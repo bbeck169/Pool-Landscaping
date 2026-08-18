@@ -33,6 +33,10 @@ router = APIRouter(tags=["recurring_jobs"])
 
 VALID_FREQ = {"weekly", "biweekly", "monthly", "custom"}
 
+# Feb-2026 · Monthly nth-weekday recurrence (RFC 5545 BYDAY + BYSETPOS).
+VALID_MONTHLY_PATTERN = {"day_of_month", "nth_weekday"}
+VALID_NTH_WEEK = {"first": 1, "second": 2, "third": 3, "fourth": 4, "last": -1}
+
 
 class RecurringJobIn(BaseModel):
     customer_id: str
@@ -48,6 +52,19 @@ class RecurringJobIn(BaseModel):
     notes: str = ""
     allow_sunday: bool = False
     active: bool = True
+    # Feb-2026 · Never-end recurrence. When True, `end_date` is forced
+    # to None on save so `_next_occurrences` walks unbounded (capped
+    # only by the nightly 14-day generator horizon → rolling forever).
+    # Explicit intent flag so the UI can render a distinct "runs until
+    # manually stopped" state instead of a silently-blank End date.
+    recurrence_never_ends: bool = False
+    # Feb-2026 · Monthly nth-weekday pattern (e.g. "3rd Friday",
+    # "Last Wednesday"). Only meaningful when frequency=="monthly".
+    # ``day_of_month`` (default) preserves the legacy always-on-the-Nth
+    # behavior. ``nth_weekday`` requires both companion fields below.
+    monthly_pattern: Optional[str] = "day_of_month"
+    monthly_nth_week: Optional[str] = None  # first|second|third|fourth|last
+    monthly_weekday: Optional[int] = Field(None, ge=0, le=6)  # 0=Mon…6=Sun
 
 
 class RecurringJobPatch(BaseModel):
@@ -63,6 +80,10 @@ class RecurringJobPatch(BaseModel):
     notes: Optional[str] = None
     allow_sunday: Optional[bool] = None
     active: Optional[bool] = None
+    recurrence_never_ends: Optional[bool] = None
+    monthly_pattern: Optional[str] = None
+    monthly_nth_week: Optional[str] = None
+    monthly_weekday: Optional[int] = None
 
 
 def _parse_date(s: Optional[str]) -> Optional[date]:
@@ -82,8 +103,50 @@ def _validate(body: RecurringJobIn | RecurringJobPatch) -> None:
         raise HTTPException(422, "interval_days is required for custom frequency")
     if freq in ("weekly", "biweekly") and body.day_of_week is None:
         raise HTTPException(422, "day_of_week (0=Mon…6=Sun) is required for weekly/biweekly")
-    if freq == "monthly" and body.day_of_month is None:
-        raise HTTPException(422, "day_of_month is required for monthly")
+    if freq == "monthly":
+        # Feb-2026 · monthly can be classic day-of-month or nth-weekday.
+        pattern = getattr(body, "monthly_pattern", None) or "day_of_month"
+        if pattern not in VALID_MONTHLY_PATTERN:
+            raise HTTPException(422,
+                f"monthly_pattern must be one of {sorted(VALID_MONTHLY_PATTERN)}")
+        if pattern == "day_of_month" and body.day_of_month is None:
+            raise HTTPException(422, "day_of_month is required for monthly (day_of_month pattern)")
+        if pattern == "nth_weekday":
+            nth = getattr(body, "monthly_nth_week", None)
+            wd = getattr(body, "monthly_weekday", None)
+            if nth not in VALID_NTH_WEEK:
+                raise HTTPException(422,
+                    f"monthly_nth_week must be one of {sorted(VALID_NTH_WEEK.keys())}")
+            if wd is None:
+                raise HTTPException(422,
+                    "monthly_weekday (0=Mon…6=Sun) is required for nth_weekday pattern")
+
+
+def _nth_weekday_of_month(year: int, month: int, nth: str, weekday: int) -> Optional[date]:
+    """Return the date of the ``nth`` occurrence of ``weekday`` in the
+    given month, or None if it doesn't exist (e.g. "5th Friday" in a
+    month with only 4 Fridays — caller should treat as skip). ``nth``
+    is a key of ``VALID_NTH_WEEK``; ``weekday`` uses Python's
+    ``date.weekday()`` convention (Mon=0…Sun=6).
+    """
+    import calendar as _cal
+    n = VALID_NTH_WEEK.get(nth)
+    if n is None:
+        return None
+    _, last_day = _cal.monthrange(year, month)
+    if n == -1:
+        # Walk backwards from the last day to find the target weekday.
+        d = date(year, month, last_day)
+        while d.weekday() != weekday:
+            d -= timedelta(days=1)
+        return d
+    # Find the first matching weekday, then step forward (n-1) weeks.
+    first = date(year, month, 1)
+    delta = (weekday - first.weekday()) % 7
+    candidate = first + timedelta(days=delta + (n - 1) * 7)
+    if candidate.month != month:
+        return None  # e.g. 5th Friday when only 4 exist
+    return candidate
 
 
 def _next_occurrences(tpl: Dict[str, Any], anchor: date,
@@ -132,26 +195,47 @@ def _next_occurrences(tpl: Dict[str, Any], anchor: date,
                 out.append(walker)
             walker += step
     elif freq == "monthly":
-        # Walk month-by-month; pick day_of_month clamped to the month's length.
+        # Feb-2026 · monthly branches on ``monthly_pattern``. Default
+        # (day_of_month) preserves the legacy always-on-the-Nth
+        # behavior; ``nth_weekday`` walks the calendar picking e.g.
+        # the 3rd Friday of each month (skipping months without a
+        # matching Nth-week when nth != "last").
         import calendar as _cal
+        pattern = tpl.get("monthly_pattern") or "day_of_month"
         y, m = walker.year, walker.month
-        while len(out) < max_count:
-            last_day = _cal.monthrange(y, m)[1]
-            picked_day = min(dom or 1, last_day)
-            candidate = date(y, m, picked_day)
-            if candidate < walker:
-                # push to next month
+        if pattern == "nth_weekday":
+            nth = tpl.get("monthly_nth_week")
+            wd = tpl.get("monthly_weekday")
+            if nth in VALID_NTH_WEEK and wd is not None:
+                while len(out) < max_count:
+                    candidate = _nth_weekday_of_month(y, m, nth, int(wd))
+                    if candidate is not None and candidate >= walker:
+                        if candidate > hard_stop:
+                            break
+                        if allow_sunday or candidate.weekday() != 6:
+                            out.append(candidate)
+                    m += 1
+                    if m > 12:
+                        m = 1; y += 1
+        else:
+            # Classic day-of-month.
+            while len(out) < max_count:
+                last_day = _cal.monthrange(y, m)[1]
+                picked_day = min(dom or 1, last_day)
+                candidate = date(y, m, picked_day)
+                if candidate < walker:
+                    # push to next month
+                    m += 1
+                    if m > 12:
+                        m = 1; y += 1
+                    continue
+                if candidate > hard_stop:
+                    break
+                if allow_sunday or candidate.weekday() != 6:
+                    out.append(candidate)
                 m += 1
                 if m > 12:
                     m = 1; y += 1
-                continue
-            if candidate > hard_stop:
-                break
-            if allow_sunday or candidate.weekday() != 6:
-                out.append(candidate)
-            m += 1
-            if m > 12:
-                m = 1; y += 1
     elif freq == "custom":
         step = timedelta(days=interval)
         # Anchor cadence to start_date so custom stays aligned.
@@ -172,13 +256,63 @@ async def _ensure_indexes():
         await db.recurring_job_templates.create_index(
             [("tenant_id", 1), ("active", 1)]
         )
-        # Unique on (recurring_template_id, scheduled_date) — guarantees
-        # idempotent regeneration. `sparse` so pre-existing jobs (no
-        # template) are unaffected.
-        await db.jobs.create_index(
-            [("recurring_template_id", 1), ("scheduled_date", 1)],
-            unique=True, sparse=True,
-        )
+        # Feb-2026 · P0 index remediation.
+        #
+        # The prior index was ``unique=True, sparse=True`` on
+        # ``(recurring_template_id, scheduled_date)`` — intended to
+        # dedup regenerated recurring occurrences. Sparse on a
+        # *compound* index still indexes every document that has at
+        # least one of the keys, and ``scheduled_date`` is present on
+        # every job. That meant every non-recurring job (where
+        # ``recurring_template_id`` was ``null`` or missing) was
+        # indexed under the same synthetic ``null`` bucket keyed by
+        # date → the SECOND non-recurring job for any customer on
+        # any given date collided with the unique constraint and the
+        # request 500'd with ``E11000 duplicate key``. Root cause
+        # for the Terry-Hernandez ``POST /api/jobs`` 500 reported on
+        # production (repro-clean in preview because this index was
+        # never lazily created here).
+        #
+        # Fix: replace with a *partial* unique index whose filter
+        # excludes docs that lack ``recurring_template_id``. Now the
+        # dedup guarantee is preserved for actual recurring
+        # occurrences, and non-recurring jobs are free to duplicate
+        # per date.
+        target_name = "recurring_template_id_1_scheduled_date_1"
+        info = await db.jobs.index_information()
+        existing = info.get(target_name)
+        needs_recreate = False
+        if existing is not None:
+            # Motor returns the raw index spec. ``partialFilterExpression``
+            # signals the new shape; ``sparse`` signals the legacy one.
+            if not existing.get("partialFilterExpression"):
+                needs_recreate = True
+        if needs_recreate:
+            try:
+                await db.jobs.drop_index(target_name)
+                logger.info(
+                    "[recurring_jobs.indexes] dropped legacy sparse-unique "
+                    "index — replacing with partial-unique variant"
+                )
+            except Exception as drop_err:
+                logger.warning(
+                    f"[recurring_jobs.indexes] drop legacy index failed: "
+                    f"{drop_err}"
+                )
+        if needs_recreate or existing is None:
+            await db.jobs.create_index(
+                [("recurring_template_id", 1), ("scheduled_date", 1)],
+                unique=True,
+                # MongoDB partialFilterExpression only supports equality,
+                # $exists:true, $gt/$gte/$lt/$lte, $type, $and, $or.
+                # $ne / $not are rejected. Since ``recurring_template_id``
+                # is a string uuid when set, ``$type: "string"`` cleanly
+                # excludes both null and missing values.
+                partialFilterExpression={
+                    "recurring_template_id": {"$type": "string"},
+                },
+                name=target_name,
+            )
     except Exception as e:
         logger.warning(f"recurring_jobs index: {e}")
 
@@ -195,6 +329,11 @@ async def create_recurring(body: RecurringJobIn,
     if not cust:
         raise HTTPException(404, "customer not found")
     doc = body.dict()
+    # Feb-2026 · Never-end intent overrides end_date. If the caller
+    # said "runs until manually stopped", clear the end date so the
+    # generator walks forever.
+    if doc.get("recurrence_never_ends"):
+        doc["end_date"] = None
     doc.update({
         "id": new_id(),
         "tenant_id": tenant["id"],
@@ -250,6 +389,13 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
                             tenant: dict = Depends(get_current_tenant)):
     _validate(body)
     updates = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None or k == "active"}
+    # Feb-2026 · Never-end intent overrides end_date on patch too. If
+    # the caller flipped the flag on, clear end_date so the generator
+    # keeps walking; if they explicitly turned the flag off, leave
+    # end_date as whatever they passed (may still be None → still
+    # infinite via the pre-flag legacy path).
+    if updates.get("recurrence_never_ends") is True:
+        updates["end_date"] = None
     updates["updated_at"] = now_iso()
     res = await db.recurring_job_templates.update_one(
         {"id": tpl_id, "tenant_id": tenant["id"]},
@@ -273,6 +419,86 @@ async def delete_recurring(tpl_id: str,
     if res.matched_count == 0:
         raise HTTPException(404, "template not found")
     return {"id": tpl_id, "active": False}
+
+
+async def _stop_template_and_prune_future(tpl_id: str, tenant_id: str) -> Dict[str, Any]:
+    """Feb-2026 · Never-end recurrence · Stop action.
+
+    Marks the template inactive, sets ``end_date = today`` (so any
+    subsequent regenerate is a no-op), clears ``recurrence_never_ends``
+    and removes future *unstarted* occurrences from ``db.jobs``.
+
+    "Unstarted" means ``status == 'scheduled'`` AND
+    ``scheduled_date > today``. Jobs the tech already started
+    (in-progress, completed, cancelled) are never touched, and today's
+    visit is preserved so the crew's route board doesn't lose work
+    already loaded. Existing past-dated jobs are preserved.
+    """
+    today_iso = date.today().isoformat()
+    tpl = await db.recurring_job_templates.find_one(
+        {"id": tpl_id, "tenant_id": tenant_id}, {"_id": 0},
+    )
+    if not tpl:
+        raise HTTPException(404, "template not found")
+    await db.recurring_job_templates.update_one(
+        {"id": tpl_id, "tenant_id": tenant_id},
+        {"$set": {"active": False,
+                    "end_date": today_iso,
+                    "recurrence_never_ends": False,
+                    "stopped_at": now_iso(),
+                    "updated_at": now_iso()}},
+    )
+    # Remove future, still-scheduled occurrences. Keep today's visit
+    # (>= today_iso would nuke it) and preserve started/completed rows.
+    del_res = await db.jobs.delete_many({
+        "tenant_id": tenant_id,
+        "recurring_template_id": tpl_id,
+        "status": "scheduled",
+        "scheduled_date": {"$gt": today_iso},
+    })
+    return {
+        "template_id": tpl_id,
+        "stopped_at": today_iso,
+        "removed_future_jobs": del_res.deleted_count,
+    }
+
+
+@router.post("/recurring-jobs/{tpl_id}/stop")
+async def stop_recurring(tpl_id: str,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
+    """Feb-2026 · Never-end recurrence · Stop generating future occurrences.
+
+    Idempotent-ish: calling twice sets end_date to the second call's
+    date and returns 0 removed the second time (no more future scheduled
+    jobs to prune).
+    """
+    return await _stop_template_and_prune_future(tpl_id, tenant["id"])
+
+
+@router.post("/jobs/{jid}/recurrence/stop")
+async def stop_recurring_from_job(jid: str,
+                                     user: dict = Depends(require_admin),
+                                     tenant: dict = Depends(get_current_tenant)):
+    """Feb-2026 · Job-scoped convenience shim. Resolves the job's
+    ``recurring_template_id`` and delegates to the template-stop
+    helper. Useful from the Job detail page which only knows the job
+    id, not the template id."""
+    # Feb-2026 · Note — do NOT pass a projection that includes only
+    # ``recurring_template_id``. When the field is absent on the doc,
+    # Motor returns ``{}`` and ``if not job:`` becomes truthy → false
+    # 404. Read the full doc (cheap — jobs are small) so both the
+    # existence check and the ``recurring_template_id`` lookup are
+    # reliable.
+    job = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+    )
+    if not job:
+        raise HTTPException(404, "job not found")
+    tpl_id = job.get("recurring_template_id")
+    if not tpl_id:
+        raise HTTPException(400, "job is not part of a recurring series")
+    return await _stop_template_and_prune_future(tpl_id, tenant["id"])
 
 
 async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[str, Any]:

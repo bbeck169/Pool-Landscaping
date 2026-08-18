@@ -8,7 +8,7 @@
  *   POST   /api/recurring-jobs/{id}/generate?through=YYYY-MM-DD
  */
 import React, { useEffect, useState } from "react";
-import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X } from "lucide-react";
+import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 
@@ -56,13 +56,25 @@ export default function RecurringJobs() {
 
   useEffect(() => { load(); }, []);
 
-  const openCreate = () => { setEditing({ frequency: "weekly", day_of_week: 0, start_date: todayIso(), price_cents: 12000, active: true, notes: "" }); setModalOpen(true); };
-  const openEdit = (row) => { setEditing({ ...row }); setModalOpen(true); };
+  const openCreate = () => { setEditing({ frequency: "weekly", day_of_week: 0, start_date: todayIso(), price_cents: 12000, active: true, notes: "", recurrence_never_ends: true, end_date: null }); setModalOpen(true); };
+  const openEdit = (row) => {
+    // Feb-2026 · Ends-mode default. Legacy rows may have neither
+    // `recurrence_never_ends` nor `end_date`; treat that as "Never"
+    // per the product rule ("if neither set, fall back to Never").
+    const neverEnds = row.recurrence_never_ends === true
+      || (row.recurrence_never_ends == null && !row.end_date);
+    setEditing({ ...row, recurrence_never_ends: neverEnds });
+    setModalOpen(true);
+  };
 
   const save = async () => {
     setError(null);
     try {
+      // Feb-2026 · Never-end recurrence · UI intent maps to backend
+      // flag. When true, clear the end_date field client-side too so
+      // the payload doesn't fight the backend override.
       const payload = { ...editing };
+      if (payload.recurrence_never_ends) payload.end_date = null;
       if (editing.id) {
         await api.patch(`/recurring-jobs/${editing.id}`, payload);
       } else {
@@ -85,6 +97,26 @@ export default function RecurringJobs() {
     setBusy(row.id);
     try { await api.del(`/recurring-jobs/${row.id}`); await load(); }
     finally { setBusy(null); }
+  };
+
+  const stopRecurrence = async (row) => {
+    // Feb-2026 · Never-end recurrence · Stop action. Confirm because
+    // this removes unstarted future occurrences from db.jobs.
+    // eslint-disable-next-line no-alert
+    const ok = window.confirm(
+      "Stop generating future occurrences?\n\nExisting scheduled visits from today onward that haven't been started will be removed. Started/completed visits and today's route stay untouched."
+    );
+    if (!ok) return;
+    setBusy(row.id);
+    try {
+      const res = await api.post(`/recurring-jobs/${row.id}/stop`, {});
+      alertOk(`Stopped. Removed ${res?.removed_future_jobs ?? 0} future occurrences.`);
+      await load();
+    } catch (e) {
+      setError(e?.message || "Stop failed");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const generateNow = async (row) => {
@@ -198,6 +230,14 @@ export default function RecurringJobs() {
                             data-testid={`recurring-job-toggle-${r.id}`}>
                       {r.active ? <Pause size={11} /> : <Play size={11} />}{r.active ? "Pause" : "Resume"}
                     </button>
+                    {r.active ? (
+                      <button type="button" onClick={() => stopRecurrence(r)} disabled={busy === r.id}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold mr-1"
+                              style={{ border: `1px solid #FCD34D`, background: colors.surface, color: "#B45309" }}
+                              data-testid={`recurring-job-stop-${r.id}`}>
+                        <Ban size={11} /> Stop
+                      </button>
+                    ) : null}
                     <button type="button" onClick={() => softDelete(r)}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold"
                             style={{ border: `1px solid #FECACA`, background: colors.surface, color: "#B91C1C" }}
@@ -276,7 +316,7 @@ export default function RecurringJobs() {
                          data-testid="recurring-jobs-interval" />
                 </label>
               ) : null}
-              <div className="grid grid-cols-2 gap-3">
+              <div>
                 <label className="text-xs font-semibold" style={{ color: colors.muted }}>Start date
                   <input type="date" value={editing.start_date || todayIso()}
                          onChange={(e) => setEditing((x) => ({ ...x, start_date: e.target.value }))}
@@ -284,14 +324,58 @@ export default function RecurringJobs() {
                          style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                          data-testid="recurring-jobs-start" />
                 </label>
-                <label className="text-xs font-semibold" style={{ color: colors.muted }}>End date (optional)
-                  <input type="date" value={editing.end_date || ""}
-                         onChange={(e) => setEditing((x) => ({ ...x, end_date: e.target.value || null }))}
-                         className="w-full mt-1 px-2 py-1.5 rounded text-sm"
-                         style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-                         data-testid="recurring-jobs-end" />
-                </label>
               </div>
+              {/* Feb-2026 · Ends mode · explicit radio group. Two mutually-
+                  exclusive modes: Never (recurrence_never_ends=true) or
+                  On date (end_date=<picked>). Default Never. Backend
+                  forces end_date=null when recurrence_never_ends is on. */}
+              <fieldset className="rounded-lg p-3" style={{ border: `1px solid ${colors.border}` }}>
+                <legend className="text-xs font-semibold px-1" style={{ color: colors.muted }}>Ends</legend>
+                <div className="space-y-2">
+                  <label className="flex items-start gap-2 text-xs font-semibold" style={{ color: colors.onSurface }}>
+                    <input type="radio" name="recurrence-ends-mode"
+                           checked={!!editing.recurrence_never_ends}
+                           onChange={() => setEditing((x) => ({ ...x, recurrence_never_ends: true, end_date: null }))}
+                           className="mt-0.5"
+                           data-testid="recurring-jobs-ends-never" />
+                    <span>
+                      Never
+                      <span className="block font-normal mt-0.5" style={{ color: colors.muted }}>
+                        {editing.recurrence_never_ends
+                          ? "Continues indefinitely — stop from the row action bar."
+                          : "Rolls forward on a 14-day horizon until you stop it."}
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-xs font-semibold" style={{ color: colors.onSurface }}>
+                    <input type="radio" name="recurrence-ends-mode"
+                           checked={!editing.recurrence_never_ends}
+                           onChange={() => setEditing((x) => ({ ...x, recurrence_never_ends: false }))}
+                           className="mt-0.5"
+                           data-testid="recurring-jobs-ends-on-date" />
+                    <span className="flex-1">
+                      On date
+                      <input type="date"
+                             value={editing.end_date || ""}
+                             disabled={!!editing.recurrence_never_ends}
+                             onChange={(e) => setEditing((x) => ({ ...x, end_date: e.target.value || null, recurrence_never_ends: false }))}
+                             className="w-full mt-1 px-2 py-1.5 rounded text-sm"
+                             style={{
+                               border: `1px solid ${colors.border}`,
+                               background: editing.recurrence_never_ends ? colors.surfaceSecondary : colors.surface,
+                               color: editing.recurrence_never_ends ? colors.muted : colors.onSurface,
+                               opacity: editing.recurrence_never_ends ? 0.55 : 1,
+                             }}
+                             data-testid="recurring-jobs-end" />
+                      {(!editing.recurrence_never_ends && editing.end_date) ? (
+                        <span className="block font-normal mt-1" style={{ color: colors.muted }}>
+                          Final visit on or before {editing.end_date}.
+                        </span>
+                      ) : null}
+                    </span>
+                  </label>
+                </div>
+              </fieldset>
               <label className="text-xs font-semibold" style={{ color: colors.muted }}>Assigned tech
                 <select value={editing.assigned_tech_id || ""} onChange={(e) => setEditing((x) => ({ ...x, assigned_tech_id: e.target.value || null }))}
                         className="w-full mt-1 px-2 py-1.5 rounded text-sm"
