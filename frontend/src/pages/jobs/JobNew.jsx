@@ -10,6 +10,10 @@ import {
   Toast,
   Chip,
 } from "@/components/ui-kit";
+import {
+  MonthlyNthWeekdaySelector,
+  RecurrenceEndsRadio,
+} from "@/components/recurring/MonthlyNthWeekdaySelector";
 
 const CADENCES = [
   { k: "one_time", label: "One-time" },
@@ -81,6 +85,17 @@ export default function JobNew({
     cadence: "one_time",
     price: 0,
     property_id: preselectedProperty,
+    // Feb-2026 · Monthly Nth-weekday recurrence controls. Only sent
+    // to the ``/api/recurring-jobs`` endpoint when ``cadence ===
+    // "monthly"`` AND ``monthly_pattern === "nth_weekday"``. Kept in
+    // the same ``form`` object so a single ``set(k)`` handler and
+    // the shared ``MonthlyNthWeekdaySelector`` component can drive
+    // both surfaces.
+    monthly_pattern: "day_of_month",
+    monthly_nth_week: "first",
+    monthly_weekday: 0,
+    recurrence_never_ends: true,
+    end_date: null,
   });
 
   useEffect(() => {
@@ -156,6 +171,43 @@ export default function JobNew({
     }
     setBusy(true);
     try {
+      // Feb-2026 · Monthly Nth-weekday recurrence branch. When the
+      // user selects ``cadence === "monthly"`` AND the shared
+      // MonthlyNthWeekdaySelector is set to ``nth_weekday``, we
+      // create a proper recurring-job TEMPLATE rather than one-off
+      // jobs so the backend Nth-weekday engine drives future
+      // materialization. The rest of the flow (POST /jobs +
+      // preview loop) remains unchanged for one-time / weekly /
+      // biweekly / same-day-monthly cadences.
+      const wantsNthWeekdayTemplate =
+        form.cadence === "monthly" &&
+        form.monthly_pattern === "nth_weekday";
+      if (wantsNthWeekdayTemplate) {
+        const tplPayload = {
+          customer_id: form.customer_id,
+          service_type: form.service_type || null,
+          notes: form.notes || "",
+          price_cents: Math.round((Number(form.price) || 0) * 100),
+          start_date: form.scheduled_date || null,
+          frequency: "monthly",
+          monthly_pattern: "nth_weekday",
+          monthly_nth_week: form.monthly_nth_week,
+          monthly_weekday: form.monthly_weekday,
+          recurrence_never_ends: !!form.recurrence_never_ends,
+          end_date: form.recurrence_never_ends ? null : (form.end_date || null),
+          active: true,
+        };
+        if (form.property_id) tplPayload.property_id = form.property_id;
+        if (form.technician_id) tplPayload.technician_id = form.technician_id;
+        const tpl = await api.post("/recurring-jobs", tplPayload);
+        setToast({ tone: "success", message: "Recurring series created" });
+        if (renderMode === "modal" && typeof onCreated === "function") {
+          onCreated(tpl);
+        } else {
+          setTimeout(() => navigate(`/admin/recurring-jobs`), 400);
+        }
+        return;
+      }
       const payload = {
         title: form.title,
         customer_id: form.customer_id,
@@ -402,6 +454,24 @@ export default function JobNew({
               </button>
             ))}
           </div>
+          {form.cadence === "monthly" ? (
+            <div className="grid gap-3 mb-3" data-testid="jf-monthly-recurrence">
+              {/* Feb-2026 · Monthly Nth-weekday selector + Ends
+                  radio. Uses the SAME shared components as
+                  /admin/recurring-jobs so the wire contract is
+                  canonical in one place. */}
+              <MonthlyNthWeekdaySelector
+                value={form}
+                onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+                testidPrefix="jf-monthly-"
+              />
+              <RecurrenceEndsRadio
+                value={form}
+                onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+                testidPrefix="jf-recurrence-ends-"
+              />
+            </div>
+          ) : null}
           {preview ? (
             <div data-testid="jf-preview">
               <div className="text-xs uppercase font-semibold mb-1" style={{ color: colors.muted }}>

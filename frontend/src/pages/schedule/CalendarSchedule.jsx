@@ -254,7 +254,7 @@ export default function CalendarSchedule() {
   const [selectedJobIds, setSelectedJobIds] = useState(() => new Set());
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const canMultiSelectDelete = ["admin", "super_admin"].includes(
+  const canMultiSelectDelete = ["admin", "super_admin", "manager"].includes(
     (user?.role || "").toLowerCase());
   // Phase 28 · Feb-2026 — multi-select reassign to a new tech. Reuses
   // the same selection state; the toolbar adds a second action next to
@@ -271,6 +271,16 @@ export default function CalendarSchedule() {
     });
   };
   const clearSelection = () => setSelectedJobIds(new Set());
+  // Feb-2026 · Bulk-selection "Select all in view" — picks every
+  // job currently rendered on the focused day (post-filter,
+  // post-search). Uses ``dayJobs`` (derived below) via a ref so
+  // the callback stays stable across renders. NOTE: ``dayJobs`` is
+  // defined further down, hence the lazy ``jobsRef.current``.
+  const dayJobsRef = React.useRef([]);
+  const selectAllInView = React.useCallback(() => {
+    const ids = (dayJobsRef.current || []).map((j) => j.id);
+    setSelectedJobIds(new Set(ids));
+  }, []);
   const doBulkDelete = async () => {
     setDeleteBusy(true);
     try {
@@ -561,6 +571,9 @@ export default function CalendarSchedule() {
     list.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999));
     return list;
   }, [filteredJobs, focusISO]);
+  // Feb-2026 · Keep ``selectAllInView`` in sync with the derived
+  // day list without stashing it in state.
+  React.useEffect(() => { dayJobsRef.current = dayJobs; }, [dayJobs]);
   // Feb-2026 · Schedule-UI · per-day count map for the WeekStrip badges.
   // {iso: count} across every currently-visible job (post-filter).
   // Purely derived — no extra fetch, no backend touch. Recalculates
@@ -958,6 +971,7 @@ export default function CalendarSchedule() {
           canMultiSelectDelete={canMultiSelectDelete}
           onOpenBulkDelete={() => setDeleteConfirmOpen(true)}
           onClearSelection={clearSelection}
+          onSelectAllInView={selectAllInView}
           canMultiSelectAssign={canMultiSelectAssign}
           onOpenBulkAssign={(techId) => {
             setAssignPickedTechId(techId);
@@ -1117,7 +1131,7 @@ function GridPanel({
   onConfirmMove, busy, onOpenJob, onNewJob, reorderUnavailable,
   // Feb-2026 · Schedule multi-select soft-delete —
   selectedJobIds, onToggleSelect, canMultiSelectDelete,
-  onOpenBulkDelete, onClearSelection,
+  onOpenBulkDelete, onClearSelection, onSelectAllInView,
   // Phase 28 · Feb-2026 · Schedule multi-select bulk reassign —
   canMultiSelectAssign, onOpenBulkAssign, techs,
   // Feb-2026 · Schedule-screen inline edit — admin+ Pencil affordance.
@@ -1270,6 +1284,19 @@ function GridPanel({
           <span className="text-sm font-bold" data-testid="grid-selection-count">
             {selectedJobIds.size} selected
           </span>
+          {/* Feb-2026 · "Select all in view" inside the active
+              toolbar — mirrors the pre-selection affordance so the
+              user can escalate a partial pick to everything on the
+              current day without clearing first. */}
+          <button
+            type="button"
+            onClick={onSelectAllInView}
+            className="text-xs font-semibold underline hover:no-underline"
+            style={{ color: "#78350F" }}
+            data-testid="grid-selection-select-all"
+          >
+            Select all in view
+          </button>
           <button
             type="button"
             onClick={onClearSelection}
@@ -1296,6 +1323,33 @@ function GridPanel({
               count={selectedJobIds.size}
             />
           ) : null}
+        </div>
+      ) : canMultiSelectDelete && Array.isArray(jobs) && jobs.length > 0 ? (
+        // Feb-2026 · Pre-selection "Select all" affordance. Only
+        // renders for super_admin / admin / manager (via
+        // ``canMultiSelectDelete`` which the parent computed with
+        // the same three-role list). Techs + customers never see
+        // this row.
+        <div
+          className="flex items-center gap-2 rounded-xl mb-3 px-3 py-2"
+          style={{ background: colors.surfaceSecondary,
+                     border: `1px solid ${colors.border}`, color: colors.onSurface }}
+          data-testid="grid-selection-preselect-bar"
+        >
+          <span className="text-xs" style={{ color: colors.muted }}>
+            Bulk actions
+          </span>
+          <button
+            type="button"
+            onClick={onSelectAllInView}
+            className="text-xs font-semibold px-2 py-1 rounded-lg"
+            style={{ background: colors.surface,
+                     border: `1px solid ${colors.border}`,
+                     color: colors.onSurface }}
+            data-testid="grid-selection-select-all"
+          >
+            Select all in view ({jobs.length})
+          </button>
         </div>
       ) : null}
 

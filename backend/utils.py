@@ -103,6 +103,21 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+def require_admin_or_manager(user: dict = Depends(get_current_user)) -> dict:
+    """Feb-2026 · widen ``require_admin`` to include ``manager``.
+
+    Used by endpoints the product intentionally exposes to the
+    manager role (recurring-jobs CRUD + bulk-selection on Schedule).
+    NOT a global replacement for ``require_admin`` — technicians +
+    customers are still 403'd. Multi-tenant scoping still enforced
+    downstream via ``get_current_tenant`` on every mutating
+    endpoint, so a tenant-A manager cannot edit tenant-B state.
+    """
+    if user.get("role") not in ("admin", "super_admin", "owner", "manager"):
+        raise HTTPException(status_code=403, detail="Admin or manager access required")
+    return user
+
+
 def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Super admin access required")

@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from config import db, logger
-from utils import new_id, now_iso, require_admin
+from utils import new_id, now_iso, require_admin, require_admin_or_manager
 from routers.tenants import get_current_tenant
 
 router = APIRouter(tags=["recurring_jobs"])
@@ -319,7 +319,7 @@ async def _ensure_indexes():
 
 @router.post("/recurring-jobs")
 async def create_recurring(body: RecurringJobIn,
-                             user: dict = Depends(require_admin),
+                             user: dict = Depends(require_admin_or_manager),
                              tenant: dict = Depends(get_current_tenant)):
     _validate(body)
     await _ensure_indexes()
@@ -385,7 +385,7 @@ async def get_recurring(tpl_id: str,
 
 @router.patch("/recurring-jobs/{tpl_id}")
 async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
-                            user: dict = Depends(require_admin),
+                            user: dict = Depends(require_admin_or_manager),
                             tenant: dict = Depends(get_current_tenant)):
     _validate(body)
     updates = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None or k == "active"}

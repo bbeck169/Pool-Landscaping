@@ -209,6 +209,13 @@ export default function ScheduleCalendar() {
       return next;
     });
   };
+  // Feb-2026 · Mobile Schedule "Select all in view" parity with web.
+  // Admin+ gated at the button level; ``jobs`` is the currently
+  // visible list post-filter, matching the web ``dayJobs`` derivation.
+  const selectAllInView = () => {
+    setChecked(new Set(jobs.map((j) => j.id)));
+  };
+  const clearSelection = () => setChecked(new Set());
 
   const bulkComplete = async () => {
     if (!checked.size) return;
@@ -459,6 +466,8 @@ export default function ScheduleCalendar() {
           hourlyData={hourlyData}
           weatherWidget={(isTech || isAdmin) ? <WeatherWidget onHourlyLoaded={setHourlyData} /> : null}
           onOpenEdit={isAdmin ? ((jobRow: Job) => setEditingJob(jobRow)) : undefined}
+          onSelectAllInView={isAdmin ? selectAllInView : undefined}
+          onClearSelection={isAdmin ? clearSelection : undefined}
         />
       ) : (
         <CalendarView
@@ -568,7 +577,7 @@ function GridView(props: any) {
     rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
     onBulkComplete, onBulkDelete, onOpenMove, onOpenReassign, moveOpen, setMoveOpen, moveDate, setMoveDate,
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData,
-    weatherWidget, onOpenEdit,
+    weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection,
   } = props;
   const focusISO = iso(focus);
   const isToday = focusISO === iso(new Date());
@@ -597,6 +606,30 @@ function GridView(props: any) {
           Move/Delete/Assign/Rearrange are gated to isAdmin per user brief. */}
       {canWrite ? (
         <View style={gStyles.pillRow} testID="grid-bulk-pills">
+          {/* Feb-2026 · Select-all / Clear pills — admin+ only.
+              Renders BEFORE the action pills so the affordance is
+              reachable even when no cards are checked yet. */}
+          {isAdmin && onSelectAllInView ? (
+            <Pressable
+              onPress={onSelectAllInView}
+              disabled={!jobs.length}
+              style={[gStyles.pill, gStyles.pillPurple, !jobs.length && { opacity: 0.4 }]}
+              testID="grid-bulk-select-all"
+            >
+              <Ionicons name="checkbox-outline" size={13} color="#fff" />
+              <Text style={gStyles.pillText}>Select all ({jobs.length})</Text>
+            </Pressable>
+          ) : null}
+          {isAdmin && onClearSelection && checked.size > 0 ? (
+            <Pressable
+              onPress={onClearSelection}
+              style={[gStyles.pill, gStyles.pillGrey]}
+              testID="grid-bulk-clear-selection"
+            >
+              <Ionicons name="close-outline" size={13} color="#fff" />
+              <Text style={gStyles.pillText}>Clear</Text>
+            </Pressable>
+          ) : null}
           <Pressable
             onPress={onBulkComplete}
             disabled={busy || checked.size === 0}
@@ -1050,6 +1083,7 @@ const gStyles = StyleSheet.create({
   pillRed:    { backgroundColor: "#DC2626" },
   pillOrange: { backgroundColor: "#D97706" },
   pillPurple: { backgroundColor: "#7C3AED" },
+  pillGrey:   { backgroundColor: "#6B7280" },
   pillText: { fontFamily: font.bold, fontSize: fontSize.xs, color: "#fff" },
   moveBox: {
     padding: spacing.md, borderRadius: radius.md,

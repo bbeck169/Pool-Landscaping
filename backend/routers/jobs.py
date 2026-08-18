@@ -8,7 +8,8 @@ from pymongo.errors import DuplicateKeyError
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
-                   get_current_user, require_admin, send_sms, notify_customer, auth_response,
+                   get_current_user, require_admin, require_admin_or_manager,
+                   send_sms, notify_customer, auth_response,
                    create_staff_notification)
 from routers.tenants import get_current_tenant
 from models import (
@@ -1263,7 +1264,7 @@ async def soft_delete_job(jid: str,
 @router.post("/jobs/bulk-soft-delete",
               operation_id="jobs.bulkSoftDelete")
 async def bulk_soft_delete_jobs(body: BulkSoftDeleteIn,
-                                  user: dict = Depends(require_admin),
+                                  user: dict = Depends(require_admin_or_manager),
                                   tenant: dict = Depends(get_current_tenant)):
     """Feb-2026 · Schedule multi-select — bulk soft-delete wrapper.
 
@@ -1328,7 +1329,7 @@ async def _lookup_tech_user(tenant_id: str, tech_id: str) -> Optional[dict]:
 
 @router.post("/jobs/bulk-reassign", operation_id="jobs.bulkReassign")
 async def bulk_reassign_jobs(body: BulkReassignIn,
-                                user: dict = Depends(require_admin),
+                                user: dict = Depends(require_admin_or_manager),
                                 tenant: dict = Depends(get_current_tenant)):
     """Phase 28 · Feb-2026 · Schedule multi-select — reassign N jobs
     to a single tech in one call. Response mirrors the bulk-soft-delete

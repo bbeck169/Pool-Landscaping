@@ -11,6 +11,9 @@ import React, { useEffect, useState } from "react";
 import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import {
+  MonthlyNthWeekdaySelector,
+} from "@/components/recurring/MonthlyNthWeekdaySelector";
 
 const FREQ_OPTIONS = [
   { value: "weekly", label: "Weekly" },
@@ -299,13 +302,17 @@ export default function RecurringJobs() {
                 </label>
               ) : null}
               {editing.frequency === "monthly" ? (
-                <label className="text-xs font-semibold" style={{ color: colors.muted }}>Day of month
-                  <input type="number" min="1" max="31" value={editing.day_of_month ?? 1}
-                         onChange={(e) => setEditing((x) => ({ ...x, day_of_month: Number(e.target.value) }))}
-                         className="w-full mt-1 px-2 py-1.5 rounded text-sm"
-                         style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-                         data-testid="recurring-jobs-dom" />
-                </label>
+                // Feb-2026 · Monthly recurrence — shared component
+                // exposing both "Same day each month" (day_of_month)
+                // AND "Nth weekday" (monthly_pattern="nth_weekday"
+                // with monthly_nth_week + monthly_weekday). Same
+                // component is used on /jobs/new so the wire
+                // contract is canonical in one place.
+                <MonthlyNthWeekdaySelector
+                  value={editing}
+                  onChange={(patch) => setEditing((x) => ({ ...x, ...patch }))}
+                  testidPrefix="recurring-jobs-monthly-"
+                />
               ) : null}
               {editing.frequency === "custom" ? (
                 <label className="text-xs font-semibold" style={{ color: colors.muted }}>Interval days
