@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
@@ -14,13 +14,26 @@ const SERVICE_TYPES = ["Pool Cleaning", "Repair", "Landscaping", "Inspection", "
 
 export default function JobForm() {
   const router = useRouter();
+  // Feb-2026 · JobDetail "+ New Scheduled Job" hook — the parent
+  // screen pushes /job/new with pre-fill params derived from the
+  // current job (customer/technician/service/date). We hydrate the
+  // form state below once the /customers + /technicians lists have
+  // loaded so the picker labels resolve.
+  const prefill = useLocalSearchParams<{
+    customer_id?: string;
+    technician_id?: string;
+    service_type?: string;
+    scheduled_date?: string;
+  }>();
   const [customers, setCustomers] = useState<any[]>([]);
   const [techs, setTechs] = useState<any[]>([]);
   const [customer, setCustomer] = useState<any>(null);
   const [tech, setTech] = useState<any>(null);
   const [title, setTitle] = useState("");
-  const [serviceType, setServiceType] = useState("Pool Cleaning");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [serviceType, setServiceType] = useState(prefill?.service_type || "Pool Cleaning");
+  const [date, setDate] = useState(
+    prefill?.scheduled_date || new Date().toISOString().slice(0, 10),
+  );
   const [price, setPrice] = useState("");
   const [notes, setNotes] = useState("");
   const [sheet, setSheet] = useState<null | "customer" | "tech" | "service">(null);
@@ -28,8 +41,23 @@ export default function JobForm() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.get("/customers").then(setCustomers);
-    api.get("/technicians").then(setTechs);
+    api.get("/customers").then((rows) => {
+      setCustomers(rows);
+      // Feb-2026 · Pre-fill selection when the parent (JobDetail
+      // "+ New Scheduled Job" flow) passes an explicit customer_id.
+      if (prefill?.customer_id) {
+        const c = (rows || []).find((r: any) => r.id === prefill.customer_id);
+        if (c) setCustomer(c);
+      }
+    });
+    api.get("/technicians").then((rows) => {
+      setTechs(rows);
+      if (prefill?.technician_id) {
+        const t = (rows || []).find((r: any) => r.id === prefill.technician_id);
+        if (t) setTech(t);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const save = async () => {

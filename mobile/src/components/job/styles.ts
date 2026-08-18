@@ -207,6 +207,16 @@ export const styles = StyleSheet.create({
   completedText: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.success },
   autoNotifyBanner: { flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center", marginTop: spacing.sm, paddingHorizontal: spacing.md },
   autoNotifyText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
+  // Feb-2026 · "+ New Scheduled Job" quick-action button on JobDetail.
+  newJobBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: spacing.sm, marginTop: spacing.md, paddingVertical: spacing.md,
+    borderRadius: 12, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  newJobBtnText: {
+    fontFamily: font.semibold, fontSize: fontSize.base, color: colors.brand,
+  },
   techRow: {
     flexDirection: "row",
     alignItems: "center",

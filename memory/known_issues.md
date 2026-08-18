@@ -27,3 +27,25 @@ Feb-2026 update — enrichment endpoint hardening:
 Follow-up (owner: TBD): reconcile in a dedicated pass — one canonical
 id per human, back-fill `job.technician_id` accordingly, and delete the
 double-lookup once the store is consistent.
+
+## `backend/.env.example` ships preview-posture defaults (Feb-2026)
+`/app/backend/.env.example` — the tracked template — currently seeds
+production deploys that follow the `cp .env.example .env` shortcut with
+the following preview-only values:
+
+* `SHOW_DEMO_LOGINS=true` (appears twice — duplicated seed sections).
+* `APP_ENV=preview` (comms whitelist, Zillow guardrails, Lumino test
+  gates all key off this — non-allowlisted recipients drop silently
+  in preview mode).
+* `STRIPE_MODE=test` (test-mode cards silently accepted).
+* `CORS_ORIGINS=*` (too permissive for a customer domain).
+
+This is the drift that caused the `app.plofv.com` demo-tiles leak on
+Feb-2026. The client-side hostname gate now blocks the demo-tiles
+render regardless, but every other flag above still needs an
+independent audit before production.
+
+Follow-up: create a companion `backend/.env.production.example` with
+the safe-in-prod defaults inverted, and document a checklist for
+promoting a preview deploy to production.
+

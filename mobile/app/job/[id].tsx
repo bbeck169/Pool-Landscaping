@@ -499,6 +499,33 @@ export default function JobDetail() {
             <Text style={styles.completedText}>Job completed</Text>
           </View>
         )}
+
+        {/* Feb-2026 · "+ New Scheduled Job" quick-action — parity
+            with the web JobDetail button. Pushes the existing
+            /job/new route with pre-fill query params derived from
+            this job; the form hydrates them once the customer /
+            technician pickers finish loading. Admin-only, matches
+            the web permission gate. */}
+        {isAdmin ? (
+          <Pressable
+            style={styles.newJobBtn}
+            onPress={() =>
+              router.push({
+                pathname: "/job/new",
+                params: {
+                  customer_id: job.customer_id || "",
+                  technician_id: job.technician_id || "",
+                  service_type: job.service_type || "",
+                  scheduled_date: new Date().toISOString().slice(0, 10),
+                },
+              })
+            }
+            testID="jd-new-scheduled-job"
+          >
+            <Ionicons name="add" size={18} color={colors.brand} />
+            <Text style={styles.newJobBtnText}>New Scheduled Job</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <Sheet visible={techSheet} onClose={() => setTechSheet(false)} title="Assign Technician" testID="tech-sheet">

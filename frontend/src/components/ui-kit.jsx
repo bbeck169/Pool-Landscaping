@@ -175,8 +175,12 @@ export function Button({ children, variant = "primary", className = "", testid, 
   );
 }
 
-export function Modal({ open, onClose, title, children, footer, testid }) {
+export function Modal({ open, onClose, title, children, footer, testid, wide }) {
   if (!open) return null;
+  // Feb-2026 · optional ``wide`` variant — lifts the modal max-width
+  // from ``max-w-lg`` (28rem) to ``max-w-3xl`` (48rem) so long forms
+  // like the "+ New Scheduled Job" surface don't cramp on desktop.
+  const maxW = wide ? "max-w-3xl" : "max-w-lg";
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center px-4"
@@ -185,7 +189,7 @@ export function Modal({ open, onClose, title, children, footer, testid }) {
       data-testid={testid || "modal"}
     >
       <div
-        className="w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl"
+        className={`w-full ${maxW} rounded-2xl overflow-hidden shadow-2xl`}
         style={{ backgroundColor: colors.surface }}
         onClick={(e) => e.stopPropagation()}
       >

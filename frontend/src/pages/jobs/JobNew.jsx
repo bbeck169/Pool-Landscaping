@@ -18,10 +18,36 @@ const CADENCES = [
   { k: "monthly", label: "Monthly" },
 ];
 
-export default function JobNew() {
+export default function JobNew({
+  initialValues = null,
+  renderMode = "page",
+  onCreated = null,
+  onCancel = null,
+} = {}) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const preselectedCustomer = params.get("customer_id") || "";
+  // Feb-2026 · JobNew is now dual-mode:
+  //   • ``renderMode="page"`` (default) — the standalone
+  //     /jobs/new route. Reads pre-fills from the URL query
+  //     (customer_id / property_id / technician_id /
+  //     scheduled_date) so links from /schedule and the new
+  //     /jobs/{id} "+ New Scheduled Job" button both work.
+  //   • ``renderMode="modal"`` — mounted inside a Dialog by
+  //     JobDetail.jsx (and mobile equivalent). Consumes
+  //     ``initialValues`` from props, calls ``onCreated`` on
+  //     success instead of navigating.
+  // Props always beat URL params so a JobDetail modal can
+  // enforce customer/property/technician regardless of the
+  // active browser URL.
+  const iv = initialValues || {};
+  const preselectedCustomer =
+    iv.customer_id ?? params.get("customer_id") ?? "";
+  const preselectedProperty =
+    iv.property_id ?? params.get("property_id") ?? "";
+  const preselectedTech =
+    iv.technician_id ?? params.get("technician_id") ?? "";
+  const preselectedDate =
+    iv.scheduled_date ?? params.get("scheduled_date") ?? "";
 
   const [customers, setCustomers] = useState([]);
   const [techs, setTechs] = useState([]);
@@ -39,13 +65,13 @@ export default function JobNew() {
     customer_id: preselectedCustomer,
     title: "",
     service_type: "Pool Cleaning",
-    technician_id: "",
-    scheduled_date: "",
+    technician_id: preselectedTech,
+    scheduled_date: preselectedDate,
     arrival_window: "",
     notes: "",
     cadence: "one_time",
     price: 0,
-    property_id: "",
+    property_id: preselectedProperty,
   });
 
   useEffect(() => {
@@ -140,7 +166,15 @@ export default function JobNew() {
         }
       }
       setToast({ tone: "success", message: "Job created" });
-      setTimeout(() => navigate(`/jobs/${first.id}`), 400);
+      // Feb-2026 · JobNew modal mode — the parent (JobDetail's
+      // "+ New Scheduled Job" flow) supplies ``onCreated`` and
+      // owns navigation. Page mode keeps the historical behavior
+      // of jumping straight to the new job's detail.
+      if (renderMode === "modal" && typeof onCreated === "function") {
+        onCreated(first);
+      } else {
+        setTimeout(() => navigate(`/jobs/${first.id}`), 400);
+      }
     } catch (err) {
       setToast({ tone: "error", message: err.message });
     } finally {
@@ -150,14 +184,18 @@ export default function JobNew() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="job-new-page">
-      <button
-        onClick={() => navigate(-1)}
-        className="flex items-center gap-1 text-sm font-semibold mb-4"
-        style={{ color: colors.muted }}
-      >
-        <ArrowLeft size={14} /> Back
-      </button>
-      <PageHeader title="New Job" subtitle="Assign, schedule, or set up a recurring series." />
+      {renderMode !== "modal" ? (
+        <>
+          <button
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-1 text-sm font-semibold mb-4"
+            style={{ color: colors.muted }}
+          >
+            <ArrowLeft size={14} /> Back
+          </button>
+          <PageHeader title="New Job" subtitle="Assign, schedule, or set up a recurring series." />
+        </>
+      ) : null}
 
       <form onSubmit={submit} data-testid="job-form">
         <div
@@ -364,7 +402,17 @@ export default function JobNew() {
         </div>
 
         <div className="flex gap-2 justify-end pb-8">
-          <Button variant="ghost" onClick={(e) => { e.preventDefault(); navigate(-1); }}>
+          <Button
+            variant="ghost"
+            onClick={(e) => {
+              e.preventDefault();
+              if (renderMode === "modal" && typeof onCancel === "function") {
+                onCancel();
+              } else {
+                navigate(-1);
+              }
+            }}
+          >
             Cancel
           </Button>
           <Button type="submit" disabled={busy} testid="jf-submit">

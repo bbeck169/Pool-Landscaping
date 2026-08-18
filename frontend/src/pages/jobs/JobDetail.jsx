@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Trash2, MapPin, Clock, User, FileDown, Mail, RotateCw, Play, Check, AlertTriangle, Camera, X as XIcon } from "lucide-react";
+import { ArrowLeft, Trash2, MapPin, Clock, User, FileDown, Mail, RotateCw, Play, Check, AlertTriangle, Camera, X as XIcon, Plus } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import { colors, money } from "@/theme";
 import { Button, Skeleton, StatusPill, Chip, Modal, TextInput, Toast } from "@/components/ui-kit";
@@ -12,6 +12,7 @@ import LineItemsSection from "@/pages/jobs/LineItemsSection";
 import TimelineSection from "@/pages/jobs/TimelineSection";
 import JobBeforeAfterPhotos from "@/components/jobs/JobBeforeAfterPhotos";
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
+import JobNew from "@/pages/jobs/JobNew";
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -25,9 +26,21 @@ export default function JobDetail() {
   const [emailModal, setEmailModal] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [lightbox, setLightbox] = useState(null);
+  // Feb-2026 · "+ New Scheduled Job" quick-action. Reuses <JobNew>
+  // in ``renderMode="modal"`` so there is exactly one form
+  // component in the codebase (no fork). Pre-fill defaults are
+  // derived from the current job so scheduling another visit for
+  // the same customer/property/technician is a one-tap flow.
+  const [createOpen, setCreateOpen] = useState(false);
 
   const isTech = user?.role === "technician";
-  const isAdmin = user?.role === "admin";
+  // Feb-2026 · admin-gate parity with mobile — ``super_admin`` has
+  // every ``admin`` capability, so the JobDetail admin action row
+  // (Work Order, Email, Delete, "+ New Scheduled Job") must render
+  // for it too. Prior version silently hid the whole row from
+  // super_admin sessions, which is why the "+ New Scheduled Job"
+  // wasn't visible in the screenshot verification pass.
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const isCustomer = user?.role === "customer";
   const techLocked = isTech && !attendance.clockedIn;
 
@@ -212,6 +225,13 @@ export default function JobDetail() {
           </div>
           {isAdmin ? (
             <div className="flex gap-2 flex-wrap">
+              <Button
+                variant="ghost"
+                onClick={() => setCreateOpen(true)}
+                testid="jd-new-scheduled-job"
+              >
+                <Plus size={14} /> New Scheduled Job
+              </Button>
               <Button variant="ghost" onClick={downloadWorkOrder} testid="jd-workorder">
                 <FileDown size={14} /> Work Order
               </Button>
@@ -563,6 +583,40 @@ export default function JobDetail() {
         <p className="text-sm" style={{ color: colors.onSurfaceSecondary }}>
           This removes the job permanently.
         </p>
+      </Modal>
+
+      {/* Feb-2026 · "+ New Scheduled Job" modal. Reuses <JobNew> in
+          modal mode with pre-filled defaults inherited from the
+          current job. On success we stay on the current job's
+          detail page and surface a toast — matches the reference
+          UX described in the product brief. */}
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Schedule another job"
+        wide
+      >
+        <div data-testid="jd-new-scheduled-job-modal">
+          <JobNew
+            renderMode="modal"
+            initialValues={{
+              customer_id: job.customer_id || "",
+              property_id: job.property_id || "",
+              technician_id: job.technician_id || "",
+              scheduled_date: new Date().toISOString().slice(0, 10),
+            }}
+            onCancel={() => setCreateOpen(false)}
+            onCreated={(created) => {
+              setCreateOpen(false);
+              const when = created?.scheduled_date || "today";
+              const who = job.customer_name || "customer";
+              setToast({
+                tone: "success",
+                message: `Job scheduled for ${who} on ${when}`,
+              });
+            }}
+          />
+        </div>
       </Modal>
 
       <Toast toast={toast} onClose={() => setToast(null)} />

@@ -12,6 +12,7 @@ import { colors, spacing, radius, font, fontSize, IMAGES } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
 import BrandLogo from "@/src/components/BrandLogo";
 import AIAvatar from "@/src/components/ai/AIAvatar";
+import { isPreviewOrDev } from "@/src/utils/env";
 
 export default function Login() {
   const { login } = useAuth();
@@ -26,25 +27,40 @@ export default function Login() {
   // the bundle at ``eas build`` time and leaks to production;
   // fetch ``app_env`` from ``/api/config/public`` instead. Default
   // null → hide the demo tiles (fail-closed).
-  const [appEnv, setAppEnv] = useState<string | null>(null);
+  //
+  // Feb 2026 · Hotfix #3 (mobile parity with web) — belt-and-
+  // suspenders. Even when the server reports demo tiles are
+  // allowed, refuse to render them unless the app is talking to a
+  // preview / dev backend host. Prevents a wrong-env prod backend
+  // (``SHOW_DEMO_LOGINS=true`` + ``APP_ENV=preview`` seeded in
+  // ``.env``) from overriding the gate. Prefers the new
+  // ``/config/features.demo_logins_enabled`` flag when present.
+  const [demoServerAllowed, setDemoServerAllowed] = useState<boolean | null>(null);
   useEffect(() => {
     let cancelled = false;
     (api as any)
-      .get("/config/public")
+      .get("/config/features")
       .then((r: any) => {
         if (cancelled) return;
-        const v = String(r?.app_env || "").toLowerCase();
-        setAppEnv(v || "production");
+        if (r && typeof r.demo_logins_enabled === "boolean") {
+          setDemoServerAllowed(r.demo_logins_enabled);
+          return;
+        }
+        // Legacy fallback for older backends.
+        return (api as any).get("/config/public").then((rr: any) => {
+          if (cancelled) return;
+          const v = String(rr?.app_env || "").toLowerCase();
+          setDemoServerAllowed(!!v && v !== "production");
+        });
       })
       .catch(() => {
         if (cancelled) return;
-        setAppEnv("production"); // fail-closed
+        setDemoServerAllowed(false); // fail-closed
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
-  const showDemoTiles = appEnv !== null && appEnv !== "production";
+  const hostAllowed = React.useMemo(() => isPreviewOrDev(), []);
+  const showDemoTiles = hostAllowed && demoServerAllowed === true;
   // Phase 30 · Feb 2026 — demo-accounts UI removed unconditionally. Manual
   // sign-in still works for the seed accounts; the ``SHOW_DEMO_LOGINS``
   // env flag + ``/config/public`` field are intentionally left alone so
