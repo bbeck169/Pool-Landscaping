@@ -270,22 +270,46 @@ async def sync_all_tenants(platform: str) -> Dict[str, Any]:
 
 # ─── Scheduler registration ──────────────────────────────────────────
 
+# Feb-2026 · P1 asyncio-in-thread fix.
+#
+# The prior revision fired ``_fire_async`` from a plain lambda job.
+# ``AsyncIOScheduler`` invokes non-coroutine callables on a worker
+# thread, and that thread has no event loop → ``asyncio.get_event_loop()``
+# raised ``RuntimeError: There is no current event loop in thread
+# 'asyncio_N'`` and the sync silently dropped. Three daily crons + a
+# weekly churn scan all hit this. Fix mirrors the earlier Phase-49
+# ``reminder_cron.py`` remediation: give APScheduler the coroutine
+# functions directly. ``AsyncIOScheduler`` schedules coroutine jobs
+# on its own event loop, so no thread/loop bridging is needed.
+
+async def _sync_google() -> None:
+    await sync_all_tenants("google")
+
+
+async def _sync_facebook() -> None:
+    await sync_all_tenants("facebook")
+
+
+async def _sync_yelp() -> None:
+    await sync_all_tenants("yelp")
+
+
 def register_daily_sync(scheduler) -> None:
     """Add three daily-at-03:00-UTC cron sweeps to the existing
     APScheduler instance. Called from ``server.py`` on startup."""
     try:
         scheduler.add_job(
-            lambda: _fire_async(sync_all_tenants, "google"),
+            _sync_google,
             "cron", hour=3, minute=0, id="reviews.sync.google",
             replace_existing=True,
         )
         scheduler.add_job(
-            lambda: _fire_async(sync_all_tenants, "facebook"),
+            _sync_facebook,
             "cron", hour=3, minute=10, id="reviews.sync.facebook",
             replace_existing=True,
         )
         scheduler.add_job(
-            lambda: _fire_async(sync_all_tenants, "yelp"),
+            _sync_yelp,
             "cron", hour=3, minute=20, id="reviews.sync.yelp",
             replace_existing=True,
         )
@@ -293,12 +317,3 @@ def register_daily_sync(scheduler) -> None:
                      "(google 03:00, facebook 03:10, yelp 03:20 UTC)")
     except Exception as e:
         logger.warning(f"[review_scraper] scheduler registration failed: {e}")
-
-
-def _fire_async(coro_fn, *args):
-    """AsyncIOScheduler expects an async callable, but we pass a lambda
-    so ``sync_all_tenants`` gets a fresh coroutine each fire (crucial for
-    APScheduler's replayability)."""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    loop.create_task(coro_fn(*args))

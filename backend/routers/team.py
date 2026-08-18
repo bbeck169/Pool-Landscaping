@@ -378,7 +378,7 @@ async def list_team(user: dict = Depends(require_admin),
     it with the kebab suppressed (per the permission matrix — no
     self-serve reset/delete) plus a small "(you)" label.
     """
-    q: dict = {"role": {"$in": ["admin", "technician",
+    q: dict = {"role": {"$in": ["admin", "technician", "tech",
                                     "super_admin", "manager"]},
                 "tenant_id": tenant["id"]}
     is_super = (user.get("role") or "").lower() == "super_admin"

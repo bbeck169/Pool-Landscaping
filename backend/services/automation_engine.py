@@ -312,30 +312,27 @@ def register_daily_sweeps(scheduler) -> None:
     if scheduler is None:
         return
     from apscheduler.triggers.cron import CronTrigger
-    import asyncio
 
-    def _wrap(coro_fn):
-        def _runner():
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.ensure_future(coro_fn())
-                else:
-                    loop.run_until_complete(coro_fn())
-            except Exception as e:
-                logger.warning(f"[automation_engine] sweep runner failed: {e}")
-        return _runner
+    # Feb-2026 · P1 asyncio-in-thread fix.
+    #
+    # The prior ``_wrap`` returned a sync ``_runner`` that called
+    # ``asyncio.get_event_loop()``. APScheduler's ``AsyncIOScheduler``
+    # invokes sync callables on a worker thread with no event loop →
+    # ``RuntimeError: There is no current event loop in thread``. Hand
+    # the coroutine functions to the scheduler directly instead; it
+    # awaits them on its own loop. Mirrors the Phase-49 pattern in
+    # ``reminder_cron.py`` and the review_scraper remediation.
 
     try:
-        scheduler.add_job(_wrap(sweep_invoice_overdue),
+        scheduler.add_job(sweep_invoice_overdue,
                            CronTrigger(hour=9, minute=0),
                            id="automation.invoice_overdue",
                            replace_existing=True)
-        scheduler.add_job(_wrap(sweep_customer_birthday),
+        scheduler.add_job(sweep_customer_birthday,
                            CronTrigger(hour=8, minute=0),
                            id="automation.customer_birthday",
                            replace_existing=True)
-        scheduler.add_job(_wrap(sweep_customer_anniversary),
+        scheduler.add_job(sweep_customer_anniversary,
                            CronTrigger(hour=8, minute=5),
                            id="automation.customer_anniversary",
                            replace_existing=True)

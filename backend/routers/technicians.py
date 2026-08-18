@@ -50,7 +50,12 @@ async def list_technicians(user: dict = Depends(get_current_user),
     #     technicians row. Use the same role set the Team page uses
     #     so Schedule / Crews assignee dropdowns match the Team
     #     roster count.
-    ASSIGNABLE_ROLES = ["technician", "landscaper", "admin",
+    # Feb-2026 · P1 — also honour ``role='tech'`` (singular): 5
+    # preview users were written with this legacy variant and were
+    # invisible in every picker. See also the one-shot normaliser
+    # ``scripts/normalize_role_tech_to_technician.py`` which rewrites
+    # the field so future queries don't need the alias.
+    ASSIGNABLE_ROLES = ["technician", "tech", "landscaper", "admin",
                           "super_admin", "manager"]
     synth_docs: list = []
     async for u in db.users.find(

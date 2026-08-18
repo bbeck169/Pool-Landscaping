@@ -203,17 +203,22 @@ def _record_denied(tenant_id: Optional[str], *,
                     x_forwarded_origin_hdr: Optional[str]) -> None:
     """Sync wrapper for legacy call sites (middleware).  Schedules the
     insert on the running loop when available, falls back to a no-op
-    when called outside a loop context."""
+    when called outside a loop context.
+
+    Feb-2026 · Uses ``asyncio.get_running_loop()`` instead of the
+    deprecated ``get_event_loop()`` — the former raises ``RuntimeError``
+    cleanly when no loop is running (swallowed by the outer ``except``)
+    and never emits Python 3.12 deprecation warnings.
+    """
     try:
         import asyncio
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(_record_denied_async(
-                tenant_id, reason=reason, path=path,
-                origin_hdr=origin_hdr, referer_hdr=referer_hdr,
-                x_forwarded_origin_hdr=x_forwarded_origin_hdr,
-            ))
-    except Exception:  # pragma: no cover
+        loop = asyncio.get_running_loop()
+        loop.create_task(_record_denied_async(
+            tenant_id, reason=reason, path=path,
+            origin_hdr=origin_hdr, referer_hdr=referer_hdr,
+            x_forwarded_origin_hdr=x_forwarded_origin_hdr,
+        ))
+    except Exception:  # pragma: no cover — best-effort middleware
         pass
 
 
