@@ -27,7 +27,8 @@ import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
          CheckCircle2, Move as MoveIcon, ArrowUp, ArrowDown, FileText,
-         Save as SaveIcon, Star, Check, Trash2, Loader2, UsersRound } from "lucide-react";
+         Save as SaveIcon, Star, Check, Trash2, Loader2, UsersRound,
+         Pencil } from "lucide-react";
 
 import { api } from "@/api";
 import { colors, font } from "@/theme";
@@ -45,6 +46,7 @@ import WeekStrip from "@/components/schedule/WeekStrip";
 // swap has to live here too. Sized ``xs`` (20px) so per-job card
 // height is preserved.
 import TechAvatar from "@/components/common/TechAvatar";
+import ScheduleJobEditModal from "@/pages/schedule/ScheduleJobEditModal";
 
 
 // Feb-2026 · Schedule-UI · left-border indicator for status.
@@ -224,6 +226,19 @@ export default function CalendarSchedule() {
   // navigating away to /jobs/:id. Preserves the /schedule URL so the
   // grid/calendar toggle, filters, and range presets survive the close.
   const [checklistJobId, setChecklistJobId] = useState(null);
+  // Feb-2026 · Schedule-screen inline edit — admin+ opens the shared
+  // ScheduleJobEditModal without leaving /schedule. On save we mutate
+  // ``rawJobs`` in place so the affected card re-renders with the
+  // new values (no full reload). Delete removes the card in place.
+  const [editingJob, setEditingJob] = useState(null);
+  const patchJobInPlace = React.useCallback((patched) => {
+    setRawJobs((prev) => (prev || []).map((r) =>
+      r.id === patched.id ? { ...r, ...patched } : r,
+    ));
+  }, []);
+  const removeJobInPlace = React.useCallback((jid) => {
+    setRawJobs((prev) => (prev || []).filter((r) => r.id !== jid));
+  }, []);
   // Phase 56.3.C RBAC — technicians must not create jobs, regardless of
   // their department (pool / landscape / both). Admins + super_admins are
   // unaffected. Backend already enforces this via `require_admin` on
@@ -949,6 +964,8 @@ export default function CalendarSchedule() {
             setAssignConfirmOpen(true);
           }}
           techs={techs}
+          onOpenEdit={isAdminRole ? ((jobRow) => setEditingJob(jobRow)) : undefined}
+          isAdminForCard={isAdminRole}
         />
       )}
 
@@ -1069,6 +1086,25 @@ export default function CalendarSchedule() {
         onClose={() => setChecklistJobId(null)}
         onSubmitted={() => { load(); }}
       />
+      {/* Feb-2026 · Schedule-screen inline edit modal. Mutates
+          ``rawJobs`` in place on save so the affected card re-
+          renders without a full reload. Delete removes it. */}
+      <ScheduleJobEditModal
+        open={!!editingJob}
+        job={editingJob}
+        onClose={() => setEditingJob(null)}
+        onSaved={(updated) => {
+          patchJobInPlace(updated);
+          setEditingJob(null);
+          setToast({ kind: "info",
+                     text: `Job saved for ${updated.customer_name || "customer"}` });
+        }}
+        onDeleted={(jid) => {
+          removeJobInPlace(jid);
+          setEditingJob(null);
+          setToast({ kind: "info", text: "Job deleted" });
+        }}
+      />
     </SafeScrollContainer>
   );
 }
@@ -1084,6 +1120,8 @@ function GridPanel({
   onOpenBulkDelete, onClearSelection,
   // Phase 28 · Feb-2026 · Schedule multi-select bulk reassign —
   canMultiSelectAssign, onOpenBulkAssign, techs,
+  // Feb-2026 · Schedule-screen inline edit — admin+ Pencil affordance.
+  onOpenEdit, isAdminForCard,
 }) {
   const focusISO = format(date, "yyyy-MM-dd");
   const isToday = focusISO === format(new Date(), "yyyy-MM-dd");
@@ -1479,6 +1517,22 @@ function GridPanel({
                 >
                   <ChevronRight size={18} />
                 </button>
+                {/* Feb-2026 · Schedule-screen inline edit affordance.
+                    Gated by ``isAdminRole`` (super_admin | admin |
+                    manager) — techs and customers never see it.
+                    Backend PUT /api/jobs/{id} also role-gates so a
+                    forged request still 403s. */}
+                {onOpenEdit && isAdminForCard ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onOpenEdit(j); }}
+                    style={{ background: "transparent", border: 0, cursor: "pointer", color: colors.muted }}
+                    data-testid={`grid-edit-${j.id}`}
+                    aria-label="Edit job"
+                    title="Edit job"
+                  >
+                    <Pencil size={16} />
+                  </button>
+                ) : null}
               </div>
             );
           })}

@@ -958,8 +958,21 @@ async def update_job(jid: str, body: JobUpdate,
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
     if not job:
         raise HTTPException(404, "Job not found")
-    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
-        raise HTTPException(403, "Not your job")
+    # Feb-2026 · Schedule-screen inline edit — the Edit affordance
+    # on the Schedule cards uses this endpoint. Prior version only
+    # gated technicians (own-job check); customer / any-other role
+    # sessions could freely PATCH any job. Tighten to
+    # admin-equivalent (admin / super_admin / owner / manager) OR
+    # technicians restricted to their own assignments.
+    role = (user.get("role") or "").lower()
+    ADMIN_ROLES = {"admin", "super_admin", "owner", "manager"}
+    if role in ADMIN_ROLES:
+        pass  # full write access
+    elif role == "technician":
+        if job.get("technician_id") != user.get("technician_id"):
+            raise HTTPException(403, "Not your job")
+    else:
+        raise HTTPException(403, "Not permitted to edit jobs")
     update = {k: v for k, v in body.dict().items() if v is not None}
     if "technician_id" in update:
         tech = await db.technicians.find_one(

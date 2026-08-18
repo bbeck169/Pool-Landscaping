@@ -41,6 +41,7 @@ import WeekStrip from "@/src/components/schedule/WeekStrip";
 import { showConfirm } from "@/src/components/ConfirmModal";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
+import ScheduleJobEditSheet from "@/src/components/schedule/ScheduleJobEditSheet";
 // Phase 27 · Feb-2026 — Global avatar swap for the per-job card in
 // the schedule grid. Compact 20dp footprint keeps row height
 // invariant vs the pre-Phase-27 layout.
@@ -117,7 +118,7 @@ export default function ScheduleCalendar() {
   const router = useRouter();
   const { user } = useAuth();
   const role = (user?.role as string) || "";
-  const isAdmin = role === "admin" || role === "super_admin";
+  const isAdmin = role === "admin" || role === "super_admin" || role === "manager";
   const isTech = role === "technician";
   const canWriteJobs = isAdmin || isTech;
 
@@ -127,6 +128,15 @@ export default function ScheduleCalendar() {
   const [modeLoaded, setModeLoaded] = useState(false);
   const [focus, setFocus] = useState(new Date());                // Grid: single day; Calendar: anchors the week
   const [jobs, setJobs] = useState<Job[]>([]);
+  // Feb-2026 · Schedule inline-edit sheet state. In-place mutate on
+  // save / delete so cards refresh without a full ``load()`` cycle.
+  const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const patchJobInPlace = useCallback((patched: Partial<Job> & { id: string }) => {
+    setJobs((prev) => prev.map((r) => (r.id === patched.id ? { ...r, ...patched } : r)));
+  }, []);
+  const removeJobInPlace = useCallback((jid: string) => {
+    setJobs((prev) => prev.filter((r) => r.id !== jid));
+  }, []);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [checked, setChecked] = useState<Set<string>>(new Set());
@@ -448,6 +458,7 @@ export default function ScheduleCalendar() {
           isAdmin={isAdmin}
           hourlyData={hourlyData}
           weatherWidget={(isTech || isAdmin) ? <WeatherWidget onHourlyLoaded={setHourlyData} /> : null}
+          onOpenEdit={isAdmin ? ((jobRow: Job) => setEditingJob(jobRow)) : undefined}
         />
       ) : (
         <CalendarView
@@ -464,6 +475,23 @@ export default function ScheduleCalendar() {
       )}
 
       </ScrollView>
+
+      {/* Feb-2026 · Schedule inline-edit sheet. In-place mutate on
+          save; drops the card on delete. Admin-gated at the button
+          level; backend PUT + DELETE also role-gate. */}
+      <ScheduleJobEditSheet
+        open={!!editingJob}
+        job={editingJob}
+        onClose={() => setEditingJob(null)}
+        onSaved={(patched) => {
+          patchJobInPlace(patched);
+          setEditingJob(null);
+        }}
+        onDeleted={(jid) => {
+          removeJobInPlace(jid);
+          setEditingJob(null);
+        }}
+      />
 
       {/* Reassign Tech Modal */}
       <Modal visible={reassignOpen} transparent animationType="fade" onRequestClose={() => setReassignOpen(false)}>
@@ -540,7 +568,7 @@ function GridView(props: any) {
     rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
     onBulkComplete, onBulkDelete, onOpenMove, onOpenReassign, moveOpen, setMoveOpen, moveDate, setMoveDate,
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData,
-    weatherWidget,
+    weatherWidget, onOpenEdit,
   } = props;
   const focusISO = iso(focus);
   const isToday = focusISO === iso(new Date());
@@ -682,6 +710,8 @@ function GridView(props: any) {
           first={idx === 0}
           last={idx === jobs.length - 1}
           hourlyData={hourlyData}
+          isAdminForCard={isAdmin}
+          onEdit={isAdmin ? onOpenEdit : undefined}
         />
       ))}
       {weatherWidget ? (
@@ -693,7 +723,7 @@ function GridView(props: any) {
   );
 }
 
-function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData }: any) {
+function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData, isAdminForCard, onEdit }: any) {
   const pill = STATUS_PILL[(job.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
   const svc = SERVICE_COLOR(job.service_type);
   // Feb-2026 · Schedule-UI · colored left border.
@@ -839,6 +869,19 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
       <View testID={`grid-open-${job.id}`}>
         <Ionicons name="chevron-forward" size={20} color={colors.muted} />
       </View>
+      {/* Feb-2026 · Schedule inline edit affordance — admin+ only.
+          Backend PUT /api/jobs/{id} enforces the same role gate. */}
+      {isAdminForCard && onEdit ? (
+        <Pressable
+          onPress={() => onEdit(job)}
+          hitSlop={8}
+          testID={`grid-edit-${job.id}`}
+          accessibilityLabel="Edit job"
+          style={gStyles.editBtn}
+        >
+          <Ionicons name="pencil-outline" size={16} color={colors.muted} />
+        </Pressable>
+      ) : null}
     </Pressable>
   );
 }
@@ -1067,6 +1110,8 @@ const gStyles = StyleSheet.create({
     backgroundColor: colors.brand,
   },
   newBtnText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" },
+  // Feb-2026 · Schedule inline-edit — Pencil affordance on admin cards.
+  editBtn: { padding: spacing.xs, marginLeft: spacing.xs, alignSelf: "center" },
 });
 
 const cStyles = StyleSheet.create({
