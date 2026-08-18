@@ -44,6 +44,11 @@ describe("JobDetail · '+ New Scheduled Job' quick-action", () => {
     expect(detailSrc).toMatch(
       /scheduled_date:\s*new Date\(\)\.toISOString\(\)\.slice\(0,\s*10\)/,
     );
+    // Feb-2026 bug fix — service_type MUST arrive BLANK so the
+    // admin re-picks it deliberately. Guard against a regression
+    // that forwards ``job.service_type`` through initialValues.
+    expect(detailSrc).toMatch(/service_type:\s*["']{2}\s*,/);
+    expect(detailSrc).not.toMatch(/service_type:\s*job\.service_type/);
   });
 
   it("stays on JobDetail after create — success toast, no navigate", () => {
@@ -84,6 +89,14 @@ describe("JobNew · reusable modal-mode contract", () => {
     expect(jobNewSrc).toMatch(
       /iv\.scheduled_date\s*\?\?\s*params\.get\(["']scheduled_date["']\)/,
     );
+    // Feb-2026 · service_type must also honour ``initialValues``
+    // (with ``??`` so an explicit ``""`` survives). The form seeds
+    // its state from ``preselectedService`` — so passing
+    // ``service_type: ""`` from JobDetail lands as blank.
+    expect(jobNewSrc).toMatch(
+      /iv\.service_type\s*\?\?\s*params\.get\(["']service_type["']\)/,
+    );
+    expect(jobNewSrc).toMatch(/service_type:\s*preselectedService,/);
   });
 
   it("calls onCreated instead of navigating when renderMode=modal", () => {

@@ -48,6 +48,15 @@ export default function JobNew({
     iv.technician_id ?? params.get("technician_id") ?? "";
   const preselectedDate =
     iv.scheduled_date ?? params.get("scheduled_date") ?? "";
+  // Feb-2026 · "+ New Scheduled Job" bug fix — service_type must
+  // start BLANK when the modal is opened from JobDetail. Uses
+  // ``??`` so an empty string coming through ``initialValues`` /
+  // URL param is respected (as opposed to ``||`` which would fall
+  // back to the "Pool Cleaning" default on empty). Direct
+  // navigations to ``/jobs/new`` still land on the historical
+  // "Pool Cleaning" default because neither source is present.
+  const preselectedService =
+    iv.service_type ?? params.get("service_type") ?? "Pool Cleaning";
 
   const [customers, setCustomers] = useState([]);
   const [techs, setTechs] = useState([]);
@@ -64,7 +73,7 @@ export default function JobNew({
   const [form, setForm] = useState({
     customer_id: preselectedCustomer,
     title: "",
-    service_type: "Pool Cleaning",
+    service_type: preselectedService,
     technician_id: preselectedTech,
     scheduled_date: preselectedDate,
     arrival_window: "",
@@ -280,6 +289,18 @@ export default function JobNew({
                 }}
                 data-testid="jf-service"
               >
+                {/* Feb-2026 · placeholder option so the "+ New
+                    Scheduled Job" modal renders visibly blank when
+                    ``service_type=""`` is passed as an initial
+                    value. Historical /jobs/new callers still land
+                    on "Pool Cleaning" (the ``preselectedService``
+                    default) so the placeholder is never selected
+                    for them. */}
+                {!form.service_type ? (
+                  <option value="" data-testid="jf-service-placeholder">
+                    Choose a service…
+                  </option>
+                ) : null}
                 {services.map((s) => (
                   <option key={s}>{s}</option>
                 ))}

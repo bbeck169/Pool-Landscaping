@@ -30,7 +30,14 @@ export default function JobForm() {
   const [customer, setCustomer] = useState<any>(null);
   const [tech, setTech] = useState<any>(null);
   const [title, setTitle] = useState("");
-  const [serviceType, setServiceType] = useState(prefill?.service_type || "Pool Cleaning");
+  // Feb-2026 · "+ New Scheduled Job" bug fix — respect an empty
+  // ``service_type`` param from the JobDetail push (``??`` instead
+  // of ``||`` so "" survives). Direct /job/new opens still land on
+  // the "Pool Cleaning" default because the param is undefined
+  // there.
+  const [serviceType, setServiceType] = useState(
+    prefill?.service_type ?? "Pool Cleaning",
+  );
   const [date, setDate] = useState(
     prefill?.scheduled_date || new Date().toISOString().slice(0, 10),
   );
@@ -93,7 +100,7 @@ export default function JobForm() {
 
         <Selector label="Customer *" value={customer?.name} placeholder="Select customer" onPress={() => setSheet("customer")} testID="select-customer" />
         <Selector label="Technician" value={tech?.name} placeholder="Unassigned" onPress={() => setSheet("tech")} testID="select-technician" />
-        <Selector label="Service Type" value={serviceType} onPress={() => setSheet("service")} testID="select-service" />
+        <Selector label="Service Type" value={serviceType} placeholder="Select service type" onPress={() => setSheet("service")} testID="select-service" />
 
         <Field label="Scheduled Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" testID="job-date-input" />
         <Field label="Price ($)" value={price} onChangeText={setPrice} placeholder="0.00" keyboardType="decimal-pad" testID="job-price-input" />

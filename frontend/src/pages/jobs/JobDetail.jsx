@@ -603,6 +603,12 @@ export default function JobDetail() {
               customer_id: job.customer_id || "",
               property_id: job.property_id || "",
               technician_id: job.technician_id || "",
+              // Feb-2026 bug fix — service_type MUST start blank so
+              // the admin re-picks it deliberately for the next
+              // visit; carrying the parent job's service through
+              // was a bug that shipped with the initial "+ New
+              // Scheduled Job" cut.
+              service_type: "",
               scheduled_date: new Date().toISOString().slice(0, 10),
             }}
             onCancel={() => setCreateOpen(false)}

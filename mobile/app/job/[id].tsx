@@ -515,7 +515,12 @@ export default function JobDetail() {
                 params: {
                   customer_id: job.customer_id || "",
                   technician_id: job.technician_id || "",
-                  service_type: job.service_type || "",
+                  // Feb-2026 bug fix — service_type MUST start blank
+                  // in the new-job form so the admin re-picks it for
+                  // the next visit. Prior version forwarded
+                  // ``job.service_type`` which caused the modal to
+                  // arrive pre-populated with "Pool Cleaning" etc.
+                  service_type: "",
                   scheduled_date: new Date().toISOString().slice(0, 10),
                 },
               })
