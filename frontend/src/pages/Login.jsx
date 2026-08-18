@@ -4,6 +4,7 @@ import { useAuth } from "@/auth";
 import { brandGradientCss, colors, font } from "@/theme";
 import { PreviewDemoLogins } from "@/components/auth/PreviewDemoLogins";
 import { api } from "@/api";
+import { isPreviewOrDev } from "@/utils/env";
 
 // Role -> home landing (mirrors the Expo app's tab targeting).
 function landingFor(role) {
@@ -36,26 +37,52 @@ export default function Login({ variant = "staff" } = {}) {
   // at ``/portal/login`` NEVER renders the demo-tiles block, and
   // to keep DOM parity we also skip the ``/config/public`` fetch
   // entirely on that surface. Staff-facing ``/login`` is unchanged.
-  const [appEnv, setAppEnv] = useState(null);
+  //
+  // Feb 2026 · P0 Hotfix #3 (belt-and-suspenders) — production
+  // custom domain ``app.plofv.com`` was leaking the demo tiles
+  // because its backend had ``APP_ENV=preview`` +
+  // ``SHOW_DEMO_LOGINS=true`` seeded in ``.env``. Adding a
+  // hostname-based outer gate via ``isPreviewOrDev()`` — no
+  // amount of wrong-env server response can override it. Also
+  // prefer the new ``/config/features.demo_logins_enabled`` flag
+  // when the endpoint exists; fall back to the legacy
+  // ``/config/public.app_env`` gate for backward-compat.
+  const [demoServerAllowed, setDemoServerAllowed] = useState(null);
   useEffect(() => {
     if (isCustomerVariant) return; // customer surface never renders tiles
     let cancelled = false;
-    api.get("/config/public")
+    // Try the new dedicated feature flag first — cleaner contract
+    // and easier to reason about than shipping an env label to the
+    // wire. Fall back to the legacy app_env gate if the endpoint
+    // is missing (older backend still in the wild).
+    api.get("/config/features")
       .then((r) => {
         if (cancelled) return;
-        const v = String(r?.app_env || "").toLowerCase();
-        setAppEnv(v || "production");
+        if (r && typeof r.demo_logins_enabled === "boolean") {
+          setDemoServerAllowed(r.demo_logins_enabled);
+          return;
+        }
+        // Legacy fallback — old backend, use ``app_env``.
+        return api.get("/config/public").then((rr) => {
+          if (cancelled) return;
+          const v = String(rr?.app_env || "").toLowerCase();
+          setDemoServerAllowed(v && v !== "production");
+        });
       })
       .catch(() => {
         if (cancelled) return;
-        setAppEnv("production"); // fail-closed
+        setDemoServerAllowed(false); // fail-closed
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [isCustomerVariant]);
+  // Strict hostname gate — computed once per mount. No re-render
+  // condition needed because the hostname doesn't change without a
+  // full navigation.
+  const hostAllowed = React.useMemo(() => isPreviewOrDev(), []);
   const showDemoTiles =
-    !isCustomerVariant && appEnv !== null && appEnv !== "production";
+    !isCustomerVariant
+    && hostAllowed
+    && demoServerAllowed === true;
   // Phase 30 · Feb 2026 — the DEMO ACCOUNTS block has been removed from
   // the login UI unconditionally. Manual login with the seed emails
   // (admin@aquaterra.com / mike@aquaterra.com / customer@aquaterra.com)

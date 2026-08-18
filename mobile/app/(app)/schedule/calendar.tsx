@@ -69,6 +69,8 @@ type Job = {
   recurring?: boolean;
   recurrence?: string | null;
   title?: string;
+  notes?: string | null;
+  notes_truncated?: boolean;
 };
 
 type Mode = "grid" | "calendar";
@@ -807,6 +809,19 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
                 testID={`job-notes-preview-${job.id}`}>
             Notes: {String(job.customer_notes || job.account_notes).slice(0, 60)}
             {String(job.customer_notes || job.account_notes).length > 60 ? "…" : ""}
+          </Text>
+        ) : null}
+        {/* Feb-2026 · Schedule surface — job-level ``notes``
+            (distinct from account-level ``customer_notes``). Muted
+            2-line clamp via ``numberOfLines={2}``. Empty notes → the
+            row is not rendered at all. */}
+        {job.notes && String(job.notes).trim() ? (
+          <Text
+            style={gStyles.notePreview}
+            numberOfLines={2}
+            testID={`job-${job.id}-notes`}
+          >
+            {String(job.notes)}{job.notes_truncated ? "…" : ""}
           </Text>
         ) : null}
         {job.address ? (

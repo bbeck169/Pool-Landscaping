@@ -1442,6 +1442,23 @@ function GridPanel({
                       {String(j.customer_notes || j.account_notes).length > 60 ? "…" : ""}
                     </div>
                   ) : null}
+                  {/* Feb-2026 · Schedule surface — job-level ``notes``
+                      (distinct from account-level ``customer_notes``).
+                      Muted secondary line, 2-line clamp via
+                      ``line-clamp-2``. ``title`` attribute gives an
+                      expand-on-hover tooltip with the full (already
+                      500-cap'd, ``notes_truncated`` hint) text.
+                      Empty notes → the row is not rendered at all. */}
+                  {(j.notes && String(j.notes).trim()) ? (
+                    <div
+                      className="text-[11px] mt-1 line-clamp-2"
+                      style={{ color: colors.onSurfaceSecondary }}
+                      data-testid={`job-${j.id}-notes`}
+                      title={String(j.notes) + (j.notes_truncated ? "…" : "")}
+                    >
+                      {String(j.notes)}{j.notes_truncated ? "…" : ""}
+                    </div>
+                  ) : null}
                   <div className="flex items-center gap-2 mt-1 text-xs" style={{ color: colors.muted }}>
                     <FileText size={11} />
                     <span>{jobHours(j)}</span>

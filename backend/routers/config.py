@@ -32,6 +32,25 @@ async def frontend_env():
     }
 
 
+@router.get("/config/features")
+async def config_features():
+    """Public runtime feature flags.
+
+    Feb 2026 · Demo-login P0 hotfix #3 — dedicated endpoint that
+    returns ONLY the flags a client needs to decide whether to
+    render the demo-logins block. Kept separate from
+    ``/config/public`` so we can iterate on the contract without
+    breaking legacy consumers of ``app_env``.
+
+    ``demo_logins_enabled`` mirrors the ``SHOW_DEMO_LOGINS`` env
+    var (default ``false`` → hidden). Any non-truthy value → False,
+    matching the fail-closed posture on the client side.
+    """
+    raw = (os.getenv("SHOW_DEMO_LOGINS") or "").strip().lower()
+    return {"demo_logins_enabled": raw in ("1", "true", "yes", "on")}
+
+
+
 @router.get("/config/public")
 async def config_public():
     """Public runtime flags for the web + mobile clients.

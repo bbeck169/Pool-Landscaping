@@ -51,6 +51,11 @@ class JobListItem(BaseModel):
     checklist_kind: Optional[str] = None
     account_notes: Optional[str] = None
     gate_code: Optional[str] = None
+    # Feb-2026 · Schedule notes surface — ``notes`` is job-level free
+    # text, capped at 500 chars server-side. ``notes_truncated`` is
+    # True when the original was longer, so the client can render a
+    # "…" hint / expand affordance without needing a HEAD roundtrip.
+    notes_truncated: Optional[bool] = None
     # Feb-2026 MP2 UI enrichments — always present (null when absent).
     property_id: Optional[str] = None
     property_label: Optional[str] = None
@@ -427,6 +432,22 @@ async def list_jobs(
     except Exception:
         # Non-fatal — the chip just doesn't render.
         pass
+    # Feb-2026 · Schedule notes surface — cap the free-text ``notes``
+    # column at 500 chars on the wire and expose ``notes_truncated``
+    # so the schedule card can render a 2-line clamp + expand hint
+    # without a HEAD roundtrip. Non-strings + empty values are left
+    # untouched; ``notes_truncated`` only appears when ``notes`` is a
+    # non-empty string, matching the "empty → hide the row" contract
+    # the web + mobile schedules enforce.
+    _NOTES_CAP = 500
+    for d in docs:
+        n = d.get("notes")
+        if isinstance(n, str) and n:
+            if len(n) > _NOTES_CAP:
+                d["notes"] = n[:_NOTES_CAP]
+                d["notes_truncated"] = True
+            else:
+                d["notes_truncated"] = False
     # Phase 16C add-on: strip revenue/pricing fields for technicians.
     if user.get("role") == "technician":
         for d in docs:
