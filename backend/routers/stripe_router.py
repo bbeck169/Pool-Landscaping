@@ -130,7 +130,12 @@ async def get_stripe_config(user: dict = Depends(get_current_user)):
         raise HTTPException(403, "forbidden")
     return {
         "publishable_key": stripe_svc._publishable_key(),
+        # Feb-2026 · FIX 4 — return BOTH ``mode`` (legacy) and
+        # ``stripe_mode`` (new canonical) for one release cycle so
+        # existing callers keep working. Deprecation of ``mode``
+        # tracked in /app/memory/known_issues.md.
         "mode": stripe_svc._mode(),
+        "stripe_mode": stripe_svc._mode(),
     }
 
 
@@ -254,6 +259,15 @@ async def post_charge(
             metadata=body.metadata,
             actor_user_id=user.get("id"),
         )
+    except stripe_svc.ChargeAlreadySucceededError as exc:
+        # Feb-2026 · FIX 1 — return 409 + existing PI so callers
+        # can render "already paid" instead of double-charging.
+        raise HTTPException(409, {
+            "detail": "invoice already charged",
+            "payment_intent_id": exc.payment_intent_id,
+        })
+    except stripe_svc.InvoiceAlreadyPaidError as exc:
+        raise HTTPException(409, {"detail": str(exc)})
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     except Exception as exc:  # noqa: BLE001

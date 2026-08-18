@@ -183,6 +183,38 @@ async def _to_thread(fn, /, *args, **kwargs):
     return await asyncio.to_thread(fn, *args, **kwargs)
 
 
+async def _create_intent(
+    *,
+    amount_cents: int,
+    currency: str,
+    customer: Optional[str],
+    payment_method: str,
+    off_session: bool,
+    confirm: bool,
+    description: Optional[str],
+    metadata: Dict[str, Any],
+    idempotency_key: str,
+) -> Any:
+    """Thin wrapper around ``stripe.PaymentIntent.create`` — kept as a
+    module-level coroutine so pytest can monkeypatch it and drive
+    ``charge_card_on_file`` without hitting Stripe. Returns whatever
+    the SDK returns (StripeObject or, in tests, a plain dict); the
+    caller normalises via :func:`_asdict`.
+    """
+    return await _to_thread(
+        _stripe.PaymentIntent.create,
+        amount=amount_cents,
+        currency=currency,
+        customer=customer,
+        payment_method=payment_method,
+        off_session=off_session,
+        confirm=confirm,
+        description=description or None,
+        metadata=metadata,
+        idempotency_key=idempotency_key,
+    )
+
+
 # ── Public helpers ────────────────────────────────────────────────────
 async def create_setup_intent(
     *, tenant_id: str, customer_id: str, actor_user_id: Optional[str] = None
@@ -419,6 +451,24 @@ async def detach_payment_method(
     }
 
 
+# Feb-2026 · Stripe reconciliation exception hierarchy — the router
+# maps these to HTTP 409 with the existing PI in the response body.
+class InvoiceAlreadyPaidError(ValueError):
+    """Raised when the target invoice is already flagged paid."""
+
+
+class ChargeAlreadySucceededError(ValueError):
+    """Raised when a prior succeeded PaymentIntent exists for the
+    same (tenant, invoice, amount, payment_method) tuple. Carries
+    the existing ``payment_intent_id`` so the router can echo it in
+    the 409 body.
+    """
+    def __init__(self, msg: str, payment_intent_id: str | None = None):
+        super().__init__(msg)
+        self.payment_intent_id = payment_intent_id
+
+
+
 async def charge_card_on_file(
     *,
     tenant_id: str,
@@ -454,6 +504,44 @@ async def charge_card_on_file(
         raise ValueError("payment method not attached to this customer")
     provider_customer_id = row.get("provider_customer_id")
 
+    # Feb-2026 · Stripe reconciliation FIX 1 — pre-check guards to
+    # prevent double-charges. Deterministic idempotency key across
+    # retries. Multi-tenant scoped on every read.
+    #
+    # Order matters:
+    #   (a) Prior succeeded charge for the same
+    #       (tenant, invoice, amount, pm) → raise
+    #       ChargeAlreadySucceededError carrying the existing PI so
+    #       the caller/UI can echo it (more actionable than a bare
+    #       "invoice paid" 409). This must run BEFORE the invoice-
+    #       paid guard because the belt-and-suspenders sync flip in
+    #       the success path (below) marks the invoice paid; on a
+    #       retry both conditions match and we prefer the specific
+    #       one.
+    #   (b) Invoice already paid → InvoiceAlreadyPaidError. Covers
+    #       the case where the invoice was marked paid by some other
+    #       provider (Lumino bridge, manual, etc.) with no local
+    #       stripe_charges row.
+    if invoice_id:
+        prior = await db.stripe_charges.find_one({
+            "tenant_id": tenant_id,
+            "invoice_id": invoice_id,
+            "amount_cents": amount_cents,
+            "provider_payment_method_id": payment_method_id,
+            "status": {"$in": ["succeeded", "pending"]},
+        }, {"_id": 0, "id": 1, "stripe_payment_intent_id": 1, "status": 1})
+        if prior and prior.get("status") == "succeeded":
+            raise ChargeAlreadySucceededError(
+                f"invoice {invoice_id} already charged",
+                payment_intent_id=prior.get("stripe_payment_intent_id"),
+            )
+        inv = await db.quotes.find_one(
+            {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
+            {"_id": 0, "payment_status": 1},
+        )
+        if inv and (inv.get("payment_status") or "").lower() == "paid":
+            raise InvoiceAlreadyPaidError(f"invoice {invoice_id} already paid")
+
     md = {
         "crm_tenant_id": tenant_id,
         "crm_customer_id": customer_id,
@@ -463,19 +551,24 @@ async def charge_card_on_file(
     }
     charge_row_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    # Deterministic Stripe idempotency key across retries — same
+    # (tenant, invoice, amount, pm) always resolves to the same PI.
+    deterministic_key = (
+        f"charge:{tenant_id}:{invoice_id or 'noinv'}:"
+        f"{amount_cents}:{payment_method_id}"
+    )
 
     try:
-        intent = await _to_thread(
-            _stripe.PaymentIntent.create,
-            amount=amount_cents,
+        intent = await _create_intent(
+            amount_cents=amount_cents,
             currency=currency,
             customer=provider_customer_id,
             payment_method=payment_method_id,
             off_session=True,
             confirm=True,
-            description=description or None,
+            description=description,
             metadata=md,
-            idempotency_key=idempotency_key or f"charge:{charge_row_id}",
+            idempotency_key=idempotency_key or deterministic_key,
         )
         # Phase 42.3 · Feb 2026 — v15-safe response scrape.
         pi = _asdict(intent)
@@ -496,6 +589,16 @@ async def charge_card_on_file(
             actor_user_id=actor_user_id,
             created_at=now,
         )
+        # Feb-2026 · FIX 2 (belt-and-suspenders) — synchronously flip
+        # ``quotes.payment_status`` when the charge succeeded so the
+        # UI doesn't wait on the webhook (which can be delayed by
+        # tens of seconds). Idempotent: same values as the webhook
+        # write.
+        if status == "succeeded" and invoice_id:
+            await _mark_invoice_paid(
+                tenant_id=tenant_id, invoice_id=invoice_id,
+                amount_cents=amount_cents, paid_at=now,
+            )
         return {
             "ok": status == "succeeded",
             "charge_row_id": charge_row_id,
@@ -728,6 +831,72 @@ async def _mark_invoice_paid_from_session(
 
 
 # ── Webhook helpers ───────────────────────────────────────────────────
+# Feb-2026 · FIX 2 / FIX 3 · Invoice reconciliation helpers. All
+# tenant-scoped on every write, idempotent (safe to re-run on
+# webhook retries + belt-and-suspenders sync path).
+async def _mark_invoice_paid(*, tenant_id: str, invoice_id: str,
+                              amount_cents: int, paid_at: str,
+                              payment_intent_id: Optional[str] = None) -> bool:
+    inv = await db.quotes.find_one(
+        {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
+        {"_id": 0, "amount_paid": 1, "total": 1, "payment_status": 1},
+    )
+    if not inv:
+        return False
+    prior = float(inv.get("amount_paid") or 0)
+    new_paid = round(prior + (int(amount_cents) / 100.0), 2)
+    total = float(inv.get("total") or 0)
+    fully = new_paid + 0.01 >= total if total > 0 else True
+    set_doc: dict = {
+        "amount_paid": new_paid,
+        "payment_status": "paid" if fully else "partial",
+        "payment_method": "stripe",
+    }
+    if fully:
+        set_doc["paid_at"] = paid_at
+    if payment_intent_id:
+        set_doc["stripe_payment_intent_id"] = payment_intent_id
+    r = await db.quotes.update_one(
+        {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice",
+         # Idempotency guard — the update only fires if the invoice
+         # isn't already flipped past this state.
+         "$or": [{"payment_status": {"$ne": "paid"}},
+                 {"amount_paid": {"$lt": new_paid}}]},
+        {"$set": set_doc},
+    )
+    return bool(r.modified_count)
+
+
+async def _mark_invoice_failed(*, tenant_id: str, invoice_id: str,
+                                failure_reason: str) -> None:
+    await db.quotes.update_one(
+        {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice",
+         "payment_status": {"$nin": ["paid", "refunded", "partially_refunded"]}},
+        {"$set": {"payment_status": "failed",
+                    "failure_reason": failure_reason}},
+    )
+
+
+async def _apply_refund_to_invoice(*, tenant_id: str, invoice_id: str,
+                                     refund_cents: int, fully_refunded: bool) -> None:
+    inv = await db.quotes.find_one(
+        {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
+        {"_id": 0, "amount_paid": 1},
+    )
+    if not inv:
+        return
+    prior = float(inv.get("amount_paid") or 0)
+    new_paid = round(max(prior - (int(refund_cents) / 100.0), 0.0), 2)
+    await db.quotes.update_one(
+        {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
+        {"$set": {
+            "amount_paid": 0.0 if fully_refunded else new_paid,
+            "payment_status": "refunded" if fully_refunded else "partially_refunded",
+            "refunded_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+
+
 def verify_and_parse_webhook(*, payload: bytes, sig_header: str) -> Dict[str, Any]:
     """Verify the Stripe-Signature header and return the parsed event
     dict. Raises the SDK's ``SignatureVerificationError`` on bad sig or
@@ -819,6 +988,9 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
         err = None
         if status_final == "failed":
             err = (data.get("last_payment_error") or {}).get("message") or "failed"
+        meta = (data.get("metadata") or {})
+        pi_tenant = meta.get("crm_tenant_id")
+        pi_invoice = meta.get("crm_invoice_id") or None
         # Upsert by payment_intent_id so a webhook that arrives before the
         # API-triggered row is fully persisted (rare) still records the
         # outcome without duplicating.
@@ -827,12 +999,12 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "$setOnInsert": {
                     "id": str(uuid.uuid4()),
-                    "tenant_id": (data.get("metadata") or {}).get("crm_tenant_id"),
-                    "customer_id": (data.get("metadata") or {}).get("crm_customer_id"),
+                    "tenant_id": pi_tenant,
+                    "customer_id": meta.get("crm_customer_id"),
                     "provider_payment_method_id": data.get("payment_method"),
                     "amount_cents": data.get("amount"),
                     "currency": data.get("currency"),
-                    "invoice_id": (data.get("metadata") or {}).get("crm_invoice_id") or None,
+                    "invoice_id": pi_invoice,
                     "stripe_mode": _mode(),
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 },
@@ -845,6 +1017,79 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
             },
             upsert=True,
         )
+        # Feb-2026 · FIX 2 — flip the linked invoice. Guarded on
+        # tenant + invoice metadata presence. Dashboard-created PIs
+        # (no metadata) skip the invoice update and log a warning.
+        if pi_tenant and pi_invoice:
+            amount = int(data.get("amount_received") or data.get("amount") or 0)
+            if status_final == "succeeded":
+                await _mark_invoice_paid(
+                    tenant_id=pi_tenant, invoice_id=pi_invoice,
+                    amount_cents=amount,
+                    paid_at=datetime.now(timezone.utc).isoformat(),
+                    payment_intent_id=pi_id,
+                )
+            else:
+                await _mark_invoice_failed(
+                    tenant_id=pi_tenant, invoice_id=pi_invoice,
+                    failure_reason=err or "failed",
+                )
+        elif not pi_tenant or not pi_invoice:
+            logger.warning(
+                "[stripe.webhook] payment_intent.%s pi=%s missing "
+                "metadata (tenant=%r invoice=%r) — invoice unchanged",
+                status_final, pi_id, pi_tenant, pi_invoice,
+            )
+        result["handled"] = True
+        return result
+
+    # Feb-2026 · FIX 3 — refund lifecycle. Both events point at the
+    # same charge; we key off ``payment_intent`` so partial refunds
+    # arriving out-of-order still reconcile cleanly.
+    if etype in ("charge.refunded", "refund.updated"):
+        pi_id = data.get("payment_intent") or (data.get("charge") or {}).get("payment_intent")
+        if not pi_id and etype == "refund.updated":
+            # ``refund.updated`` payload sometimes only carries the
+            # charge id — resolve to a PI via our stripe_charges row.
+            charge_id = data.get("charge")
+            if charge_id:
+                pri = await db.stripe_charges.find_one(
+                    {"stripe_charge_id": charge_id}, {"_id": 0, "stripe_payment_intent_id": 1},
+                )
+                pi_id = (pri or {}).get("stripe_payment_intent_id")
+        if not pi_id:
+            return result
+        # Look up the charge row (tenant-scoped downstream).
+        row = await db.stripe_charges.find_one(
+            {"stripe_payment_intent_id": pi_id},
+            {"_id": 0, "tenant_id": 1, "invoice_id": 1, "amount_cents": 1},
+        )
+        if not row:
+            logger.warning("[stripe.webhook] %s pi=%s no local charge row", etype, pi_id)
+            return result
+        amount_orig = int(row.get("amount_cents") or 0)
+        # ``charge.refunded``: ``amount_refunded`` lives on the top-
+        # level charge. ``refund.updated``: payload IS the refund.
+        if etype == "charge.refunded":
+            amount_refunded = int(data.get("amount_refunded") or 0)
+        else:
+            amount_refunded = int(data.get("amount") or 0)
+        full = amount_orig > 0 and amount_refunded >= amount_orig
+        new_status = "refunded" if full else "partially_refunded"
+        await db.stripe_charges.update_one(
+            {"stripe_payment_intent_id": pi_id},
+            {"$set": {
+                "status": new_status,
+                "amount_refunded_cents": amount_refunded,
+                "refunded_at": datetime.now(timezone.utc).isoformat(),
+                "webhook_updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        if row.get("invoice_id") and row.get("tenant_id"):
+            await _apply_refund_to_invoice(
+                tenant_id=row["tenant_id"], invoice_id=row["invoice_id"],
+                refund_cents=amount_refunded, fully_refunded=full,
+            )
         result["handled"] = True
         return result
 

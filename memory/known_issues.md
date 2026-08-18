@@ -49,3 +49,13 @@ Follow-up: create a companion `backend/.env.production.example` with
 the safe-in-prod defaults inverted, and document a checklist for
 promoting a preview deploy to production.
 
+
+## `/api/payments/stripe/config` returns both `mode` and `stripe_mode` (Feb-2026)
+FIX 4 of the Stripe reconciliation batch aligned the config key with
+what newer callers expect. The endpoint now returns BOTH `mode`
+(legacy) and `stripe_mode` (new canonical) for one release cycle so
+existing customer-portal + admin-console builds keep working.
+
+Deprecation: remove `mode` after the next mobile + web build is out
+in prod (~Mar 2026). Search for `stripe_mode ||` in the JS/TSX
+tree before dropping to catch stragglers.
