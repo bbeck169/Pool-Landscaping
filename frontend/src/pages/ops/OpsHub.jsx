@@ -245,15 +245,37 @@ function Routes() {
       </div>
       {order === null ? <Skeleton style={{ height: 160 }} /> :
        order.length === 0 ? <EmptyState title="No jobs for that day/tech" /> :
-       <ol className="space-y-2">{order.map((j, i) => (
+       <ol className="space-y-2">{order.map((j, i) => {
+         // Feb-2026 · Routes enrichment. ``customer_name`` and
+         // ``technician_name`` are denormalised on the job doc at
+         // create time, so we render them directly — no client N+1
+         // and no extra endpoint. Fall back to address / '(unknown)'
+         // for jobs whose customer was later deleted. Tech color chip
+         // reads ``technician_color_hex`` when present (already on
+         // the job doc for tenants that populate ``display_color_hex``).
+         const primary = (j.customer_name || j.address || j.title || "(unknown customer)").trim();
+         const techLabel = j.technician_name || "Unassigned";
+         const techColor = j.technician_color_hex || null;
+         return (
          <li key={j.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: colors.surfaceSecondary }} data-testid={`route-${j.id}`}>
            <span className="w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center" style={{ background: brandGradientCss, color: "#fff" }}>{i + 1}</span>
-           <div className="flex-1"><div className="font-semibold text-sm">{j.title}</div><div className="text-xs" style={{ color: colors.muted }}>{j.address || "—"}</div></div>
+           <div className="flex-1">
+             <div className="font-semibold text-sm" data-testid={`route-${j.id}-customer`}>{primary}</div>
+             <div className="text-xs flex items-center gap-1.5" style={{ color: colors.muted }}>
+               {techColor ? (
+                 <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: techColor }} aria-hidden="true" />
+               ) : null}
+               <span data-testid={`route-${j.id}-tech`}>{techLabel}</span>
+               <span>·</span>
+               <span>{j.address || "—"}</span>
+             </div>
+           </div>
            <button onClick={() => move(i, -1)} className="opacity-70">↑</button>
            <button onClick={() => move(i, 1)} className="opacity-70">↓</button>
            <a target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(j.address || "")}`} className="text-xs font-semibold" style={{ color: colors.brand }}>Navigate</a>
          </li>
-       ))}</ol>}
+         );
+       })}</ol>}
       <Toast toast={toast} onClose={() => setToast(null)} />
     </Card>
   );

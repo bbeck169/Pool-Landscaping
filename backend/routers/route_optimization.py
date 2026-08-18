@@ -226,9 +226,13 @@ async def get_route_stops(
 
     # Load the tech row so we can match either user_id or technician_id
     # on the jobs collection (mirrors ``optimize_route``).
+    # Feb-2026 · Routes enrichment — also read ``name`` and
+    # ``display_color_hex`` in the same round-trip so the UI can show
+    # the tech's name + color chip without an N+1 fetch.
     tech_user = await db.users.find_one(
         {"id": tech_id, "tenant_id": tenant["id"]},
-        {"_id": 0, "id": 1, "technician_id": 1},
+        {"_id": 0, "id": 1, "technician_id": 1,
+         "name": 1, "display_color_hex": 1},
     ) or {}
     tid = tech_user.get("technician_id") or tech_id
 
@@ -249,12 +253,24 @@ async def get_route_stops(
     stops: List[dict] = []
     for j in jobs:
         geo = await resolve_stop_geo(j, tenant["id"], geocode_if_missing=False)
+        # Feb-2026 · Routes enrichment · deleted-customer fallback.
+        # ``customer_name`` on the job is denormalised at create-time;
+        # if the customer row was later deleted (or the job was
+        # imported without a name), fall back to the resolved address
+        # so the UI never renders a blank primary line.
+        display_name = (
+            (j.get("customer_name") or "").strip()
+            or (geo.get("address") or "").strip()
+            or (j.get("title") or "").strip()
+            or "(unknown customer)"
+        )
         stops.append({
             "job_id": j.get("id"),
             "title": j.get("title"),
             "service_type": j.get("service_type") or j.get("job_type"),
             "customer_id": j.get("customer_id"),
             "customer_name": j.get("customer_name"),
+            "customer_display_name": display_name,
             "property_id": j.get("property_id"),
             "property_label": j.get("property_label"),
             "scheduled_start": j.get("scheduled_start"),
@@ -269,6 +285,8 @@ async def get_route_stops(
 
     return {
         "tech_id": tech_id,
+        "tech_name": tech_user.get("name"),
+        "tech_color_hex": tech_user.get("display_color_hex"),
         "date": date_str,
         "count": len(stops),
         "stops": stops,
