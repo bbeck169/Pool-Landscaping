@@ -82,6 +82,7 @@ export function AiEmployeesList() {
             <AIAvatar
               size={56}
               src={e.avatar_url || undefined}
+              name={e.name}
               alt={e.name}
               testId={`ai-lottie-avatar-${e.slug || e.id}`}
             />

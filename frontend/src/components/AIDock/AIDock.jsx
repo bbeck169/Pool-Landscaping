@@ -10,6 +10,11 @@
 import React from "react";
 import { Bot, X, Send, Sparkles, Check, Copy, AlertTriangle } from "lucide-react";
 import { api } from "@/api";
+// Feb-2026 · AI Dock avatar parity — share the same <AIAvatar>
+// component the /ai-employees page uses so each persona shows the
+// same human portrait in both surfaces (was rendering emoji here,
+// portraits there → visual disconnect).
+import AIAvatar from "@/components/ai/AIAvatar";
 import { colors } from "@/theme";
 import { Button, Chip } from "@/components/ui-kit";
 import { EMPLOYEE_ACTIONS, ACTION_LABELS } from "./actionCatalog";
@@ -180,7 +185,16 @@ function RosterView({ employees, loading, onPick }) {
             }}
             data-testid={`ai-dock-pick-${e.key}`}
           >
-            <span className="text-2xl">{e.avatar_emoji || "🤖"}</span>
+            {/* Feb-2026 · AI Dock avatar parity — same <AIAvatar> the
+                /ai-employees page uses; falls back to an initial in
+                a pastel circle when the persona has no avatar_url. */}
+            <AIAvatar
+              size={40}
+              src={e.avatar_url || undefined}
+              name={e.name}
+              alt={e.name || "AI persona"}
+              testId={`ai-dock-avatar-${e.key || e.slug || e.id}`}
+            />
             <span className="flex-1 min-w-0">
               <span className="block text-sm font-semibold" style={{ color: colors.onSurface }}>
                 {e.name}
@@ -331,7 +345,16 @@ function ChatPane({ employee, onBack, onBalanceChange, balance }) {
         >
           ← Back
         </button>
-        <span className="text-lg">{employee?.avatar_emoji || "🤖"}</span>
+        {/* Feb-2026 · AI Dock avatar parity — same shared <AIAvatar>
+            component used by the roster row + the /ai-employees
+            page. Slightly smaller here so it fits the chat header. */}
+        <AIAvatar
+          size={32}
+          src={employee?.avatar_url || undefined}
+          name={employee?.name}
+          alt={employee?.name || "AI persona"}
+          testId={`ai-dock-chat-avatar-${employee?.key || employee?.slug || employee?.id || "unknown"}`}
+        />
         <div className="flex-1">
           <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
             {employee?.name}
