@@ -25,7 +25,7 @@ import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAuth } from "@/auth";
 import { brandGradientCss } from "@/theme";
-import NotificationBell from "@/components/NotificationBell";
+import UniversalMenu from "@/layouts/UniversalMenu";
 import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
 import {
   DropdownMenu,
@@ -332,12 +332,14 @@ export default function AdminTopBar() {
       {visible.length === 0 ? (
         // Feb-2026 · Technician (no admin categories) still needs
         // the right-side actions cluster — render just the actions,
-        // no empty dropdown row above.
+        // no empty dropdown row above. Sign Out sits to the LEFT of
+        // the bell + hamburger cluster per header-cleanup spec.
         <div
           className="px-4 h-11 flex items-center justify-end gap-2"
           data-testid="admin-topbar-tech-wrap"
         >
           <SignOutButton />
+          <UniversalMenu variant="inline" />
         </div>
       ) : isNarrow ? (
         <div
@@ -345,11 +347,14 @@ export default function AdminTopBar() {
           data-testid="admin-topbar-narrow-wrap"
         >
           <MobileMenu visible={visible} />
+          {/* Feb-2026 · Header cleanup — single bell (rendered by
+              inline UniversalMenu below), Sign Out visible to its
+              LEFT, everything sits on the header baseline. */}
           <div className="flex items-center gap-2">
             <AddCustomerButton />
             <CreditsBudgetChip />
-            <NotificationBell variant="inline" />
             <SignOutButton />
+            <UniversalMenu variant="inline" />
           </div>
         </div>
       ) : (
@@ -360,11 +365,18 @@ export default function AdminTopBar() {
           {visible.map((g) => (
             <CategoryDropdown key={g.key} group={g} />
           ))}
+          {/* Feb-2026 · Header cleanup — right-side cluster ordering
+              per user spec (left → right): Add Customer · 500c ·
+              Sign Out · 🔔 Bell · ☰ Menu. The bell + hamburger are
+              rendered by <UniversalMenu variant="inline"> so there
+              is exactly ONE bell in the top bar (was duplicated
+              between the inline top-bar bell and the fixed
+              UniversalMenu floating bell). */}
           <div className="ml-auto shrink-0 flex items-center gap-2">
             <AddCustomerButton />
             <CreditsBudgetChip />
-            <NotificationBell variant="inline" />
             <SignOutButton />
+            <UniversalMenu variant="inline" />
           </div>
         </div>
       )}

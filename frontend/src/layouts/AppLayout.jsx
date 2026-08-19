@@ -535,12 +535,17 @@ function AppLayout() {
           <AdminTopBar />
         )}
 
-        {/* Phase 44 · universal top-right menu — visible for every
-            authenticated role EXCEPT admin (admins already have the
-            admin sidebar + AdminTopBar so a third hamburger is
-            redundant). Fixed-positioned so it doesn't nudge layout on
-            any page. */}
-        {(effectiveRole || user.role) !== "admin" && <UniversalMenu />}
+        {/* Phase 44 · universal top-right menu — Feb-2026 cleanup:
+            admin / super_admin / manager / technician now render
+            <UniversalMenu variant="inline" /> INSIDE <AdminTopBar>
+            (bell + hamburger sit in the header row instead of
+            floating in the top-right corner and overlapping
+            content). Only customer / customer-portal roles still
+            get the floating instance here, since they don't mount
+            <AdminTopBar>. */}
+        {!["admin", "super_admin", "manager", "technician"].includes(
+          effectiveRole || user.role
+        ) && <UniversalMenu />}
 
         {/* Phase 49.3 · Landscape Time Clock widget — auto-hides for
             non-landscaping users. Mount-site gate: admin / super_admin

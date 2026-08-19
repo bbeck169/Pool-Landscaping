@@ -81,7 +81,7 @@ function useFlatEntries(sections, canFn, effectiveRole) {
   }, [sections, canFn, effectiveRole]);
 }
 
-export default function UniversalMenu() {
+export default function UniversalMenu({ variant = "floating" } = {}) {
   const { user } = useAuth();
   const { can, effectiveRole } = usePermissions();
   const role = user?.role || effectiveRole || "";
@@ -165,15 +165,26 @@ export default function UniversalMenu() {
 
   return (
     <>
-      <NotificationBell variant="floating" />
+      {/* Feb-2026 · Header cleanup — when mounted inline (inside
+          <AdminTopBar>) the bell + hamburger sit in the header row
+          instead of the fixed top-right corner, and the bell uses
+          the ``inline`` variant so it matches the rest of the
+          header buttons in size. Floating variant keeps the
+          original positioning for customer roles that don't have
+          <AdminTopBar>. */}
+      <NotificationBell variant={variant === "inline" ? "inline" : "floating"} />
       <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
-        className="fixed top-3 right-3 z-40 inline-flex items-center justify-center w-10 h-10 rounded-lg border shadow-sm bg-white hover:bg-gray-50 focus:outline-none"
+        className={
+          variant === "inline"
+            ? "inline-flex items-center justify-center w-9 h-9 rounded-lg border shadow-sm bg-white hover:bg-gray-50 focus:outline-none"
+            : "fixed top-3 right-3 z-40 inline-flex items-center justify-center w-10 h-10 rounded-lg border shadow-sm bg-white hover:bg-gray-50 focus:outline-none"
+        }
         style={{ borderColor: colors.border }}
         data-testid="web-menu-trigger"
         aria-label="Open menu"
       >
-        <Menu size={20} style={{ color: colors.onSurface }} />
+        <Menu size={variant === "inline" ? 16 : 20} style={{ color: colors.onSurface }} />
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
