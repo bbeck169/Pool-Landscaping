@@ -1,5 +1,28 @@
 # Known Issues (rolling)
 
+## Mobile schedule countdown pills — reverted per user request (Feb-2026)
+The N/M SERVICES / N/M REPAIRS countdown pills that briefly shipped
+on the mobile tech schedule (`mobile/app/(app)/schedule/calendar.tsx`,
+directly below `<JobTrackerTiles>`) were removed at the user's
+explicit request. Only the mobile surface was reverted — the web
+admin Workstream page still renders the pills unchanged.
+
+Preserved for potential future reuse (do NOT delete):
+* `mobile/components/JobCountPill.tsx` — mobile pill component.
+* `mobile/lib/jobCategory.ts` — shared classifier (still used by the
+  jest unit test at `mobile/__tests__/JobCountPill.test.tsx`).
+* `frontend/src/components/JobCountPill.jsx` — web pill (still mounted
+  on the admin Workstream page).
+* `frontend/src/lib/jobCategory.js` — shared classifier (web).
+
+Regression guard: `mobile/__tests__/schedule-no-count-pills.test.ts`
+source-inspects `calendar.tsx` to fail-loudly if a future refactor
+re-imports `JobCountPill` / `computePillCounts` or re-adds the
+`schedule-count-pills` container. If pills need to come back on
+mobile, delete that regression test in the same commit.
+
+
+
 ## Mobile schedule map — deferred to follow-up (Feb-2026)
 Web admin schedule now renders a Google-Maps stops map at the top
 of the Grid view (see ``frontend/src/pages/schedule/ScheduleMap.jsx``).
