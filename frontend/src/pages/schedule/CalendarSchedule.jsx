@@ -47,6 +47,7 @@ import WeekStrip from "@/components/schedule/WeekStrip";
 // height is preserved.
 import TechAvatar from "@/components/common/TechAvatar";
 import ScheduleJobEditModal from "@/pages/schedule/ScheduleJobEditModal";
+import ScheduleDayDnDPanel from "@/pages/schedule/ScheduleDayDnDPanel";
 
 
 // Feb-2026 · Schedule-UI · left-border indicator for status.
@@ -742,6 +743,29 @@ export default function CalendarSchedule() {
             </button>
           ) : null}
         </Gate>
+        {isAdminRole ? (
+          <button
+            data-testid="calendar-send-to-dispatch"
+            onClick={async () => {
+              try {
+                setBusy(true);
+                const r = await api.post("/dispatch/import-schedule",
+                                          { date: focusISO });
+                toast_(`Sent ${r.job_count} jobs to Dispatch (${r.techs_written} techs).`);
+                navigate(`/admin/dispatch?date=${focusISO}`);
+              } catch (e) {
+                toast_(`Send to Dispatch failed: ${e.message || e}`, "err");
+              } finally {
+                setBusy(false);
+              }
+            }}
+            className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold"
+            style={{ background: "#0F172A", color: "#fff" }}
+            disabled={busy}
+          >
+            <MoveIcon size={14} /> Send to Dispatch Board
+          </button>
+        ) : null}
       </div>
 
       {/* Filter toolbar */}
@@ -982,6 +1006,22 @@ export default function CalendarSchedule() {
           isAdminForCard={isAdminRole}
         />
       )}
+
+      {/* Feb-2026 · Schedule DnD — route order & cross-tech reassign.
+          Renders in Grid mode only where a single focus-day is
+          selected; the calendar view already exposes RBC's native
+          time-slot drag for rescheduling. */}
+      {mode === "grid" ? (
+        <ScheduleDayDnDPanel
+          date={focusISO}
+          jobs={dayJobs}
+          techs={techs}
+          canDrag={isAdminRole}
+          toast={toast_}
+          onSaved={load}
+          servicePalette={SERVICE_PALETTE}
+        />
+      ) : null}
 
       {/* Feb-2026 · Schedule multi-select · bulk soft-delete confirm. */}
       {deleteConfirmOpen ? (

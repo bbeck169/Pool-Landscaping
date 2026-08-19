@@ -387,6 +387,10 @@ api_router.include_router(_dispatch_ins_router.router, dependencies=[Depends(_rg
 from routers import dispatch_savings as _dispatch_savings_router  # noqa: E402
 api_router.include_router(_dispatch_savings_router.router, dependencies=[Depends(_rg)])
 
+# Feb 2026 · Schedule DnD reorder + Dispatch import.
+from routers import schedule_reorder as _schedule_reorder_router  # noqa: E402
+api_router.include_router(_schedule_reorder_router.router)
+
 # Phase 11 · Feb-2026 — Invoice reconciliation log (super-admin only).
 from routers import invoice_reconciliation as _invoice_reconciliation_router  # noqa: E402
 api_router.include_router(_invoice_reconciliation_router.router)
