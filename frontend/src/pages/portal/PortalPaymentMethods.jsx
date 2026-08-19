@@ -44,14 +44,23 @@ export default function PortalPaymentMethods() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const meJson = await meRes.json().catch(() => ({}));
-      if (!meRes.ok || !meJson?.customer_id) {
+      // Feb-2026 · P0 fix — ``/api/me`` returns the CUSTOMER doc
+      // (where ``id`` == the customer's own id). Prior code read
+      // ``customer_id`` from this payload, which never existed on
+      // ``/api/me`` — so every portal user hit the "Your account
+      // isn't linked to a customer record" banner and the PMs
+      // fetch went to ``.../payment-methods/undefined`` → 403.
+      // Accept either shape so the same page still works if
+      // callers migrate to ``/auth/me`` (which uses ``customer_id``).
+      const customerId = meJson?.customer_id || meJson?.id;
+      if (!meRes.ok || !customerId) {
         setMe(meJson || null);
         setRows([]);
         return;
       }
-      setMe(meJson);
+      setMe({ ...meJson, customer_id: customerId });
       const res = await fetch(
-        `${API}/payments/stripe/payment-methods/${meJson.customer_id}`,
+        `${API}/payments/stripe/payment-methods/${customerId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const json = await res.json().catch(() => ({}));

@@ -270,3 +270,27 @@ After Stage 2 deploys with the above value, **delete these six
 lines from `/app/memory/promote_to_prod_checklist.md` immediately**
 (a single git commit removing the block is fine — the secret was
 never in git, only in the preview pod's memory folder).
+
+---
+
+## Feb-2026 · Portal P0 identity leak + add-card 404
+
+Both fixes ship in preview. Prod (`app.plofv.com`) needs a REDEPLOY.
+
+### Backend
+- `backend/routers/portal_admin.py` — every `/portal/home` Mongo lookup now scopes by `tenant_id` in addition to `customer_id`. Response now includes `identity_mismatch: bool` when the JWT `email` claim doesn't match the resolved customer's email (log-only server-side; the frontend uses it to surface a banner).
+
+### Frontend
+- `frontend/src/pages/portal/PortalHome.jsx` — greeting now binds to `data.customer.first_name` (SERVER-scoped) first, falls back to JWT `user.name` only if the API hasn't responded. Also fixed the arrow-function body bug where `loadSummary` only included the first call.
+- `frontend/src/pages/portal/PortalPaymentMethods.jsx` — reads customer id from `id || customer_id` on `/api/me` response (was reading `customer_id` which never existed on the customer doc, causing every portal user to see the "Your account isn't linked" banner + a 403 fetch to `.../payment-methods/undefined`).
+
+### Regression tests shipped
+- `backend/tests/test_portal_identity_isolation.py` (3 cases)
+- `backend/tests/test_portal_payment_methods_bug2.py` (3 cases)
+- `frontend/src/test/portal-identity-and-add-card.test.jsx` (5 cases)
+
+### Post-deploy verification steps
+1. Log in on prod as any portal customer.
+2. Confirm the greeting matches the customer.
+3. Navigate to Payment Method — confirm the page renders "You haven't added a card yet." (NOT the red "Your account isn't linked" banner). Click Add card → confirm the Stripe form loads.
+4. If any portal user sees `identity_mismatch=true` in `/api/portal/home` responses, forward the pair (`user_id`, `customer_id`) to fix the DB row.

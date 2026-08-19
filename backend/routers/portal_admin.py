@@ -36,16 +36,46 @@ def _random_password(n: int = 12) -> str:
 
 # ─── Portal home aggregate ──────────────────────────────────────────────────
 @router.get("/portal/home")
-async def portal_home(user: dict = Depends(get_current_user)):
-    """Aggregated dashboard payload for the logged-in customer."""
+async def portal_home(user: dict = Depends(get_current_user),
+                       tenant: dict = Depends(get_current_tenant)):
+    """Aggregated dashboard payload for the logged-in customer.
+
+    Feb-2026 P0 defense-in-depth — every Mongo lookup is now scoped
+    by ``tenant_id`` in addition to ``customer_id``. A misseeded
+    ``users.customer_id`` cannot leak another tenant's customer/
+    invoices/jobs into the response. Also emits a
+    ``identity_mismatch`` flag when the JWT's ``email`` claim does
+    not match the resolved customer's primary email — surfaces
+    data-integrity issues immediately in the frontend without
+    breaking legitimate rebinds.
+    """
     if user.get("role") != "customer" or not user.get("customer_id"):
         raise HTTPException(403, "Not a customer")
     cid = user["customer_id"]
+    tid = tenant["id"]
     now = datetime.now(timezone.utc)
     today_iso = now.date().isoformat()
 
-    customer = await db.customers.find_one({"id": cid}, {"_id": 0}) or {}
-    jobs = await db.jobs.find({"customer_id": cid}, {"_id": 0}).sort("scheduled_date", 1).to_list(200)
+    customer = await db.customers.find_one(
+        {"id": cid, "tenant_id": tid}, {"_id": 0}
+    ) or {}
+    # Feb-2026 P0 · JWT ↔ customer email sanity check. Log-only for
+    # now (no 403) so a benign rebind doesn't lock a legitimate user
+    # out; the identity_mismatch flag lets the frontend render a
+    # "please re-sign-in" banner and lets ops grep the warning.
+    identity_mismatch = False
+    if customer and user.get("email") and customer.get("email"):
+        if str(user["email"]).lower() != str(customer["email"]).lower():
+            identity_mismatch = True
+            logger.warning(
+                "[portal_home] JWT identity mismatch — "
+                "user_id=%s user_email=%s customer_id=%s customer_email=%s tenant=%s",
+                user.get("id"), user.get("email"),
+                customer.get("id"), customer.get("email"), tid,
+            )
+    jobs = await db.jobs.find(
+        {"customer_id": cid, "tenant_id": tid}, {"_id": 0}
+    ).sort("scheduled_date", 1).to_list(200)
 
     upcoming = [
         j for j in jobs
@@ -59,7 +89,7 @@ async def portal_home(user: dict = Depends(get_current_user)):
     past.sort(key=lambda j: j.get("completed_at") or j.get("scheduled_date") or "", reverse=True)
 
     invs = await db.quotes.find(
-        {"customer_id": cid, "doc_type": "invoice"}, {"_id": 0}
+        {"customer_id": cid, "tenant_id": tid, "doc_type": "invoice"}, {"_id": 0}
     ).to_list(500)
     overdue_count = 0
     outstanding = 0.0
@@ -70,7 +100,7 @@ async def portal_home(user: dict = Depends(get_current_user)):
             overdue_count += 1
 
     estimates = await db.quotes.find(
-        {"customer_id": cid, "doc_type": "quote"}, {"_id": 0}
+        {"customer_id": cid, "tenant_id": tid, "doc_type": "quote"}, {"_id": 0}
     ).to_list(500)
     pending_estimates = [
         e for e in estimates
@@ -80,7 +110,7 @@ async def portal_home(user: dict = Depends(get_current_user)):
     unread_msgs = 0
     try:
         threads = await db.communications.find(
-            {"customer_id": cid}, {"messages": 1, "_id": 0}
+            {"customer_id": cid, "tenant_id": tid}, {"messages": 1, "_id": 0}
         ).to_list(200)
         for t in threads:
             for m in (t.get("messages") or []):
@@ -100,6 +130,10 @@ async def portal_home(user: dict = Depends(get_current_user)):
             "pending_estimates": len(pending_estimates),
             "unread_messages": unread_msgs,
         },
+        # Feb-2026 P0 · surface the JWT ↔ customer email mismatch to
+        # the frontend so a stale prod session (or a mis-linked
+        # ``users.customer_id``) is immediately visible.
+        "identity_mismatch": identity_mismatch,
     }
 
 

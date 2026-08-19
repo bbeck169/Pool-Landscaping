@@ -52,7 +52,7 @@ export default function PortalHome() {
   // ``unreadMessages`` powers the Messages tile badge.
   const [unreadMessages, setUnreadMessages] = useState(0);
 
-  const loadSummary = () =>
+  const loadSummary = () => {
     api.get("/customer-portal/summary").then(setSummary).catch(() => setSummary(null));
     api.get("/customer-portal/credits/balance")
       .then((r) => {
@@ -61,6 +61,7 @@ export default function PortalHome() {
         }
       })
       .catch(() => {});
+  };
 
   useEffect(() => {
     api.get("/portal/home").then(setData).catch(() => setData({ counts: {} }));
@@ -87,7 +88,19 @@ export default function PortalHome() {
   }, []);
 
   if (user && user.role !== "customer") return <Navigate to="/" replace />;
-  const first = user?.name?.split(" ")[0] || "there";
+  // Feb-2026 P0 defense-in-depth — prefer the SERVER-scoped customer
+  // name (returned by ``/portal/home`` and scoped strictly by JWT
+  // ``customer_id`` + ``tenant_id``) over the JWT's ``user.name``
+  // claim. If a mis-linked ``users.customer_id`` on the server ever
+  // resolves the wrong customer, the greeting will still reflect
+  // the ACTUAL customer the API is returning data for, so a mismatch
+  // becomes visually obvious instead of masquerading. Falls back to
+  // the JWT name only if the endpoint hasn't responded yet.
+  const _serverName =
+    data?.customer?.first_name ||
+    (data?.customer?.name && String(data.customer.name).split(" ")[0]) ||
+    "";
+  const first = _serverName || user?.name?.split(" ")[0] || "there";
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-home">
