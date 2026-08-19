@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from config import db, logger
-from utils import now_iso, new_id, require_admin
+from utils import now_iso, new_id, require_admin, require_admin_or_manager
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -443,8 +443,13 @@ async def _job_locked(row: dict) -> Optional[str]:
 
 @router.post("/jobs/bulk-delete", operation_id="jobs.bulkDelete")
 async def jobs_bulk_delete(body: _BulkIdsIn,
-                             user: dict = Depends(require_admin),
+                             user: dict = Depends(require_admin_or_manager),
                              tenant: dict = Depends(get_current_tenant)):
+    # Feb-2026 · Workstream bulk-delete parity — role gate widened
+    # from ``require_admin`` (admin/super_admin/owner) to include
+    # ``manager`` so the manager role gets the same bulk-selection
+    # affordance the Schedule + Workstream UIs render. Multi-tenant
+    # scoping and the ``_job_locked`` cascade-check are unchanged.
     ids = (await _resolve_ids("jobs", tenant["id"], body.query_selector or {},
                                     body.exclude_ids or [], _JOB_SELECTOR)
               if body.query_selector else list(body.ids or []))

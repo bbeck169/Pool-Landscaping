@@ -402,6 +402,22 @@ function AdminOrManagerForProfitReport({ children }) {
 }
 
 
+// Feb-2026 · Workstream bulk-actions parity — managers now get the
+// same Workstream affordances (checkbox, bulk-delete, inline edit)
+// as admins. Mirrors the ``AdminOrManagerForProfitReport`` wrapper
+// so the gate stays consistent across the manager-eligible surfaces.
+function AdminOrManagerForWorkstream({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  const role = user?.role || "";
+  const allowed = role === "admin" || role === "super_admin" || role === "manager";
+  if (!user || !allowed) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+
 // Phase 41.5c-fixup · Feb 2026 — /weather page. Field managers make
 // scheduling decisions off the risk grid + reschedule-recommendations
 // (both endpoints back /weather); the existing ``<AdminOnly>`` here
@@ -754,8 +770,8 @@ export default function App() {
             <Route path="schedule/legacy-timeline" element={<TodaySchedule />} />
             {/* Phase 5A.2 · Feb 2026 — Workstream is admin-only,
                 completed-jobs surface. Route + API + nav all gated. */}
-            <Route path="workstream" element={<AdminOnly><WorkstreamPage /></AdminOnly>} />
-            <Route path="workstream/:id" element={<AdminOnly><ServiceLogPage /></AdminOnly>} />
+            <Route path="workstream" element={<AdminOrManagerForWorkstream><WorkstreamPage /></AdminOrManagerForWorkstream>} />
+            <Route path="workstream/:id" element={<AdminOrManagerForWorkstream><ServiceLogPage /></AdminOrManagerForWorkstream>} />
             {/* Phase 32 · Step 2 — AI CFO dashboard (admin only, RBAC in-page) */}
             <Route path="cfo" element={<CFODashboard />} />
             <Route path="tech/huddle" element={<TechHuddlePage />} />

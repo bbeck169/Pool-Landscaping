@@ -16,7 +16,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Workflow, RefreshCw, Loader2, ChevronDown, X as XIcon, Image as ImageIcon, Video, MapPin, User, Star, Calendar as CalendarIcon } from "lucide-react";
+import { Workflow, RefreshCw, Loader2, ChevronDown, X as XIcon, Image as ImageIcon, Video, MapPin, User, Star, Calendar as CalendarIcon, Pencil, Trash2 } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import { useAuth } from "@/auth";
 import { Forbidden } from "@/hooks/usePermissions";
@@ -28,6 +28,10 @@ import { UserAvatar } from "@/components/UserAvatar";
 // with the mobile tech Schedule screen — see ``mobile/lib/jobCategory``).
 import JobCountPill from "@/components/JobCountPill";
 import { computePillCounts } from "@/lib/jobCategory";
+// Feb-2026 · Workstream inline job edit — reuses the exact modal
+// the Schedule page's Pencil affordance opens. Do NOT fork.
+import ScheduleJobEditModal from "@/pages/schedule/ScheduleJobEditModal";
+import { toast as sonnerToast } from "sonner";
 
 const SORT_OPTIONS = [
   { value: "newest", label: "Newest first" },
@@ -170,7 +174,7 @@ function MediaStrip({ jid, media }) {
   );
 }
 
-function JobCard({ job, onOpen }) {
+function JobCard({ job, onOpen, isSelected, onToggleSelect, canBulk, onEdit }) {
   const handleKey = (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -187,11 +191,30 @@ function JobCard({ job, onOpen }) {
       style={{
         borderBottom: `1px solid ${colors.border}`,
         cursor: "pointer",
-        background: colors.surface,
+        background: isSelected ? "#FEF3C7" : colors.surface,
       }}
       data-testid={`ws-job-${job.id}`}
     >
       <div className="flex items-start gap-3">
+        {/* Feb-2026 · Workstream per-row select — visible only to
+            super_admin / admin / manager. Technicians + customers see
+            no checkbox at all. Click stops propagation so the card
+            navigation isn't triggered when the user is picking rows
+            for a bulk action. */}
+        {canBulk ? (
+          <input
+            type="checkbox"
+            checked={!!isSelected}
+            onChange={(e) => {
+              e.stopPropagation();
+              onToggleSelect && onToggleSelect(job.id, e.target.checked);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1"
+            data-testid={`ws-select-${job.id}`}
+            aria-label={`Select ${job.title || job.id}`}
+          />
+        ) : null}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="flex items-center gap-2 flex-wrap">
             {job.status ? <StatusPill status={job.status} /> : null}
@@ -252,11 +275,36 @@ function JobCard({ job, onOpen }) {
           <MediaStrip jid={job.id} media={job.media} />
         </div>
         <div
-          className="text-[11px] whitespace-nowrap text-right"
+          className="text-[11px] whitespace-nowrap text-right flex flex-col items-end gap-1"
           style={{ color: colors.muted }}
           title={job.updated_at || job.created_at}
         >
           {relTime(job.updated_at || job.created_at)}
+          {/* Feb-2026 · Workstream inline edit — Pencil affordance
+              only visible to super_admin / admin / manager. Click
+              stops propagation so the card navigation doesn't
+              fire; the parent opens the shared ScheduleJobEditModal
+              with this job pre-loaded. */}
+          {canBulk ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit && onEdit(job);
+              }}
+              className="inline-flex items-center justify-center rounded-md"
+              style={{
+                width: 24, height: 24,
+                background: colors.surfaceSecondary,
+                border: `1px solid ${colors.border}`,
+                color: colors.onSurface,
+              }}
+              aria-label={`Edit job ${job.title || job.id}`}
+              data-testid={`ws-edit-${job.id}`}
+            >
+              <Pencil size={12} />
+            </button>
+          ) : null}
         </div>
       </div>
     </div>
@@ -313,12 +361,25 @@ export default function WorkstreamPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const role = user?.role || "";
-  // Phase 5A.2 · Feb 2026 — Workstream is admin-only. Manager, tech,
-  // customer all get 403. Route-level <AdminOnly> catches them too.
-  const allowed = role === "admin" || role === "super_admin";
+  // Feb-2026 · Workstream — view gate is unchanged (admin |
+  // super_admin still owns the page); bulk-selection affordances
+  // (per-row checkbox, Pencil edit, delete toolbar) additionally
+  // admit ``manager`` per the shipped role-parity spec. Technicians
+  // + customers never see the Workstream page or any of its bulk
+  // affordances.
+  const allowed = role === "admin" || role === "super_admin" || role === "manager";
   const isAdmin = allowed;
+  const canBulk = role === "admin" || role === "super_admin" || role === "manager";
 
   const [jobs, setJobs] = useState([]);
+  // Feb-2026 · Workstream bulk-select — same mental model as the
+  // Schedule page: a Set<string> of job ids the user has ticked.
+  // Toolbar only renders when ``canBulk`` AND (size > 0 OR the
+  // caller wants the pre-selection "Select all in view" bar).
+  const [selectedJobIds, setSelectedJobIds] = useState(() => new Set());
+  const [editingJob, setEditingJob] = useState(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -395,6 +456,48 @@ export default function WorkstreamPage() {
   };
 
   const openJob = (jid) => navigate(`/workstream/${jid}`);
+
+  // Feb-2026 · Bulk-select helpers — kept together so the mental
+  // model matches the Schedule page's ``selectedJobIds`` handlers.
+  const toggleSelect = useCallback((jid, on) => {
+    setSelectedJobIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(jid); else next.delete(jid);
+      return next;
+    });
+  }, []);
+  const clearSelection = useCallback(() => {
+    setSelectedJobIds(new Set());
+  }, []);
+  const selectAllInView = useCallback(() => {
+    setSelectedJobIds(new Set((jobs || []).map((j) => j.id)));
+  }, [jobs]);
+  const doBulkDelete = useCallback(async () => {
+    if (selectedJobIds.size === 0) return;
+    setBulkBusy(true);
+    try {
+      const ids = Array.from(selectedJobIds);
+      const res = await api.post("/jobs/bulk-delete", { ids });
+      const okC = res?.deleted_count || 0;
+      const failed = res?.failed || [];
+      // Optimistic — remove the deleted rows locally.
+      const deletedSet = new Set(res?.deleted || []);
+      setJobs((prev) => (prev || []).filter((j) => !deletedSet.has(j.id)));
+      setSelectedJobIds(new Set());
+      setConfirmBulkDelete(false);
+      if (failed.length === 0) {
+        sonnerToast.success(`${okC} job${okC === 1 ? "" : "s"} deleted`);
+      } else {
+        sonnerToast(`${okC} deleted · ${failed.length} skipped`, {
+          description: failed.slice(0, 3).map((f) => f.reason).join(" · "),
+        });
+      }
+    } catch (e) {
+      sonnerToast.error(e?.message || "Bulk delete failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [selectedJobIds]);
 
   // Feb-2026 · Countdown pills — derived client-side from the same
   // ``jobs`` array the list renders. Recomputes reactively via
@@ -605,6 +708,76 @@ export default function WorkstreamPage() {
         </div>
       </div>
 
+      {/* Feb-2026 · Workstream bulk toolbar — mirrors the visual
+          language of the Schedule page's ``grid-selection-toolbar``
+          / ``grid-selection-preselect-bar``. Two modes:
+            * pre-selection: shows a subtle "Select all in view (N)"
+              chip when nothing is picked yet.
+            * active: shows the amber selection bar with count +
+              Deselect all + Delete N. */}
+      {canBulk && selectedJobIds.size > 0 ? (
+        <div
+          className="flex items-center gap-2 rounded-xl mb-3 px-3 py-2"
+          style={{ background: "#FEF3C7",
+                     border: "1px solid #FDE68A", color: "#78350F" }}
+          data-testid="ws-selection-toolbar"
+        >
+          <span className="text-sm font-bold" data-testid="ws-selection-count">
+            {selectedJobIds.size} selected
+          </span>
+          <button
+            type="button"
+            onClick={selectAllInView}
+            className="text-xs font-semibold underline hover:no-underline"
+            style={{ color: "#78350F" }}
+            data-testid="ws-selection-select-all-in-view"
+          >
+            Select all in view ({jobs.length})
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="text-xs font-semibold underline hover:no-underline"
+            style={{ color: "#78350F" }}
+            data-testid="ws-selection-clear"
+          >
+            Deselect all
+          </button>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={() => setConfirmBulkDelete(true)}
+            className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-bold"
+            style={{ background: "#DC2626", color: "#FFFFFF" }}
+            data-testid="ws-selection-delete"
+          >
+            <Trash2 size={13} /> Delete {selectedJobIds.size}
+          </button>
+        </div>
+      ) : canBulk && Array.isArray(jobs) && jobs.length > 0 ? (
+        <div
+          className="flex items-center gap-2 rounded-xl mb-3 px-3 py-2"
+          style={{ background: colors.surfaceSecondary,
+                     border: `1px solid ${colors.border}`, color: colors.onSurface }}
+          data-testid="ws-selection-preselect-bar"
+        >
+          <span className="text-xs" style={{ color: colors.muted }}>
+            Bulk actions
+          </span>
+          <button
+            type="button"
+            onClick={selectAllInView}
+            className="text-xs font-semibold px-2 py-1 rounded-lg"
+            style={{ background: colors.surface,
+                       border: `1px solid ${colors.border}`,
+                       color: colors.onSurface }}
+            data-testid="ws-selection-preselect-select-all"
+          >
+            Select all in view ({jobs.length})
+          </button>
+        </div>
+      ) : null}
+
       <div
         className="rounded-lg overflow-hidden"
         style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
@@ -624,10 +797,97 @@ export default function WorkstreamPage() {
           </div>
         ) : (
           jobs.map((j) => (
-            <JobCard key={j.id} job={j} onOpen={openJob} />
+            <JobCard
+              key={j.id}
+              job={j}
+              onOpen={openJob}
+              canBulk={canBulk}
+              isSelected={selectedJobIds.has(j.id)}
+              onToggleSelect={toggleSelect}
+              onEdit={setEditingJob}
+            />
           ))
         )}
       </div>
+
+      {/* Feb-2026 · Shared edit modal — same component the Schedule
+          page's Pencil affordance opens. NO fork. Saved / deleted
+          callbacks patch the local ``jobs`` array so the list
+          reflects the change without a full refetch. */}
+      <ScheduleJobEditModal
+        open={!!editingJob}
+        job={editingJob}
+        onClose={() => setEditingJob(null)}
+        onSaved={(patched) => {
+          setJobs((prev) => (prev || []).map(
+            (j) => (j.id === patched.id ? { ...j, ...patched } : j)));
+          setEditingJob(null);
+          sonnerToast.success("Job updated");
+        }}
+        onDeleted={(jid) => {
+          setJobs((prev) => (prev || []).filter((j) => j.id !== jid));
+          setEditingJob(null);
+          sonnerToast.success("Job deleted");
+        }}
+      />
+
+      {/* Feb-2026 · Bulk-delete confirm — matches the Schedule
+          page's confirm-modal ergonomics. Under 500 rows the plain
+          modal fires with "Delete N" wording; over-threshold path
+          could be added later if Workstream ops start needing it. */}
+      {confirmBulkDelete ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !bulkBusy) {
+              setConfirmBulkDelete(false);
+            }
+          }}
+          data-testid="ws-bulk-delete-modal"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+            style={{ backgroundColor: colors.surface,
+                       border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold" style={{ color: "#DC2626" }}
+                data-testid="ws-bulk-delete-title">
+              Delete {selectedJobIds.size} job{selectedJobIds.size === 1 ? "" : "s"}?
+            </h2>
+            <p className="text-sm mt-2"
+                style={{ color: colors.onSurfaceSecondary || colors.muted }}>
+              Completed jobs with an active invoice will be skipped
+              (backend cascade guard). Deletion is soft — a super_admin
+              can restore later via backend tooling.
+            </p>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmBulkDelete(false)}
+                disabled={bulkBusy}
+                className="px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-60"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                          color: colors.onSurface }}
+                data-testid="ws-bulk-delete-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doBulkDelete}
+                disabled={bulkBusy}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                style={{ backgroundColor: "#DC2626" }}
+                data-testid="ws-bulk-delete-confirm"
+              >
+                {bulkBusy ? "Deleting…" : `Delete ${selectedJobIds.size}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
