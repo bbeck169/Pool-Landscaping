@@ -14,7 +14,6 @@ import TosGate from "@/components/legal/TosGate";
 import ProfileCompletionGate from "@/components/portal/ProfileCompletionGate";
 import Breadcrumbs from "@/components/breadcrumbs/Breadcrumbs";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
-import { UserAvatar } from "@/components/UserAvatar";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
   LayoutDashboard,
@@ -36,7 +35,6 @@ import {
   Calculator,
   BarChart3,
   DollarSign,
-  ChevronDown,
   Shield,
   Clock,
   Sparkles,
@@ -184,61 +182,6 @@ const CUSTOMER_NAV = [
   { to: "/portal/terms", label: "Terms of Service", icon: Shield },
 ];
 
-function NavGroup({ item }) {
-  const location = useLocation();
-  const containsActive = item.children.some((c) =>
-    location.pathname === c.to || location.pathname.startsWith(c.to + "/")
-  );
-  const [open, setOpen] = React.useState(containsActive);
-  React.useEffect(() => {
-    if (containsActive) setOpen(true);
-  }, [containsActive]);
-  const Icon = item.icon;
-  return (
-    <div className="space-y-0.5" data-testid={`nav-group-${item.group.toLowerCase()}`}>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold hover:brightness-95 transition"
-        style={{
-          backgroundColor: "transparent",
-          color: colors.onSurfaceSecondary,
-        }}
-        data-testid={`nav-group-toggle-${item.group.toLowerCase()}`}
-      >
-        <Icon size={18} />
-        <span className="flex-1 text-left">{item.group}</span>
-        <ChevronDown size={14} style={{
-          transform: open ? "rotate(0deg)" : "rotate(-90deg)",
-          transition: "transform 150ms",
-        }} />
-      </button>
-      {open && (
-        <div className="ml-4 pl-2 space-y-0.5"
-             style={{ borderLeft: `2px solid ${colors.border}` }}>
-          {item.children.map((c) => (
-            <NavLink
-              key={c.to}
-              to={c.to}
-              end
-              className={({ isActive }) =>
-                `block px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                  isActive ? "" : "hover:brightness-95"
-                }`
-              }
-              style={({ isActive }) => ({
-                backgroundColor: isActive ? colors.brandTertiary : "transparent",
-                color: isActive ? colors.onBrandTertiary : colors.onSurfaceSecondary,
-              })}
-              data-testid={`nav-child-${c.label.toLowerCase().replace(/\s+/g, "-")}`}
-            >
-              {c.label}
-            </NavLink>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // Feb-2026 · Sidebar-pivot follow-up — 7-item vertical quick-nav rail
 // that replaces the removed horizontal QuickNavRow. Same order, same
@@ -461,102 +404,7 @@ function AppLayout() {
       >
         <QuickNavRail role={effectiveRole || user.role} />
       </aside>
-      {/* Legacy sidebar footer/nav retained below in a fully
-          collapsed container so any downstream import references
-          (mobile drawer, tests) keep resolving. Rendered only when
-          ``false`` so it never mounts on the desktop tree. */}
-      {false && (
-      <aside
-        className="hidden"
-        data-testid="side-nav-legacy"
-      >
-        <div
-          className="px-5 py-5 flex items-center gap-3"
-          style={{ borderBottom: `1px solid ${colors.border}` }}
-        >
-          <img
-            src="/logo-icon.png"
-            alt="Pool & Landscaping"
-            className="w-10 h-10 rounded-xl shadow-sm object-contain"
-            style={{ background: "#0EA5E9" }}
-            data-testid="app-logo-icon"
-          />
-          <div className="min-w-0">
-            <div
-              className="font-semibold text-sm truncate"
-              style={{ color: colors.onSurface }}
-              data-testid="app-brand-short"
-            >
-              Pool & Landscaping
-            </div>
-            <div className="text-xs truncate" style={{ color: colors.muted }}>
-              of Vistancia
-            </div>
-          </div>
-        </div>
 
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto" data-testid="admin-sidebar-scroll">
-          {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") ? (
-            <AdminSidebar />
-          ) : nav.map((item, _idx) => {
-            if (item.group) {
-              return <NavGroup key={`group-${item.group}`} item={item} />;
-            }
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
-                    isActive ? "" : "hover:brightness-95"
-                  }`
-                }
-                style={({ isActive }) => ({
-                  backgroundColor: isActive ? colors.brandTertiary : "transparent",
-                  color: isActive ? colors.onBrandTertiary : colors.onSurfaceSecondary,
-                })}
-                data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
-              >
-                <Icon size={18} />
-                <span>{item.label}</span>
-              </NavLink>
-            );
-          })}
-        </nav>
-
-        <div
-          className="px-5 py-4"
-          style={{ borderTop: `1px solid ${colors.border}` }}
-        >
-          <div className="text-xs uppercase tracking-wide mb-1" style={{ color: colors.muted }}>
-            Signed in
-          </div>
-          <div className="flex items-center gap-3 mb-3">
-            <UserAvatar user={user} size="md" testid="shell-user-avatar" />
-            <div className="min-w-0 flex-1">
-              <div
-                className="text-sm font-semibold truncate"
-                style={{ color: colors.onSurface }}
-                data-testid="shell-user-name"
-              >
-                {user.name || user.email}
-              </div>
-              <div
-                className="text-xs"
-                style={{ color: colors.muted }}
-                data-testid="shell-user-role"
-              >
-                {roleLabel}
-              </div>
-            </div>
-          </div>
-          {/* Feb-2026 · Sign out relocated to <AdminTopBar>. This
-              footer keeps only the identity block per user request. */}
-        </div>
-      </aside>
-      )}
 
       {/* Main content */}
       <main

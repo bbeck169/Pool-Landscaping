@@ -1499,7 +1499,15 @@ import os  # noqa: E402
 async def public_add_card_context(token: str):
     """Public: validate a Phase-12 magic link and return the minimum
     metadata the SetupIntent page needs. NEVER expose full email or
-    phone here — a link leak shouldn't reveal PII."""
+    phone here — a link leak shouldn't reveal PII.
+
+    Feb-2026 · BUG 2 fix — the 404 path here is now structured. The
+    most common cause of a valid-JWT-but-missing-customer is a stale
+    link minted before a database reseed (typical on preview) or a
+    hard-deleted customer. Distinguish those cases from a genuine
+    misroute so the frontend can render helpful copy instead of the
+    raw "Customer not found" banner.
+    """
     from services.add_card_links import decode_add_card_token
     payload = decode_add_card_token(token)
     customer = await db.customers.find_one(
@@ -1507,7 +1515,28 @@ async def public_add_card_context(token: str):
         {"_id": 0, "name": 1, "first_name": 1, "last_name": 1},
     )
     if not customer:
-        raise HTTPException(404, "Customer not found")
+        # Tenant sanity-probe so we can tell the difference between
+        # "customer got hard-deleted" and "token from a completely
+        # different env / reseeded DB".
+        tenant_exists = bool(await db.tenants.find_one(
+            {"id": payload["tenant_id"]}, {"_id": 0, "id": 1}
+        ))
+        logger.warning(
+            "[phase12] add-card token points at unknown customer "
+            "customer_id=%s tenant_id=%s tenant_exists=%s",
+            payload["customer_id"], payload["tenant_id"], tenant_exists,
+        )
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "stale_add_card_link",
+                "message": (
+                    "This add-card link is no longer valid. Please contact "
+                    "your service provider to send a fresh link."
+                ),
+                "tenant_exists": tenant_exists,
+            },
+        )
     tenant = await db.tenants.find_one(
         {"id": payload["tenant_id"]},
         {"_id": 0, "name": 1, "brand": 1, "support_phone": 1, "phone": 1},

@@ -140,7 +140,15 @@ export default function AddCardPage() {
         );
         const ctxJson = await ctxRes.json().catch(() => ({}));
         if (!ctxRes.ok) {
-          throw new Error(ctxJson.detail || "This link is no longer valid.");
+          // Feb-2026 · BUG 2 — backend now returns a structured
+          // ``detail`` object for the stale-link case. Prefer the
+          // human ``message`` over the code so the banner reads
+          // like a helpful hint, not a stack trace.
+          const d = ctxJson?.detail;
+          const msg = (d && typeof d === "object" && d.message)
+            ? d.message
+            : (typeof d === "string" ? d : "This link is no longer valid.");
+          throw new Error(msg);
         }
         if (cancelled) return;
         setCtx(ctxJson);

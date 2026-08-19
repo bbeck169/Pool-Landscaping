@@ -19,8 +19,8 @@
  *     category, giving mobile web the same 100% coverage.
  */
 import React, { useMemo } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, ListChecks, Phone, GraduationCap, Plus as PlusIcon, LogOut, LayoutDashboard, Workflow, CreditCard, FileEdit } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, ListChecks, Phone, GraduationCap, Plus as PlusIcon, LogOut } from "lucide-react";
 import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAuth } from "@/auth";
@@ -253,55 +253,13 @@ function QuickAccessRow() {
 }
 
 
-// Feb-2026 · Sidebar removed → 7 flat quick-nav buttons anchor the
-// new top nav. Order and route matches user spec. Role gating is
-// declarative — each entry lists the roles that see it; anyone
-// outside that set never renders the link (no dead-end clicks).
-const QUICK_NAV = [
-  { to: "/", label: "Dashboard", Icon: LayoutDashboard, roles: ["super_admin", "admin", "manager", "technician"] },
-  { to: "/workstream", label: "Workstream", Icon: Workflow, roles: ["super_admin", "admin", "manager"] },
-  { to: "/schedule",   label: "Schedule",   Icon: CalendarDays, roles: ["super_admin", "admin", "manager", "technician"] },
-  { to: "/invoices",   label: "Invoices",   Icon: FileText,     roles: ["super_admin", "admin", "manager"] },
-  { to: "/payments",   label: "Payments",   Icon: CreditCard,   roles: ["super_admin", "admin", "manager"] },
-  { to: "/customers",  label: "Customers",  Icon: Users,        roles: ["super_admin", "admin", "manager"] },
-  { to: "/estimates",  label: "Estimates",  Icon: FileEdit,     roles: ["super_admin", "admin", "manager"] },
-];
+// Feb-2026 · Sidebar-pivot follow-up — the flat horizontal
+// QuickNavRow (and its QUICK_NAV table) that briefly lived here has
+// been retired. The 7 quick-access items are now rendered as a
+// vertical rail in <AppLayout>. This file no longer owns any
+// primary-nav surface; only the QuickAccessRow (pinned pill strip)
+// and the ADMIN_NAV_V2 category dropdowns remain.
 
-
-function QuickNavRow({ role }) {
-  const items = QUICK_NAV.filter((n) => n.roles.includes(role));
-  if (items.length === 0) return null;
-  return (
-    <div
-      className="flex items-center gap-1 px-3 py-2 overflow-x-auto"
-      style={{ borderBottom: `1px solid ${colors.border}`,
-                 backgroundColor: colors.surface }}
-      data-testid="admin-topbar-quick-nav"
-    >
-      {items.map(({ to, label, Icon }) => (
-        <NavLink
-          key={to}
-          to={to}
-          className={({ isActive }) =>
-            `inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm font-semibold transition ${
-              isActive ? "" : "hover:brightness-95"
-            }`
-          }
-          style={({ isActive }) => ({
-            backgroundColor: isActive ? colors.brandTertiary : colors.surfaceSecondary,
-            color: isActive ? colors.brand : colors.onSurface,
-            border: `1px solid ${isActive ? colors.brand : colors.border}`,
-            whiteSpace: "nowrap",
-          })}
-          data-testid={`quick-nav-${to === "/" ? "dashboard" : to.replace(/^\/+/, "")}`}
-        >
-          <Icon size={14} />
-          <span>{label}</span>
-        </NavLink>
-      ))}
-    </div>
-  );
-}
 
 
 export default function AdminTopBar() {
