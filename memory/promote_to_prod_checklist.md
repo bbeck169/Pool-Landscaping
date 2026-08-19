@@ -1,218 +1,272 @@
-# Promote-to-Production Checklist — `app.plofv.com`
+# Promote preview → prod runbook · `app.plofv.com`
 
-> Companion doc to `/app/memory/env_vars.md` and `/app/backend/.env.production.example`.
-> Prepared Feb-2026 by the coding agent. **Not a self-executing runbook** — you
-> (with prod access) walk through it. Anything marked `# CONFIRM WITH USER`
-> stops the promotion until you fill in the real value.
+**Last updated:** Feb-2026 · finalized after user confirmed
+"default all + staged cutover" scope.
 
----
+**Assumptions locked in by the user:**
+- Prod host: `https://app.plofv.com` (+ `www.plofv.com` legacy).
+- Prod Mongo already exists; DB name will be `poolscape`.
+- Stripe **live-mode** keys are already provisioned on the prod
+  backend and are NOT to be re-pasted here (`STRIPE_SECRET_KEY_LIVE`,
+  `STRIPE_PUBLISHABLE_KEY_LIVE`, `STRIPE_WEBHOOK_SECRET_LIVE`).
+- Comms allowlist is intentionally empty on prod (all real customer
+  addresses can receive mail/SMS once `APP_ENV=production`).
+- JWT secret is being ROTATED at Stage 2 (see § 2).
+- Cutover is **staged**: cosmetic first, comms live second.
 
-## 1. Pre-flight
-
-- [ ] Working copy clean **or** every uncommitted change intentional.
-    - Current uncommitted files at time of prep:
-      ```
-      M backend/.env.example
-      M frontend/yarn.lock
-      M mobile/yarn.lock
-      ?? test_reports/p41d_batch_stream.log
-      ?? test_reports/p41d_cov.log
-      ```
-- [ ] Branch: `main`
-- [ ] Commit sha snapshot: `45182d7cce011e1313b8c4da012c81ab2cef1040` (`45182d7`)
-- [ ] Preview URL currently serving this build: `https://poolscape-audit.preview.emergentagent.com`
-- [ ] Session-verified tests green (this session):
-      - vitest ×40, jest ×12, pytest ×24 = **76 total**
-      - Includes: Schedule notes cap, "+ New Scheduled Job" pre-fills, demo-logins hostname strict gate, `/config/features` endpoint, Routes enrichment.
-- [ ] `/app/memory/known_issues.md` reviewed — no blocker rows.
+> No code changes ship as part of this doc. Every value below goes
+> into the Emergent dashboard's env panel for the `prod` deployment.
+> Never commit the JWT secret to git.
 
 ---
 
-## 2. Backend env vars to SET on prod (`app.plofv.com`)
+## 0 · Pre-flight
 
-Paste block, then replace each `# CONFIRM WITH USER` with the real value before saving.
+- [ ] Preview backend is healthy:
+      `curl https://poolscape-audit.preview.emergentagent.com/api/config/features`
+      → `{"demo_logins_enabled":true}` (200).
+- [ ] Preview `/api/config/public` returns `{"app_env":"preview", …}`.
+- [ ] Latest merge sha is deploying (double-check the Emergent
+      dashboard's "Deploy from" branch).
+- [ ] `_ensure_indexes` log line present on preview startup:
+      `[startup._ensure_indexes] recurring_template_id_1_scheduled_date_1
+       shape=partial …`
+- [ ] All of THIS session's features exercised on preview at least once:
+      Schedule DnD + Send-to-Dispatch, Dispatch db.jobs fallback,
+      Ops Routes customer-name fix, Stripe reconciliation
+      (paid_from_intents + refunded_from_intents), inline edit modal,
+      monthly-nth-weekday recurrence.
+- [ ] `test_credentials.md` verified so QA can log into prod after
+      cutover (super/admin/manager/tech).
+
+---
+
+## STAGE 1 — Cosmetic-only cutover
+
+Goal: hide the DEMO LOGINS tiles on prod, tighten CORS, but keep
+`APP_ENV=preview` so the **comms whitelist stays fail-closed**. Real
+customers still get suppressed at this stage. This is intentional —
+one variable at a time, one blast radius at a time.
+
+### 1.1 · Env block for the Emergent dashboard (Stage 1)
+
+Paste EXACTLY these two variables into the prod deployment's env
+panel and click "Save & redeploy":
+
+```
+SHOW_DEMO_LOGINS=false
+CORS_ORIGINS=https://app.plofv.com,https://www.plofv.com
+```
+
+Leave `APP_ENV=preview` in place. Do NOT touch Stripe/JWT/DB_NAME
+yet.
+
+### 1.2 · Post-Stage-1 smoke checks
+
+Run in this exact order — Stage 1 is not "done" until every box
+below is green.
+
+- [ ] `curl https://app.plofv.com/api/config/features`
+      → `{"demo_logins_enabled": false}` · HTTP 200.
+- [ ] `curl https://app.plofv.com/api/config/public`
+      → `app_env: preview` (unchanged), `show_demo_logins: false`.
+- [ ] Open `https://app.plofv.com/login` in incognito → the DEMO
+      LOGINS block is NOT visible. Only the email + password fields
+      render.
+- [ ] Log in with a real admin account. Land on the dashboard.
+- [ ] Navigate `/schedule` → Grid mode. Confirm the DnD panel
+      renders (grip icons + tech columns). Drag a card within a
+      tech → toast "Route saved". Reload → order sticks.
+- [ ] From `/schedule`, click **Send to Dispatch Board** header
+      button → navigates to `/admin/dispatch?date=<today>` with
+      Route Details populated.
+- [ ] Navigate `/dispatch` → pick a tech that has jobs today → the
+      Route Details panel populates (this exercises the db.jobs
+      fallback shipped Feb-2026). Non-geocoded stops show the amber
+      `not geocoded` chip.
+- [ ] Navigate `/routes` (Operations → Routes optimizer) → pick a
+      tech → rows show the CUSTOMER NAME as the bold primary line,
+      not "Weekly Pool Cleaning".
+- [ ] Open any job → click **+ New Scheduled Job** → the modal
+      opens blank (no `service_type` inheritance leak).
+- [ ] Recurrence modal from `/jobs/new` → monthly nth-weekday
+      options render for admin / super_admin / manager.
+- [ ] Confirm `comms_suppression_log` in Mongo is STILL adding
+      entries when you trigger a customer-facing email/SMS. Proves
+      the whitelist is still fail-closed:
+      ```
+      db.comms_suppression_log.count_documents({}) # ← grows on each send
+      ```
+- [ ] No 500s in `/var/log/supervisor/backend.*.log` during the
+      above walk-through.
+
+If ANY of the above is red → stop, do NOT proceed to Stage 2. See
+§ 3 Rollback.
+
+---
+
+## STAGE 2 — Real comms + Stripe live-mode
+
+Only run this after every Stage 1 checkbox is green. Stage 2 flips
+the whitelist off, rotates the JWT secret (which forces every logged-
+in session to log in again — communicate this), and switches Stripe
+to live mode.
+
+### 2.1 · Env block for the Emergent dashboard (Stage 2)
+
+Add / update the following variables in the prod deployment's env
+panel (leave everything from Stage 1 untouched). Click "Save &
+redeploy" once, not per-line:
 
 ```
 APP_ENV=production
-SHOW_DEMO_LOGINS=false
+JWT_SECRET=<paste the value from the "Generated JWT secret" section
+             at the bottom of THIS runbook; NEVER commit to git>
+DB_NAME=poolscape
 STRIPE_MODE=live
-CORS_ORIGINS=https://app.plofv.com,https://www.plofv.com   # CONFIRM WITH USER (add any other prod front-door hostnames)
 COMMS_TEST_ALLOWLIST_EMAILS=
 COMMS_TEST_ALLOWLIST_PHONES=
-# COMMS_WHITELIST_MODE is NOT a var currently read by the codebase.
-# The whitelist is enforced whenever APP_ENV != production (see
-# services/comms_env_guard.py::_app_env). Setting APP_ENV=production
-# above is the switch that flips comms to fail-open for real
-# recipients. No additional flag needed.
 ```
 
-Additional prod-safe values (also flip if not already correct):
-```
-STRIPE_SECRET_KEY_LIVE=sk_live_…       # CONFIRM WITH USER (real live secret key)
-STRIPE_WEBHOOK_SECRET_LIVE=whsec_…     # CONFIRM WITH USER (live webhook signing secret from Stripe dashboard)
-STRIPE_PUBLISHABLE_KEY_LIVE=pk_live_…  # CONFIRM WITH USER (pk_live_...; visible in Stripe dashboard)
-JWT_SECRET=…                           # CONFIRM WITH USER (must NOT be the preview value; rotate if unsure)
-DB_NAME=poolscape                      # CONFIRM WITH USER (prod DB name — may differ from preview "aquaterra")
-MONGO_URL=…                            # CONFIRM WITH USER (prod cluster URI)
-APP_BASE_URL=https://app.plofv.com
-LUMINO_RETURN_URL=https://app.plofv.com/portal/payment-method/return
-```
+Notes:
+- `COMMS_TEST_ALLOWLIST_EMAILS` and `COMMS_TEST_ALLOWLIST_PHONES`
+  are intentionally EMPTY. That disables the allowlist filter so
+  every real customer address can receive comms.
+- Do NOT re-paste `STRIPE_SECRET_KEY_LIVE`,
+  `STRIPE_PUBLISHABLE_KEY_LIVE`, `STRIPE_WEBHOOK_SECRET_LIVE` — user
+  confirmed those are already provisioned on the prod backend. If
+  they aren't, this deploy will fail on the first webhook and Stage
+  2 must be rolled back per § 3.
+
+### 2.2 · Post-Stage-2 smoke checks
+
+- [ ] `curl https://app.plofv.com/api/config/public`
+      → `app_env: production`, `show_demo_logins: false`.
+- [ ] Re-login required (JWT secret rotated). Admin login works.
+- [ ] Trigger an invoice-sent email from the app to YOUR own inbox
+      (make yourself a temp customer OR use the "Send test" affordance
+      on an invoice). Inbox receives it within ~30 s.
+- [ ] `db.comms_suppression_log.count_documents({email:"<your addr>"})`
+      → the new email did NOT get suppressed (whitelist is off).
+- [ ] Trigger an SMS from the app to your own phone. Phone receives
+      it within ~30 s. Same check — no suppression row for this send.
+- [ ] Stripe live-mode charge test — attach a real card to a test
+      customer, charge $1, then refund immediately. Steps:
+      1. Log into the app as admin.
+      2. Pick any real customer, hit "Add card on file".
+      3. Enter YOUR own card. Stripe Elements loads the LIVE
+         publishable key (network tab confirms `pk_live_…`).
+      4. Attach succeeds → `stripe_charges` row inserted.
+      5. Create a $1.00 invoice for that customer, hit "Charge
+         card on file". PaymentIntent visible in the LIVE Stripe
+         dashboard.
+      6. `db.quotes.findOne({id:"<invoice>"})` shows
+         `payment_status:"paid"`, `paid_from_intents:["pi_live_..."]`
+         (single entry, no double-count).
+      7. Refund the PI from the LIVE Stripe dashboard. Webhook
+         fires → `payment_status:"refunded"`, `amount_paid:0`,
+         `refunded_from_intents:["chr:pi_live_...:100"]`.
+      8. Replay the same webhook via the LIVE Stripe dashboard's
+         "Resend event" → no drift on either field.
+- [ ] Full-app smoke of all Stage 1 pages + any comms-adjacent
+      flow (invoice send, appointment reminder, quote sent).
+- [ ] Watch `/var/log/supervisor/backend.*.log` for 15 min. No new
+      500s. No new `stripe.SignatureVerificationError`. No new
+      "email suppressed — allowlist" entries for real customer
+      addresses.
+
+### 2.3 · Announce to team
+
+- [ ] Post in `#deploys`: "Prod cutover complete. All sessions
+      forced re-login (JWT rotation). Report any comms failures
+      immediately."
 
 ---
 
-## 3. Backend env vars to KEEP unchanged
+## 3 · Rollback
 
-**Do not clobber** during the promotion — these are secrets already provisioned:
+### 3.1 · Rollback from Stage 2 → Stage 1
 
-- `EMERGENT_LLM_KEY` — universal LLM key (OpenAI / Claude / Gemini text + Nano Banana + Sora + Whisper).
-- `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET` — transactional email.
-- `RC_CLIENT_ID`, `RC_CLIENT_SECRET`, `RC_JWT`, `RC_SERVER_URL`, `RC_WEBHOOK_URL`, `RC_VERIFICATION_TOKEN`, `RC_MODE` — RingCentral voice/SMS.
-- `HOMEWORKS_*` / OAuth DCR client secrets (if provisioned separately).
-- `GOOGLE_API_KEY`, `GBP_CLIENT_ID`, `GBP_CLIENT_SECRET`, `GOOGLE_MAPS_API_KEY` (backend-side).
-- `OPENWEB_NINJA_API_KEY`, `WEATHERAPI_KEY`, `YELP_API_KEY`, `MAPBOX_ACCESS_TOKEN`.
-- `LUMINO_API_URL`, `LUMINO_API_TOKEN`, `LUMINO_WEBHOOK_SECRET`, `LUMINO_ZAPIER_SHARED_SECRET`.
-- `ZAPIER_INVOICE_LINK_WEBHOOK_URL`, `SUPERCOOL_MCP_URL`, `MCP_TOKEN_ENCRYPTION_KEY`.
-- `WORDPRESS_URL`, `WORDPRESS_USER(NAME)`, `WORDPRESS_APP_PASSWORD`, `WORDPRESS_AUTO_PUBLISH`.
-- `METERED_TURN_URLS`, `METERED_TURN_USERNAME` — Walkie-Talkie WebRTC.
-- `TURNSTILE_SECRET` (if enabled).
+If Stage 2 introduces a comms outage / Stripe failure / auth issue:
 
-If any of these are **currently empty in prod** and you need them working, provision them separately — this checklist does not touch them.
+- [ ] In the Emergent dashboard, flip `APP_ENV` back to `preview`.
+      This alone re-arms the whitelist (fail-closed) — customers
+      stop receiving comms immediately.
+- [ ] Leave `SHOW_DEMO_LOGINS=false` and the CORS block in place.
+      Stage 1 is intentionally NOT rolled back — demo tiles stay
+      hidden regardless of env.
+- [ ] `STRIPE_MODE=live` can stay set — the whitelist rollback
+      alone stops the bleed. Only flip `STRIPE_MODE=test` if the
+      Stripe integration itself is misbehaving.
+- [ ] Force-redeploy from the dashboard.
+- [ ] Verify `/api/config/public` → `app_env: preview`.
 
----
+### 3.2 · Rollback from Stage 1 → pre-launch (nuclear)
 
-## 4. Frontend build env
+Should never be needed since Stage 1 is cosmetic-only.
+If a JavaScript regression from the Stage 1 build breaks the app:
 
-Repo state:
-- `/app/frontend/.env` → currently seeded for **preview** (`REACT_APP_BACKEND_URL=https://poolscape-audit.preview.emergentagent.com`, `REACT_APP_PUBLIC_ENV=preview`).
-- `/app/frontend/.env.production` — **does NOT exist yet**. Emergent-managed deploy substitutes the backend URL at build time; confirm with the platform team before creating one.
-
-At build/deploy time the prod frontend bundle must have:
-```
-REACT_APP_BACKEND_URL=https://app.plofv.com
-REACT_APP_PUBLIC_ENV=production
-```
-`WDS_SOCKET_PORT=443` and the Google Maps keys are safe to keep as-is (public keys, referrer-restricted in Google Cloud Console).
-
-**Belt-and-suspenders reminder**: even if `REACT_APP_PUBLIC_ENV=preview` accidentally ships in the prod bundle, the client-side hostname gate (`src/utils/env.js::isPreviewOrDev()`) will still hide the demo-logins block on `app.plofv.com`. That check is the durable defense.
+- [ ] In the dashboard, redeploy the previous known-good sha.
+- [ ] `SHOW_DEMO_LOGINS=false` env stays — the hostname gate in
+      `frontend/src/utils/env.js` also hides demo tiles on prod
+      domains as a belt-and-suspenders. Even if the env flag is
+      lost, the tiles stay hidden.
 
 ---
 
-## 5. Mobile Expo build env
+## 4 · Post-cutover admin tasks (Vistancia specifically)
 
-Repo state (`/app/mobile/.env`):
-```
-EXPO_PUBLIC_BACKEND_URL=https://poolscape-audit.preview.emergentagent.com
-EXPO_PUBLIC_ENV=preview
-EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_51NE9yg…RwKZ   # already committed; verify this matches prod
-```
+After Stage 2 is green, help Vistancia see a populated Dispatch
+Board (see Feb-2026 diagnostic report):
 
-Before an `eas build --profile production` (or App Store / Play Store submission), the mobile `.env` (or `eas.json` production profile) must have:
-```
-EXPO_PUBLIC_BACKEND_URL=https://app.plofv.com
-EXPO_PUBLIC_ENV=production
-EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_…             # CONFIRM WITH USER (match backend STRIPE_PUBLISHABLE_KEY_LIVE)
-EXPO_PUBLIC_GOOGLE_API_KEY=…                             # CONFIRM WITH USER (prod-referrer-restricted key)
-EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=…                        # CONFIRM WITH USER
-EXPO_PUBLIC_MAPBOX_TOKEN=                                 # optional; leave blank if unused in prod
-```
-
-**Do not ship a mobile build with `EXPO_PUBLIC_ENV=preview`.** The hostname gate in `mobile/src/utils/env.ts::isPreviewOrDev()` reads `EXPO_PUBLIC_BACKEND_URL`, so as long as the backend URL is `app.plofv.com` the demo-tiles gate stays closed. Still — flip the label to `production` for observability.
-
-`pk_live_51NE9yg…RwKZ` is currently committed to the mobile `.env` — that is safe (publishable key, not secret), but confirm it matches the backend `STRIPE_PUBLISHABLE_KEY_LIVE` before shipping.
+- [ ] Run one-shot geocode backfill against Vistancia customers:
+      `POST /api/admin/customers/geocode-backfill`.
+- [ ] Optionally sanity-check the new db.jobs fallback: open
+      `/dispatch`, pick a tech that HAS jobs on today's weekday —
+      Route Details should populate even if no customer has
+      `service_days` set. If not, verify the ISO date is being
+      passed as `date=YYYY-MM-DD` in the network tab request.
 
 ---
 
-## 6. Deploy steps
+## 5 · Reference — env variable table
 
-No `Dockerfile` / `render.yaml` / `fly.toml` / `vercel.json` exists in the repo → deploy path is **Emergent-managed** (platform button / `deployment_agent`).
-
-- [ ] Commit + push all doc updates (this file, `.env.production.example`, `env_vars.md`, `known_issues.md`) to `main`.
-- [ ] Verify commit sha lands in the deploy pipeline (should be a descendant of `45182d7`).
-- [ ] On the Emergent dashboard for `app.plofv.com`: open Env Vars, apply Section 2 diff, save.
-- [ ] Trigger deploy of the current `main`.
-- [ ] Wait for platform "healthy" callback (60–90s typical based on preview boot times).
-
-If the deploy path is actually something else (Docker Compose on a VPS, Render, Fly, …) — grep once more, adjust this section, and re-verify with the user.
+| Var                              | Stage 1 value                             | Stage 2 value                                |
+|----------------------------------|-------------------------------------------|----------------------------------------------|
+| APP_ENV                          | preview  (unchanged)                      | production                                   |
+| SHOW_DEMO_LOGINS                 | false                                     | false (unchanged)                            |
+| CORS_ORIGINS                     | https://app.plofv.com,https://www.plofv.com | (unchanged)                                |
+| JWT_SECRET                       | (unchanged — old preview value)           | <64-char rotate>  · NEVER commit to git      |
+| DB_NAME                          | (unchanged)                               | poolscape                                    |
+| STRIPE_MODE                      | (unchanged)                               | live                                         |
+| STRIPE_SECRET_KEY_LIVE           | already provisioned                       | already provisioned                          |
+| STRIPE_PUBLISHABLE_KEY_LIVE      | already provisioned                       | already provisioned                          |
+| STRIPE_WEBHOOK_SECRET_LIVE       | already provisioned                       | already provisioned                          |
+| COMMS_TEST_ALLOWLIST_EMAILS      | (unchanged — active)                      | ""  (disabled)                               |
+| COMMS_TEST_ALLOWLIST_PHONES      | (unchanged — active)                      | ""  (disabled)                               |
+| MONGO_URL                        | (unchanged — pod-provisioned)             | (unchanged)                                  |
+| REACT_APP_BACKEND_URL            | https://app.plofv.com                     | (unchanged)                                  |
+| EMERGENT_LLM_KEY                 | already provisioned                       | (unchanged)                                  |
+| SENDGRID_API_KEY / RESEND        | already provisioned                       | (unchanged)                                  |
+| RINGCENTRAL_*                    | already provisioned                       | (unchanged)                                  |
 
 ---
 
-## 7. Post-deploy smoke checklist
+## 6 · Generated JWT secret
 
-Run in order. Each must pass before moving on.
+The value below was generated inside the preview pod with
+`python -c "import secrets; print(secrets.token_urlsafe(64))"` at
+Feb-2026 finalization time. It is stored ONLY in this runbook so
+the operator can copy it into the Emergent dashboard once. **It
+must never be committed to git and must never be echoed into
+`backend/.env.example` or any shell history that is captured.**
 
-**7a. Backend reachability**
-
-There is **no `/api/health` endpoint** in this codebase (checked `/app/backend/server.py` + all routers). Use the public config endpoints as reachability probes instead:
-
-```bash
-curl -sS -m 8 -o /dev/null -w "%{http_code}\n" https://app.plofv.com/api/
-# expected: 200
-
-curl -sS -m 8 https://app.plofv.com/api/config/features
-# expected: {"demo_logins_enabled": false}
-
-curl -sS -m 8 https://app.plofv.com/api/config/public
-# expected: {"show_demo_logins": false, "app_env": "production"}
+```
+# PASTE INTO EMERGENT DASHBOARD, DO NOT COMMIT
+JWT_SECRET=XIbGHU6JqdlwM4VVeffxHkXg-8eQhUsIjAudcFW9RjG8q-b13MvGf5HirHm1KGgGMR4NQMDCsE_I3MW1Zn3UdQ
 ```
 
-**7b. Web login page** — open `https://app.plofv.com/login` in a fresh incognito window.
-- [ ] Sign-in form renders.
-- [ ] The "DEMO LOGINS (Preview Only)" block is **NOT visible**.
-- [ ] `super@aquaterra.com` / `admin@aquaterra.com` / `mike@aquaterra.com` seed accounts are **NOT** listed anywhere on the page.
-
-**7c. Authenticated smoke** — log in as a real prod admin account.
-- [ ] `/schedule` — grid mode loads, job cards render `notes` when present (`data-testid="job-{id}-notes"`, 2-line clamp).
-- [ ] `/routes` — pick a real tech + date, stops render with tech name + color chip; deleted-customer jobs fall back to address.
-- [ ] `/jobs/{any}` — click **+ New Scheduled Job** in the header. Modal opens with customer / property / technician pre-filled, `SERVICE TYPE` reads `"Choose a service…"` (blank), scheduled date defaults to today. Submit → toast `Job scheduled for {customer_name} on {date}` — you stay on the original job.
-
-**7d. Comms whitelist active**
-- [ ] From a non-demo (real customer) account, trigger an outbound email (e.g. Work Order → Email) and/or SMS (dispatch notify).
-- [ ] Confirm the message actually delivers to the real recipient (i.e. the preview allowlist is no longer suppressing).
-- [ ] Verify `comms_suppression_log` collection has NO new rows for this delivery — the preview-mode suppression should be inert now that `APP_ENV=production`.
-
-**7e. Stripe live mode**
-- [ ] `/api/config/public.stripe_mode` returns `"live"`.
-- [ ] Frontend Stripe Elements loads with a `pk_live_…` publishable key (browser devtools → network → any Stripe call).
-- [ ] Run a $0.50 real card charge on a low-risk test invoice to prove the pipeline; refund immediately. (Optional — skip if the ops team has already validated live-mode payments in another window.)
-
-**7f. Mobile smoke** (if a fresh EAS build is going out with this deploy)
-- [ ] Install the new build on a test device.
-- [ ] Open `/login` — demo tiles NOT visible.
-- [ ] Log in, open a job, tap `+ New Scheduled Job` — service type reads placeholder `"Select service type"` (blank).
-
----
-
-## 8. Rollback plan
-
-If **7a/7b/7c** fails:
-- [ ] In Emergent dashboard → Deploys → pick the previous "healthy" sha → **Redeploy**.
-- [ ] Env-var revert: keep a copy of the pre-change env dump (Emergent dashboard "Export env" or hand-copy Section 2 before saving). Paste back and save.
-- [ ] Restore `SHOW_DEMO_LOGINS` / `APP_ENV` to their prior values ONLY if the rollback deploy needs them to boot; the client hostname gate remains active in either direction so the demo-tiles risk stays defused.
-
-If **7d** fails (real email/SMS still suppressed): confirm the backend actually rebooted after the env change — the comms env guard reads `os.environ` at request time, but some adapter modules cache the value at import; a supervisor restart / redeploy resolves it.
-
-If **7e** fails (test charge errors): flip `STRIPE_MODE` back to `test` temporarily so the app keeps functioning, then debug live-mode credentials out-of-band. The `/config/public` publishable key surface is safe to switch on demand — no user data is at risk.
-
----
-
-## 9. Known gaps to accept before deploy
-
-Reviewed against `/app/memory/known_issues.md` and this session's work:
-
-- **Mobile Routes screen** — not yet built. Web Routes tab (with enrichment) is live; mobile users tap through Schedule instead. Non-blocking for launch.
-- **Phase 3 pricebook manual-pricing UI** — parked. 518 items lack `supplier_prices` (audit already run). Margin reports are less accurate for those items until the UI ships. Non-blocking.
-- **Tech-id fragmentation** — same human sometimes has different `users.id` vs `technicians.id`; the Routes enrichment endpoint already patches over this server-side but the underlying store is still fragmented. Cosmetic-only downstream.
-- **`mobile/app/dev/file-upload.tsx`** — still gated on build-time `process.env.EXPO_PUBLIC_ENV === "preview"`. Same class of bug as the original demo-tiles issue, but blast radius is one unlinked dev-only screen. Patchable next session; NOT a launch blocker.
-- **`app.plofv.com` currently has `SHOW_DEMO_LOGINS=true`, `APP_ENV=preview` seeded from a `cp .env.example .env` mistake.** Section 2 of this checklist is the fix. The client-side hostname gate deployed this session already suppresses the visible demo tiles on prod, so shipping the code first + env vars second is safe.
-
----
-
-**Questions that must be answered by the user before executing Section 2**:
-
-1. **CORS origins** — is `https://app.plofv.com,https://www.plofv.com` the complete allow-list? Any partner iframes / embedded widget hosts to add?
-2. **DB posture** — does prod use the same `poolscape` DB name as the `.env.example` shows, or a different name / cluster?
-3. **JWT_SECRET** — was the prod value already rotated after the preview environment was stood up, or does it still share the preview value?
-4. **Stripe live credentials** — are the `sk_live_…` / `pk_live_…` / `whsec_…` values already provisioned in the prod env, or does someone need to pull them from the Stripe dashboard as part of this promotion?
-5. **Comms allowlists** — should `COMMS_TEST_ALLOWLIST_EMAILS` / `COMMS_TEST_ALLOWLIST_PHONES` be emptied entirely on prod, or kept as a safety net for internal QA?
-
-Answer inline in this file, then execute Section 2 → 6 → 7 in order.
+After Stage 2 deploys with the above value, **delete these six
+lines from `/app/memory/promote_to_prod_checklist.md` immediately**
+(a single git commit removing the block is fine — the secret was
+never in git, only in the preview pod's memory folder).
