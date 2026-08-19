@@ -93,6 +93,12 @@ async def get_board(
     tech_user_id: Optional[str] = Query(None),
     route_type: str = Query("all"),
     global_view: bool = Query(False, alias="global"),
+    date: Optional[str] = Query(None, description=(
+        "Feb-2026 · Concrete calendar date (YYYY-MM-DD). When present "
+        "AND the customer-denorm path yields empty route_stops, the "
+        "endpoint falls back to db.jobs for that (tenant, tech, date). "
+        "Read-only — never mutates dispatch_route_orders or customer "
+        "denorm fields.")),
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
@@ -316,16 +322,138 @@ async def get_board(
             "reason": reason,
         })
 
+    # Feb-2026 · jobs fallback — when the customer-denorm path
+    # yielded nothing (no dispatch_route_orders row AND no pins
+    # matched the day/tech filter) AND the caller supplied a
+    # concrete ``date``, hydrate ``route_stops`` from ``db.jobs``.
+    # Read-only: no writes to dispatch_route_orders or customer
+    # denorm fields. Multi-tenant safe (query is tenant-scoped).
+    fallback_from_jobs = False
+    if (not route_stops) and date and tech_user_id:
+        import re as _re
+        date_prefix = _re.escape(date)
+        job_q: Dict[str, Any] = {
+            "tenant_id": tenant["id"],
+            "scheduled_date": {"$regex": f"^{date_prefix}"},
+            "$or": [
+                {"tech_user_id": tech_user_id},
+                {"assigned_to": tech_user_id},
+                {"technician_id": tech_user_id},
+            ],
+        }
+        jobs = await db.jobs.find(
+            job_q,
+            {"_id": 0, "id": 1, "customer_id": 1, "customer_name": 1,
+             "title": 1, "service_type": 1, "address": 1, "status": 1,
+             "route_index": 1, "scheduled_start": 1, "scheduled_date": 1},
+        ).sort([("route_index", 1), ("scheduled_start", 1)]).to_list(500)
+
+        if jobs:
+            fallback_from_jobs = True
+            # Batch-fetch customers for name + coords in one round-trip.
+            needed = {j.get("customer_id") for j in jobs if j.get("customer_id")}
+            cmap: Dict[str, Dict[str, Any]] = {}
+            if needed:
+                async for c in db.customers.find(
+                    {"id": {"$in": list(needed)}, "tenant_id": tenant["id"]},
+                    {"_id": 0, "id": 1, "name": 1, "billing_name": 1,
+                     "service_address": 1, "service_lat": 1, "service_lng": 1},
+                ):
+                    cmap[c["id"]] = c
+
+            # Reset pins so the map + tech_load reflect the fallback
+            # set. Skip customers we didn't just look up so we don't
+            # bleed unrelated pins in.
+            pins = []
+            for j in jobs:
+                cust = cmap.get(j.get("customer_id"))
+                display_name = (
+                    (j.get("customer_name") or "").strip()
+                    or ((cust or {}).get("name") or "").strip()
+                    or ((cust or {}).get("billing_name") or "").strip()
+                    or ((cust or {}).get("service_address") or "").strip()
+                    or (j.get("address") or "").strip()
+                    or "(no customer)"
+                )
+                svc_addr = (
+                    (cust or {}).get("service_address")
+                    or j.get("address") or ""
+                )
+                lat = (cust or {}).get("service_lat")
+                lng = (cust or {}).get("service_lng")
+                route_stops.append({
+                    "job_id": j.get("id"),
+                    "customer_id": j.get("customer_id"),
+                    "name": display_name,
+                    "customer_display_name": display_name,
+                    "service_address": svc_addr,
+                    "address": svc_addr,
+                    "lat": lat, "lng": lng,
+                    "route_index": j.get("route_index"),
+                    "service_type": j.get("service_type"),
+                    "title": j.get("title"),
+                    "status": j.get("status"),
+                    "not_geocoded": lat is None or lng is None,
+                    "tech_color_hex": None,
+                    "crew_label": None,
+                    "crew_color_hex": None,
+                    "service_day": day_norm,
+                    "override_source_tech_id": None,
+                    "source": "jobs_fallback",
+                })
+                # Emit a pin ONLY when geocoded. Non-geocoded stops
+                # still show on the sidebar list via ``route_stops``.
+                if lat is not None and lng is not None:
+                    pins.append({
+                        "customer_id": j.get("customer_id"),
+                        "name": display_name,
+                        "address": svc_addr,
+                        "lat": lat, "lng": lng,
+                        "tags": [], "category_ids": [],
+                        "service_days": [day_norm] if day_norm != "all" else [],
+                        "assigned_tech_ids": [tech_user_id],
+                        "is_scheduled_this_day": True,
+                        "tech_color_hex": None,
+                        "crew_label": None,
+                        "crew_color_hex": None,
+                        "service_day": day_norm,
+                        "override_source_tech_id": None,
+                        "override_id": None,
+                        "override_end_at": None,
+                        "source": "jobs_fallback",
+                    })
+
+            # Refresh tech_load for the fallback tech.
+            tech_load = {tech_user_id: {
+                "tech_user_id": tech_user_id,
+                "name": None, "color_hex": _hash_color(tech_user_id or ""),
+                "count": len(route_stops),
+            }}
+            u = await db.users.find_one(
+                {"id": tech_user_id, "tenant_id": tenant["id"]},
+                {"_id": 0, "name": 1, "display_color_hex": 1},
+            )
+            if u:
+                tech_load[tech_user_id]["name"] = u.get("name") or tech_user_id
+                tech_load[tech_user_id]["color_hex"] = (
+                    u.get("display_color_hex") or tech_load[tech_user_id]["color_hex"]
+                )
+            # Rebuild routed_ids so unrouted computation reflects the
+            # new pins set (below).
+            routed_ids = {p["customer_id"] for p in pins}
+
     return {
         "pins": pins,
         "route_stops": route_stops,
-        "tech_load": list(tech_load.values()),
+        "tech_load": list(tech_load.values()) if isinstance(tech_load, dict) else tech_load,
         "unrouted_customers": unrouted_customers,
         "suggested_optimization": None,
         "polyline": None,
         "global_view": global_view,
         "day": day_norm,
+        "date": date,
         "tech_user_id": tech_user_id,
+        "source": "jobs_fallback" if fallback_from_jobs else "denorm",
     }
 
 

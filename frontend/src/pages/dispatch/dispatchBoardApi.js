@@ -11,12 +11,16 @@ const q = (p) => {
   return parts.length ? `?${parts.join("&")}` : "";
 };
 
-export function fetchBoard({ day, tech_user_id, route_type, global_view } = {}) {
+export function fetchBoard({ day, tech_user_id, route_type, global_view, date } = {}) {
   return api.get(`/dispatch/board${q({
     day: day || "all",
     tech_user_id: tech_user_id || undefined,
     route_type: route_type || "all",
     global: global_view ? "true" : undefined,
+    // Feb-2026 · concrete calendar date triggers the db.jobs
+    // fallback in the backend when the customer-denorm path yields
+    // empty. Omit for backwards-compat behaviour.
+    date: date || undefined,
   })}`);
 }
 

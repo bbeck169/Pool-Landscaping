@@ -162,9 +162,15 @@ export default function DispatchBoardPage() {
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
+      const isoDate = isoDateForDayKey(day);  // null for "all"
       const data = await fetchBoard({
         day, tech_user_id: techId,
         route_type: routeType, global_view: globalView,
+        // Feb-2026 · resolve the weekday tab to a concrete calendar
+        // date so the backend can fall back to db.jobs when the
+        // customer-denorm path is empty. Null for the "All" tab so
+        // legacy behaviour is preserved.
+        date: isoDate,
       });
       setBoard(data);
       // Reset optimizer state whenever filters change.

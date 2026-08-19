@@ -107,6 +107,17 @@ export default function RouteDetailsList({
               >
                 <MapPin size={11} />
                 {formatAddress(s.address) || "No address"}
+                {/* Feb-2026 · db.jobs-fallback flag — surface a chip so
+                    admins understand why a stop isn't on the map. */}
+                {s.not_geocoded ? (
+                  <span
+                    data-testid={`dispatch-route-nogeo-${s.customer_id}`}
+                    className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold"
+                    style={{ background: "#FEF3C7", color: "#92400E" }}
+                  >
+                    not geocoded
+                  </span>
+                ) : null}
               </div>
             </div>
             {!disabled && (
