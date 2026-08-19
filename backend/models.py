@@ -232,6 +232,12 @@ class LineItem(BaseModel):
     retail_price_snapshot: Optional[float] = None
     wholesale_price_snapshot: Optional[float] = None
     labor_cost_snapshot: Optional[float] = None
+    # Feb-2026 · Pricebook item_type — set by the estimate/invoice
+    # writer path when the line references a service and the operator
+    # overrides the unit_price. Products may NOT set this — the
+    # writer rejects such lines with 400. Nullable so legacy lines
+    # (no ``item_type`` on the referenced item) grandfather to false.
+    overridden_price: Optional[bool] = False
 
 
 class QuoteIn(BaseModel):
@@ -386,6 +392,14 @@ class ItemIn(BaseModel):
     unit: Optional[str] = "each"
     unit_price: float = 0.0
     taxable: Optional[bool] = True
+    # Feb-2026 · Pricebook item taxonomy — "product" vs "service".
+    # Products keep the existing locked-price behaviour and can carry
+    # supplier prices / cost fields. Services have NO supplier data
+    # and their unit price is EDITABLE per-customer on estimate /
+    # invoice line items (see routers/quotes.py). Defaults to
+    # ``product`` so every row that pre-dates this feature keeps its
+    # current behaviour.
+    item_type: Optional[str] = "product"
     # Feb-2026 · Service categories — higher-level business-unit
     # taxonomy attached to pricebook items. Required on new writes;
     # existing rows without one are grandfathered on reads.

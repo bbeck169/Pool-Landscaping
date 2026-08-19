@@ -90,6 +90,10 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
             quantity: Number(li.quantity) || 0,
             unit_price: Number(li.unit_price) || 0,
             category: li.category || "Pool",
+            // Feb-2026 · plumb pricebook FK so the backend can
+            // resolve item_type and enforce the price-lock rule.
+            item_id: li.item_id || li.pricebook_item_id || undefined,
+            pricebook_item_id: li.pricebook_item_id || undefined,
           })),
       };
       const saved = await api.post("/quotes", payload);
@@ -184,7 +188,18 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
                           ...f,
                           line_items: f.line_items.map((x, idx) =>
                             idx === i
-                              ? { ...x, description: chosen.name, unit_price: chosen.unit_price || 0, category: chosen.category || "Pool", pricebook_item_id: chosen.id }
+                              ? { ...x, description: chosen.name,
+                                   unit_price: chosen.unit_price || 0,
+                                   category: chosen.category || "Pool",
+                                   pricebook_item_id: chosen.id,
+                                   item_id: chosen.id,
+                                   // Feb-2026 · Pricebook item_type — snapshot the
+                                   // referenced item's type + reference price so the
+                                   // UI can lock/unlock the price cell + surface the
+                                   // "overridden" chip without a second round-trip.
+                                   _item_type: (chosen.item_type || "product").toLowerCase(),
+                                   _pricebook_unit_price: Number(chosen.unit_price || 0),
+                                   overridden_price: false }
                               : x
                           ),
                         }));
@@ -214,17 +229,59 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
                   style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
                   data-testid={`qf-line-${i}-qty`}
                 />
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={li.unit_price}
-                  onChange={(e) => setLine(i, "unit_price", e.target.value)}
-                  placeholder="Unit $"
-                  className="col-span-3 px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
-                  style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
-                  data-testid={`qf-line-${i}-price`}
-                />
+                {/* Feb-2026 · Pricebook item_type — product lines lock
+                    unit_price to the pricebook value; service lines
+                    stay editable. Renders a small "🔒" lock icon +
+                    tooltip on locked cells, and an "overridden" chip
+                    when the operator diverges on a service. */}
+                <div className="col-span-3 relative"
+                     data-testid={`qf-line-${i}-price-wrap`}>
+                  {(() => {
+                    const isProduct = (li._item_type || "product").toLowerCase() === "product"
+                                       && !!li.item_id;
+                    const overridden = !isProduct
+                       && li._pricebook_unit_price != null
+                       && Math.abs(Number(li.unit_price || 0)
+                                    - Number(li._pricebook_unit_price || 0)) > 0.005;
+                    return (
+                      <>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={li.unit_price}
+                          readOnly={isProduct}
+                          disabled={isProduct}
+                          onChange={(e) => setLine(i, "unit_price", e.target.value)}
+                          placeholder="Unit $"
+                          className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+                          title={isProduct ? "Product prices are locked to the pricebook. Convert the item to a service to edit here." : undefined}
+                          style={{
+                            backgroundColor: isProduct ? colors.surface : colors.surfaceSecondary,
+                            border: `1px solid ${colors.border}`,
+                            opacity: isProduct ? 0.72 : 1,
+                          }}
+                          data-testid={`qf-line-${i}-price`}
+                        />
+                        {isProduct ? (
+                          <span
+                            data-testid={`qf-line-${i}-price-lock`}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-xs"
+                            style={{ color: colors.muted }}
+                            aria-label="Product price locked"
+                          >🔒</span>
+                        ) : null}
+                        {overridden ? (
+                          <span
+                            data-testid={`qf-line-${i}-price-overridden`}
+                            className="absolute -bottom-4 right-0 px-1 py-0.5 rounded text-[10px] font-semibold"
+                            style={{ background: "#FEF3C7", color: "#92400E" }}
+                          >overridden</span>
+                        ) : null}
+                      </>
+                    );
+                  })()}
+                </div>
                 <button
                   type="button"
                   onClick={() => removeLine(i)}

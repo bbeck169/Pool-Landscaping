@@ -25,11 +25,39 @@ async def list_items(user: dict = Depends(require_admin)):
 @router.post("/items")
 async def create_item(body: ItemIn, user: dict = Depends(require_admin)):
     doc = body.dict()
+    # Feb-2026 · Pricebook item_type — services carry NO supplier /
+    # cost data. If the caller passes any such fields on a service
+    # write, reject with 400 (fail-loud is nicer to the UI than a
+    # silent scrub).
+    item_type = (doc.get("item_type") or "product").lower()
+    if item_type not in ("product", "service"):
+        raise HTTPException(400, "item_type must be 'product' or 'service'")
+    doc["item_type"] = item_type
+    if item_type == "service":
+        _SUPPLIER_FIELDS = ("supplier_prices", "supplier_id",
+                             "wholesale_price", "labor_cost_default",
+                             "income_category_id", "external_sku")
+        offending = [f for f in _SUPPLIER_FIELDS
+                     if doc.get(f) not in (None, [], "", 0, 0.0)]
+        if offending:
+            raise HTTPException(400, {
+                "error": "services_cannot_have_supplier_pricing",
+                "message": "services cannot have supplier pricing",
+                "fields": offending,
+            })
+        # Safety-net scrub — force null so downstream reports don't
+        # see stale supplier state on a service row.
+        for f in _SUPPLIER_FIELDS:
+            if f == "supplier_prices":
+                doc[f] = []
+            else:
+                doc[f] = None
     # Feb-2026 · Service category enforcement on pricebook write.
     from routers.service_categories import validate_service_category
     tenant_id = user.get("tenant_id") or ""
     await validate_service_category(tenant_id, doc.get("service_category_id"))
     # Phase 56-b · Aug-2026 — Multi-supplier pricing validation.
+    # (No-op for services — supplier_prices was scrubbed to [] above.)
     doc["supplier_prices"] = await _validate_supplier_prices(
         tenant_id, doc.get("income_category_id"), doc.get("supplier_prices"),
     )
@@ -88,6 +116,10 @@ class ItemPatch(BaseModel):
     description: Optional[str] = None
     active: Optional[bool] = None
     sku: Optional[str] = None
+    # Feb-2026 · Pricebook item_type patch. Flipping product → service
+    # scrubs supplier fields to null. Flipping service → product
+    # leaves them null (admin must repopulate).
+    item_type: Optional[str] = None
     # Feb-2026 · Service category — patchable, validated below.
     service_category_id: Optional[str] = None
     # Feb-2026 · PB1 · Internal-only cost fields.
@@ -229,6 +261,33 @@ async def patch_item(iid: str, body: ItemPatch,
         from routers.service_categories import validate_service_category
         await validate_service_category(row.get("tenant_id") or user.get("tenant_id") or "",
                                           upd["service_category_id"])
+    # Feb-2026 · item_type patch. Compute the effective type after
+    # the patch applies, then reject any supplier field on a service.
+    effective_type = (
+        (upd.get("item_type") or row.get("item_type") or "product").lower()
+    )
+    if "item_type" in upd and effective_type not in ("product", "service"):
+        raise HTTPException(400, "item_type must be 'product' or 'service'")
+    upd["item_type"] = effective_type
+    if effective_type == "service":
+        _SUPPLIER_FIELDS = ("supplier_prices", "supplier_id",
+                             "wholesale_price", "labor_cost_default",
+                             "income_category_id", "external_sku")
+        offending = [f for f in _SUPPLIER_FIELDS
+                     if upd.get(f) not in (None, [], "", 0, 0.0)]
+        if offending:
+            raise HTTPException(400, {
+                "error": "services_cannot_have_supplier_pricing",
+                "message": "services cannot have supplier pricing",
+                "fields": offending,
+            })
+        # Flipping product → service scrubs whatever supplier state
+        # was on the row.
+        for f in _SUPPLIER_FIELDS:
+            if f == "supplier_prices":
+                upd[f] = []
+            else:
+                upd[f] = None
     # Phase 56-b · Aug-2026 — Multi-supplier pricing patch validation.
     # If the caller sends supplier_prices, validate against the
     # income_category the item is (or is becoming) attached to. If

@@ -21,6 +21,63 @@ def compute_totals(line_items: List[dict], tax_rate: float):
     return round(subtotal, 2), tax, round(subtotal + tax, 2)
 
 
+# ── Feb-2026 · Pricebook item_type enforcement on line-items.
+# ────────────────────────────────────────────────────────────────
+# Every line item that references a pricebook row via ``item_id`` (or
+# ``pricebook_item_id``) is checked against the referenced item's
+# ``item_type``:
+#   • ``product`` → ``unit_price`` MUST equal the pricebook value.
+#     Any drift → 400 (product prices are locked).
+#   • ``service`` → ``unit_price`` may differ. Whenever it differs
+#     from the pricebook value we stamp ``overridden_price=True`` on
+#     the line for downstream reporting.
+# Legacy rows without ``item_type`` on the referenced item are
+# treated as ``product`` (matches the "default all existing rows to
+# product" migration policy).
+async def _enforce_item_type_price_lock(tenant_id: str,
+                                          line_items: List[dict]) -> None:
+    ids = {li.get("item_id") or li.get("pricebook_item_id")
+            for li in line_items}
+    ids.discard(None)
+    if not ids:
+        return
+    rows = {}
+    async for row in db.items.find(
+        {"id": {"$in": list(ids)}, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "item_type": 1, "unit_price": 1, "name": 1},
+    ):
+        rows[row["id"]] = row
+    for li in line_items:
+        pid = li.get("item_id") or li.get("pricebook_item_id")
+        if not pid or pid not in rows:
+            # Line has no pricebook link OR the pricebook item was
+            # deleted (soft-delete leaves the id valid on old lines).
+            # Neither case has a price-lock rule to enforce.
+            li.setdefault("overridden_price", False)
+            continue
+        row = rows[pid]
+        pb_type = (row.get("item_type") or "product").lower()
+        try:
+            line_up = float(li.get("unit_price") or 0)
+            pb_up = float(row.get("unit_price") or 0)
+        except (TypeError, ValueError) as e:
+            raise HTTPException(422, "unit_price must be numeric") from e
+        differs = abs(line_up - pb_up) > 0.005
+        if pb_type == "product" and differs:
+            raise HTTPException(400, {
+                "error": "product_price_locked",
+                "message": ("product prices are locked; convert the "
+                             "pricebook item to a service if you need "
+                             "custom pricing"),
+                "item_id": pid,
+                "item_name": row.get("name"),
+                "pricebook_unit_price": pb_up,
+                "attempted_unit_price": line_up,
+            })
+        # Service — record whether the operator overrode the price.
+        li["overridden_price"] = bool(differs and pb_type == "service")
+
+
 # ── PB1 · Feb-2026 · Line-item margin snapshot stamping.
 # ────────────────────────────────────────────────────────────────
 # Snapshots are IMMUTABLE once written. On every write path we look
@@ -176,6 +233,10 @@ async def create_quote(body: QuoteIn,
         if len(active_props) == 1:
             property_id = active_props[0]["id"]
     items = [li.dict() for li in body.line_items]
+    # Feb-2026 · Pricebook item_type enforcement on line-item writes.
+    # Products lock unit_price to the pricebook; services allow the
+    # operator to override per-customer.
+    await _enforce_item_type_price_lock(tenant["id"], items)
     # Feb-2026 · Income category enforcement — every line item on a
     # NEW invoice must carry a valid category (existing seed data is
     # grandfathered). Enforced only for invoices; quotes remain lenient.
@@ -323,6 +384,8 @@ async def update_quote(qid: str, body: QuoteUpdate,
                         # Unconditional overwrite of incoming payload —
                         # snapshots are immutable once set.
                         new_li[k] = match[k]
+        # Feb-2026 · Pricebook item_type enforcement.
+        await _enforce_item_type_price_lock(tenant["id"], upd["line_items"])
         await _stamp_line_snapshots(upd["line_items"])
     if "line_items" in upd or "tax_rate" in upd:
         items = upd.get("line_items", existing.get("line_items", []))

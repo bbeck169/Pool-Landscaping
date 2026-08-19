@@ -1865,6 +1865,10 @@ export function PriceBook() {
     tax_rate: 0, wholesale_price: 0, labor_cost_default: 0,
     service_category_id: "", income_category_id: "",
     supplier_prices: {},
+    // Feb-2026 · Pricebook item_type — default "product" preserves
+    // existing lock-price behaviour. Flipping to "service" hides
+    // supplier UI and unlocks unit_price on estimate/invoice lines.
+    item_type: "product",
   });
   const [toast, setToast] = useState(null);
   // Aug-2026 · Fix P1 — Pricebook create requires ``service_category_id``.
@@ -2110,18 +2114,26 @@ export function PriceBook() {
       return;
     }
     try {
+      // Feb-2026 · item_type — services must NOT carry any supplier
+      // or cost data. Send null / [] so the backend accept path is
+      // clean even if the form state has stale numbers.
+      const isService = form.item_type === "service";
       await api.post("/items", {
         ...form,
         unit_price: Number(form.unit_price) || 0,
         tax_rate: taxN,
-        income_category_id: form.income_category_id || null,
-        supplier_prices,
+        item_type: form.item_type || "product",
+        income_category_id: isService ? null : (form.income_category_id || null),
+        supplier_prices: isService ? [] : supplier_prices,
+        wholesale_price: isService ? null : (Number(form.wholesale_price) || 0),
+        labor_cost_default: isService ? null : (Number(form.labor_cost_default) || 0),
       });
       setOpen(false);
       setForm({
         name: "", category: "Pool", unit: "each", unit_price: 0,
         tax_rate: 0, service_category_id: "",
         income_category_id: "", supplier_prices: {},
+        item_type: "product",
       });
       refresh();
     } catch (e) {
@@ -2441,7 +2453,9 @@ export function PriceBook() {
           {/* Phase 56-b · Aug-2026 — Income Category picker.
               Drives which suppliers appear in the grid below.
               Switching this dropdown wipes the supplier_prices state
-              so stale entries from a different category can't leak. */}
+              so stale entries from a different category can't leak.
+              Feb-2026 · hidden entirely when item_type=service. */}
+          {form.item_type !== "service" ? (
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-wide mb-1"
                     style={{ color: colors.muted }}>
@@ -2466,16 +2480,65 @@ export function PriceBook() {
               ))}
             </select>
           </div>
+          ) : null}
           <TextInput label="CATEGORY" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} testid="pb-new-category" />
           <TextInput label="UNIT" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} testid="pb-new-unit" />
           <TextInput label="UNIT PRICE ($)" type="number" step="0.01" min="0" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} testid="pb-new-price" />
           {/* Legacy ``cost``/``tax_rate`` — kept in form state for
               backend contract, hidden from UI per preflight §3. */}
           <TextInput label="TAX RATE (%)" type="number" step="0.01" min="0" max="100" value={form.tax_rate} onChange={(e) => setForm({ ...form, tax_rate: e.target.value })} testid="pb-new-tax" />
+          {/* Feb-2026 · item_type toggle. Products keep locked pricing
+              + supplier costs; services allow per-customer price
+              overrides on estimates and invoices. Renders BEFORE the
+              supplier grid so the grid can hide when Service picked. */}
+          <div className="pt-2">
+            <div className="text-[10px] font-bold uppercase tracking-wide mb-1"
+                  style={{ color: colors.muted }}>Type</div>
+            <div className="inline-flex rounded-lg border overflow-hidden"
+                  style={{ borderColor: colors.divider }}
+                  data-testid="pb-new-type-toggle">
+              {[{ v: "product", label: "Product" },
+                { v: "service", label: "Service" }].map((opt) => {
+                const on = form.item_type === opt.v;
+                return (
+                  <button key={opt.v} type="button"
+                    data-testid={`pb-new-type-${opt.v}`}
+                    onClick={() => setForm({
+                      ...form, item_type: opt.v,
+                      // Flipping to service scrubs supplier state
+                      // client-side so the send matches the backend
+                      // reject rules — no stale supplier fields.
+                      ...(opt.v === "service" ? {
+                        income_category_id: "",
+                        supplier_prices: {},
+                        wholesale_price: 0,
+                        labor_cost_default: 0,
+                      } : {}),
+                    })}
+                    className="px-3 py-1.5 text-xs font-semibold"
+                    style={{
+                      background: on ? colors.brand : colors.surface,
+                      color: on ? "#fff" : colors.onSurface,
+                    }}>
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            {form.item_type === "service" ? (
+              <div className="text-xs mt-2"
+                    style={{ color: colors.muted }}
+                    data-testid="pb-new-service-helper">
+                Service prices are editable per-customer on estimates
+                and invoices.
+              </div>
+            ) : null}
+          </div>
           {/* Phase 56-b · Supplier prices grid. Only renders when the
               user picks an income_category. Empty grid (unknown cat)
-              stays hidden. */}
-          {form.income_category_id && modalSuppliers.length > 0 ? (
+              stays hidden. Feb-2026 · also hides when item_type is
+              service — services carry NO supplier data. */}
+          {form.item_type !== "service" && form.income_category_id && modalSuppliers.length > 0 ? (
             <div className="pt-3 mt-2"
                   style={{ borderTop: `1px solid ${colors.divider}` }}
                   data-testid="pb-new-supplier-grid">
