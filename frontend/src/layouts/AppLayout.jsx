@@ -25,7 +25,6 @@ import {
   Wrench,
   MoreHorizontal,
   Magnet,
-  LogOut,
   Home as HomeIcon,
   Waves,
   Receipt,
@@ -390,13 +389,13 @@ function AppLayout() {
       <div id="impersonation-banner-slot" style={{ height: impersonating ? 40 : 0 }} />
       <div id="preview-banner-slot" style={{ height: isPreviewing ? 40 : 0 }} />
 
-      {/* Side nav (>=md) */}
+      {/* Feb-2026 · Sidebar removed per user request — primary
+          navigation lives in <AdminTopBar> now (7 flat quick-nav
+          buttons + existing category dropdowns act as "More admin"
+          submenus). This <aside> is force-hidden so ``main``
+          takes the full viewport width. */}
       <aside
-        className="hidden md:flex md:flex-col md:w-64 md:min-h-screen"
-        style={{
-          backgroundColor: colors.surface,
-          borderRight: `1px solid ${colors.border}`,
-        }}
+        className="hidden"
         data-testid="side-nav"
       >
         <div
@@ -481,19 +480,8 @@ function AppLayout() {
               </div>
             </div>
           </div>
-          <button
-            onClick={onLogout}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition hover:brightness-95"
-            style={{
-              backgroundColor: colors.surfaceSecondary,
-              color: colors.error,
-              border: `1px solid ${colors.border}`,
-            }}
-            data-testid="shell-logout-button"
-          >
-            <LogOut size={16} />
-            Sign out
-          </button>
+          {/* Feb-2026 · Sign out relocated to <AdminTopBar>. This
+              footer keeps only the identity block per user request. */}
         </div>
       </aside>
 
@@ -615,11 +603,14 @@ function AppLayout() {
           </div>
         )}
 
-        {/* Phase 44 · Admin-only persistent top navigation bar. Renders
-            below the mobile top bar (which is already sticky-top on
-            <md) and above the page outlet. Additive — the sidebar
-            remains the canonical IA. */}
-        {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") && (
+        {/* Phase 44 · persistent top navigation bar.
+            Feb-2026 — extended to render for technicians too so the
+            QuickNavRow (Dashboard + Schedule for techs) is reachable
+            after the left sidebar was hidden. Customer / customer_admin
+            keep their own <UniversalMenu> (mounted just below). */}
+        {["admin", "super_admin", "manager", "technician"].includes(
+          (effectiveRole || user.role)
+        ) && (
           <AdminTopBar />
         )}
 

@@ -19,8 +19,8 @@
  *     category, giving mobile web the same 100% coverage.
  */
 import React, { useMemo } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, ListChecks, Phone, GraduationCap, Plus as PlusIcon } from "lucide-react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, ListChecks, Phone, GraduationCap, Plus as PlusIcon, LogOut, LayoutDashboard, Workflow, CreditCard, FileEdit } from "lucide-react";
 import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAuth } from "@/auth";
@@ -45,6 +45,14 @@ import { colors } from "@/theme";
 function useVisibleGroups() {
   const { can, effectiveRole } = usePermissions();
   return useMemo(() => {
+    // Feb-2026 · sidebar-removal follow-up — `ADMIN_NAV_V2` is the
+    // admin IA surface. Technicians / customers now share the same
+    // AdminTopBar host (so the QuickNavRow reaches them), but they
+    // must NOT see the admin category dropdowns. Short-circuit here
+    // so downstream mapping cost is zero for those roles.
+    if (!["admin", "super_admin", "manager"].includes(effectiveRole)) {
+      return [];
+    }
     return ADMIN_NAV_V2
       .map((g) => ({
         ...g,
@@ -245,8 +253,66 @@ function QuickAccessRow() {
 }
 
 
+// Feb-2026 · Sidebar removed → 7 flat quick-nav buttons anchor the
+// new top nav. Order and route matches user spec. Role gating is
+// declarative — each entry lists the roles that see it; anyone
+// outside that set never renders the link (no dead-end clicks).
+const QUICK_NAV = [
+  { to: "/", label: "Dashboard", Icon: LayoutDashboard, roles: ["super_admin", "admin", "manager", "technician"] },
+  { to: "/workstream", label: "Workstream", Icon: Workflow, roles: ["super_admin", "admin", "manager"] },
+  { to: "/schedule",   label: "Schedule",   Icon: CalendarDays, roles: ["super_admin", "admin", "manager", "technician"] },
+  { to: "/invoices",   label: "Invoices",   Icon: FileText,     roles: ["super_admin", "admin", "manager"] },
+  { to: "/payments",   label: "Payments",   Icon: CreditCard,   roles: ["super_admin", "admin", "manager"] },
+  { to: "/customers",  label: "Customers",  Icon: Users,        roles: ["super_admin", "admin", "manager"] },
+  { to: "/estimates",  label: "Estimates",  Icon: FileEdit,     roles: ["super_admin", "admin", "manager"] },
+];
+
+
+function QuickNavRow({ role }) {
+  const items = QUICK_NAV.filter((n) => n.roles.includes(role));
+  if (items.length === 0) return null;
+  return (
+    <div
+      className="flex items-center gap-1 px-3 py-2 overflow-x-auto"
+      style={{ borderBottom: `1px solid ${colors.border}`,
+                 backgroundColor: colors.surface }}
+      data-testid="admin-topbar-quick-nav"
+    >
+      {items.map(({ to, label, Icon }) => (
+        <NavLink
+          key={to}
+          to={to}
+          className={({ isActive }) =>
+            `inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm font-semibold transition ${
+              isActive ? "" : "hover:brightness-95"
+            }`
+          }
+          style={({ isActive }) => ({
+            backgroundColor: isActive ? colors.brandTertiary : colors.surfaceSecondary,
+            color: isActive ? colors.brand : colors.onSurface,
+            border: `1px solid ${isActive ? colors.brand : colors.border}`,
+            whiteSpace: "nowrap",
+          })}
+          data-testid={`quick-nav-${to === "/" ? "dashboard" : to.replace(/^\/+/, "")}`}
+        >
+          <Icon size={14} />
+          <span>{label}</span>
+        </NavLink>
+      ))}
+    </div>
+  );
+}
+
+
 export default function AdminTopBar() {
   const visible = useVisibleGroups();
+  const _auth = useAuth();
+  const _role = _auth?.user?.role || "";
+  // Feb-2026 · Sidebar removed → the quick-nav row is the primary
+  // top-of-page navigation. Compute BEFORE the ``visible.length===0``
+  // guard so technicians (who see no admin category dropdowns) still
+  // get their Dashboard + Schedule quick-nav row.
+  const _quickNavCount = QUICK_NAV.filter((n) => n.roles.includes(_role)).length;
   // Phase 44 · Fix A (attempt 3) — bulletproof responsive gate.
   //
   // Previous attempts using Tailwind `hidden md:flex` / `md:hidden` and
@@ -285,7 +351,7 @@ export default function AdminTopBar() {
   }, []);
   const isNarrow = vw < 768;
 
-  if (visible.length === 0) return null;
+  if (visible.length === 0 && _quickNavCount === 0) return null;
   return (
     <div
       className="sticky top-0 z-30 w-full border-b"
@@ -297,11 +363,26 @@ export default function AdminTopBar() {
       data-vw={vw}
       data-narrow={isNarrow ? "1" : "0"}
     >
+      {/* Feb-2026 · Quick-nav row (Dashboard / Workstream / Schedule /
+          Invoices / Payments / Customers / Estimates). Sits ABOVE
+          the existing 6 category dropdowns, which now act as the
+          "More admin" access surface. */}
+      <QuickNavRow role={_role} />
       {/* Phase 55 — pinned Quick Access strip. Rendered above the
           6-category dropdowns / mobile menu so it stays reachable
           in one tap without changing existing behavior. */}
       <QuickAccessRow />
-      {isNarrow ? (
+      {visible.length === 0 ? (
+        // Feb-2026 · Technician (no admin categories) still needs
+        // the right-side actions cluster — render just the actions,
+        // no empty dropdown row above.
+        <div
+          className="px-4 h-11 flex items-center justify-end gap-2"
+          data-testid="admin-topbar-tech-wrap"
+        >
+          <SignOutButton />
+        </div>
+      ) : isNarrow ? (
         <div
           className="px-4 h-11 flex items-center justify-between"
           data-testid="admin-topbar-narrow-wrap"
@@ -311,6 +392,7 @@ export default function AdminTopBar() {
             <AddCustomerButton />
             <CreditsBudgetChip />
             <NotificationBell variant="inline" />
+            <SignOutButton />
           </div>
         </div>
       ) : (
@@ -325,6 +407,7 @@ export default function AdminTopBar() {
             <AddCustomerButton />
             <CreditsBudgetChip />
             <NotificationBell variant="inline" />
+            <SignOutButton />
           </div>
         </div>
       )}
@@ -351,6 +434,39 @@ function AddCustomerButton() {
       aria-label="Add customer"
     >
       <PlusIcon size={14} /> Add Customer
+    </button>
+  );
+}
+
+
+// Feb-2026 · Sign-out moved from the sidebar footer up to the
+// AdminTopBar per user request. Reuses the exact ``useAuth().logout``
+// handler that used to live in ``AppLayout``. Same visible role
+// scope as the rest of the topbar (any signed-in user reaches this
+// component because the sidebar mounts it for every role).
+function SignOutButton() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  if (!auth?.user) return null;
+  const onLogout = () => {
+    try { auth.logout && auth.logout(); } finally {
+      navigate("/login", { replace: true });
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={onLogout}
+      className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-semibold shadow-sm hover:brightness-95"
+      style={{
+        backgroundColor: colors.surfaceSecondary,
+        color: colors.error,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid="header-signout"
+      aria-label="Sign out"
+    >
+      <LogOut size={14} /> Sign out
     </button>
   );
 }
