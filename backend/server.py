@@ -164,9 +164,12 @@ api_router = APIRouter(prefix="/api")
 api_router.include_router(marketing_campaigns_router.router)
 
 # Phase 12B · Feb 2026 — Stripe ↔ Customers cross-reference admin
-# endpoints. REMOVED in Phase LZ4 (Feb 2026) — Stripe SDK retired
-# in favour of Lumino via Zapier bridge. Legacy stripe_* invoice
-# fields are preserved as historical audit; no live sync remains.
+# endpoints. Retired at the router-registration level (never
+# re-mounted after the Phase 47d Stripe restoration). Legacy
+# stripe_* invoice fields on ``quotes`` are preserved as the live
+# audit trail feeding paid_from_intents / refunded_from_intents on
+# every current charge; the removed endpoint was the admin-only
+# reverse-lookup UI, not the sync layer.
 
 # Feb-2026 · BUG E — global Terms of Service gate. Registered BEFORE
 # the generic router loop so that ``GET /api/legal/tos`` wins the path
@@ -451,14 +454,16 @@ api_router.include_router(_stop_attr_router.router, dependencies=[Depends(_rg)])
 from routers import driver_scorecard as _driver_scorecard_router  # noqa: E402
 api_router.include_router(_driver_scorecard_router.router, dependencies=[Depends(_rg)])
 
-# Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
+# Feb-2026 · Payments summary tile (restored on Phase 47d Stripe
+# revival — see routers/payments_summary.py docstring).
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)
 
 # Phase 14a · Feb-2026 — Stripe re-integration (card-on-file).
 # Endpoints: /api/payments/stripe/{setup-intent,attach,payment-methods/*,charge,webhook}.
 # Fresh collection ``db.stripe_charges``; legacy ``db.stripe_payments_live``
-# stays retired (Phase LZ4). Test/live mode split via ``STRIPE_MODE``.
+# stays retired at the collection level. Test/live mode split via
+# ``STRIPE_MODE``.
 from routers import stripe_router as _p14a_stripe_router  # noqa: E402
 api_router.include_router(_p14a_stripe_router.router)
 # Feb 2026 · P1 Hotfix #3 — Legacy-URL alias so ``/api/stripe/webhook``
@@ -1118,9 +1123,11 @@ async def _background_seed():
             "cron", hour=2, minute=0,
             id="recurring_job_generator", replace_existing=True)
 
-        # Phase 4B follow-up · Feb 2026 — Stripe live-key health cron
-        # was REMOVED in Phase LZ4 (Feb 2026). Lumino via Zapier bridge
-        # is the sole payment provider; nothing to health-check here.
+        # Phase 4B follow-up — Stripe live-key health cron slot,
+        # intentionally left empty. The live probe now runs on
+        # demand via ``GET /api/settings/integrations/health/stripe``
+        # (see routers/google.py); a cron isn't needed while there
+        # is only one Stripe account per tenant.
         # Phase 54 — nightly RingCentral contact pull-sync (03:00 UTC).
         async def _rc_nightly_pull():
             try:
@@ -1304,9 +1311,11 @@ async def _background_seed():
         except Exception as _re:
             logger.warning(f"referral watcher registration crashed: {_re}")
 
-        # Phase 12B · Feb 2026 — Weekly Stripe customer sync cron.
-        # REMOVED in Phase LZ4 (Feb 2026). Kept the empty block as a
-        # signpost so nobody reintroduces the retired code path.
+        # Phase 12B — weekly Stripe ↔ customers reverse-sync cron
+        # slot. Intentionally left empty. Customer creation happens
+        # inline in the /payments/stripe/attach path (see
+        # routers/customer_portal.py + routers/customers.py), so
+        # there is no separate sweep to run. Kept as a signpost.
 
         # G0 · Feb-2026 — GPS driver-activity retention purge cron.
         # Daily 04:00 UTC. Safe against empty collections. G1/G2 will
@@ -1714,9 +1723,10 @@ async def startup():
     except Exception as e:
         logger.warning(f"[phase12] boot migration crashed: {e}")
 
-    # Phase 4B · Stripe Live Payments boot log — REMOVED in Phase LZ4
-    # (Feb 2026). Stripe SDK is retired; Lumino via Zapier is the sole
-    # payment provider now. No boot-time key inspection is needed.
+    # Phase 4B — Stripe live-payments boot inspection.
+    # Not run at boot; the on-demand health probe at
+    # ``/api/settings/integrations/health/stripe`` covers this
+    # cheaply and reflects the current STRIPE_MODE + key state.
 
     # Phase 6 · Feb 2026 — RingCentral banner + subscription index.
     try:

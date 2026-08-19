@@ -4,9 +4,12 @@ Endpoint::
 
     GET /api/payments/summary
 
-Re-implementation after Phase LZ4 (Stripe SDK purge) removed the old
-``payments.py`` router. The Admin Dashboard + InvoicesList still expect
-this endpoint. Aggregates directly from ``db.quotes`` where
+Re-implementation of the older ``payments.py`` router (retired during
+the Feb-2026 Lumino experiment). Data now flows through the
+Phase 47d Stripe restoration + ``db.quotes`` invoice rows —
+``paid_from_intents`` / ``refunded_from_intents`` are the current
+source of truth. The Admin Dashboard + InvoicesList expect this
+endpoint. Aggregates directly from ``db.quotes`` where
 ``doc_type == 'invoice'`` (the canonical invoice collection).
 
 Auth

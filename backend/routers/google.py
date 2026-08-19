@@ -285,13 +285,53 @@ async def integration_health(integration: str, admin: dict = Depends(require_adm
                 "response_body": body_snippet if not resend_error else None,
             }
         if integration == "stripe":
-            # Phase LZ4 (Feb 2026) — Stripe SDK retired. Health-check
-            # always reports the retired-integration state so the
-            # settings screen can render a "Stripe removed — use
-            # Lumino" tile instead of a probe.
-            return {"ok": False,
-                    "message": "Stripe integration retired (Phase LZ4). "
-                                "Payments now flow through Lumino via Zapier."}
+            # Feb-2026 · Option-A revert · real health probe restoring
+            # the Phase 47d truth: Stripe is the primary payment
+            # provider. The Phase LZ4 "retired" stub was leftover
+            # from a since-reverted decision.
+            #
+            # Probe strategy:
+            #   1. Pick the secret key for the active ``STRIPE_MODE``.
+            #   2. If no key → ok=false with a "key unset" message.
+            #   3. Call ``stripe.Account.retrieve()`` via ``asyncio
+            #      .to_thread`` with a 3-second timeout. Success →
+            #      ok=true. Auth error → surface the real message.
+            #   4. If the ``stripe`` SDK isn't importable, fall back
+            #      to key-presence only so the panel doesn't stall.
+            mode = (os.environ.get("STRIPE_MODE") or "test").lower()
+            key_var = ("STRIPE_SECRET_KEY_LIVE" if mode == "live"
+                       else "STRIPE_SECRET_KEY_TEST")
+            key = (os.environ.get(key_var) or "").strip()
+            if not key:
+                return {"ok": False,
+                        "message": f"{key_var} unset (STRIPE_MODE={mode})"}
+            try:
+                import stripe as _stripe  # type: ignore
+            except Exception:
+                return {"ok": True,
+                        "message": "Key present (SDK not loaded)",
+                        "stripe_mode": mode}
+            try:
+                _stripe.api_key = key
+                acct = await asyncio.wait_for(
+                    asyncio.to_thread(_stripe.Account.retrieve),
+                    timeout=3.0,
+                )
+                return {
+                    "ok": True,
+                    "message": "HTTP 200",
+                    "stripe_mode": mode,
+                    "account_id": getattr(acct, "id", None),
+                    "livemode": getattr(acct, "livemode", None),
+                }
+            except asyncio.TimeoutError:
+                return {"ok": False, "stripe_mode": mode,
+                        "message": "timeout after 3s"}
+            except Exception as e:
+                # ``stripe.error.*`` exceptions carry ``.user_message``.
+                msg = getattr(e, "user_message", None) or str(e)[:200]
+                return {"ok": False, "stripe_mode": mode,
+                        "message": msg}
         if integration == "emergent_llm":
             return {"ok": bool(EMERGENT_LLM_KEY), "message": "Key present" if EMERGENT_LLM_KEY else "unset"}
         if integration == "wordpress":

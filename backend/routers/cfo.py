@@ -1292,11 +1292,13 @@ async def legacy_card_cash_weekly_endpoint(
     """Historical report over legacy card processor rows retained for
     audit; no live processor calls.
 
-    Phase LZ5 · Feb 2026 — this endpoint was renamed from
-    ``/api/cfo/stripe-cash-weekly`` when the Stripe SDK was retired
-    (Phase LZ4). The underlying data source (``stripe_charge_id`` on
-    legacy invoice rows) is preserved untouched per LZ4 rule #5, but
-    the URL no longer implies a live Stripe integration exists.
+    Historical note — the URL was once ``/api/cfo/stripe-cash-weekly``
+    and got renamed during the Feb-2026 Lumino experiment. The
+    experiment has since been reverted (see Phase 47d); Stripe is
+    once again the primary provider. The generic URL is retained
+    for now to avoid breaking existing report bookmarks; feel free
+    to add a ``/stripe-cash-weekly`` alias if that reads better in
+    the CFO dashboard.
 
     Phase 55.1 heritage — Weekly net cash for a given ``YYYY-MM``
     (default last month). Used by the Pricing Insights page + CFO
