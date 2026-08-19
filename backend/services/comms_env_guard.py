@@ -171,8 +171,23 @@ def guard_outbound(*, kind: str, to: str) -> GuardVerdict:
 def startup_banner() -> str:
     """One-line summary logged at backend boot so it's immediately
     obvious whether the current process is live or dry-run."""
+    global _LAST_STARTUP_BANNER_ISO
     env = _app_env()
     ae = len(_allowlist_emails())
     ap = len(_allowlist_phones())
     mode = "LIVE" if env == "production" else "DRY-RUN"
+    from datetime import datetime, timezone
+    _LAST_STARTUP_BANNER_ISO = datetime.now(timezone.utc).isoformat()
     return f"[COMMS] mode={mode} env={env} allowlist_emails={ae} allowlist_phones={ap}"
+
+
+# Feb-2026 P0 · timestamp of the most recent ``startup_banner()``
+# call. Read by the ``/api/settings/integrations/health/comms``
+# admin endpoint so ops can confirm the running process actually
+# booted after the last env change. ``None`` until first banner
+# emit; ISO 8601 UTC string thereafter.
+_LAST_STARTUP_BANNER_ISO: "str | None" = None
+
+
+def last_startup_banner_iso() -> "str | None":
+    return _LAST_STARTUP_BANNER_ISO

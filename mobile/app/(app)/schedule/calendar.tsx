@@ -41,6 +41,11 @@ import WeekStrip from "@/src/components/schedule/WeekStrip";
 import { showConfirm } from "@/src/components/ConfirmModal";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
+// Feb-2026 · Services / Repairs countdown pills (shared classifier
+// with the web admin Workstream page — see
+// ``frontend/src/lib/jobCategory.js``).
+import JobCountPill from "@/components/JobCountPill";
+import { computePillCounts } from "@/lib/jobCategory";
 import ScheduleJobEditSheet from "@/src/components/schedule/ScheduleJobEditSheet";
 // Phase 27 · Feb-2026 — Global avatar swap for the per-job card in
 // the schedule grid. Compact 20dp footprint keeps row height
@@ -398,6 +403,40 @@ export default function ScheduleCalendar() {
           Client-side classification off ``service_type`` — no
           backend change. */}
       <JobTrackerTiles jobs={dayJobs} loading={busy} />
+
+      {/* Feb-2026 · Services / Repairs countdown pills — same
+          "remaining/total" pair the admin Workstream page renders.
+          Client-side classification via shared ``lib/jobCategory``;
+          reactively recomputes as ``dayJobs`` changes (day focus
+          shift, status flip, refetch). */}
+      {(() => {
+        const _pc = computePillCounts(dayJobs);
+        return (
+          <View
+            style={{
+              flexDirection: "row",
+              flexWrap: "wrap",
+              gap: 12,
+              paddingHorizontal: 12,
+              paddingBottom: 8,
+            }}
+            testID="schedule-count-pills"
+          >
+            <JobCountPill
+              category="services"
+              total={_pc.services.total}
+              remaining={_pc.services.remaining}
+              testID="schedule-pill-services"
+            />
+            <JobCountPill
+              category="repairs"
+              total={_pc.repairs.total}
+              remaining={_pc.repairs.remaining}
+              testID="schedule-pill-repairs"
+            />
+          </View>
+        );
+      })()}
 
       {/* Feb-2026 · Schedule-UI · 7-day toggle strip.
           The strip drives the shared `focus` state — tapping a day

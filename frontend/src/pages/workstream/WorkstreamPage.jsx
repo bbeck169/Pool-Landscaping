@@ -24,6 +24,10 @@ import { colors } from "@/theme";
 import { StatusPill } from "@/components/ui-kit";
 // Phase 19 · Feb-2026 · Sub-item A — job assignee avatar.
 import { UserAvatar } from "@/components/UserAvatar";
+// Feb-2026 · Services / Repairs countdown pills (shared classifier
+// with the mobile tech Schedule screen — see ``mobile/lib/jobCategory``).
+import JobCountPill from "@/components/JobCountPill";
+import { computePillCounts } from "@/lib/jobCategory";
 
 const SORT_OPTIONS = [
   { value: "newest", label: "Newest first" },
@@ -392,6 +396,11 @@ export default function WorkstreamPage() {
 
   const openJob = (jid) => navigate(`/workstream/${jid}`);
 
+  // Feb-2026 · Countdown pills — derived client-side from the same
+  // ``jobs`` array the list renders. Recomputes reactively via
+  // ``useMemo`` whenever filters / sorts refetch and repopulate.
+  const pillCounts = useMemo(() => computePillCounts(jobs), [jobs]);
+
   if (!allowed) {
     return <Forbidden reason="Workstream is admin-only." />;
   }
@@ -431,6 +440,29 @@ export default function WorkstreamPage() {
           {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
           Refresh
         </button>
+      </div>
+
+      {/* Feb-2026 · Countdown pills — SERVICES / REPAIRS derived
+          client-side from the current jobs list. Updates reactively
+          as filters / sort change (both trigger ``load`` which
+          repopulates the ``jobs`` state that ``pillCounts`` is
+          memoised on). */}
+      <div
+        className="flex flex-wrap items-center gap-3 mb-4"
+        data-testid="workstream-count-pills"
+      >
+        <JobCountPill
+          category="services"
+          total={pillCounts.services.total}
+          remaining={pillCounts.services.remaining}
+          testid="workstream-pill-services"
+        />
+        <JobCountPill
+          category="repairs"
+          total={pillCounts.repairs.total}
+          remaining={pillCounts.repairs.remaining}
+          testid="workstream-pill-repairs"
+        />
       </div>
 
       {/* Filter bar */}

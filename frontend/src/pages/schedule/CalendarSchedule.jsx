@@ -48,6 +48,9 @@ import WeekStrip from "@/components/schedule/WeekStrip";
 import TechAvatar from "@/components/common/TechAvatar";
 import ScheduleJobEditModal from "@/pages/schedule/ScheduleJobEditModal";
 import ScheduleDayDnDPanel from "@/pages/schedule/ScheduleDayDnDPanel";
+// Feb-2026 · Google-Maps stops map above the DnD panel (reuses the
+// app-wide ``<APIProvider>`` mounted in ``layouts/AppLayout.jsx``).
+import ScheduleMap from "@/pages/schedule/ScheduleMap";
 
 
 // Feb-2026 · Schedule-UI · left-border indicator for status.
@@ -1006,6 +1009,19 @@ export default function CalendarSchedule() {
           isAdminForCard={isAdminRole}
         />
       )}
+
+      {/* Feb-2026 · Schedule map — pins for every stop of the
+          focused day. Auto-hides when zero stops have coords so
+          the page never shows an empty gray box. Reuses the same
+          ``techColorMap`` the schedule calendar / DnD panel key on
+          so a stop's colour matches across surfaces. */}
+      {mode === "grid" ? (
+        <ScheduleMap
+          jobs={dayJobs}
+          techs={techs}
+          techColorMap={techColorMap}
+        />
+      ) : null}
 
       {/* Feb-2026 · Schedule DnD — route order & cross-tech reassign.
           Renders in Grid mode only where a single focus-day is

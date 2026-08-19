@@ -17,7 +17,7 @@ from config import (
     GOOGLE_API_KEY, EMERGENT_LLM_KEY, RESEND_API_KEY,
     OPENWEB_NINJA_API_KEY,
 )
-from utils import now_iso, require_admin
+from utils import now_iso, require_admin, require_admin_or_manager
 
 router = APIRouter()
 
@@ -193,6 +193,147 @@ async def get_integrations_status(admin: dict = Depends(require_admin)):
         "wordpress":       {"configured": bool(wp_url),                  "preview": _mask(wp_url),                "note": "SEO article publishing"},
         "gbp":             {"configured": bool(gbp_client),              "preview": _mask(gbp_client),            "note": "Google Business Profile OAuth (Client ID)"},
         "ringcentral":     {"configured": bool(rc_client_id or ring_key), "preview": _mask(rc_client_id or ring_key), "note": "SMS delivery + inbound call tracking"},
+    }
+
+
+@router.get("/settings/integrations/health/comms")
+async def integration_health_comms(
+    admin: dict = Depends(require_admin_or_manager),
+):
+    """Feb-2026 P0 · Comms end-to-end diagnostic (admin/manager only).
+
+    Returns a single snapshot of every gate + provider config that
+    can silently suppress an outbound Email / SMS in the running
+    process. This is the "one curl" replacement for the previous
+    Mongo-shell walkthrough (see the P0 diagnostic report).
+
+    Multi-tenant note: this endpoint reports PROCESS-level config
+    (env vars, in-process singletons). The one Mongo-level check
+    (``rc_settings.outbound_enabled``) is a **global** RC toggle
+    stored WITHOUT ``tenant_id``, per the current schema, so it
+    reports uniformly across tenants — that matches the current
+    single-RC-tenant deployment.
+    """
+    import os
+    from services.comms.gate import current_gate_policy
+    from services.comms_env_guard import (
+        is_production as _is_prod,
+        last_startup_banner_iso as _banner_iso,
+    )
+    from services.ringcentral_client import (
+        is_outbound_enabled as _rc_outbound_enabled_runtime,
+    )
+
+    notes: list[str] = []
+
+    # ── App env ──
+    app_env = (os.environ.get("APP_ENV") or "preview").strip().lower()
+    is_prod = _is_prod()
+    if not is_prod:
+        notes.append(
+            f"APP_ENV={app_env!r} (not 'production'); guard_outbound "
+            "will dry-run every send unless recipient is on "
+            "COMMS_TEST_ALLOWLIST_EMAILS/PHONES.")
+
+    # ── Resend ──
+    resend_key = (os.environ.get("RESEND_API_KEY") or "").strip()
+    resend_configured = bool(resend_key) and not resend_key.startswith(
+        "re_placeholder")
+    resend_from = (
+        os.environ.get("RESEND_FROM_ADDRESS")
+        or os.environ.get("EMAIL_FROM")
+        or os.environ.get("RESEND_FROM")
+        or None
+    )
+    if resend_from:
+        resend_from = resend_from.strip('"').strip("'")
+    verified_raw = (os.environ.get("RESEND_VERIFIED_DOMAINS")
+                      or "resend.dev").strip()
+    verified_domains = sorted({
+        d.strip().lower() for d in verified_raw.split(",") if d.strip()
+    })
+    if not resend_configured:
+        notes.append("RESEND_API_KEY unset or placeholder; email sends "
+                       "will return provider_status='mocked'.")
+
+    # ── RingCentral ──
+    rc_client_id = os.environ.get("RC_CLIENT_ID") or ""
+    rc_client_secret = os.environ.get("RC_CLIENT_SECRET") or ""
+    rc_jwt = os.environ.get("RC_JWT") or ""
+    rc_configured = bool(rc_client_id and rc_client_secret and rc_jwt)
+    rc_mode = os.environ.get("RC_MODE") or None
+    rc_env_val = (os.environ.get("RC_OUTBOUND_ENABLED") or "").lower()
+    rc_env_enabled = rc_env_val == "true"
+    # Mongo toggle — wins over env at runtime. ``None`` when the doc
+    # is absent (env then applies).
+    rc_mongo_enabled: "bool | None" = None
+    try:
+        row = await db.rc_settings.find_one(
+            {"key": "outbound_enabled"}, {"_id": 0, "value": 1},
+        )
+        if row is not None:
+            rc_mongo_enabled = bool(row.get("value"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"comms-health: rc_settings read failed: {exc}")
+    try:
+        rc_effective_outbound = await _rc_outbound_enabled_runtime()
+    except Exception:  # noqa: BLE001
+        rc_effective_outbound = rc_env_enabled
+    if not rc_effective_outbound:
+        if rc_mongo_enabled is False:
+            notes.append("rc_settings.outbound_enabled=false in Mongo — "
+                          "overrides RC_OUTBOUND_ENABLED env. Delete the "
+                          "doc or PUT true via /admin/settings/ringcentral.")
+        elif not rc_env_enabled:
+            notes.append("RC_OUTBOUND_ENABLED != 'true' — SMS notification "
+                          "path (_dispatch_sms) will record delivery_status="
+                          "'mocked'.")
+
+    # ── SMS mock (campaign adapter) ──
+    sms_mock_raw = os.environ.get("SMS_MOCK_MODE")
+    # Adapter defaults to "1" when unset — strict compare in
+    # services/comms_sms_adapter.py:87.
+    sms_will_mock = (sms_mock_raw or "1") == "1"
+    if sms_will_mock:
+        notes.append("SMS_MOCK_MODE defaults to mock (adapter treats "
+                      "anything != '0' as mock). Set SMS_MOCK_MODE=0 for "
+                      "live campaign-broadcast SMS.")
+
+    # ── Resend SDK monkey-patch presence ──
+    monkey_patch_installed = False
+    try:
+        import resend as _resend  # type: ignore
+        monkey_patch_installed = bool(getattr(
+            getattr(_resend, "Emails", None),
+            "_aquaterra_gated_send", False,
+        ))
+    except Exception:  # noqa: BLE001
+        monkey_patch_installed = False
+
+    # ── Gate policy ──
+    gate_policy = current_gate_policy()
+    if gate_policy == "demo_only":
+        notes.append("Gate policy is 'demo_only' — only recipients with "
+                      "is_demo_account=True clear the gate. Flip APP_ENV to "
+                      "'production' to switch to 'prod_bypass'.")
+
+    return {
+        "app_env": app_env,
+        "is_production": is_prod,
+        "gate_policy": gate_policy,
+        "resend_api_key_configured": resend_configured,
+        "resend_from": resend_from,
+        "resend_verified_domains": verified_domains,
+        "ringcentral_configured": rc_configured,
+        "rc_outbound_enabled_env": rc_env_enabled,
+        "rc_outbound_enabled_mongo": rc_mongo_enabled,
+        "rc_outbound_enabled_effective": bool(rc_effective_outbound),
+        "rc_mode": rc_mode,
+        "sms_mock_mode": sms_mock_raw,
+        "sms_will_mock": sms_will_mock,
+        "monkey_patch_installed": monkey_patch_installed,
+        "startup_banner_last_seen": _banner_iso(),
+        "notes": notes,
     }
 
 

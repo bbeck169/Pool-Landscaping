@@ -5,12 +5,21 @@ MUST call before dispatching to Resend / RingCentral / any other
 external provider. Fails closed on any error — silent no-op is
 always safer than an accidental blast to a real customer.
 
-The rule (locked by user Feb-2026 dispatch):
-  A comm may leave the system only if the recipient record has
-  ``is_demo_account = True``. That flag is opt-in per record; only
-  demo staff + emails whose domain matches the tenant allowlist are
-  auto-flagged. Everyone else silently no-ops with a row in
-  ``comms_suppression_log``.
+The rule (revised by user Feb-2026 P0 dispatch — production bypass):
+  * ``APP_ENV=production`` → gate returns True (real customers are
+    the intended recipients). ``gate_policy="prod_bypass"``.
+  * Any other ``APP_ENV`` → a comm may leave the system only if the
+    recipient record has ``is_demo_account = True``. That flag is
+    opt-in per record; only demo staff + emails whose domain matches
+    the tenant allowlist are auto-flagged. Everyone else silently
+    no-ops with a row in ``comms_suppression_log``.
+    ``gate_policy="demo_only"``.
+
+Rationale for the split: preview / dev / staging deploys share the
+same codebase as production; the whitelist stays active there to
+prevent developer / QA activity from accidentally emailing or
+texting real customers. Production is where real customer comms are
+supposed to go out.
 
 Recipient resolver order (locked):
   1. explicit customer_id lookup
@@ -28,6 +37,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from config import db, logger  # type: ignore
+
+# Feb-2026 · P0 whitelist scope-narrowing — reuse the same
+# ``APP_ENV`` truth-source that ``/api/config/public`` and
+# ``services/comms_env_guard.guard_outbound`` already consult so
+# the three gates stay in lock-step. Reading through the helper
+# (not a captured constant) means a supervisor reload of ``.env``
+# takes effect without a Python-import cycle on this module.
+from services.comms_env_guard import is_production
 
 _LOG = logging.getLogger("comms.gate")
 
@@ -202,6 +219,21 @@ async def _resolve_recipient(
 
 
 # ── Public API ───────────────────────────────────────────────────────
+def current_gate_policy() -> str:
+    """Return the string label for the currently active gate policy.
+
+    * ``"prod_bypass"`` — ``APP_ENV=production``; every comm allowed
+      through (real customers are the intended recipients).
+    * ``"demo_only"``  — any other ``APP_ENV``; only recipients with
+      ``is_demo_account=True`` clear the gate.
+
+    Exposed for the ``/api/settings/integrations/health/comms``
+    admin endpoint so ops can see at a glance which policy is
+    active in the running process.
+    """
+    return "prod_bypass" if is_production() else "demo_only"
+
+
 async def is_comm_allowed(
     *,
     recipient_identifier: Any,
@@ -210,12 +242,45 @@ async def is_comm_allowed(
     provider: Optional[str] = None,
     trigger_action: Optional[str] = None,
 ) -> bool:
-    """Return True iff the resolved recipient has
-    ``is_demo_account=True``.
+    """Return True iff the send is allowed to reach the live provider.
 
-    Every False return writes a suppression-log row. Fails closed on
-    any error path (resolution failure, DB failure, unexpected input).
+    Policy (Feb-2026 P0 revision):
+      * ``APP_ENV=production`` → always allowed. Real customers are
+        the intended recipients; the demo-account whitelist is
+        scoped to non-prod only.
+      * Otherwise → allowed iff the resolved recipient has
+        ``is_demo_account=True``.
+
+    Every False return writes a suppression-log row. Fails closed
+    on any error path (resolution failure, DB failure, unexpected
+    input) — silent no-op is always safer than an accidental send.
     """
+    # Feb-2026 P0 whitelist scoped to non-prod only per user directive.
+    # In production, real customers are the intended recipients.
+    # Preview stays fail-closed to prevent accidental sends.
+    if is_production():
+        # Emit the same audit canary as the whitelist-pass path so
+        # ``grep [COMMS_SEND]`` still shows every allowed send in
+        # the log stream. Recipient identity kept minimal (domain +
+        # last4) so we don't PII-tax the log volume.
+        _email = None
+        _phone = None
+        if isinstance(recipient_identifier, dict):
+            _email = recipient_identifier.get("email")
+            _phone = recipient_identifier.get("phone")
+        elif isinstance(recipient_identifier, str):
+            if "@" in recipient_identifier:
+                _email = recipient_identifier
+            else:
+                _phone = recipient_identifier
+        _LOG.info(
+            "[COMMS_SEND] policy=prod_bypass type=%s provider=%s "
+            "trigger=%s domain=%s last4=%s",
+            comm_type, provider, trigger_action,
+            _domain_of(_email), _last4(_phone),
+        )
+        return True
+
     global _indexes_ready
     if not _indexes_ready:
         await _ensure_indexes()
@@ -269,10 +334,45 @@ async def is_comm_allowed(
     return False
 
 
-# Sync convenience for legacy sync callers. Runs the async check on a
-# fresh event loop when called from thread context (like the sync
-# Resend SDK inside asyncio.to_thread). Falls back to fail-closed on
-# any event-loop confusion.
+# Sync convenience for legacy sync callers. The Resend SDK monkey-
+# patch in ``services/comms/sdk_intercept.py`` calls this from a
+# ``asyncio.to_thread`` worker (Resend SDK is sync), which means the
+# caller may or may not be running inside an active event loop
+# depending on how far up the stack the ``to_thread`` boundary was.
+#
+# Previous implementation created a fresh loop via
+# ``asyncio.new_event_loop()`` + ``loop.run_until_complete(...)`` on
+# the current thread. That works when there is no running loop on
+# the current thread, but raises ``RuntimeError: This event loop is
+# already running`` when the caller IS inside a running loop (any
+# ``await``ing FastAPI handler stack that reaches a direct
+# ``resend.Emails.send`` bypass). The bare ``except`` at the bottom
+# then swallowed the RuntimeError and returned ``False`` — real
+# demo-account sends were being fail-closed silently.
+#
+# Fix: run the async gate on a **worker thread** with its own fresh
+# event loop, using ``concurrent.futures.ThreadPoolExecutor``. This
+# is safe regardless of whether the calling thread already has a
+# running loop (the worker thread has its own thread-local loop).
+# Uses stdlib only — no new dependency.
+_SYNC_EXECUTOR: "Optional[Any]" = None
+
+
+def _get_sync_executor():
+    """Lazy singleton worker-thread pool for :func:`is_comm_allowed_sync`.
+    Sized to 4 workers — the SDK monkey-patch is the sole caller,
+    burst-fires at most once per outbound email, and blocks the
+    caller until the gate resolves. 4 concurrent workers is plenty
+    to absorb any realistic burst without contention."""
+    global _SYNC_EXECUTOR
+    if _SYNC_EXECUTOR is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _SYNC_EXECUTOR = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="comms-gate-sync",
+        )
+    return _SYNC_EXECUTOR
+
+
 def is_comm_allowed_sync(
     *,
     recipient_identifier: Any,
@@ -281,17 +381,44 @@ def is_comm_allowed_sync(
     provider: Optional[str] = None,
     trigger_action: Optional[str] = None,
 ) -> bool:
+    """Synchronous wrapper around :func:`is_comm_allowed`.
+
+    Runs the async gate on a worker thread with its own fresh event
+    loop so it's safe to call from within an already-running loop
+    (the previous implementation silently fail-closed in that case).
+
+    Fails closed on any unexpected error, but the exception is
+    logged at WARN level with the exception class name + message so
+    the failure surfaces loudly instead of masquerading as a normal
+    ``is_demo_account=False`` suppression.
+    """
     import asyncio
-    try:
+
+    def _worker() -> bool:
         loop = asyncio.new_event_loop()
         try:
+            asyncio.set_event_loop(loop)
             return loop.run_until_complete(is_comm_allowed(
                 recipient_identifier=recipient_identifier,
                 comm_type=comm_type, tenant_id=tenant_id,
                 provider=provider, trigger_action=trigger_action,
             ))
         finally:
-            loop.close()
+            try:
+                loop.close()
+            except Exception:  # noqa: BLE001
+                pass
+            asyncio.set_event_loop(None)
+
+    try:
+        future = _get_sync_executor().submit(_worker)
+        # No timeout: the gate is cheap (single Mongo point-read on
+        # customers/users). A pathological Mongo hang would already
+        # be visible in the caller's own timeout budget.
+        return future.result()
     except Exception as exc:  # noqa: BLE001
-        _LOG.warning("[comms.gate] sync-wrapper failed closed: %s", exc)
+        _LOG.warning(
+            "[comms.gate] sync-wrapper failed closed: %s: %s",
+            type(exc).__name__, exc,
+        )
         return False

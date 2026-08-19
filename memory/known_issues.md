@@ -1,5 +1,76 @@
 # Known Issues (rolling)
 
+## Mobile schedule map — deferred to follow-up (Feb-2026)
+Web admin schedule now renders a Google-Maps stops map at the top
+of the Grid view (see ``frontend/src/pages/schedule/ScheduleMap.jsx``).
+Mobile tech schedule parity was scoped in the same task but is
+DEFERRED because:
+
+* Mobile's map infrastructure is ``@rnmapbox/maps@^10.1.34``, whose
+  native module requires a dev-client rebuild per
+  ``mobile/EXPO_GO_RUNBOOK.md`` — plain Expo Go crashes if the
+  module is imported top-level. The existing ``LiveTechPinsMap.tsx``
+  works around this with a dynamic ``require`` + try/catch in the
+  parent; replicating that pattern for the schedule surface is a
+  clean but non-trivial follow-up.
+* ``react-native-maps@1.20.1`` is also in ``mobile/package.json`` but
+  no existing mobile screen uses it, so adopting it would introduce
+  a second, unproven map dep on the schedule surface. Not worth the
+  divergence for a nice-to-have.
+
+Resume-notes for the next agent:
+1. Port ``ScheduleMap.jsx`` to ``mobile/src/components/schedule/ScheduleMap.tsx``.
+2. Follow the dynamic-require + parent-side try/catch pattern from
+   ``mobile/src/components/dispatch/LiveTechPinsWrapper.tsx``.
+3. Data source: ``job.location_lat`` / ``job.location_lng`` on each
+   job (backend projection was already added — see
+   ``backend/routers/jobs.py::list_jobs`` on the ``customers`` join).
+4. Colour token: reuse ``techColorMap`` the calendar builds; falls
+   back to ``#94A3B8`` (slate-400) on unassigned. Same tokens as web.
+5. Testing: extend ``mobile/__tests__/`` with a component test that
+   mocks ``@rnmapbox/maps.PointAnnotation`` so plain Jest can run
+   without the native module.
+
+
+
+## Comms gate — production-bypass fix is preview-verified only (Feb-2026 P0)
+The layer-2 comms whitelist gate at `services/comms/gate.py::is_comm_allowed`
+was silently blocking real customers on production because it required
+`is_demo_account=True` on every recipient (whitelist policy locked in
+Feb-2026 P0 dispatch). Root cause was the code-side gate, not just the
+`APP_ENV` env-guard.
+
+Fix applied (Feb-2026, preview only):
+* `services/comms/gate.py` — added early `if is_production(): return True`
+  short-circuit at the top of `is_comm_allowed`. Preview / dev / staging
+  keep the whitelist active (developer / QA activity still fail-safe).
+* `services/comms/gate.py` — rewrote `is_comm_allowed_sync` to run on a
+  worker-thread ThreadPoolExecutor so the Resend SDK monkey-patch no
+  longer fails-closed when invoked from inside an already-running event
+  loop. Logs the exception class + message on the fail-closed path so
+  the failure surfaces loudly.
+* `routers/google.py` — new admin/manager endpoint
+  `GET /api/settings/integrations/health/comms` returning `{app_env,
+  is_production, gate_policy, resend_api_key_configured, resend_from,
+  resend_verified_domains, ringcentral_configured, rc_outbound_enabled_env,
+  rc_outbound_enabled_mongo, rc_outbound_enabled_effective, rc_mode,
+  sms_mock_mode, sms_will_mock, monkey_patch_installed,
+  startup_banner_last_seen, notes[]}` — one-curl replacement for the
+  Mongo-shell walkthrough.
+
+Verified on preview via `pytest tests/test_comms_gate_prod_bypass.py
+tests/test_health_comms_endpoint.py` — 9 passed, 1 skipped (no
+technician demo account on this preview; test skips gracefully).
+
+**Production status: requires redeploy to take effect on `app.plofv.com`.**
+Preview response body currently reports `gate_policy="demo_only"` because
+`APP_ENV=preview` here — that's expected. After redeploy, hit
+`GET https://app.plofv.com/api/settings/integrations/health/comms` and
+confirm `gate_policy="prod_bypass"` before the fix is considered live.
+Owner: user to trigger redeploy from the Emergent dashboard.
+
+
+
 ## Tech-id fragmentation across `users` / `technicians` / job docs (Feb-2026)
 When a user has both a row in `users` and `technicians` (or was seeded as
 one and later imported as the other), the same person can carry three

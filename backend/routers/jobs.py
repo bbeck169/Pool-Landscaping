@@ -370,7 +370,14 @@ async def list_jobs(
             custs = await db.customers.find(
                 {"id": {"$in": cids}, "tenant_id": tenant["id"]},
                 {"_id": 0, "id": 1, "notes": 1, "gate_code": 1, "is_vip": 1,
-                  "service_notes": 1},
+                  "service_notes": 1,
+                  # Feb-2026 · Schedule map pins — surface the customer's
+                  # geocoded coords so the schedule map can render a pin
+                  # without an N+1 customer lookup. Both keys are aliased
+                  # to ``location_lat`` / ``location_lng`` on the job
+                  # payload below so consumers key on a single naming
+                  # convention regardless of source.
+                  "service_lat": 1, "service_lng": 1},
             ).to_list(1000)
             cmap = {c["id"]: c for c in custs}
             for d in docs:
@@ -398,11 +405,22 @@ async def list_jobs(
                     d["service_note"] = _resolve_service_note(
                         c, d.get("service_type") or d.get("job_type"), user,
                     )
+                    # Feb-2026 · Schedule map pins — expose the customer's
+                    # geocoded coords under the ``location_*`` alias the
+                    # web + mobile schedule maps consume. ``None`` when
+                    # the customer hasn't been geocoded (pin is skipped
+                    # client-side; no fake coords ever rendered).
+                    lat = c.get("service_lat")
+                    lng = c.get("service_lng")
+                    d["location_lat"] = float(lat) if lat is not None else None
+                    d["location_lng"] = float(lng) if lng is not None else None
                 else:
                     d["customer_is_vip"] = False
                     d["customer_gate_code"] = None
                     d["customer_notes"] = None
                     d["service_note"] = None
+                    d["location_lat"] = None
+                    d["location_lng"] = None
     # Feb-2026 MP2 UI — enrich each job with the property label so
     # mobile schedule rows can render a chip without an N+1 fetch. The
     # property doc's address is also surfaced under ``property_address``
