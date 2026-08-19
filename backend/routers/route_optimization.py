@@ -11,7 +11,7 @@ the property's coords + address instead of the customer default. See
 """
 import hashlib
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -285,27 +285,58 @@ async def get_route_stops(
         [("route_order", 1), ("scheduled_start", 1)]
     ).to_list(200)
 
+    # Feb-2026 · Ops Routes fix — batch-fetch customers for every
+    # job that has a ``customer_id`` but empty ``customer_name`` on
+    # the job doc. Avoids the N+1 per stop AND makes the display
+    # name fallback authoritative (name → billing_name → display_name
+    # → service_address → "(no customer)"). The address fallback now
+    # lives on the display-name chain explicitly, not conflated with
+    # a title-typed fallback that hides real customer identity.
+    needy_cids = {j.get("customer_id") for j in jobs
+                  if j.get("customer_id")
+                     and not (j.get("customer_name") or "").strip()}
+    cust_map: Dict[str, dict] = {}
+    if needy_cids:
+        async for c in db.customers.find(
+            {"id": {"$in": list(needy_cids)}, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "name": 1, "billing_name": 1,
+             "display_name": 1, "service_address": 1},
+        ):
+            cust_map[c["id"]] = c
+
     stops: List[dict] = []
     for j in jobs:
         geo = await resolve_stop_geo(j, tenant["id"], geocode_if_missing=False)
-        # Feb-2026 · Routes enrichment · deleted-customer fallback.
-        # ``customer_name`` on the job is denormalised at create-time;
-        # if the customer row was later deleted (or the job was
-        # imported without a name), fall back to the resolved address
-        # so the UI never renders a blank primary line.
+        # Prefer the denormalised name on the job. When missing, look
+        # up the customer doc (batched above) and walk the name
+        # chain. Address is the LAST resort — "(no customer)" is the
+        # ultimate fallback so the UI never leaks "Weekly Pool Service"
+        # into the primary line.
+        name_on_job = (j.get("customer_name") or "").strip()
+        cust = cust_map.get(j.get("customer_id")) if not name_on_job else None
         display_name = (
-            (j.get("customer_name") or "").strip()
+            name_on_job
+            or ((cust or {}).get("name") or "").strip()
+            or ((cust or {}).get("billing_name") or "").strip()
+            or ((cust or {}).get("display_name") or "").strip()
+            or ((cust or {}).get("service_address") or "").strip()
             or (geo.get("address") or "").strip()
-            or (j.get("title") or "").strip()
-            or "(unknown customer)"
+            or "(no customer)"
         )
         stops.append({
             "job_id": j.get("id"),
             "title": j.get("title"),
             "service_type": j.get("service_type") or j.get("job_type"),
             "customer_id": j.get("customer_id"),
-            "customer_name": j.get("customer_name"),
+            "customer_name": j.get("customer_name") or (
+                (cust or {}).get("name")
+                or (cust or {}).get("billing_name")
+                or (cust or {}).get("display_name")
+                or None
+            ),
             "customer_display_name": display_name,
+            "billing_name": (cust or {}).get("billing_name") or None,
+            "service_address": (cust or {}).get("service_address") or None,
             "property_id": j.get("property_id"),
             "property_label": j.get("property_label"),
             "scheduled_start": j.get("scheduled_start"),

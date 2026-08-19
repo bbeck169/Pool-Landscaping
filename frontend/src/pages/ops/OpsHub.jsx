@@ -226,7 +226,14 @@ function Routes() {
         const mapped = (r.stops || []).map((s) => ({
           id: s.job_id,
           title: s.title,
-          customer_name: s.customer_display_name || s.customer_name,
+          // Ops Routes bug-fix · Feb-2026 — keep the RAW field names so
+          // the render fallback chain can walk them explicitly instead
+          // of collapsing everything into `customer_name` (which used
+          // to shadow real customer identity with an address).
+          customer_display_name: s.customer_display_name || null,
+          customer_name: s.customer_name || null,
+          billing_name: s.billing_name || null,
+          service_address: s.service_address || null,
           technician_name: r.tech_name || null,
           technician_color_hex: r.tech_color_hex || null,
           address: s.address,
@@ -271,26 +278,37 @@ function Routes() {
       {order === null ? <Skeleton style={{ height: 160 }} /> :
        order.length === 0 ? <EmptyState title="No jobs for that day/tech" /> :
        <ol className="space-y-2">{order.map((j, i) => {
-         // Feb-2026 · Routes enrichment. ``customer_name`` and
-         // ``technician_name`` are denormalised on the job doc at
-         // create time, so we render them directly — no client N+1
-         // and no extra endpoint. Fall back to address / '(unknown)'
-         // for jobs whose customer was later deleted. Tech color chip
-         // reads ``technician_color_hex`` when present (already on
-         // the job doc for tenants that populate ``display_color_hex``).
-         const primary = (j.customer_name || j.address || j.title || "(unknown customer)").trim();
+         // Feb-2026 · Ops Routes bug-fix — customer name is the primary
+         // line. Fallback chain per user spec:
+         //   customer_display_name → customer_name → billing_name →
+         //   service_address → "(no customer)".
+         // Title stays SECONDARY (with address). Fixes the tester
+         // screenshot where "Weekly Pool Cleaning" was rendering as
+         // the bold primary line.
+         const primary = (
+           j.customer_display_name
+           || j.customer_name
+           || j.billing_name
+           || j.service_address
+           || "(no customer)"
+         ).toString().trim();
+         const secondary = j.title || j.service_type || "";
          const techLabel = j.technician_name || "Unassigned";
          const techColor = j.technician_color_hex || null;
          return (
          <li key={j.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: colors.surfaceSecondary }} data-testid={`route-${j.id}`}>
            <span className="w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center" style={{ background: brandGradientCss, color: "#fff" }}>{i + 1}</span>
            <div className="flex-1">
-             <div className="font-semibold text-sm" data-testid={`route-${j.id}-customer`}>{primary}</div>
+             <div className="font-semibold text-sm"
+                  data-testid={`ops-route-${j.id}-customer`}>
+               {primary}
+             </div>
              <div className="text-xs flex items-center gap-1.5" style={{ color: colors.muted }}>
                {techColor ? (
                  <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: techColor }} aria-hidden="true" />
                ) : null}
                <span data-testid={`route-${j.id}-tech`}>{techLabel}</span>
+               {secondary ? (<><span>·</span><span>{secondary}</span></>) : null}
                <span>·</span>
                <span>{j.address || "—"}</span>
              </div>
