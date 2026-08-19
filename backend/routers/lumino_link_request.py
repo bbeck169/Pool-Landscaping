@@ -122,8 +122,37 @@ async def request_payment_link(
         # surface as 4xx so the frontend renders a specific message
         # instead of the generic retry copy.
         code = str(exc)
-        status = 409 if code == "invoice_already_paid" else 400
-        raise HTTPException(status, code)
+        if code == "invoice_already_paid":
+            raise HTTPException(409, "invoice_already_paid")
+        # Feb-2026 P0 belt-and-braces — ``create_invoice_checkout_session``
+        # raises ``ValueError("APP_PUBLIC_URL not configured")`` when
+        # the env var is unset in the running pod. Frontend
+        # ``PaymentForm.extractErrorCode`` doesn't map that literal
+        # string, so users would see the generic
+        # ``"Something went wrong preparing your payment link"`` copy.
+        # Collapse every non-``invoice_already_paid`` config-time
+        # ValueError to the SAME 502 code that the SDK-exception path
+        # below uses so operators see a single well-known error mode
+        # regardless of which env var is missing.
+        import logging as _logging
+        _logging.getLogger("phase47").warning(
+            "[phase47] checkout config error for invoice=%s: %s",
+            invoice_id, code,
+        )
+        raise HTTPException(502, "payment_gateway_unavailable")
+    except stripe_svc._UnconfiguredStripeError as exc:
+        # Feb-2026 P0 belt-and-braces — ``_init_api_key()`` raises this
+        # from INSIDE ``create_invoice_checkout_session`` when no
+        # Stripe secret key resolves in the running pod. Previously
+        # bubbled up as an unmapped 500 → frontend showed the generic
+        # error. Now maps to the same friendly code as any other
+        # gateway outage so ops sees a single well-known error mode.
+        import logging as _logging
+        _logging.getLogger("phase47").warning(
+            "[phase47] Stripe unconfigured for invoice=%s: %s",
+            invoice_id, exc,
+        )
+        raise HTTPException(502, "payment_gateway_unavailable")
     except Exception as exc:
         # Stripe SDK failure or transient outage — 502 lets the browser
         # differentiate a "we couldn't reach the gateway" case from a
