@@ -39,7 +39,10 @@ import ReflowHistoryPage from "@/pages/admin/ReflowHistoryPage";
 import AiPersonasScopePage from "@/pages/admin/AiPersonasScopePage";
 import AiToolAuditPage from "@/pages/admin/AiToolAuditPage";
 import PortalPaymentReturn from "@/pages/portal/PortalPaymentReturn";
-import PortalPaymentMethods from "@/pages/portal/PortalPaymentMethods";
+// Feb-2026 P0 fix (Bug 2 · Item A) — legacy ``PortalPaymentMethods``
+// (plural) removed. The one true portal card management surface is
+// ``<PortalPaymentMethod>`` (singular) from ``PortalPages.jsx``, on
+// route ``/portal/payment-method``.
 import QuickBooksIntegrationPage from "@/pages/admin/integrations/QuickBooksIntegrationPage";
 import {
   BulkChargeRunsList as _P14bRunsList,
@@ -1043,7 +1046,10 @@ export default function App() {
             <Route path="portal/estimates/:id" element={<PortalEstimateDetail />} />
             <Route path="portal/payments" element={<PortalPayments />} />
             <Route path="portal/payment-method" element={<PortalPaymentMethod />} />
-            <Route path="portal/payment-methods" element={<PortalPaymentMethods />} />
+            {/* Feb-2026 P0 fix (Bug 2 · Item A) — legacy plural
+                ``portal/payment-methods`` route + component removed;
+                the singular route above is the one true portal card
+                management surface. */}
             {/* Phase 14b · Feb 2026 — Bulk charge runs history + detail. */}
             <Route path="admin/finance/bulk-charge-runs" element={<_P14bRunsList />} />
             <Route path="admin/finance/bulk-charge-runs/:runId" element={<_P14bRunDetail />} />

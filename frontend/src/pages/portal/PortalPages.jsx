@@ -22,6 +22,15 @@ import PortalBookingPhotos from "@/components/portal/PortalBookingPhotos";
 // Phase 5A hot-fix · Feb 2026 — replace the legacy hosted-checkout
 // redirect with the Phase 4B <PaymentForm> modal (Card + ACH + wallets).
 import PaymentForm from "@/components/PaymentForm";
+// Feb-2026 P0 fix (Bug 2 · Item A) — the previous portal Add-card
+// flow POSTed to ``/payments/setup-session`` (a hosted-checkout
+// endpoint that doesn't exist on this deployment) and GET
+// ``/payments/method`` (also 404). We now use the shared inline
+// SetupIntent + Elements form the sibling ``PortalPaymentMethods``
+// page uses. Same identity invariant: customer_id derives from
+// the JWT server-side, never from a URL param.
+import StripeAddCardForm from "@/components/payments/StripeAddCardForm";
+import { getStripeConfig } from "@/lib/stripeConfig";
 // Phase 30 · Feb-2026 — shared TechAvatar for tech identity chips.
 import TechAvatar from "@/components/common/TechAvatar";
 import { PageHeader, Button, Skeleton, Chip, StatusPill, TextInput, EmptyState, Toast } from "@/components/ui-kit";
@@ -317,7 +326,18 @@ export function PortalPayments() {
         : (resp?.payments || resp?.items || resp?.data || resp?.rows || []);
       setPayments(list);
     }).catch(() => setPayments([]));
-    api.get("/payments/method").then(setPm).catch(() => setPm(null));
+    // Feb-2026 P0 fix (Bug 2 · Item A) — was ``/payments/method``
+    // which returns 404 on this deployment. The portal-scoped list
+    // endpoint returns ``{methods: [...]}``; pick the default (or
+    // first) entry for the summary chip on this page.
+    api
+      .get("/customer-portal/payment-methods")
+      .then((r) => {
+        const list = Array.isArray(r?.methods) ? r.methods : [];
+        const chosen = list.find((m) => m?.is_default) || list[0] || null;
+        setPm(chosen);
+      })
+      .catch(() => setPm(null));
   }, []);
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-payments">
@@ -366,81 +386,67 @@ export function PortalPaymentMethod() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [pm, setPm] = useState(null);
-  const [busy, setBusy] = useState(false);
+  // Feb-2026 P0 fix (Bug 2 · Item A) — the previous "Add card" flow
+  // used ``busy`` state to gate a Stripe Checkout redirect. The
+  // inline SetupIntent + Elements form now owns its own busy
+  // state internally, so we no longer need a top-level one.
   const [toast, setToast] = useState(null);
+  // Feb-2026 P0 fix (Bug 2 · Item A) — inline Stripe Elements Add-card
+  // form replaces the previous hosted-checkout redirect. The
+  // ``showAddCard`` toggle controls the form panel; on success we
+  // refresh the card-on-file summary and hide the form. Publishable
+  // key + auth token are read the same way the sibling
+  // ``PortalPaymentMethods`` page reads them.
+  const [showAddCard, setShowAddCard] = useState(false);
+  const [pubKey, setPubKey] = useState("");
+  const _authToken = typeof window !== "undefined"
+    ? window.localStorage.getItem("token") : "";
+  const _apiBase = `${process.env.REACT_APP_BACKEND_URL}/api`;
   // Feb-2026 · Slice 3A — ACH.  We probe the ACH endpoint once on mount
   // to learn whether the backend is Stripe-configured.  When it isn't,
   // the ACH card renders a disabled "Connect Bank Account" button with
   // a tooltip.
   const [ach, setAch] = useState({ open: false, configured: null, busy: false });
-  useEffect(() => {
-    api.get("/payments/method").then(setPm).catch(() => setPm(null));
+
+  // Feb-2026 P0 fix (Bug 2 · Item A) — shared loader so the "card on
+  // file" chip refreshes after a successful Add-card, without a full
+  // page reload.
+  const loadPm = React.useCallback(() => {
     api
       .get("/customer-portal/payment-methods")
-      .then((r) => setAch((s) => ({ ...s, configured: !!r?.stripe_configured })))
-      .catch(() => setAch((s) => ({ ...s, configured: false })));
+      .then((r) => {
+        const list = Array.isArray(r?.methods) ? r.methods : [];
+        const chosen = list.find((m) => m?.is_default) || list[0] || null;
+        setPm(chosen);
+        setAch((s) => ({ ...s, configured: !!r?.stripe_configured }));
+      })
+      .catch(() => {
+        setPm(null);
+        setAch((s) => ({ ...s, configured: false }));
+      });
   }, []);
-  const addCard = async () => {
-    // Phase 34 · Feb-2026 · Task J — hardened Stripe "Add card" flow.
-    //
-    // The previous handler had three defensive gaps that could
-    // manifest as "button does nothing" for the user:
-    //   1. If ``r.url`` was falsy for any reason (backend hiccup,
-    //      Stripe not configured surfacing as a soft failure, etc.)
-    //      we neither navigated nor toasted — the button stayed
-    //      stuck on "Redirecting…" forever with no feedback.
-    //   2. ``setBusy(false)`` never fired on the success path either
-    //      (relying on the redirect leaving the page), so any race
-    //      that stopped the nav left the UI locked.
-    //   3. ``window.location.href = url`` from deep inside an async
-    //      handler can occasionally be dropped by strict popup /
-    //      cross-origin policies. We now use ``.assign()`` (which
-    //      is treated as an explicit navigation) and fall back to
-    //      opening the checkout in a new tab if the top-level nav
-    //      is blocked.
-    if (busy) return;
-    setBusy(true);
+
+  useEffect(() => {
+    loadPm();
+    getStripeConfig()
+      .then((c) => setPubKey(c?.publishable_key || ""))
+      .catch(() => setPubKey(""));
+  }, [loadPm]);
+
+  const addCard = () => {
+    // Feb-2026 P0 fix (Bug 2 · Item A) — opens the inline SetupIntent
+    // + Elements form. Never redirects, never POSTs to the missing
+    // ``/payments/setup-session`` endpoint, never constructs a URL
+    // with ``/undefined``. The SetupIntent endpoint (``POST
+    // /api/payments/stripe/setup-intent``) derives ``customer_id``
+    // from the JWT server-side.
     setToast(null);
-    let didNavigate = false;
-    try {
-      const r = await api.post("/payments/setup-session", {
-        customer_id: user.customer_id,
-        return_url: `${window.location.origin}/portal/payment-method?setup=1`,
-      });
-      const url = r?.url;
-      if (typeof url === "string" && url.startsWith("http")) {
-        didNavigate = true;
-        // Primary: top-level nav to the Stripe Checkout page.
-        try {
-          window.location.assign(url);
-        } catch (_) {
-          // Fallback: some browsers deprioritize async-triggered
-          // top-level navigation; opening the URL in a new tab keeps
-          // the flow usable even in those cases.
-          const opened = window.open(url, "_self");
-          if (!opened) window.open(url, "_blank", "noopener,noreferrer");
-        }
-      } else {
-        setToast({
-          tone: "error",
-          message:
-            "Could not open the payment form. Please try again, or contact support if this keeps happening.",
-        });
-      }
-    } catch (e) {
-      setToast({
-        tone: "error",
-        message:
-          e?.message ||
-          "Could not open the payment form. Please try again, or contact support if this keeps happening.",
-      });
-    } finally {
-      // Only reset busy when we did NOT hand off to Stripe — if we
-      // did, the browser is on its way to checkout.stripe.com and
-      // resetting the state would just cause a UI flicker before the
-      // navigation completes.
-      if (!didNavigate) setBusy(false);
-    }
+    setShowAddCard(true);
+  };
+  const onAddCardSuccess = () => {
+    setShowAddCard(false);
+    setToast({ tone: "success", message: "Card saved." });
+    loadPm();
   };
   const connectBank = async () => {
     setAch((s) => ({ ...s, busy: true }));
@@ -501,18 +507,44 @@ export function PortalPaymentMethod() {
               {pm.brand} · •••• {pm.last4}
             </div>
             <div className="text-sm mt-1" style={{ color: colors.muted }}>Saved · expires {pm.exp_month}/{pm.exp_year}</div>
-            <Button variant="ghost" onClick={addCard} disabled={busy} type="button" className="mt-3" testid="pm-replace">
-              <CreditCard size={16} /> {busy ? "Redirecting…" : "Replace card"}
+            <Button variant="ghost" onClick={addCard} disabled={showAddCard} type="button" className="mt-3" testid="pm-replace">
+              <CreditCard size={16} /> {showAddCard ? "Adding…" : "Replace card"}
             </Button>
           </div>
         ) : (
           <div>
             <p className="text-sm mb-3" style={{ color: colors.onSurfaceSecondary }}>No card on file yet.</p>
-            <Button onClick={addCard} disabled={busy} type="button" testid="pm-add">
-              <CreditCard size={16} /> {busy ? "Redirecting…" : "Add card"}
+            <Button onClick={addCard} disabled={showAddCard} type="button" testid="pm-add">
+              <CreditCard size={16} /> {showAddCard ? "Adding…" : "Add card"}
             </Button>
           </div>
         )}
+        {/* Feb-2026 P0 fix (Bug 2 · Item A) — inline Stripe Elements
+            form. Renders only when the user has clicked Add/Replace.
+            Reads ``customer_id`` from the JWT server-side (the
+            component posts no explicit id for portal customers). */}
+        {showAddCard ? (
+          <div className="mt-4" data-testid="pm-add-card-form">
+            <StripeAddCardForm
+              apiBase={_apiBase}
+              authToken={_authToken}
+              customerId={user?.customer_id}
+              publishableKey={pubKey}
+              onSuccess={onAddCardSuccess}
+              onCancel={() => setShowAddCard(false)}
+              title="Add a card"
+            />
+          </div>
+        ) : null}
+        {toast?.tone === "success" ? (
+          <div
+            className="mt-3 text-sm rounded-md px-3 py-2"
+            style={{ backgroundColor: "#DCFCE7", color: "#166534" }}
+            data-testid="pm-toast"
+          >
+            {toast.message}
+          </div>
+        ) : null}
       </div>
 
       {/* Feb-2026 · Slice 3A — ACH bank account (Stripe Financial
