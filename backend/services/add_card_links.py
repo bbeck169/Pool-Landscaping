@@ -37,18 +37,44 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-change-me")
 JWT_ALGO = "HS256"
 _TOKEN_SUB = "add_card"
 
+# Feb-2026 · Add-card magic-link TTL — 24 hours by default (per user
+# spec). Env override ``PORTAL_ADD_CARD_LINK_TTL_HOURS`` lets ops
+# widen or narrow the window without a code push. Applies ONLY to
+# the ``add_card`` purpose; login / invoice-pay / quote-approve
+# magic links have their own independent TTLs and are unaffected.
+_DEFAULT_ADD_CARD_TTL_HOURS = 24
+try:
+    _ttl_hours = int(os.environ.get(
+        "PORTAL_ADD_CARD_LINK_TTL_HOURS", _DEFAULT_ADD_CARD_TTL_HOURS,
+    ))
+except (TypeError, ValueError):
+    _ttl_hours = _DEFAULT_ADD_CARD_TTL_HOURS
+ADD_CARD_LINK_TTL_SECONDS = max(60, _ttl_hours * 3600)
+
 _RATE_WINDOW_SECONDS = 300  # 5 minutes
 _RATE_CACHE: Dict[str, float] = {}
 
 
 # ─── JWT helpers ──────────────────────────────────────────────────────
 def encode_add_card_token(customer_id: str, tenant_id: str, *,
-                            ttl_days: int = 30) -> str:
+                            ttl_seconds: Optional[int] = None) -> str:
+    """Mint a short-lived JWT that unlocks the public
+    ``/portal/add-card`` page for a specific customer.
+
+    Feb-2026 update — default TTL is now 24 hours (was 30 days). See
+    the module-level ``ADD_CARD_LINK_TTL_SECONDS`` constant for the
+    single source of truth (env-overridable via
+    ``PORTAL_ADD_CARD_LINK_TTL_HOURS``). Callers can still pass an
+    explicit ``ttl_seconds`` to override on a case-by-case basis.
+    """
+    ttl = ADD_CARD_LINK_TTL_SECONDS if ttl_seconds is None else int(ttl_seconds)
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": _TOKEN_SUB,
         "customer_id": customer_id,
         "tenant_id": tenant_id,
-        "exp": datetime.now(timezone.utc) + timedelta(days=ttl_days),
+        "iat": now,
+        "exp": now + timedelta(seconds=ttl),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
 
