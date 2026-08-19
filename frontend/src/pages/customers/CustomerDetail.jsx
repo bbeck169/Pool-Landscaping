@@ -254,50 +254,73 @@ export default function CustomerDetail() {
               />
             </div>
           </div>
-          <div className="flex flex-col items-end gap-2">
+          <div
+            className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
+            data-testid="cd-action-row"
+          >
             {/* Feb-2026 Customer Detail Additions — top-right Send + Create dropdowns */}
             <CustomerActionDropdowns
               customer={customer}
               onSend={openSendModal}
               onQuickTask={openQuickTaskFromDropdown}
             />
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => navigate(`/customers/${id}/edit`)} testid="cd-edit">
-                <Edit3 size={14} /> Edit
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => navigate(`/customers/${id}/chemistry`)}
-                testid="cd-chemistry"
-              >
-                <Beaker size={14} /> Chemistry
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => navigate(`/customers/${id}/chemistry-history`)}
-                testid="cd-chemistry-history"
-              >
-                <Beaker size={14} /> Chem History
-              </Button>
-              <Button variant="danger" onClick={() => setConfirmDelete(true)} testid="cd-delete">
-                <Trash2 size={14} /> Delete
-              </Button>
-            </div>
-            {/* Phase 6B · Feb 2026 — one-click RingCentral call */}
+            <Button variant="ghost" className="px-2.5 py-1 text-xs" onClick={() => navigate(`/customers/${id}/edit`)} testid="cd-edit">
+              <Edit3 size={14} /> Edit
+            </Button>
+            <Button
+              variant="ghost"
+              className="px-2.5 py-1 text-xs"
+              onClick={() => navigate(`/customers/${id}/chemistry`)}
+              testid="cd-chemistry"
+            >
+              <Beaker size={14} /> Chemistry
+            </Button>
+            <Button
+              variant="ghost"
+              className="px-2.5 py-1 text-xs"
+              onClick={() => navigate(`/customers/${id}/chemistry-history`)}
+              testid="cd-chemistry-history"
+            >
+              <Beaker size={14} /> Chem History
+            </Button>
+            <Button variant="danger" className="px-2.5 py-1 text-xs" onClick={() => setConfirmDelete(true)} testid="cd-delete">
+              <Trash2 size={14} /> Delete
+            </Button>
+            {/* Phase 6B · Feb 2026 — one-click RingCentral call. Feb-2026 UX
+                cleanup — action bar consolidated to a single row, so we
+                suppress the ClickToCallButton's stacked ``Dial from this
+                device`` fallback and render it here as a compact icon-
+                only sibling with a tooltip. All click handlers, phone
+                normalization, and RingCentral wiring stay identical. */}
             {(() => {
               const primary =
                 (customer.mobiles && customer.mobiles[0]?.number_e164) ||
                 customer.phone;
               if (!primary) return null;
+              const telHref = `tel:${String(primary).replace(/[^0-9+]/g, "")}`;
               return (
-                <div className="mt-1" data-testid="cd-click-to-call-wrapper">
+                <div
+                  className="inline-flex items-center gap-1"
+                  data-testid="cd-click-to-call-wrapper"
+                >
                   <ClickToCallButton
                     phoneNumber={primary}
                     entityKind="customer"
                     entityId={customer.id}
                     label={`Call ${customer.name || "customer"}`}
                     testIdPrefix="cd-click-to-call"
+                    size="sm"
+                    showFallback={false}
                   />
+                  <a
+                    href={telHref}
+                    className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+                    title="Dial from this device"
+                    aria-label="Dial from this device"
+                    data-testid="cd-click-to-call-tel-fallback"
+                  >
+                    <Phone size={12} />
+                  </a>
                 </div>
               );
             })()}
