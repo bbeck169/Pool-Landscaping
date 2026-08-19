@@ -37,6 +37,22 @@ router = APIRouter()
 
 _CAP = 400
 
+# Feb-2026 · Customers unlimited bulk-delete — the customers surface
+# has a distinct, higher ceiling because the ops flow (mass-CSV
+# import → mass-delete of imports gone wrong) needs to move real
+# tenant-sized batches in one call. Every OTHER collection stays on
+# the shared 400 ceiling above. Not unbounded — a >10k array body
+# is a DoS vector regardless of intent.
+_CAP_CUSTOMERS_DELETE = 10_000
+# Super_admin-only threshold — the 400→10k widening is scoped to
+# super_admin. Admin/manager still capped at the original _CAP so
+# a compromised admin session can't nuke the entire customer base.
+_CUSTOMERS_ELEVATED_DELETE_ROLE = "super_admin"
+# Chunk size for the customer soft-delete pass — one ``update_many``
+# per chunk keeps individual Mongo ops < 500 rows so a batch of
+# 10k lands in ~20 round-trips instead of 10,000 point updates.
+_CUSTOMERS_DELETE_CHUNK = 500
+
 
 class _BulkIdsIn(BaseModel):
     ids: Optional[List[str]] = None
@@ -49,7 +65,8 @@ class _BulkUpdateIn(_BulkIdsIn):
 
 
 async def _resolve_ids(coll: str, tenant_id: str, selector: Dict[str, Any],
-                          exclude: List[str], allowed_keys: set) -> List[str]:
+                          exclude: List[str], allowed_keys: set,
+                          *, cap: Optional[int] = None) -> List[str]:
     q: Dict[str, Any] = {"tenant_id": tenant_id,
                             "$or": [{"deleted_at": None},
                                         {"deleted_at": {"$exists": False}}]}
@@ -64,8 +81,9 @@ async def _resolve_ids(coll: str, tenant_id: str, selector: Dict[str, Any],
             ]})
     q.update(clean)
     excl = set(exclude or [])
+    effective_cap = cap if cap is not None else _CAP
     ids: List[str] = []
-    async for row in db[coll].find(q, {"_id": 0, "id": 1}).limit(_CAP + 1):
+    async for row in db[coll].find(q, {"_id": 0, "id": 1}).limit(effective_cap + 1):
         rid = row.get("id")
         if rid and rid not in excl:
             ids.append(rid)
@@ -155,7 +173,12 @@ async def _generic_bulk_update(coll: str, action: str, ids: List[str],
 
 
 # ──── Customers ─────────────────────────────────────────────────────────
-_CUSTOMER_SELECTOR = {"search", "tag", "assigned_owner_id"}
+# Feb-2026 · ``is_active`` added so the customers UI can pass its
+# current tab (Active / Inactive / All) through the query_selector
+# path when the user clicks "Select all N matching this filter" —
+# without this key, the mass-delete would silently cross-cut both
+# active and inactive customers.
+_CUSTOMER_SELECTOR = {"search", "tag", "assigned_owner_id", "is_active"}
 _CUSTOMER_PATCH_ALLOWED = {"tag", "assigned_owner_id"}
 
 
@@ -175,11 +198,153 @@ async def _customer_locked(row: dict) -> Optional[str]:
 async def customers_bulk_delete(body: _BulkIdsIn,
                                     user: dict = Depends(require_admin),
                                     tenant: dict = Depends(get_current_tenant)):
+    """Feb-2026 · Soft-delete a selection of customers. Widened cap:
+    up to 10,000 IDs per call for ``super_admin``; admin / manager
+    still capped at 400 (shared cap for every other collection).
+
+    Execution is chunked into ``_CUSTOMERS_DELETE_CHUNK`` (500) row
+    batches so a 10k call becomes ~20 Mongo round-trips instead of
+    10,000 point updates. Locked-check (active invoices) is
+    preserved. A single ``customer_bulk_delete_audit`` doc summarises
+    the invocation (per-row audit rows are also kept for parity with
+    smaller deletes).
+    """
     ids = (await _resolve_ids("customers", tenant["id"], body.query_selector or {},
-                                    body.exclude_ids or [], _CUSTOMER_SELECTOR)
+                                    body.exclude_ids or [], _CUSTOMER_SELECTOR,
+                                    cap=_CAP_CUSTOMERS_DELETE)
               if body.query_selector else list(body.ids or []))
-    return await _generic_bulk_delete("customers", "customer.soft_delete",
-                                          ids, user, tenant, _customer_locked)
+    # De-dup and validate up front. Empty selections short-circuit
+    # with the classic 400 for parity with the rest of the family.
+    ids = list(dict.fromkeys(ids or []))
+    if not ids:
+        raise HTTPException(400, "ids is empty")
+
+    role = (user or {}).get("role")
+    # Elevated ceiling is super_admin-only. Anyone else still hits the
+    # shared 400 cap. That keeps blast radius aligned with the ops
+    # hierarchy — mass-delete is a P0-risk action.
+    if len(ids) > _CUSTOMERS_DELETE_CHUNK and role != _CUSTOMERS_ELEVATED_DELETE_ROLE:
+        raise HTTPException(
+            403,
+            f"bulk_delete_over_{_CUSTOMERS_DELETE_CHUNK}_requires_super_admin",
+        )
+    if len(ids) > _CAP_CUSTOMERS_DELETE:
+        raise HTTPException(
+            400,
+            f"bulk-delete capped at {_CAP_CUSTOMERS_DELETE} rows per call",
+        )
+
+    now = now_iso()
+    actor_id = (user or {}).get("id")
+
+    # 1) Locked-check — one round-trip aggregation for every id
+    # against active invoices. Cheap even at 10k: single ``$in``
+    # count-by-customer_id groupby.
+    locked_reason_by_id: dict = {}
+    try:
+        pipeline = [
+            {"$match": {
+                "tenant_id": tenant["id"],
+                "customer_id": {"$in": ids},
+                "doc_type": "invoice",
+                "$or": [{"deleted_at": None},
+                          {"deleted_at": {"$exists": False}}],
+            }},
+            {"$group": {"_id": "$customer_id", "n": {"$sum": 1}}},
+        ]
+        async for row in db.quotes.aggregate(pipeline):
+            locked_reason_by_id[row["_id"]] = (
+                f"Customer has {row['n']} active invoice(s) "
+                "— archive them first"
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[customers.bulkDelete] locked-check failed: {exc}")
+
+    # 2) Existence + already-deleted check — single point-read per
+    # chunk so we can classify rows without a per-id round-trip.
+    known_alive: set = set()
+    already_deleted: set = set()
+    for start in range(0, len(ids), _CUSTOMERS_DELETE_CHUNK):
+        chunk = ids[start:start + _CUSTOMERS_DELETE_CHUNK]
+        async for row in db.customers.find(
+            {"id": {"$in": chunk}, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "deleted_at": 1},
+        ):
+            rid = row["id"]
+            if row.get("deleted_at"):
+                already_deleted.add(rid)
+            else:
+                known_alive.add(rid)
+
+    # 3) Bucket every requested id into deleted / failed[].
+    deleted: List[str] = []
+    failed: List[dict] = []
+    to_soft_delete: List[str] = []
+    for rid in ids:
+        if rid not in known_alive and rid not in already_deleted:
+            failed.append({"id": rid, "reason": "Not found",
+                            "status_code": 404})
+            continue
+        if rid in already_deleted:
+            # Idempotent — already-deleted rows count as deleted.
+            deleted.append(rid)
+            continue
+        reason = locked_reason_by_id.get(rid)
+        if reason:
+            failed.append({"id": rid, "reason": reason, "status_code": 409})
+            continue
+        to_soft_delete.append(rid)
+
+    # 4) Chunked ``update_many`` — one round-trip per 500 rows.
+    for start in range(0, len(to_soft_delete), _CUSTOMERS_DELETE_CHUNK):
+        chunk = to_soft_delete[start:start + _CUSTOMERS_DELETE_CHUNK]
+        await db.customers.update_many(
+            {"id": {"$in": chunk}, "tenant_id": tenant["id"]},
+            {"$set": {"deleted_at": now, "deleted_by_user_id": actor_id}},
+        )
+        deleted.extend(chunk)
+
+    # 5) Per-row audit-log parity with the shared helper (only for
+    # newly-soft-deleted rows, not the idempotent already-deleted
+    # ones). Best-effort; audit failures never block the response.
+    for rid in to_soft_delete:
+        await _write_audit("customer.soft_delete", user, tenant["id"], rid)
+
+    # 6) Single invocation-level audit doc — enables ops to answer
+    # "who mass-deleted 4000 customers on Aug 19?" without scanning
+    # 4000 per-row audit rows.
+    try:
+        await db.customer_bulk_delete_audit.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": actor_id,
+            "actor_email": (user or {}).get("email"),
+            "actor_role": role,
+            "requested_count": len(ids),
+            "deleted_count": len(deleted),
+            "failed_count": len(failed),
+            # Log only the first 100 ids to keep the audit doc
+            # bounded. ``ids_truncated`` flags the omitted tail so
+            # any forensic replay knows to consult the per-row
+            # ``audit_log`` rows for the full list.
+            "customer_ids": ids[:100],
+            "customer_ids_truncated": len(ids) > 100,
+            "created_at": now,
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            f"[customers.bulkDelete] audit summary insert failed: {exc}")
+
+    return {
+        "ok": True,
+        "deleted_count": len(deleted),
+        "deleted": deleted,
+        "failed": failed,
+        "requested_count": len(ids),
+        # Reserved for a future streaming pagination surface. Always
+        # ``None`` today — the 10k ceiling is a single-call ceiling.
+        "continue_token": None,
+    }
 
 
 @router.post("/customers/bulk-update", operation_id="customers.bulkUpdate")

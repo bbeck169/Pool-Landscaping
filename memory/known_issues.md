@@ -1,5 +1,45 @@
 # Known Issues (rolling)
 
+## Customers bulk-delete — raised to 10k, super_admin gate (Feb-2026)
+`POST /api/customers/bulk-delete` (in `backend/routers/bulk_crm.py`)
+now accepts up to **10,000 ids per call** for `super_admin`. Admin,
+manager, and owner remain capped at the shared `_CAP=400`. The
+ceiling is intentionally NOT unbounded — an oversize payload is a
+DoS vector regardless of intent.
+
+Execution is chunked into 500-row `update_many` batches (see
+`_CUSTOMERS_DELETE_CHUNK`) so a 10k call becomes ~20 Mongo round-
+trips instead of 10,000 point updates. Soft-delete only
+(`deleted_at` + `deleted_by_user_id`). Locked check for active
+invoices preserved. Every invocation writes a single
+`customer_bulk_delete_audit` summary doc (first 100 ids logged,
+`customer_ids_truncated` flag on longer calls).
+
+Web UI (customers list) additions:
+* "Select all N matching this filter" affordance (existing
+  `SelectAllMatchingLink` primitive) — surfaces `counts.active` /
+  `counts.inactive` totals from the already-loaded tab counts.
+* When the pending delete crosses 500 rows, the confirm modal
+  requires the user to **type the exact count** in the input before
+  the destructive button enables.
+* Progress spinner + "Deleting N customers…" text during the call.
+* When "Select all matching" is on, the payload switches from
+  `{ids: [...]}` to `{query_selector: {search, tag, is_active}}` so
+  the backend expands to the full matching set on its own without
+  round-tripping every id to the browser.
+
+Mobile: NOT touched. Bulk-delete-1000+ is a desktop-only workflow.
+No follow-up needed unless the mobile customers list starts hosting
+multi-select in a future task.
+
+Progress indicator note: the current implementation shows an
+**indeterminate** spinner + total count (matching the honesty of a
+single-call response). A true streaming "X of N" UI would need
+SSE / chunked-response on the endpoint — out of scope for this
+task; log as follow-up if ops demands live progress.
+
+
+
 ## Mobile schedule countdown pills — reverted per user request (Feb-2026)
 The N/M SERVICES / N/M REPAIRS countdown pills that briefly shipped
 on the mobile tech schedule (`mobile/app/(app)/schedule/calendar.tsx`,

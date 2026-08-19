@@ -11,6 +11,7 @@ import {
   BulkActionBar,
   BulkConfirmModal,
   LockedPill,
+  SelectAllMatchingLink,
 } from "@/components/bulk-select/BulkSelectToolkit";
 
 const TAG_PRESETS = ["VIP", "Specialty"];
@@ -203,6 +204,33 @@ export default function CustomersList() {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [lockedFailures, setLockedFailures] = useState({});
+  // Feb-2026 · Unlimited bulk delete — "Select all N matching this
+  // filter" flips this flag; delete then calls the backend with a
+  // ``query_selector`` payload instead of a bounded ``ids`` array so
+  // the super_admin ceiling (10,000) is reachable without loading
+  // every id into the browser.
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
+  // Typed-number confirm — becomes gating for large deletes to
+  // prevent an accidental Enter-key mass-nuke. Threshold is the
+  // same value that separates "no super_admin needed" from
+  // "super_admin required" on the backend so the UI friction lines
+  // up with the actual escalation.
+  const _TYPED_CONFIRM_THRESHOLD = 500;
+  const [confirmTypedNumber, setConfirmTypedNumber] = useState("");
+
+  // Feb-2026 · Total matching the current tab — used both by the
+  // "Select all N matching" affordance and the confirm-modal
+  // headline. The endpoint at ``/customers?count_only=true`` is
+  // cheap (single Mongo count). We use the tab-specific count that
+  // ``loadCounts()`` already populates so the fetch cost is zero.
+  const _matchingTotal = tab === "inactive"
+    ? (counts.inactive || 0)
+    : tab === "all"
+      ? (counts.active || 0) + (counts.inactive || 0)
+      : (counts.active || 0);
+  const _pendingDeleteCount = selectAllMatching
+    ? _matchingTotal
+    : selected.size;
 
   // Feb-2026 · Bulk-mark-inactive — plain Confirm/Cancel modal state.
   // The prior "type INACTIVATE" gate was removed per user feedback —
@@ -233,9 +261,23 @@ export default function CustomersList() {
   const doBulkDelete = async () => {
     setBulkBusy(true);
     try {
-      const res = await api.post("/customers/bulk-delete", {
-        ids: Array.from(selected),
-      });
+      // Feb-2026 · Unlimited bulk delete — send a ``query_selector``
+      // instead of ``ids`` when the user opted into "Select all N
+      // matching this filter" so the backend can expand up to its
+      // 10k super_admin ceiling without the browser round-tripping
+      // every id. Otherwise fall back to the classic ids-array
+      // payload (still soft-delete, still tenant-scoped).
+      const payload = selectAllMatching
+        ? {
+            query_selector: {
+              ...(searchDeb ? { search: searchDeb } : {}),
+              ...(tag ? { tag } : {}),
+              ...(tab === "active" ? { is_active: true } : {}),
+              ...(tab === "inactive" ? { is_active: false } : {}),
+            },
+          }
+        : { ids: Array.from(selected) };
+      const res = await api.post("/customers/bulk-delete", payload);
       const okC = res.deleted_count || 0;
       const failed = res.failed || [];
       if (failed.length) {
@@ -247,6 +289,8 @@ export default function CustomersList() {
       // Optimistic — hide the deleted rows locally.
       setRows((prev) => (prev || []).filter((r) => !(res.deleted || []).includes(r.id)));
       setSelected(new Set());
+      setSelectAllMatching(false);
+      setConfirmTypedNumber("");
       setConfirmDeleteOpen(false);
       if (failed.length === 0) {
         sonnerToast.success(`${okC} customer${okC === 1 ? "" : "s"} deleted`);
@@ -826,8 +870,8 @@ export default function CustomersList() {
           add/remove tag + waitlist toolbar above is retained until
           the /customers/bulk endpoint is fully deprecated. */}
       <BulkActionBar
-        selectedCount={selected.size}
-        onClear={() => setSelected(new Set())}
+        selectedCount={selectAllMatching ? _matchingTotal : selected.size}
+        onClear={() => { setSelected(new Set()); setSelectAllMatching(false); }}
         actions={[
           ...(isAdmin ? [{
             key: "owner", label: "Reassign owner",
@@ -847,15 +891,165 @@ export default function CustomersList() {
             onClick: () => setConfirmDeleteOpen(true) },
         ]}
       />
-      <BulkConfirmModal
-        open={confirmDeleteOpen}
-        onClose={() => setConfirmDeleteOpen(false)}
-        onConfirm={doBulkDelete}
-        title={`Delete ${selected.size} customer${selected.size === 1 ? "" : "s"}?`}
-        description="Customers with active invoices will show as locked and be skipped."
-        confirmLabel={bulkBusy ? "Deleting…" : `Delete ${selected.size}`}
-        busy={bulkBusy}
-      />
+      {/* Feb-2026 · Unlimited bulk delete — surfaces the "Select all
+          N matching this filter" affordance INSIDE the floating
+          action bar's own container so it lines up with the
+          existing "Clear selection" link. Only visible when the
+          on-page select-all is checked and the tenant has more
+          matching rows than are currently visible. */}
+      {selected.size > 0 && !selectAllMatching ? (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 z-30 mt-16 rounded-xl px-3 py-1.5"
+          style={{
+            top: 0,
+            backgroundColor: "rgba(15, 23, 42, 0.92)",
+            color: "#fff",
+          }}
+          data-testid="customers-select-all-matching-wrap"
+        >
+          <SelectAllMatchingLink
+            pageCount={selected.size}
+            totalMatching={_matchingTotal}
+            onSelectAllMatching={() => setSelectAllMatching(true)}
+          />
+        </div>
+      ) : null}
+      {selectAllMatching ? (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 z-30 mt-16 rounded-xl px-3 py-1.5"
+          style={{
+            top: 0,
+            backgroundColor: "rgba(15, 23, 42, 0.92)",
+            color: "#fff",
+            fontSize: 12,
+          }}
+          data-testid="customers-select-all-matching-active"
+        >
+          Selected all {_matchingTotal} matching this filter ·{" "}
+          <button
+            type="button"
+            onClick={() => setSelectAllMatching(false)}
+            className="underline font-semibold"
+            data-testid="customers-select-all-matching-undo"
+          >
+            Undo
+          </button>
+        </div>
+      ) : null}
+      {/* Feb-2026 · Unlimited bulk delete — modal replaces the plain
+          ``<BulkConfirmModal>`` when the delete blast radius crosses
+          ``_TYPED_CONFIRM_THRESHOLD`` (500). Small deletes still use
+          the classic confirm to keep the everyday flow ergonomic. */}
+      {confirmDeleteOpen && _pendingDeleteCount < _TYPED_CONFIRM_THRESHOLD ? (
+        <BulkConfirmModal
+          open={confirmDeleteOpen}
+          onClose={() => { setConfirmDeleteOpen(false); setConfirmTypedNumber(""); }}
+          onConfirm={doBulkDelete}
+          title={`Delete ${_pendingDeleteCount} customer${_pendingDeleteCount === 1 ? "" : "s"}?`}
+          description="Customers with active invoices will show as locked and be skipped."
+          confirmLabel={bulkBusy ? "Deleting…" : `Delete ${_pendingDeleteCount}`}
+          busy={bulkBusy}
+        />
+      ) : null}
+      {confirmDeleteOpen && _pendingDeleteCount >= _TYPED_CONFIRM_THRESHOLD ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !bulkBusy) {
+              setConfirmDeleteOpen(false);
+              setConfirmTypedNumber("");
+            }
+          }}
+          data-testid="customers-bulk-delete-typed-modal"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+            style={{ backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold"
+                style={{ color: "#DC2626" }}
+                data-testid="customers-bulk-delete-typed-title">
+              Delete {_pendingDeleteCount} customer{_pendingDeleteCount === 1 ? "" : "s"}?
+            </h2>
+            <p className="text-sm mt-2"
+                style={{ color: colors.onSurfaceSecondary || colors.muted }}>
+              This is a large delete. Customers with active invoices
+              will be locked and skipped. Deleted customers are
+              soft-deleted (recoverable via backend restore) — but
+              from the UI they're gone.
+            </p>
+            <div className="mt-4">
+              <label className="text-xs font-semibold uppercase tracking-wider block mb-1"
+                      style={{ color: colors.onSurfaceSecondary }}
+                      htmlFor="typed-confirm-input">
+                Type <span style={{ color: "#DC2626" }}>{_pendingDeleteCount}</span> to confirm
+              </label>
+              <input
+                id="typed-confirm-input"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoFocus
+                value={confirmTypedNumber}
+                onChange={(e) => setConfirmTypedNumber(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl text-sm"
+                style={{
+                  backgroundColor: colors.surfaceSecondary,
+                  color: colors.onSurface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                disabled={bulkBusy}
+                data-testid="customers-bulk-delete-typed-input"
+              />
+            </div>
+            {bulkBusy ? (
+              <div
+                className="mt-3 flex items-center gap-2 text-sm"
+                style={{ color: colors.onSurfaceSecondary }}
+                data-testid="customers-bulk-delete-progress"
+              >
+                <span
+                  className="inline-block w-3 h-3 rounded-full animate-spin"
+                  style={{
+                    border: "2px solid rgba(220,38,38,0.25)",
+                    borderTopColor: "#DC2626",
+                  }}
+                />
+                <span>Deleting {_pendingDeleteCount} customer{_pendingDeleteCount === 1 ? "" : "s"}…</span>
+              </div>
+            ) : null}
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setConfirmDeleteOpen(false); setConfirmTypedNumber(""); }}
+                disabled={bulkBusy}
+                className="px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-60"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                          color: colors.onSurface }}
+                data-testid="customers-bulk-delete-typed-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doBulkDelete}
+                disabled={
+                  bulkBusy
+                  || String(confirmTypedNumber).trim() !== String(_pendingDeleteCount)
+                }
+                className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                style={{ backgroundColor: "#DC2626" }}
+                data-testid="customers-bulk-delete-typed-btn"
+              >
+                {bulkBusy ? "Deleting…" : `Delete ${_pendingDeleteCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Feb-2026 · Bulk-mark-inactive hard-confirm modal. Simplified
           per user feedback to a plain Confirm / Cancel — the header
