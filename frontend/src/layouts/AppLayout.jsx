@@ -240,6 +240,57 @@ function NavGroup({ item }) {
   );
 }
 
+// Feb-2026 · Sidebar-pivot follow-up — 7-item vertical quick-nav rail
+// that replaces the removed horizontal QuickNavRow. Same order, same
+// icons, same role gating semantics as the previous QuickNavRow so
+// the ADMIN_NAV_V2 dropdowns in <AdminTopBar> keep serving the
+// "…More" surface for deep admin routes.
+const QUICK_NAV_RAIL = [
+  { key: "dashboard", to: "/",           label: "Dashboard",  Icon: LayoutDashboard, roles: ["super_admin", "admin", "manager", "technician"], end: true },
+  { key: "workstream", to: "/workstream", label: "Workstream", Icon: Wrench,         roles: ["super_admin", "admin", "manager"] },
+  { key: "schedule",   to: "/schedule",   label: "Schedule",   Icon: CalendarDays,   roles: ["super_admin", "admin", "manager", "technician"] },
+  { key: "invoices",   to: "/invoices",   label: "Invoices",   Icon: Receipt,        roles: ["super_admin", "admin", "manager"] },
+  { key: "payments",   to: "/payments",   label: "Payments",   Icon: CreditCard,     roles: ["super_admin", "admin", "manager"] },
+  { key: "customers",  to: "/customers",  label: "Customers",  Icon: Users,          roles: ["super_admin", "admin", "manager"] },
+  { key: "estimates",  to: "/estimates",  label: "Estimates",  Icon: FileText,       roles: ["super_admin", "admin", "manager"] },
+];
+
+function QuickNavRail({ role }) {
+  const items = QUICK_NAV_RAIL.filter((n) => n.roles.includes(role));
+  if (items.length === 0) return null;
+  return (
+    <nav
+      className="flex-1 flex flex-col items-stretch py-3 gap-1 overflow-y-auto"
+      data-testid="quick-nav-rail"
+      aria-label="Primary navigation"
+    >
+      {items.map(({ key, to, label, Icon, end }) => (
+        <NavLink
+          key={key}
+          to={to}
+          end={end}
+          className={({ isActive }) =>
+            `mx-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[10px] font-semibold transition ${
+              isActive ? "" : "hover:brightness-95"
+            }`
+          }
+          style={({ isActive }) => ({
+            backgroundColor: isActive ? colors.brandTertiary : "transparent",
+            color: isActive ? colors.brand : colors.onSurfaceSecondary,
+            border: `1px solid ${isActive ? colors.brand : "transparent"}`,
+          })}
+          data-testid={`rail-nav-${key}`}
+          aria-label={label}
+          title={label}
+        >
+          <Icon size={20} />
+          <span className="leading-none text-center">{label}</span>
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
 function ProtectedShell() {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -389,14 +440,35 @@ function AppLayout() {
       <div id="impersonation-banner-slot" style={{ height: impersonating ? 40 : 0 }} />
       <div id="preview-banner-slot" style={{ height: isPreviewing ? 40 : 0 }} />
 
-      {/* Feb-2026 · Sidebar removed per user request — primary
-          navigation lives in <AdminTopBar> now (7 flat quick-nav
-          buttons + existing category dropdowns act as "More admin"
-          submenus). This <aside> is force-hidden so ``main``
-          takes the full viewport width. */}
+      {/* Feb-2026 · Pivot — the 7 quick-access items move from the
+          header row to a slim vertical rail in the same slot the
+          sidebar used to occupy. Everything below inside the aside
+          renders the new <QuickNavRail>; the legacy AdminSidebar /
+          role-nav / user footer that used to live here is retired
+          from the desktop rail (mobile drawer still uses
+          AdminSidebar for the full IA — see below). */}
+      <aside
+        className={
+          ["admin", "super_admin", "manager", "technician"].includes(effectiveRole || user.role)
+            ? "hidden md:flex md:flex-col md:w-[88px] md:shrink-0 md:sticky md:top-0 md:h-screen"
+            : "hidden"
+        }
+        style={{
+          backgroundColor: colors.surface,
+          borderRight: `1px solid ${colors.border}`,
+        }}
+        data-testid="side-nav"
+      >
+        <QuickNavRail role={effectiveRole || user.role} />
+      </aside>
+      {/* Legacy sidebar footer/nav retained below in a fully
+          collapsed container so any downstream import references
+          (mobile drawer, tests) keep resolving. Rendered only when
+          ``false`` so it never mounts on the desktop tree. */}
+      {false && (
       <aside
         className="hidden"
-        data-testid="side-nav"
+        data-testid="side-nav-legacy"
       >
         <div
           className="px-5 py-5 flex items-center gap-3"
@@ -484,6 +556,7 @@ function AppLayout() {
               footer keeps only the identity block per user request. */}
         </div>
       </aside>
+      )}
 
       {/* Main content */}
       <main

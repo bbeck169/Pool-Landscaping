@@ -308,11 +308,6 @@ export default function AdminTopBar() {
   const visible = useVisibleGroups();
   const _auth = useAuth();
   const _role = _auth?.user?.role || "";
-  // Feb-2026 · Sidebar removed → the quick-nav row is the primary
-  // top-of-page navigation. Compute BEFORE the ``visible.length===0``
-  // guard so technicians (who see no admin category dropdowns) still
-  // get their Dashboard + Schedule quick-nav row.
-  const _quickNavCount = QUICK_NAV.filter((n) => n.roles.includes(_role)).length;
   // Phase 44 · Fix A (attempt 3) — bulletproof responsive gate.
   //
   // Previous attempts using Tailwind `hidden md:flex` / `md:hidden` and
@@ -351,7 +346,11 @@ export default function AdminTopBar() {
   }, []);
   const isNarrow = vw < 768;
 
-  if (visible.length === 0 && _quickNavCount === 0) return null;
+  // Feb-2026 · Sidebar-pivot follow-up — hooks run first (rules-of-
+  // hooks); this defensive null-guard now sits below every hook
+  // call to keep the invocation order stable across renders.
+  if (!_role) return null;
+
   return (
     <div
       className="sticky top-0 z-30 w-full border-b"
@@ -363,11 +362,11 @@ export default function AdminTopBar() {
       data-vw={vw}
       data-narrow={isNarrow ? "1" : "0"}
     >
-      {/* Feb-2026 · Quick-nav row (Dashboard / Workstream / Schedule /
-          Invoices / Payments / Customers / Estimates). Sits ABOVE
-          the existing 6 category dropdowns, which now act as the
-          "More admin" access surface. */}
-      <QuickNavRow role={_role} />
+      {/* Feb-2026 · Pivot — the 7 quick-access items are now
+          rendered as a vertical rail in <AppLayout> (left column).
+          The horizontal QuickNavRow that lived here has been
+          retired; the category dropdowns below remain as the
+          "…More" surface for deep admin routes. */}
       {/* Phase 55 — pinned Quick Access strip. Rendered above the
           6-category dropdowns / mobile menu so it stays reachable
           in one tap without changing existing behavior. */}
