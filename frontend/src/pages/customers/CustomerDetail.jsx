@@ -39,11 +39,43 @@ const TABS = [
   { k: "portal", label: "Portal Access", icon: KeyRound },
 ];
 
+
+// Feb-2026 · Customer profile — primary-property address line under
+// the name. "Primary" = the property flagged ``is_primary`` on the
+// property doc; if none flagged, fall back to the first property in
+// the API-returned list (backend sorts by ``sort_order`` asc). The
+// backend lazily backfills a single "Main" property from a legacy
+// customer's address on first read, so this covers legacy rows too.
+export function getPrimaryPropertyAddress(properties) {
+  if (!Array.isArray(properties) || properties.length === 0) return null;
+  const flagged = properties.find(
+    (p) => p && (p.is_primary === true || p.primary === true),
+  );
+  const chosen = flagged || properties[0];
+  const addr = (chosen && chosen.address) || {};
+  const line1 = (addr.line1 || addr.address_line1 || "").trim();
+  const city = (addr.city || "").trim();
+  const state = (addr.state || "").trim();
+  const postal = (addr.postal_code || addr.zip || "").trim();
+  if (!line1 && !city && !state && !postal) return null;
+  const cityStateZip = [
+    city,
+    [state, postal].filter(Boolean).join(" ").trim(),
+  ].filter(Boolean).join(", ");
+  const oneLine = [line1, cityStateZip].filter(Boolean).join(", ");
+  return oneLine || null;
+}
+
+
 export default function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [customer, setCustomer] = useState(null);
   const [jobs, setJobs] = useState([]);
+  // Feb-2026 · Customer profile — primary-property address line under
+  // the name (see the header render). Fetched alongside customer +
+  // jobs so the address can appear in the first paint.
+  const [properties, setProperties] = useState([]);
   const [tab, setTab] = useState("overview");
   const [toast, setToast] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -75,12 +107,18 @@ export default function CustomerDetail() {
 
   const load = async () => {
     try {
-      const [c, allJobs] = await Promise.all([
+      const [c, allJobs, props] = await Promise.all([
         api.get(`/customers/${id}`),
         api.get("/jobs"),
+        // Feb-2026 · Customer profile — properties fetched for the
+        // primary-address line under the customer name. Non-fatal:
+        // if the call fails we still render the rest of the page and
+        // just show "No address on file".
+        api.get(`/customers/${id}/properties`).catch(() => []),
       ]);
       setCustomer(c);
       setJobs((allJobs || []).filter((j) => j.customer_id === id));
+      setProperties(Array.isArray(props) ? props : []);
     } catch (e) {
       setToast({ tone: "error", message: e.message });
     }
@@ -222,6 +260,56 @@ export default function CustomerDetail() {
                 onError={(msg) => setToast({ tone: "error", message: msg })}
               />
             </div>
+            {/* Feb-2026 · Customer profile — primary-property address
+                line under the name. Clickable → Google Maps
+                directions in a new tab. Falls back to a muted
+                "No address on file" when the customer has no
+                usable property address. Long addresses truncate
+                with ellipsis; ``title`` reveals the full string
+                on hover. */}
+            {(() => {
+              const oneLine = getPrimaryPropertyAddress(properties);
+              if (!oneLine) {
+                return (
+                  <div
+                    className="flex items-center gap-1.5 mt-2 text-sm truncate max-w-xl"
+                    style={{ color: colors.muted }}
+                    data-testid="customer-primary-address"
+                    title="No address on file"
+                  >
+                    <MapPin size={14} />
+                    <span
+                      className="truncate"
+                      data-testid="customer-primary-address-empty"
+                    >
+                      No address on file
+                    </span>
+                  </div>
+                );
+              }
+              const href = "https://www.google.com/maps/dir/?api=1&destination="
+                + encodeURIComponent(oneLine);
+              return (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Navigate to ${oneLine}`}
+                  title={oneLine}
+                  className="inline-flex items-center gap-1.5 mt-2 text-sm hover:underline truncate max-w-xl"
+                  style={{ color: colors.onSurfaceSecondary }}
+                  data-testid="customer-primary-address"
+                >
+                  <MapPin size={14} />
+                  <span
+                    className="truncate"
+                    data-testid="customer-primary-address-text"
+                  >
+                    {oneLine}
+                  </span>
+                </a>
+              );
+            })()}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               {/* Phase 15b · Feb-2026 — inline tag picker with a
                   "+ Add new tag" affordance in the dropdown. Server
