@@ -138,11 +138,11 @@ describe("InvoiceEditModal", () => {
     };
     render(<InvoiceEditModal invoice={inv} onClose={() => {}} onSaved={() => {}} />);
     // No warning until a money field changes.
-    expect(screen.queryByTestId("invoice-edit-lumino-warning")).toBeNull();
+    expect(screen.queryByTestId("invoice-edit-paylink-warning")).toBeNull();
     fireEvent.change(screen.getByTestId("invoice-edit-tax-rate"), {
       target: { value: "8.25" },
     });
-    expect(screen.getByTestId("invoice-edit-lumino-warning")).toBeTruthy();
+    expect(screen.getByTestId("invoice-edit-paylink-warning")).toBeTruthy();
   });
 
   it("submits a PATCH with the correct payload including confirm flags", async () => {

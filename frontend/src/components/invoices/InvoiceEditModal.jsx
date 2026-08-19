@@ -3,7 +3,7 @@
  *
  * Covers all editable fields, live subtotal preview (visual only —
  * backend recomputes), status-gated warnings (sent / paid / void),
- * money-change warning about Lumino link regeneration.
+ * money-change warning about Stripe payment-link regeneration.
  */
 import React, { useMemo, useState } from "react";
 import { X, Plus, Trash2, AlertTriangle } from "lucide-react";
@@ -114,7 +114,10 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
     () => moneyFieldsChanged(invoice || {}, form),
     [invoice, form],
   );
-  const showLuminoWarning =
+  // Feb-2026 · Option A revert — the invoice pay-link is a Stripe
+  // Checkout Session (not Lumino), so the "regenerate link" warning
+  // now reflects Stripe. Kept behind the same money-change guard.
+  const showPayLinkWarning =
     moneyChangedList.length > 0 && Boolean(invoice?.payment_url);
 
   // ── Line item editor helpers ─────────────────────────────────
@@ -277,14 +280,14 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
             </div>
           ) : null}
 
-          {showLuminoWarning ? (
+          {showPayLinkWarning ? (
             <div
               className="rounded-xl p-3 text-xs"
               style={{ background: "#DBEAFE", color: "#1E3A8A",
                         border: "1px solid #93C5FD" }}
-              data-testid="invoice-edit-lumino-warning"
+              data-testid="invoice-edit-paylink-warning"
             >
-              Note: this change will invalidate the current Lumino payment
+              Note: this change will invalidate the current Stripe payment
               link and generate a new one. The old link URL will stop working.
             </div>
           ) : null}

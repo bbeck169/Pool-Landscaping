@@ -1,11 +1,10 @@
 /**
  * Phase 47 · Feb-2026 — Direct Stripe Checkout Session redirect flow.
  *
- * User has directed every payment surface to route through Stripe
- * directly (no Lumino / Zapier). This component replaces the LZ3
- * polling-for-Lumino flow with an immediate ``POST
- * /api/invoices/{id}/request-payment-link`` → redirect on the
- * returned ``payment_url`` (a ``https://checkout.stripe.com/…`` URL).
+ * Every payment surface routes through Stripe directly. This
+ * component POSTs ``/api/invoices/{id}/request-payment-link`` and
+ * redirects on the returned ``payment_url`` (a
+ * ``https://checkout.stripe.com/…`` URL).
  *
  * Behaviour:
  *   1. On mount, POST the request-payment-link endpoint.
@@ -17,9 +16,8 @@
  *      mapped from the backend error code (409 already_paid, 400
  *      invoice_not_found, 502 payment_gateway_unavailable, …).
  *
- * There is NO polling anymore. The Session URL is returned in the
- * same response the browser initiates — waiting-30-seconds-for-Zapier
- * is gone.
+ * There is NO polling — the Session URL is returned in the same
+ * response the browser initiates.
  */
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "@/api";
