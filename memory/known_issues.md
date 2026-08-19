@@ -59,3 +59,80 @@ existing customer-portal + admin-console builds keep working.
 Deprecation: remove `mode` after the next mobile + web build is out
 in prod (~Mar 2026). Search for `stripe_mode ||` in the JS/TSX
 tree before dropping to catch stragglers.
+
+## RESUME · Feb-2026 — Stripe primary / Lumino manual-only revert (Phase 2 deferred)
+
+Phase 1 investigation complete. Current preview state is ALREADY
+"Stripe primary" for every customer-facing pay path — no
+auto-failover to Lumino exists. The revert is a naming / surfacing
+cleanup + new manual admin button, NOT a hot rewrite.
+
+**Zero in-flight Lumino charges** on preview (no `lumino_*`
+collections, zero `quotes.payment_provider=lumino`). Safe to execute
+Phase 2 without reconciliation.
+
+### Phase 2 delta (execute in a single follow-up turn)
+
+1. **Backend — dead-hard-code removal (~15 LOC)**
+   - `services/payments/provider_factory.py:24-38` — the block that
+     always returns `LuminoProvider` regardless of env. Replace with
+     a real switch on `PAYMENT_PROVIDER` env (default `"stripe"` →
+     raise `NotImplementedError` since only Lumino has a concrete
+     `PaymentProvider` subclass today; alternatively return `None`
+     and force callers to import `stripe_charge` directly).
+   - Update the two live callers (`services/lumino_reconciler.py`,
+     `routers/lumino_return.py`) to instantiate `LuminoProvider`
+     directly since they are lumino-specific by design.
+
+2. **Backend — new manual-charge endpoint (~40 LOC)**
+   - Add `POST /api/payments/lumino/manual-charge` in a new
+     `routers/lumino_manual_charge.py`.
+   - Body: `{invoice_id}`. Reads invoice + customer, calls
+     `LuminoProvider.create_hosted_session()` (or the current Lumino
+     link generator). Returns `{payment_url, session_id}`.
+   - Role gate: super_admin | admin | manager (403 else).
+   - Tenant-scoped invoice lookup.
+   - Audit log: `db.audit_log.insert_one({type:"manual_lumino_charge_initiated",
+     actor_id:user.id, invoice_id, tenant_id, at:now_iso()})`.
+
+3. **Frontend web — add admin button (~20 LOC)**
+   - In `pages/quotes/QuoteInvoiceDetail.jsx` admin actions dropdown
+     (already gated to admin roles), add "Charge via Lumino" that
+     POSTs the new endpoint and opens `payment_url` in a new tab.
+   - `data-testid="invoice-charge-via-lumino"`.
+
+4. **Backend tests — new file `tests/test_payments_primary_stripe.py` (~150 LOC)**
+   - Auto-charge path (POST `/invoices/{id}/request-payment-link`)
+     invokes `stripe_svc.create_invoice_checkout_session` — mock
+     assert. LuminoProvider NOT called.
+   - Manual endpoint: super_admin / admin / manager return 200.
+   - Manual endpoint: technician / customer return 403.
+   - Manual endpoint: tenant isolation (foreign invoice → 404).
+   - Manual endpoint: audit log row written on success.
+   - Stripe failure on auto-charge → 502
+     `payment_gateway_unavailable`; LuminoProvider NOT invoked as
+     fallback.
+
+5. **Vitest (~40 LOC)** — Charge-via-Lumino button visible on admin
+   invoice detail; NOT rendered on customer portal invoice page.
+
+6. **Mobile** — skip. Grep clean, no Lumino UI in the app.
+
+### Files that DO NOT need changes (verified)
+- `services/payments/provider_mode.py` — already defaults to
+  `"stripe_direct"`; leave in place as a documented kill switch.
+- `services/payments/stripe_charge.py` — already sole pay-path.
+- `components/PaymentForm.jsx` — already Stripe-only.
+- `routers/lumino_link_request.py` — despite the filename, already
+  uses Stripe Checkout. RENAME is cosmetic; skip to save churn.
+- Customer portal / `PortalPaymentReturn.jsx` — return-URL landing
+  only, no initiation UI. Keep.
+- `LuminoBackfillPage.jsx` — super-admin-only backfill tool. Keep.
+
+### Estimated time to execute Phase 2
+~1 focused turn (60-90 min of tool calls including tests + 2
+screenshots).
+
+### Screenshots owed
+- Admin invoice detail with "Charge via Lumino" visible.
+- Customer portal invoice page — Lumino NOT visible.
