@@ -18,6 +18,7 @@ from config import (
     OPENWEB_NINJA_API_KEY,
 )
 from utils import now_iso, require_admin, require_admin_or_manager
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -335,6 +336,158 @@ async def integration_health_comms(
         "startup_banner_last_seen": _banner_iso(),
         "notes": notes,
     }
+
+
+@router.get("/settings/integrations/health/checkout-preflight")
+async def integration_health_checkout_preflight(
+    admin: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Feb-2026 P0 · Stripe Checkout preflight (admin/manager only).
+
+    Runs the SAME code path as ``POST /api/invoices/{id}/request-payment-link``
+    against a synthetic in-memory invoice + customer so we can see
+    the EXACT Stripe SDK exception that a real click would surface
+    on this pod. Never persists a real invoice or customer. Uses a
+    ``preflight:`` idempotency key + immediately expires the created
+    Checkout Session so we don't clutter the live Stripe dashboard.
+
+    Reads env vars via ``os.environ.get`` so a supervisor reload of
+    ``.env`` takes effect without a Python-import round-trip.
+    """
+    import os
+    import uuid as _uuid
+
+    from services.payments import stripe_charge as _stripe_svc
+
+    out: dict = {
+        "ok": False,
+        "app_env": (os.environ.get("APP_ENV") or "").strip().lower(),
+        "stripe_mode": None,
+        "stripe_account_id": None,
+        "app_public_url": os.environ.get("APP_PUBLIC_URL") or None,
+        "stripe_secret_key_live_set": bool(
+            os.environ.get("STRIPE_SECRET_KEY_LIVE")),
+        "stripe_webhook_secret_live_set": bool(
+            os.environ.get("STRIPE_WEBHOOK_SECRET_LIVE")),
+        "checkout_session_created": False,
+        "checkout_url_preview": None,
+        "error_class": None,
+        "error_message": None,
+        "hint": None,
+    }
+
+    # Snapshot mode + account before we try the round-trip — even
+    # if the round-trip fails, ops still see what mode the pod
+    # THINKS it's in.
+    try:
+        out["stripe_mode"] = _stripe_svc._mode()
+    except Exception:  # noqa: BLE001
+        pass
+
+    synth_id = f"preflight-{_uuid.uuid4().hex[:12]}"
+    synth_invoice = {
+        "id": synth_id,
+        "invoice_number": f"PF-{synth_id[-6:]}",
+        "total": 1.00,
+        "amount_paid": 0.00,
+        "currency": "usd",
+        "tenant_id": tenant["id"],
+    }
+    synth_customer = {
+        # ``customer.id`` is only used for Stripe metadata — never
+        # persisted, never billed.
+        "id": f"preflight-customer-{_uuid.uuid4().hex[:8]}",
+        "email": "preflight@plofv.com",
+    }
+
+    try:
+        result = await _stripe_svc.create_invoice_checkout_session(
+            tenant_id=tenant["id"],
+            invoice=synth_invoice,
+            customer=synth_customer,
+        )
+        out["checkout_session_created"] = True
+        out["checkout_url_preview"] = (result.get("payment_url") or "")[:80]
+        out["stripe_mode"] = result.get("mode") or out["stripe_mode"]
+        # Best-effort — capture Stripe account so ops sees which
+        # account key is loaded (live vs test).
+        try:
+            import stripe as _stripe  # type: ignore
+            _stripe.api_key = _stripe_svc._select_secret_key()
+            acct = _stripe.Account.retrieve()
+            # Stripe v7+ returns a ``StripeObject``; both attribute and
+            # subscript access work but not dict.get(). Prefer id attr.
+            out["stripe_account_id"] = getattr(acct, "id", None) or acct["id"]
+        except Exception:  # noqa: BLE001
+            pass
+        # Cleanup — immediately expire the Session so it never
+        # transacts. Best-effort; failure here does NOT flip ``ok``.
+        try:
+            import stripe as _stripe  # type: ignore
+            _stripe.checkout.Session.expire(
+                result.get("checkout_session_id"))
+        except Exception as _exc:  # noqa: BLE001
+            logger.warning(
+                f"[preflight] session.expire best-effort failed: {_exc}")
+        out["ok"] = True
+        out["hint"] = ("Stripe checkout is fully reachable on this pod. "
+                        "If real ``request-payment-link`` calls still 502 "
+                        "in the browser, inspect the specific invoice's "
+                        "``customer_id`` / ``total`` / ``payment_status`` "
+                        "for guard-condition mismatches.")
+        return out
+    except _stripe_svc._UnconfiguredStripeError as exc:
+        out["error_class"] = "_UnconfiguredStripeError"
+        out["error_message"] = str(exc)[:400]
+        out["hint"] = (
+            "No Stripe secret key is present in this pod's environment. "
+            "Set STRIPE_SECRET_KEY_LIVE (for STRIPE_MODE=live) or "
+            "STRIPE_SECRET_KEY_TEST (STRIPE_MODE=test) and restart the "
+            "backend.")
+        return out
+    except ValueError as exc:
+        out["error_class"] = "ValueError"
+        out["error_message"] = str(exc)[:400]
+        if "APP_PUBLIC_URL" in str(exc):
+            out["hint"] = ("APP_PUBLIC_URL env var is missing on this pod. "
+                            "Set APP_PUBLIC_URL=https://app.plofv.com and "
+                            "restart the backend.")
+        else:
+            out["hint"] = ("Business-logic guard blocked the preflight — "
+                            "unlikely on a synthetic $1 invoice; treat as "
+                            "an unexpected code-side regression.")
+        return out
+    except Exception as exc:  # noqa: BLE001
+        # Every remaining path — stripe.error.AuthenticationError,
+        # stripe.error.APIConnectionError, stripe.error.InvalidRequestError,
+        # stripe.error.RateLimitError, etc. Report the class + message
+        # verbatim so ops sees exactly what Stripe returned.
+        out["error_class"] = type(exc).__name__
+        out["error_message"] = str(exc)[:400]
+        cls = out["error_class"]
+        if cls == "AuthenticationError":
+            out["hint"] = ("STRIPE_SECRET_KEY_LIVE is present but INVALID "
+                            "(rotated, wrong account, or missing scopes). "
+                            "Re-copy the key from Stripe dashboard → "
+                            "Developers → API keys → Live secret key.")
+        elif cls == "APIConnectionError":
+            out["hint"] = ("Pod cannot reach ``api.stripe.com`` (network "
+                            "egress problem or Cloudflare block). Confirm "
+                            "outbound HTTPS is open.")
+        elif cls == "InvalidRequestError":
+            out["hint"] = ("Stripe rejected the request body — likely a "
+                            "malformed line_item or missing metadata. "
+                            "Escalate for code-side review.")
+        elif cls == "RateLimitError":
+            out["hint"] = ("Stripe rate-limited this key. Wait 60s then "
+                            "retry.")
+        else:
+            out["hint"] = ("Unexpected Stripe SDK exception. Full class "
+                            f"name: {cls}. Escalate for code-side review.")
+        logger.warning(
+            f"[preflight] Stripe SDK exception class={cls} msg={exc}")
+        return out
 
 
 @router.get("/settings/integrations/health/{integration}")
