@@ -35,13 +35,22 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 logger = logging.getLogger("homeworks_mcp.dispatcher")
 
 # Poll cadence — every 30s. Matches user brief.
 DISPATCHER_INTERVAL_S = 30
+
+# Feb-2026 · Watchdog — a job that sat in {queued, running} for more
+# than ``WATCHDOG_STALE_MINUTES`` with zero forward progress
+# (``counters.customers_scanned == 0``) is auto-transitioned to
+# ``failed_stale`` on the next dispatcher tick.  Prevents a silent
+# hang from a crashed pod / lost claim from clogging the queue
+# indefinitely (root cause of the Feb-2026 P0 "QUEUED · Running… ·
+# Scanned 0" bug reported by ops).
+WATCHDOG_STALE_MINUTES = 15
 
 # Importer routing table — kind → module. Kept flat + explicit so
 # adding a new importer is a one-line append.
@@ -69,7 +78,83 @@ async def _try_start_run(db, doc: Dict[str, Any]) -> bool:
                    "dispatcher_pid": _pid_tag(),
                    "dispatcher_claimed_at": _now_iso()}},
     )
-    return r.modified_count == 1
+    if r.modified_count == 1:
+        # Feb-2026 · Structured transition log (queued → running).
+        # Same shape as the terminal-status logs the importers emit
+        # so a single ``grep '[dispatcher]'`` reconstructs a run's
+        # lifecycle from the supervisor log.
+        logger.info(
+            "[dispatcher] transition queued->running kind=%s tenant=%s run_id=%s",
+            doc.get("kind"), doc.get("tenant_id"), doc.get("run_id"),
+        )
+        return True
+    return False
+
+
+async def _watchdog_sweep(db) -> Dict[str, int]:
+    """Auto-fail every {queued, running} run whose ``updated_at`` is
+    older than :data:`WATCHDOG_STALE_MINUTES` AND whose customer
+    scan count has not advanced (``customers_scanned == 0``).
+
+    Rationale:
+      * A doc stuck in ``queued`` past the threshold means the
+        dispatcher never claimed it (pod died between insert + tick,
+        or scheduler was never wired) — safe to auto-fail and let
+        the operator resubmit.
+      * A doc stuck in ``running`` past the threshold with zero
+        rows scanned means ``run_full`` crashed before its first
+        checkpoint — the dispatcher's own try/except would have
+        marked it ``failed`` if the crash bubbled out of
+        ``_run_one``; a doc that stays ``running`` means the
+        coroutine hung silently (network deadlock, event-loop
+        rebind, etc.).  Either way, unblock the queue.
+
+    Idempotent — a follow-up tick with no eligible docs is a no-op.
+    Returns ``{stale_transitioned: N}``.
+    """
+    cutoff = (
+        datetime.now(timezone.utc)
+        - timedelta(minutes=WATCHDOG_STALE_MINUTES)
+    ).isoformat()
+    q = {
+        "status": {"$in": ["queued", "running"]},
+        "updated_at": {"$lt": cutoff},
+        "$or": [
+            {"counters.customers_scanned": {"$in": [0, None]}},
+            {"counters.customers_scanned": {"$exists": False}},
+        ],
+    }
+    stale = 0
+    async for doc in db.homeworks_import_runs.find(
+        q, {"_id": 0, "run_id": 1, "tenant_id": 1, "kind": 1,
+             "status": 1, "updated_at": 1},
+    ):
+        r = await db.homeworks_import_runs.update_one(
+            {"run_id": doc["run_id"],
+             "status": {"$in": ["queued", "running"]}},
+            {"$set": {"status": "failed_stale",
+                       "finished_at": _now_iso(),
+                       "updated_at": _now_iso()},
+             "$push": {"error_log": {
+                 "stage": "watchdog",
+                 "reason": (
+                     f"stale_{doc.get('status')}_"
+                     f"{WATCHDOG_STALE_MINUTES}min_no_progress"),
+                 "prev_status": doc.get("status"),
+                 "prev_updated_at": doc.get("updated_at"),
+                 "at": _now_iso(),
+             }}},
+        )
+        if r.modified_count:
+            stale += 1
+            logger.warning(
+                "[dispatcher] transition %s->failed_stale kind=%s "
+                "tenant=%s run_id=%s prev_updated_at=%s",
+                doc.get("status"), doc.get("kind"),
+                doc.get("tenant_id"), doc.get("run_id"),
+                doc.get("updated_at"),
+            )
+    return {"stale_transitioned": stale}
 
 
 def _pid_tag() -> str:
@@ -113,6 +198,21 @@ async def _run_one(kind: str, tenant_id: str, run_id: str,
         await imp.run_full(
             tenant_id=tenant_id, user_id=user_id, run_id=run_id,
         )
+        # Feb-2026 · Structured terminal-transition log.  Read back the
+        # doc so we surface whichever status the importer's own
+        # ``_checkpoint`` chose: ``completed`` / ``succeeded`` /
+        # ``cancelled`` / ``paused_needs_attention``.
+        from config import db
+        end_doc = await db.homeworks_import_runs.find_one(
+            {"run_id": run_id},
+            {"_id": 0, "status": 1, "counters": 1},
+        ) or {}
+        logger.info(
+            "[dispatcher] transition running->%s kind=%s tenant=%s "
+            "run_id=%s counters=%s",
+            end_doc.get("status"), kind, tenant_id, run_id,
+            end_doc.get("counters"),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception("[dispatcher] run_full crashed kind=%s run_id=%s",
                           kind, run_id)
@@ -127,6 +227,11 @@ async def _run_one(kind: str, tenant_id: str, run_id: str,
                  "error": str(exc)[:500],
                  "at": _now_iso(),
              }}},
+        )
+        logger.warning(
+            "[dispatcher] transition running->failed kind=%s tenant=%s "
+            "run_id=%s error=%s",
+            kind, tenant_id, run_id, str(exc)[:200],
         )
 
 
@@ -146,6 +251,10 @@ async def dispatcher_tick() -> Dict[str, Any]:
     scheduler log stays readable + tests can assert behaviour.
     """
     from config import db  # local import — matches other cron jobs
+    # Feb-2026 · Watchdog sweep BEFORE the queued scan so a doc that
+    # just aged past the stale threshold gets marked ``failed_stale``
+    # instead of being re-claimed for another useless run.
+    watchdog = await _watchdog_sweep(db)
     started = 0
     skipped_concurrency = 0
     unknown_kind = 0
@@ -181,6 +290,7 @@ async def dispatcher_tick() -> Dict[str, Any]:
     return {"started": started,
               "skipped_concurrency": skipped_concurrency,
               "unknown_kind": unknown_kind,
+              "stale_transitioned": watchdog.get("stale_transitioned", 0),
               "at": _now_iso()}
 
 

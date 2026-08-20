@@ -100,6 +100,15 @@ def build_job_view_url(
 ) -> str:
     """Build the full portal deep-link URL.
 
+    Feb-2026 hotfix — the URL now points at the backend redemption
+    interstitial (``GET /api/portal/auto-login?t=…``) instead of the
+    portal SPA directly.  The interstitial verifies the token, mints
+    a customer-scoped access token, seeds it into ``localStorage``,
+    and JS-navigates to ``/portal/service-reports/{sr_id}`` (or
+    ``/portal/login?reason=link_expired`` on failure).  This closes
+    the P0 "button 404s" bug where the raw ``/portal/jobs/{jid}``
+    URL had no portal-side route.
+
     Callers who need to defend against a mint failure (e.g. the door-
     hanger email builder) should call ``mint_job_view_token`` directly
     in a try/except and omit the CTA on failure rather than letting
@@ -108,4 +117,4 @@ def build_job_view_url(
     token = mint_job_view_token(
         customer_id, job_id, tenant_id, ttl_hours=ttl_hours,
     )
-    return f"{base_url.rstrip('/')}/portal/jobs/{job_id}?t={token}"
+    return f"{base_url.rstrip('/')}/api/portal/auto-login?t={token}"

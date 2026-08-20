@@ -60,9 +60,12 @@ class DryRunReport:
 @dataclass
 class Counters:
     customers_scanned: int = 0
-    customers_imported: int = 0
-    customers_skipped: int = 0
+    customers_imported: int = 0     # BC = created + updated
+    customers_created: int = 0      # new insert
+    customers_updated: int = 0      # existing row had at least one field backfilled
+    customers_skipped: int = 0      # existing row, nothing to change (true no-op)
     customers_failed: int = 0
+    customers_marked_inactive: int = 0   # ended with is_active=False (new or backfilled)
     jobs_imported: int = 0
     invoices_imported: int = 0
     payments_imported: int = 0
@@ -91,14 +94,20 @@ class _RateLimiter:
         self._last = time.monotonic()
 
 
-async def _customer_exists(tenant_id: str, homeworks_id: int) -> bool:
-    """Idempotency check — has this Homeworks customer already landed?"""
-    row = await db.customers.find_one(
+async def _customer_exists(tenant_id: str, homeworks_id: int) -> Optional[Dict[str, Any]]:
+    """Idempotency probe — return the existing customer doc (or
+    ``None``) so the caller can decide between insert / backfill /
+    skip.  Only fields the update path needs are projected."""
+    return await db.customers.find_one(
         {"tenant_id": tenant_id, "original_id": str(homeworks_id),
          "imported_from": "homeworks"},
-        {"_id": 1},
+        {"_id": 0, "id": 1, "is_active": 1, "source_status": 1,
+         "homeworks_status": 1, "homeworks_outstanding": 1,
+         "homeworks_lifetime_paid": 1, "email": 1, "phone": 1,
+         "address": 1, "city": 1, "state": 1, "zip": 1,
+         "first_name": 1, "last_name": 1, "name": 1,
+         "description": 1, "tags": 1},
     )
-    return row is not None
 
 
 # ── Dry-run ──────────────────────────────────────────────────────────
@@ -248,6 +257,24 @@ async def _cancel_flag_set(run_id: str) -> bool:
 
 
 # ── Import — per customer ────────────────────────────────────────────
+# Feb-2026 · Homeworks statuses that map to our inactive lifecycle.
+# Everything else (ACTIVE, PROSPECT, etc.) is a hard skip for THIS
+# importer (the active importer owns those).  ``WRITTEN_OFF`` is
+# collapsed onto ``is_active=False`` too — we surface the raw
+# Homeworks value via ``source_status`` for traceability.
+_HW_INACTIVE_STATUSES = {"INACTIVE", "WRITTEN_OFF"}
+
+
+def _hw_status_to_is_active(hw_status: Optional[str]) -> Optional[bool]:
+    """Return ``False`` for Homeworks statuses that map to our
+    inactive lifecycle; ``None`` for anything else (unknown status —
+    do NOT stamp the field so a local edit is preserved)."""
+    norm = (hw_status or "").strip().upper()
+    if norm in _HW_INACTIVE_STATUSES:
+        return False
+    return None
+
+
 def _map_customer(c: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
     now = _now_iso()
     addr = c.get("address") or {}
@@ -262,7 +289,9 @@ def _map_customer(c: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         }
     street_parts = [addr.get("street1") or "", addr.get("street2") or ""]
     street_joined = " ".join(p for p in street_parts if p).strip()
-    return {
+    hw_status = c.get("status")
+    is_active_val = _hw_status_to_is_active(hw_status)
+    doc: Dict[str, Any] = {
         "id": uuid.uuid4().hex,
         "tenant_id": tenant_id,
         "imported_from": "homeworks",
@@ -270,8 +299,17 @@ def _map_customer(c: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         "imported_at": now,
         "created_at": now,
         "updated_at": now,
+        # Legacy string label — kept for BC with any dashboard that
+        # read the old field.  The lifecycle boolean below is the
+        # source of truth going forward.
         "status": "inactive",
-        "homeworks_status": c.get("status"),
+        # Feb-2026 · Fix 2 — canonical lifecycle flag consumed by
+        # ``routers/customers.py`` list filters (``is_active``).
+        # ``source_status`` preserves the raw Homeworks label so
+        # ops can distinguish INACTIVE vs WRITTEN_OFF for churn
+        # analysis even though both collapse onto ``is_active=False``.
+        "homeworks_status": hw_status,
+        "source_status": hw_status,
         "email": (c.get("email") or "").strip() or None,
         "first_name": c.get("firstName") or "",
         "last_name": c.get("lastName") or "",
@@ -291,6 +329,63 @@ def _map_customer(c: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         "homeworks_outstanding": c.get("outstanding"),
         "homeworks_lifetime_paid": c.get("lifetimePaid"),
     }
+    # Only stamp ``is_active`` when the Homeworks status maps to a
+    # known inactive value.  Leaving it absent keeps the customer
+    # visible in the active-cohort filter (which treats field-absent
+    # as active for Phase 34f BC) — safer than force-flipping.
+    if is_active_val is False:
+        doc["is_active"] = False
+    return doc
+
+
+def _build_backfill_update(
+    existing: Dict[str, Any], mapped: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Compute the ``$set`` payload for the idempotent update path.
+
+    Rules (locked by Feb-2026 P0 spec):
+      * Only fill missing / empty fields — never overwrite a non-null
+        local edit (e.g. an admin who curated the phone number,
+        renamed the customer, or manually flipped ``is_active=True``
+        after import).
+      * ALWAYS refresh the volatile Homeworks snapshot fields
+        (``homeworks_status``, ``homeworks_outstanding``,
+        ``homeworks_lifetime_paid``, ``source_status``) so the
+        churn dashboard sees the latest reading — these mirror
+        source-of-truth data and are never edited locally.
+      * NEVER touch ``is_active`` when the existing row already has
+        a boolean value set — a local edit toggling the customer
+        back to active must be preserved on re-import.
+    """
+    def _empty(v: Any) -> bool:
+        if v is None:
+            return True
+        if isinstance(v, str) and not v.strip():
+            return True
+        if isinstance(v, list) and not v:
+            return True
+        return False
+
+    upd: Dict[str, Any] = {}
+    fillable = (
+        "email", "phone", "first_name", "last_name", "name",
+        "address", "city", "state", "zip", "description", "tags",
+    )
+    for key in fillable:
+        if _empty(existing.get(key)) and not _empty(mapped.get(key)):
+            upd[key] = mapped[key]
+    # Volatile Homeworks snapshot — always refresh.
+    for key in ("homeworks_status", "source_status",
+                 "homeworks_outstanding", "homeworks_lifetime_paid"):
+        if mapped.get(key) is not None and existing.get(key) != mapped.get(key):
+            upd[key] = mapped[key]
+    # Lifecycle backfill — set is_active=False only if it's
+    # currently absent (never overwrite a local True/False edit).
+    if "is_active" not in existing and mapped.get("is_active") is False:
+        upd["is_active"] = False
+    if upd:
+        upd["updated_at"] = _now_iso()
+    return upd
 
 
 async def _download_avatar(url: Optional[str]) -> Optional[bytes]:
@@ -319,8 +414,24 @@ async def _import_one_customer(
         counters.customers_failed += 1
         raise RuntimeError("customer_missing_id")
 
-    if await _customer_exists(tenant_id, hw_id):
-        counters.customers_skipped += 1
+    existing = await _customer_exists(tenant_id, hw_id)
+    mapped = _map_customer(customer, tenant_id)
+
+    if existing:
+        # Idempotent update path — only fill missing fields; never
+        # overwrite non-null local edits.
+        upd = _build_backfill_update(existing, mapped)
+        if upd:
+            await db.customers.update_one(
+                {"tenant_id": tenant_id, "id": existing["id"]},
+                {"$set": upd},
+            )
+            counters.customers_updated += 1
+            counters.customers_imported += 1
+            if upd.get("is_active") is False:
+                counters.customers_marked_inactive += 1
+        else:
+            counters.customers_skipped += 1
         return
 
     # Insert core customer first so child insert failures don't orphan
@@ -329,10 +440,13 @@ async def _import_one_customer(
     # on a mid-flight crash — the resume run will `_customer_exists`
     # short-circuit AND we skip re-fetching children. See idempotency
     # note in the module docstring.
-    at_customer = _map_customer(customer, tenant_id)
+    at_customer = mapped
     await db.customers.insert_one(at_customer)
     aqua_customer_id = at_customer["id"]
+    counters.customers_created += 1
     counters.customers_imported += 1
+    if at_customer.get("is_active") is False:
+        counters.customers_marked_inactive += 1
     counters.tags_imported += len(at_customer["tags"])
     if at_customer.get("description"):
         counters.notes_imported += 1  # Customer.description counted as one note

@@ -418,13 +418,21 @@ def test_door_hanger_portal_cta_renders_after_photos_before_footer(monkeypatch):
             r = await _call_email_door_hanger(jid, tid)
             assert r["ok"] is True
             body = captured.get("html") or ""
-            # Anchor href follows the {base}/portal/jobs/{job_id}?t=...
-            # pattern (search for the fragment — job_id has UUID noise).
-            expected_url_prefix = f"https://app.plofv.com/portal/jobs/{jid}?t="
+            # Feb-2026 hotfix — the button href now targets the
+            # backend redemption endpoint so a click auto-logs the
+            # customer in.  The old ``/portal/jobs/{jid}?t=`` URL
+            # 404'd (no portal-side route).
+            expected_url_prefix = (
+                "https://app.plofv.com/api/portal/auto-login?t="
+            )
             assert expected_url_prefix in body, body[:800]
-            # CTA label + accessible fallback text.
+            # The bare portal-jobs path MUST no longer appear.
+            assert f"/portal/jobs/{jid}?t=" not in body
+            # CTA label — plaintext "paste this link" fallback removed
+            # per user hotfix Feb-2026 (visual noise + double surface).
             assert "View Service Report in Portal" in body
-            assert "If the button doesn't work, paste this link:" in body
+            assert "If the button doesn't work" not in body
+            assert "paste this link" not in body
             # Positional: photos section < CTA < footer.
             photos_idx = body.index("Service Photos")
             cta_idx = body.index("View Service Report in Portal")
@@ -469,6 +477,7 @@ def test_door_hanger_omits_cta_when_customer_id_missing(monkeypatch):
             body = composed["html"]
             # CTA MUST be absent.
             assert "View Service Report in Portal" not in body
+            assert "/api/portal/auto-login" not in body
             assert "/portal/jobs/" not in body
             # Rest of the email still renders — baseline copy present.
             assert "your visit has been completed" in body
@@ -480,19 +489,22 @@ def test_door_hanger_omits_cta_when_customer_id_missing(monkeypatch):
 
 
 def test_door_hanger_cta_omitted_gracefully_when_mint_raises(monkeypatch):
-    """When ``mint_job_view_token`` raises, the CTA MUST be omitted
+    """When the portal mint helper raises, the CTA MUST be omitted
     but the email must still render successfully — never 500."""
     async def _go():
         tid = await _tenant_id()
         cid = await _mk_customer(tid)
         jid = await _mk_pool_job(tid, cid)
-        # Sabotage the token minter — the builder must catch + log
-        # + omit the CTA.
+        # Sabotage the URL builder — the door-hanger composer must
+        # catch + log + omit the CTA.  ``build_job_view_url``
+        # internally calls ``mint_job_view_token`` so patching the
+        # public builder covers both entry points.
         from services import portal_magic_links as _pml
 
         def _boom(*a, **kw):
             raise RuntimeError("simulated mint failure")
 
+        monkeypatch.setattr(_pml, "build_job_view_url", _boom)
         monkeypatch.setattr(_pml, "mint_job_view_token", _boom)
         # Also patch the freshly-imported name inside the builder
         # module — the builder does a local ``from ... import`` at
@@ -503,7 +515,7 @@ def test_door_hanger_cta_omitted_gracefully_when_mint_raises(monkeypatch):
             assert r.get("ok") is True, r
             body = captured.get("html") or ""
             assert "View Service Report in Portal" not in body
-            assert "/portal/jobs/" not in body
+            assert "/api/portal/auto-login" not in body
             # Rest of email still there.
             assert "your visit has been completed" in body
             assert "We appreciate your business" in body

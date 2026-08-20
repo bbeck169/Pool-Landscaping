@@ -331,10 +331,34 @@ function ImporterRow({ importer, onLaunch }) {
             style={{ color: colors.onSurfaceSecondary }}
             data-testid={`homeworks-import-progress-${importer.key}`}
           >
-            Scanned {humanCount(status.counters.customers_scanned)} · Imported{" "}
-            {humanCount(status.counters.customers_imported)} · Skipped{" "}
-            {humanCount(status.counters.customers_skipped)}
+            Scanned {humanCount(status.counters.customers_scanned)}
+            {" · Created "}{humanCount(status.counters.customers_created || 0)}
+            {" · Updated "}{humanCount(status.counters.customers_updated || 0)}
+            {" · Skipped "}{humanCount(status.counters.customers_skipped || 0)}
+            {" · Marked Inactive "}{humanCount(status.counters.customers_marked_inactive || 0)}
           </div>
+        ) : null}
+        {running ? (
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const r = await api.post(
+                  `/integrations/homeworks/imports/dispatcher/reset-stuck?kind=${encodeURIComponent(importer.kind || "")}`,
+                );
+                toast.success(
+                  `Reset ${r?.reset || 0} stuck job(s) — dispatcher will retry.`,
+                );
+              } catch (e) {
+                toast.error(e?.message || "Reset stuck failed");
+              }
+            }}
+            className="mt-2 text-[11px] font-semibold underline"
+            style={{ color: colors.muted }}
+            data-testid={`homeworks-import-reset-stuck-${importer.key}`}
+          >
+            Reset stuck job
+          </button>
         ) : null}
       </div>
       <button

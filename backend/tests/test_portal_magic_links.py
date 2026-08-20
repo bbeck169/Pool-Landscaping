@@ -100,8 +100,13 @@ def test_build_job_view_url_shape():
     url = build_job_view_url(
         "https://portal.example.com/", "cust-a", "job-b", "tenant-c",
     )
-    # No double slashes, correct path template, token embedded.
-    assert url.startswith("https://portal.example.com/portal/jobs/job-b?t=")
+    # Feb-2026 hotfix — URL now points at the backend redemption
+    # interstitial (``/api/portal/auto-login?t=…``) instead of the
+    # portal SPA directly, so the button click has a server to hit
+    # and can't 404 on missing SPA route.
+    assert url.startswith(
+        "https://portal.example.com/api/portal/auto-login?t="
+    )
     tok = url.split("?t=", 1)[1]
     payload = verify_job_view_token(tok)
     assert payload["customer_id"] == "cust-a"

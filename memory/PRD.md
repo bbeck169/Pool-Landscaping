@@ -10750,3 +10750,162 @@ Comms gate logged `policy=prod_bypass type=email provider=resend
 trigger=transactional domain=plofv.com` for both sends — no
 mocked / dry_run / suppression fallbacks fired. Rotation confirmed
 live for both paths.
+
+---
+
+## Feb-2026 · Homeworks Import Center · P0 Unstick + Inactive lifecycle mapping
+
+### Root cause (stuck QUEUED · Running…)
+`services/homeworks_mcp/import_dispatcher.py` had NO watchdog / recovery
+mechanism.  A doc claimed to `running` by a pod that then died (crash,
+OOM, deploy roll) stayed `running` forever — no scheduled tick would
+re-pick it (the atomic `queued → running` flip filters `status:"queued"`
+by design).  Compounded by `_dry_run_cache` being in-memory (a pod
+restart lost the dry-run window, so re-submitting also failed with
+`dry_run_required_within_15_minutes_before_run`).
+
+### Fixes shipped
+1. **Watchdog** in `dispatcher_tick()`.  Sweeps `{queued, running}`
+   docs whose `updated_at` is older than `WATCHDOG_STALE_MINUTES=15`
+   with `counters.customers_scanned == 0`, transitions them to
+   `failed_stale`, appends an `error_log` row with the reason.
+2. **Reset-stuck admin endpoint** —
+   `POST /api/integrations/homeworks/imports/dispatcher/reset-stuck?kind={optional}`
+   (super_admin only).  Flips any stuck `{queued, running}` doc back
+   to `queued`, clears the `dispatcher_pid` / `dispatcher_claimed_at`
+   lock fields, kicks a dispatcher tick immediately if the 5s cooldown
+   window is clear.  Preserves `counters` + `resume_cursor` so a mid-
+   flight run resumes.
+3. **Structured transition logs** — every `queued → running`,
+   `running → <terminal>`, and `<stuck> → failed_stale` now emits
+   one `[dispatcher] transition …` line so ops can reconstruct a
+   run's lifecycle from `grep '[dispatcher]'`.
+4. **Inactive lifecycle mapping** — Homeworks `INACTIVE` /
+   `WRITTEN_OFF` now stamps our canonical `customer.is_active = False`
+   (the exact field `routers/customers.py` line 261 filters on).
+   Raw label preserved as `customer.source_status` so churn analysis
+   can distinguish the two.  Idempotent update path (`_build_backfill_update`)
+   only fills missing fields — never overwrites non-null local
+   edits, and never flips `is_active` if a local edit set it back to
+   True.
+5. **Refined counters** — `customers_created` / `customers_updated` /
+   `customers_skipped` / `customers_marked_inactive` (plus legacy
+   `customers_imported` = created + updated for BC).  FE
+   progress line updated to show all four.
+
+### Files changed
+- `backend/services/homeworks_mcp/import_dispatcher.py` — watchdog +
+  transition logging + `_try_start_run` log line.
+- `backend/routers/integrations_homeworks_dispatcher.py` — new
+  `POST /reset-stuck` endpoint.
+- `backend/services/homeworks_mcp/inactive_customers_importer.py` —
+  `_map_customer` stamps `is_active=False` + `source_status`;
+  `_customer_exists` returns the doc for the update path; new
+  `_build_backfill_update`; `_import_one_customer` uses new counters.
+- `frontend/src/components/settings/HomeworksImportCenter.jsx` —
+  progress line now reads `Scanned · Created · Updated · Skipped ·
+  Marked Inactive`; new "Reset stuck job" link per row when the row
+  is in a running state.
+- `backend/tests/test_homeworks_import_inactive.py` — **NEW**, 7 tests
+  covering all 7 scenarios in the P0 spec.
+
+### Test roll-up
+`test_homeworks_import_inactive.py` → 7/7 passing.
+
+### Sample dispatcher log lines (happy path)
+```
+[dispatcher] transition queued->running kind=inactive_customers tenant=<tid> run_id=<rid>
+[dispatcher] executing kind=inactive_customers tenant=<tid> run_id=<rid>
+[dispatcher] transition running->succeeded kind=inactive_customers tenant=<tid> run_id=<rid> counters={'customers_scanned': 25, 'customers_created': 22, 'customers_updated': 3, 'customers_skipped': 0, 'customers_marked_inactive': 25, …}
+```
+
+Sample failure-path lines (stuck job auto-swept):
+```
+[dispatcher] transition running->failed_stale kind=inactive_customers tenant=<tid> run_id=<rid> prev_updated_at=2026-02-20T15:20:00+00:00
+```
+
+---
+
+## Feb-2026 hotfix · Door-hanger CTA — remove plaintext fallback + close 404 gap
+
+### What shipped
+1. **Removed plaintext "paste this link:" line** from
+   `_build_door_hanger_email` — only the button remains.
+2. **New backend redemption interstitial**
+   `GET /api/portal/auto-login?t=<jwt>&redirect=<optional>`.
+   Verifies the token via `verify_job_view_token`, looks up the
+   customer's `role="customer"` login user (same cascade the
+   `/auth/admin/impersonate/{cid}` endpoint uses), mints an
+   access token via **`utils.create_token`** (the SAME helper
+   `auth_response` uses for real logins — no forked session logic),
+   and returns a **200 HTML interstitial** that seeds the JWT into
+   `localStorage["token"]` (the codebase's Bearer-JWT auth store —
+   no session cookies exist) then `window.location.replace`s to
+   `/portal/service-reports/{sr_id}`.
+3. **`build_job_view_url` now emits the redemption URL** —
+   `{APP_BASE_URL}/api/portal/auto-login?t=<jwt>` — so the button
+   click has a server route to hit.
+4. **Open-redirect guard** — `redirect` param honoured only when it
+   starts with `/portal/`; anything else falls back to the token-
+   derived service-report path.
+5. **Never-logs-the-raw-token** — the redemption logger records
+   `outcome=<success|expired|invalid|wrong_scope>` + `customer_id` /
+   `job_id` / `service_report_id`, but the raw `t` value is
+   scrubbed.
+6. **Frontend `/portal/login` banner** now reads both `?reason=expired`
+   and `?reason=link_expired` and renders a friendly one-liner
+   ("Your one-click link has expired. Please log in to continue.")
+   when it's `link_expired`.
+
+### Session helper reused
+`utils.create_token(user)` — the exact function
+`utils.auth_response` uses when a real login succeeds.  No new session
+logic was invented.
+
+### Portal `/portal/jobs/:job_id` route status
+**Did not exist and was NOT added.**  The canonical portal detail page
+is `/portal/service-reports/:id` (keyed on `service_report.id`, not
+`job.id`).  The redemption endpoint resolves the service report from
+the job id and redirects to `/portal/service-reports/{sr_id}`
+directly — a click still lands on the right page without needing a
+new frontend route.
+
+### Files changed
+- `backend/services/portal_magic_links.py` — `build_job_view_url`
+  now emits the auto-login URL.
+- `backend/routers/portal_auto_login.py` — **NEW** router.
+- `backend/server.py` — imports + registers the new router.
+- `backend/routers/workstream_service_log.py` — removed the
+  plaintext fallback line; switched to `build_job_view_url`.
+- `backend/tests/test_portal_auto_login_route.py` — **NEW**, 7 tests
+  matching the spec's contract points.
+- `backend/tests/test_portal_magic_links.py` — updated URL-shape test.
+- `backend/tests/test_door_hanger_email_body.py` — updated CTA
+  assertions (new URL prefix, plaintext line absent).
+- `frontend/src/pages/Login.jsx` — banner reads both `expired` and
+  `link_expired` reasons.
+
+### Live-verify (localhost:8001 curl trace)
+```
+CTA URL       : https://app.plofv.com/api/portal/auto-login?t=eyJhbGciOiJIUzI1NiIs…
+HTTP status   : 200
+has token seed: True
+redirect to   : /portal/service-reports/live-sr-62c18e8c
+bogus status  : 302   redirect: /portal/login?reason=link_expired
+```
+
+- Plaintext "If the button doesn't work" / "paste this link" strings
+  verified absent from the email body.
+- Interstitial contains `localStorage.setItem('token', <jwt>)` +
+  `window.location.replace('/portal/service-reports/<sr_id>')`.
+- Bogus token redirects to `/portal/login?reason=link_expired`
+  without seeding an access token.
+
+### Combined test roll-up (Homeworks + Door-hanger hotfix)
+- `test_homeworks_import_inactive.py` → 7/7
+- `test_portal_auto_login_route.py` → 7/7 (NEW)
+- `test_portal_magic_links.py` → 8/8
+- `test_door_hanger_email_body.py` → 9/9
+- `test_door_hanger_auto_send.py` → 8/8
+
+**Total this pass: 39/39 passing in 3.27s.**

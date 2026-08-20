@@ -100,7 +100,15 @@ export default function Login({ variant = "staff" } = {}) {
   // page reload triggered by ``window.location.assign``.
   const expiredBanner = React.useMemo(() => {
     const params = new URLSearchParams(location.search || "");
-    return params.get("reason") === "expired";
+    const reason = params.get("reason");
+    // Feb-2026 · Door-hanger auto-login redemption reasons — the
+    // /api/portal/auto-login interstitial 302s here with a specific
+    // ``reason`` when the one-click ``?t=`` link is unusable.
+    return reason === "expired" || reason === "link_expired";
+  }, [location.search]);
+  const isLinkExpired = React.useMemo(() => {
+    const params = new URLSearchParams(location.search || "");
+    return params.get("reason") === "link_expired";
   }, [location.search]);
 
   const onSubmit = async (e) => {
@@ -211,7 +219,9 @@ export default function Login({ variant = "staff" } = {}) {
               role="status"
               data-testid="login-session-expired-banner"
             >
-              Your session has expired. Please sign in again.
+              {isLinkExpired
+                ? "Your one-click link has expired. Please log in to continue."
+                : "Your session has expired. Please sign in again."}
             </div>
           )}
 

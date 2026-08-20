@@ -613,16 +613,20 @@ async def _build_door_hanger_email(
     # Skip rules for the CTA (do NOT skip the whole email):
     #   * missing ``customer.id`` → omit the CTA block entirely.
     #   * mint helper raises      → catch, log, omit CTA.
+    # Hotfix Feb-2026 — the URL now points at the backend redemption
+    # interstitial ``/api/portal/auto-login?t=…`` so a click auto-
+    # logs the customer in and lands them on the service report.  The
+    # plaintext "paste this link" fallback line was removed per user
+    # feedback (visual noise + double surface for the same URL).
     portal_cta_html = ""
     customer_id_for_link = (cust or {}).get("id") or cid
     if customer_id_for_link and jid and (tenant or {}).get("id"):
         try:
-            from services.portal_magic_links import mint_job_view_token
-            _tok = mint_job_view_token(
+            from services.portal_magic_links import build_job_view_url
+            portal_url = build_job_view_url(
+                _resolve_public_base_url(),
                 customer_id_for_link, jid, tenant["id"],
             )
-            _base = _resolve_public_base_url()
-            portal_url = f"{_base}/portal/jobs/{jid}?t={_tok}"
             _btn_bg = (tenant or {}).get("brand_color") or "#1f2937"
             portal_cta_html = (
                 f"<div style=\"text-align:center;margin:32px 0 16px;\">"
@@ -631,11 +635,6 @@ async def _build_door_hanger_email(
                 f"color:#ffffff;padding:12px 24px;border-radius:6px;"
                 f"text-decoration:none;font-weight:600;font-size:14px;\">"
                 f"View Service Report in Portal</a>"
-                f"<p style=\"font-size:12px;color:#64748B;margin-top:12px;\">"
-                f"If the button doesn't work, paste this link: "
-                f"<a href=\"{portal_url}\" "
-                f"style=\"color:#64748B;text-decoration:underline;word-break:break-all;\">"
-                f"{portal_url}</a></p>"
                 f"</div>"
             )
         except Exception as exc:  # pragma: no cover — belt-and-braces
