@@ -1,0 +1,203 @@
+Phase 1 offline · schedule day-view verification
+Generated:  2026-08-20T17:27:44.530Z
+Airplane mode:  NetInfo mocked with isConnected=false
+Server:  api.get throws ApiNetworkError on every call
+Data source:  SQLite read cache (readCachedWeekJobs)
+
+───────────────────  RN tree  ───────────────────
+{
+  "type": "View",
+  "props": {
+    "testID": "schedule-offline-root"
+  },
+  "children": [
+    {
+      "type": "View",
+      "props": {
+        "testID": "schedule-header",
+        "style": {
+          "flexDirection": "row",
+          "alignItems": "center",
+          "gap": 8
+        }
+      },
+      "children": [
+        {
+          "type": "Text",
+          "props": {
+            "testID": "schedule-title"
+          },
+          "children": [
+            "Schedule"
+          ]
+        },
+        {
+          "type": "View",
+          "props": {
+            "style": {
+              "flexDirection": "row",
+              "alignItems": "center",
+              "alignSelf": "flex-start",
+              "gap": 4,
+              "backgroundColor": "#E5E7EB",
+              "borderColor": "#D1D5DB",
+              "borderWidth": 1,
+              "paddingHorizontal": 8,
+              "paddingVertical": 2,
+              "borderRadius": 8
+            },
+            "testID": "offline-badge"
+          },
+          "children": [
+            {
+              "type": "View",
+              "props": {
+                "accessibilityLabel": "ionicons-cloud-offline-outline"
+              },
+              "children": null
+            },
+            {
+              "type": "Text",
+              "props": {
+                "style": {
+                  "fontFamily": "PlusJakarta-Bold",
+                  "fontSize": 10,
+                  "color": "#4B5563",
+                  "letterSpacing": 0.4
+                }
+              },
+              "children": [
+                "Offline"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "View",
+      "props": {
+        "testID": "schedule-day-list"
+      },
+      "children": [
+        {
+          "type": "View",
+          "props": {
+            "testID": "job-row-j-cache-1",
+            "style": {
+              "flexDirection": "row"
+            }
+          },
+          "children": [
+            {
+              "type": "Text",
+              "props": {
+                "testID": "job-order-j-cache-1"
+              },
+              "children": [
+                "1",
+                "."
+              ]
+            },
+            {
+              "type": "Text",
+              "props": {
+                "testID": "job-customer-j-cache-1"
+              },
+              "children": [
+                "Blake Residence"
+              ]
+            },
+            {
+              "type": "Text",
+              "props": {
+                "testID": "job-address-j-cache-1"
+              },
+              "children": [
+                "123 Vistancia"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "View",
+          "props": {
+            "testID": "job-row-j-cache-2",
+            "style": {
+              "flexDirection": "row"
+            }
+          },
+          "children": [
+            {
+              "type": "Text",
+              "props": {
+                "testID": "job-order-j-cache-2"
+              },
+              "children": [
+                "2",
+                "."
+              ]
+            },
+            {
+              "type": "Text",
+              "props": {
+                "testID": "job-customer-j-cache-2"
+              },
+              "children": [
+                "Waverly Retreat"
+              ]
+            },
+            {
+              "type": "Text",
+              "props": {
+                "testID": "job-address-j-cache-2"
+              },
+              "children": [
+                "45 Pool Ln"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "View",
+          "props": {
+            "testID": "job-row-j-cache-3",
+            "style": {
+              "flexDirection": "row"
+            }
+          },
+          "children": [
+            {
+              "type": "Text",
+              "props": {
+                "testID": "job-order-j-cache-3"
+              },
+              "children": [
+                "3",
+                "."
+              ]
+            },
+            {
+              "type": "Text",
+              "props": {
+                "testID": "job-customer-j-cache-3"
+              },
+              "children": [
+                "Ridgeway Cottage"
+              ]
+            },
+            {
+              "type": "Text",
+              "props": {
+                "testID": "job-address-j-cache-3"
+              },
+              "children": [
+                "9 Oasis Cir"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -33,6 +33,12 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+// Feb-2026 · Phase 1 offline foundation — cache customer on the
+// close-out lookup + surface the offline pill in the header.
+import {
+  writeThroughCustomer, readCachedCustomer,
+} from "@/src/lib/offline/apiCache";
+import OfflineBadge from "@/src/components/OfflineBadge";
 import { getChecklistType, ChecklistType } from "@/src/utils/checklistType";
 import ServiceReportMediaUploader from "@/src/components/checklist/ServiceReportMediaUploader";
 import type { SRMedia } from "@/src/api/serviceReportMedia";
@@ -382,6 +388,7 @@ export default function JobChecklistScreen() {
               try {
                 if (job?.customer_id) {
                   const cust: any = await api.get(`/customers/${job.customer_id}`);
+                  writeThroughCustomer(cust).catch(() => {});
                   setRecapCustomer({
                     id: cust?.id, name: cust?.name,
                     email: cust?.email, phone: cust?.phone,
@@ -390,7 +397,19 @@ export default function JobChecklistScreen() {
                 } else {
                   setRecapCustomer({ name: job?.customer_name });
                 }
-              } catch { setRecapCustomer({ name: job?.customer_name }); }
+              } catch {
+                // Offline — try the SQLite read cache before we
+                // fall through to the job's denormalised
+                // ``customer_name``.
+                const cached = job?.customer_id
+                  ? await readCachedCustomer(job.customer_id).catch(() => null)
+                  : null;
+                setRecapCustomer(cached ? {
+                  id: cached.id, name: cached.name,
+                  email: cached.email, phone: cached.phone,
+                  alert_phone: cached.alert_phone,
+                } : { name: job?.customer_name });
+              }
               setRecapOpen(true);
             } catch (e: any) {
               Alert.alert("Close failed", e?.message || "Try again.");
@@ -446,7 +465,7 @@ export default function JobChecklistScreen() {
 
   return (
     <View style={styles.root}>
-      <Header title="Job Checklist" />
+      <Header title="Job Checklist" right={<OfflineBadge testID="checklist-header-offline-badge" />} />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 160 }}>
         <View style={styles.hero} testID="checklist-hero">
           <Text style={styles.heroLabel}>

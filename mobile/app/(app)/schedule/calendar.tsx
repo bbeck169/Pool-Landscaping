@@ -34,6 +34,10 @@ import { useAuth } from "@/src/auth";
 import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header, NotificationBell } from "@/src/components/widgets";
+// Feb-2026 · Phase 1 offline foundation — write-through cache on
+// successful load + read-fallback + header-level "Offline" pill.
+import { cachedGet, writeThroughJobs, readCachedWeekJobs } from "@/src/lib/offline/apiCache";
+import OfflineBadge from "@/src/components/OfflineBadge";
 import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import RainFlag from "@/src/components/weather/RainFlag";
@@ -185,13 +189,20 @@ export default function ScheduleCalendar() {
     try {
       const start = iso(addDays(focus, -14));
       const end   = iso(addDays(focus,  60));
-      const data = await api.get(`/jobs?start=${start}&end=${end}`);
+      // Feb-2026 · Phase 1 offline — write-through on success, read
+      // from the SQLite cache when the network throws.  Only cache
+      // for the current tech (bulk-replace is scoped by user).
+      const techUserId = user?.id || "";
+      const data = await cachedGet<any>(`/jobs?start=${start}&end=${end}`, {
+        writeThrough: async (d) => { await writeThroughJobs(techUserId, d); },
+        readCache:    async ()  => { return techUserId ? await readCachedWeekJobs(techUserId) : []; },
+      });
       const arr = Array.isArray(data) ? data : (data.items || data.data || []);
       setJobs(arr);
     } catch (e: any) {
       setErr(e.message || "Failed to load schedule");
     } finally { setLoading(false); }
-  }, [focus]);
+  }, [focus, user?.id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -377,16 +388,21 @@ export default function ScheduleCalendar() {
       <Header
         title="Schedule"
         subtitle={loading ? "Loading…" : `${jobs.length} jobs in window · ${mode}`}
-        right={isTech ? (
-          // Phase 22 · 2026-08-02 · Sub-item B — the ambient shell
-          // hamburger renders at the extreme top-right and was
-          // visually overlapping the bell. Push the bell 44dp left
-          // (hamburger tap target + 8dp gap) so both are fully
-          // tappable and non-colliding.
-          <View style={{ marginRight: 52 }} testID="schedule-header-bell">
-            <NotificationBell />
+        right={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <OfflineBadge testID="schedule-header-offline-badge" />
+            {isTech ? (
+              // Phase 22 · 2026-08-02 · Sub-item B — the ambient shell
+              // hamburger renders at the extreme top-right and was
+              // visually overlapping the bell. Push the bell 44dp left
+              // (hamburger tap target + 8dp gap) so both are fully
+              // tappable and non-colliding.
+              <View style={{ marginRight: 52 }} testID="schedule-header-bell">
+                <NotificationBell />
+              </View>
+            ) : null}
           </View>
-        ) : undefined}
+        }
       />
       {/* Phase 24 · 2026-08-03 — Root scroll wrapper. Prior layout was
           a flex column with per-view ScrollViews inside GridView /

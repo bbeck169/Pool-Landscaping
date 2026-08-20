@@ -12,6 +12,13 @@ import { useAuth } from "@/src/auth";
 import { useAttendance } from "@/src/hooks/useAttendance";
 import { useOnline, queuePhoto, pendingForJob, flushPendingPhotos, getCachedJobs, cacheJob, getCachedJob, queueMutation, flushPendingMutations } from "@/src/offline";
 import { colors, spacing, money, IMAGES , colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
+// Feb-2026 · Phase 1 offline foundation — cache /properties/{id}
+// on success + fall back to the SQLite cache on network failure so
+// the tech can still see property address / gate code offline.
+import {
+  writeThroughProperty, readCachedProperty,
+} from "@/src/lib/offline/apiCache";
+import OfflineBadge from "@/src/components/OfflineBadge";
 import { Loading, StatusChip, PrimaryButton, Sheet } from "@/src/components/ui";
 import { styles } from "@/src/components/job/styles";
 import { JobBeforeAfterPhotos } from "@/src/components/files";
@@ -87,8 +94,12 @@ export default function JobDetail() {
         try {
           const p = await api.get(`/properties/${fresh.property_id}`);
           setProperty(p);
+          writeThroughProperty(p).catch(() => {});
         } catch {
-          setProperty(null);
+          // Offline / server error — fall back to the SQLite cache
+          // if we cached this property on a previous online load.
+          const cachedProp = await readCachedProperty(fresh.property_id).catch(() => null);
+          setProperty(cachedProp || null);
         }
       } else {
         setProperty(null);
@@ -249,6 +260,16 @@ export default function JobDetail() {
           <Pressable style={[styles.backBtn, { top: insets.top + 8 }]} onPress={() => router.back()} testID="job-back">
             <Ionicons name="chevron-back" size={24} color="#fff" />
           </Pressable>
+          {/* Feb-2026 · Phase 1 offline foundation — floating "Offline"
+              pill above the hero.  Only renders when netinfo reports
+              disconnected; on the hero image a light chip stays legible. */}
+          <View
+            style={{ position: "absolute", right: 12, top: insets.top + 12 }}
+            testID="job-detail-header-offline-badge-wrap"
+            pointerEvents="none"
+          >
+            <OfflineBadge testID="job-detail-header-offline-badge" />
+          </View>
           <View style={styles.heroContent}>
             <StatusChip status={job.status} testID="job-status-chip" />
             <Text style={styles.heroTitle}>{job.title}</Text>

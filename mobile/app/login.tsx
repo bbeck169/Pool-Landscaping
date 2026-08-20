@@ -13,6 +13,12 @@ import { PrimaryButton } from "@/src/components/ui";
 import BrandLogo from "@/src/components/BrandLogo";
 import AIAvatar from "@/src/components/ai/AIAvatar";
 import { isPreviewOrDev } from "@/src/utils/env";
+// Feb-2026 · Phase 1 offline — skip the login screen when a fresh
+// cached JWT (<24h) + a cached ``/me`` payload exist.  The tech
+// can start their day in airplane mode and still see today's route.
+import { getFreshCachedJwt } from "@/src/lib/offline/jwtCache";
+import { getCachedMe } from "@/src/lib/offline/cache";
+import { storage } from "@/src/utils/storage";
 
 export default function Login() {
   const { login } = useAuth();
@@ -36,6 +42,33 @@ export default function Login() {
   // ``.env``) from overriding the gate. Prefers the new
   // ``/config/features.demo_logins_enabled`` flag when present.
   const [demoServerAllowed, setDemoServerAllowed] = useState<boolean | null>(null);
+
+  // Feb-2026 · Phase 1 offline — on mount, if there's a still-fresh
+  // JWT (<24h) + a cached ``/me`` payload, hydrate AsyncStorage and
+  // bounce to (app).  This lets a tech open the app offline first
+  // thing in the morning and land on today's route without a
+  // password prompt.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getFreshCachedJwt();
+        if (!token) return;
+        const cachedUser = await getCachedMe();
+        if (!cachedUser?.id) return;
+        // Prime the AuthProvider's storage keys — its boot effect
+        // reads AsyncStorage(USER_KEY) + SecureStore(TOKEN_KEY), so
+        // hydrating those is enough to skip the login screen on
+        // the very next tick.
+        await storage.setItem("pool_crm_user", JSON.stringify(cachedUser));
+        if (cancelled) return;
+        router.replace("/(app)");
+      } catch {
+        // Silent — fall through to normal manual sign-in.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [router]);
   useEffect(() => {
     let cancelled = false;
     (api as any)
