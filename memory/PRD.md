@@ -10909,3 +10909,94 @@ bogus status  : 302   redirect: /portal/login?reason=link_expired
 - `test_door_hanger_auto_send.py` → 8/8
 
 **Total this pass: 39/39 passing in 3.27s.**
+
+---
+
+## Feb-2026 · Chemistry required-readings gate (5 core fields)
+
+### Business rule
+A pool job cannot transition to ``completed`` unless all five core
+chemistry readings are present + parse as a real finite float:
+
+1. Free Cl (free_chlorine)
+2. Total Cl (total_chlorine)
+3. Alkalinity
+4. pH
+5. CYA (cyanuric_acid)
+
+Optionals (water temp, calcium hardness, anything else on the
+checklist) can still submit blank.  Missing = ``null`` / ``""`` /
+whitespace / unparseable string.  ``0`` and negative floats are
+VALID readings.
+
+### Single source of truth
+**`backend/services/chemistry_gate.py`** —
+`assert_core_readings_present(source)` raises a structured 422:
+
+```json
+{
+  "detail": "chemistry_core_readings_missing",
+  "missing_fields": ["free_cl", "ph", "cya"],
+  "message": "Cannot close job — required chemistry readings missing"
+}
+```
+
+Accepts both the ``service_reports.chemical_readings`` list-of-dicts
+shape AND the legacy ``jobs.chemical_readings`` flat dict.  Aliases
+(``free_cl`` / ``cya`` / ``alk`` / ``total_alkalinity`` / etc.) fold
+onto canonical keys.
+
+### Backend enforcement — all 3 paths call the same helper
+1. `POST /api/jobs/{jid}/service-report/submit` (routers/service_reports.py)
+2. `PUT  /api/jobs/{jid}` — only when payload flips `status → "completed"` (routers/jobs.py)
+3. `mobile_sync._handle_job_close` — the offline-replay path (routers/mobile_sync.py)
+
+**Could-Not-Service and any other non-``completed`` status change
+is NOT gated.**  Landscape jobs are exempt (`is_pool_job()` check).
+
+Mobile offline replay returns the 422 inline so the client's SQLite
+queue holds the row until the tech fills the readings — no silent
+drop.
+
+### Frontend mirrors
+* **Web (React)** — `frontend/src/utils/chemistryGate.js` +
+  `frontend/src/pages/tech/ServiceReport.jsx`:
+  * Submit button disabled while any core is missing.
+  * Native `title` tooltip lists the exact missing labels
+    ("Missing: Free Cl, pH, CYA").
+  * On 422 from a stale UI → dismissible inline warning banner
+    (does NOT lose the tech's other entered data).
+* **Mobile (Expo)** — `mobile/utils/chemistryGate.ts` +
+  `mobile/app/(app)/service-report/[id].tsx`:
+  * Submit button disabled + amber "Missing: …" hint line above it.
+  * `Alert` fallback if the client mirror lets a stale submit
+    through and the backend 422s.
+  * Offline queue row is NOT dequeued on 422 — tech can re-open,
+    fill readings, and re-sync (SQLite read cache from Offline
+    Phase 1 untouched).
+
+### Files changed
+* `backend/services/chemistry_gate.py` — **NEW**, single source of truth.
+* `backend/routers/service_reports.py` — gate on submit.
+* `backend/routers/jobs.py` — gate on PUT transition to completed.
+* `backend/routers/mobile_sync.py` — gate on `_handle_job_close`.
+* `backend/tests/test_chemistry_required_readings_gate.py` — **NEW**, 11 cases.
+* `frontend/src/utils/chemistryGate.js` — **NEW**, web mirror.
+* `frontend/src/pages/tech/ServiceReport.jsx` — button disable + tooltip + inline banner.
+* `mobile/utils/chemistryGate.ts` — **NEW**, mobile mirror.
+* `mobile/app/(app)/service-report/[id].tsx` — button disable + hint + Alert fallback.
+
+### Test roll-up
+Full sweep (chemistry + regression):
+- `test_chemistry_required_readings_gate.py` → 11/11
+- `test_door_hanger_auto_send.py` → 8/8
+- `test_door_hanger_email_body.py` → 9/9
+- `test_workstream_service_log_read_paths.py` → passing
+- `test_p0_sms_misrouting_fixes.py` → 5/5
+- `test_homeworks_import_inactive.py` → 7/7
+- `test_portal_auto_login_route.py` → 7/7
+- `test_portal_magic_links.py` → 8/8
+- `test_tech_name_resolution.py` → 6/6
+
+**Total: 68/68 passing in 5.50s.** Pre-existing unrelated failure
+`test_admin_cannot_undelete_job` untouched.

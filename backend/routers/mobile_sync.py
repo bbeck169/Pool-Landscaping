@@ -126,6 +126,23 @@ async def _handle_job_close(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
     if not job:
         raise ValueError("job not found")
     _prev_status = (job.get("status") or "").lower()
+    # Feb-2026 · Chemistry required-readings gate — applied ONLY
+    # when this replay actually flips a pool job to ``completed``.
+    # A 422 propagates back to the mobile client so the offline
+    # replay row stays in the local SQLite queue until the tech
+    # fills the missing readings and re-syncs.
+    if _prev_status != "completed":
+        from services.chemistry_gate import (
+            assert_core_readings_present, gather_readings_for_job, is_pool_job,
+        )
+        if is_pool_job(job):
+            rep = await db.service_reports.find_one(
+                {"tenant_id": tenant_id, "job_id": op.entity_id},
+                {"_id": 0},
+            )
+            assert_core_readings_present(
+                gather_readings_for_job(job, rep),
+            )
     await _log_conflict(op, tenant_id, {"status": job.get("status"),
                                             "completed_at": job.get("completed_at")})
     await db.jobs.update_one(

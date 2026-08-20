@@ -1010,6 +1010,21 @@ async def update_job(jid: str, body: JobUpdate,
         )
         update["technician_name"] = tech["name"] if tech else None
         update["technician_avatar"] = tech.get("avatar", "") if tech else ""
+    # Feb-2026 · Chemistry required-readings gate.  Applied ONLY on
+    # the ``→ completed`` transition — Could-Not-Service and other
+    # status changes are NOT gated.  Landscape jobs skip the gate.
+    if (update.get("status") == "completed"
+            and job.get("status") != "completed"):
+        from services.chemistry_gate import (
+            assert_core_readings_present, gather_readings_for_job, is_pool_job,
+        )
+        if is_pool_job(job):
+            rep = await db.service_reports.find_one(
+                {"tenant_id": tenant["id"], "job_id": jid}, {"_id": 0},
+            )
+            assert_core_readings_present(
+                gather_readings_for_job(job, rep),
+            )
     if update:
         await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": update})
 

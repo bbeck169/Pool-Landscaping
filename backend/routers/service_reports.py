@@ -435,6 +435,15 @@ async def submit_service_report(jid: str,
         raise HTTPException(404, "No report to submit — GET first")
     if rep.get("submitted_at"):
         return rep  # idempotent
+    # Feb-2026 · Chemistry required-readings gate.  Pool jobs MUST
+    # have all 5 core readings (Free Cl, Total Cl, Alkalinity, pH,
+    # CYA) before we accept the submit.  Landscape jobs skip the
+    # gate — no chemistry surface on that checklist.
+    from services.chemistry_gate import (
+        assert_core_readings_present, gather_readings_for_job, is_pool_job,
+    )
+    if is_pool_job(job):
+        assert_core_readings_present(gather_readings_for_job(job, rep))
     now = now_iso()
     # Phase 22 · Feb 2026 — backfill ``public_uuid`` on submit for
     # reports that were bootstrapped before the field existed. Safe

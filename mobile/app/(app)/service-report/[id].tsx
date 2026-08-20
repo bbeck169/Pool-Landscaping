@@ -12,6 +12,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+// Feb-2026 · Chemistry required-readings gate — mirror of backend
+// helper (see ``backend/services/chemistry_gate.py``).
+import { missingCoreReadings } from "@/utils/chemistryGate";
 
 const AUTOSAVE_MS = 5000;
 const PHOTO_CAP = 10;
@@ -157,6 +160,17 @@ export default function ServiceReportScreen() {
   };
 
   const submitAndClockOut = async () => {
+    // Feb-2026 · Client mirror of the backend gate.  Same rules as
+    // ``services/chemistry_gate.py`` so we never let a submit slip
+    // past that the API would then 422.
+    const missing = missingCoreReadings(report?.chemical_readings || []);
+    if (missing.length > 0) {
+      Alert.alert(
+        "Cannot submit yet",
+        `Missing required chemistry readings: ${missing.join(", ")}.`,
+      );
+      return;
+    }
     Alert.alert("Submit report", "Submit this report and clock out?", [
       { text: "Cancel", style: "cancel" },
       { text: "Submit", onPress: async () => {
@@ -179,7 +193,22 @@ export default function ServiceReportScreen() {
               router.replace("/(app)/today");
             }
           } catch (e: any) {
-            Alert.alert("Submit failed", e?.message || "");
+            // Feb-2026 · Surface the backend 422 (chemistry gate)
+            // as a friendly warning instead of a generic error so
+            // the tech knows exactly which fields to fill.
+            const detail = e?.response?.data?.detail || e?.detail;
+            if (
+              detail && typeof detail === "object"
+              && detail.detail === "chemistry_core_readings_missing"
+            ) {
+              const missed = (detail.missing_fields || []).join(", ");
+              Alert.alert(
+                "Cannot submit yet",
+                `Missing required chemistry readings: ${missed}.`,
+              );
+            } else {
+              Alert.alert("Submit failed", e?.message || "");
+            }
           }
         }}
     ]);
@@ -475,11 +504,44 @@ export default function ServiceReportScreen() {
 
       {!locked && (
         <View style={styles.footer}>
-          <Pressable style={[styles.submitBtn]} onPress={submitAndClockOut}
-                     testID="svc-report-submit">
-            <Ionicons name="shield-checkmark-outline" size={18} color="#fff"/>
-            <Text style={styles.submitBtnText}>Submit & Clock Out</Text>
-          </Pressable>
+          {(() => {
+            const missing = missingCoreReadings(report?.chemical_readings || []);
+            const gateOk = missing.length === 0;
+            return (
+              <>
+                {!gateOk && (
+                  <Text
+                    style={{
+                      color: "#78350F",
+                      backgroundColor: "#FEF3C7",
+                      borderColor: "#FDE68A",
+                      borderWidth: 1,
+                      borderRadius: 8,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      marginBottom: 8,
+                      fontSize: fontSize.sm,
+                    }}
+                    testID="chem-gate-missing-hint"
+                  >
+                    Missing: {missing.join(", ")}
+                  </Text>
+                )}
+                <Pressable
+                  style={[
+                    styles.submitBtn,
+                    !gateOk && { opacity: 0.5, backgroundColor: colors.muted },
+                  ]}
+                  onPress={submitAndClockOut}
+                  disabled={!gateOk}
+                  testID="svc-report-submit"
+                >
+                  <Ionicons name="shield-checkmark-outline" size={18} color="#fff"/>
+                  <Text style={styles.submitBtnText}>Submit & Clock Out</Text>
+                </Pressable>
+              </>
+            );
+          })()}
         </View>
       )}
     </View>

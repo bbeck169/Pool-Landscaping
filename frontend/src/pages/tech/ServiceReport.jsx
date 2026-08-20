@@ -9,6 +9,8 @@ import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer, Share2 } from "lucide-react";
+// Feb-2026 · Chemistry required-readings gate — shared with backend.
+import { missingCoreReadings } from "@/utils/chemistryGate";
 
 const AUTOSAVE_MS = 5000;
 const PHOTO_CAP = 10;
@@ -224,9 +226,31 @@ export default function ServiceReport() {
         navigate("/schedule/today");
       }
     } catch (e) {
-      alert(e.message);
+      // Feb-2026 · Defense-in-depth — the button is client-gated by
+      // ``coreMissing``, but if a stale UI slips a submit past that
+      // guard the backend returns 422 with a structured payload.
+      // Surface it inline instead of the generic alert so the tech
+      // does NOT lose their other entered data.
+      const detail = e?.response?.data?.detail || e?.detail;
+      if (
+        detail && typeof detail === "object"
+        && detail.detail === "chemistry_core_readings_missing"
+      ) {
+        setChemGateError(detail);
+      } else {
+        alert(e.message);
+      }
     } finally { setSubmitting(false); }
   };
+  const [chemGateError, setChemGateError] = useState(null);
+
+  // Feb-2026 · Live client-side mirror of the backend gate.  Same
+  // rules (see ``utils/chemistryGate.js``) so the button state
+  // matches the backend contract exactly.
+  const coreMissing = React.useMemo(
+    () => missingCoreReadings(report?.chemical_readings || []),
+    [report?.chemical_readings],
+  );
 
   const uncheckedCount = (report.checklist_items || []).filter((c) => !c.checked).length;
   const locked = !!report.submitted_at;
@@ -576,13 +600,32 @@ export default function ServiceReport() {
                   data-testid="svc-report-save-now">
             <Save size={13} className="inline mr-1"/> Save now
           </button>
-          <button onClick={submitAndClockOut} disabled={submitting}
-                  className="px-4 py-2 rounded-xl text-sm font-bold text-white"
-                  style={{ background: brandGradientCss }}
+          <button onClick={submitAndClockOut}
+                  disabled={submitting || coreMissing.length > 0}
+                  title={
+                    coreMissing.length > 0
+                      ? `Missing: ${coreMissing.join(", ")}`
+                      : undefined
+                  }
+                  className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                  style={{ background: coreMissing.length > 0 ? colors.muted : brandGradientCss }}
                   data-testid="svc-report-submit">
             <ShieldCheck size={14} className="inline mr-1"/>
             {submitting ? "Submitting…" : "Submit Report & Clock Out"}
           </button>
+        </div>
+      )}
+      {chemGateError && (
+        <div className="mx-3 mt-2 px-3 py-2 rounded-lg text-sm"
+             role="alert"
+             data-testid="chem-gate-error-banner"
+             style={{ backgroundColor: "#FEF3C7", color: "#78350F",
+                       border: "1px solid #FDE68A" }}>
+          <b>Cannot submit yet.</b> Missing required chemistry readings:{" "}
+          {(chemGateError.missing_fields || []).join(", ")}.
+          <button type="button" onClick={() => setChemGateError(null)}
+                  className="ml-3 underline text-xs"
+                  data-testid="chem-gate-error-dismiss">Dismiss</button>
         </div>
       )}
 
