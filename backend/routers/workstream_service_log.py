@@ -37,6 +37,13 @@ from fastapi.responses import JSONResponse
 
 from config import db, logger
 from routers.tenants import get_current_tenant
+from services.service_report_view import (
+    resolve_water_test as _resolve_water_test,
+    resolve_chemicals_used_with_cost as _resolve_chems_with_cost,
+    resolve_checklist_state as _resolve_checklist_shared,
+    resolve_notes as _resolve_notes,
+    resolve_photo_items as _resolve_photo_items,
+)
 from utils import get_current_user, new_id, now_iso
 
 router = APIRouter()
@@ -122,180 +129,27 @@ def _classify(job: dict) -> str:
 
 
 async def _resolve_checklist_state(job: dict, tenant_id: str) -> Dict[str, Any]:
-    """Emit the ORDERED checklist for this job's service line, marking
-    each item completed based on the per-job ``checklist`` array. When a
-    job's per-item ``done`` flag is missing, fall back to service_reports
-    checklist_items so both storage lanes render consistently.
-
-    P0 · Feb 2026 (Fix C) — match on ``key`` first, then on
-    ``_norm(label)`` only when both write and canonical entries lack a
-    ``key``.  The pre-fix code matched on normalised label alone, so a
-    tech payload of ``"Brushed Pool"`` never matched the canonical
-    ``"Brush Pool"`` and the item silently rendered unchecked.
-    """
+    """Thin adapter — the canonical implementation lives in
+    ``services/service_report_view.resolve_checklist_state``.  Kept
+    in this module (as ``_resolve_checklist_state``) for backward
+    compat with tests that import it directly."""
     from routers.checklists import DEFAULT_POOL_ITEMS, DEFAULT_LANDSCAPE_ITEMS
-    kind = _classify(job)
-    tenant_doc = await db.service_checklists.find_one(
-        {"tenant_id": tenant_id, "service_line": kind},
-        {"_id": 0, "items": 1},
+    return await _resolve_checklist_shared(
+        db, job, tenant_id, _classify(job),
+        DEFAULT_POOL_ITEMS, DEFAULT_LANDSCAPE_ITEMS,
     )
-    canon = (tenant_doc or {}).get("items") or (
-        DEFAULT_POOL_ITEMS if kind == "pool" else DEFAULT_LANDSCAPE_ITEMS
-    )
-
-    # Build TWO lookups from the write side — one by ``key``
-    # (preferred, exact-match) and one by ``_norm(label)`` (fuzzy
-    # fallback for legacy entries that lack a key).
-    key_map: Dict[str, bool] = {}
-    label_map: Dict[str, bool] = {}
-
-    def _record(it: dict) -> None:
-        if not (it.get("done") or it.get("checked")):
-            return
-        k = (it.get("key") or "").strip()
-        if k:
-            key_map[k] = True
-            return
-        lbl = _norm(it.get("label"))
-        if lbl:
-            label_map[lbl] = True
-
-    for it in (job.get("checklist") or []):
-        _record(it)
-    rep = await db.service_reports.find_one(
-        {"tenant_id": tenant_id, "job_id": job.get("id"),
-         "checklist_items": {"$exists": True}},
-        {"_id": 0, "checklist_items": 1},
-    )
-    for it in ((rep or {}).get("checklist_items") or []):
-        _record(it)
-
-    items_out: List[Dict[str, Any]] = []
-    for it in canon:
-        ck = (it.get("key") or "").strip()
-        completed = False
-        if ck and ck in key_map:
-            completed = True
-        else:
-            # Canonical entry has no key OR the write side never
-            # supplied one → fall back to label match.
-            completed = bool(label_map.get(_norm(it.get("label"))))
-        items_out.append({
-            "key": it.get("key"),
-            "label": it.get("label"),
-            "completed": completed,
-        })
-    return {"service_line": kind, "items": items_out, "count": len(items_out)}
-
-
-# Canonical water-test key list — ordered for the Workstream panel.
-# Free Chlorine → Total Chlorine → pH → Alkalinity → CYA → Conditioner
-# → anything else the tech submitted (rendered in submission order).
-# Note: ``cyanuric_acid`` was added Feb 2026 (P0 Workstream read/write
-# reconciliation).  ``conditioner`` is the legacy synonym kept for
-# backward compatibility with older service reports.
-_WATER_TEST_CANONICAL: List[tuple] = [
-    ("free_chlorine",   "Free Chlorine",  "ppm"),
-    ("total_chlorine",  "Total Chlorine", "ppm"),
-    ("ph",              "Ph Balance",     ""),
-    ("alkalinity",      "Alkalinity",     "ppm"),
-    ("cyanuric_acid",   "CYA",            "ppm"),
-    ("conditioner",     "Conditioner",    "ppm"),
-]
-
-
-def _coerce_readings(raw: Any) -> Dict[str, Any]:
-    """Normalise both storage shapes into a single ``{key: value}`` dict.
-
-    Accepts:
-      * ``dict`` — ``{"free_chlorine": 2.5, ...}`` (legacy job doc).
-      * ``list`` of ``{"key": ..., "value": ...}`` (tech write path via
-        ``PATCH /jobs/{jid}/service-report`` — the canonical shape).
-      * ``None`` — returns ``{}``.
-    """
-    if isinstance(raw, dict):
-        return dict(raw)
-    if isinstance(raw, list):
-        out: Dict[str, Any] = {}
-        for row in raw:
-            if not isinstance(row, dict):
-                continue
-            k = (row.get("key") or "").strip()
-            if not k:
-                continue
-            out[k] = row.get("value")
-        return out
-    return {}
 
 
 async def _water_test(job: dict, tenant_id: str) -> List[Dict[str, Any]]:
-    """Emit the water-test rows.
-
-    P0 · Feb 2026 (Fix A) — reads the service_reports collection FIRST
-    (where the tech's ``PATCH /jobs/{jid}/service-report`` actually
-    lands), falls back to ``job.chemical_readings`` for backward
-    compat with legacy jobs that stored inline.  Accepts BOTH the
-    list-of-``{key, label, value, unit}`` shape (canonical) and the
-    dict shape (legacy).
-    """
-    rep = await db.service_reports.find_one(
-        {"tenant_id": tenant_id, "job_id": job.get("id"),
-         "chemical_readings": {"$exists": True}},
-        {"_id": 0, "chemical_readings": 1},
-    )
-    readings = _coerce_readings((rep or {}).get("chemical_readings"))
-    if not readings:
-        readings = _coerce_readings(job.get("chemical_readings"))
-
-    out: List[Dict[str, Any]] = []
-    emitted: set = set()
-    # 1. Canonical order first.
-    for key, label, unit in _WATER_TEST_CANONICAL:
-        if key not in readings:
-            continue
-        v = readings[key]
-        if v in (None, ""):
-            continue
-        try:
-            fv = float(v)
-        except (TypeError, ValueError):
-            continue
-        out.append({"key": key, "label": label, "value": fv, "unit": unit})
-        emitted.add(key)
-    # 2. Any other keys the tech typed — rendered after the canonical
-    #    block in insertion order so we don't drop custom readings.
-    for key, v in readings.items():
-        if key in emitted or v in (None, ""):
-            continue
-        try:
-            fv = float(v)
-        except (TypeError, ValueError):
-            continue
-        out.append({
-            "key": key,
-            "label": key.replace("_", " ").title(),
-            "value": fv,
-            "unit": "",
-        })
-    return out
+    """Thin adapter — see
+    ``services/service_report_view.resolve_water_test``."""
+    return await _resolve_water_test(db, job, tenant_id)
 
 
 async def _chemicals_used_source(job: dict, tenant_id: str) -> List[Dict[str, Any]]:
-    """Return the raw ``chemicals_added`` list for a job.
-
-    P0 · Feb 2026 (Fix B) — pulls from ``service_reports.chemicals_added``
-    first (canonical write target), falls back to
-    ``job.chemicals_added`` for backward compat.
-    """
-    rep = await db.service_reports.find_one(
-        {"tenant_id": tenant_id, "job_id": job.get("id"),
-         "chemicals_added": {"$exists": True}},
-        {"_id": 0, "chemicals_added": 1},
-    )
-    src = (rep or {}).get("chemicals_added")
-    if not src:
-        src = job.get("chemicals_added") or []
-    return src or []
+    """Thin adapter — returns raw ``chemicals_added`` list."""
+    from services.service_report_view import resolve_chemicals_used_raw
+    return await resolve_chemicals_used_raw(db, job, tenant_id)
 
 
 def _media_items(job: dict) -> List[Dict[str, Any]]:
@@ -536,16 +390,127 @@ async def email_door_hanger(
 
     # Compose. Keep the body simple + branded; techs never call this
     # endpoint so no tech-projection needed.
+    #
+    # P0 · Feb 2026 — resolve every service-report chunk via the same
+    # helpers the Workstream Service Log page uses (chemistry,
+    # chemicals used, checklist, notes, photos).  Pre-fix the door
+    # hanger read from ``job.notes`` / ``job.service_notes`` only —
+    # which meant every real tech submission produced an empty "Notes:
+    # —" email plus no chemistry, no chemicals, no checklist and no
+    # images.
+    from services.service_report_view import (
+        resolve_water_test, resolve_chemicals_used_with_cost,
+        resolve_checklist_state, resolve_notes, resolve_photo_items,
+    )
+    from routers.checklists import DEFAULT_POOL_ITEMS, DEFAULT_LANDSCAPE_ITEMS
+    kind = _classify(job)
+    water_test = await resolve_water_test(db, job, tenant["id"]) if kind == "pool" else []
+    chems_used, chem_total_cents = await resolve_chemicals_used_with_cost(
+        db, job, tenant["id"],
+    ) if kind == "pool" else ([], 0)
+    checklist = await resolve_checklist_state(
+        db, job, tenant["id"], kind, DEFAULT_POOL_ITEMS, DEFAULT_LANDSCAPE_ITEMS,
+    )
+    notes_text = await resolve_notes(db, job, tenant["id"])
+    photos = resolve_photo_items(job)
+
     company = "Pool & Landscaping of Vistancia"
     customer_name = (cust or {}).get("name") or "Neighbor"
     completed = job.get("completed_at") or job.get("scheduled_date") or now_iso()
     subject = f"Service door hanger — {company}"
+
+    # ── Compose HTML fragments per section, hiding empty ones. ──
+    def _row(label: str, value: str) -> str:
+        return (
+            f"<tr><td style=\"padding:4px 12px 4px 0;color:#64748B;white-space:nowrap\">{label}</td>"
+            f"<td style=\"padding:4px 0;color:#0F172A\"><b>{value}</b></td></tr>"
+        )
+
+    water_html = ""
+    if water_test:
+        rows = "".join(
+            _row(r["label"], f"{r['value']} {r.get('unit') or ''}".strip())
+            for r in water_test
+        )
+        water_html = (
+            f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Water Test</h3>"
+            f"<table cellpadding=0 cellspacing=0 style=\"font-size:14px;border-collapse:collapse\">"
+            f"{rows}</table>"
+        )
+
+    chems_html = ""
+    if chems_used:
+        rows = "".join(
+            f"<li>{c['name']} — {c.get('display') or c['quantity']}</li>"
+            for c in chems_used
+        )
+        cost_line = (
+            f"<div style=\"font-size:12px;color:#64748B;margin-top:4px\">"
+            f"Chemical cost: <b style=\"color:#0F172A\">${chem_total_cents/100:.2f}</b></div>"
+            if chem_total_cents else ""
+        )
+        chems_html = (
+            f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Chemicals Used</h3>"
+            f"<ul style=\"font-size:14px;color:#0F172A;padding-left:20px;margin:4px 0\">{rows}</ul>"
+            f"{cost_line}"
+        )
+
+    checklist_html = ""
+    checklist_items = (checklist or {}).get("items") or []
+    if checklist_items:
+        # Split completed vs skipped so the customer sees BOTH — the
+        # door hanger's job is transparency, not marketing.
+        def _tick(done: bool) -> str:
+            return "&#10003;" if done else "&#9633;"
+        rows = "".join(
+            f"<li style=\"color:{'#0F172A' if it['completed'] else '#94A3B8'}\">"
+            f"{_tick(bool(it['completed']))} {it['label']}</li>"
+            for it in checklist_items
+        )
+        checklist_html = (
+            f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Service Checklist</h3>"
+            f"<ul style=\"font-size:14px;list-style:none;padding-left:0;margin:4px 0\">"
+            f"{rows}</ul>"
+        )
+
+    notes_html = ""
+    if notes_text:
+        # Escape newlines to <br/> so the customer sees the tech's
+        # freeform notes formatted the way they were typed.
+        notes_safe = notes_text.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
+        notes_html = (
+            f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Notes from your technician</h3>"
+            f"<div style=\"font-size:14px;color:#0F172A;white-space:pre-wrap\">{notes_safe}</div>"
+        )
+    else:
+        notes_html = (
+            f"<p style=\"color:#94A3B8;font-size:13px;margin-top:16px\">"
+            f"Notes: —</p>"
+        )
+
+    photos_html = ""
+    if photos:
+        thumbs = "".join(
+            f"<a href=\"{p['url_absolute']}\" style=\"display:inline-block;margin:4px\">"
+            f"<img src=\"{p['url_absolute']}\" alt=\"{(p.get('label') or 'service photo')}\" "
+            f"width=\"140\" style=\"display:block;border-radius:8px;border:1px solid #E2E8F0\"/></a>"
+            for p in photos
+        )
+        photos_html = (
+            f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Service Photos</h3>"
+            f"<div style=\"margin:4px 0\">{thumbs}</div>"
+        )
+
     html = (
-        f"<div style=\"font-family:Inter,Arial,sans-serif;max-width:600px;\">"
+        f"<div style=\"font-family:Inter,Arial,sans-serif;max-width:640px;color:#0F172A\">"
         f"<h2 style=\"color:#0F172A;margin:0 0 8px;\">We stopped by, {customer_name}.</h2>"
         f"<p>Your service was completed on <b>{str(completed)[:10]}</b>.</p>"
-        f"<p>Notes: {job.get('service_notes') or job.get('notes') or '—'}</p>"
-        f"<p style=\"font-size:12px;color:#64748B\">If anything looks off, "
+        f"{water_html}"
+        f"{chems_html}"
+        f"{checklist_html}"
+        f"{notes_html}"
+        f"{photos_html}"
+        f"<p style=\"font-size:12px;color:#64748B;margin-top:16px\">If anything looks off, "
         f"reply to this email or call us — we'll make it right.</p>"
         f"<p style=\"margin-top:16px;font-weight:600;\">— {company}</p>"
         f"</div>"
