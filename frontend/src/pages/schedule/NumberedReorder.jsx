@@ -203,6 +203,7 @@ export function NumberOrderInput({ job, controller, disabled, testId, autoFocus 
       onClick={(e) => e.stopPropagation()}
       disabled={disabled || controller.saving}
       data-testid={testId || `route-order-input-${job.id}`}
+      className="reorder-num-input"
       aria-label={`Order number for ${job.customer_name || job.title || "job"}`}
       aria-invalid={isErr ? "true" : "false"}
       style={{

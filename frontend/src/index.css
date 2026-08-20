@@ -116,3 +116,20 @@ code {
         border-bottom-color: inherit;
     }
 }
+
+/* Feb-2026 · Numbered-order schedule reorder — hide the browser's
+ * default up/down spinner arrows on the schedule inline number
+ * input + the bulk modal number input.  Typed input remains the
+ * canonical interaction; blur still triggers auto-save.
+ * ``type="number"`` is retained (Option A) so the semantic +
+ * server-side validation stays intact. */
+input.reorder-num-input::-webkit-outer-spin-button,
+input.reorder-num-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+input.reorder-num-input {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+

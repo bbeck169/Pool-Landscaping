@@ -88,6 +88,22 @@ describe("Numbered-order inline inputs", () => {
     expect(screen.getByTestId("route-order-input-j3").value).toBe("3");
   });
 
+  it("uses the reorder-num-input class so the browser's spinner arrows are hidden (Option A)", () => {
+    render(<Harness />);
+    // Every inline number input carries the shared class; the
+    // sibling `index.css` rule hides the ▲▼ spinner UI cross-
+    // browser via ``::-webkit-*-spin-button`` + Firefox's
+    // ``-moz-appearance: textfield``.
+    for (const id of ["j1", "j2", "j3"]) {
+      const el = screen.getByTestId(`route-order-input-${id}`);
+      expect(el.className).toMatch(/reorder-num-input/);
+      // Type stays ``number`` (Option A) so the browser-level
+      // validation + numeric keypad on mobile stay intact.
+      expect(el.getAttribute("type")).toBe("number");
+      expect(el.getAttribute("inputmode")).toBe("numeric");
+    }
+  });
+
   it("duplicate numbers → red border on both inputs + banner + POST NOT fired", async () => {
     render(<Harness />);
     const i1 = screen.getByTestId("route-order-input-j1");
