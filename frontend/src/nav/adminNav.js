@@ -141,6 +141,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/routes",                 label: "Routes",             icon: Route,        feature: "jobs", subsection: "Schedule & Dispatch" },
     { to: "/workstream",             label: "Workstream", icon: Workflow,     feature: "jobs", subsection: "Service Log" },
     { to: "/admin/appointments",     label: "Appointments",       icon: CalendarDays, feature: "jobs", subsection: "Schedule & Dispatch" },
+    { to: "/settings/job-outcome-reasons", label: "Job Outcome Reasons", icon: AlertTriangleIcon, feature: "settings", hard_rule: "admin_only", subsection: "Schedule & Dispatch" },
     // Workforce
     { to: "/team?t=team",              label: "Team",             icon: UsersRound,  feature: "jobs", subsection: "Workforce" },
     { to: "/admin/users",              label: "Team (admin)",     icon: UserCog,     feature: "settings", subsection: "Workforce" },

@@ -192,6 +192,9 @@ api_router.include_router(_repair_calc_router.router)
 # Feb-2026 · Phase 1 — Tech "On my way" SMS endpoint.
 from routers import on_my_way as _on_my_way_router  # noqa: E402
 api_router.include_router(_on_my_way_router.router)
+# Feb-2026 · Phase 1 — Tech "Could Not Service" outcome + reasons CRUD.
+from routers import could_not_service as _cns_router  # noqa: E402
+api_router.include_router(_cns_router.router)
 from routers import ai_visibility as _aiv_router  # noqa: E402
 api_router.include_router(_aiv_router.router)
 from routers import ai_media_estimator as _p25_ai_media_router  # noqa: E402

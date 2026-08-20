@@ -36,6 +36,8 @@ import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import { useAuth } from "@/auth";
 // Feb-2026 · Phase 1 — Tech "On my way" SMS CTA.
 import OnMyWayButton from "@/components/schedule/OnMyWayButton";
+// Feb-2026 · Phase 1 — Could-Not-Service modal.
+import CouldNotServiceModal from "@/components/schedule/CouldNotServiceModal";
 import { Gate, useCan } from "@/hooks/usePermissions";
 import { useClockInGate, ClockInGateDialog } from "@/hooks/useClockInGate";
 import ChecklistModal from "@/components/checklist/ChecklistModal";
@@ -237,6 +239,8 @@ export default function CalendarSchedule() {
   // ``rawJobs`` in place so the affected card re-renders with the
   // new values (no full reload). Delete removes the card in place.
   const [editingJob, setEditingJob] = useState(null);
+  // Feb-2026 · Phase 1 — Could-Not-Service modal target job.
+  const [cnsJob, setCnsJob] = useState(null);
   const patchJobInPlace = React.useCallback((patched) => {
     setRawJobs((prev) => (prev || []).map((r) =>
       r.id === patched.id ? { ...r, ...patched } : r,
@@ -1019,6 +1023,7 @@ export default function CalendarSchedule() {
           onOpenJob={(id) => clockGate.openJob(id, () => setChecklistJobId(id))}
           onNewJob={canCreateJobs ? (() => navigate(`/jobs/new?date=${focusISO}`)) : undefined}
           reorderUnavailable={reorderUnavailable}
+          onOpenCouldNotService={(j) => setCnsJob(j)}
           selectedJobIds={selectedJobIds}
           onToggleSelect={toggleJobSelected}
           canMultiSelectDelete={canMultiSelectDelete}
@@ -1201,6 +1206,19 @@ export default function CalendarSchedule() {
           setToast({ kind: "info", text: "Job deleted" });
         }}
       />
+      {/* Feb-2026 · Phase 1 — Could-Not-Service modal. Mutates the
+          job in place on success so its status pill flips to
+          "Could Not Service" without a full reload. */}
+      {cnsJob && (
+        <CouldNotServiceModal
+          job={cnsJob}
+          onClose={() => setCnsJob(null)}
+          onDone={(resp) => {
+            if (resp?.job) patchJobInPlace(resp.job);
+            else patchJobInPlace({ ...cnsJob, status: "could_not_service" });
+          }}
+        />
+      )}
     </SafeScrollContainer>
   );
 }
@@ -1218,6 +1236,8 @@ function GridPanel({
   canMultiSelectAssign, onOpenBulkAssign, techs,
   // Feb-2026 · Schedule-screen inline edit — admin+ Pencil affordance.
   onOpenEdit, isAdminForCard,
+  // Feb-2026 · Phase 1 — Could-Not-Service modal opener.
+  onOpenCouldNotService,
 }) {
   const focusISO = format(date, "yyyy-MM-dd");
   const isToday = focusISO === format(new Date(), "yyyy-MM-dd");
@@ -1643,16 +1663,29 @@ function GridPanel({
                       admin / super_admin (component self-gates on
                       role); hidden for completed / canceled jobs so a
                       dispatcher can't spam customers post-visit. */}
-                  {["completed", "canceled", "cancelled", "skipped"].includes(
+                  {["completed", "canceled", "cancelled", "skipped", "could_not_service"].includes(
                     String(j.status || "").toLowerCase()
                   ) ? null : (
-                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="mt-2 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                       <OnMyWayButton
                         jobId={j.id}
                         customerFirstName={(j.customer_name || "").split(" ")[0] || ""}
                         variant="compact"
                         testId={`on-my-way-btn-${j.id}`}
                       />
+                      {/* Feb-2026 · Phase 1 — Could Not Service. Same
+                          terminal-status guard as OMW plus the new
+                          ``could_not_service`` status itself so we
+                          can't re-open the modal after a mark. */}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onOpenCouldNotService?.(j); }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold"
+                        style={{ backgroundColor: "#FEF3C7", color: "#B45309", border: "1px solid #FCD34D" }}
+                        data-testid={`could-not-service-btn-${j.id}`}
+                      >
+                        Could not service
+                      </button>
                     </div>
                   )}
                 </div>

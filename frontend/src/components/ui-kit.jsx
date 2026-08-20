@@ -47,6 +47,11 @@ export function StatusPill({ status }) {
     completed: { bg: "#DCFCE7", fg: colors.success, label: "Completed" },
     reopened: { bg: "#FFEDD5", fg: "#C2410C", label: "Reopened" },
     cancelled: { bg: "#FEE2E2", fg: colors.error, label: "Cancelled" },
+    // Feb-2026 · Phase 1 — Could-Not-Service outcome. Amber palette
+    // to distinguish from ``skipped`` (gray fallback) and
+    // ``cancelled`` (red). Reportable as its own bucket.
+    could_not_service: { bg: "#FEF3C7", fg: "#B45309", label: "Could Not Service" },
+    skipped: { bg: "#E5E7EB", fg: "#6B7280", label: "Skipped" },
   }[status] || { bg: colors.surfaceTertiary, fg: colors.muted, label: status || "—" };
   return (
     <span

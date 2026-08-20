@@ -60,6 +60,7 @@ import PricebookSuppliersAdmin from "@/pages/settings/PricebookSuppliersAdmin";
 import PricebookCostComparison from "@/pages/reports/PricebookCostComparison";
 import SupplierSpendReport from "@/pages/reports/SupplierSpendReport";
 import ServiceCategoriesPage from "@/pages/settings/ServiceCategoriesPage";
+import JobOutcomeReasonsPage from "@/pages/settings/JobOutcomeReasonsPage";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import SupplierSettings from "@/pages/settings/SupplierSettings";
 import SupplierSyncAnalytics from "@/pages/reports/SupplierSyncAnalytics";
@@ -650,6 +651,7 @@ export default function App() {
             {/* Phase 56-d · Aug-2026 — Supplier Spend / Margin report. */}
             <Route path="admin/reports/supplier-spend" element={<AdminOnly><SupplierSpendReport /></AdminOnly>} />
             <Route path="settings/service-categories" element={<AdminOnly><ServiceCategoriesPage /></AdminOnly>} />
+            <Route path="settings/job-outcome-reasons" element={<AdminOnly><JobOutcomeReasonsPage /></AdminOnly>} />
             <Route path="settings/billing" element={<AdminOnly><BillingSettings /></AdminOnly>} />
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />

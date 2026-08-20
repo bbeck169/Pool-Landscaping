@@ -22,6 +22,7 @@ import PhotoCarousel from "@/src/components/job/PhotoCarousel";
 import Row from "@/src/components/job/Row";
 import JobTimerCard from "@/src/components/job/JobTimerCard";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
+import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
 
 // Phase 49.0 — inline styles for the "Open Service Report" CTA. Kept
 // local so we don't touch the shared `styles` module.
@@ -365,6 +366,17 @@ export default function JobDetail() {
                 {onWaySent ? "Customer notified" : onWaySending ? "Notifying…" : "Notify customer: On My Way"}
               </Text>
             </Pressable>
+          ) : null}
+
+          {canManage && job.id ? (
+            <CouldNotServiceButton
+              jobId={job.id}
+              jobStatus={job.status}
+              role={user?.role || ""}
+              variant="detail"
+              onDone={load}
+              testID="could-not-service-detail-btn"
+            />
           ) : null}
 
           {job.notes ? (

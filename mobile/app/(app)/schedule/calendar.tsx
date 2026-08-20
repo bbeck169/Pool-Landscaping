@@ -47,6 +47,10 @@ import ScheduleJobEditSheet from "@/src/components/schedule/ScheduleJobEditSheet
 // invariant vs the pre-Phase-27 layout.
 import TechAvatar from "../../../components/common/TechAvatar";
 import { getStatusBorderColor } from "@/src/utils/scheduleStatus";
+import OnMyWayButton from "@/src/components/schedule/OnMyWayButton";
+import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
+import ScheduleMap from "@/src/components/schedule/ScheduleMap";
+import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 import type { HourlyEntry } from "@/src/api/weather";
 
 type Job = {
@@ -66,6 +70,9 @@ type Job = {
   billable_hours?: number | null;
   duration_minutes?: number | null;
   route_order?: number | null;
+  route_index?: number | null;
+  location_lat?: number | null;
+  location_lng?: number | null;
   is_recurring?: boolean;
   recurring?: boolean;
   recurrence?: string | null;
@@ -92,6 +99,11 @@ const STATUS_PILL: Record<string, { bg: string; fg: string; label: string }> = {
   reopened:   { bg: "#FEE2E2", fg: "#991B1B", label: "Reopened" },
   cancelled:  { bg: "#F3F4F6", fg: "#4B5563", label: "Cancelled" },
   on_hold:    { bg: "#FFEDD5", fg: "#9A3412", label: "On hold" },
+  // Feb-2026 · Phase 1 — "Could Not Service" outcome. Amber tone
+  // deliberately deeper than ``scheduled``/``pending`` so the pill is
+  // visually distinct from a plain "Open" job on the same card.
+  could_not_service: { bg: "#FDE68A", fg: "#78350F", label: "Could Not Service" },
+  skipped:    { bg: "#E5E7EB", fg: "#374151", label: "Skipped" },
 };
 
 // Service-type → column card colour. Distinct hues for the Calendar view;
@@ -143,6 +155,7 @@ export default function ScheduleCalendar() {
   const [busy, setBusy] = useState(false);
   const [showBH, setShowBH] = useState(true);
   const [rearrangeMode, setRearrangeMode] = useState(false);
+  const [gridSubMode, setGridSubMode] = useState<"list" | "map">("list");
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveDate, setMoveDate] = useState("");
   const [reassignOpen, setReassignOpen] = useState(false);
@@ -468,6 +481,11 @@ export default function ScheduleCalendar() {
           onOpenEdit={isAdmin ? ((jobRow: Job) => setEditingJob(jobRow)) : undefined}
           onSelectAllInView={isAdmin ? selectAllInView : undefined}
           onClearSelection={isAdmin ? clearSelection : undefined}
+          role={role}
+          gridSubMode={gridSubMode}
+          setGridSubMode={setGridSubMode}
+          dayJobs={dayJobs}
+          setReorderList={setReorderList}
         />
       ) : (
         <CalendarView
@@ -577,10 +595,15 @@ function GridView(props: any) {
     rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
     onBulkComplete, onBulkDelete, onOpenMove, onOpenReassign, moveOpen, setMoveOpen, moveDate, setMoveDate,
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData,
-    weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection,
+    weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection, role,
+    gridSubMode, setGridSubMode, dayJobs, setReorderList,
   } = props;
   const focusISO = iso(focus);
   const isToday = focusISO === iso(new Date());
+
+  /** Next-job: first non-terminal job in route order. */
+  const _TERMINAL = new Set(["completed", "canceled", "cancelled", "skipped", "could_not_service"]);
+  const nextJob = jobs.find((j: Job) => !_TERMINAL.has((j.status || "").toLowerCase()));
 
   return (
     <View style={{ padding: spacing.md, paddingBottom: spacing["3xl"] }}>
@@ -685,6 +708,45 @@ function GridView(props: any) {
         </View>
       ) : null}
 
+      {/* On My Way — next job primary CTA */}
+      {nextJob ? (
+        <OnMyWayButton
+          jobId={nextJob.id}
+          customerName={nextJob.customer_name}
+          variant="primary"
+          role={role}
+          testID="on-my-way-next-btn"
+        />
+      ) : null}
+
+      {/* List | Map toggle */}
+      <View style={gStyles.subModeRow} testID="grid-sub-mode-toggle">
+        {(["list", "map"] as const).map((sm) => {
+          const active = gridSubMode === sm;
+          return (
+            <Pressable
+              key={sm}
+              onPress={() => setGridSubMode(sm)}
+              style={[gStyles.subModeBtn, active && gStyles.subModeBtnActive]}
+              testID={`grid-sub-mode-${sm}`}
+            >
+              <Ionicons
+                name={sm === "list" ? "list-outline" : "map-outline"}
+                size={12}
+                color={active ? "#fff" : colors.onSurfaceSecondary}
+              />
+              <Text style={[gStyles.subModeText, active && { color: "#fff" }]}>
+                {sm === "list" ? "List" : "Map"}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {gridSubMode === "map" ? (
+        <ScheduleMap jobs={dayJobs || jobs} testID="schedule-day-map" />
+      ) : (
+        <>
       {moveOpen ? (
         <View style={gStyles.moveBox} testID="grid-move-box">
           <Text style={gStyles.moveLabel}>Move {checked.size} job{checked.size === 1 ? "" : "s"} to:</Text>
@@ -730,6 +792,51 @@ function GridView(props: any) {
             </Pressable>
           ) : null}
         </View>
+      ) : rearrangeMode && Platform.OS !== "web" ? (
+        <DraggableFlatList
+          data={jobs}
+          keyExtractor={(item: Job) => item.id}
+          scrollEnabled={false}
+          onDragEnd={({ data }: { data: Job[] }) => {
+            setReorderList(data);
+            // Auto-save reorder on drop (admin only)
+            if (isAdmin) {
+              api.post("/jobs/reorder", { job_ids: data.map((j: Job) => j.id) })
+                .then(() => {})
+                .catch((e: any) => {
+                  // Snap back to original order
+                  setReorderList(dayJobs || jobs);
+                  Alert.alert("Reorder failed", e?.message || "Could not save new order.");
+                });
+            }
+          }}
+          renderItem={({ item, getIndex, drag, isActive }: RenderItemParams<Job>) => {
+            const idx = getIndex() ?? 0;
+            return (
+              <ScaleDecorator>
+                <JobRow
+                  key={item.id}
+                  job={item}
+                  idx={idx}
+                  checked={checked.has(item.id)}
+                  onCheck={() => onToggle(item.id)}
+                  onOpen={() => onOpenJob(item.id)}
+                  rearrangeMode={rearrangeMode}
+                  onShift={onShift}
+                  first={idx === 0}
+                  last={idx === jobs.length - 1}
+                  hourlyData={hourlyData}
+                  isAdminForCard={isAdmin}
+                  onEdit={isAdmin ? onOpenEdit : undefined}
+                  role={role}
+                  onDrag={drag}
+                  isDragging={isActive}
+                />
+              </ScaleDecorator>
+            );
+          }}
+          testID="grid-dnd-list"
+        />
       ) : jobs.map((j: Job, idx: number) => (
         <JobRow
           key={j.id}
@@ -745,8 +852,11 @@ function GridView(props: any) {
           hourlyData={hourlyData}
           isAdminForCard={isAdmin}
           onEdit={isAdmin ? onOpenEdit : undefined}
+          role={role}
         />
       ))}
+        </>
+      )}
       {weatherWidget ? (
         <View style={{ paddingHorizontal: spacing.xs, paddingTop: spacing.lg }} testID="schedule-weather-bottom">
           {weatherWidget}
@@ -756,11 +866,14 @@ function GridView(props: any) {
   );
 }
 
-function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData, isAdminForCard, onEdit }: any) {
+function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData, isAdminForCard, onEdit, role, onDrag, isDragging }: any) {
   const pill = STATUS_PILL[(job.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
   const svc = SERVICE_COLOR(job.service_type);
   // Feb-2026 · Schedule-UI · colored left border.
   const statusBorder = getStatusBorderColor(job.status);
+  const _TERMINAL_STATUS = new Set(["completed", "canceled", "cancelled", "skipped", "could_not_service"]);
+  const showOnMyWay = !_TERMINAL_STATUS.has((job.status || "").toLowerCase());
+  const showDragHandle = rearrangeMode && isAdminForCard && onDrag;
   // Phase 31 · Step 2a hotfix — the entire row body is now the primary
   // tap target and routes to /job/{id}/checklist. Previously only the
   // right-edge chevron was pressable, leaving 90% of the visible card
@@ -773,11 +886,21 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
   // remain the only interactive elements.
   return (
     <Pressable
-      style={[gStyles.card, { borderLeftWidth: 4, borderLeftColor: statusBorder }]}
+      style={[gStyles.card, { borderLeftWidth: 4, borderLeftColor: statusBorder }, isDragging && { opacity: 0.7, shadowOpacity: 0.3 }]}
       onPress={rearrangeMode ? undefined : onOpen}
+      onLongPress={showDragHandle ? onDrag : undefined}
       testID={`grid-job-${job.id}`}
       hitSlop={4}
     >
+      {showDragHandle ? (
+        <Pressable
+          onPressIn={onDrag}
+          style={gStyles.dragHandle}
+          testID={`grid-drag-handle-${job.id}`}
+        >
+          <Ionicons name="reorder-three" size={18} color={colors.muted} />
+        </Pressable>
+      ) : null}
       {rearrangeMode ? (
         <View style={gStyles.reorderCol}>
           <Pressable onPress={() => onShift(job.id, -1)} disabled={first}
@@ -895,6 +1018,22 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           <Text style={gStyles.metaText}>{jobHours(job)}</Text>
           {/* Phase 30X · time-of-day removed. Schedule is per-day. */}
         </View>
+        {showOnMyWay ? (
+          <OnMyWayButton
+            jobId={job.id}
+            customerName={job.customer_name}
+            variant="compact"
+            role={role}
+          />
+        ) : null}
+        {showOnMyWay ? (
+          <CouldNotServiceButton
+            jobId={job.id}
+            jobStatus={job.status}
+            role={role}
+            variant="compact"
+          />
+        ) : null}
       </View>
       <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
         <Text style={[gStyles.statusText, { color: pill.fg }]}>{pill.label}</Text>
@@ -1138,6 +1277,23 @@ const gStyles = StyleSheet.create({
     borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border,
   },
   emptyTitle: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  subModeRow: {
+    flexDirection: "row", gap: spacing.xs, marginBottom: spacing.sm,
+  },
+  subModeBtn: {
+    flex: 1, height: 32,
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 4,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  subModeBtnActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  subModeText: { fontFamily: font.bold, fontSize: 11, color: colors.onSurfaceSecondary },
+  dragHandle: {
+    justifyContent: "center", alignItems: "center",
+    width: 28, marginRight: 2,
+  },
   newBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: spacing.md, height: 36, borderRadius: radius.md,
