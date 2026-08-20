@@ -11458,3 +11458,105 @@ NEXT STEPS card with both buttons functional.
 * Service Photos heading + absolute URLs.
 * View Service Report in Portal CTA + auto-login target URL.
 * "We appreciate your business" footer + phone cascade.
+
+---
+
+## Feb-2026 · Slice 5 add-on + Queue Item #6 · ✅ SHIPPED
+
+### Small pre-flight — Elevated CTA ledger measurability
+
+* `backend/routers/workstream_service_log.py` — new
+  `_record_elevated_followup_shown()` helper writes a
+  `marketing_event_ledger` row keyed
+  `elevated_followup_shown:{job_id}` when — and only when — the
+  Elevated CTA actually renders. Idempotent via the compound-unique
+  index that the drip-events dedupe uses (silent on
+  `DuplicateKeyError`).
+* Ledger row shape: `event_key`, `trigger_type`,
+  `correlation_id=job_id`, `customer_id`, `processed_at`,
+  `meta.job_id`.
+* Tests in `test_door_hanger_email_body.py`: **+3 cases**
+  (positive render → row present; 5 suppression paths → 0 rows;
+  manual resend of the same job → still exactly 1 row).
+
+### Queue Item #6 — 24h Post-Completion Edit Window (SHIPPED)
+
+**Backend** — staged code re-run + hardened.
+* `backend/routers/jobs.py::patch_job_edit_window` — 6 gates
+  (soft-delete, role auth, immutable-field guard, status guard,
+  edit window, chemistry re-check).
+* `backend/routers/jobs.py::list_job_edits` — history endpoint
+  with same tenant + role scoping.
+* `backend/routers/mobile_sync.py::_handle_job_edit` — offline
+  replay path (already in place; unchanged this session).
+* **Side-effect suppression mechanism** — **code-path separation**
+  (primary) + **ledger-key idempotency** (belt-and-suspenders).
+  Verified via 4 dedicated tests: no duplicate
+  `door_hanger_auto:{job_id}` row, no new
+  `elevated_followup_shown:{job_id}` row, zero net rows on ANY
+  `trigger_type` for the edited job, zero new
+  `marketing_deliveries` rows.
+* **1 test fix** on `test_job_mutation_failure_rolls_back_audit_row`
+  — replaced instance-attribute monkeypatch on the transient
+  Motor collection with a proxy attached to `_m.db.jobs`
+  (Motor's `__getattr__` returns a fresh collection instance on
+  every access; the shadow-attribute pattern now used ensures the
+  patch sticks).
+* **17/17 backend tests pass** (15 original + 2 new elevated-ledger
+  suppression assertions).
+
+**Frontend (Web)**
+* `frontend/src/pages/jobs/JobEditPanel.jsx` (new) — encapsulates
+  the edit window banner, edit modal, and Edit History section.
+  Exports `isWithinEditWindow` + `hoursSinceCompletion` for
+  reuse. Handles 403 `edit_window_expired`, 422 chemistry gate,
+  and 400 `immutable_field` errors with inline messages.
+* `frontend/src/pages/jobs/JobDetail.jsx` — `<JobEditPanel>`
+  mounted after `<LineItemsSection>`, gated on `!isCustomer`.
+* **12/12 vitest pass** in `test/job-edit-window.test.jsx` —
+  6 `isWithinEditWindow` client-mirror cases + 6
+  `<JobEditPanel>` mount / save / error / history-fetch cases.
+  * Wider frontend regression: 30/30 across 5 related suites.
+
+**Mobile (Expo)**
+* `mobile/src/lib/editWindow.ts` (new) — mirrors backend
+  `EDIT_WINDOW_HOURS`, `isWithinEditWindow`, `hoursSinceCompletion`.
+* `mobile/app/job/[id].tsx` — "Edit (Nh left)" Pressable added to
+  the "Job completed" banner. Bottom-sheet notes editor with an
+  optional reason field. **Online-only** (see below).
+* **Mobile parity strategy** — **Option 1 · online-required
+  tooltip** (Pressable text switches to "Online required to edit"
+  when `useOnline()` returns false; button opacity dims). Rationale:
+  offline queuing risks the edit landing past the 24h window before
+  replay; the `queueMutation("job.edit", …)` primitive is still
+  available for a future `pending_edits` promotion if field data
+  justify it.
+* **8/8 jest pass** in `mobile/__tests__/EditWindow.test.ts`.
+
+**Live-verify (deferred to user)**
+* Complete a job in the admin UI → observe the yellow edit
+  banner appear + "Nh left" countdown.
+* Edit notes within 5 minutes → confirm PATCH `/api/jobs/{id}`
+  200s, no duplicate `door_hanger_auto:{job_id}` or
+  `elevated_followup_shown:{job_id}` row in
+  `marketing_event_ledger`, no new `marketing_deliveries` row,
+  Edit visible in the collapsible Edit History section with
+  `before → after` diff.
+* Simulate expiry (wait 25h OR spoof `completed_at` back a day)
+  → confirm banner disappears, PATCH returns 403
+  `edit_window_expired`.
+
+**Test roll-up**
+* Backend: **81/81 pass** (job-edit-window 17 + door-hanger body
+  27 + portal DTO 2 + chemistry bands 12 + door-hanger auto-send
+  10 + portal auto-login 13).
+* Frontend: **30/30 pass** in 5 suites.
+* Mobile: **8/8 pass** in the new EditWindow suite.
+
+**Queue state after this ship**
+1. ~~Queue Item #4~~ ✅ Chemical cost hide
+2. ~~Queue Item #5~~ ✅ Door Hanger Redesign + Elevated CTA + ledger
+3. ~~Queue Item #6~~ ✅ 24h Post-Completion Edit Window (web + mobile)
+4. → Queue Item #7 — Invoice pay-link + Estimate accept-link
+   auto-login port (fresh session)
+5. Queue Item #2 — First-Login Gate + Multi-ToS (paused, 4 sub-phases)

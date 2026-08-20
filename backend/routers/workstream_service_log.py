@@ -783,6 +783,42 @@ def _dh_render_footer(company: str, tenant_phone: str) -> str:
     )
 
 
+async def _record_elevated_followup_shown(
+    *, tenant_id: str, customer_id: Optional[str], job_id: str,
+) -> None:
+    """Feb-2026 · Slice 5 add-on — measurable channel for the
+    Elevated readings CTA. Emits ONE ``marketing_event_ledger`` row
+    per job, keyed ``elevated_followup_shown:{job_id}``.
+
+    Idempotent — repeat manual resends of the same job never create
+    duplicate rows (relies on the same unique compound index the
+    drip-events dedupe uses). Silent on any error — this is
+    observability, not a business gate.
+    """
+    if not (tenant_id and job_id):
+        return
+    try:
+        await _ensure_auto_send_index()
+        await db.marketing_event_ledger.insert_one({
+            "id": new_id(), "tenant_id": tenant_id,
+            "customer_id": customer_id,
+            "event_key": f"elevated_followup_shown:{job_id}",
+            "trigger_type": "elevated_followup_shown",
+            "correlation_id": job_id,
+            "processed_at": now_iso(),
+            "meta": {"job_id": job_id},
+        })
+    except Exception as exc:
+        # DuplicateKeyError is the happy path (idempotent). Anything
+        # else is logged and swallowed — we NEVER let observability
+        # writes block or fail an email send.
+        if type(exc).__name__ != "DuplicateKeyError":  # pragma: no cover
+            logger.warning(
+                f"[door-hanger] elevated_followup_shown ledger "
+                f"insert failed: {exc}"
+            )
+
+
 async def _build_door_hanger_email(
     *, job: Dict[str, Any], tenant: Dict[str, Any],
     cust: Dict[str, Any], cid: Optional[str],
@@ -903,6 +939,16 @@ async def _build_door_hanger_email(
         elevated_count=elevated_count, cust=cust, tenant=tenant,
         job_id=jid, brand_color=brand_color,
     )
+    # Observability — record one ledger row per job when the CTA
+    # actually renders (all suppression rules already applied inside
+    # ``_dh_render_elevated_cta``). Idempotent; safe on manual
+    # resends of the same job.
+    if elevated_cta_html:
+        await _record_elevated_followup_shown(
+            tenant_id=tenant["id"],
+            customer_id=(cust or {}).get("id") or cid,
+            job_id=jid,
+        )
 
     # ── Section render order ──
     hero_html      = _dh_render_hero(

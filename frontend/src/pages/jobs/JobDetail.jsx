@@ -13,6 +13,8 @@ import TimelineSection from "@/pages/jobs/TimelineSection";
 import JobBeforeAfterPhotos from "@/components/jobs/JobBeforeAfterPhotos";
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import JobNew from "@/pages/jobs/JobNew";
+// Feb-2026 · Slice 6 — 24h post-completion edit window UI.
+import JobEditPanel from "@/pages/jobs/JobEditPanel";
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -349,6 +351,17 @@ export default function JobDetail() {
       {/* Slice K2 · Line Items (server-side pricing projection for tech) */}
       {!isCustomer ? (
         <LineItemsSection jobId={job.id} jobStatus={job.status} user={user} />
+      ) : null}
+
+      {/* Feb-2026 · Slice 6 — 24h post-completion edit window. Renders
+          an Edit button + Edit History for admin / assigned tech.
+          Customer view MUST NOT see the edit affordance (they view
+          the read-only portal service report instead). */}
+      {!isCustomer ? (
+        <JobEditPanel
+          job={job}
+          onEdited={(fresh) => setJob(fresh)}
+        />
       ) : null}
 
       {/* Field Report card */}

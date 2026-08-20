@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, ScrollView, Pressable, Linking, StyleSheet } from "react-native";
+import { View, Text, ScrollView, Pressable, Linking, StyleSheet, TextInput } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
@@ -28,6 +28,8 @@ import ServiceIssues from "@/src/components/job/ServiceIssues";
 import PhotoCarousel from "@/src/components/job/PhotoCarousel";
 import Row from "@/src/components/job/Row";
 import JobTimerCard from "@/src/components/job/JobTimerCard";
+// Feb-2026 · Slice 6 — 24h post-completion edit window (mobile).
+import { isWithinEditWindow, hoursSinceCompletion, EDIT_WINDOW_HOURS } from "@/src/lib/editWindow";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
 
@@ -72,6 +74,12 @@ export default function JobDetail() {
   const [lineItems, setLineItems] = useState<any[]>([]);
   const [activeSection, setActiveSection] = useState("overview");
   const online = useOnline();
+  // Feb-2026 · Slice 6 — 24h post-completion edit window (mobile).
+  const [editSheet, setEditSheet] = useState(false);
+  const [editNotes, setEditNotes] = useState("");
+  const [editReason, setEditReason] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
 
   // Phase 47 follow-up — removed the "tech must be clocked in" redirect
   // that used to send technicians to `/(app)/schedule` here. Techs now
@@ -138,6 +146,50 @@ export default function JobDetail() {
   const isCustomer = user?.role === "customer";
   const isTech = user?.role === "technician";
   const canManage = isAdmin || isTech;
+  const canEditNow = !isCustomer && isWithinEditWindow(job);
+  const editHoursLeft = canEditNow
+    ? Math.max(0, EDIT_WINDOW_HOURS - (hoursSinceCompletion(job) || 0))
+    : null;
+
+  const openEditSheet = () => {
+    setEditNotes(String(job?.notes || ""));
+    setEditReason("");
+    setEditError("");
+    setEditSheet(true);
+  };
+
+  const saveEdit = async () => {
+    if (editSaving || !job?.id) return;
+    if (!online) {
+      setEditError("Online required to save edits.");
+      return;
+    }
+    setEditSaving(true);
+    setEditError("");
+    try {
+      const body: any = { notes: editNotes, edit_source: "mobile" };
+      const trimmed = editReason.trim();
+      if (trimmed) body.edit_reason = trimmed;
+      const fresh = await api.patch(`/jobs/${job.id}`, body);
+      setJob(fresh);
+      setEditSheet(false);
+    } catch (e: any) {
+      const detail = e?.detail || e?.data?.detail;
+      if (detail && typeof detail === "object") {
+        if (detail.detail === "edit_window_expired") {
+          setEditError(
+            `Edit window closed (${detail.edit_window_hours || EDIT_WINDOW_HOURS}h).`,
+          );
+        } else {
+          setEditError(detail.message || detail.detail || "Save failed.");
+        }
+      } else {
+        setEditError(e?.message || "Save failed.");
+      }
+    } finally {
+      setEditSaving(false);
+    }
+  };
   const MAX_PHOTOS = 10;
   const MAX_VIDEOS = 3;
   const photoCount = (job?.photos?.length || 0) + pendingPhotos.length;
@@ -530,6 +582,30 @@ export default function JobDetail() {
           <View style={styles.completedBanner}>
             <Ionicons name="checkmark-circle" size={20} color={colors.success} />
             <Text style={styles.completedText}>Job completed</Text>
+            {canEditNow ? (
+              <Pressable
+                onPress={openEditSheet}
+                testID="job-edit-open"
+                disabled={!online}
+                style={{
+                  marginLeft: "auto",
+                  paddingHorizontal: spacing.md,
+                  paddingVertical: spacing.sm,
+                  borderRadius: 8,
+                  backgroundColor: online ? colors.brand : colors.muted,
+                  opacity: online ? 1 : 0.6,
+                }}
+              >
+                <Text
+                  style={{ color: "#fff", fontWeight: "600", fontSize: 13 }}
+                  testID="job-edit-button-label"
+                >
+                  {online
+                    ? `Edit (${(editHoursLeft ?? 0).toFixed(1)}h left)`
+                    : "Online required to edit"}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         )}
 
@@ -610,6 +686,71 @@ export default function JobDetail() {
             Linking.openSettings();
           }}
           testID="open-settings-button"
+        />
+      </Sheet>
+
+      <Sheet
+        visible={editSheet}
+        onClose={() => setEditSheet(false)}
+        title="Edit completed job"
+        testID="job-edit-sheet"
+      >
+        <Text style={styles.sheetHint} testID="job-edit-sheet-hint">
+          Edits within the {EDIT_WINDOW_HOURS}h window do not re-send
+          customer notifications.
+        </Text>
+        <View style={{ height: spacing.sm }} />
+        <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 4 }}>
+          Notes
+        </Text>
+        <TextInput
+          testID="job-edit-notes-input"
+          value={editNotes}
+          onChangeText={setEditNotes}
+          multiline
+          numberOfLines={5}
+          style={{
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: 8,
+            padding: spacing.sm,
+            color: colors.onSurface,
+            textAlignVertical: "top",
+            minHeight: 100,
+          }}
+        />
+        <View style={{ height: spacing.sm }} />
+        <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 4 }}>
+          Reason (optional)
+        </Text>
+        <TextInput
+          testID="job-edit-reason-input"
+          value={editReason}
+          onChangeText={setEditReason}
+          placeholder="e.g., Fixed typo"
+          placeholderTextColor={colors.muted}
+          style={{
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: 8,
+            padding: spacing.sm,
+            color: colors.onSurface,
+          }}
+        />
+        {editError ? (
+          <View style={{ marginTop: spacing.sm }} testID="job-edit-error">
+            <Text style={{ color: colors.danger || "#991B1B", fontSize: 13 }}>
+              {editError}
+            </Text>
+          </View>
+        ) : null}
+        <View style={{ height: spacing.md }} />
+        <PrimaryButton
+          title={editSaving ? "Saving…" : "Save changes"}
+          icon="save-outline"
+          onPress={saveEdit}
+          loading={editSaving}
+          testID="job-edit-save"
         />
       </Sheet>
     </View>

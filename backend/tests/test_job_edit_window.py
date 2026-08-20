@@ -381,6 +381,90 @@ def test_edit_does_not_duplicate_door_hanger_ledger():
 
 
 # ═════════════════════════════════════════════════════════════════════
+# 8b. Edit MUST NOT re-fire the elevated_followup_shown ledger (new
+# side effect introduced with the Slice 5 door-hanger redesign).
+# ═════════════════════════════════════════════════════════════════════
+def test_edit_does_not_duplicate_elevated_followup_ledger():
+    async def _go():
+        tid = await _tenant_id()
+        jid = await _mk_completed_pool_job(tid)
+        # Seed one ledger row to represent the original CTA render.
+        from utils import now_iso, new_id
+        await _db().marketing_event_ledger.insert_one({
+            "id": new_id(), "tenant_id": tid,
+            "customer_id": "cust-ew",
+            "event_key": f"elevated_followup_shown:{jid}",
+            "trigger_type": "elevated_followup_shown",
+            "correlation_id": jid,
+            "processed_at": now_iso(),
+            "meta": {"job_id": jid},
+        })
+        try:
+            from routers.jobs import patch_job_edit_window
+            before_count = await _db().marketing_event_ledger.count_documents({
+                "tenant_id": tid,
+                "event_key": f"elevated_followup_shown:{jid}",
+            })
+            assert before_count == 1
+            # Edit the chemistry — even if the new state STILL has
+            # 2+ elevated readings, the PATCH path must not fire the
+            # composer that writes the ledger row. Belt-and-suspenders:
+            # the compound-unique index also blocks a duplicate.
+            await patch_job_edit_window(
+                jid, _patch(chemical_readings=[
+                    {"key": "free_chlorine",  "value": 12.0},
+                    {"key": "total_chlorine", "value": 12.0},
+                    {"key": "ph",             "value": 8.6},
+                    {"key": "alkalinity",     "value": 200},
+                    {"key": "cyanuric_acid",  "value": 40},
+                ]),
+                user=_mk_tech_user(tid), tenant=await _tenant_dep(tid),
+            )
+            after_count = await _db().marketing_event_ledger.count_documents({
+                "tenant_id": tid,
+                "event_key": f"elevated_followup_shown:{jid}",
+            })
+            assert after_count == 1, (
+                "PATCH edit path must NOT re-fire the "
+                "elevated_followup_shown ledger side effect"
+            )
+        finally:
+            await _drain(tid)
+
+    _run(_go())
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 8c. Edit path never emits ANY ledger row on any trigger_type — the
+# separated code path guarantees NO composer / send / drip is invoked.
+# ═════════════════════════════════════════════════════════════════════
+def test_edit_writes_no_new_ledger_rows_for_any_trigger_type():
+    async def _go():
+        tid = await _tenant_id()
+        jid = await _mk_completed_pool_job(tid)
+        try:
+            from routers.jobs import patch_job_edit_window
+            before = await _db().marketing_event_ledger.count_documents({
+                "tenant_id": tid, "correlation_id": jid,
+            })
+            await patch_job_edit_window(
+                jid, _patch(notes="Additional notes on the visit."),
+                user=_mk_tech_user(tid), tenant=await _tenant_dep(tid),
+            )
+            after = await _db().marketing_event_ledger.count_documents({
+                "tenant_id": tid, "correlation_id": jid,
+            })
+            assert after == before, (
+                f"PATCH edit path emitted {after - before} new "
+                f"ledger row(s); should emit 0"
+            )
+        finally:
+            await _drain(tid)
+
+    _run(_go())
+
+
+# ═════════════════════════════════════════════════════════════════════
 # 9. No new marketing_deliveries rows written on an edit.
 # ═════════════════════════════════════════════════════════════════════
 def test_edit_writes_no_new_marketing_deliveries():
@@ -519,12 +603,27 @@ def test_job_mutation_failure_rolls_back_audit_row(monkeypatch):
         try:
             from routers.jobs import patch_job_edit_window
             import routers.jobs as _m
-            _orig_update = _m.db.jobs.update_one
 
-            async def _fail_update(*a, **kw):
-                raise RuntimeError("simulated jobs.update_one failure")
+            # Motor returns a fresh AsyncIOMotorCollection on every
+            # ``_m.db.jobs`` access, so assigning
+            # ``_m.db.jobs.update_one`` never sticks (the instance is
+            # thrown away by the next lookup). Wrap the whole jobs
+            # collection in a proxy attached to ``_m.db.jobs`` — the
+            # attribute lands in ``_m.db.__dict__`` and shadows the
+            # dynamic Motor lookup for the duration of the test.
+            _orig_jobs = _m.db.jobs
 
-            _m.db.jobs.update_one = _fail_update
+            class _FailingJobs:
+                def __init__(self, real):
+                    self._real = real
+
+                def __getattr__(self, name):
+                    return getattr(self._real, name)
+
+                async def update_one(self, *a, **kw):
+                    raise RuntimeError("simulated jobs.update_one failure")
+
+            _m.db.jobs = _FailingJobs(_orig_jobs)
             try:
                 with pytest.raises(Exception):
                     await patch_job_edit_window(
@@ -533,7 +632,12 @@ def test_job_mutation_failure_rolls_back_audit_row(monkeypatch):
                         tenant=await _tenant_dep(tid),
                     )
             finally:
-                _m.db.jobs.update_one = _orig_update
+                # Delete the shadow attribute so Motor's __getattr__
+                # kicks in again for subsequent tests.
+                try:
+                    del _m.db.jobs
+                except AttributeError:  # pragma: no cover
+                    _m.db.jobs = _orig_jobs
             n = await _db().job_edits.count_documents(
                 {"tenant_id": tid, "job_id": jid},
             )

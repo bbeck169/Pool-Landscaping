@@ -1200,3 +1200,185 @@ def test_door_hanger_uses_inline_styles_only_and_no_class_attrs(monkeypatch):
 
     _run(_go())
 
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · Slice 5 add-on — Elevated CTA measurability ledger.
+# ═════════════════════════════════════════════════════════════════════
+#
+# When the Elevated CTA renders we emit ONE
+# ``marketing_event_ledger`` row per job keyed
+# ``elevated_followup_shown:{job_id}`` so ops can count how many
+# customers saw the follow-up prompt. Idempotent — manual resends of
+# the same job never duplicate rows. NO row is written when the CTA
+# is suppressed (landscape / unsubscribed / <2 elevated / etc.).
+async def _count_ledger(tid: str, jid: str) -> int:
+    return await _db().marketing_event_ledger.count_documents({
+        "tenant_id": tid,
+        "event_key": f"elevated_followup_shown:{jid}",
+    })
+
+
+def test_door_hanger_elevated_ledger_written_when_cta_renders(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(3),
+        })
+        # Purge any pre-existing ledger row for this job (drain-safe).
+        await _db().marketing_event_ledger.delete_many(
+            {"tenant_id": tid, "event_key": f"elevated_followup_shown:{jid}"},
+        )
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            assert _ELEVATED_CTA_HEADING in body
+            # Exactly one ledger row with the right shape.
+            rows = await _db().marketing_event_ledger.find(
+                {"tenant_id": tid,
+                 "event_key": f"elevated_followup_shown:{jid}"},
+                {"_id": 0},
+            ).to_list(5)
+            assert len(rows) == 1, rows
+            row = rows[0]
+            assert row["trigger_type"] == "elevated_followup_shown"
+            assert row["correlation_id"] == jid
+            assert row["customer_id"] == cid
+            assert row.get("meta", {}).get("job_id") == jid
+            assert row.get("processed_at")
+        finally:
+            await _db().marketing_event_ledger.delete_many(
+                {"tenant_id": tid, "event_key": f"elevated_followup_shown:{jid}"},
+            )
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_elevated_ledger_absent_when_suppressed(monkeypatch):
+    """No ledger row on any suppression path — <2 elevated /
+    landscape / unsubscribed / do_not_contact.
+    """
+    async def _one_case(seed_readings, *, landscape=False,
+                          unsubscribed=False, do_not_contact=False):
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        from utils import now_iso, new_id
+        if landscape:
+            jid = f"test-job-{uuid.uuid4().hex[:12]}"
+            await _db().jobs.insert_one({
+                "id": jid, "tenant_id": tid, "customer_id": cid,
+                "customer_name": "Kaylan Testcase",
+                "service_type": "Landscape Maintenance",
+                "status": "completed", "completed_at": now_iso(),
+                "scheduled_date": now_iso(),
+                "title": "Yard Clean-Up", "created_at": now_iso(),
+            })
+        else:
+            jid = await _mk_pool_job(tid, cid)
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": seed_readings,
+        })
+        if unsubscribed:
+            await _db().customers.update_one(
+                {"id": cid, "tenant_id": tid},
+                {"$set": {"unsubscribed": True}},
+            )
+        if do_not_contact:
+            await _db().customers.update_one(
+                {"id": cid, "tenant_id": tid},
+                {"$set": {"do_not_contact": True}},
+            )
+        await _db().marketing_event_ledger.delete_many(
+            {"tenant_id": tid, "event_key": f"elevated_followup_shown:{jid}"},
+        )
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            assert _ELEVATED_CTA_HEADING not in body, (
+                f"CTA rendered on a suppressed case — landscape={landscape}, "
+                f"unsub={unsubscribed}, dnc={do_not_contact}"
+            )
+            n = await _count_ledger(tid, jid)
+            assert n == 0, (
+                f"ledger row written for suppressed case — landscape="
+                f"{landscape}, unsub={unsubscribed}, dnc={do_not_contact}"
+            )
+        finally:
+            await _db().marketing_event_ledger.delete_many(
+                {"tenant_id": tid, "event_key": f"elevated_followup_shown:{jid}"},
+            )
+            await _drain(tid, jid, cid)
+
+    # 4 suppression paths.
+    _run(_one_case(_elevated_seed_readings(0)))                       # <2 elevated
+    _run(_one_case(_elevated_seed_readings(1)))                       # 1 elevated
+    _run(_one_case(_elevated_seed_readings(3), landscape=True))       # landscape
+    _run(_one_case(_elevated_seed_readings(3), unsubscribed=True))    # unsubscribed
+    _run(_one_case(_elevated_seed_readings(3), do_not_contact=True)) # DNC
+
+
+def test_door_hanger_elevated_ledger_is_idempotent_on_resend(monkeypatch):
+    """Manual resend of the SAME job MUST keep the ledger count at
+    exactly 1. Second render is idempotent via the compound-unique
+    index on ``marketing_event_ledger``.
+    """
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(3),
+        })
+        await _db().marketing_event_ledger.delete_many(
+            {"tenant_id": tid, "event_key": f"elevated_followup_shown:{jid}"},
+        )
+        # Clear any manual-cooldown row too so the second send lands.
+        await _db().marketing_deliveries.delete_many(
+            {"tenant_id": tid, "trigger_entity.id": jid,
+             "trigger_entity.kind": "job_door_hanger"},
+        )
+        _stub_email_send(monkeypatch)
+        try:
+            r1 = await _call_email_door_hanger(jid, tid)
+            assert r1["ok"] is True
+            n1 = await _count_ledger(tid, jid)
+            assert n1 == 1
+
+            # Drain cooldown so the second manual send goes through.
+            await _db().marketing_deliveries.delete_many(
+                {"tenant_id": tid, "trigger_entity.id": jid,
+                 "trigger_entity.kind": "job_door_hanger"},
+            )
+            r2 = await _call_email_door_hanger(jid, tid)
+            assert r2["ok"] is True
+            n2 = await _count_ledger(tid, jid)
+            assert n2 == 1, (
+                f"resend must not duplicate the ledger row (found {n2})"
+            )
+        finally:
+            await _db().marketing_event_ledger.delete_many(
+                {"tenant_id": tid, "event_key": f"elevated_followup_shown:{jid}"},
+            )
+            await _db().marketing_deliveries.delete_many(
+                {"tenant_id": tid, "trigger_entity.id": jid,
+                 "trigger_entity.kind": "job_door_hanger"},
+            )
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
