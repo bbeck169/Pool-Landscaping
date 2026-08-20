@@ -268,7 +268,28 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
                 )
             # Chemicals used.
             assert "Liquid Chlorine" in body
-            assert "$8.00" in body, body[:600]
+            # Feb-2026 · Slice 4 — chemical cost hide. The customer-facing
+            # door hanger MUST NOT render a Chemical cost total. The
+            # priced resolver still computes ``chem_total_cents`` (used
+            # by internal surfaces / auto-invoice) but the template
+            # drops the ``Chemical cost: $x.xx`` line.
+            assert "$8.00" not in body, (
+                "chemical cost leaked into customer-facing door hanger"
+            )
+            assert "Chemical cost" not in body, (
+                "'Chemical cost' label leaked into customer-facing door hanger"
+            )
+            # Scope-limited: no dollar signs anywhere in the Chemicals
+            # Used section (label + list). Other UI (e.g., tenant
+            # phone, portal CTA copy) is out of scope for this rule.
+            _ch_start = body.index("Chemicals Used</h3>")
+            _ch_end = body.index("</ul>", _ch_start) + len("</ul>")
+            _ch_section = body[_ch_start:_ch_end]
+            for _needle in ("$", "cost", "price", "total"):
+                assert _needle not in _ch_section.lower(), (
+                    f"pricing signal {_needle!r} leaked into Chemicals Used "
+                    f"section: {_ch_section!r}"
+                )
             # Checklist — checked items rendered.
             assert "Skimmed Pool" in body
             assert "Brush Pool" in body

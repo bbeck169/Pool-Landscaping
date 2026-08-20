@@ -11333,3 +11333,50 @@ Ordered remaining:
 
 **Hard-stopped at clean file boundary after #3.**  #4 starts fresh
 next session per the same context discipline.
+
+---
+
+## Feb-2026 · Queue Item #4 — Hide chemical cost on customer-facing views · ✅ SHIPPED
+
+**Scope** — Strip pricing signals from every customer-facing surface that
+renders `chemicals_added`. Keep chemical name + amount + unit intact.
+Tech / admin / super_admin surfaces UNCHANGED.
+
+**Code changes**
+
+* `backend/routers/service_reports.py`
+  * New helper `_strip_chem_costs_for_customer(chems)` — whitelist
+    approach; keeps `name`, `chemical`, `quantity`, `amount`, `qty`,
+    `unit`, `default_unit`, `raw_label`; drops everything else.
+  * `_redact_report_for_customer` now calls the helper on
+    `chemicals_added` **and** pops top-level cost totals
+    (`chem_total_cents`, `chemicals_total_cents`, `chemicals_cost_cents`,
+    `chemicals_total`, `chemical_cost`, `chemicals_cost`).
+* `backend/routers/workstream_service_log.py`
+  * `_build_door_hanger_email` — removed the
+    `Chemical cost: $x.xx` `<div>`. Resolver still returns
+    `chem_total_cents` (used by other internal surfaces / auto-invoice)
+    but the door-hanger template drops it.
+
+**Tests**
+
+* `backend/tests/test_portal_service_report_customer_view.py` (new)
+  * `test_portal_service_report_strips_chemical_costs` — priced seed
+    with `unit_cost`, `line_total`, `cost_cents`, `price_cents`,
+    `unit_cost_at_time_cents`, `total_cost_cents` on rows +
+    `chem_total_cents` at top level → response contains none.
+  * `test_portal_service_report_preserves_amount_display_fields` —
+    guards `amount` / `qty` / `default_unit` / `raw_label` aliases.
+* `backend/tests/test_door_hanger_email_body.py`
+  * Inverted the `$8.00` assertion; added scoped substring check on the
+    Chemicals Used section for `$`, `cost`, `price`, `total`.
+* 42/42 backend tests pass (door-hanger + portal DTO + internal
+  workstream + chemistry bands).
+* 7/7 frontend vitest pass (portal sections + bands).
+
+**Surfaces verified unchanged**
+* Internal Workstream Service Log payload
+  (`chemical_cost_usd`, `chemical_cost_cents`) still populated.
+* Auto-visit email — no cost fields (already customer-safe).
+* Visit-recap email `_compose_recap` — uses `_chem_added_line` which
+  only emits name + qty + unit.

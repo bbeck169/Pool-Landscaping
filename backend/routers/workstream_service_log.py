@@ -563,15 +563,14 @@ async def _build_door_hanger_email(
             f"<li>{c['name']} — {c.get('display') or c['quantity']}</li>"
             for c in chems_used
         )
-        cost_line = (
-            f"<div style=\"font-size:12px;color:#64748B;margin-top:4px\">"
-            f"Chemical cost: <b style=\"color:#0F172A\">${chem_total_cents/100:.2f}</b></div>"
-            if chem_total_cents else ""
-        )
+        # Feb-2026 · Slice 4 — chemical cost hide. The door hanger is a
+        # customer-facing surface, so we intentionally omit the
+        # ``Chemical cost: $x.xx`` line even though the resolver still
+        # returns ``chem_total_cents``. Cost visibility for tech /
+        # admin / super_admin is unchanged on internal surfaces.
         chems_html = (
             f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Chemicals Used</h3>"
             f"<ul style=\"font-size:14px;color:#0F172A;padding-left:20px;margin:4px 0\">{rows}</ul>"
-            f"{cost_line}"
         )
 
     checklist_html = ""

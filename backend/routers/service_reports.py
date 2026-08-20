@@ -1510,6 +1510,33 @@ async def send_visit_recap(sr_id: str, body: RecapReq,
 
 
 # ─── Phase 56.16 — Customer portal: service reports (read-only) ────────────
+# Feb-2026 · Slice 4 — Chemical-cost-hide. Any field on a
+# ``chemicals_added`` row that carries pricing/cost signal MUST be
+# stripped before the payload reaches a customer surface. We take the
+# whitelist approach (opposite of blacklist) — a customer only sees
+# the semantic descriptors of the chemical + how much was added.
+_CUSTOMER_CHEM_KEEP_FIELDS = frozenset({
+    "name", "chemical",           # display name
+    "quantity", "amount", "qty",  # numeric amount
+    "unit", "default_unit",       # unit of measure
+    "raw_label",                  # freeform label like "2 tabs"
+})
+
+
+def _strip_chem_costs_for_customer(chems):
+    """Return a list of chemical rows with all cost/price fields
+    stripped. Non-dict rows pass through unchanged."""
+    if not chems:
+        return chems
+    out = []
+    for c in chems:
+        if not isinstance(c, dict):
+            out.append(c)
+            continue
+        out.append({k: v for k, v in c.items() if k in _CUSTOMER_CHEM_KEEP_FIELDS})
+    return out
+
+
 def _redact_report_for_customer(sr: dict) -> dict:
     """Strip fields a customer must NEVER see.
 
@@ -1523,11 +1550,24 @@ def _redact_report_for_customer(sr: dict) -> dict:
     Feb-2026 · Slice 3C — Chemistry readings are converted from raw
     numeric values to qualitative bands. Customers see ``below /
     average / above / elevated`` chips only; raw values are stripped.
+
+    Feb-2026 · Slice 4 — Chemical cost hide. ``chemicals_added`` rows
+    are passed through :func:`_strip_chem_costs_for_customer` so
+    fields like ``unit_cost`` / ``line_total`` / ``cost_cents`` /
+    ``price_cents`` never surface. Top-level ``chem_total_cents`` and
+    ``chemicals_total_cents`` are also dropped.
     """
     if not sr:
         return sr
     sr = dict(sr)
     sr.pop("internal_notes", None)
+    # Feb-2026 · Slice 4 — hide chemical costs from customer views.
+    sr["chemicals_added"] = _strip_chem_costs_for_customer(sr.get("chemicals_added") or [])
+    for _cost_field in (
+        "chem_total_cents", "chemicals_total_cents", "chemicals_cost_cents",
+        "chemicals_total", "chemical_cost", "chemicals_cost",
+    ):
+        sr.pop(_cost_field, None)
     # Drop private/issue photos.
     photos = sr.get("photos") or []
     sr["photos"] = [
