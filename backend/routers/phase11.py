@@ -181,7 +181,8 @@ async def reschedule_recs(user: dict = Depends(get_current_user)):
         q["customer_id"] = cust_id
     elif role != "admin":
         return {"suggested": [], "poor_days": sorted(poor_days)}
-    jobs = await db.jobs.find(q, {"_id": 0}).to_list(500)
+    from utils import not_deleted_filter as _nd
+    jobs = await db.jobs.find({**q, **_nd()}, {"_id": 0}).to_list(500)
     suggested = [j for j in jobs if (j.get("scheduled_date") or "")[:10] in poor_days]
     return {"suggested": suggested, "poor_days": sorted(poor_days)}
 

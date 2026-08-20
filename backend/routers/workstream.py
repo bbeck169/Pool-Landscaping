@@ -296,7 +296,8 @@ async def list_workstream_jobs(
             ),
         )
 
-    q: Dict[str, Any] = {"tenant_id": tenant["id"]}
+    from utils import not_deleted_filter
+    q: Dict[str, Any] = {"tenant_id": tenant["id"], **not_deleted_filter()}
 
     # RBAC: tech is ALWAYS auto-scoped, tech_id filter is ignored for them.
     if role == "technician":

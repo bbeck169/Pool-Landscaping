@@ -22,8 +22,9 @@ async def dashboard(user: dict = Depends(get_current_user),
         pending = await db.jobs.count_documents({**base, "status": "pending"})
         active = await db.jobs.count_documents({**base, "status": "active"})
         completed = await db.jobs.count_documents({**base, "status": "completed"})
+        from utils import not_deleted_filter as _nd
         upcoming = await db.jobs.find(
-            {**base, "status": {"$in": ["pending", "active"]}}, {"_id": 0}
+            {**base, "status": {"$in": ["pending", "active"]}, **_nd()}, {"_id": 0}
         ).sort("scheduled_date", 1).to_list(10)
         return {
             "role": "technician",
@@ -46,7 +47,7 @@ async def dashboard(user: dict = Depends(get_current_user),
             {**base, "doc_type": "quote", "status": {"$nin": ["accepted", "declined"]}}
         )
         upcoming = await db.jobs.find(
-            {**base, "status": {"$in": ["pending", "active", "requested"]}}, {"_id": 0}
+            {**base, "status": {"$in": ["pending", "active", "requested"]}, **_nd()}, {"_id": 0}
         ).sort("scheduled_date", 1).to_list(20)
         next_service = upcoming[0] if upcoming else None
         recent = await db.jobs.find(base, {"_id": 0}).sort("created_at", -1).to_list(5)
@@ -109,7 +110,7 @@ async def dashboard(user: dict = Depends(get_current_user),
     revenue_series = [{"label": month_names[m - 1], "value": round(buckets[f"{y}-{m:02d}"], 2)} for (y, m) in seq]
 
     svc: dict = {}
-    alljobs = await db.jobs.find(tenant_q, {"_id": 0}).to_list(2000)
+    alljobs = await db.jobs.find({**tenant_q, **_nd()}, {"_id": 0}).to_list(2000)
     for j in alljobs:
         k = j.get("service_type") or "Other"
         svc[k] = svc.get(k, 0.0) + (j.get("price") or 0.0)

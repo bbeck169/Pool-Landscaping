@@ -820,7 +820,8 @@ async def auto_clock_in(body: AutoClockInReq,
         "status": {"$nin": ["completed", "cancelled"]},
         "scheduled_start": {"$gte": day_start, "$lt": day_end},
     }
-    jobs_today = await db.jobs.find(query, {"_id": 0}).to_list(50)
+    from utils import not_deleted_filter as _nd
+    jobs_today = await db.jobs.find({**query, **_nd()}, {"_id": 0}).to_list(50)
 
     # Split by geofence first.
     in_geofence: list = []

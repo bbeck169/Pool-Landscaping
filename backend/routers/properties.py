@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field, model_validator
 from config import db, logger
 from routers.tenants import get_current_tenant
 from utils import get_current_user, new_id, now_iso, require_admin
+from utils import not_deleted_filter as _nd
 
 router = APIRouter(tags=["Properties"])
 

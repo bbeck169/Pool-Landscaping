@@ -1170,9 +1170,10 @@ async def last_readings(
     under each reading."""
     if not customer_id:
         raise HTTPException(400, "customer_id required")
+    from utils import not_deleted_filter as _nd
     # All the customer's jobs.
     jobs = await db.jobs.find(
-        {"customer_id": customer_id, "tenant_id": tenant["id"]},
+        {"customer_id": customer_id, "tenant_id": tenant["id"], **_nd()},
         {"_id": 0, "id": 1},
     ).to_list(2000)
     jids = [j["id"] for j in jobs]
@@ -1431,10 +1432,12 @@ async def send_visit_recap(sr_id: str, body: RecapReq,
 
     # "Next visit" — cheap lookup of the next scheduled pool job for this customer.
     next_visit = None
+    from utils import not_deleted_filter as _nd_next
     upcoming = await db.jobs.find(
         {"tenant_id": tenant["id"], "customer_id": job.get("customer_id"),
          "status": {"$in": ["scheduled", "open"]},
-         "scheduled_at": {"$gt": now_iso()}},
+         "scheduled_at": {"$gt": now_iso()},
+         **_nd_next()},
         {"_id": 0, "scheduled_at": 1},
     ).sort("scheduled_at", 1).to_list(1)
     if upcoming:
@@ -1567,8 +1570,9 @@ async def list_my_service_reports(
         raise HTTPException(403, "Customer portal only")
 
     # Find all jobs for this customer's id, then all completed reports.
+    from utils import not_deleted_filter as _nd_portal
     job_ids = [j["id"] async for j in db.jobs.find(
-        {"tenant_id": tenant["id"], "customer_id": user["customer_id"]},
+        {"tenant_id": tenant["id"], "customer_id": user["customer_id"], **_nd_portal()},
         {"_id": 0, "id": 1},
     )]
     if not job_ids:

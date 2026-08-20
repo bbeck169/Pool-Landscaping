@@ -98,8 +98,9 @@ async def list_stops(
     jobs_by_id: Dict[str, Any] = {}
     custs_by_id: Dict[str, Any] = {}
     if job_ids:
+        from utils import not_deleted_filter as _nd
         async for j in db.jobs.find(
-            {"tenant_id": tenant_id, "id": {"$in": job_ids}},
+            {"tenant_id": tenant_id, "id": {"$in": job_ids}, **_nd()},
             {"_id": 0, "id": 1, "title": 1, "service_type": 1,
              "customer_name": 1, "address": 1},
         ):

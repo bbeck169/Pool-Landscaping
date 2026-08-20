@@ -19,6 +19,32 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
+def not_deleted_filter() -> dict:
+    """Feb-2026 · P0 soft-delete read-filter helper.
+
+    Every job list endpoint (except the tightly-scoped audit paths in
+    ``routers/jobs.py`` and ``routers/bulk_crm.py`` that intentionally
+    inspect deleted rows) MUST merge this predicate into its
+    ``db.jobs.find(...)`` query so soft-deleted rows never surface in
+    the UI, revenue rollups, analytics, dispatch board, workstream
+    list, mobile sync, portal media, etc.
+
+    The write side (``_generic_bulk_delete`` in ``routers/bulk_crm.py``)
+    stamps ``deleted_at: <iso>`` + ``deleted_by_user_id`` on the job
+    doc.  Older jobs (predating the soft-delete rollout) have no
+    ``deleted_at`` field at all, so the predicate has to accept both
+    ``None`` and missing-key.  Same pattern already used at
+    ``bulk_crm.py:71`` for customers.
+
+    Usage::
+
+        q = {"tenant_id": tenant["id"], **not_deleted_filter()}
+        docs = await db.jobs.find(q, {"_id": 0}).to_list(...)
+    """
+    return {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]}
+
+
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from config import db, logger
 from utils import now_iso, new_id, get_current_user
+from utils import not_deleted_filter as _nd
 from routers.tenants import get_current_tenant
 from services.stop_geo import resolve_stop_geo
 
@@ -90,6 +91,7 @@ async def optimize_route(
         "status": {"$nin": ["completed", "cancelled"]},
         "scheduled_start": {"$gte": day_start, "$lte": day_end},
     }
+    query = {**query, **_nd()}
     jobs = await db.jobs.find(query, {"_id": 0}).to_list(100)
     # Feb-2026 · Slice 4 (MP1.6) — resolve every stop through the
     # shared stop-geo resolver so a job with ``property_id`` set uses
@@ -281,6 +283,7 @@ async def get_route_stops(
             ],
         }],
     }
+    q = {**q, **_nd()}
     jobs = await db.jobs.find(q, {"_id": 0}).sort(
         [("route_order", 1), ("scheduled_start", 1)]
     ).to_list(200)

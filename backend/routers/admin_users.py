@@ -412,10 +412,14 @@ async def _cascade_soft_delete_reassignments(
     for the audit trail. Extracted from ``_perform_soft_delete``."""
     unassigned_placeholder = "unassigned"
     reassigned_jobs: List[str] = []
+    from utils import not_deleted_filter as _nd
     async for j in db.jobs.find({
         "tenant_id": target.get("tenant_id"),
-        "$or": [{"technician_id": target.get("id")},
-                 {"assigned_tech_id": target.get("id")}],
+        "$and": [
+            {"$or": [{"technician_id": target.get("id")},
+                      {"assigned_tech_id": target.get("id")}]},
+            _nd(),
+        ],
         "status": {"$in": ["scheduled", "active", "in_progress"]},
     }, {"_id": 0, "id": 1}):
         reassigned_jobs.append(j["id"])

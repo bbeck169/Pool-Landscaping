@@ -25,6 +25,7 @@ from services.stop_attributor import (
     get_settings, run_attribution_batch, run_attribution_batch_all_tenants,
 )
 from utils import get_current_user, new_id, now_iso
+from utils import not_deleted_filter as _nd
 
 router = APIRouter()
 _MOD_ROLES = {"admin", "super_admin", "manager"}

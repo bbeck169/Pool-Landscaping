@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from config import db
 from routers.tenants import get_current_tenant
 from utils import get_current_user
+from utils import not_deleted_filter as _nd
 
 router = APIRouter()
 
@@ -146,6 +147,7 @@ async def reorder_jobs(
     # visual order after the next reload) and cross-day/cross-tech
     # ids (which the per-job update filter would silently drop).
     day_jobs: List[Dict[str, Any]] = []
+    day_filter = {**day_filter, **_nd()}
     async for j in db.jobs.find(day_filter, {"_id": 0, "id": 1, "status": 1}):
         if (j.get("status") or "").lower() in _TERMINAL_STATUSES:
             continue
@@ -274,6 +276,7 @@ async def import_schedule(
 
     # Group jobs by their effective tech id (fallback chain).
     grouped: Dict[str, List[Dict[str, Any]]] = {}
+    q = {**q, **_nd()}
     async for j in db.jobs.find(q, {"_id": 0, "id": 1, "customer_id": 1,
                                       "tech_user_id": 1, "technician_id": 1,
                                       "assigned_to": 1, "route_index": 1}):

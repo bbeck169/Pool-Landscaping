@@ -3,6 +3,7 @@ from datetime import datetime, timezone, date, timedelta
 
 from config import db, logger
 from utils import now_iso, new_id, require_admin, notify_technician
+from utils import not_deleted_filter as _nd
 from models import CoverageIn
 
 router = APIRouter()
@@ -68,6 +69,7 @@ async def create_coverage(body: CoverageIn, admin: dict = Depends(require_admin)
         label = f"{_fmt(anchor.isoformat())}–{_fmt(week_end.isoformat())}"
 
     query = {"technician_id": body.source_technician_id, "status": {"$ne": "completed"}, **date_filter}
+    query = {**query, **_nd()}
     jobs = await db.jobs.find(query, {"_id": 0}).to_list(1000)
     if not jobs:
         raise HTTPException(400, f"{src['name']} has no open stops to move for {label}.")

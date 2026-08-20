@@ -36,6 +36,7 @@ from pydantic import BaseModel
 
 from config import db, logger
 from utils import get_current_user
+from utils import not_deleted_filter as _nd
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -341,6 +342,7 @@ async def get_board(
                 {"technician_id": tech_user_id},
             ],
         }
+        job_q = {**job_q, **_nd()}
         jobs = await db.jobs.find(
             job_q,
             {"_id": 0, "id": 1, "customer_id": 1, "customer_name": 1,

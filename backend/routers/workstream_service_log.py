@@ -45,6 +45,7 @@ from services.service_report_view import (
     resolve_photo_items as _resolve_photo_items,
 )
 from utils import get_current_user, new_id, now_iso
+from utils import not_deleted_filter as _nd
 
 router = APIRouter()
 
@@ -197,6 +198,7 @@ async def _previous_service(job: dict, tenant_id: str) -> List[Dict[str, Any]]:
         q["customer_id"] = cid
     else:
         return []
+    q = {**q, **_nd()}
     docs = await db.jobs.find(
         q,
         {"_id": 0, "id": 1, "completed_at": 1, "scheduled_date": 1,

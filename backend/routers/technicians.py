@@ -169,8 +169,9 @@ async def technician_performance(tid: str, user: dict = Depends(get_current_user
         raise HTTPException(403, "You can only view your own profile")
     from datetime import datetime, timezone, timedelta  # noqa: F811
     cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    from utils import not_deleted_filter as _nd
     jobs = await db.jobs.find(
-        {"technician_id": tid, "created_at": {"$gte": cutoff}}, {"_id": 0}
+        {"technician_id": tid, "created_at": {"$gte": cutoff}, **_nd()}, {"_id": 0}
     ).to_list(500)
     total = len(jobs)
     completed = [j for j in jobs if j.get("status") == "completed"]

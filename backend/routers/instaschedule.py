@@ -293,10 +293,12 @@ async def _compute_slots(*, cfg: Dict[str, Any], service_type: Dict[str, Any],
         "status": {"$in": ["pending", "confirmed"]},
         "requested_slot.date": date_key,
     }, {"requested_slot": 1, "_id": 0}).to_list(500)
+    from utils import not_deleted_filter as _nd
     scheduled_jobs = await db.jobs.find({
         "tenant_id": cfg["tenant_id"],
         "scheduled_date": date_key,
         "status": {"$nin": ["cancelled", "completed"]},
+        **_nd(),
     }, {"scheduled_start": 1, "_id": 0}).to_list(500)
     if len(existing) >= max_per_day:
         return []

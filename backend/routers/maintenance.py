@@ -4,6 +4,7 @@ from typing import Optional
 
 from config import db, logger
 from utils import now_iso, new_id, get_current_user, require_admin, notify_customer
+from utils import not_deleted_filter as _nd
 from models import MaintScheduleIn, MaintSettingsIn, MaintLogIn, MaintBulkIn
 
 router = APIRouter()

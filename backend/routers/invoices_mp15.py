@@ -461,8 +461,9 @@ async def migrate_invoices_estimates_property_id() -> Dict[str, int]:
         job_ids.discard(None)
         if not job_ids:
             return None
+        from utils import not_deleted_filter as _nd
         jobs = await db.jobs.find(
-            {"tenant_id": doc.get("tenant_id"), "id": {"$in": list(job_ids)}},
+            {"tenant_id": doc.get("tenant_id"), "id": {"$in": list(job_ids)}, **_nd()},
             {"_id": 0, "id": 1, "property_id": 1},
         ).to_list(500)
         pids = {j.get("property_id") for j in jobs}

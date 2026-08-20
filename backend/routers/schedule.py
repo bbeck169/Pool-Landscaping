@@ -88,7 +88,8 @@ async def schedule_today(date: Optional[str] = None,
     # ``route_index`` (written by ``POST /api/jobs/reorder``).
     # Fallback to Mongo's natural insertion order for untouched days
     # via ``created_at`` as the tertiary key.
-    jobs = await db.jobs.find(job_q, {"_id": 0}).sort(
+    from utils import not_deleted_filter as _nd
+    jobs = await db.jobs.find({**job_q, **_nd()}, {"_id": 0}).sort(
         [("scheduled_date", 1), ("route_index", 1), ("created_at", 1)]
     ).to_list(200)
 

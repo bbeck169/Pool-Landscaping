@@ -36,8 +36,9 @@ def _require_customer(user: dict) -> str:
 
 async def _customer_job_ids(customer_id: str, tenant_id: str) -> List[str]:
     """Ids of every job the customer owns in this tenant."""
+    from utils import not_deleted_filter as _nd
     cur = db.jobs.find(
-        {"customer_id": customer_id, "tenant_id": tenant_id},
+        {"customer_id": customer_id, "tenant_id": tenant_id, **_nd()},
         {"_id": 0, "id": 1, "title": 1},
     )
     return [j async for j in cur]

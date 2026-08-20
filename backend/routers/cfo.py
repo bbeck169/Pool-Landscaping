@@ -658,8 +658,9 @@ async def forecast(
     # Cash-in: future jobs.price grouped by scheduled_date, plus warranty
     # renewals bucketed by end_date within horizon (treated as auto-renew).
     cash_in_by_week = [0.0] * n_weeks
+    from utils import not_deleted_filter as _nd
     async for j in db.jobs.find(
-        {"tenant_id": tid, "status": {"$in": ["scheduled", "pending", "active"]}},
+        {"tenant_id": tid, "status": {"$in": ["scheduled", "pending", "active"]}, **_nd()},
         {"_id": 0, "price": 1, "scheduled_date": 1},
     ):
         d = _parse_dt(j.get("scheduled_date"))

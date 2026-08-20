@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from config import db, logger
 from utils import now_iso, new_id, get_current_user
+from utils import not_deleted_filter as _nd
 from routers.tenants import get_current_tenant
 from services.chat_attachment_hydration import (
     hydrate_message_attachments,

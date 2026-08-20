@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from config import db
 from utils import get_current_user
+from utils import not_deleted_filter as _nd
 
 # Reuse Phase 3 helpers so the math stays identical.
 from routers.dispatch_route_optimize import (  # noqa: F401
@@ -116,6 +117,7 @@ async def list_unscheduled_jobs(
              ]},
          ]}
     items: List[Dict[str, Any]] = []
+    q = {**q, **_nd()}
     cursor = db.jobs.find(q, {"_id": 0, "id": 1, "title": 1, "address": 1,
                                 "customer_id": 1, "customer_name": 1,
                                 "service_type": 1, "lat": 1, "lon": 1}).limit(limit)
@@ -164,6 +166,7 @@ async def insert_route_job(body: InsertBody,
                   {"assigned_to": tech_id},
                   {"technician_id": tech_id}]}
     existing: List[Dict[str, Any]] = []
+    q = {**q, **_nd()}
     async for j in db.jobs.find(q, {"_id": 0}).sort("route_index", 1):
         existing.append(j)
 
@@ -212,6 +215,7 @@ async def insert_route_job(body: InsertBody,
 
     # Build response payload — reload the final ordered list.
     final: List[Dict[str, Any]] = []
+    q = {**q, **_nd()}
     async for j in db.jobs.find(q, {"_id": 0}).sort("route_index", 1):
         c = await _job_coords(j)
         final.append({"job_id": j["id"], "address": j.get("address") or "",
@@ -282,6 +286,7 @@ async def preview_insert_batch(body: PreviewBatchBody,
                     {"assigned_to": body.tech_user_id},
                     {"technician_id": body.tech_user_id}]}
     existing_pts: List[Tuple[float, float]] = []
+    q = {**q, **_nd()}
     async for j in db.jobs.find(q, {"_id": 0}).sort("route_index", 1):
         c = await _job_coords(j)
         if c:

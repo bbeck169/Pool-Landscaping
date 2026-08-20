@@ -19,8 +19,9 @@ async def dispatch(user: dict = Depends(require_admin),
                    date: Optional[str] = None):
     """Technicians with their jobs for a given day, plus an unassigned bucket."""
     day = (date or now_iso())[:10]
+    from utils import not_deleted_filter as _nd
     jobs = await db.jobs.find(
-        {"tenant_id": tenant["id"], "status": {"$in": ["pending", "active", "requested", "completed"]}},
+        {"tenant_id": tenant["id"], "status": {"$in": ["pending", "active", "requested", "completed"]}, **_nd()},
         {"_id": 0},
     ).to_list(2000)
     day_jobs = [j for j in jobs if (j.get("scheduled_date") or "")[:10] == day]
@@ -139,7 +140,7 @@ async def _compute_reports(tenant_id: str, date_from: str | None = None, date_to
     month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     revenue_series = [{"label": month_names[m - 1], "value": round(buckets[f"{y}-{m:02d}"], 2)} for (y, m) in seq]
 
-    all_jobs = await db.jobs.find(tq, {"_id": 0}).to_list(3000)
+    all_jobs = await db.jobs.find({**tq, **_nd()}, {"_id": 0}).to_list(3000)
     all_jobs = [j for j in all_jobs if _in_range(j.get("scheduled_date") or j.get("created_at"), date_from, date_to)]
     status_counts: dict = {}
     for j in all_jobs:

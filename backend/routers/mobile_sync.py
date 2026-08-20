@@ -303,11 +303,14 @@ async def mobile_offline_bundle(tech_id: str = "me",
     horizon = now + timedelta(days=OFFLINE_BUNDLE_WINDOW_DAYS)
 
     # Jobs assigned to this tech within the 7-day window.
+    from utils import not_deleted_filter as _nd
     jobs_cur = db.jobs.find(
         {"tenant_id": tenant_id,
-         "$or": [{"technician_id": target_tech},
-                    {"assigned_tech_id": target_tech}],
-         "deleted_at": {"$in": [None, False]},
+         "$and": [
+             {"$or": [{"technician_id": target_tech},
+                       {"assigned_tech_id": target_tech}]},
+             _nd(),
+         ],
          "scheduled_at": {"$lte": horizon.isoformat()}},
         {"_id": 0, "id": 1, "customer_id": 1, "title": 1,
           "service_type": 1, "scheduled_at": 1, "scheduled_end": 1,

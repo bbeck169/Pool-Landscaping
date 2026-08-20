@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from config import db
 from routers.tenants import get_current_tenant
 from utils import get_current_user
+from utils import not_deleted_filter as _nd
 
 router = APIRouter()
 

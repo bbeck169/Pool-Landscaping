@@ -148,7 +148,8 @@ async def churn_risk(user: dict = Depends(require_admin),
     tid = tenant["id"]
     now = datetime.now(timezone.utc)
     customers = await db.customers.find({"tenant_id": tid}, {"_id": 0}).to_list(2000)
-    jobs = await db.jobs.find({"tenant_id": tid}, {"_id": 0}).to_list(5000)
+    from utils import not_deleted_filter as _nd
+    jobs = await db.jobs.find({"tenant_id": tid, **_nd()}, {"_id": 0}).to_list(5000)
     invoices = await db.quotes.find({"tenant_id": tid, "doc_type": "invoice"}, {"_id": 0}).to_list(5000)
     csats = await db.csat_surveys.find({"tenant_id": tid, "nps_score": {"$ne": None}}, {"_id": 0}).to_list(2000)
     comms = await db.communications.find({"tenant_id": tid}, {"_id": 0}).to_list(5000)
@@ -273,10 +274,12 @@ async def tech_productivity(user: dict = Depends(require_admin),
         end = now.date().isoformat()
 
     techs = await db.technicians.find({"tenant_id": tid_}, {"_id": 0}).to_list(500)
+    from utils import not_deleted_filter as _nd
     jobs = await db.jobs.find({
         "tenant_id": tid_,
         "status": "completed",
         "completed_at": {"$gte": start, "$lte": end + "T23:59:59+00:00"},
+        **_nd(),
     }, {"_id": 0}).to_list(5000)
 
     weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]

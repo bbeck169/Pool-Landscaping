@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import db
 from utils import get_current_user
+from utils import not_deleted_filter as _nd
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -32,6 +33,7 @@ async def portal_photos(
     job_query: dict = {"tenant_id": tid, "customer_id": cid}
     if service_type:
         job_query["service_type"] = service_type
+    job_query = {**job_query, **_nd()}
     jobs = await db.jobs.find(job_query, {"_id": 0, "id": 1, "title": 1,
                                           "service_type": 1, "scheduled_start": 1,
                                           "scheduled_date": 1}).to_list(2000)

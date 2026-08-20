@@ -266,9 +266,10 @@ async def list_customers(
     docs = await db.customers.find(q, {"_id": 0}).sort("name", 1).to_list(2000)
     # If unscheduled=true, filter out customers who have any non-completed/cancelled job.
     if unscheduled:
+        from utils import not_deleted_filter as _nd
         scheduled_ids = set(
             [d["customer_id"] async for d in db.jobs.find(
-                {"tenant_id": tenant["id"], "status": {"$nin": ["completed", "cancelled"]}},
+                {"tenant_id": tenant["id"], "status": {"$nin": ["completed", "cancelled"]}, **_nd()},
                 {"customer_id": 1, "_id": 0},
             )]
         )
@@ -562,8 +563,9 @@ async def get_customer(cid: str,
     )
     if not doc:
         raise HTTPException(404, "Customer not found")
+    from utils import not_deleted_filter as _nd_cust
     jobs = await db.jobs.find(
-        {"customer_id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+        {"customer_id": cid, "tenant_id": tenant["id"], **_nd_cust()}, {"_id": 0}
     ).sort("scheduled_date", -1).to_list(200)
     doc["jobs"] = jobs
     # Phase 12 · Feb 2026 — derive card-on-file fields at read time.

@@ -202,8 +202,9 @@ async def _tool_get_customer(tenant_id: str, customer_id: str) -> Dict[str, Any]
         {"_id": 0, "channel": 1, "subject": 1, "created_at": 1,
           "delivered": 1, "trigger_entity": 1},
     ).sort("created_at", -1).limit(10).to_list(10)
+    from utils import not_deleted_filter as _nd
     jobs = await db.jobs.find(
-        {"tenant_id": tenant_id, "customer_id": customer_id},
+        {"tenant_id": tenant_id, "customer_id": customer_id, **_nd()},
         {"_id": 0, "id": 1, "scheduled_date": 1, "status": 1,
           "service_type": 1},
     ).sort("scheduled_date", -1).limit(10).to_list(10)

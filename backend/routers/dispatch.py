@@ -164,10 +164,11 @@ async def _rank_techs_for_job(
             te["preferred_service_types"] = (
                 u.get("preferred_service_types") or [])
 
+    from utils import not_deleted_filter as _nd
     # Today's existing jobs, grouped by tech.
     todays = await db.jobs.find(
         {"tenant_id": tenant_id,
-          "status": {"$nin": ["cancelled", "completed"]}},
+          "status": {"$nin": ["cancelled", "completed"]}, **_nd()},
         {"_id": 0, "id": 1, "technician_id": 1,
           "scheduled_date": 1, "scheduled_start": 1,
           "site_lat": 1, "site_lng": 1, "lat": 1, "lng": 1},
@@ -412,10 +413,12 @@ async def weather_scan(user: dict = Depends(require_admin),
     today = _today_key()
     tomorrow = (datetime.now(timezone.utc).date()
                   + timedelta(days=1)).isoformat()
+    from utils import not_deleted_filter as _nd
     jobs = await db.jobs.find(
         {"tenant_id": tenant["id"],
           "scheduled_date": {"$in": [today, tomorrow]},
-          "status": {"$nin": ["cancelled", "completed"]}},
+          "status": {"$nin": ["cancelled", "completed"]},
+          **_nd()},
         {"_id": 0},
     ).to_list(2000)
     outdoor = [j for j in jobs if _is_outdoor(j)]

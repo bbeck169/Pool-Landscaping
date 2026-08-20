@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from config import db, logger
 from utils import get_current_user, new_id, now_iso
+from utils import not_deleted_filter as _nd
 from routers.tenants import get_current_tenant
 from routers.ai_employees import (
     CHAT_MSG_COST,

@@ -295,7 +295,8 @@ async def revenue_forecast(
         "status": {"$in": ["scheduled", "confirmed"]},
         "scheduled_date": {"$gte": s_iso, "$lte": e_iso},
     }
-    cur = db.jobs.find(booked_q, {
+    from utils import not_deleted_filter as _nd
+    cur = db.jobs.find({**booked_q, **_nd()}, {
         "_id": 0, "id": 1, "price": 1, "total": 1, "quote_total": 1,
     })
     booked_amount = 0.0

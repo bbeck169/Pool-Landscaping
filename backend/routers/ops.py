@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import now_iso, new_id, require_admin, get_current_user
+from utils import not_deleted_filter as _nd
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -261,6 +262,7 @@ async def routes_optimize(body: RouteOptimizeIn, user: dict = Depends(require_ad
     q: dict = {"scheduled_date": {"$regex": f"^{body.date}"}, "tenant_id": tenant["id"]}
     if body.tech_id:
         q["technician_id"] = body.tech_id
+    q = {**q, **_nd()}
     jobs = await db.jobs.find(q, {"_id": 0}).to_list(200)
     if not jobs:
         return {"ok": True, "order": [], "note": "No jobs"}

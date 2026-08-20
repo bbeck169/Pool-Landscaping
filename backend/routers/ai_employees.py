@@ -1801,9 +1801,10 @@ async def _vizzy_dispatch(*, tenant, user, employee, action, params,
 
 async def _vizzy_daily_brief(*, tenant, user, system_prompt, user_text):
     today = datetime.now(timezone.utc).date().isoformat()
+    from utils import not_deleted_filter as _nd
     # Jobs today by tech.
     jobs_today = await db.jobs.find(
-        {"tenant_id": tenant["id"], "scheduled_date": today},
+        {"tenant_id": tenant["id"], "scheduled_date": today, **_nd()},
         {"_id": 0, "id": 1, "technician_id": 1, "technician_name": 1,
           "status": 1},
     ).to_list(500)
@@ -1867,8 +1868,9 @@ async def _vizzy_prep_call(*, tenant, params, system_prompt, user_text):
     )
     if not cust:
         return f"Customer `{cid}` not found in this tenant.", None
+    from utils import not_deleted_filter as _nd_recent
     recent_jobs = await db.jobs.find(
-        {"tenant_id": tenant["id"], "customer_id": cid},
+        {"tenant_id": tenant["id"], "customer_id": cid, **_nd_recent()},
         {"_id": 0, "title": 1, "scheduled_date": 1, "status": 1},
     ).sort("scheduled_date", -1).to_list(10)
     open_invoices = await db.quotes.find(

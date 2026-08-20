@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from config import db
 from utils import get_current_user, require_gps_read  # noqa: F401
+from utils import not_deleted_filter as _nd
 
 router = APIRouter()
 
@@ -165,6 +166,7 @@ async def optimize_route(body: OptimizeBody,
                   {"assigned_to": tech_id},
                   {"technician_id": tech_id}]}
     jobs: List[Dict[str, Any]] = []
+    q = {**q, **_nd()}
     async for j in db.jobs.find(q, {"_id": 0}).sort("route_index", 1):
         jobs.append(j)
     if not jobs:

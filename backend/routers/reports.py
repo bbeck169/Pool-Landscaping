@@ -789,8 +789,9 @@ async def evaluate_algae_risk(tenant_id: str, customer_id: str | None):
     if not customer_id:
         return None
     # Any already-open flag? Keep it open, just refresh evidence.
+    from utils import not_deleted_filter as _nd
     jobs = await db.jobs.find(
-        {"customer_id": customer_id, "tenant_id": tenant_id},
+        {"customer_id": customer_id, "tenant_id": tenant_id, **_nd()},
         {"_id": 0, "id": 1},
     ).to_list(2000)
     jids = [j["id"] for j in jobs]

@@ -252,9 +252,10 @@ async def recompute_customer_denorm(tenant_id: str,
             {"tenant_id": tenant_id, "customer_id": cid, "active": True},
             {"_id": 0, "service_type": 1, "day_of_week": 1, "assigned_tech_id": 1},
         ).to_list(200)
+        from utils import not_deleted_filter as _nd
         recent_jobs = await db.jobs.find(
             {"tenant_id": tenant_id, "customer_id": cid,
-              "created_at": {"$gte": ninety_ago}},
+              "created_at": {"$gte": ninety_ago}, **_nd()},
             {"_id": 0, "service_type": 1},
         ).to_list(500)
 

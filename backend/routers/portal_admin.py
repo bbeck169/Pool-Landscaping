@@ -13,6 +13,7 @@ from typing import Optional
 
 from config import db, logger, APP_PUBLIC_URL
 from utils import now_iso, new_id, require_admin, get_current_user, hash_password
+from utils import not_deleted_filter as _nd
 from routers.tenants import get_current_tenant
 
 router = APIRouter()

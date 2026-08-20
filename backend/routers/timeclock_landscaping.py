@@ -220,10 +220,12 @@ async def my_jobs_today(user: dict = Depends(get_current_user)):
     tech_link = user.get("technician_id") or user["id"]
     # scheduled_date is stored either as a bare "YYYY-MM-DD" or a full
     # ISO datetime string. Match both via a `startswith` regex.
+    from utils import not_deleted_filter as _nd
     cur = db.jobs.find(
         {"tenant_id": user["tenant_id"],
          "technician_id": {"$in": [tech_link, user["id"]]},
-         "scheduled_date": {"$regex": f"^{today}"}},
+         "scheduled_date": {"$regex": f"^{today}"},
+         **_nd()},
         {"_id": 0, "id": 1, "title": 1, "customer_name": 1,
          "service_type": 1, "scheduled_start": 1, "status": 1},
     ).sort("scheduled_start", 1)
