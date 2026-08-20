@@ -1213,6 +1213,228 @@ async def delete_job(jid: str,
     return {"ok": True, "deleted": res.deleted_count}
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · 24-hour post-completion edit window (PATCH + edit history)
+# ═════════════════════════════════════════════════════════════════════
+class JobEditPatch(BaseModel):
+    # Only the mutable set — anything not listed here is silently
+    # dropped by the endpoint's ``.dict(exclude_none=True)`` filter.
+    # Immutable-field guard runs separately (see ``edit_window``).
+    chemical_readings: Optional[List[Dict[str, Any]]] = None
+    chemicals_added:   Optional[List[Dict[str, Any]]] = None
+    checklist:         Optional[List[Dict[str, Any]]] = None
+    checklist_items:   Optional[List[Dict[str, Any]]] = None
+    notes:             Optional[str] = None
+    observations:      Optional[str] = None
+    photos:            Optional[List[Dict[str, Any]]] = None
+    title:             Optional[str] = None
+    service_notes:     Optional[str] = None
+    # Free-text reason surfaced in the audit doc.  Never mutates the
+    # job itself.
+    edit_reason:       Optional[str] = None
+    # Source of the edit (``web`` / ``mobile`` / ``api``).  Optional
+    # so a plain UI call still works.
+    edit_source:       Optional[str] = None
+
+
+async def _authorize_edit(
+    job: Dict[str, Any], user: Dict[str, Any],
+) -> None:
+    """Feb-2026 · edit-window auth cascade — technicians can edit
+    only their own assigned jobs; admin roles have full write access.
+    Customers are always rejected."""
+    role = (user.get("role") or "").lower()
+    ADMIN_ROLES = {"admin", "super_admin", "owner", "manager"}
+    if role in ADMIN_ROLES:
+        return
+    if role == "technician":
+        assigned = job.get("technician_id")
+        if assigned not in (user.get("id"), user.get("technician_id")):
+            raise HTTPException(403, "Not your job")
+        return
+    raise HTTPException(403, "Not permitted to edit jobs")
+
+
+@router.patch("/jobs/{jid}",
+              operation_id="jobs.edit_within_window")
+async def patch_job_edit_window(
+    jid: str, body: JobEditPatch,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Feb-2026 · 24h post-completion edit path.
+
+    Fixes mistakes on a completed job within
+    :data:`services.edit_window.EDIT_WINDOW_HOURS` of ``completed_at``
+    WITHOUT re-triggering the customer-facing completion side
+    effects (door hanger email, drip sequences, SMS, invoice
+    re-issue, webhook fan-out).
+
+    Deliberately DOES NOT reuse ``update_job`` (the PUT status-flow
+    endpoint) — separating the code path is the primary side-effect
+    suppression mechanism.  See ``services/edit_window.py`` for the
+    gate helpers.
+    """
+    from services.edit_window import (
+        EDIT_WINDOW_HOURS, IMMUTABLE_FIELDS,
+        assert_immutable_fields_untouched, diff_fields,
+        hours_since_completion, is_within_edit_window,
+    )
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
+    role = (user.get("role") or "").lower()
+    # Gate 1 · soft-delete visibility.
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("deleted_at"):
+        if role == "super_admin":
+            raise HTTPException(
+                status_code=409,
+                detail={"detail": "job_soft_deleted",
+                        "message": "Job is soft-deleted; restore first."},
+            )
+        # Non-super-admins get a stock 404 so the mere existence of a
+        # soft-deleted job doesn't leak.
+        raise HTTPException(404, "Job not found")
+
+    # Gate 2 · role auth.
+    await _authorize_edit(job, user)
+
+    # Gate 3 · immutable field guard — reject payloads that try to
+    # sneak in an admin-only field (customer_id, technician_id, etc.).
+    incoming = body.dict(exclude_none=True)
+    # ``edit_reason`` + ``edit_source`` are audit-only and never
+    # applied to the job doc.
+    audit_reason = incoming.pop("edit_reason", None)
+    audit_source = incoming.pop("edit_source", "web")
+    assert_immutable_fields_untouched(incoming)
+
+    # Gate 4 · status guard — only completed jobs may be edited via
+    # this endpoint.  Non-completed jobs still use the existing
+    # status-flow endpoints (PUT / service-report submit).
+    if (job.get("status") or "").lower() != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail={"detail": "job_not_completed",
+                    "message": "Edit path is for completed jobs only. "
+                                "Use the existing status-flow endpoints for "
+                                "non-completed jobs."},
+        )
+
+    # Gate 5 · edit window.
+    if not is_within_edit_window(job):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "detail": "edit_window_expired",
+                "message": (
+                    f"Edits allowed within {EDIT_WINDOW_HOURS} hours "
+                    f"of completion"
+                ),
+                "hours_since_completion": hours_since_completion(job),
+                "edit_window_hours": EDIT_WINDOW_HOURS,
+            },
+        )
+
+    # Gate 6 · chemistry re-check.  If the edit touches any of the
+    # 5 core readings, the resulting state must still satisfy the
+    # chemistry gate.  Reuse the same helper — no fork.
+    if "chemical_readings" in incoming:
+        from services.chemistry_gate import (
+            assert_core_readings_present, gather_readings_for_job, is_pool_job,
+        )
+        if is_pool_job(job):
+            # Merge: existing service_report + patch-in readings so
+            # the gate sees the RESULTING state, not the delta.
+            rep = await db.service_reports.find_one(
+                {"tenant_id": tenant["id"], "job_id": jid}, {"_id": 0},
+            ) or {}
+            merged_source = dict(rep)
+            merged_source["chemical_readings"] = incoming["chemical_readings"]
+            assert_core_readings_present(
+                gather_readings_for_job(job, merged_source),
+            )
+
+    # Compute the diff BEFORE touching anything so the audit row
+    # reflects the actual state change.
+    changes = diff_fields(job, incoming, skip=("updated_at",))
+    if not changes:
+        # No-op edit — no audit row, but return the current job so the
+        # UI can rerender cleanly.
+        job.pop("_id", None)
+        return job
+
+    # Write the audit doc FIRST — if the job mutation fails afterwards
+    # we roll it back so the log doesn't lie.  If the audit write
+    # itself crashes, the job never gets touched.
+    edit_id = new_id()
+    audit_doc = {
+        "id": edit_id,
+        "tenant_id": tenant["id"],
+        "job_id": jid,
+        "edited_by": user.get("id"),
+        "edited_by_name": user.get("name") or user.get("email"),
+        "edited_by_role": role,
+        "edited_at": now_iso(),
+        "changes": changes,
+        "reason": (audit_reason or "").strip()[:500] or None,
+        "source": audit_source if audit_source in {"web", "mobile", "api"} else "web",
+    }
+    await db.job_edits.insert_one(audit_doc)
+
+    try:
+        incoming["updated_at"] = now_iso()
+        await db.jobs.update_one(
+            {"id": jid, "tenant_id": tenant["id"]}, {"$set": incoming},
+        )
+    except Exception:
+        # Rollback the audit row so history doesn't record a change
+        # that never landed.  Then bubble the 500.
+        await db.job_edits.delete_one({"id": edit_id})
+        raise
+
+    fresh = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    # DO NOT call ``send_completion_email`` / ``schedule_auto_send_door_hanger``
+    # / ``create_recurring_maintenance`` / anything from the PUT path.
+    # Belt-and-suspenders: even if a future refactor accidentally
+    # imports the PUT handler, the door-hanger ledger key
+    # ``door_hanger_auto:{job_id}`` still prevents a duplicate email.
+    return fresh
+
+
+@router.get("/jobs/{jid}/edits",
+            operation_id="jobs.list_edits")
+async def list_job_edits(
+    jid: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """List the audit history for a job.  Sorted ``edited_at desc``,
+    capped at 100 rows.  Enforces the same tenant + role scoping as
+    the PATCH endpoint."""
+    job = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "technician_id": 1, "deleted_at": 1},
+    )
+    if not job or job.get("deleted_at"):
+        # Same 404 mask as PATCH.
+        raise HTTPException(404, "Job not found")
+    role = (user.get("role") or "").lower()
+    ADMIN_ROLES = {"admin", "super_admin", "owner", "manager"}
+    if role == "technician":
+        assigned = job.get("technician_id")
+        if assigned not in (user.get("id"), user.get("technician_id")):
+            raise HTTPException(403, "Not your job")
+    elif role not in ADMIN_ROLES:
+        raise HTTPException(403, "Not permitted to read edit history")
+    rows = await db.job_edits.find(
+        {"tenant_id": tenant["id"], "job_id": jid},
+        {"_id": 0},
+    ).sort("edited_at", -1).to_list(100)
+    return {"count": len(rows), "edits": rows}
+
+
 # ═════════════════════════════════════════════════════════════════════════
 # Feb-2026 · Schedule multi-select soft-delete
 # ═════════════════════════════════════════════════════════════════════════

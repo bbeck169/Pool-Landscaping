@@ -911,6 +911,17 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"media_gen ensure_indexes crashed: {e}")
 
+    # Feb-2026 · 24h post-completion edit-window audit indexes.
+    try:
+        await db.job_edits.create_index([
+            ("tenant_id", 1), ("job_id", 1), ("edited_at", -1),
+        ], name="job_edits_by_job")
+        await db.job_edits.create_index([
+            ("tenant_id", 1), ("edited_by", 1), ("edited_at", -1),
+        ], name="job_edits_by_user")
+    except Exception as e:
+        logger.warning(f"job_edits ensure_indexes crashed: {e}")
+
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.
     try:

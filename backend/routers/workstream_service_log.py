@@ -513,15 +513,49 @@ async def _build_door_hanger_email(
 
     water_html = ""
     if water_test:
-        rows = "".join(
-            _row(r["label"], f"{r['value']} {r.get('unit') or ''}".strip())
-            for r in water_test
+        # Feb-2026 hotfix — customer-facing views show qualitative
+        # BANDS ("Below Average" / "Average" / "Above Average" /
+        # "Elevated") instead of raw ppm/pH numbers.  Tech-facing
+        # surfaces (Workstream, ServiceReport form) still render
+        # exact numbers — see ``services/chemistry_bands.py`` for
+        # the shared boundary rules.
+        from services.chemistry_bands import (
+            band_for_reading, CANONICAL_BAND_THRESHOLDS,
         )
-        water_html = (
-            f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Water Test</h3>"
-            f"<table cellpadding=0 cellspacing=0 style=\"font-size:14px;border-collapse:collapse\">"
-            f"{rows}</table>"
-        )
+        from services.chemistry_gate import DISPLAY_LABELS, CORE_READINGS
+        by_key = {r["key"]: r for r in water_test}
+        # 5-core section — fixed order, banded label. Missing rows
+        # skipped silently (chemistry gate should have blocked the
+        # completion, but defence-in-depth).
+        core_rows = ""
+        for key in CORE_READINGS:
+            r = by_key.get(key)
+            if not r:
+                continue
+            band = band_for_reading(key, r.get("value"))
+            if not band:
+                continue
+            core_rows += _row(DISPLAY_LABELS[key], band)
+        # Optional readings block — anything NOT in the 5 cores.
+        # Render exact value + unit; OMIT the row entirely if the
+        # value is blank (user-approved Feb-2026 spec).
+        optional_rows = ""
+        for r in water_test:
+            if r["key"] in CANONICAL_BAND_THRESHOLDS:
+                continue
+            v = r.get("value")
+            if v in (None, ""):
+                continue
+            optional_rows += _row(
+                r["label"],
+                f"{v} {r.get('unit') or ''}".strip(),
+            )
+        if core_rows or optional_rows:
+            water_html = (
+                f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Water Test</h3>"
+                f"<table cellpadding=0 cellspacing=0 style=\"font-size:14px;border-collapse:collapse\">"
+                f"{core_rows}{optional_rows}</table>"
+            )
 
     chems_html = ""
     if chems_used:

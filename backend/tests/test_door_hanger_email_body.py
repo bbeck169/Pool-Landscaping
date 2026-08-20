@@ -244,13 +244,28 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
             assert "We appreciate your business" in body
             assert "602-887-4400" in body or "reply to this email" not in body
             assert "make it right" not in body
-            # Chemistry — every canonical field + CYA specifically.
-            assert "Free Chlorine" in body, body[:300]
-            assert "Total Chlorine" in body
-            assert "Ph Balance" in body
-            assert "Alkalinity" in body
-            assert "CYA" in body
-            assert "40 ppm" in body or "40.0 ppm" in body, body[:400]
+            # Chemistry — Feb-2026 hotfix: customer-facing views now
+            # render qualitative BANDS in place of raw ppm/pH numbers.
+            # free_chlorine=2.5 → Average; total_chlorine=3.0 → Average;
+            # ph=7.4 → Average; alkalinity=80 → Average; cyanuric_acid=40 → Average.
+            # Every value in this test payload sits in the Average band.
+            # Rendered as a two-cell table row: <td>{label}</td><td><b>{band}</b></td>.
+            _wt_start = body.index("Water Test</h3>")
+            _wt_end   = body.index("</table>", _wt_start)
+            _wt = body[_wt_start:_wt_end]
+            for _label in ("Free Cl", "Total Cl", "pH", "Alkalinity", "CYA"):
+                assert f">{_label}</td>" in _wt, (
+                    f"missing display label {_label!r} in Water Test section"
+                )
+                assert "<b>Average</b>" in _wt
+            # RAW numeric readings must NOT appear in the Water Test
+            # section — scope the substring check so numeric values
+            # that legitimately appear elsewhere (photo URLs, cost)
+            # can't false-positive.
+            for _val in ("2.5", "3.0", "7.4", "40 ppm", "40.0 ppm", " 80 "):
+                assert _val not in _wt, (
+                    f"raw reading {_val!r} leaked into Water Test section"
+                )
             # Chemicals used.
             assert "Liquid Chlorine" in body
             assert "$8.00" in body, body[:600]
@@ -293,7 +308,11 @@ def test_door_hanger_legacy_readings_on_job_doc_still_render(monkeypatch):
             assert r["ok"] is True
             body = captured.get("html") or ""
             assert "CYA" in body
-            assert "45" in body
+            # Feb-2026 hotfix — raw CYA value MUST NOT leak into the
+            # customer-facing email; only the band renders.
+            _wt = body[body.index("Water Test</h3>"):body.index("</table>", body.index("Water Test</h3>"))]
+            assert "45" not in _wt, "raw CYA value leaked into Water Test"
+            assert "<b>Average</b>" in _wt   # 45 falls in 30-80 → Average
             assert "Muriatic Acid" in body
             assert "Legacy path" in body
         finally:
@@ -553,6 +572,166 @@ def test_door_hanger_cta_omitted_gracefully_when_mint_raises(monkeypatch):
             # Rest of email still there.
             assert "your visit has been completed" in body
             assert "We appreciate your business" in body
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · Water-test BANDS + optionals-omit hotfix regression tests.
+# ═════════════════════════════════════════════════════════════════════
+def test_door_hanger_elevated_ph_renders_band_not_number(monkeypatch):
+    """A pH of 8.5 sits in the Elevated band.  The email MUST show
+    ``pH: Elevated`` and MUST NOT show the raw ``8.5`` value."""
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        # Seed a service report with an Elevated pH + Average rest.
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                {"key": "free_chlorine",  "value": 2.5},
+                {"key": "total_chlorine", "value": 3.0},
+                {"key": "ph",             "value": 8.5},
+                {"key": "alkalinity",     "value": 90},
+                {"key": "cyanuric_acid",  "value": 45},
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            _wt = body[body.index("Water Test</h3>"):body.index("</table>",
+                       body.index("Water Test</h3>"))]
+            assert ">pH</td>" in _wt
+            assert "<b>Elevated</b>" in _wt
+            assert "8.5" not in _wt
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_water_test_renders_all_five_cores_in_fixed_order(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        # Seed readings in a SHUFFLED order to prove the email always
+        # renders them in the canonical order (Free Cl → Total Cl →
+        # Alkalinity → pH → CYA, matching ``chemistry_gate.CORE_READINGS``).
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                {"key": "cyanuric_acid",  "value": 45},
+                {"key": "ph",             "value": 7.4},
+                {"key": "alkalinity",     "value": 90},
+                {"key": "total_chlorine", "value": 3.0},
+                {"key": "free_chlorine",  "value": 2.5},
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            _wt = body[body.index("Water Test</h3>"):body.index("</table>",
+                       body.index("Water Test</h3>"))]
+            # Every core rendered, in canonical order.
+            positions = {
+                lbl: _wt.index(f">{lbl}</td>") for lbl in
+                ("Free Cl", "Total Cl", "Alkalinity", "pH", "CYA")
+            }
+            ordered = sorted(positions.items(), key=lambda kv: kv[1])
+            assert [k for k, _ in ordered] == [
+                "Free Cl", "Total Cl", "Alkalinity", "pH", "CYA",
+            ]
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_optional_readings_omit_when_blank(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        # 5 cores present + BOTH optionals blank.
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                {"key": "free_chlorine",   "value": 2.5},
+                {"key": "total_chlorine",  "value": 3.0},
+                {"key": "ph",              "value": 7.4},
+                {"key": "alkalinity",      "value": 90},
+                {"key": "cyanuric_acid",   "value": 45},
+                {"key": "water_temp",      "value": None},
+                {"key": "calcium_hardness", "value": ""},
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            # Optional rows MUST be absent — the entire optionals
+            # block is omitted when every optional is blank.
+            _wt = body[body.index("Water Test</h3>"):body.index("</table>",
+                       body.index("Water Test</h3>"))]
+            assert "Water Temp" not in _wt
+            assert "Calcium Hardness" not in _wt
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_optional_reading_rendered_when_filled(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                {"key": "free_chlorine",   "value": 2.5},
+                {"key": "total_chlorine",  "value": 3.0},
+                {"key": "ph",              "value": 7.4},
+                {"key": "alkalinity",      "value": 90},
+                {"key": "cyanuric_acid",   "value": 45},
+                {"key": "water_temp",      "value": 82, "unit": "°F"},
+                {"key": "calcium_hardness", "value": None},
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            _wt = body[body.index("Water Test</h3>"):body.index("</table>",
+                       body.index("Water Test</h3>"))]
+            # Filled optional renders with its numeric value + unit.
+            assert "Water Temp" in _wt
+            assert "82" in _wt
+            # Blank optional stays omitted.
+            assert "Calcium Hardness" not in _wt
         finally:
             await _drain(tid, jid, cid)
 

@@ -44,7 +44,7 @@ SYNC_RECEIPT_TTL_DAYS = 60
 
 # op_types accepted by /mobile/sync — routed via ``_HANDLERS`` below.
 SUPPORTED_OP_TYPES = {
-    "job.update", "job.close", "service_report.upsert",
+    "job.update", "job.close", "job.edit", "service_report.upsert",
     "photo.upload", "chemistry.record", "chemical.add",
     "checklist.tick", "note.add",
 }
@@ -169,6 +169,80 @@ async def _handle_job_close(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
     return {"server_id": op.entity_id, "server_ts": now_iso()}
 
 
+async def _handle_job_edit(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
+    """Feb-2026 · Mobile offline replay of a 24h edit-window PATCH.
+
+    Mirrors the gates + audit + side-effect suppression of the web
+    ``PATCH /api/jobs/{jid}`` endpoint (see ``routers/jobs.py ::
+    patch_job_edit_window``).  A 403 or 422 raised here propagates
+    back to the mobile client so its local queue can either surface
+    the error to the tech (edit_window_expired → local warning
+    card) or hold the row for a re-sync (chemistry gate failure).
+    """
+    from services.edit_window import (
+        EDIT_WINDOW_HOURS,
+        assert_immutable_fields_untouched, diff_fields,
+        hours_since_completion, is_within_edit_window,
+    )
+    job = await db.jobs.find_one(
+        {"id": op.entity_id, "tenant_id": tenant_id}, {"_id": 0})
+    if not job or job.get("deleted_at"):
+        raise ValueError("job not found")
+    if (job.get("status") or "").lower() != "completed":
+        raise HTTPException(400, {"detail": "job_not_completed"})
+    if not is_within_edit_window(job):
+        raise HTTPException(
+            403, {"detail": "edit_window_expired",
+                   "edit_window_hours": EDIT_WINDOW_HOURS,
+                   "hours_since_completion": hours_since_completion(job)},
+        )
+
+    incoming = dict(op.payload or {})
+    reason = (incoming.pop("edit_reason", None) or "")[:500] or None
+    incoming.pop("edit_source", None)
+    assert_immutable_fields_untouched(incoming)
+
+    # Chemistry re-check (mirrors the web PATCH gate 6).
+    if "chemical_readings" in incoming:
+        from services.chemistry_gate import (
+            assert_core_readings_present, gather_readings_for_job, is_pool_job,
+        )
+        if is_pool_job(job):
+            rep = await db.service_reports.find_one(
+                {"tenant_id": tenant_id, "job_id": op.entity_id},
+                {"_id": 0},
+            ) or {}
+            merged = dict(rep)
+            merged["chemical_readings"] = incoming["chemical_readings"]
+            assert_core_readings_present(
+                gather_readings_for_job(job, merged),
+            )
+
+    changes = diff_fields(job, incoming, skip=("updated_at",))
+    if not changes:
+        return {"server_id": op.entity_id, "server_ts": now_iso()}
+
+    edit_id = f"edit-{op.client_op_id}"
+    await db.job_edits.insert_one({
+        "id": edit_id,
+        "tenant_id": tenant_id, "job_id": op.entity_id,
+        "edited_by": user_id, "edited_by_role": "technician",
+        "edited_at": now_iso(), "changes": changes,
+        "reason": reason, "source": "mobile",
+    })
+    try:
+        incoming["updated_at"] = now_iso()
+        await db.jobs.update_one(
+            {"id": op.entity_id, "tenant_id": tenant_id},
+            {"$set": incoming},
+        )
+    except Exception:
+        await db.job_edits.delete_one({"id": edit_id})
+        raise
+    return {"server_id": op.entity_id, "server_ts": now_iso()}
+
+
+
 async def _handle_service_report_upsert(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
     existing = await db.service_reports.find_one(
         {"id": op.entity_id, "tenant_id": tenant_id}, {"_id": 0})
@@ -235,6 +309,7 @@ async def _handle_generic_report_field_append(op: _SyncOp, tenant_id: str,
 _HANDLERS = {
     "job.update":              _handle_job_update,
     "job.close":               _handle_job_close,
+    "job.edit":                _handle_job_edit,
     "service_report.upsert":   _handle_service_report_upsert,
     "photo.upload":            _handle_photo_upload,
     "chemistry.record":        lambda op, t, u: _handle_generic_report_field_append(

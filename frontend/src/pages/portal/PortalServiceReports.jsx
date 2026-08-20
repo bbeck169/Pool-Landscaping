@@ -27,6 +27,11 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+// Feb-2026 hotfix — client-side band derivation.  Mirrors backend
+// ``services/chemistry_bands.py`` exactly so a portal load with a
+// stale server payload (no ``label`` attached) still classifies the
+// reading with the same thresholds the email builder uses.
+import { bandForReading, DISPLAY_LABELS } from "@/utils/chemistryBands";
 import {
   PageHeader,
   Skeleton,
@@ -430,7 +435,24 @@ export function PortalServiceReportDetail() {
             data-testid="portal-service-report-readings-list"
           >
             {readings.map((r, i) => {
-              const band = r.label || sr?.readings_label?.[r.key] || "average";
+              // Feb-2026 hotfix — prefer the server-attached
+              // classification when present, else derive from the
+              // numeric value using the SAME thresholds the door-
+              // hanger email uses.  Falls back to the pre-hotfix
+              // "average" default only when neither path resolves.
+              const derived = bandForReading(r.key, r.value);
+              // ChemChip keys are lowercase short codes; the helper
+              // returns display labels ("Above Average" etc.).
+              // Map full display → chip key here so the chip picks
+              // the correct color + short label.
+              const _CHIP_KEY = {
+                "Below Average": "below",
+                "Average":       "average",
+                "Above Average": "above",
+                "Elevated":      "elevated",
+              };
+              const band = r.label || _CHIP_KEY[derived] || "average";
+              const displayName = DISPLAY_LABELS[r.key] || r.name || r.key;
               return (
                 <li
                   key={r.key || r.name || i}
@@ -446,16 +468,11 @@ export function PortalServiceReportDetail() {
                       className="text-sm font-semibold truncate"
                       style={{ color: colors.onSurface }}
                     >
-                      {r.name || r.key}
+                      {displayName}
                     </div>
-                    {r.unit ? (
-                      <div
-                        className="text-xs"
-                        style={{ color: colors.muted }}
-                      >
-                        {r.unit}
-                      </div>
-                    ) : null}
+                    {/* Numeric value + unit intentionally NOT rendered
+                        on customer-facing surfaces — only the band chip
+                        conveys the reading (Feb-2026 hotfix). */}
                   </div>
                   <ChemChip
                     band={band}

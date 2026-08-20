@@ -11064,3 +11064,94 @@ Full sweep (chemistry + regression):
 ### Test roll-up
 - Backend: **69/69 passing in 5.52s** (chemistry gate 12/12, door-hanger email body 9/9, door-hanger auto-send 8/8, workstream read paths, P0 SMS 5/5, Homeworks import inactive 7/7, portal auto-login 7/7, portal magic links 8/8, tech-name resolution 6/6).
 - Frontend: **5/5 Vitest passing in 134ms** (service-report chemistry-gate transitions).
+
+---
+
+## Feb-2026 · 24h edit window — PAUSED at clean file boundary
+
+Backend + mobile-sync code is written, imports cleanly, endpoints wired.
+Test file exists but the full 15-case pytest sweep has NOT been executed yet.
+Frontend Edit button + Edit History component NOT yet started.
+
+Paused mid-phase to ship the customer-facing water-test-bands hotfix
+(live emails going out with raw ppm numbers). Resumes right after
+bands hotfix lands.
+
+Files landed for edit window so far:
+* `backend/services/edit_window.py` — NEW helper.
+* `backend/routers/jobs.py` — new `PATCH /jobs/{jid}` + `GET /jobs/{jid}/edits`.
+* `backend/routers/mobile_sync.py` — new `_handle_job_edit`.
+* `backend/server.py` — `job_edits` indexes.
+* `backend/tests/test_job_edit_window.py` — 15 cases (UNRUN).
+
+---
+
+## Feb-2026 · Water-test bands hotfix (customer-facing views)
+
+### What shipped
+Raw ppm/pH values are gone from customer-facing surfaces. Instead:
+
+| Reading    | Below Average | Average | Above Average | Elevated |
+| ---------- | ------------- | ------- | ------------- | -------- |
+| Free Cl    | < 1           | 1 – 5   | 5 – 10        | ≥ 10     |
+| Total Cl   | < 1           | 1 – 5   | 5 – 10        | ≥ 10     |
+| pH         | < 7.2         | 7.2–7.6 | 7.6–8.2       | ≥ 8.2    |
+| Alkalinity | < 80          | 80–120  | 120–140       | ≥ 140    |
+| CYA        | < 30          | 30–80   | 80–150        | ≥ 150    |
+
+**Boundary rule (user-approved):** lower INCLUSIVE, upper EXCLUSIVE.
+So Free Cl == 1.0 → Average, Free Cl == 5.0 → Above Average, Free Cl == 10 → Elevated.
+
+⚠️ **Free Cl / Total Cl "Above Average" (5–10) and "Elevated" (≥ 10)
+thresholds are main-agent defaults surfaced for user confirmation.**
+pH, Alkalinity, CYA thresholds are user-approved verbatim.
+
+### Where bands REPLACE numbers
+1. Door hanger email — Water Test section in `_build_door_hanger_email`.
+2. Portal service-report detail page (`/portal/service-reports/:id`) —
+   already customer-only (portal route + portal auth). Band chip + display label combo.
+
+### Where exact numbers STAY
+- Tech ServiceReport form
+- Workstream admin views
+- Admin job detail views
+- Anywhere behind admin/super_admin auth
+
+### Optional readings (water_temp, calcium_hardness)
+- Filled → render exact value + unit
+- Blank → row OMITTED entirely (no "N/A" placeholder)
+
+### Files changed
+- `backend/services/chemistry_bands.py` — **NEW**, shared thresholds + `band_for_reading()`.
+- `backend/routers/workstream_service_log.py` — Water Test section swapped for banded rendering + optionals omit.
+- `backend/tests/test_chemistry_bands.py` — **NEW**, 20-case parametrised.
+- `backend/tests/test_door_hanger_email_body.py` — 4 new hotfix tests + assertion updates (raw numbers absent, bands present, ordering, optionals omit).
+- `frontend/src/utils/chemistryBands.js` — **NEW**, JS mirror.
+- `frontend/src/pages/portal/PortalServiceReports.jsx` — client `bandForReading` derivation + DISPLAY_LABELS + raw-number stripped.
+- `frontend/src/test/portal-service-report-bands.test.jsx` — **NEW**, 4 cases (bands render, raw numbers absent, optionals omit, chemicals used unchanged).
+- `mobile/utils/chemistryBands.ts` — **NEW**, TS mirror (not wired — parity for future customer-facing mobile).
+
+### Live-verification (real Resend send to `brian@plofv.com`)
+```
+provider           : resend
+provider_status    : sent
+mock               : False
+provider_response_id: e078583c-bdd4-497d-8a45-7977ea391b71
+```
+Water Test section rendered:
+```
+Free Cl     Average
+Total Cl    Average
+Alkalinity  Average
+pH          Elevated   ← from 8.5
+CYA         Elevated   ← from 160
+Water Temp  82 (filled optional stays numeric)
+```
+Zero raw ppm/pH values in the customer-facing body.
+
+### Test roll-up
+- Backend: **93/93 passing in 6.00s** (chemistry bands 20/20, chemistry gate 12/12, door-hanger email body 13/13, door-hanger auto-send 8/8, workstream read paths, P0 SMS 5/5, Homeworks import inactive 7/7, portal auto-login 7/7, portal magic links 8/8, tech-name resolution 6/6).
+- Frontend: **9/9 Vitest passing** (portal bands 4/4 + service-report gate 5/5).
+
+### Auth situation on the portal service-report page
+Route `/portal/service-reports/:id` is customer-only — mounted inside the portal auth guard (`PortalGuard` wrapper), no dual-mode admin view. Band rendering is unconditional on this route (no role gate needed). Admin views live under `/admin/…` and use the exact-numeric renderer.
