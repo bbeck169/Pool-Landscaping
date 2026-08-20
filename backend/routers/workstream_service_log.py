@@ -350,6 +350,56 @@ def _format_chem_qty(qty: float, unit: str) -> str:
     return str(int(qty) if qty == int(qty) else qty)
 
 
+# ─── Service-date formatter ──────────────────────────────────────────
+_DEFAULT_TZ_NAME = "America/Phoenix"
+
+
+def _format_service_date(job: Dict[str, Any], tenant: Dict[str, Any]) -> str:
+    """Long-form ("Monday, November 4, 2025") service date in the
+    tenant's timezone.
+
+    Field cascade: ``job.completed_at`` → ``job.scheduled_end`` →
+    ``job.scheduled_start`` → ``datetime.utcnow()``.  Timezone cascade:
+    ``tenant.timezone`` → ``tenant.settings.timezone`` →
+    ``America/Phoenix`` (pod-wide fallback — same default used by
+    ``services/invoice_numbering.py``,
+    ``services/equipment_trackers_cron.py``, and the Phase 12C tenant
+    timezone backfill in ``services/add_card_links.py``).
+    """
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    raw = (
+        job.get("completed_at")
+        or job.get("scheduled_end")
+        or job.get("scheduled_start")
+    )
+    dt: Optional[datetime] = None
+    if raw:
+        try:
+            dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            dt = None
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+
+    tz_name = (
+        (tenant or {}).get("timezone")
+        or ((tenant or {}).get("settings") or {}).get("timezone")
+        or _DEFAULT_TZ_NAME
+    )
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo(_DEFAULT_TZ_NAME)
+    local = dt.astimezone(tz)
+    # ``%A, %B %-d, %Y`` — but ``%-d`` is Linux-only; strip the padding
+    # zero manually so this works on macOS + Windows if ever exercised.
+    day = str(local.day)
+    return f"{local.strftime('%A')}, {local.strftime('%B')} {day}, {local.year}"
+
+
 # ─── Door-hanger email · shared builder + dispatcher ─────────────────
 # Feb-2026 · Part A + Part B refactor.  The body composition and the
 # Resend dispatch are hoisted out of the POST endpoint so BOTH the
@@ -405,6 +455,15 @@ async def _build_door_hanger_email(
     customer_first_name = _first.strip() or "Neighbor"
     completed = job.get("completed_at") or job.get("scheduled_date") or now_iso()
     subject = f"Job Completed - {company}"
+
+    # Feb-2026 · Addition 1 — Service Date line (long-form, tenant TZ).
+    # Cascade: ``job.completed_at`` → ``job.scheduled_end`` →
+    # ``job.scheduled_start`` → now (UTC).  Rendered in the tenant's
+    # timezone (``tenant.timezone``, defaulting to the pod-wide
+    # ``America/Phoenix`` — same idiom used by
+    # ``invoice_numbering._year_in_tz`` and
+    # ``add_card_links.ensure_tenants_timezone_backfill``).
+    service_date_line = _format_service_date(job, tenant)
 
     # Feb-2026 · Door hanger copy + design update.
     # Job title cascade: ``job.title`` → ``job.service_template.title``
@@ -538,10 +597,50 @@ async def _build_door_hanger_email(
     )
     header_html = (
         f"<h2 style=\"color:#0F172A;margin:0 0 8px;\">Hi {customer_first_name}, your visit has been completed.</h2>"
+        # Feb-2026 · Addition 1 — Service Date line. Directly below the
+        # greeting, above the bolded job title. Muted body-weight text.
+        + (f"<p style=\"margin:4px 0;font-size:14px;color:#555\">Service Date: {service_date_line}</p>"
+           if service_date_line else "")
         + (f"<p style=\"margin:4px 0;font-size:15px\"><b>{job_title}</b></p>" if job_title else "")
         + (f"<p style=\"margin:4px 0;font-size:14px;color:#334155\"><b>{service_address}</b></p>" if service_address else "")
         + f"<p style=\"font-size:13px;color:#64748B;margin-top:8px\">Completed on <b>{str(completed)[:10]}</b>.</p>"
     )
+
+    # Feb-2026 · Addition 2 — Customer portal deep-link CTA.
+    # Placement: BELOW the photos section, ABOVE the footer. Tenant
+    # brand color if available, else neutral dark. Inline styles only
+    # (Gmail / Outlook / iOS Mail strip <style> blocks).
+    # Skip rules for the CTA (do NOT skip the whole email):
+    #   * missing ``customer.id`` → omit the CTA block entirely.
+    #   * mint helper raises      → catch, log, omit CTA.
+    portal_cta_html = ""
+    customer_id_for_link = (cust or {}).get("id") or cid
+    if customer_id_for_link and jid and (tenant or {}).get("id"):
+        try:
+            from services.portal_magic_links import mint_job_view_token
+            _tok = mint_job_view_token(
+                customer_id_for_link, jid, tenant["id"],
+            )
+            _base = _resolve_public_base_url()
+            portal_url = f"{_base}/portal/jobs/{jid}?t={_tok}"
+            _btn_bg = (tenant or {}).get("brand_color") or "#1f2937"
+            portal_cta_html = (
+                f"<div style=\"text-align:center;margin:32px 0 16px;\">"
+                f"<a href=\"{portal_url}\" "
+                f"style=\"display:inline-block;background:{_btn_bg};"
+                f"color:#ffffff;padding:12px 24px;border-radius:6px;"
+                f"text-decoration:none;font-weight:600;font-size:14px;\">"
+                f"View Service Report in Portal</a>"
+                f"<p style=\"font-size:12px;color:#64748B;margin-top:12px;\">"
+                f"If the button doesn't work, paste this link: "
+                f"<a href=\"{portal_url}\" "
+                f"style=\"color:#64748B;text-decoration:underline;word-break:break-all;\">"
+                f"{portal_url}</a></p>"
+                f"</div>"
+            )
+        except Exception as exc:  # pragma: no cover — belt-and-braces
+            logger.warning(f"[door-hanger] portal CTA mint failed: {exc}")
+            portal_cta_html = ""
 
     html = (
         f"<div style=\"font-family:Inter,Arial,sans-serif;max-width:640px;color:#0F172A\">"
@@ -552,6 +651,7 @@ async def _build_door_hanger_email(
         f"{checklist_html}"
         f"{notes_html}"
         f"{photos_html}"
+        f"{portal_cta_html}"
         f"<p style=\"font-size:13px;color:#334155;margin-top:24px;\">We appreciate your business<br/>"
         f"<b>{company}</b><br/>"
         f"{tenant_phone}</p>"

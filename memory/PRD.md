@@ -10656,3 +10656,73 @@ documents Part B (Auto-send + shared builder refactor).
 
 Full `test_door_hanger_auto_send.py` + `test_door_hanger_email_body.py`
 suite → **12/12 passing** in 1.76s.
+
+---
+
+## Feb-2026 · Door-hanger email — Service Date + Portal deep-link CTA
+
+### What shipped
+Two additions to the door-hanger email template (auto-send + manual
+endpoint share the SAME builder, `_build_door_hanger_email`).
+
+**Addition 1 — Service Date line**
+- Placement: directly below the greeting, above the bolded job title.
+- Style: `font-size:14px; color:#555` (body-weight, muted — not a heading).
+- Format: long form (`Tuesday, November 4, 2025`).
+- Field cascade: `job.completed_at` → `job.scheduled_end` →
+  `job.scheduled_start` → `datetime.utcnow()`.
+- Timezone cascade: `tenant.timezone` → `tenant.settings.timezone`
+  → `America/Phoenix` (pod-wide fallback — matches
+  `services/invoice_numbering.py` and the Phase 12C backfill in
+  `services/add_card_links.py`).
+
+**Addition 2 — Customer-portal deep-link CTA**
+- Placement: below the photos section, above the footer.
+- Label: `View Service Report in Portal`.
+- Style: solid button, `tenant.brand_color` fallback `#1f2937`;
+  white text; `padding:12px 24px; border-radius:6px`; inline styles
+  only (no `<style>` blocks).
+- Raw-URL fallback line rendered directly below the button (email
+  clients that strip buttons still show the paste-able URL).
+- URL pattern: `{PUBLIC_APP_BASE_URL}/portal/jobs/{job_id}?t={jwt}`.
+- Skip rules (CTA-only — the rest of the email still renders):
+  * Missing `customer.id` → omit CTA.
+  * `mint_job_view_token` raises → catch, log, omit CTA.
+
+### Token infra
+Reused the existing add-card magic-link idiom
+(`services/add_card_links.py::encode_add_card_token/decode_add_card_token`)
+— HS256 JWT via PyJWT, `config.JWT_SECRET` + `config.JWT_ALGO`, 24-hour
+TTL, **reusable within TTL** (matches the add-card contract; not
+single-use). New file:
+
+- `backend/services/portal_magic_links.py` — mint / verify / URL builder.
+  * `mint_job_view_token(customer_id, job_id, tenant_id, ttl_hours=24)`
+  * `verify_job_view_token(token) → {customer_id, job_id, tenant_id, iat, exp}`
+  * `build_job_view_url(base_url, customer_id, job_id, tenant_id)`
+  * Failure modes surface as `HTTPException(401, "token_invalid_or_expired" | "token_wrong_scope" | "token_malformed")` — same shape as `routers/invoice_magic_view._verify_invoice_magic_token`.
+
+No portal-side redemption endpoint was built — that's frontend
+integration and is out of scope for this backend-only phase. The
+verify helper is ready to be called from a portal auth-loader.
+
+### Files changed
+- `backend/routers/workstream_service_log.py` — added
+  `_format_service_date`, extended `_build_door_hanger_email` with
+  the Service Date line and the portal CTA block.
+- `backend/services/portal_magic_links.py` — **NEW.** Mint / verify /
+  URL builder.
+- `backend/tests/test_door_hanger_email_body.py` — 5 new tests
+  (service date long-form + cascade + CTA positioning + CTA skip
+  rules).
+- `backend/tests/test_portal_magic_links.py` — **NEW.** 8 tests
+  (roundtrip, empty/tampered/wrong-scope/expired/missing-claims
+  rejection, URL shape).
+
+### Test roll-up
+- `test_door_hanger_email_body.py` — 9/9 passing.
+- `test_door_hanger_auto_send.py` — 8/8 passing.
+- `test_portal_magic_links.py` — 8/8 passing.
+- Adjacent suites (workstream read paths, tech-name resolution,
+  P0 SMS misrouting, add-card magic link, add-card link TTL, service
+  report slice 3E) — 57/57 passing total in 5.74s.

@@ -320,3 +320,194 @@ def test_door_hanger_empty_report_renders_gracefully(monkeypatch):
             await _drain(tid, jid, cid)
 
     _run(_go())
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 5. Feb-2026 · Addition 1 — Service Date line.
+# ═════════════════════════════════════════════════════════════════════
+def test_door_hanger_service_date_renders_long_form(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        # Fixed completed_at → deterministic long-form date.
+        # 2025-11-04T15:30:00Z → Tue, Nov 4, 2025 (all timezones we
+        # care about show the same calendar date because completion
+        # was 15:30 UTC, well past midnight in the Americas).
+        jid = await _mk_pool_job(tid, cid, seed_fields={
+            "completed_at": "2025-11-04T15:30:00Z",
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            # Long-form label + weekday + month name + year.
+            assert "Service Date:" in body
+            assert "Tuesday, November 4, 2025" in body, body[:600]
+            # Positional assertion — greeting < Service Date < job title.
+            gi = body.index("Hi Kaylan,")
+            si = body.index("Service Date:")
+            ti = body.index("<b>Weekly Pool</b>")
+            assert gi < si < ti, (gi, si, ti)
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_service_date_falls_back_through_cascade(monkeypatch):
+    """Cascade: completed_at → scheduled_end → scheduled_start → now."""
+    async def _go_case(seed: Dict[str, Any], expected_date_str: str | None):
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid, seed_fields=seed)
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            assert "Service Date:" in body
+            if expected_date_str:
+                assert expected_date_str in body, body[:600]
+        finally:
+            await _drain(tid, jid, cid)
+
+    # Case 1 — completed_at wins over scheduled_end + scheduled_start.
+    _run(_go_case({
+        "completed_at":   "2025-11-04T15:30:00Z",
+        "scheduled_end":  "2025-11-05T15:30:00Z",
+        "scheduled_start": "2025-11-06T15:30:00Z",
+    }, "November 4, 2025"))
+    # Case 2 — no completed_at → scheduled_end wins.
+    _run(_go_case({
+        "completed_at": None,
+        "scheduled_end": "2025-11-05T15:30:00Z",
+        "scheduled_start": "2025-11-06T15:30:00Z",
+    }, "November 5, 2025"))
+    # Case 3 — only scheduled_start.
+    _run(_go_case({
+        "completed_at": None,
+        "scheduled_end": None,
+        "scheduled_start": "2025-11-06T15:30:00Z",
+    }, "November 6, 2025"))
+    # Case 4 — nothing at all → uses now (assert only label presence).
+    _run(_go_case({
+        "completed_at": None,
+        "scheduled_end": None,
+        "scheduled_start": None,
+    }, None))
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 6. Feb-2026 · Addition 2 — Portal deep-link CTA.
+# ═════════════════════════════════════════════════════════════════════
+def test_door_hanger_portal_cta_renders_after_photos_before_footer(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid, seed_fields={
+            "photos": [{
+                "id": "cta-photo", "data": "data:image/png;base64,iVBORw==",
+                "label": "before", "created_at": "2026-02-20T00:00:00+00:00",
+            }],
+        })
+        monkeypatch.setenv("PUBLIC_APP_BASE_URL", "https://app.plofv.com")
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            # Anchor href follows the {base}/portal/jobs/{job_id}?t=...
+            # pattern (search for the fragment — job_id has UUID noise).
+            expected_url_prefix = f"https://app.plofv.com/portal/jobs/{jid}?t="
+            assert expected_url_prefix in body, body[:800]
+            # CTA label + accessible fallback text.
+            assert "View Service Report in Portal" in body
+            assert "If the button doesn't work, paste this link:" in body
+            # Positional: photos section < CTA < footer.
+            photos_idx = body.index("Service Photos")
+            cta_idx = body.index("View Service Report in Portal")
+            footer_idx = body.index("We appreciate your business")
+            assert photos_idx < cta_idx < footer_idx, (
+                photos_idx, cta_idx, footer_idx)
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_omits_cta_when_customer_id_missing(monkeypatch):
+    """Skip rule: no customer.id → OMIT CTA, rest of email still renders."""
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        # Nuke the customer.id AFTER the job is created — simulates a
+        # stale link where the customer doc has no id (should never
+        # happen in prod, but the CTA must fail-safe regardless).
+        await _db().customers.update_one(
+            {"id": cid, "tenant_id": tid}, {"$unset": {"id": ""}},
+        )
+        # Also drop the ``customer_id`` from the job so the builder
+        # can't recover cid via the job doc either.
+        await _db().jobs.update_one(
+            {"id": jid, "tenant_id": tid}, {"$unset": {"customer_id": ""}},
+        )
+        captured = _stub_email_send(monkeypatch)
+        try:
+            # Manual endpoint short-circuits on "no email" — call the
+            # shared builder directly instead so we can inspect an
+            # email that has NO cid available.
+            from routers.workstream_service_log import _build_door_hanger_email
+            job = await _db().jobs.find_one(
+                {"id": jid, "tenant_id": tid}, {"_id": 0})
+            tenant = await _db().tenants.find_one({"id": tid}, {"_id": 0})
+            composed = await _build_door_hanger_email(
+                job=job, tenant=tenant, cust={}, cid=None,
+            )
+            body = composed["html"]
+            # CTA MUST be absent.
+            assert "View Service Report in Portal" not in body
+            assert "/portal/jobs/" not in body
+            # Rest of the email still renders — baseline copy present.
+            assert "your visit has been completed" in body
+            assert "We appreciate your business" in body
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_cta_omitted_gracefully_when_mint_raises(monkeypatch):
+    """When ``mint_job_view_token`` raises, the CTA MUST be omitted
+    but the email must still render successfully — never 500."""
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        # Sabotage the token minter — the builder must catch + log
+        # + omit the CTA.
+        from services import portal_magic_links as _pml
+
+        def _boom(*a, **kw):
+            raise RuntimeError("simulated mint failure")
+
+        monkeypatch.setattr(_pml, "mint_job_view_token", _boom)
+        # Also patch the freshly-imported name inside the builder
+        # module — the builder does a local ``from ... import`` at
+        # call time, so patching the module-level attribute is enough.
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r.get("ok") is True, r
+            body = captured.get("html") or ""
+            assert "View Service Report in Portal" not in body
+            assert "/portal/jobs/" not in body
+            # Rest of email still there.
+            assert "your visit has been completed" in body
+            assert "We appreciate your business" in body
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
