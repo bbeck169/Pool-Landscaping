@@ -18,6 +18,100 @@ import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNot
 import PropertiesTab from "./PropertiesTab";
 import MasterBillingCard from "./MasterBillingCard";
 import { CustomerCreditsPanel } from "./CustomerCreditsPage";
+
+
+/**
+ * Feb-2026 · Send Portal Invite button — relocated from the Portal
+ * Access tab to the main Contact card in the Overview tab.
+ *
+ * Reuses the exact same backend endpoint the old placement called
+ * (``POST /api/customers/{cid}/portal-invite``) so behaviour is
+ * byte-identical: same email template, same auto-generated password,
+ * same admin/super_admin permission gate (enforced server-side).
+ *
+ * Disabled state — required per the relocation spec:
+ *   * No email on file → button disabled with a helpful tooltip.
+ *   * Send in flight   → button labelled "Sending…" and disabled.
+ */
+function PortalInviteQuickAction({ customer, onToast }) {
+  const [busy, setBusy] = React.useState(false);
+  const [payload, setPayload] = React.useState(null);
+  const email = (
+    (customer.emails || []).find((e) => e && e.address)?.address
+    || customer.email
+    || ""
+  );
+  const hasEmail = !!email.trim();
+
+  const send = async () => {
+    setBusy(true);
+    setPayload(null);
+    try {
+      const r = await api.post(`/customers/${customer.id}/portal-invite`);
+      if (r?.emailed) {
+        onToast?.({ tone: "success",
+                     message: `Portal invite email sent to ${r.email}` });
+      } else if (r?.password) {
+        setPayload({ link: r.login_url, email: r.email, password: r.password });
+        onToast?.({ tone: "info",
+                     message: "Portal invite link ready — share it manually" });
+      } else {
+        onToast?.({ tone: "success", message: "Portal invite sent" });
+      }
+    } catch (e) {
+      onToast?.({ tone: "error", message: e.message || "Portal invite failed" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div data-testid="cd-portal-invite-quick-action">
+      <div className="flex items-center justify-between rounded-xl p-3"
+           style={{ backgroundColor: colors.surfaceSecondary,
+                    border: `1px solid ${colors.border}` }}>
+        <div className="min-w-0">
+          <div className="text-xs uppercase font-semibold"
+               style={{ color: colors.muted }}>
+            Portal Access
+          </div>
+          <div className="text-sm mt-0.5"
+               style={{ color: colors.onSurfaceSecondary }}>
+            {hasEmail
+              ? "Send a one-click login link to this customer."
+              : "Add a customer email to enable portal invites."}
+          </div>
+        </div>
+        <Button
+          onClick={send}
+          disabled={busy || !hasEmail}
+          title={!hasEmail
+            ? "Add customer email to send portal invite"
+            : undefined}
+          testid="cd-portal-invite"
+        >
+          {busy ? "Sending…" : "Send Portal Invite"}
+        </Button>
+      </div>
+      {payload ? (
+        <div className="mt-2 rounded-lg p-3 text-sm"
+             style={{ backgroundColor: colors.brandTertiary,
+                      color: colors.onBrandTertiary }}
+             data-testid="portal-invite-payload">
+          <div className="font-semibold mb-1">
+            Share these credentials manually:
+          </div>
+          <div>
+            Login: <a href={payload.link} className="underline"
+                       target="_blank" rel="noreferrer">{payload.link}</a>
+          </div>
+          <div>Email: <code>{payload.email}</code></div>
+          <div>Temp password: <code>{payload.password}</code></div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 import CardOnFileControl from "@/components/customers/CardOnFileControl";
 import CardOnFileWarningBanner from "@/components/customers/CardOnFileWarningBanner";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
@@ -520,6 +614,16 @@ export default function CustomerDetail() {
                 }}
                 onError={(msg) => setToast({ tone: "error", message: msg })}
               />
+              {/* Feb-2026 · Send Portal Invite relocated from the
+                  Portal Access tab to the main Contact card.  Same
+                  handler + API + toast shape as the old Portal
+                  Access panel button; disabled when the customer
+                  has no email on file.  See the PRD queue entry
+                  #1 for the relocation spec. */}
+              <PortalInviteQuickAction
+                customer={customer}
+                onToast={(t) => setToast(t)}
+              />
               {/* Queue Item 3 · Feb-2026 — dedicated Tags section on
                   the customer detail page. Chip render + combobox +
                   inline "Create new: <query>" all live inside
@@ -878,15 +982,11 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
         )}
       </div>
 
-      {/* Actions */}
+      {/* Actions.  Feb-2026 · the customer-facing invite CTA MOVED
+          to the main Contact card in the Overview tab
+          (``PortalInviteQuickAction``); this panel keeps only the
+          advanced portal-access actions. */}
       <div className="flex flex-wrap gap-2">
-        <Button
-          onClick={() => doAction("portal-invite", "Portal invite")}
-          disabled={busy === "portal-invite"}
-          testid="cd-portal-invite"
-        >
-          {busy === "portal-invite" ? "Sending…" : "Send portal invite"}
-        </Button>
         {hasLogin ? (
           <>
             <Button

@@ -11198,3 +11198,54 @@ Updated ordered queue:
    ``services/chemistry_bands.py`` as single source of truth for the
    portal to adopt later.
 6. Resume 24h edit window
+
+---
+
+## Feb-2026 · Send Portal Invite button relocation (Queue #1 · SHIPPED)
+
+### What shipped
+- New `PortalInviteQuickAction` component defined at top of
+  `frontend/src/pages/customers/CustomerDetail.jsx`.
+- Mounted in the Overview tab immediately AFTER `CustomerContactsPanel`
+  (the main Contact card).
+- Old "Send portal invite" button REMOVED from `PortalAccessPanel`
+  (the tab now only shows advanced actions: Reset password,
+  View as customer, Revoke, Manual create).
+- Disabled state: no email on file → button disabled with tooltip
+  `"Add customer email to send portal invite"`.
+- Handler: `POST /customers/{cid}/portal-invite` — byte-identical to
+  the old button (same endpoint, same server-side admin/super_admin
+  gate, same email template, same auto-generated password).
+- Manual-payload fallback (when server returns `password` instead
+  of `emailed`) is preserved inline in the new component.
+
+### Mobile parity
+Grepped `/app/mobile` for `portal-invite` / `Send Portal Invite` /
+`sendPortalInvite` — **no mobile portal-invite action exists**;
+nothing to mirror.
+
+### Files changed
+- `frontend/src/pages/customers/CustomerDetail.jsx` — new component,
+  new mount, old button removed, comment updated.
+- `frontend/src/test/customer-portal-invite-relocation.test.jsx` —
+  **NEW**, 6 source-inspection tests (same pattern as
+  `customer-detail-action-row.test.jsx`).
+
+### Tests
+- Frontend: 20/20 vitest passing across relocation (6) + related
+  regression files (14).
+- Backend: 93/93 regression sweep still green.
+
+### Queue state after this ship
+Remaining (in order):
+1. ~~Send Portal Invite button relocation~~  ← **SHIPPED**
+2. Customer first-login gate — Tutorial → ToS
+3. AI Concierge avatar parity with AI Employee Hub
+4. Hide chemical cost on customer-facing views
+5. Door hanger email visual redesign
+6. Resume 24h edit window (backend code + 15-case test file staged
+   but UNRUN; FE Edit button + Edit History component not started)
+
+**Hard-stopped at clean file boundary after #1** to preserve budget
+for the next work turn (per user's instruction "stop at a clean
+file boundary AFTER completing whichever item you're on").
