@@ -118,7 +118,7 @@ describe("Numbered-order inline inputs", () => {
     expect(i1.getAttribute("aria-invalid")).toBe("true");
     expect(i2.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByTestId("route-order-error-banner").textContent)
-      .toMatch(/unique 1–3/);
+      .toMatch(/must be unique/i);
     expect(_h.post).not.toHaveBeenCalled();
   });
 
@@ -131,20 +131,91 @@ describe("Numbered-order inline inputs", () => {
     });
     expect(i2.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByTestId("route-order-error-banner").textContent)
-      .toMatch(/must have a number 1–3/);
+      .toMatch(/needs a number/i);
     expect(_h.post).not.toHaveBeenCalled();
   });
 
-  it("out-of-range value → red border + banner + POST NOT fired", async () => {
+  it("out-of-range value (>50 cap) → red border + banner + POST NOT fired", async () => {
     render(<Harness />);
     const i3 = screen.getByTestId("route-order-input-j3");
     await act(async () => {
-      fireEvent.change(i3, { target: { value: "9" } });
+      fireEvent.change(i3, { target: { value: "51" } });
       fireEvent.blur(i3);
     });
     expect(i3.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByTestId("route-order-error-banner").textContent)
-      .toMatch(/between 1 and 3/);
+      .toMatch(/unique positive integers .*1.*50/i);
+    expect(_h.post).not.toHaveBeenCalled();
+  });
+
+  it("zero value → red border + banner + POST NOT fired", async () => {
+    render(<Harness />);
+    const i1 = screen.getByTestId("route-order-input-j1");
+    await act(async () => {
+      fireEvent.change(i1, { target: { value: "0" } });
+      fireEvent.blur(i1);
+    });
+    expect(i1.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByTestId("route-order-error-banner").textContent)
+      .toMatch(/unique positive integers .*1.*50/i);
+    expect(_h.post).not.toHaveBeenCalled();
+  });
+
+  it("negative value is silently rejected at the input layer (digit-only guard) — draft stays valid, no error, no POST", async () => {
+    render(<Harness />);
+    const i1 = screen.getByTestId("route-order-input-j1");
+    await act(async () => {
+      // The setInput guard drops non-digit values silently — the
+      // draft keeps its prior "1" so on blur the whole day is
+      // still valid and auto-save runs.  This is intentional; the
+      // browser's ``type="number"`` won't emit ``-1`` on a
+      // fresh keystroke either.
+      fireEvent.change(i1, { target: { value: "-1" } });
+      fireEvent.blur(i1);
+    });
+    expect(i1.value).toBe("1");
+    expect(i1.getAttribute("aria-invalid")).toBe("false");
+  });
+
+  it("non-contiguous numbers (1, 5, 12) save cleanly — cap relaxed from 1..N to 1..50", async () => {
+    render(<Harness />);
+    const i1 = screen.getByTestId("route-order-input-j1");
+    const i2 = screen.getByTestId("route-order-input-j2");
+    const i3 = screen.getByTestId("route-order-input-j3");
+
+    await act(async () => {
+      fireEvent.change(i1, { target: { value: "1"  } });
+      fireEvent.change(i2, { target: { value: "5"  } });
+      fireEvent.change(i3, { target: { value: "12" } });
+      fireEvent.blur(i3);   // whole day is valid — auto-save fires
+    });
+
+    // No validation banner while every value is unique + in range.
+    expect(screen.queryByTestId("route-order-error-banner")).toBeNull();
+    // Sorted by the typed numbers ascending — the id list is
+    // ``[j1, j2, j3]`` because 1 < 5 < 12.  If a user typed
+    // ``[9, 5, 12]`` the payload would be ``[j2, j1, j3]``.
+    await waitFor(() => {
+      expect(_h.post).toHaveBeenCalledWith(
+        "/jobs/reorder",
+        expect.objectContaining({
+          ordered_job_ids: ["j1", "j2", "j3"],
+          tech_user_id: "tech-1",
+          date: "2026-03-15",
+        }),
+      );
+    });
+  });
+
+  it("duplicate values 1,1,3 remain rejected", async () => {
+    render(<Harness />);
+    const i2 = screen.getByTestId("route-order-input-j2");
+    await act(async () => {
+      fireEvent.change(i2, { target: { value: "1" } });   // duplicates j1
+      fireEvent.blur(i2);
+    });
+    expect(screen.getByTestId("route-order-error-banner").textContent)
+      .toMatch(/must be unique/i);
     expect(_h.post).not.toHaveBeenCalled();
   });
 

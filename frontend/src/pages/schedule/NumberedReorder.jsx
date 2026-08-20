@@ -3,11 +3,15 @@
  *
  * Replaces the prior drag-and-drop route reorder with a simple
  * numeric-input model.  The design decision (confirmed by the user)
- * is that a tech's day is manually numbered 1..N where N = count of
- * non-terminal jobs on that tech's day.  Numbers must be unique
- * positive integers, no blanks, no gaps.  The persistence contract
- * is unchanged — we still POST ``/jobs/reorder`` with the ordered
- * ``job_ids`` (the backend now enforces the set-completeness rule).
+ * is that a tech's day is manually numbered using positive integers
+ * — numbers do NOT have to be contiguous (users can type ``1, 5,
+ * 12`` if they prefer to leave gaps for future insertions).  Numbers
+ * must be unique positive integers ≤ ``MAX_ORDER_VALUE``, no blanks.
+ * The persistence contract is unchanged — we still POST
+ * ``/jobs/reorder`` with the ordered ``job_ids``.  The client sorts
+ * the day's jobs by the user's typed numbers in ascending order and
+ * sends the resulting ids; the backend writes ``route_index`` 0..N-1
+ * from that list, so the numbers themselves are UX-only.
  *
  * Two entry points ship here:
  *
@@ -34,6 +38,17 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 
 
+/**
+ * Maximum accepted numeric label.  Bumped from ``N = count of the
+ * day's non-terminal jobs`` (the old contiguous rule) to a flat 50
+ * so techs on an 11-job day can still type ``1, 5, 12`` without
+ * hitting a validation cap.  50 aligns with the offline-cache
+ * scope decision (a tech's week tops out around 50 jobs), so we
+ * won't need to bump this again during Phase 1.
+ */
+export const MAX_ORDER_VALUE = 50;
+
+
 /** Return the initial draft number map keyed by job id.  Each entry
  *  is a string (inputs are text boxes) — the current ``route_index``
  *  is offset by +1 for 1-based UX.  Jobs with no assigned index get
@@ -52,7 +67,14 @@ function _initialDrafts(jobs) {
 
 
 /** Validate the whole draft map.  Returns
- *   { valid, errorIds:Set<string>, message:string|null } */
+ *   { valid, errorIds:Set<string>, message:string|null }
+ *
+ *  Feb-2026 · relaxed from the original ``1..N`` contiguous rule.
+ *  Numbers are now unique positive integers ≤ ``MAX_ORDER_VALUE``;
+ *  gaps are permitted (``1, 5, 12`` is valid on a 3-job day).  The
+ *  backend only cares about the ordered ``job_ids`` list we POST,
+ *  so the numbers themselves are pure UX sort keys.
+ */
 function _validate(drafts, jobs) {
   const errorIds = new Set();
   const N = jobs.length;
@@ -62,6 +84,7 @@ function _validate(drafts, jobs) {
   let hasBlank = false;
   let hasNonInt = false;
   let hasOutOfRange = false;
+  let hasDup = false;
 
   for (const j of jobs) {
     const raw = (drafts[j.id] ?? "").trim();
@@ -70,33 +93,34 @@ function _validate(drafts, jobs) {
     if (!Number.isInteger(n) || String(n) !== raw.replace(/^0+(?=\d)/, "")) {
       errorIds.add(j.id); hasNonInt = true; continue;
     }
-    if (n < 1 || n > N) {
+    if (n < 1 || n > MAX_ORDER_VALUE) {
       errorIds.add(j.id); hasOutOfRange = true; continue;
     }
     if (seen.has(n)) {
       errorIds.add(j.id);
       errorIds.add(seen.get(n));
+      hasDup = true;
     } else {
       seen.set(n, j.id);
     }
   }
 
-  const hasDup = errorIds.size > seen.size && !hasBlank && !hasNonInt && !hasOutOfRange;
   const valid = errorIds.size === 0;
 
   let message = null;
   if (!valid) {
     if (hasBlank) {
-      message = `All jobs must have a number 1–${N}.`;
+      message = `Every job needs a number.`;
     } else if (hasNonInt) {
       message = `Only whole numbers are allowed.`;
     } else if (hasOutOfRange) {
-      message = `Numbers must be between 1 and ${N}.`;
+      message = `Numbers must be unique positive integers (1–${MAX_ORDER_VALUE}).`;
+    } else if (hasDup) {
+      message = `Job numbers must be unique.`;
     } else {
-      message = `Job orders must be unique 1–${N}.`;
+      // Defence-in-depth — should be unreachable.
+      message = `Job numbers are invalid.`;
     }
-    // Suppress-flag left in place for grep-friendliness in code review.
-    void hasDup;
   }
   return { valid, errorIds, message };
 }
@@ -193,7 +217,7 @@ export function NumberOrderInput({ job, controller, disabled, testId, autoFocus 
       type="number"
       inputMode="numeric"
       min={1}
-      max={Object.keys(controller.drafts).length || 1}
+      max={MAX_ORDER_VALUE}
       step={1}
       value={controller.drafts[job.id] ?? ""}
       placeholder="—"
@@ -276,7 +300,7 @@ export function BulkReorderModal({ jobs, techUserId, date, onClose, onSaved }) {
               Reorder route
             </div>
             <div className="text-xs" style={{ color: colors.muted }}>
-              Number every job 1–{jobs.length}. Duplicates and blanks block Save.
+              Give every job a unique positive number (1–{MAX_ORDER_VALUE}). Gaps are fine — the day sorts by whatever you type.
             </div>
           </div>
           <button onClick={onClose} data-testid="bulk-reorder-close" style={{ color: colors.muted }}>
