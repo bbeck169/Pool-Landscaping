@@ -38,32 +38,25 @@ const DISPATCH_BOARD_SRC = DISPATCH_BOARD_EXISTS
   ? fs.readFileSync(MOBILE_DISPATCH_BOARD, "utf-8")
   : "";
 
-describe("Phase 27 · Mobile schedule per-job card avatar", () => {
-  it("imports the shared mobile TechAvatar component", () => {
-    // The mobile TechAvatar lives at
-    // `mobile/components/common/TechAvatar.tsx`. The relative
-    // import from `mobile/app/(app)/schedule/calendar.tsx` is
-    // `../../../components/common/TechAvatar`.
-    expect(CALENDAR_SRC).toMatch(
-      /import\s+TechAvatar\s+from\s+["']\.\.\/\.\.\/\.\.\/components\/common\/TechAvatar["']/,
+describe("Feb-2026 · Mobile schedule polish — per-card TechAvatar removed", () => {
+  it("mobile calendar.tsx no longer imports the shared TechAvatar", () => {
+    expect(CALENDAR_SRC).not.toMatch(
+      /^\s*import\s+TechAvatar\s+from\s+["']\.\.\/\.\.\/\.\.\/components\/common\/TechAvatar["']/m,
     );
   });
 
-  it("mounts <TechAvatar size='xs' /> inside the JobRow header", () => {
-    expect(CALENDAR_SRC).toMatch(/<TechAvatar[\s\S]*?size=["']xs["']/);
+  it("mobile calendar.tsx no longer mounts <TechAvatar> inside the JobRow header", () => {
+    // Only assert on JSX open-tag occurrences (excluding JSDoc /
+    // line-comment mentions used to document the removal).
+    const codeLines = CALENDAR_SRC
+      .split("\n")
+      .filter((line) => !/^\s*(?:\/\/|\*)/.test(line))
+      .join("\n");
+    expect(codeLines).not.toMatch(/<TechAvatar[\s>/]/);
   });
 
-  it("guards the avatar behind a technician-identity conditional", () => {
-    // We only want to render the chip when the job actually has an
-    // assigned tech — otherwise the visual is redundant and pushes
-    // the customer line for no reason.
-    expect(CALENDAR_SRC).toMatch(
-      /job\.technician_name\s*\|\|\s*job\.assigned_technician_name/,
-    );
-  });
-
-  it("attaches a per-job testID (`grid-tech-avatar-${job.id}`) for QA", () => {
-    expect(CALENDAR_SRC).toMatch(/grid-tech-avatar-\$\{job\.id\}/);
+  it("mobile calendar.tsx no longer carries the `grid-tech-avatar-${job.id}` testid", () => {
+    expect(CALENDAR_SRC).not.toMatch(/grid-tech-avatar-\$\{job\.id\}/);
   });
 });
 

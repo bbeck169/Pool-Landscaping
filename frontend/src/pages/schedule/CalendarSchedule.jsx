@@ -49,7 +49,11 @@ import WeekStrip from "@/components/schedule/WeekStrip";
 // CalendarSchedule (not TodaySchedule), so the compact tech-avatar
 // swap has to live here too. Sized ``xs`` (20px) so per-job card
 // height is preserved.
-import TechAvatar from "@/components/common/TechAvatar";
+// Feb-2026 · Schedule polish — the per-card <TechAvatar> was
+// removed from the JobRow; the import lives in
+// /app/frontend/src/components/common/TechAvatar.jsx and is
+// still used elsewhere (customer profile, dispatch board).
+// Intentionally not imported here.
 import ScheduleJobEditModal from "@/pages/schedule/ScheduleJobEditModal";
 import { useNumberedOrder, NumberOrderInput, ReorderBanner, BulkReorderModal } from "@/pages/schedule/NumberedReorder";
 // Feb-2026 · numbered-order reorder — the ScheduleDayDnDPanel import
@@ -1567,23 +1571,13 @@ function GridPanel({
                     {isRecurring(j) ? "🔁 " : ""}{j.service_type || "General"}
                   </div>
                   <div className="text-sm font-bold flex items-center gap-1.5" style={{ color: colors.onSurface }}>
-                    {/* Phase 27 follow-up · compact tech avatar on the
-                        primary /schedule (Grid mode) card. Only renders
-                        when the job has an assigned tech; keeps card
-                        height unchanged because 20px fits under the
-                        existing line-height. */}
-                    {(j.technician_name || j.assigned_technician_name
-                       || j.technician_id) ? (
-                      <TechAvatar
-                        user={{
-                          name: j.technician_name || j.assigned_technician_name,
-                          profile_photo_url: j.technician_photo_url
-                                           || j.assignee_photo_url,
-                        }}
-                        size="xs"
-                        testid={`schedule-card-tech-avatar-${j.id}`}
-                      />
-                    ) : null}
+                    {/* Feb-2026 · Schedule polish — the per-card
+                        <TechAvatar> that used to render the
+                        tech's initials (e.g. "MR") between the
+                        route-number input and the customer name
+                        was removed. The schedule day view is
+                        already tech-scoped in the header, so the
+                        per-card avatar was redundant clutter. */}
                     <span>{j.customer_name || "Unknown"}</span>
                     {j.customer_is_vip ? (
                       <span

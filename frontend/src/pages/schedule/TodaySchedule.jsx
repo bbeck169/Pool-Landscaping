@@ -18,7 +18,10 @@ import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 // Compact tech avatar rendered next to the customer line so
 // admins/dispatchers can spot the assigned tech at a glance
 // without inflating the card height.
-import TechAvatar from "@/components/common/TechAvatar";
+// Feb-2026 · Schedule polish — the per-card <TechAvatar> was
+// removed from the today view; the component still ships for
+// other surfaces (dispatch/portal). Import intentionally dropped
+// so the file has no unused-symbol lint churn.
 // Feb-2026 · Phase 1 — Tech "On my way" SMS button. Used both as
 // the prominent top-level next-job CTA and as the compact inline
 // affordance on each job card.
@@ -856,22 +859,12 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                   <div className="text-sm font-extrabold uppercase tracking-wide flex items-center gap-1.5"
                        style={{ color: "#DC2626" }}
                        data-testid={`schedule-card-service-${j.id}`}>
-                    {/* Phase 27 · Feb-2026 — compact tech avatar in the
-                        card header. Only renders when a tech is
-                        actually assigned; keeps row height unchanged
-                        because the avatar (20px) is smaller than the
-                        header line-height. */}
-                    {(j.technician_name || j.assigned_technician_name || j.technician_id) ? (
-                      <TechAvatar
-                        user={{
-                          name: j.technician_name || j.assigned_technician_name,
-                          profile_photo_url: j.technician_photo_url
-                                           || j.assignee_photo_url,
-                        }}
-                        size="xs"
-                        testid={`schedule-card-tech-avatar-${j.id}`}
-                      />
-                    ) : null}
+                    {/* Feb-2026 · Schedule polish — the per-card
+                        <TechAvatar> that used to render the tech's
+                        initials next to the service label was
+                        removed; the today view is already
+                        tech-scoped, so the per-row avatar was
+                        redundant clutter. */}
                     <span>{j.service_type || j.title || "Service"}</span>
                   </div>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide flex-shrink-0"

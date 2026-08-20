@@ -119,51 +119,34 @@ describe("Phase 27 · Dispatch Board TechLoadStrip source contract", () => {
   });
 });
 
-describe("Phase 27 · Schedule card source contract", () => {
-  it("TodaySchedule imports the shared TechAvatar", () => {
-    expect(SCHEDULE_SRC).toMatch(
-      /import\s+TechAvatar\s+from\s+["']@\/components\/common\/TechAvatar["']/,
-    );
+describe("Feb-2026 · Schedule polish — per-card TechAvatar removed", () => {
+  it("TodaySchedule no longer mounts a <TechAvatar> in the per-card header", () => {
+    // The per-card avatar was redundant with the day-scoped header
+    // and was removed to declutter the row.  The shared component
+    // itself is still shipped and used elsewhere (dispatch,
+    // portal) — we only strip the schedule-card call site.
+    expect(SCHEDULE_SRC).not.toMatch(/<TechAvatar[\s\S]*?testid=`schedule-card-tech-avatar/);
+    expect(SCHEDULE_SRC).not.toMatch(/schedule-card-tech-avatar-\$\{j\.id\}/);
   });
 
-  it("TodaySchedule mounts <TechAvatar size='xs' /> in the card header", () => {
-    expect(SCHEDULE_SRC).toMatch(/<TechAvatar[\s\S]*?size=["']xs["']/);
-  });
-
-  it("card avatar carries a per-job testid so admins can assert on it", () => {
-    // Pattern: `schedule-card-tech-avatar-${j.id}` in a template
-    // string literal.
-    expect(SCHEDULE_SRC).toMatch(
-      /schedule-card-tech-avatar-\$\{j\.id\}/,
+  it("TodaySchedule no longer imports the shared TechAvatar (unused after removal)", () => {
+    expect(SCHEDULE_SRC).not.toMatch(
+      /^\s*import\s+TechAvatar\s+from\s+["']@\/components\/common\/TechAvatar["']/m,
     );
   });
 });
 
-describe("Phase 27 follow-up · Primary /schedule (CalendarSchedule) source contract", () => {
-  it("CalendarSchedule imports the shared TechAvatar", () => {
-    expect(CALENDAR_SRC).toMatch(
-      /import\s+TechAvatar\s+from\s+["']@\/components\/common\/TechAvatar["']/,
+describe("Feb-2026 · Primary /schedule (CalendarSchedule) — per-card TechAvatar removed", () => {
+  it("CalendarSchedule no longer mounts a <TechAvatar> in the per-card row", () => {
+    expect(CALENDAR_SRC).not.toMatch(
+      /<TechAvatar[\s\S]{0,400}testid=`schedule-card-tech-avatar/,
     );
+    expect(CALENDAR_SRC).not.toMatch(/schedule-card-tech-avatar-\$\{j\.id\}/);
   });
 
-  it("CalendarSchedule mounts <TechAvatar size='xs' /> inside its per-job card", () => {
-    expect(CALENDAR_SRC).toMatch(/<TechAvatar[\s\S]*?size=["']xs["']/);
-  });
-
-  it("CalendarSchedule attaches schedule-card-tech-avatar-${j.id} testid", () => {
-    // Same testid pattern as TodaySchedule so the tester selector
-    // `[data-testid^=\"schedule-card-tech-avatar-\"]` resolves on
-    // whichever surface is currently rendering.
-    expect(CALENDAR_SRC).toMatch(
-      /schedule-card-tech-avatar-\$\{j\.id\}/,
-    );
-  });
-
-  it("CalendarSchedule avatar is guarded behind a technician-identity conditional", () => {
-    // Same guard shape as TodaySchedule — no chip when the job has
-    // no assigned tech.
-    expect(CALENDAR_SRC).toMatch(
-      /j\.technician_name\s*\|\|\s*j\.assigned_technician_name/,
+  it("CalendarSchedule no longer imports the shared TechAvatar (unused after removal)", () => {
+    expect(CALENDAR_SRC).not.toMatch(
+      /^\s*import\s+TechAvatar\s+from\s+["']@\/components\/common\/TechAvatar["']/m,
     );
   });
 });

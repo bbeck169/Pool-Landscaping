@@ -45,7 +45,10 @@ import ScheduleJobEditSheet from "@/src/components/schedule/ScheduleJobEditSheet
 // Phase 27 · Feb-2026 — Global avatar swap for the per-job card in
 // the schedule grid. Compact 20dp footprint keeps row height
 // invariant vs the pre-Phase-27 layout.
-import TechAvatar from "../../../components/common/TechAvatar";
+// Feb-2026 · Schedule polish — the per-card <TechAvatar> was
+// removed from the mobile JobRow; keeping the import out avoids
+// an unused-symbol lint. The component still ships and is used
+// by other surfaces (portal, dispatch, service detail).
 import { getStatusBorderColor } from "@/src/utils/scheduleStatus";
 import OnMyWayButton from "@/src/components/schedule/OnMyWayButton";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
@@ -932,22 +935,12 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
         </Text>
         {/* Phase 27 · Feb-2026 — inline tech avatar chip next to
             customer line. 20dp footprint stays under the existing
-            line-height so row height is unchanged. Only renders when
-            an assigned tech name/photo is present in the payload —
-            unassigned jobs skip the chip entirely. */}
+            line-height so row height is unchanged. Feb-2026 · the
+            per-card tech avatar that rendered the tech's initials
+            (e.g. "MR") before the customer name was removed —
+            the schedule day view is already tech-scoped in the
+            header, so the per-card avatar was redundant clutter. */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
-          {(job.technician_name || job.assigned_technician_name
-             || job.technician_id) ? (
-            <TechAvatar
-              user={{
-                name: job.technician_name || job.assigned_technician_name,
-                profile_photo_url: job.technician_photo_url
-                                 || job.assignee_photo_url,
-              }}
-              size="xs"
-              testID={`grid-tech-avatar-${job.id}`}
-            />
-          ) : null}
           <Text style={gStyles.cust} numberOfLines={1}>{job.customer_name || "Unknown"}</Text>
         </View>
         {job.property_label ? (
