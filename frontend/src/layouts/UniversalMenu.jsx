@@ -23,7 +23,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Menu, Search, X, Bookmark, BookmarkCheck } from "lucide-react";
+import { Menu, Search, X, Bookmark, BookmarkCheck, LogOut } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -82,7 +82,7 @@ function useFlatEntries(sections, canFn, effectiveRole) {
 }
 
 export default function UniversalMenu({ variant = "floating" } = {}) {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { can, effectiveRole } = usePermissions();
   const role = user?.role || effectiveRole || "";
   const nav = useNavigate();
@@ -165,6 +165,38 @@ export default function UniversalMenu({ variant = "floating" } = {}) {
 
   return (
     <>
+      {/* Feb-2026 · Portal Sign-out — mirrors the admin ``header-signout``
+          pill in ``AdminTopBar``, but only rendered in the ``floating``
+          variant (i.e., the customer-portal shell). The ``inline``
+          variant is mounted inside ``AdminTopBar`` which already has
+          its own ``header-signout`` — rendering here again would
+          duplicate. Positioning math (fixed anchors):
+            • hamburger (this component)   right-3
+            • NotificationBell (floating)  right-14
+            • Portal Sign Out (this pill)  right-[6.5rem] (~100 px)
+          The pill is icon-only on mobile (< sm) and icon+label on
+          sm+ so the fixed anchor never collides with the bell at
+          any viewport. */}
+      {variant === "floating" && user ? (
+        <button
+          type="button"
+          onClick={() => {
+            try { logout && logout(); } finally {
+              nav("/portal/login", { replace: true });
+            }
+          }}
+          className="fixed top-3 right-[6.5rem] z-40 inline-flex items-center gap-1 h-10 px-3 rounded-lg text-xs font-semibold shadow-sm bg-white hover:brightness-95 focus:outline-none"
+          style={{
+            color: colors.error,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="portal-signout"
+          aria-label="Sign out"
+        >
+          <LogOut size={14} />
+          <span className="hidden sm:inline">Sign out</span>
+        </button>
+      ) : null}
       {/* Feb-2026 · Header cleanup — when mounted inline (inside
           <AdminTopBar>) the bell + hamburger sit in the header row
           instead of the fixed top-right corner, and the bell uses
