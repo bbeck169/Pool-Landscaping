@@ -10726,3 +10726,27 @@ verify helper is ready to be called from a portal auth-loader.
 - Adjacent suites (workstream read paths, tech-name resolution,
   P0 SMS misrouting, add-card magic link, add-card link TTL, service
   report slice 3E) — 57/57 passing total in 5.74s.
+
+### Live-send smoke check (Resend key rotation confirmed)
+
+Executed at the end of the Service Date + Portal CTA pass, after user
+confirmed the rotated `RESEND_API_KEY` is now live in `/app/backend/.env`.
+
+**Adapter state**
+- `ResendEmailAdapter().enabled = True`
+- `from_addr = cs@plofv.com`
+- `verified_domains = {plofv.com, resend.dev}`
+- `APP_ENV = production` → `is_production() = True`
+- `guard_outbound(kind="email", to="brian@plofv.com")` → `blocked=False reason=production_live`
+
+**End-to-end send (allowlisted recipient `brian@plofv.com`)**
+
+| Path   | provider | provider_status | mock  | provider_response_id (Resend) |
+| ------ | -------- | --------------- | ----- | ----------------------------- |
+| Manual | `resend` | `sent`          | False | `4ebd6aa8-3acc-482d-8c3f-e394857059e4` |
+| Auto   | `resend` | `sent`          | False | `b9b21c2f-8c01-4d09-939c-8a06be80f971` |
+
+Comms gate logged `policy=prod_bypass type=email provider=resend
+trigger=transactional domain=plofv.com` for both sends — no
+mocked / dry_run / suppression fallbacks fired. Rotation confirmed
+live for both paths.
