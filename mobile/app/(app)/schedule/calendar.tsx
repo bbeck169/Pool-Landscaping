@@ -983,33 +983,77 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             hourlyData={hourlyData}
           />
         )}
-        {job.customer_gate_code || job.gate_code ? (
+        {/* Feb-2026 · schedule polish — gate-code amber badge +
+            optional access-instructions bullet. */}
+        {(job.customer_gate_code || job.gate_code || job.access_notes) ? (
           <View style={gStyles.gateChip} testID={`job-gate-code-${job.id}`}>
-            <Ionicons name="key" size={10} color="#92400E" />
-            <Text style={gStyles.gateText}>{job.customer_gate_code || job.gate_code}</Text>
+            <Ionicons name="key-outline" size={11} color="#78350F" />
+            {(job.customer_gate_code || job.gate_code) ? (
+              <Text style={gStyles.gateText}>
+                Gate: {job.customer_gate_code || job.gate_code}
+              </Text>
+            ) : (
+              <Text style={gStyles.gateText}>Access</Text>
+            )}
+            {job.access_notes ? (
+              <Text
+                style={gStyles.gateAccessText}
+                numberOfLines={1}
+                testID={`job-access-notes-${job.id}`}
+              >
+                {` · ${job.access_notes}`}
+              </Text>
+            ) : null}
           </View>
         ) : null}
-        {job.customer_notes || job.account_notes ? (
-          <Text style={gStyles.notePreview}
-                numberOfLines={2}
-                testID={`job-notes-preview-${job.id}`}>
-            Notes: {String(job.customer_notes || job.account_notes).slice(0, 60)}
-            {String(job.customer_notes || job.account_notes).length > 60 ? "…" : ""}
-          </Text>
-        ) : null}
-        {/* Feb-2026 · Schedule surface — job-level ``notes``
-            (distinct from account-level ``customer_notes``). Muted
-            2-line clamp via ``numberOfLines={2}``. Empty notes → the
-            row is not rendered at all. */}
-        {job.notes && String(job.notes).trim() ? (
-          <Text
-            style={gStyles.notePreview}
-            numberOfLines={2}
-            testID={`job-${job.id}-notes`}
-          >
-            {String(job.notes)}{job.notes_truncated ? "…" : ""}
-          </Text>
-        ) : null}
+        {/* Feb-2026 · schedule polish — combined notes call-out.
+            Job-level ``notes`` render first; ``customer_notes`` /
+            ``account_notes`` follow with a "Customer note:"
+            prefix.  Tap the call-out to see the full text via
+            an Alert.  Empty on all three ⇒ nothing rendered. */}
+        {(() => {
+          const jobNote = job.notes && String(job.notes).trim() ? String(job.notes) : "";
+          const custNote = (job.customer_notes || job.account_notes)
+            ? String(job.customer_notes || job.account_notes).trim() : "";
+          if (!jobNote && !custNote) return null;
+          const full = [
+            jobNote ? jobNote + (job.notes_truncated ? "…" : "") : "",
+            custNote ? `Customer note: ${custNote}` : "",
+          ].filter(Boolean).join("\n\n");
+          return (
+            <Pressable
+              onPress={(e) => { e?.stopPropagation?.(); Alert.alert("Notes", full); }}
+              style={gStyles.notesCallout}
+              testID={`job-notes-callout-${job.id}`}
+            >
+              <Ionicons name="document-text-outline" size={12} color="#2563EB"
+                        style={{ marginTop: 1 }} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                {jobNote ? (
+                  <Text
+                    style={gStyles.notesCalloutJobText}
+                    numberOfLines={2}
+                    ellipsizeMode="tail"
+                    testID={`job-${job.id}-notes`}
+                  >
+                    {jobNote}{job.notes_truncated ? "…" : ""}
+                  </Text>
+                ) : null}
+                {custNote ? (
+                  <Text
+                    style={gStyles.notesCalloutCustText}
+                    numberOfLines={2}
+                    ellipsizeMode="tail"
+                    testID={`job-notes-preview-${job.id}`}
+                  >
+                    <Text style={{ fontWeight: "700" }}>Customer note: </Text>
+                    {custNote}
+                  </Text>
+                ) : null}
+              </View>
+            </Pressable>
+          );
+        })()}
         {job.address ? (
           <Text style={gStyles.addr} numberOfLines={1}>{job.address}</Text>
         ) : null}
@@ -1177,12 +1221,32 @@ const gStyles = StyleSheet.create({
     letterSpacing: 0.8, textTransform: "uppercase",
   },
   gateChip: {
-    flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 3,
-    backgroundColor: "#FEF3C7", borderColor: "#FDE68A", borderWidth: 1,
-    paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6, marginTop: 2,
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 4,
+    backgroundColor: "#FEF3C7", borderColor: "#FCD34D", borderWidth: 1,
+    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginTop: 4,
+    maxWidth: "100%",
   },
   gateText: {
-    fontFamily: font.bold, fontSize: 10, color: "#92400E",
+    fontFamily: font.bold, fontSize: 10, color: "#78350F",
+    letterSpacing: 0.5,
+  },
+  gateAccessText: {
+    fontFamily: font.medium, fontSize: 10, color: "#78350F",
+    flexShrink: 1,
+  },
+  notesCallout: {
+    flexDirection: "row", alignItems: "flex-start", gap: 6,
+    backgroundColor: "#EFF6FF", borderColor: "#BFDBFE", borderWidth: 1,
+    borderLeftColor: "#3B82F6", borderLeftWidth: 4,
+    paddingHorizontal: 8, paddingVertical: 6, borderRadius: 6,
+    marginTop: 4,
+  },
+  notesCalloutJobText: {
+    fontFamily: font.medium, fontSize: 11, color: "#1E3A8A", lineHeight: 15,
+  },
+  notesCalloutCustText: {
+    fontFamily: font.regular, fontSize: 11, color: "#3730A3", lineHeight: 15,
+    marginTop: 2,
   },
   notePreview: {
     fontFamily: font.regular, fontSize: 10, color: colors.onSurfaceSecondary,

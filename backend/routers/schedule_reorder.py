@@ -33,6 +33,13 @@ from utils import get_current_user
 router = APIRouter()
 
 _ADMIN_ROLES = {"admin", "super_admin", "manager"}
+# Feb-2026 · numbered-order reorder — jobs in a terminal status are
+# excluded from the "day set" both on the client (they don't render a
+# number input) and on the server (they don't count toward the
+# expected N).  Keep this in sync with the schedule pill palette.
+_TERMINAL_STATUSES = {
+    "completed", "canceled", "cancelled", "skipped", "could_not_service",
+}
 
 
 def _require_admin_or_manager(user: dict) -> None:
@@ -90,6 +97,14 @@ async def reorder_jobs(
     if not ids:
         raise HTTPException(400, "ordered_job_ids required")
 
+    # ── Defense-in-depth · duplicate ids in payload ────────────
+    # Feb-2026 · numbered-order reorder guardrail.  A duplicate
+    # would cause the same job to overwrite its own route_index in
+    # the same batch and silently swallow the second write's
+    # position; safer to reject up-front with a 422.
+    if len(set(ids)) != len(ids):
+        raise HTTPException(422, "ordered_job_ids contains duplicate ids")
+
     tenant_id = tenant["id"]
     tech_user_id = body.tech_user_id
     date = body.date
@@ -117,12 +132,47 @@ async def reorder_jobs(
         {"assigned_to": tech_user_id},
         {"technician_id": tech_user_id},
     ]}
+    day_filter = {
+        "tenant_id": tenant_id,
+        "scheduled_date": _date_regex(date),
+        **tech_match,
+    }
+
+    # ── Defense-in-depth · set completeness ─────────────────────
+    # Fetch every non-terminal job on this (tenant, tech, date) and
+    # require the payload's id set to match it exactly.  This
+    # prevents partial reorders (which would silently leave some
+    # jobs at their old ``route_index`` and produce an inconsistent
+    # visual order after the next reload) and cross-day/cross-tech
+    # ids (which the per-job update filter would silently drop).
+    day_jobs: List[Dict[str, Any]] = []
+    async for j in db.jobs.find(day_filter, {"_id": 0, "id": 1, "status": 1}):
+        if (j.get("status") or "").lower() in _TERMINAL_STATUSES:
+            continue
+        day_jobs.append(j)
+    day_ids = {j["id"] for j in day_jobs}
+    submitted = set(ids)
+    if submitted != day_ids:
+        missing = sorted(day_ids - submitted)
+        extra = sorted(submitted - day_ids)
+        reason_bits = []
+        if missing:
+            reason_bits.append(f"missing {len(missing)} job(s)")
+        if extra:
+            reason_bits.append(
+                f"{len(extra)} job(s) not on this tech's {date}",
+            )
+        reason = "; ".join(reason_bits) or "set mismatch"
+        raise HTTPException(
+            422,
+            f"ordered_job_ids must be the exact set of non-terminal jobs "
+            f"on this tech's day — {reason}",
+        )
+
     updated = 0
     for i, jid in enumerate(ids):
         r = await db.jobs.update_one(
-            {"id": jid, "tenant_id": tenant_id,
-             "scheduled_date": _date_regex(date),
-             **tech_match},
+            {"id": jid, **day_filter},
             {"$set": {
                 "route_index": i,
                 "route_reordered_at": _now_iso(),
@@ -131,6 +181,41 @@ async def reorder_jobs(
         )
         if r.matched_count:
             updated += 1
+
+    # Best-effort dispatch_route_orders upsert so the Dispatch Board
+    # reflects the new order without a follow-up import call.  Not
+    # fatal on failure — the schedule persistence has already
+    # succeeded above.
+    try:
+        ordered_customer_ids: List[str] = []
+        async for j in db.jobs.find(
+            {"id": {"$in": ids}, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1, "customer_id": 1},
+        ):
+            ordered_customer_ids.append((j.get("id"), j.get("customer_id")))
+        # Preserve payload order.
+        by_id = {jid: cid for jid, cid in ordered_customer_ids}
+        ordered_customer_ids = [
+            by_id.get(jid) for jid in ids if by_id.get(jid)
+        ]
+        weekday = _weekday_of(date)
+        await db.dispatch_route_orders.update_one(
+            {"tenant_id": tenant_id, "day": weekday,
+             "tech_user_id": tech_user_id},
+            {"$set": {
+                "tenant_id": tenant_id, "day": weekday,
+                "tech_user_id": tech_user_id,
+                "ordered_customer_ids": ordered_customer_ids,
+                "updated_at": _now_iso(),
+                "updated_by": user.get("id"),
+                "source": "schedule_reorder",
+                "source_date": date,
+            }},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
     return {
         "ok": True,
         "updated": updated,

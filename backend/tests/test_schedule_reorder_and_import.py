@@ -111,6 +111,15 @@ def test_reorder_happy_path_renumbers_route_index():
 
 
 def test_reorder_rejects_cross_tenant_ids_silently():
+    """Feb-2026 · numbered-order reorder — hardened.
+
+    The pre-existing contract silently dropped foreign-tenant ids
+    from the update batch (200 OK, ``updated<expected``). The new
+    contract rejects the whole payload with 422 as soon as a
+    single id doesn't belong to that tech's day — a partial
+    reorder can leave the day's ``route_index`` in an inconsistent
+    state that the UI can't recover from without a full reload.
+    """
     admin_tok = _login("admin@aquaterra.com")
     tenant_id = _tenant_of("admin@aquaterra.com")
     own_ids = _run(_seed_jobs(tenant_id, TECH_A, 2))
@@ -130,14 +139,13 @@ def test_reorder_rejects_cross_tenant_ids_silently():
                       json={"tech_user_id": TECH_A, "date": DATE,
                             "ordered_job_ids": [foreign_jid, *own_ids]},
                       timeout=15)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    # Only own_ids matched.
-    assert body["updated"] == 2
-    assert body["expected"] == 3
+    assert r.status_code == 422, r.text
+    assert "not on this tech" in r.text.lower() or "set" in r.text.lower()
 
-    foreign = _run(_DB.jobs.find_one({"id": foreign_jid}, {"_id": 0, "route_index": 1}))
-    assert foreign["route_index"] == 99  # untouched
+    # Foreign row is untouched — hardening did NOT bleed across tenants.
+    foreign = _run(_DB.jobs.find_one(
+        {"id": foreign_jid}, {"_id": 0, "route_index": 1}))
+    assert foreign["route_index"] == 99
 
 
 def test_reorder_role_gate_rejects_technician():

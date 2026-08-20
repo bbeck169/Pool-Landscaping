@@ -28,7 +28,7 @@ import "react-big-calendar/lib/css/react-big-calendar.css";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
          CheckCircle2, Move as MoveIcon, ArrowUp, ArrowDown, FileText,
          Save as SaveIcon, Star, Check, Trash2, Loader2, UsersRound,
-         Pencil } from "lucide-react";
+         Pencil, Key, StickyNote } from "lucide-react";
 
 import { api } from "@/api";
 import { colors, font } from "@/theme";
@@ -51,7 +51,10 @@ import WeekStrip from "@/components/schedule/WeekStrip";
 // height is preserved.
 import TechAvatar from "@/components/common/TechAvatar";
 import ScheduleJobEditModal from "@/pages/schedule/ScheduleJobEditModal";
-import ScheduleDayDnDPanel from "@/pages/schedule/ScheduleDayDnDPanel";
+import { useNumberedOrder, NumberOrderInput, ReorderBanner, BulkReorderModal } from "@/pages/schedule/NumberedReorder";
+// Feb-2026 · numbered-order reorder — the ScheduleDayDnDPanel import
+// was removed as part of the DnD → numbered-input pivot.  The number
+// input primitives + the bulk-reorder modal are imported above.
 // Feb-2026 · Google-Maps stops map above the DnD panel (reuses the
 // app-wide ``<APIProvider>`` mounted in ``layouts/AppLayout.jsx``).
 import ScheduleMap from "@/pages/schedule/ScheduleMap";
@@ -224,12 +227,11 @@ export default function CalendarSchedule() {
   // Phase 30W · grid-mode bookkeeping.
   const [checked, setChecked] = useState(new Set());
   const [busy, setBusy] = useState(false);
-  const [rearrangeMode, setRearrangeMode] = useState(false);
-  const [reorderList, setReorderList] = useState([]);
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveDate, setMoveDate] = useState("");
   const [toast, setToast] = useState(null);              // {text, kind:"info"|"err"}
-  const [reorderUnavailable, setReorderUnavailable] = useState(false);
+  // Feb-2026 · numbered-order reorder — bulk modal open flag.
+  const [bulkReorderOpen, setBulkReorderOpen] = useState(false);
   // Phase 31 · Step 2b — tap-job opens the checklist modal in place of
   // navigating away to /jobs/:id. Preserves the /schedule URL so the
   // grid/calendar toggle, filters, and range presets survive the close.
@@ -597,8 +599,34 @@ export default function CalendarSchedule() {
     }
     return m;
   }, [filteredJobs]);
-  useEffect(() => { setReorderList(dayJobs); }, [dayJobs]);
-  const gridList = rearrangeMode ? reorderList : dayJobs;
+  useEffect(() => {}, [dayJobs]);
+  const gridList = dayJobs;
+
+  // Feb-2026 · numbered-order reorder — the schedule day's live
+  // controller drives both the per-card inputs and the bulk modal.
+  // We derive the (tech, date) hint from the day's first job so the
+  // hardened backend accepts the payload without having to re-infer
+  // on its side.  Only non-terminal jobs are numbered.
+  const _TERMINAL_STATUSES = React.useMemo(
+    () => new Set(["completed", "canceled", "cancelled", "skipped", "could_not_service"]),
+    [],
+  );
+  const reorderableJobs = React.useMemo(
+    () => dayJobs.filter((j) => !_TERMINAL_STATUSES.has((j.status || "").toLowerCase())),
+    [dayJobs, _TERMINAL_STATUSES],
+  );
+  const _dayTechHint = React.useMemo(() => {
+    const first = reorderableJobs[0];
+    return first
+      ? (first.tech_user_id || first.assigned_to || first.technician_id || null)
+      : null;
+  }, [reorderableJobs]);
+  const orderController = useNumberedOrder(reorderableJobs, {
+    autoSave: isAdminRole,
+    techUserId: _dayTechHint,
+    date: focusISO,
+    onSaved: () => load(),
+  });
 
   const toast_ = (text, kind = "info") => {
     setToast({ text, kind });
@@ -636,34 +664,13 @@ export default function CalendarSchedule() {
     toast_(`${ok} moved · ${fail} failed`, fail > ok ? "err" : "info");
     await load();
   };
-  const saveReorder = async () => {
-    setBusy(true);
-    try {
-      await api.post("/jobs/reorder", { job_ids: reorderList.map((j) => j.id) });
-      toast_(`Route saved for ${reorderList.length} jobs.`);
-      await load();
-    } catch (e) {
-      const m = String(e?.message || "");
-      if (/403|404|not.?found|forbidden|admin only/i.test(m)) {
-        setReorderUnavailable(true);
-        toast_("Rearrange endpoint not available for your role — order kept locally only.", "err");
-      } else {
-        toast_(m || "Reorder failed.", "err");
-      }
-    } finally {
-      setBusy(false);
-      setRearrangeMode(false);
-    }
-  };
-  const shift = (id, dir) => setReorderList((cur) => {
-    const i = cur.findIndex((j) => j.id === id);
-    if (i < 0) return cur;
-    const j = i + dir;
-    if (j < 0 || j >= cur.length) return cur;
-    const c = [...cur];
-    [c[i], c[j]] = [c[j], c[i]];
-    return c;
-  });
+  // Feb-2026 · numbered-order reorder — replaces the old rearrange
+  // mode (drag-handles + up/down chevrons + explicit "Save order"
+  // button).  ``orderController`` (declared above) auto-saves on
+  // input blur, and the bulk modal saves on its own explicit
+  // "Save order" click.  No local shift/save helpers needed here.
+  const shift = () => {};   // kept as a no-op for prop compatibility
+  const saveReorder = () => {}; // ditto
 
   return (
     // Feb-2026 · scroll-trap prevention convention — the outer
@@ -1008,10 +1015,6 @@ export default function CalendarSchedule() {
           checked={checked}
           onToggle={toggleCheck}
           canWrite={canWriteJobs}
-          rearrangeMode={rearrangeMode}
-          setRearrangeMode={setRearrangeMode}
-          onSaveReorder={saveReorder}
-          onShift={shift}
           onBulkComplete={bulkComplete}
           onOpenMove={() => setMoveOpen(true)}
           moveOpen={moveOpen}
@@ -1022,7 +1025,6 @@ export default function CalendarSchedule() {
           busy={busy}
           onOpenJob={(id) => clockGate.openJob(id, () => setChecklistJobId(id))}
           onNewJob={canCreateJobs ? (() => navigate(`/jobs/new?date=${focusISO}`)) : undefined}
-          reorderUnavailable={reorderUnavailable}
           onOpenCouldNotService={(j) => setCnsJob(j)}
           selectedJobIds={selectedJobIds}
           onToggleSelect={toggleJobSelected}
@@ -1038,8 +1040,24 @@ export default function CalendarSchedule() {
           techs={techs}
           onOpenEdit={isAdminRole ? ((jobRow) => setEditingJob(jobRow)) : undefined}
           isAdminForCard={isAdminRole}
+          orderController={orderController}
+          onOpenBulkReorder={() => setBulkReorderOpen(true)}
+          reorderableJobIds={reorderableJobs.map((j) => j.id)}
         />
       )}
+
+      {/* Feb-2026 · numbered-order reorder — bulk modal.  Only
+          admins/managers/super_admins see the trigger + the modal;
+          techs never see either. */}
+      {bulkReorderOpen && isAdminRole ? (
+        <BulkReorderModal
+          jobs={reorderableJobs}
+          techUserId={_dayTechHint}
+          date={focusISO}
+          onClose={() => setBulkReorderOpen(false)}
+          onSaved={() => load()}
+        />
+      ) : null}
 
       {/* Feb-2026 · Schedule map — pins for every stop of the
           focused day. Auto-hides when zero stops have coords so
@@ -1054,21 +1072,11 @@ export default function CalendarSchedule() {
         />
       ) : null}
 
-      {/* Feb-2026 · Schedule DnD — route order & cross-tech reassign.
-          Renders in Grid mode only where a single focus-day is
-          selected; the calendar view already exposes RBC's native
-          time-slot drag for rescheduling. */}
-      {mode === "grid" ? (
-        <ScheduleDayDnDPanel
-          date={focusISO}
-          jobs={dayJobs}
-          techs={techs}
-          canDrag={isAdminRole}
-          toast={toast_}
-          onSaved={load}
-          servicePalette={SERVICE_PALETTE}
-        />
-      ) : null}
+      {/* Feb-2026 · Numbered-order reorder — the previous
+          <ScheduleDayDnDPanel /> mount lived here; DnD was
+          replaced by inline number inputs on each grid card
+          plus a bulk "Reorder…" modal.  The persistence contract
+          (POST /jobs/reorder) is unchanged. */}
 
       {/* Feb-2026 · Schedule multi-select · bulk soft-delete confirm. */}
       {deleteConfirmOpen ? (
@@ -1226,9 +1234,8 @@ export default function CalendarSchedule() {
 /* ═══ Phase 30W · Grid panel ═════════════════════════════════════════ */
 function GridPanel({
   date, setDate, jobs, loading, checked, onToggle, canWrite,
-  rearrangeMode, setRearrangeMode, onSaveReorder, onShift,
   onBulkComplete, onOpenMove, moveOpen, setMoveOpen, moveDate, setMoveDate,
-  onConfirmMove, busy, onOpenJob, onNewJob, reorderUnavailable,
+  onConfirmMove, busy, onOpenJob, onNewJob,
   // Feb-2026 · Schedule multi-select soft-delete —
   selectedJobIds, onToggleSelect, canMultiSelectDelete,
   onOpenBulkDelete, onClearSelection, onSelectAllInView,
@@ -1238,6 +1245,10 @@ function GridPanel({
   onOpenEdit, isAdminForCard,
   // Feb-2026 · Phase 1 — Could-Not-Service modal opener.
   onOpenCouldNotService,
+  // Feb-2026 · numbered-order reorder — the day's ordering
+  // controller (drives inline inputs) + bulk-modal opener + the id
+  // set that is actually reorderable (non-terminal only).
+  orderController, onOpenBulkReorder, reorderableJobIds,
 }) {
   const focusISO = format(date, "yyyy-MM-dd");
   const isToday = focusISO === format(new Date(), "yyyy-MM-dd");
@@ -1313,23 +1324,29 @@ function GridPanel({
             <MoveIcon size={12} /> Move these events ({checked.size})
           </button>
           <button
-            onClick={rearrangeMode ? onSaveReorder : () => setRearrangeMode(true)}
-            disabled={busy || reorderUnavailable}
+            onClick={onOpenBulkReorder}
+            disabled={busy || !isAdminForCard || (reorderableJobIds || []).length < 2}
             className="flex items-center gap-1 px-3 h-8 rounded-full text-xs font-bold"
-            style={{ background: rearrangeMode ? "#059669" : "#7C3AED", color: "#fff",
-                     opacity: reorderUnavailable ? 0.4 : 1 }}
-            data-testid="grid-bulk-rearrange"
-            title={reorderUnavailable ? "Reorder endpoint not available for your role." : ""}
+            style={{
+              background: "#7C3AED", color: "#fff",
+              opacity: (!isAdminForCard || (reorderableJobIds || []).length < 2)
+                ? 0.4 : 1,
+            }}
+            data-testid="grid-bulk-reorder"
+            title={
+              !isAdminForCard
+                ? "Reorder is admin/manager only."
+                : (reorderableJobIds || []).length < 2
+                  ? "Need at least 2 non-terminal jobs to reorder."
+                  : "Open the bulk reorder modal"
+            }
           >
-            {rearrangeMode ? <SaveIcon size={12} /> : <ArrowUp size={12} />}
-            {rearrangeMode ? "Save order" : "Rearrange"}
+            <ArrowUp size={12} /> Reorder…
           </button>
-          {reorderUnavailable ? (
-            <span className="text-xs" style={{ color: colors.muted }} data-testid="grid-reorder-unavailable">
-              Rearrange not available for this role.
-            </span>
-          ) : null}
         </div>
+      ) : null}
+      {isAdminForCard && orderController ? (
+        <ReorderBanner controller={orderController} />
       ) : null}
 
       {/* Inline move date picker */}
@@ -1507,10 +1524,18 @@ function GridPanel({
                 }}
                 data-testid={`grid-job-${j.id}`}
                 data-status-color={statusBorderColor}
-                onClick={() => { if (!rearrangeMode) onOpenJob(j.id); }}
+                onClick={() => onOpenJob(j.id)}
                 role="button"
               >
-                {canMultiSelectDelete && !rearrangeMode ? (
+                {isAdminForCard && orderController
+                  && (reorderableJobIds || []).includes(j.id) ? (
+                  <NumberOrderInput
+                    job={j}
+                    controller={orderController}
+                    testId={`grid-order-input-${j.id}`}
+                  />
+                ) : null}
+                {canMultiSelectDelete ? (
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); onToggleSelect?.(j.id); }}
@@ -1526,39 +1551,16 @@ function GridPanel({
                     {isSelectedForDelete ? <Check size={12} color="#FFFFFF" /> : null}
                   </button>
                 ) : null}
-                {rearrangeMode ? (
-                  <div className="flex flex-col items-center gap-0.5 w-8">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onShift(j.id, -1); }}
-                      disabled={idx === 0}
-                      style={{ background: "transparent", border: 0, cursor: idx === 0 ? "default" : "pointer", opacity: idx === 0 ? 0.3 : 1 }}
-                      data-testid={`grid-reorder-up-${j.id}`}
-                    >
-                      <ArrowUp size={14} color={colors.brand} />
-                    </button>
-                    <span className="text-[10px] font-bold" style={{ color: colors.brand }}>{idx + 1}</span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onShift(j.id, 1); }}
-                      disabled={idx === jobs.length - 1}
-                      style={{ background: "transparent", border: 0, cursor: idx === jobs.length - 1 ? "default" : "pointer",
-                               opacity: idx === jobs.length - 1 ? 0.3 : 1 }}
-                      data-testid={`grid-reorder-down-${j.id}`}
-                    >
-                      <ArrowDown size={14} color={colors.brand} />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onToggle(j.id); }}
-                    className="w-6 h-6 rounded-full flex items-center justify-center"
-                    style={{ background: isChecked ? colors.brand : "transparent",
-                             border: `1.5px solid ${isChecked ? colors.brand : colors.muted}` }}
-                    data-testid={`grid-check-${j.id}`}
-                    aria-label={isChecked ? "uncheck" : "check"}
-                  >
-                    {isChecked ? <CheckCircle2 size={13} color="#fff" /> : null}
-                  </button>
-                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggle(j.id); }}
+                  className="w-6 h-6 rounded-full flex items-center justify-center"
+                  style={{ background: isChecked ? colors.brand : "transparent",
+                           border: `1.5px solid ${isChecked ? colors.brand : colors.muted}` }}
+                  data-testid={`grid-check-${j.id}`}
+                  aria-label={isChecked ? "uncheck" : "check"}
+                >
+                  {isChecked ? <CheckCircle2 size={13} color="#fff" /> : null}
+                </button>
                 <div className="flex-1 min-w-0">
                   <div className="text-[11px] font-bold uppercase tracking-wide"
                        style={{ color: svc.tag }}>
@@ -1609,14 +1611,47 @@ function GridPanel({
                   {j.address ? (
                     <div className="text-xs truncate" style={{ color: colors.muted }}>{j.address}</div>
                   ) : null}
-                  {(j.customer_gate_code || j.gate_code) ? (
-                    <div className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold"
-                         style={{ background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A",
-                                  fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
-                         data-testid={`job-gate-code-${j.id}`}>
-                      🔑 Gate: {j.customer_gate_code || j.gate_code}
-                    </div>
-                  ) : null}
+                  {/* Feb-2026 · schedule polish — gate-code amber
+                      pill (with lucide Key icon).  Merges the
+                      property's ``access_notes`` free-text after a
+                      bullet when present. Rendered only when at
+                      least one of the fields is populated. */}
+                  {(() => {
+                    const code = j.customer_gate_code || j.gate_code;
+                    const access = j.access_notes || j.access_instructions;
+                    if (!code && !access) return null;
+                    return (
+                      <div className="mt-1">
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold"
+                          style={{
+                            background: "#FEF3C7",
+                            color: "#78350F",
+                            border: "1px solid #FCD34D",
+                            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                            maxWidth: "100%",
+                          }}
+                          title={
+                            (code ? `Gate: ${code}` : "Access") +
+                            (access ? ` · ${access}` : "")
+                          }
+                          data-testid={`job-gate-code-${j.id}`}
+                        >
+                          <Key size={11} />
+                          {code ? <>Gate: <span style={{ letterSpacing: 1 }}>{code}</span></> : <>Access</>}
+                          {access ? (
+                            <span
+                              className="truncate"
+                              style={{ maxWidth: 160, fontWeight: 600, fontFamily: font.family }}
+                              data-testid={`job-access-notes-${j.id}`}
+                            >
+                              {" · "}{access}
+                            </span>
+                          ) : null}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   {/* Feb-2026 Note-pill — specialty-specific service note. */}
                   {j.service_note ? (
                     <div className="mt-1">
@@ -1628,31 +1663,59 @@ function GridPanel({
                       />
                     </div>
                   ) : null}
-                  {(j.customer_notes || j.account_notes) ? (
-                    <div className="text-[11px] mt-1 line-clamp-2" style={{ color: colors.onSurfaceSecondary }}
-                         data-testid={`job-notes-preview-${j.id}`}>
-                      <span className="font-semibold">Notes: </span>
-                      {String(j.customer_notes || j.account_notes).slice(0, 60)}
-                      {String(j.customer_notes || j.account_notes).length > 60 ? "…" : ""}
-                    </div>
-                  ) : null}
-                  {/* Feb-2026 · Schedule surface — job-level ``notes``
-                      (distinct from account-level ``customer_notes``).
-                      Muted secondary line, 2-line clamp via
-                      ``line-clamp-2``. ``title`` attribute gives an
-                      expand-on-hover tooltip with the full (already
-                      500-cap'd, ``notes_truncated`` hint) text.
-                      Empty notes → the row is not rendered at all. */}
-                  {(j.notes && String(j.notes).trim()) ? (
-                    <div
-                      className="text-[11px] mt-1 line-clamp-2"
-                      style={{ color: colors.onSurfaceSecondary }}
-                      data-testid={`job-${j.id}-notes`}
-                      title={String(j.notes) + (j.notes_truncated ? "…" : "")}
-                    >
-                      {String(j.notes)}{j.notes_truncated ? "…" : ""}
-                    </div>
-                  ) : null}
+                  {/* Feb-2026 · schedule polish — combined notes
+                      call-out.  Job-level ``notes`` render first;
+                      customer-level ``customer_notes`` /
+                      ``account_notes`` follow with a small
+                      "Customer note:" prefix.  Native ``title``
+                      attribute gives the full text on hover; the
+                      visible text is line-clamp-2. Empty on all
+                      three ⇒ nothing rendered. */}
+                  {(() => {
+                    const jobNote = (j.notes && String(j.notes).trim()) ? String(j.notes) : "";
+                    const custNote = (j.customer_notes || j.account_notes) ? String(j.customer_notes || j.account_notes).trim() : "";
+                    if (!jobNote && !custNote) return null;
+                    const tooltip = [
+                      jobNote ? jobNote + (j.notes_truncated ? "…" : "") : "",
+                      custNote ? `Customer note: ${custNote}` : "",
+                    ].filter(Boolean).join("\n\n");
+                    return (
+                      <div
+                        className="mt-1 rounded-md p-2 text-[11px]"
+                        style={{
+                          background: "#EFF6FF",
+                          color: "#1E3A8A",
+                          border: "1px solid #BFDBFE",
+                          borderLeft: "4px solid #3B82F6",
+                          display: "flex", gap: 6,
+                        }}
+                        title={tooltip}
+                        data-testid={`job-notes-callout-${j.id}`}
+                      >
+                        <StickyNote size={12} style={{ flexShrink: 0, marginTop: 1, color: "#2563EB" }} />
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          {jobNote ? (
+                            <div
+                              className="line-clamp-2"
+                              data-testid={`job-${j.id}-notes`}
+                            >
+                              {jobNote}{j.notes_truncated ? "…" : ""}
+                            </div>
+                          ) : null}
+                          {custNote ? (
+                            <div
+                              className="line-clamp-2"
+                              style={{ color: "#3730A3", marginTop: jobNote ? 3 : 0 }}
+                              data-testid={`job-notes-preview-${j.id}`}
+                            >
+                              <span style={{ fontWeight: 700, opacity: 0.85 }}>Customer note: </span>
+                              {custNote}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center gap-2 mt-1 text-xs" style={{ color: colors.muted }}>
                     <FileText size={11} />
                     <span>{jobHours(j)}</span>

@@ -9,6 +9,7 @@ import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import { useJsApiLoader } from "@react-google-maps/api";
 import { useAuth } from "@/auth";
+import { BulkReorderModal } from "@/pages/schedule/NumberedReorder";
 // Phase 16C `<WeatherWidget5Day>` removed from tech home 2026-07 per
 // user request. File still exists at ``pages/aitools/`` — imported
 // by the admin Dashboard.
@@ -49,6 +50,13 @@ export default function TodaySchedule() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isTech = user?.role === "technician";
+  // Feb-2026 · numbered-order reorder — admin/manager can open the
+  // bulk reorder modal directly from the today view.  Techs never
+  // see it.
+  const isAdminForReorder = ["admin", "manager", "super_admin"].includes(
+    (user?.role || "").toLowerCase(),
+  );
+  const [reorderOpen, setReorderOpen] = useState(false);
   // Auto-clock-in state (tech only)
   const [autoToast, setAutoToast] = useState(null); // {entry_id, job_id, job_title, customer_name}
   const autoToastRef = useRef(null);
@@ -343,6 +351,35 @@ export default function TodaySchedule() {
 
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" data-testid="today-schedule-page">
+      {/* Feb-2026 · numbered-order reorder — admin-only pill at
+          the very top of the today view opens the bulk modal.
+          Techs never see this pill; they see the reordered route
+          only (via ``orderedJobItems``). */}
+      {isAdminForReorder && orderedJobItems.length >= 2 ? (
+        <div className="flex justify-end mb-3">
+          <button
+            onClick={() => setReorderOpen(true)}
+            className="inline-flex items-center gap-1 px-3 h-8 rounded-full text-xs font-bold shadow-sm"
+            style={{ background: "#7C3AED", color: "#fff" }}
+            data-testid="today-open-reorder"
+          >
+            Reorder…
+          </button>
+        </div>
+      ) : null}
+
+      {reorderOpen && isAdminForReorder ? (
+        <BulkReorderModal
+          jobs={orderedJobItems.filter(
+            (j) => !["completed", "canceled", "cancelled", "skipped",
+                     "could_not_service"].includes(
+              String(j.status || "").toLowerCase()),
+          )}
+          date={new Date().toISOString().slice(0, 10)}
+          onClose={() => setReorderOpen(false)}
+          onSaved={() => { setReorderOpen(false); load?.(); }}
+        />
+      ) : null}
       {autoToast && (
         <div className="fixed top-4 right-4 z-50 rounded-xl shadow-xl p-4 max-w-sm"
              style={{ background: "#0F172A", color: "#fff" }}

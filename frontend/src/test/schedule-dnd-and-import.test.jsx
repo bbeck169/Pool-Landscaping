@@ -1,142 +1,24 @@
 /**
- * Feb-2026 · Schedule DnD panel + Send to Dispatch Board — vitest.
+ * Feb-2026 · Send-to-Dispatch button — regression only.
  *
- * Covers:
- *   1. Dragging a card within the same tech's column POSTs
- *      ``/jobs/reorder`` with the correct payload.
- *   2. Dragging a card across techs PATCHes ``/jobs/:id`` with the
- *      new technician_id + POSTs reorder for the new column.
- *   3. The "Send to Dispatch Board" button POSTs
- *      ``/dispatch/import-schedule`` with the visible date.
+ * The pre-existing schedule DnD panel test suite lived here. As of
+ * the numbered-order reorder pivot, the DnD panel was removed from
+ * the schedule tree and the ``ScheduleDayDnDPanel`` component was
+ * deleted. This file retains ONLY the "Send to Dispatch Board"
+ * button test — it exercises the schedule → dispatch bridge, which
+ * is a separate feature and is unaffected by the reorder pivot.
  *
- * DnD interactions in jsdom are notoriously awkward — we drive the
- * DndContext by simulating ``dragStart`` + ``dragEnd`` via the
- * exposed ``onDragEnd`` handler on the panel. This exercises the
- * component's actual persistence code paths without depending on
- * pointer-move mechanics that jsdom doesn't emulate faithfully.
+ * The full numbered-input + bulk-modal reorder coverage lives in
+ * ``schedule-numbered-reorder.test.jsx``.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
 
 
-// ── Mocks ────────────────────────────────────────────────────────────
 const mockPost = vi.fn(async () => ({ ok: true, updated: 2, expected: 2,
                                         job_count: 3, techs_written: 1 }));
-const mockPatch = vi.fn(async () => ({ ok: true }));
 
-vi.mock("@/api", () => ({
-  api: {
-    post: (...args) => mockPost(...args),
-    patch: (...args) => mockPatch(...args),
-  },
-}));
-vi.mock("@/theme", () => ({
-  colors: {
-    brand: "#0f6ed1", muted: "#666", onSurface: "#111",
-    surface: "#fff", surfaceSecondary: "#f5f5f5", border: "#ccc",
-    text: "#111",
-  },
-  font: { family: "system-ui" },
-}));
-
-// eslint-disable-next-line import/first
-import ScheduleDayDnDPanel from "@/pages/schedule/ScheduleDayDnDPanel";
-
-
-const TECHS = [
-  { id: "tech-A", name: "Alice Alpha" },
-  { id: "tech-B", name: "Bob Beta" },
-];
-
-const JOBS = [
-  { id: "j1", tech_user_id: "tech-A", route_index: 0,
-    title: "Alice job 1", customer_name: "Cust 1", service_type: "pool" },
-  { id: "j2", tech_user_id: "tech-A", route_index: 1,
-    title: "Alice job 2", customer_name: "Cust 2", service_type: "pool" },
-  { id: "j3", tech_user_id: "tech-B", route_index: 0,
-    title: "Bob job 1", customer_name: "Cust 3", service_type: "pool" },
-];
-
-
-beforeEach(() => {
-  mockPost.mockClear();
-  mockPatch.mockClear();
-});
-
-
-describe("ScheduleDayDnDPanel", () => {
-  it("renders one column per tech and cards inside", () => {
-    render(
-      <ScheduleDayDnDPanel
-        date="2026-03-15"
-        jobs={JOBS}
-        techs={TECHS}
-        canDrag={true}
-        toast={vi.fn()}
-        onSaved={vi.fn()}
-      />,
-    );
-    expect(screen.getByTestId("schedule-dnd-panel")).toBeInTheDocument();
-    expect(screen.getByTestId("dnd-tech-column-tech-A")).toBeInTheDocument();
-    expect(screen.getByTestId("dnd-tech-column-tech-B")).toBeInTheDocument();
-    expect(screen.getByTestId("dnd-job-j1")).toBeInTheDocument();
-    expect(screen.getByTestId("dnd-job-j2")).toBeInTheDocument();
-    expect(screen.getByTestId("dnd-job-j3")).toBeInTheDocument();
-  });
-
-  it("does not render drag handles when canDrag=false", () => {
-    render(
-      <ScheduleDayDnDPanel
-        date="2026-03-15"
-        jobs={JOBS}
-        techs={TECHS}
-        canDrag={false}
-        toast={vi.fn()}
-        onSaved={vi.fn()}
-      />,
-    );
-    // Grip handles are gated on canDrag.
-    expect(screen.queryByTestId("dnd-grip-j1")).toBeNull();
-  });
-
-  // For the actual drag path — jsdom + @dnd-kit pointer events are
-  // brittle. We instead spy on the persistence functions by
-  // simulating a same-column drop end via a synthetic ``onDragEnd``
-  // through the underlying DndContext.
-  //
-  // Approach: we exercise the component's persistence code paths by
-  // wrapping the panel and forcing an internal state change through
-  // its ``onSaved`` callback prop. This confirms the API surface —
-  // per-tech reorder + cross-tech patch — matches the contract.
-
-  it("shows a placeholder in an empty column so drop-target is visible", () => {
-    render(
-      <ScheduleDayDnDPanel
-        date="2026-03-15"
-        jobs={JOBS.filter((j) => j.tech_user_id === "tech-A")}
-        techs={TECHS}
-        canDrag={true}
-        toast={vi.fn()}
-        onSaved={vi.fn()}
-      />,
-    );
-    // tech-B has no jobs but still visible if we pass empty group?
-    // We only render columns for techs that HAVE jobs — so we only
-    // expect tech-A's column here.
-    expect(screen.getByTestId("dnd-tech-column-tech-A")).toBeInTheDocument();
-    expect(screen.queryByTestId("dnd-tech-column-tech-B")).toBeNull();
-  });
-});
-
-
-// ── Send-to-Dispatch button — integration test via CalendarSchedule
-// header ────────────────────────────────────────────────────────────
-// We test the button in isolation using a tiny wrapper that mirrors
-// the exact click handler shape from CalendarSchedule.jsx. This
-// avoids mounting the whole 1900-LOC schedule page (which brings in
-// react-big-calendar and its full tree — cost-prohibitive under
-// vitest for a single button test).
 
 function SendToDispatchButton({ focusISO, onNavigate, api }) {
   return (
@@ -166,5 +48,20 @@ describe("Send to Dispatch Board button", () => {
       "/dispatch/import-schedule", { date: "2026-03-15" }));
     await waitFor(() => expect(onNav).toHaveBeenCalledWith(
       "/admin/dispatch?date=2026-03-15", expect.objectContaining({ ok: true })));
+  });
+});
+
+
+// Legacy regression guard — the DnD panel used to live at this
+// import path. Its removal is part of the numbered-order pivot;
+// any accidental re-introduction would immediately surface here.
+describe("ScheduleDayDnDPanel — removed", () => {
+  it("no longer exists in the schedule tree (numbered-order reorder pivot)", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const target = path.resolve(
+      __dirname, "..", "pages", "schedule", "ScheduleDayDnDPanel.jsx",
+    );
+    expect(fs.existsSync(target)).toBe(false);
   });
 });
