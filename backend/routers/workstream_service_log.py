@@ -125,7 +125,14 @@ async def _resolve_checklist_state(job: dict, tenant_id: str) -> Dict[str, Any]:
     """Emit the ORDERED checklist for this job's service line, marking
     each item completed based on the per-job ``checklist`` array. When a
     job's per-item ``done`` flag is missing, fall back to service_reports
-    checklist_items so both storage lanes render consistently."""
+    checklist_items so both storage lanes render consistently.
+
+    P0 · Feb 2026 (Fix C) — match on ``key`` first, then on
+    ``_norm(label)`` only when both write and canonical entries lack a
+    ``key``.  The pre-fix code matched on normalised label alone, so a
+    tech payload of ``"Brushed Pool"`` never matched the canonical
+    ``"Brush Pool"`` and the item silently rendered unchecked.
+    """
     from routers.checklists import DEFAULT_POOL_ITEMS, DEFAULT_LANDSCAPE_ITEMS
     kind = _classify(job)
     tenant_doc = await db.service_checklists.find_one(
@@ -135,51 +142,118 @@ async def _resolve_checklist_state(job: dict, tenant_id: str) -> Dict[str, Any]:
     canon = (tenant_doc or {}).get("items") or (
         DEFAULT_POOL_ITEMS if kind == "pool" else DEFAULT_LANDSCAPE_ITEMS
     )
-    # Build a completed-lookup from the job's per-item state + any
-    # linked service_reports (whichever fired first wins ``completed``).
-    job_map: Dict[str, bool] = {}
-    for it in (job.get("checklist") or []):
+
+    # Build TWO lookups from the write side — one by ``key``
+    # (preferred, exact-match) and one by ``_norm(label)`` (fuzzy
+    # fallback for legacy entries that lack a key).
+    key_map: Dict[str, bool] = {}
+    label_map: Dict[str, bool] = {}
+
+    def _record(it: dict) -> None:
+        if not (it.get("done") or it.get("checked")):
+            return
+        k = (it.get("key") or "").strip()
+        if k:
+            key_map[k] = True
+            return
         lbl = _norm(it.get("label"))
-        key = _norm(it.get("key"))
-        if it.get("done") or it.get("checked"):
-            if lbl: job_map[lbl] = True
-            if key: job_map[key] = True
+        if lbl:
+            label_map[lbl] = True
+
+    for it in (job.get("checklist") or []):
+        _record(it)
     rep = await db.service_reports.find_one(
         {"tenant_id": tenant_id, "job_id": job.get("id"),
          "checklist_items": {"$exists": True}},
         {"_id": 0, "checklist_items": 1},
     )
     for it in ((rep or {}).get("checklist_items") or []):
-        lbl = _norm(it.get("label"))
-        if it.get("checked"):
-            if lbl: job_map[lbl] = True
+        _record(it)
 
     items_out: List[Dict[str, Any]] = []
     for it in canon:
-        completed = job_map.get(_norm(it.get("label"))) or job_map.get(_norm(it.get("key")))
+        ck = (it.get("key") or "").strip()
+        completed = False
+        if ck and ck in key_map:
+            completed = True
+        else:
+            # Canonical entry has no key OR the write side never
+            # supplied one → fall back to label match.
+            completed = bool(label_map.get(_norm(it.get("label"))))
         items_out.append({
             "key": it.get("key"),
             "label": it.get("label"),
-            "completed": bool(completed),
+            "completed": completed,
         })
     return {"service_line": kind, "items": items_out, "count": len(items_out)}
 
 
-def _water_test(job: dict) -> List[Dict[str, Any]]:
-    """Emit the 5 water-test rows in stable order. Values pulled from
-    the job's ``chemical_readings`` dict or the derived reading_report."""
-    readings = job.get("chemical_readings") or {}
-    # Also accept the classified fields from with_field_report.
-    row_defs = [
-        ("total_chlorine",   "Total Chlorine",  "ppm"),
-        ("free_chlorine",    "Free Chlorine",   "ppm"),
-        ("ph",               "Ph Balance",      ""),
-        ("alkalinity",       "Alkalinity",      "ppm"),
-        ("conditioner",      "Conditioner",     "ppm"),
-    ]
-    out = []
-    for key, label, unit in row_defs:
-        v = readings.get(key)
+# Canonical water-test key list — ordered for the Workstream panel.
+# Free Chlorine → Total Chlorine → pH → Alkalinity → CYA → Conditioner
+# → anything else the tech submitted (rendered in submission order).
+# Note: ``cyanuric_acid`` was added Feb 2026 (P0 Workstream read/write
+# reconciliation).  ``conditioner`` is the legacy synonym kept for
+# backward compatibility with older service reports.
+_WATER_TEST_CANONICAL: List[tuple] = [
+    ("free_chlorine",   "Free Chlorine",  "ppm"),
+    ("total_chlorine",  "Total Chlorine", "ppm"),
+    ("ph",              "Ph Balance",     ""),
+    ("alkalinity",      "Alkalinity",     "ppm"),
+    ("cyanuric_acid",   "CYA",            "ppm"),
+    ("conditioner",     "Conditioner",    "ppm"),
+]
+
+
+def _coerce_readings(raw: Any) -> Dict[str, Any]:
+    """Normalise both storage shapes into a single ``{key: value}`` dict.
+
+    Accepts:
+      * ``dict`` — ``{"free_chlorine": 2.5, ...}`` (legacy job doc).
+      * ``list`` of ``{"key": ..., "value": ...}`` (tech write path via
+        ``PATCH /jobs/{jid}/service-report`` — the canonical shape).
+      * ``None`` — returns ``{}``.
+    """
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, list):
+        out: Dict[str, Any] = {}
+        for row in raw:
+            if not isinstance(row, dict):
+                continue
+            k = (row.get("key") or "").strip()
+            if not k:
+                continue
+            out[k] = row.get("value")
+        return out
+    return {}
+
+
+async def _water_test(job: dict, tenant_id: str) -> List[Dict[str, Any]]:
+    """Emit the water-test rows.
+
+    P0 · Feb 2026 (Fix A) — reads the service_reports collection FIRST
+    (where the tech's ``PATCH /jobs/{jid}/service-report`` actually
+    lands), falls back to ``job.chemical_readings`` for backward
+    compat with legacy jobs that stored inline.  Accepts BOTH the
+    list-of-``{key, label, value, unit}`` shape (canonical) and the
+    dict shape (legacy).
+    """
+    rep = await db.service_reports.find_one(
+        {"tenant_id": tenant_id, "job_id": job.get("id"),
+         "chemical_readings": {"$exists": True}},
+        {"_id": 0, "chemical_readings": 1},
+    )
+    readings = _coerce_readings((rep or {}).get("chemical_readings"))
+    if not readings:
+        readings = _coerce_readings(job.get("chemical_readings"))
+
+    out: List[Dict[str, Any]] = []
+    emitted: set = set()
+    # 1. Canonical order first.
+    for key, label, unit in _WATER_TEST_CANONICAL:
+        if key not in readings:
+            continue
+        v = readings[key]
         if v in (None, ""):
             continue
         try:
@@ -187,7 +261,41 @@ def _water_test(job: dict) -> List[Dict[str, Any]]:
         except (TypeError, ValueError):
             continue
         out.append({"key": key, "label": label, "value": fv, "unit": unit})
+        emitted.add(key)
+    # 2. Any other keys the tech typed — rendered after the canonical
+    #    block in insertion order so we don't drop custom readings.
+    for key, v in readings.items():
+        if key in emitted or v in (None, ""):
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        out.append({
+            "key": key,
+            "label": key.replace("_", " ").title(),
+            "value": fv,
+            "unit": "",
+        })
     return out
+
+
+async def _chemicals_used_source(job: dict, tenant_id: str) -> List[Dict[str, Any]]:
+    """Return the raw ``chemicals_added`` list for a job.
+
+    P0 · Feb 2026 (Fix B) — pulls from ``service_reports.chemicals_added``
+    first (canonical write target), falls back to
+    ``job.chemicals_added`` for backward compat.
+    """
+    rep = await db.service_reports.find_one(
+        {"tenant_id": tenant_id, "job_id": job.get("id"),
+         "chemicals_added": {"$exists": True}},
+        {"_id": 0, "chemicals_added": 1},
+    )
+    src = (rep or {}).get("chemicals_added")
+    if not src:
+        src = job.get("chemicals_added") or []
+    return src or []
 
 
 def _media_items(job: dict) -> List[Dict[str, Any]]:
@@ -313,10 +421,13 @@ async def get_service_log(
             pass
 
     # Chemicals used + cost.
+    # P0 · Feb 2026 (Fix B) — source list now comes from the
+    # ``_chemicals_used_source`` helper (service_reports → job legacy
+    # fallback).  Cost math + price map are unchanged.
     prices = await _load_price_map(tenant["id"])
     chems_used: List[Dict[str, Any]] = []
     total_cents = 0
-    for c in (job.get("chemicals_added") or []):
+    for c in await _chemicals_used_source(job, tenant["id"]):
         name = c.get("name") or c.get("chemical") or ""
         qty = c.get("quantity") or c.get("amount") or 0
         unit = c.get("unit") or ""
@@ -352,7 +463,7 @@ async def get_service_log(
         "customer": cust,
         "property": prop,
         "checklist_state": await _resolve_checklist_state(job, tenant["id"]),
-        "water_test": _water_test(job) if kind == "pool" else [],
+        "water_test": await _water_test(job, tenant["id"]) if kind == "pool" else [],
         "chemicals_used": chems_used if kind == "pool" else [],
         "chemical_cost_cents": total_cents if kind == "pool" else 0,
         "chemical_cost_usd": round(total_cents / 100.0, 2) if kind == "pool" else 0.0,
