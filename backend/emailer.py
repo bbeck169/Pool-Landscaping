@@ -97,25 +97,32 @@ async def send_completion_email(job: dict) -> bool:
         return False
 
 
-def _reminder_html(inv: dict, name: str, attachment_count: int = 0) -> str:
+def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
+                     portal_cta_url: str = "") -> str:
     balance = round(float(inv.get("total") or 0) - float(inv.get("amount_paid") or 0), 2)
     due = inv.get("due_date") or "now"
-    # Feb 2026 · Pay-Now hotfix — mint a magic-link JWT so the emailed
-    # URL lands on the public payment viewer, not the login page.
-    from services.pay_link_builder import build_pay_now_url
-    pay_link = build_pay_now_url(inv["id"], inv.get("tenant_id") or "")
+    # Feb-2026 · Slice 7 — Invoice pay-link auto-login. Prefer the
+    # portal auto-login URL (drops the customer INSIDE their portal
+    # at /portal/invoices/{id}) when we can mint one. Falls back to
+    # the pre-existing public pay-sheet magic-link URL (kept intact
+    # per the "additive, not replacing" spec) — some email clients
+    # strip buttons, and some customers forward invoices to a
+    # spouse who isn't on the account, so the public viewer route
+    # remains the resilience path.
+    if portal_cta_url:
+        pay_link = portal_cta_url
+    else:
+        from services.pay_link_builder import build_pay_now_url
+        pay_link = build_pay_now_url(inv["id"], inv.get("tenant_id") or "")
     link_html = f'<p><a href="{pay_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Pay Now</a></p>' if pay_link else ""
     # Phase B1 · Feb 2026 — F2b attachment-count copy.
-    # Renders "N attachment(s) included" line above the CTA when
-    # the invoice has 1+ F0 attachments (purpose=invoice_attachment).
-    # Renders nothing when N == 0.
     n = max(0, int(attachment_count or 0))
     attach_html = ""
     if n > 0:
         noun = "attachment" if n == 1 else "attachments"
         attach_html = (
             f'<p style="font-size:13px;color:#475569;margin:8px 0 0;">'
-            f'📎 {n} {noun} included</p>'
+            f'{n} {noun} included</p>'
         )
     return (
         f'<div style="font-family:sans-serif;max-width:520px;margin:auto">'
@@ -163,6 +170,23 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
         })
     except Exception:                                                # noqa: BLE001
         attachment_count = 0
+    # Feb-2026 · Slice 7 — mint portal auto-login URL when we have
+    # both a customer_id and an app public base URL. On failure we
+    # silently fall back to the existing public pay-sheet magic-link.
+    portal_cta_url = ""
+    try:
+        if cid and inv.get("tenant_id"):
+            base = APP_PUBLIC_URL
+            if base:
+                from services.portal_magic_links import build_invoice_pay_url
+                portal_cta_url = build_invoice_pay_url(
+                    base, cid, inv["id"], inv["tenant_id"],
+                )
+    except Exception as _mint_exc:  # pragma: no cover — belt-and-braces
+        logger.warning(
+            f"[emailer] portal invoice-pay CTA mint failed: {_mint_exc}"
+        )
+        portal_cta_url = ""
     try:
         resend.api_key = RESEND_API_KEY
         resend.Emails.send({
@@ -170,7 +194,8 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
             "to": to_email,
             "subject": f"Payment reminder — {inv.get('title', 'invoice')}",
             "html": _reminder_html(inv, cust.get("name", "there"),
-                                    attachment_count=attachment_count),
+                                    attachment_count=attachment_count,
+                                    portal_cta_url=portal_cta_url),
         })
         return True
     except Exception as e:

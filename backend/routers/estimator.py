@@ -1018,8 +1018,37 @@ async def send_estimate(eid: str, body: SendIn,
         noun = "attachment" if attach_n == 1 else "attachments"
         attach_line = (
             f'<p style="font-size:13px;color:#475569;margin:8px 0 0;">'
-            f'📎 {attach_n} {noun} included</p>'
+            f'{attach_n} {noun} included</p>'
         )
+    # Feb-2026 · Slice 7 — Estimate accept-link auto-login CTA. Mint
+    # the portal auto-login URL when the estimate has a
+    # ``customer_id`` and ``APP_PUBLIC_URL`` is configured. On mint
+    # failure the CTA line is silently omitted (customers can still
+    # reach the estimate via the PDF attachment + existing public
+    # ``/portal/estimates/via-token`` viewer route which is
+    # unchanged).
+    portal_cta_html = ""
+    try:
+        _est_cid = e.get("customer_id")
+        from config import APP_PUBLIC_URL as _APP_URL
+        if _est_cid and _APP_URL:
+            from services.portal_magic_links import build_estimate_view_url
+            _cta_url = build_estimate_view_url(
+                _APP_URL, _est_cid, eid, tenant["id"],
+            )
+            portal_cta_html = (
+                f'<p style="margin-top:16px;">'
+                f'<a href="{_cta_url}" '
+                f'style="background:#0891b2;color:#fff;padding:12px 20px;'
+                f'border-radius:8px;text-decoration:none;'
+                f'display:inline-block;font-weight:600;">'
+                f'View Estimate</a></p>'
+            )
+    except Exception as _cta_exc:  # pragma: no cover — belt-and-braces
+        logger.warning(
+            f"[estimator] portal estimate CTA mint failed: {_cta_exc}"
+        )
+        portal_cta_html = ""
     try:
         import resend
         resend.api_key = RESEND_API_KEY
@@ -1032,7 +1061,7 @@ async def send_estimate(eid: str, body: SendIn,
             "html": (body.body
                        or f"<p>Please find your estimate attached.</p>"
                        f"<p>Total: <b>${e.get('total',0):.2f}</b></p>"
-                       f"{attach_line}"),
+                       f"{attach_line}{portal_cta_html}"),
             "attachments": [{
                 "filename": fname,
                 "content": base64.b64encode(attachment_bytes).decode("ascii"),

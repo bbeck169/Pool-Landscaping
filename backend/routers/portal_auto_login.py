@@ -47,13 +47,39 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from config import db
-from services.portal_magic_links import verify_job_view_token
+from services.portal_magic_links import (
+    verify_job_view_token,
+    verify_invoice_pay_token,
+    verify_estimate_view_token,
+)
 
 logger = logging.getLogger("portal.auto_login")
 
 router = APIRouter()
 
 _LOGIN_EXPIRED_URL = "/portal/login?reason=link_expired"
+
+
+def _classify_and_verify(token: str):
+    """Feb-2026 · Slice 7 — probe the token against every known
+    portal scope (``job_view``, ``portal_invoice_pay``,
+    ``portal_estimate_view``) and return
+    ``(resource_type, payload)`` on the first match. Returns
+    ``(None, None)`` when the token is expired / tampered / minted
+    for an unknown scope. Cross-scope replay is blocked here: an
+    invoice token will be REJECTED by the estimate verifier (and
+    vice versa) and will only match its own scope.
+    """
+    for kind, verify in (
+        ("job", verify_job_view_token),
+        ("invoice", verify_invoice_pay_token),
+        ("estimate", verify_estimate_view_token),
+    ):
+        try:
+            return kind, verify(token)
+        except Exception:
+            continue
+    return None, None
 
 
 def _safe_redirect(candidate: Optional[str], default: str) -> str:
@@ -68,13 +94,13 @@ def _safe_redirect(candidate: Optional[str], default: str) -> str:
 
 
 def _log(outcome: str, *, customer_id: Optional[str] = None,
-         job_id: Optional[str] = None,
-         service_report_id: Optional[str] = None,
+         resource_type: Optional[str] = None,
+         resource_id: Optional[str] = None,
          from_ip: Optional[str] = None) -> None:
     logger.info(
-        "[portal_auto_login] outcome=%s customer_id=%s job_id=%s "
-        "service_report_id=%s from_ip=%s",
-        outcome, customer_id, job_id, service_report_id, from_ip,
+        "[portal_auto_login] outcome=%s customer_id=%s "
+        "resource_type=%s resource_id=%s from_ip=%s",
+        outcome, customer_id, resource_type, resource_id, from_ip,
     )
 
 
@@ -130,34 +156,40 @@ async def portal_auto_login(
     t: str = "",
     redirect: Optional[str] = None,
 ):
-    """Redeem a door-hanger ``job_view`` token into an auto-login
-    interstitial page.  Never raises — every failure surfaces as a
-    ``302`` to the portal login page."""
+    """Redeem a portal magic-link token into an auto-login
+    interstitial page.
+
+    Feb-2026 · Slice 7 — the route now handles THREE token scopes:
+    ``job_view`` (door hanger), ``portal_invoice_pay`` (invoice
+    email CTA), ``portal_estimate_view`` (estimate email CTA).
+    Cross-scope replay is blocked in :func:`_classify_and_verify` —
+    each scope only matches its own verifier.
+
+    Never raises — every failure surfaces as a ``302`` to the
+    portal login page with ``reason=link_expired``.
+    """
     from_ip = (
         request.headers.get("x-forwarded-for")
         or (request.client.host if request.client else None)
     )
 
-    # 1) Verify token.
-    try:
-        payload = verify_job_view_token(t)
-    except Exception:  # HTTPException(401, …) from verify — swallow.
+    # 1) Classify + verify token.
+    resource_type, payload = _classify_and_verify(t)
+    if not payload:
         _log("expired", from_ip=from_ip)
         return _expired_response()
 
     customer_id = payload.get("customer_id")
-    job_id = payload.get("job_id")
     tenant_id = payload.get("tenant_id")
 
-    # 2) Look up the customer's login user (``role="customer"``).
-    #    Same cascade the impersonation endpoint uses.
+    # 2) Confirm the customer + login user exist.
     customer = await db.customers.find_one(
         {"id": customer_id, "tenant_id": tenant_id},
         {"_id": 0, "id": 1},
     )
     if not customer:
-        _log("wrong_scope", customer_id=customer_id, job_id=job_id,
-             from_ip=from_ip)
+        _log("wrong_scope", customer_id=customer_id,
+             resource_type=resource_type, from_ip=from_ip)
         return _expired_response()
     cust_user = await db.users.find_one(
         {"customer_id": customer_id, "role": "customer",
@@ -165,26 +197,43 @@ async def portal_auto_login(
         {"_id": 0, "password_hash": 0},
     )
     if not cust_user:
-        _log("no_login_user", customer_id=customer_id, job_id=job_id,
-             from_ip=from_ip)
+        _log("no_login_user", customer_id=customer_id,
+             resource_type=resource_type, from_ip=from_ip)
         return _expired_response()
 
-    # 3) Resolve final redirect path — service report if it exists,
-    #    otherwise the portal home.  Honour the ``redirect`` query
-    #    param only when it starts with ``/portal/``.
-    sr_id = await _resolve_service_report_id(tenant_id, job_id)
-    default_target = (
-        f"/portal/service-reports/{sr_id}" if sr_id else "/portal/home"
-    )
+    # 3) Resolve the destination path per resource type.
+    if resource_type == "job":
+        job_id = payload.get("job_id")
+        sr_id = await _resolve_service_report_id(tenant_id, job_id)
+        default_target = (
+            f"/portal/service-reports/{sr_id}" if sr_id else "/portal/home"
+        )
+        resource_id = job_id
+    elif resource_type == "invoice":
+        invoice_id = payload.get("invoice_id")
+        default_target = f"/portal/invoices/{invoice_id}"
+        resource_id = invoice_id
+    elif resource_type == "estimate":
+        estimate_id = payload.get("estimate_id")
+        default_target = f"/portal/estimates/{estimate_id}"
+        resource_id = estimate_id
+    else:  # pragma: no cover — defensive
+        _log("expired", customer_id=customer_id, from_ip=from_ip)
+        return _expired_response()
+
+    # 4) Open-redirect guard — ``redirect`` query param honoured
+    #    ONLY when it starts with ``/portal/``, otherwise the
+    #    token-derived destination wins.
     redirect_to = _safe_redirect(redirect, default_target)
 
-    # 4) Mint the customer-scoped access token via the SAME helper
+    # 5) Mint the customer-scoped access token via the SAME helper
     #    ``auth_response`` uses so we don't fork the session logic.
     from utils import create_token
     access_token = create_token(cust_user)
 
-    _log("success", customer_id=customer_id, job_id=job_id,
-         service_report_id=sr_id, from_ip=from_ip)
+    _log("success", customer_id=customer_id,
+         resource_type=resource_type, resource_id=resource_id,
+         from_ip=from_ip)
     return HTMLResponse(
         content=_interstitial_html(
             access_token=access_token, redirect_to=redirect_to,

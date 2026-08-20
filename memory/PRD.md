@@ -11560,3 +11560,48 @@ NEXT STEPS card with both buttons functional.
 4. → Queue Item #7 — Invoice pay-link + Estimate accept-link
    auto-login port (fresh session)
 5. Queue Item #2 — First-Login Gate + Multi-ToS (paused, 4 sub-phases)
+
+---
+
+## Feb-2026 · Queue Item #7 — Invoice + Estimate portal auto-login · ✅ SHIPPED
+
+**Backend — mint/verify helpers** (`backend/services/portal_magic_links.py`)
+* `mint_invoice_pay_token(customer_id, invoice_id, tenant_id, *, ttl_hours=48)` — new; distinct `sub="portal_invoice_pay"` claim.
+* `verify_invoice_pay_token(token)` — sibling verifier; rejects wrong-scope with `401 token_wrong_scope`, expired with `401 token_invalid_or_expired`.
+* `mint_estimate_view_token(customer_id, estimate_id, tenant_id, *, ttl_hours=72)` — new; distinct `sub="portal_estimate_view"` claim.
+* `verify_estimate_view_token(token)` — sibling verifier, same 401 contract.
+* `build_invoice_pay_url` + `build_estimate_view_url` — helpers that stamp the URL as `{base}/api/portal/auto-login?t={token}`.
+* Reuses `JWT_ALGO` + `JWT_SECRET` from `config`. No new signing scheme, no new library.
+
+**Backend — auto-login route** (`backend/routers/portal_auto_login.py`)
+* New `_classify_and_verify(token)` probes the three portal scopes (`job` / `invoice` / `estimate`) and returns `(resource_type, payload)` on the first match. Cross-scope replay blocked by design: each verifier only matches its own `sub`.
+* Route handler now dispatches on `resource_type` to compute the redirect target:
+  * `job` → `/portal/service-reports/{sr_id}` (unchanged)
+  * `invoice` → `/portal/invoices/{invoice_id}` (new)
+  * `estimate` → `/portal/estimates/{estimate_id}` (new)
+* Log line updated: `outcome=<state> customer_id=… resource_type=… resource_id=… from_ip=…`. Raw token never logged (regression-tested).
+* Every failure path still `302`s to `/portal/login?reason=link_expired` with no session seeded.
+
+**Email templates updated**
+* `backend/emailer.py::_reminder_html` — invoice payment-reminder email. Now accepts an optional `portal_cta_url` kwarg. `send_invoice_reminder_email` mints the auto-login URL when both `customer_id` and `APP_PUBLIC_URL` are present; on any mint failure OR missing config, silently falls back to the pre-existing `build_pay_now_url` (public Stripe pay-sheet magic-link). CTA button copy preserved verbatim ("Pay Now").
+* `backend/routers/estimator.py::send_estimate` — added a "View Estimate" CTA to the estimate-send email body. Renders only when the estimate has a `customer_id` AND `APP_PUBLIC_URL` is configured. No CTA copy pre-existed; new CTA respects the same visual language as the invoice one.
+
+**Public viewer fallback preserved (untouched)**
+* `backend/routers/invoice_magic_view.py` — public `/pay/invoice/:id?token=…` route untouched. Stripe pay-sheet path remains for forwarded emails or button-stripping clients.
+* `backend/routers/estimate_viewer.py` — public `/portal/estimates/via-token(/accept|/decline|/request-changes)` routes untouched. PDF attachment path also preserved.
+* Fallback path is additive per spec.
+
+**Tests**
+* `backend/tests/test_portal_magic_links.py` — **+12 new** (8/8 requested + 4 utility tests): roundtrips for both new tokens, all 4 cross-scope replay guards (invoice→estimate, estimate→invoice, job→invoice, tampered/expired), resource-ID scoping per token, build-URL shape assertions, empty-ID validation. 20/20 pass.
+* `backend/tests/test_portal_auto_login_route.py` — **+7 new**: valid invoice/estimate → interstitial with correct redirect + session seed, expired invoice → 302, tampered estimate → 302, wrong-scope replay routes to token's own resource, log line records `resource_type`/`resource_id` and NEVER the raw token. Updated the original `job_id=` assertion to the new `resource_type=job resource_id=…` log shape. 14/14 pass.
+* Wider regression: **108/108 pass** (portal magic-links, auto-login route, door hanger auto-send, door hanger body, job edit window, portal DTO, chemistry bands).
+
+**Live-verify (deferred to user)**
+* From a test tenant: mint a real invoice with a customer, trigger `POST /api/invoices/{id}/send-reminder` → confirm the Resend email has the "Pay Now" button whose href is `{APP_PUBLIC_URL}/api/portal/auto-login?t=<jwt>` and that clicking from a fresh incognito lands on `/portal/invoices/{id}` with a working session (F5 sticks).
+* Same drill for estimate: `POST /api/estimator/estimates/{id}/send-to-customer` → confirm "View Estimate" CTA drops the customer on `/portal/estimates/{id}`.
+* Manually mangle the `t` param on either URL → lands on `/portal/login?reason=link_expired`.
+* Provider_response_id capture — user to record the two Resend IDs.
+
+**Queue state**
+1. ~~#4~~ ✅ · ~~#5~~ ✅ (+ ledger add-on) · ~~#6~~ ✅ · ~~#7~~ ✅
+2. Remaining: **Queue Item #2 — First-Login Gate + Multi-ToS** (paused, 4 sub-phases 2A→2D, needs its own fresh session).

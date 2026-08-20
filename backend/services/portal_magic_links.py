@@ -118,3 +118,142 @@ def build_job_view_url(
         customer_id, job_id, tenant_id, ttl_hours=ttl_hours,
     )
     return f"{base_url.rstrip('/')}/api/portal/auto-login?t={token}"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Feb-2026 · Slice 7 — Invoice pay-link + Estimate accept-link
+# auto-login. Sibling mint/verify helpers with distinct ``sub`` claims
+# so a leaked invoice token can NEVER be replayed as an estimate token
+# and vice versa (cross-scope guard tested in
+# ``test_portal_magic_links.py``).
+# ═══════════════════════════════════════════════════════════════════════
+_TOKEN_SUB_INVOICE_PAY = "portal_invoice_pay"
+_TOKEN_SUB_ESTIMATE_VIEW = "portal_estimate_view"
+_INVOICE_TTL_HOURS = 48
+_ESTIMATE_TTL_HOURS = 72
+
+
+def mint_invoice_pay_token(
+    customer_id: str, invoice_id: str, tenant_id: str,
+    *, ttl_hours: int = _INVOICE_TTL_HOURS,
+) -> str:
+    """Mint a short-lived JWT that auto-logs a customer into the
+    portal and drops them on ``/portal/invoices/{invoice_id}``.
+
+    Distinct ``sub`` claim (``portal_invoice_pay``) so a leaked
+    token cannot be replayed on the estimate flow or the door-hanger
+    ``job_view`` flow. TTL default is 48h (invoices usually give the
+    customer a bit more runway than the 24h door-hanger window).
+    """
+    if not (customer_id and invoice_id and tenant_id):
+        raise ValueError(
+            "customer_id, invoice_id, and tenant_id are required",
+        )
+    ttl = max(60, int(ttl_hours) * 3600)
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": _TOKEN_SUB_INVOICE_PAY,
+        "customer_id": customer_id,
+        "invoice_id": invoice_id,
+        "tenant_id": tenant_id,
+        "iat": now,
+        "exp": now + timedelta(seconds=ttl),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+
+
+def verify_invoice_pay_token(token: str) -> dict:
+    """Decode + validate a portal-invoice-pay JWT.
+
+    Rejects (with 401 ``token_wrong_scope``) any token whose ``sub``
+    isn't ``portal_invoice_pay`` — protects against replay of an
+    estimate token, job_view token, add_card token, or the legacy
+    public-pay-sheet ``invoice_pay`` token on the auto-login route.
+    """
+    if not token:
+        raise HTTPException(401, "token_invalid_or_expired")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "token_invalid_or_expired")
+    except jwt.PyJWTError:
+        raise HTTPException(401, "token_invalid_or_expired")
+    if payload.get("sub") != _TOKEN_SUB_INVOICE_PAY:
+        raise HTTPException(401, "token_wrong_scope")
+    if not all(payload.get(k) for k in
+               ("customer_id", "invoice_id", "tenant_id")):
+        raise HTTPException(401, "token_malformed")
+    return payload
+
+
+def mint_estimate_view_token(
+    customer_id: str, estimate_id: str, tenant_id: str,
+    *, ttl_hours: int = _ESTIMATE_TTL_HOURS,
+) -> str:
+    """Mint a short-lived JWT that auto-logs a customer into the
+    portal and drops them on ``/portal/estimates/{estimate_id}``.
+
+    Distinct ``sub`` claim (``portal_estimate_view``) so an invoice
+    token or job_view token cannot be replayed here. TTL default is
+    72h (estimates often need the customer + a decision-maker on the
+    same account to review).
+    """
+    if not (customer_id and estimate_id and tenant_id):
+        raise ValueError(
+            "customer_id, estimate_id, and tenant_id are required",
+        )
+    ttl = max(60, int(ttl_hours) * 3600)
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": _TOKEN_SUB_ESTIMATE_VIEW,
+        "customer_id": customer_id,
+        "estimate_id": estimate_id,
+        "tenant_id": tenant_id,
+        "iat": now,
+        "exp": now + timedelta(seconds=ttl),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+
+
+def verify_estimate_view_token(token: str) -> dict:
+    if not token:
+        raise HTTPException(401, "token_invalid_or_expired")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "token_invalid_or_expired")
+    except jwt.PyJWTError:
+        raise HTTPException(401, "token_invalid_or_expired")
+    if payload.get("sub") != _TOKEN_SUB_ESTIMATE_VIEW:
+        raise HTTPException(401, "token_wrong_scope")
+    if not all(payload.get(k) for k in
+               ("customer_id", "estimate_id", "tenant_id")):
+        raise HTTPException(401, "token_malformed")
+    return payload
+
+
+def build_invoice_pay_url(
+    base_url: str, customer_id: str, invoice_id: str, tenant_id: str,
+    *, ttl_hours: int = _INVOICE_TTL_HOURS,
+) -> str:
+    """Full portal auto-login URL for the invoice pay-link email.
+
+    Callers that need to defend against a mint failure should call
+    ``mint_invoice_pay_token`` directly in a try/except and omit the
+    CTA on failure rather than letting this helper raise inside the
+    builder — same idiom as ``build_job_view_url``.
+    """
+    token = mint_invoice_pay_token(
+        customer_id, invoice_id, tenant_id, ttl_hours=ttl_hours,
+    )
+    return f"{base_url.rstrip('/')}/api/portal/auto-login?t={token}"
+
+
+def build_estimate_view_url(
+    base_url: str, customer_id: str, estimate_id: str, tenant_id: str,
+    *, ttl_hours: int = _ESTIMATE_TTL_HOURS,
+) -> str:
+    token = mint_estimate_view_token(
+        customer_id, estimate_id, tenant_id, ttl_hours=ttl_hours,
+    )
+    return f"{base_url.rstrip('/')}/api/portal/auto-login?t={token}"
