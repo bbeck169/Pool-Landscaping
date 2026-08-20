@@ -34,6 +34,8 @@ import { api } from "@/api";
 import { colors, font } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import { useAuth } from "@/auth";
+// Feb-2026 · Phase 1 — Tech "On my way" SMS CTA.
+import OnMyWayButton from "@/components/schedule/OnMyWayButton";
 import { Gate, useCan } from "@/hooks/usePermissions";
 import { useClockInGate, ClockInGateDialog } from "@/hooks/useClockInGate";
 import ChecklistModal from "@/components/checklist/ChecklistModal";
@@ -702,6 +704,30 @@ export default function CalendarSchedule() {
             {loading ? "Loading…" : `${filteredJobs.length} of ${rawJobs.length} jobs`}
           </div>
         </div>
+        {/* Feb-2026 · Phase 1 — prominent top-level "On my way — next
+            job" CTA. Visible when the currently-focused day has at
+            least one non-terminal job and the caller's role can send
+            (technician / manager / admin / super_admin; component
+            self-gates). Targets the first non-terminal job in the
+            day's ordered list (dayJobs is already sorted by
+            route_order + scheduled_time). */}
+        {(() => {
+          const done = new Set(["completed", "canceled", "cancelled", "skipped"]);
+          const nextJob = (dayJobs || []).find(
+            (j) => !done.has(String(j.status || "").toLowerCase())
+          );
+          if (!nextJob) return null;
+          return (
+            <div className="ml-2" data-testid="on-my-way-next-wrap">
+              <OnMyWayButton
+                jobId={nextJob.id}
+                customerFirstName={(nextJob.customer_name || "").split(" ")[0] || ""}
+                variant="primary"
+                testId="on-my-way-next-btn"
+              />
+            </div>
+          );
+        })()}
         <div className="flex-1" />
         {/* Phase 30W · Calendar ↔ Grid segmented control (Grid is default). */}
         <div
@@ -1612,6 +1638,23 @@ function GridPanel({
                     <span>{jobHours(j)}</span>
                     {/* Phase 30X · time-of-day removed. Schedule is per-day. */}
                   </div>
+                  {/* Feb-2026 · Phase 1 — compact per-job "On my way"
+                      SMS button. Rendered for technician / manager /
+                      admin / super_admin (component self-gates on
+                      role); hidden for completed / canceled jobs so a
+                      dispatcher can't spam customers post-visit. */}
+                  {["completed", "canceled", "cancelled", "skipped"].includes(
+                    String(j.status || "").toLowerCase()
+                  ) ? null : (
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                      <OnMyWayButton
+                        jobId={j.id}
+                        customerFirstName={(j.customer_name || "").split(" ")[0] || ""}
+                        variant="compact"
+                        testId={`on-my-way-btn-${j.id}`}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div
                   className="px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide"

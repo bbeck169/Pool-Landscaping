@@ -18,6 +18,10 @@ import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 // admins/dispatchers can spot the assigned tech at a glance
 // without inflating the card height.
 import TechAvatar from "@/components/common/TechAvatar";
+// Feb-2026 · Phase 1 — Tech "On my way" SMS button. Used both as
+// the prominent top-level next-job CTA and as the compact inline
+// affordance on each job card.
+import OnMyWayButton from "@/components/schedule/OnMyWayButton";
 import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, StickyNote, Route as RouteIcon, RotateCcw, Star } from "lucide-react";
 
 const GOOGLE_LIBS = ["places"];
@@ -317,6 +321,16 @@ export default function TodaySchedule() {
     return out;
   }, [jobItems, optimizedIds]);
 
+  // Feb-2026 · Phase 1 — first non-terminal job in today's order. Powers
+  // the top-level "On my way — next job" CTA. Sorted by ``route_index``
+  // then ``scheduled_time`` (both baked into ``orderedJobItems``).
+  const nextOpenJob = useMemo(() => {
+    const done = new Set(["completed", "canceled", "cancelled", "skipped"]);
+    return orderedJobItems.find(
+      (j) => !done.has(String(j.status || "").toLowerCase()),
+    ) || null;
+  }, [orderedJobItems]);
+
   // View mode: "list" (default) | "timeline". Persist per-user.
   const [viewMode, setViewMode] = useState(() => {
     try { return localStorage.getItem("schedule_view_mode") || "list"; }
@@ -507,6 +521,23 @@ export default function TodaySchedule() {
                   data-testid="schedule-go-to-jobs">
             View all jobs
           </button>
+        </div>
+      )}
+
+      {/* Feb-2026 · Phase 1 — top-level "On my way — next job" CTA.
+          Rendered above the list view. Visible only when there's an
+          open job in today's queue and the caller's role can send
+          (technician / manager / admin / super_admin). */}
+      {data && nextOpenJob && (
+        <div className="flex justify-center mb-4" data-testid="on-my-way-next-wrap">
+          <OnMyWayButton
+            jobId={nextOpenJob.id}
+            customerFirstName={
+              (nextOpenJob.customer_name || "").split(" ")[0] || ""
+            }
+            variant="primary"
+            testId="on-my-way-next-btn"
+          />
         </div>
       )}
 
@@ -909,6 +940,15 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                 {/* Phase 18B follow-up — Tech quick actions */}
                 {isTech && (j.status || "").toLowerCase() !== "completed" && (
                   <div className="flex gap-2 mt-3 flex-wrap">
+                    {/* Feb-2026 · Phase 1 — compact per-job "On my way"
+                        button. Same handler + toast surface as the
+                        top-level primary CTA above the list view. */}
+                    <OnMyWayButton
+                      jobId={j.id}
+                      customerFirstName={(j.customer_name || "").split(" ")[0] || ""}
+                      variant="compact"
+                      testId={`on-my-way-btn-${j.id}`}
+                    />
                     <button
                       onClick={(e) => { e.stopPropagation(); onClockIn && onClockIn(j); }}
                       className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1"
