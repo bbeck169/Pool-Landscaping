@@ -406,6 +406,381 @@ def _format_service_date(job: Dict[str, Any], tenant: Dict[str, Any]) -> str:
 # manual endpoint and the auto-send on job-completion path share a
 # single template + delivery record shape.  Only the dedupe primitive
 # differs — see :func:`maybe_auto_send_door_hanger` below.
+#
+# Feb-2026 · Slice 5 — Visual redesign.  ``_build_door_hanger_email``
+# is now a thin orchestrator; each section is built by a dedicated
+# ``_dh_render_*`` helper (below) that returns an email-safe
+# ``<table>``-wrapped card.  Inline styles only — no ``<style>``
+# blocks, no ``class=`` attributes.  All existing body copy is
+# preserved verbatim; the only new copy lives in the elevated-CTA
+# helper.
+
+
+# Chip color map for water-test band chips (email-safe, inline only).
+_DH_BAND_CHIPS = {
+    "Below Average": {"bg": "#DBEAFE", "fg": "#1E40AF"},
+    "Average":       {"bg": "#DCFCE7", "fg": "#166534"},
+    "Above Average": {"bg": "#FEF3C7", "fg": "#92400E"},
+    "Elevated":      {"bg": "#FEE2E2", "fg": "#991B1B"},
+}
+
+
+def _dh_band_chip(band: str) -> str:
+    """Return a pill-shaped band chip with inline styles.
+
+    The ``<b>{band}</b>`` inner markup is intentional — several
+    existing regression tests slice the Water Test section and
+    assert on ``<b>Average</b>`` / ``<b>Elevated</b>`` substrings.
+    """
+    tone = _DH_BAND_CHIPS.get(band, _DH_BAND_CHIPS["Average"])
+    return (
+        f'<span style="display:inline-block;padding:3px 10px;'
+        f'border-radius:12px;background:{tone["bg"]};color:{tone["fg"]};'
+        f'font-size:12px;line-height:1.4;">'
+        f'<b>{band}</b></span>'
+    )
+
+
+def _dh_card(inner_html: str, *, bg: str = "#FFFFFF",
+             border: str = "#E2E8F0") -> str:
+    """Email-safe card wrapper — ``<table role="presentation">`` for
+    Outlook parity. Fixed 100% width, 12px radius, subtle border.
+    """
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" '
+        f'border="0" width="100%" style="border-collapse:collapse;'
+        f'background:{bg};border:1px solid {border};'
+        f'border-radius:12px;margin:0 0 16px 0;">'
+        f'<tr><td style="padding:20px;">{inner_html}</td></tr></table>'
+    )
+
+
+def _dh_section_heading(text: str) -> str:
+    """``<h3>`` for the section heading — kept as ``<h3>`` (not
+    ``<p>``) so the existing regression tests that anchor slices on
+    ``Water Test</h3>`` / ``Chemicals Used</h3>`` remain valid.
+    """
+    return (
+        f'<h3 style="color:#0F172A;margin:0 0 12px 0;font-size:16px;'
+        f'font-weight:700;">{text}</h3>'
+    )
+
+
+def _dh_render_hero(*, logo_url: str, company: str, first_name: str,
+                     service_date: str, job_title: str,
+                     service_address: str, completed: Any) -> str:
+    """Header card — centered logo + greeting + service date + job
+    title + service address + completion date.  Copy is unchanged
+    from the pre-Slice-5 builder; every line uses inline styles."""
+    logo = (
+        f'<div style="text-align:center;margin-bottom:20px;">'
+        f'<img src="{logo_url}" alt="{company}" width="200" '
+        f'style="max-width:200px;height:auto;display:inline-block;"/>'
+        f'</div>'
+    )
+    inner = [
+        logo,
+        f'<p style="color:#0F172A;margin:0 0 8px;font-size:15px;'
+        f'font-weight:normal;">'
+        f'Hi {first_name}, your visit has been completed.</p>',
+    ]
+    if service_date:
+        inner.append(
+            f'<p style="margin:4px 0;font-size:14px;color:#555;">'
+            f'Service Date: {service_date}</p>'
+        )
+    if job_title:
+        inner.append(
+            f'<p style="margin:4px 0;font-size:15px;"><b>{job_title}</b></p>'
+        )
+    if service_address:
+        inner.append(
+            f'<p style="margin:4px 0;font-size:14px;color:#334155;">'
+            f'<b>{service_address}</b></p>'
+        )
+    inner.append(
+        f'<p style="font-size:13px;color:#64748B;margin-top:8px;">'
+        f'Completed on <b>{str(completed)[:10]}</b>.</p>'
+    )
+    return _dh_card("".join(inner))
+
+
+def _dh_render_water_test(water_test: List[Dict[str, Any]]) -> str:
+    """Water Test card — core readings render as band chips, optional
+    readings as raw value + unit. Empty rows are omitted.
+    """
+    if not water_test:
+        return ""
+    from services.chemistry_bands import (
+        band_for_reading, CANONICAL_BAND_THRESHOLDS,
+    )
+    from services.chemistry_gate import DISPLAY_LABELS, CORE_READINGS
+    by_key = {r["key"]: r for r in water_test}
+    core_rows = ""
+    for key in CORE_READINGS:
+        r = by_key.get(key)
+        if not r:
+            continue
+        band = band_for_reading(key, r.get("value"))
+        if not band:
+            continue
+        core_rows += (
+            f'<tr>'
+            f'<td style="padding:6px 12px 6px 0;color:#64748B;font-size:14px;'
+            f'white-space:nowrap;vertical-align:middle;">'
+            f'{DISPLAY_LABELS[key]}</td>'
+            f'<td style="padding:6px 0;text-align:right;'
+            f'vertical-align:middle;">{_dh_band_chip(band)}</td>'
+            f'</tr>'
+        )
+    optional_rows = ""
+    for r in water_test:
+        if r["key"] in CANONICAL_BAND_THRESHOLDS:
+            continue
+        v = r.get("value")
+        if v in (None, ""):
+            continue
+        val_str = f"{v} {r.get('unit') or ''}".strip()
+        optional_rows += (
+            f'<tr>'
+            f'<td style="padding:6px 12px 6px 0;color:#64748B;font-size:14px;'
+            f'white-space:nowrap;vertical-align:middle;">{r["label"]}</td>'
+            f'<td style="padding:6px 0;text-align:right;color:#0F172A;'
+            f'font-size:14px;font-weight:600;vertical-align:middle;">'
+            f'<b>{val_str}</b></td>'
+            f'</tr>'
+        )
+    if not (core_rows or optional_rows):
+        return ""
+    body = (
+        _dh_section_heading("Water Test") +
+        f'<table role="presentation" cellpadding="0" cellspacing="0" '
+        f'border="0" width="100%" '
+        f'style="border-collapse:collapse;font-size:14px;">'
+        f'{core_rows}{optional_rows}</table>'
+    )
+    return _dh_card(body)
+
+
+def _dh_elevated_core_count(water_test: List[Dict[str, Any]]) -> int:
+    """Count of *core* readings in the ``Elevated`` band.  Returns 0
+    for non-pool jobs (empty ``water_test``) so the CTA is naturally
+    suppressed on landscaping-only visits.
+    """
+    if not water_test:
+        return 0
+    from services.chemistry_bands import band_for_reading
+    from services.chemistry_gate import CORE_READINGS
+    by_key = {r["key"]: r for r in water_test}
+    n = 0
+    for key in CORE_READINGS:
+        r = by_key.get(key)
+        if not r:
+            continue
+        if band_for_reading(key, r.get("value")) == "Elevated":
+            n += 1
+    return n
+
+
+def _dh_render_elevated_cta(*, elevated_count: int,
+                              cust: Optional[Dict[str, Any]],
+                              tenant: Optional[Dict[str, Any]],
+                              job_id: str, brand_color: str) -> str:
+    """Feb-2026 · Slice 5 — service-recommendation CTA block.
+
+    Rendered ONLY when 2+ core readings land in the ``Elevated`` band
+    AND the customer has not opted out. Landscape jobs never trigger
+    (they carry an empty ``water_test`` → ``elevated_count == 0``).
+
+    Suppression rules (each returns ``""`` — the caller silently
+    drops the block):
+      * ``elevated_count < 2``
+      * ``cust.unsubscribed`` or ``cust.do_not_contact``
+    When ``tenant.phone`` (or ``rc_sms_from_number``) is missing the
+    Call button is hidden and the Reply button spans full-width.
+    """
+    if elevated_count < 2:
+        return ""
+    if cust and (bool(cust.get("unsubscribed"))
+                 or bool(cust.get("do_not_contact"))):
+        return ""
+
+    # Mailto cascade: reply-to sender → tenant support/contact → fallback.
+    settings = ((tenant or {}).get("settings") or {})
+    sender = settings.get("email_sender") or {}
+    reply_email = (
+        sender.get("reply_to")
+        or (tenant or {}).get("support_email")
+        or (tenant or {}).get("contact_email")
+        or "hello@plofv.com"
+    )
+    # ``%20%E2%80%94%20`` = " — " (space + em-dash + space) URL-safe.
+    mailto = (
+        f'mailto:{reply_email}?subject='
+        f'Follow-Up%20Request%20%E2%80%94%20Job%20{job_id}'
+    )
+    reply_btn = (
+        f'<a href="{mailto}" '
+        f'style="display:inline-block;background:{brand_color};'
+        f'color:#FFFFFF;padding:14px 32px;border-radius:8px;'
+        f'text-decoration:none;font-weight:600;font-size:14px;'
+        f'text-align:center;line-height:1;">'
+        f'Reply to Schedule Follow-Up</a>'
+    )
+    # Configured phone (no hardcoded fallback — CTA button hides if
+    # nothing is on the tenant record; footer still uses the wider
+    # cascade with the hardcoded fallback).
+    configured_phone = (
+        (tenant or {}).get("phone")
+        or (tenant or {}).get("rc_sms_from_number")
+    )
+    if configured_phone:
+        tel_digits = "".join(ch for ch in configured_phone if ch.isdigit() or ch == "+")
+        call_btn = (
+            f'<a href="tel:{tel_digits}" '
+            f'style="display:inline-block;background:#FFFFFF;'
+            f'color:{brand_color};padding:13px 32px;'
+            f'border:1px solid {brand_color};border-radius:8px;'
+            f'text-decoration:none;font-weight:600;font-size:14px;'
+            f'text-align:center;line-height:1;">'
+            f'Call {configured_phone}</a>'
+        )
+        button_row = (
+            f'<table role="presentation" cellpadding="0" cellspacing="0" '
+            f'border="0" width="100%" '
+            f'style="border-collapse:collapse;margin-top:16px;">'
+            f'<tr>'
+            f'<td width="50%" align="center" '
+            f'style="padding:4px 6px 4px 0;">{reply_btn}</td>'
+            f'<td width="50%" align="center" '
+            f'style="padding:4px 0 4px 6px;">{call_btn}</td>'
+            f'</tr></table>'
+        )
+    else:
+        button_row = (
+            f'<div style="text-align:center;margin-top:16px;">{reply_btn}</div>'
+        )
+
+    body = (
+        f'<p style="margin:0 0 4px 0;color:#64748B;font-size:11px;'
+        f'font-weight:700;letter-spacing:0.08em;'
+        f'text-transform:uppercase;">NEXT STEPS</p>'
+        f'<p style="margin:0 0 8px 0;color:#0F172A;font-size:16px;'
+        f'font-weight:700;">A few readings look elevated</p>'
+        f'<p style="margin:0;color:#334155;font-size:14px;line-height:1.5;">'
+        f"A couple of today's readings came back on the higher side. "
+        f"We'd like to swing by for a quick follow-up to get things back "
+        f'to ideal.</p>'
+        f'{button_row}'
+    )
+    return _dh_card(body, bg="#FFFBF5", border="#FDE68A")
+
+
+def _dh_render_chemicals(chems_used: List[Dict[str, Any]]) -> str:
+    """Chemicals Used card. Feb-2026 · Slice 4 (chemical cost hide)
+    invariant: customer-facing view — no cost line, no ``$`` symbols.
+    """
+    if not chems_used:
+        return ""
+    rows = "".join(
+        f'<li style="margin:4px 0;color:#0F172A;font-size:14px;">'
+        f'{c["name"]} — {c.get("display") or c["quantity"]}</li>'
+        for c in chems_used
+    )
+    body = (
+        _dh_section_heading("Chemicals Used") +
+        f'<ul style="padding-left:20px;margin:4px 0;">{rows}</ul>'
+    )
+    return _dh_card(body)
+
+
+def _dh_render_checklist(checklist_items: List[Dict[str, Any]]) -> str:
+    if not checklist_items:
+        return ""
+
+    def _tick(done: bool) -> str:
+        return "&#10003;" if done else "&#9633;"
+
+    rows = "".join(
+        f'<li style="margin:4px 0;font-size:14px;list-style:none;'
+        f'color:{"#0F172A" if it["completed"] else "#94A3B8"};">'
+        f'{_tick(bool(it["completed"]))} {it["label"]}</li>'
+        for it in checklist_items
+    )
+    body = (
+        _dh_section_heading("Service Checklist") +
+        f'<ul style="padding-left:0;margin:4px 0;list-style:none;">'
+        f'{rows}</ul>'
+    )
+    return _dh_card(body)
+
+
+def _dh_render_notes(notes_text: str) -> str:
+    """Notes card.  When notes are empty renders the muted ``Notes:
+    —`` fallback line (copy preserved verbatim from pre-Slice-5)."""
+    if notes_text:
+        safe = (notes_text.replace("<", "&lt;")
+                            .replace(">", "&gt;")
+                            .replace("\n", "<br/>"))
+        body = (
+            _dh_section_heading("Notes from your technician") +
+            f'<div style="font-size:14px;color:#0F172A;'
+            f'white-space:pre-wrap;">{safe}</div>'
+        )
+        return _dh_card(body)
+    # Empty-state fallback — muted, no card. Copy MUST match the
+    # existing "Notes: —" contract asserted by
+    # ``test_door_hanger_empty_report_renders_gracefully``.
+    return (
+        f'<p style="color:#94A3B8;font-size:13px;margin:16px 0;'
+        f'text-align:center;">Notes: —</p>'
+    )
+
+
+def _dh_render_photos(photos: List[Dict[str, Any]]) -> str:
+    if not photos:
+        return ""
+    thumbs = "".join(
+        f'<a href="{p["url_absolute"]}" '
+        f'style="display:inline-block;margin:4px;">'
+        f'<img src="{p["url_absolute"]}" '
+        f'alt="{(p.get("label") or "service photo")}" '
+        f'width="140" style="display:block;border-radius:8px;'
+        f'border:1px solid #E2E8F0;"/></a>'
+        for p in photos
+    )
+    body = (
+        _dh_section_heading("Service Photos") +
+        f'<div style="margin:4px 0;text-align:center;">{thumbs}</div>'
+    )
+    return _dh_card(body)
+
+
+def _dh_render_portal_cta(portal_url: str, brand_color: str) -> str:
+    """Feb-2026 · Addition 2 — portal auto-login CTA.  Copy preserved
+    verbatim ("View Service Report in Portal").
+    """
+    return (
+        f'<div style="text-align:center;margin:24px 0 8px 0;">'
+        f'<a href="{portal_url}" '
+        f'style="display:inline-block;background:{brand_color};'
+        f'color:#FFFFFF;padding:12px 24px;border-radius:6px;'
+        f'text-decoration:none;font-weight:600;font-size:14px;">'
+        f'View Service Report in Portal</a>'
+        f'</div>'
+    )
+
+
+def _dh_render_footer(company: str, tenant_phone: str) -> str:
+    """Footer copy preserved verbatim ("We appreciate your business" +
+    company name + phone). Centered for the card layout.
+    """
+    return (
+        f'<p style="font-size:13px;color:#334155;margin-top:24px;'
+        f'text-align:center;">We appreciate your business<br/>'
+        f'<b>{company}</b><br/>'
+        f'{tenant_phone}</p>'
+    )
 
 
 async def _build_door_hanger_email(
@@ -415,6 +790,14 @@ async def _build_door_hanger_email(
     """Compose the subject + HTML body for the door-hanger email.
     Pure builder — no send, no DB writes beyond the read helpers.
     Returns ``{"subject": str, "html": str}``.
+
+    Feb-2026 · Slice 5 — Visual redesign: each section now renders
+    inside an email-safe *card* (``<table role="presentation">``
+    wrapper) via ``_dh_render_*`` helpers so the output looks the same
+    in Gmail, Outlook, and iOS Mail. Inline styles only — no
+    ``<style>`` blocks and no ``class=`` attributes. All body copy is
+    preserved verbatim; the only new copy is the Elevated CTA block
+    (see ``_dh_render_elevated_cta``).
     """
     # P0 · Feb 2026 — resolve every service-report chunk via the same
     # helpers the Workstream Service Log page uses (chemistry,
@@ -423,12 +806,13 @@ async def _build_door_hanger_email(
     from services.service_report_view import (
         resolve_water_test, resolve_chemicals_used_with_cost,
         resolve_checklist_state, resolve_notes, resolve_photo_items,
+        _resolve_public_base_url,
     )
     from routers.checklists import DEFAULT_POOL_ITEMS, DEFAULT_LANDSCAPE_ITEMS
     kind = _classify(job)
     jid = job.get("id") or ""
     water_test = await resolve_water_test(db, job, tenant["id"]) if kind == "pool" else []
-    chems_used, chem_total_cents = await resolve_chemicals_used_with_cost(
+    chems_used, _chem_total_cents = await resolve_chemicals_used_with_cost(
         db, job, tenant["id"],
     ) if kind == "pool" else ([], 0)
     checklist = await resolve_checklist_state(
@@ -457,19 +841,10 @@ async def _build_door_hanger_email(
     subject = f"Job Completed - {company}"
 
     # Feb-2026 · Addition 1 — Service Date line (long-form, tenant TZ).
-    # Cascade: ``job.completed_at`` → ``job.scheduled_end`` →
-    # ``job.scheduled_start`` → now (UTC).  Rendered in the tenant's
-    # timezone (``tenant.timezone``, defaulting to the pod-wide
-    # ``America/Phoenix`` — same idiom used by
-    # ``invoice_numbering._year_in_tz`` and
-    # ``add_card_links.ensure_tenants_timezone_backfill``).
     service_date_line = _format_service_date(job, tenant)
 
-    # Feb-2026 · Door hanger copy + design update.
     # Job title cascade: ``job.title`` → ``job.service_template.title``
-    # → ``job.service_type``.  Prod jobs use ``service_type`` most
-    # often; ``service_template.title`` shows up on template-created
-    # jobs.
+    # → ``job.service_type``.
     job_title = (
         job.get("title")
         or (job.get("service_template") or {}).get("title")
@@ -498,164 +873,13 @@ async def _build_door_hanger_email(
         or "602-887-4400"   # TODO make per-tenant once ``tenant.phone`` is reliably seeded
     )
 
-    # Logo — served from the front-end asset bundle at ``/logo-full.png``.
-    # Use the same base-URL resolver the photo links use so preview /
-    # prod render the correct absolute URL.
-    from services.service_report_view import _resolve_public_base_url
     logo_url = f"{_resolve_public_base_url()}/logo-full.png"
+    brand_color = (tenant or {}).get("brand_color") or "#1f2937"
 
-    # ── Compose HTML fragments per section, hiding empty ones. ──
-    def _row(label: str, value: str) -> str:
-        return (
-            f"<tr><td style=\"padding:4px 12px 4px 0;color:#64748B;white-space:nowrap\">{label}</td>"
-            f"<td style=\"padding:4px 0;color:#0F172A\"><b>{value}</b></td></tr>"
-        )
-
-    water_html = ""
-    if water_test:
-        # Feb-2026 hotfix — customer-facing views show qualitative
-        # BANDS ("Below Average" / "Average" / "Above Average" /
-        # "Elevated") instead of raw ppm/pH numbers.  Tech-facing
-        # surfaces (Workstream, ServiceReport form) still render
-        # exact numbers — see ``services/chemistry_bands.py`` for
-        # the shared boundary rules.
-        from services.chemistry_bands import (
-            band_for_reading, CANONICAL_BAND_THRESHOLDS,
-        )
-        from services.chemistry_gate import DISPLAY_LABELS, CORE_READINGS
-        by_key = {r["key"]: r for r in water_test}
-        # 5-core section — fixed order, banded label. Missing rows
-        # skipped silently (chemistry gate should have blocked the
-        # completion, but defence-in-depth).
-        core_rows = ""
-        for key in CORE_READINGS:
-            r = by_key.get(key)
-            if not r:
-                continue
-            band = band_for_reading(key, r.get("value"))
-            if not band:
-                continue
-            core_rows += _row(DISPLAY_LABELS[key], band)
-        # Optional readings block — anything NOT in the 5 cores.
-        # Render exact value + unit; OMIT the row entirely if the
-        # value is blank (user-approved Feb-2026 spec).
-        optional_rows = ""
-        for r in water_test:
-            if r["key"] in CANONICAL_BAND_THRESHOLDS:
-                continue
-            v = r.get("value")
-            if v in (None, ""):
-                continue
-            optional_rows += _row(
-                r["label"],
-                f"{v} {r.get('unit') or ''}".strip(),
-            )
-        if core_rows or optional_rows:
-            water_html = (
-                f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Water Test</h3>"
-                f"<table cellpadding=0 cellspacing=0 style=\"font-size:14px;border-collapse:collapse\">"
-                f"{core_rows}{optional_rows}</table>"
-            )
-
-    chems_html = ""
-    if chems_used:
-        rows = "".join(
-            f"<li>{c['name']} — {c.get('display') or c['quantity']}</li>"
-            for c in chems_used
-        )
-        # Feb-2026 · Slice 4 — chemical cost hide. The door hanger is a
-        # customer-facing surface, so we intentionally omit the
-        # ``Chemical cost: $x.xx`` line even though the resolver still
-        # returns ``chem_total_cents``. Cost visibility for tech /
-        # admin / super_admin is unchanged on internal surfaces.
-        chems_html = (
-            f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Chemicals Used</h3>"
-            f"<ul style=\"font-size:14px;color:#0F172A;padding-left:20px;margin:4px 0\">{rows}</ul>"
-        )
-
-    checklist_html = ""
-    checklist_items = (checklist or {}).get("items") or []
-    if checklist_items:
-        # Split completed vs skipped so the customer sees BOTH — the
-        # door hanger's job is transparency, not marketing.
-        def _tick(done: bool) -> str:
-            return "&#10003;" if done else "&#9633;"
-        rows = "".join(
-            f"<li style=\"color:{'#0F172A' if it['completed'] else '#94A3B8'}\">"
-            f"{_tick(bool(it['completed']))} {it['label']}</li>"
-            for it in checklist_items
-        )
-        checklist_html = (
-            f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Service Checklist</h3>"
-            f"<ul style=\"font-size:14px;list-style:none;padding-left:0;margin:4px 0\">"
-            f"{rows}</ul>"
-        )
-
-    notes_html = ""
-    if notes_text:
-        # Escape newlines to <br/> so the customer sees the tech's
-        # freeform notes formatted the way they were typed.
-        notes_safe = notes_text.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
-        notes_html = (
-            f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Notes from your technician</h3>"
-            f"<div style=\"font-size:14px;color:#0F172A;white-space:pre-wrap\">{notes_safe}</div>"
-        )
-    else:
-        notes_html = (
-            f"<p style=\"color:#94A3B8;font-size:13px;margin-top:16px\">"
-            f"Notes: —</p>"
-        )
-
-    photos_html = ""
-    if photos:
-        thumbs = "".join(
-            f"<a href=\"{p['url_absolute']}\" style=\"display:inline-block;margin:4px\">"
-            f"<img src=\"{p['url_absolute']}\" alt=\"{(p.get('label') or 'service photo')}\" "
-            f"width=\"140\" style=\"display:block;border-radius:8px;border:1px solid #E2E8F0\"/></a>"
-            for p in photos
-        )
-        photos_html = (
-            f"<h3 style=\"color:#0F172A;margin:16px 0 4px;font-size:15px\">Service Photos</h3>"
-            f"<div style=\"margin:4px 0\">{thumbs}</div>"
-        )
-
-    # Header — centered logo + new "Your visit has been completed."
-    # greeting + job title + service address (both bolded).  Copy
-    # confirmed with the user Feb-2026.
-    logo_html = (
-        f"<div style=\"text-align:center;margin-bottom:20px\">"
-        f"<img src=\"{logo_url}\" alt=\"{company}\" "
-        f"width=\"200\" style=\"max-width:200px;height:auto;display:inline-block\"/>"
-        f"</div>"
-    )
-    header_html = (
-        # Feb-2026 hotfix — greeting shrunk to match the job-title
-        # line (``font-size:15px``, non-bold, same color as body).
-        # Previously rendered as an ``<h2>`` which many email clients
-        # blew up to ~24px, making the first line dominate the visual
-        # hierarchy above the actual service info.  Kept as a ``<p>``
-        # for semantic honesty — it's a greeting, not a heading.
-        f"<p style=\"color:#0F172A;margin:0 0 8px;font-size:15px;font-weight:normal\">"
-        f"Hi {customer_first_name}, your visit has been completed.</p>"
-        + (f"<p style=\"margin:4px 0;font-size:14px;color:#555\">Service Date: {service_date_line}</p>"
-           if service_date_line else "")
-        + (f"<p style=\"margin:4px 0;font-size:15px\"><b>{job_title}</b></p>" if job_title else "")
-        + (f"<p style=\"margin:4px 0;font-size:14px;color:#334155\"><b>{service_address}</b></p>" if service_address else "")
-        + f"<p style=\"font-size:13px;color:#64748B;margin-top:8px\">Completed on <b>{str(completed)[:10]}</b>.</p>"
-    )
-
-    # Feb-2026 · Addition 2 — Customer portal deep-link CTA.
-    # Placement: BELOW the photos section, ABOVE the footer. Tenant
-    # brand color if available, else neutral dark. Inline styles only
-    # (Gmail / Outlook / iOS Mail strip <style> blocks).
-    # Skip rules for the CTA (do NOT skip the whole email):
-    #   * missing ``customer.id`` → omit the CTA block entirely.
+    # ── Portal auto-login CTA (Feb-2026 Addition 2). ──
+    # Skip rules preserved from the pre-redesign builder:
+    #   * missing ``customer.id`` → omit CTA block entirely.
     #   * mint helper raises      → catch, log, omit CTA.
-    # Hotfix Feb-2026 — the URL now points at the backend redemption
-    # interstitial ``/api/portal/auto-login?t=…`` so a click auto-
-    # logs the customer in and lands them on the service report.  The
-    # plaintext "paste this link" fallback line was removed per user
-    # feedback (visual noise + double surface for the same URL).
     portal_cta_html = ""
     customer_id_for_link = (cust or {}).get("id") or cid
     if customer_id_for_link and jid and (tenant or {}).get("id"):
@@ -665,34 +889,57 @@ async def _build_door_hanger_email(
                 _resolve_public_base_url(),
                 customer_id_for_link, jid, tenant["id"],
             )
-            _btn_bg = (tenant or {}).get("brand_color") or "#1f2937"
-            portal_cta_html = (
-                f"<div style=\"text-align:center;margin:32px 0 16px;\">"
-                f"<a href=\"{portal_url}\" "
-                f"style=\"display:inline-block;background:{_btn_bg};"
-                f"color:#ffffff;padding:12px 24px;border-radius:6px;"
-                f"text-decoration:none;font-weight:600;font-size:14px;\">"
-                f"View Service Report in Portal</a>"
-                f"</div>"
-            )
+            portal_cta_html = _dh_render_portal_cta(portal_url, brand_color)
         except Exception as exc:  # pragma: no cover — belt-and-braces
             logger.warning(f"[door-hanger] portal CTA mint failed: {exc}")
             portal_cta_html = ""
 
+    # ── Elevated readings CTA (Feb-2026 Slice 5). Only pool jobs
+    # with 2+ elevated core readings; suppressed for unsubscribed /
+    # do-not-contact customers. Placement: below Water Test, above
+    # Chemicals Used (see body assembly below).
+    elevated_count = _dh_elevated_core_count(water_test)
+    elevated_cta_html = _dh_render_elevated_cta(
+        elevated_count=elevated_count, cust=cust, tenant=tenant,
+        job_id=jid, brand_color=brand_color,
+    )
+
+    # ── Section render order ──
+    hero_html      = _dh_render_hero(
+        logo_url=logo_url, company=company, first_name=customer_first_name,
+        service_date=service_date_line, job_title=job_title,
+        service_address=service_address, completed=completed,
+    )
+    water_html     = _dh_render_water_test(water_test)
+    chems_html     = _dh_render_chemicals(chems_used)
+    checklist_html = _dh_render_checklist((checklist or {}).get("items") or [])
+    notes_html     = _dh_render_notes(notes_text)
+    photos_html    = _dh_render_photos(photos)
+    footer_html    = _dh_render_footer(company, tenant_phone)
+
+    # Email-safe outer wrapper: table with fixed max-width and neutral
+    # background. No ``<style>`` block, no ``class=`` — inline styles
+    # only across every child element.
     html = (
-        f"<div style=\"font-family:Inter,Arial,sans-serif;max-width:640px;color:#0F172A\">"
-        f"{logo_html}"
-        f"{header_html}"
-        f"{water_html}"
-        f"{chems_html}"
-        f"{checklist_html}"
-        f"{notes_html}"
-        f"{photos_html}"
-        f"{portal_cta_html}"
-        f"<p style=\"font-size:13px;color:#334155;margin-top:24px;\">We appreciate your business<br/>"
-        f"<b>{company}</b><br/>"
-        f"{tenant_phone}</p>"
-        f"</div>"
+        f'<table role="presentation" cellpadding="0" cellspacing="0" '
+        f'border="0" width="100%" style="border-collapse:collapse;'
+        f'background:#F1F5F9;">'
+        f'<tr><td align="center" style="padding:24px 12px;">'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" '
+        f'border="0" width="640" style="border-collapse:collapse;'
+        f'max-width:640px;font-family:Inter,Arial,sans-serif;color:#0F172A;">'
+        f'<tr><td>'
+        f'{hero_html}'
+        f'{water_html}'
+        f'{elevated_cta_html}'
+        f'{chems_html}'
+        f'{checklist_html}'
+        f'{notes_html}'
+        f'{photos_html}'
+        f'{portal_cta_html}'
+        f'{footer_html}'
+        f'</td></tr></table>'
+        f'</td></tr></table>'
     )
     return {"subject": subject, "html": html}
 
@@ -974,7 +1221,8 @@ async def email_door_hanger(
     if cid:
         cust = await db.customers.find_one(
             {"id": cid, "tenant_id": tenant["id"]},
-            {"_id": 0, "id": 1, "name": 1, "first_name": 1, "email": 1},
+            {"_id": 0, "id": 1, "name": 1, "first_name": 1, "email": 1,
+             "unsubscribed": 1, "do_not_contact": 1},
         )
     email = (cust or {}).get("email") or ""
     if not email:

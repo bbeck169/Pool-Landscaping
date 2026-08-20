@@ -11380,3 +11380,81 @@ Tech / admin / super_admin surfaces UNCHANGED.
 * Auto-visit email — no cost fields (already customer-safe).
 * Visit-recap email `_compose_recap` — uses `_chem_added_line` which
   only emits name + qty + unit.
+
+---
+
+## Feb-2026 · Queue Item #5 — Door Hanger Visual Redesign + Elevated CTA · ✅ SHIPPED
+
+**Scope** — Refactor `_build_door_hanger_email` into section-builder
+helpers, apply email-safe table-based card layout, and add a
+service-recommendation CTA for elevated water-test readings.
+
+**Code changes**
+
+* `backend/routers/workstream_service_log.py`
+  * New module-level helpers: `_DH_BAND_CHIPS` map, `_dh_band_chip`,
+    `_dh_card`, `_dh_section_heading`, `_dh_render_hero`,
+    `_dh_render_water_test`, `_dh_elevated_core_count`,
+    `_dh_render_elevated_cta`, `_dh_render_chemicals`,
+    `_dh_render_checklist`, `_dh_render_notes`, `_dh_render_photos`,
+    `_dh_render_portal_cta`, `_dh_render_footer`.
+  * `_build_door_hanger_email` reduced to a ~90-line orchestrator
+    that composes: hero → Water Test → **Elevated CTA (new)** →
+    Chemicals Used → Service Checklist → Notes → Photos → Portal
+    CTA → Footer. Each section is a `<table role="presentation">`
+    wrapped card with inline styles only — no `<style>` blocks, no
+    `class=` attributes.
+  * Manual endpoint `email_door_hanger` customer projection now
+    includes `unsubscribed` + `do_not_contact` so the CTA-level
+    suppression fires even when the admin override bypasses
+    whole-email opt-out.
+
+* **Elevated CTA** (`_dh_render_elevated_cta`)
+  * Trigger: 2+ core readings in `Elevated` band.
+  * Suppression: `<2` elevated / landscape job (no water test) /
+    `cust.unsubscribed` / `cust.do_not_contact`.
+  * Layout: cream card (`#FFFBF5` / border `#FDE68A`), `NEXT STEPS`
+    eyebrow, `A few readings look elevated` heading, 2-sentence
+    warm body (no button copy duplication, no medical/legal
+    language), 2-column button table (Reply=filled brand color /
+    Call=outline) → collapses to full-width Reply if
+    `tenant.phone` and `rc_sms_from_number` are both missing.
+  * Reply button: `mailto:{sender.reply_to || support_email ||
+    contact_email || hello@plofv.com}?subject=Follow-Up Request
+    — Job {job_id}`.
+  * Call button: `tel:` scheme, digits-only (`+` preserved).
+
+**Tests** — `backend/tests/test_door_hanger_email_body.py`
+* 13 existing tests all still pass (markup contracts preserved:
+  `<h3>` section headings, `<b>{band}</b>` inside chips,
+  `</table>` end-of-section sentinels, `Notes: —` fallback).
+* **10 new Elevated CTA tests**: 0/1/2/3+ elevated thresholds,
+  landscape suppression, unsubscribed suppression, phone-missing
+  full-width fallback, `mailto:` scheme + subject correctness,
+  `tel:` scheme, ≤2-sentence body-copy guard.
+* **1 new email-safety guard**: no `<style>` blocks, no `class=`
+  attributes, `role="presentation"` table layout enforced.
+* Total: 24/24 pass. Wider regression sweep 67/67
+  (door-hanger + portal DTO + workstream + chemistry bands +
+  auto-send + portal auto-login).
+
+**Live-verify** — Deferred to user. Command:
+```bash
+# From an admin session, hit the manual endpoint on a job whose
+# service report has pH=8.6 + Alkalinity=210 (both Elevated).
+curl -X POST "$API_URL/api/jobs/{job_id}/email-door-hanger" \
+     -H "Authorization: Bearer $TOKEN"
+```
+Confirm the resulting Resend email at `brian@plofv.com` shows the
+NEXT STEPS card with both buttons functional.
+
+**Surfaces preserved unchanged**
+* Subject line, greeting copy, service date long-form, job title,
+  service address, completion date line.
+* Water Test heading + band-chip labels.
+* Chemicals Used heading (no cost line — Slice 4 invariant).
+* Service Checklist heading + tick/box rendering.
+* Notes heading + "Notes: —" empty-state fallback.
+* Service Photos heading + absolute URLs.
+* View Service Report in Portal CTA + auto-login target URL.
+* "We appreciate your business" footer + phone cascade.

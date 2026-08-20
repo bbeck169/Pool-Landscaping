@@ -757,3 +757,446 @@ def test_door_hanger_optional_reading_rendered_when_filled(monkeypatch):
             await _drain(tid, jid, cid)
 
     _run(_go())
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · Slice 5 — Elevated readings follow-up CTA tests.
+# ═════════════════════════════════════════════════════════════════════
+#
+# Trigger rule: when 2+ core readings land in the ``Elevated`` band,
+# render a service-recommendation card between Water Test and
+# Chemicals Used with a Reply-to-Schedule mailto + Call tel button.
+#
+# Suppression rules covered below:
+#   * 0 or 1 elevated cores → no block
+#   * landscape job → no block (no water test)
+#   * customer.unsubscribed → no block (Water Test card still shows)
+#   * tenant.phone missing → Reply button full-width, Call absent
+_ELEVATED_CTA_HEADING = "A few readings look elevated"
+_ELEVATED_CTA_EYEBROW = "NEXT STEPS"
+_ELEVATED_REPLY_LABEL = "Reply to Schedule Follow-Up"
+
+
+def _elevated_seed_readings(elevated_count: int) -> list:
+    """Return a canonical 5-core reading seed with the first
+    ``elevated_count`` cores pushed into the Elevated band and the
+    rest in the Average band. Free Cl >10 → Elevated; pH >8.4 →
+    Elevated; alkalinity >180 → Elevated; CYA >150 → Elevated. Total
+    Cl matches Free Cl for the Elevated case so the gate doesn't fire.
+    """
+    all_core = [
+        ("free_chlorine",  12.0, 2.5),   # (>10 elevated, average)
+        ("total_chlorine", 12.0, 3.0),
+        ("ph",             8.6,  7.4),
+        ("alkalinity",     200,  90),
+        ("cyanuric_acid",  180,  45),
+    ]
+    seed = []
+    for i, (key, hi, ok) in enumerate(all_core):
+        seed.append({"key": key, "value": hi if i < elevated_count else ok})
+    return seed
+
+
+def test_door_hanger_elevated_cta_absent_when_zero_elevated(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(0),
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            assert _ELEVATED_CTA_HEADING not in body
+            assert _ELEVATED_CTA_EYEBROW not in body
+            assert _ELEVATED_REPLY_LABEL not in body
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_elevated_cta_absent_when_one_elevated(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(1),
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            # Single Elevated reading still shows in Water Test chip.
+            _wt = body[body.index("Water Test</h3>"):body.index("</table>",
+                       body.index("Water Test</h3>"))]
+            assert "<b>Elevated</b>" in _wt
+            # But the follow-up CTA MUST NOT render (threshold is 2+).
+            assert _ELEVATED_CTA_HEADING not in body
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_elevated_cta_renders_when_two_elevated(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(2),
+        })
+        # Force a known tenant phone so the Call button is present
+        # in this positive-path test. The seeded tenant doc doesn't
+        # write a phone field by default.
+        await _db().tenants.update_one(
+            {"id": tid}, {"$set": {"phone": "+1 (602) 555-0199"}},
+        )
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            # Block present.
+            assert _ELEVATED_CTA_EYEBROW in body
+            assert _ELEVATED_CTA_HEADING in body
+            assert _ELEVATED_REPLY_LABEL in body
+            assert "Call " in body
+            # Positional: Water Test < Elevated CTA < Chemicals Used
+            # (chemicals section is empty in this seed; use portal
+            # CTA / footer as end sentinel).
+            wt_idx = body.index("Water Test</h3>")
+            ecta_idx = body.index(_ELEVATED_CTA_HEADING)
+            footer_idx = body.index("We appreciate your business")
+            assert wt_idx < ecta_idx < footer_idx, (wt_idx, ecta_idx, footer_idx)
+        finally:
+            await _db().tenants.update_one(
+                {"id": tid}, {"$unset": {"phone": ""}},
+            )
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_elevated_cta_renders_when_three_plus_elevated(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(4),
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            assert _ELEVATED_CTA_HEADING in body
+            assert _ELEVATED_REPLY_LABEL in body
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_elevated_cta_absent_for_landscape_job(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        # Explicitly landscape job — no water test resolved regardless
+        # of any chemistry rows the DB happens to hold.
+        from utils import new_id, now_iso
+        jid = f"test-job-{uuid.uuid4().hex[:12]}"
+        await _db().jobs.insert_one({
+            "id": jid, "tenant_id": tid, "customer_id": cid,
+            "customer_name": "Kaylan Testcase",
+            "service_type": "Landscape Maintenance",
+            "status": "completed", "completed_at": now_iso(),
+            "scheduled_date": now_iso(),
+            "title": "Yard Clean-Up", "created_at": now_iso(),
+        })
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            # Even with elevated readings on file, the landscape kind
+            # short-circuits water_test resolution to [].
+            "chemical_readings": _elevated_seed_readings(4),
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            assert "Water Test" not in body
+            assert _ELEVATED_CTA_HEADING not in body
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_elevated_cta_suppressed_when_customer_unsubscribed(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        # Flip the customer to unsubscribed AFTER creation.
+        await _db().customers.update_one(
+            {"id": cid, "tenant_id": tid},
+            {"$set": {"unsubscribed": True}},
+        )
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(3),
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            # Manual endpoint bypasses opt-out on the whole email BUT
+            # the CTA-level suppression still fires — Water Test card
+            # renders, Elevated CTA does not.
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            assert "Water Test</h3>" in body
+            _wt = body[body.index("Water Test</h3>"):body.index("</table>",
+                       body.index("Water Test</h3>"))]
+            assert "<b>Elevated</b>" in _wt
+            assert _ELEVATED_CTA_HEADING not in body
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_elevated_cta_hides_call_button_when_tenant_phone_missing(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(3),
+        })
+        # Wipe both tenant.phone and tenant.rc_sms_from_number so the
+        # CTA button-row falls back to the full-width Reply layout.
+        # (Footer still renders the hardcoded fallback phone; the
+        # CTA does NOT use that.)
+        prev_phone = None
+        prev_rc = None
+        t = await _db().tenants.find_one({"id": tid}, {"_id": 0, "phone": 1,
+                                                        "rc_sms_from_number": 1})
+        if t:
+            prev_phone = t.get("phone")
+            prev_rc = t.get("rc_sms_from_number")
+        await _db().tenants.update_one(
+            {"id": tid},
+            {"$unset": {"phone": "", "rc_sms_from_number": ""}},
+        )
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            assert _ELEVATED_CTA_HEADING in body
+            assert _ELEVATED_REPLY_LABEL in body
+            # Scope the Call-button check to the Elevated CTA card:
+            # the footer contains the hardcoded fallback phone but
+            # NOT a ``tel:`` link.  A ``tel:`` scheme anywhere in the
+            # body signals a Call button rendered — assert none.
+            assert "tel:" not in body, (
+                "Call button rendered even though tenant.phone + "
+                "rc_sms_from_number were both unset"
+            )
+        finally:
+            # Restore the phone fields so subsequent tests aren't
+            # polluted (autouse fixture doesn't reset tenants).
+            restore = {}
+            if prev_phone is not None:
+                restore["phone"] = prev_phone
+            if prev_rc is not None:
+                restore["rc_sms_from_number"] = prev_rc
+            if restore:
+                await _db().tenants.update_one({"id": tid}, {"$set": restore})
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_elevated_cta_reply_button_uses_mailto_scheme(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(3),
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            # Locate the Reply button's <a> tag and inspect its href.
+            import re
+            m = re.search(
+                r'<a href="([^"]+)"[^>]*>\s*Reply to Schedule Follow-Up',
+                body,
+            )
+            assert m, "Reply-to-Schedule button not found"
+            href = m.group(1)
+            # MUST be a mailto: scheme, NOT https://.
+            assert href.startswith("mailto:"), (
+                f"Reply CTA href must use mailto:, got {href!r}"
+            )
+            assert "http://" not in href and "https://" not in href
+            # Subject includes the job id for admin triage.
+            assert f"Job%20{jid}" in href, href
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_elevated_cta_call_button_uses_tel_scheme(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(3),
+        })
+        # Force a known tenant.phone so the assertion is deterministic.
+        await _db().tenants.update_one(
+            {"id": tid}, {"$set": {"phone": "+1 (602) 555-0199"}},
+        )
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            import re
+            m = re.search(
+                r'<a href="(tel:[^"]+)"[^>]*>\s*Call [^<]+</a>',
+                body,
+            )
+            assert m, "Call button not found or missing tel: scheme"
+            tel = m.group(1)
+            # Digits-only after ``tel:`` (with a leading +).
+            digits = tel.split("tel:", 1)[1]
+            assert digits.startswith("+") or digits[0].isdigit()
+            assert all(ch.isdigit() or ch == "+" for ch in digits)
+        finally:
+            # Restore tenant phone.
+            await _db().tenants.update_one(
+                {"id": tid}, {"$unset": {"phone": ""}},
+            )
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_elevated_cta_body_copy_is_two_sentences_max(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech", "submitted_at": now_iso(),
+            "chemical_readings": _elevated_seed_readings(3),
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            # Eyebrow + heading present.
+            assert _ELEVATED_CTA_EYEBROW in body
+            assert _ELEVATED_CTA_HEADING in body
+            # Extract the body paragraph following the heading. It
+            # sits inside a single <p> tag between the heading and the
+            # button row.
+            import re
+            m = re.search(
+                r'A few readings look elevated</p>\s*'
+                r'<p [^>]*>([^<]+)</p>',
+                body,
+            )
+            assert m, "elevated CTA body paragraph not found"
+            para = m.group(1).strip()
+            # Sentence count ≤ 2 (via terminal punctuation counter).
+            sentence_count = sum(1 for ch in para if ch in ".!?")
+            assert sentence_count <= 2, (
+                f"CTA body must be ≤ 2 sentences, got {sentence_count}: "
+                f"{para!r}"
+            )
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · Slice 5 — Email-safety guards for the visual redesign.
+# ═════════════════════════════════════════════════════════════════════
+#
+# Belt-and-braces regression net: the redesigned template MUST stay
+# inline-styles-only so Gmail/Outlook/iOS Mail can't strip layout.
+def test_door_hanger_uses_inline_styles_only_and_no_class_attrs(monkeypatch):
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            # No ``<style>`` blocks anywhere in the body.
+            import re
+            assert not re.search(r'<\s*style\b', body, re.IGNORECASE), (
+                "email template must not include <style> blocks — "
+                "many email clients strip them"
+            )
+            # No ``class=`` attribute — spec is inline-only.
+            assert not re.search(r'\sclass=', body), (
+                "email template must not use class= — inline styles only"
+            )
+            # Card layout uses <table role="presentation"> wrappers.
+            assert 'role="presentation"' in body, (
+                "expected email-safe table-based card layout"
+            )
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
