@@ -10589,3 +10589,70 @@ all fields are derivations of G0-G5c data.
 - Manual overrides + G5b batch behavior unchanged.
 - Aggregation bounded by 300-user tenant fan-out cap + 100-row
   leaderboard cap + 5-min cache TTL.
+
+---
+
+## Feb-2026 · Door-hanger email — Part A + Part B (Auto-send on completion)
+
+**Part A (copy/design)** — already shipped in prior turn. This entry
+documents Part B (Auto-send + shared builder refactor).
+
+### Files changed
+- `backend/routers/workstream_service_log.py` — extracted the body
+  builder + Resend dispatcher into shared helpers
+  (`_build_door_hanger_email`, `_compose_and_send_door_hanger`),
+  added `maybe_auto_send_door_hanger(jid, tenant_id)` +
+  `schedule_auto_send_door_hanger` fire-and-forget wrapper. Manual
+  endpoint now uses the shared dispatcher with `actor="manual"`.
+- `backend/routers/jobs.py` — hooked `PUT /api/jobs/{jid}` at the
+  `pending→completed` transition (line ~1076) to schedule the
+  fire-and-forget auto-send.
+- `backend/routers/service_reports.py` — hooked
+  `POST /api/jobs/{jid}/service-report/submit` (line ~452) to
+  schedule the fire-and-forget auto-send when the submit flow flips
+  the job status to `completed`. Captures `_prev_status` BEFORE the
+  update.
+- `backend/routers/mobile_sync.py` — hooked `_handle_job_close`
+  (mobile offline sync replay) with the same transition guard so
+  mobile-driven completions also fire once.
+- `backend/tests/test_door_hanger_auto_send.py` — **NEW.** 8 tests
+  covering all 7 contract points.
+
+### Contract
+* Trigger: fires on `previous_status != "completed"` →
+  `new_status == "completed"` from THREE write paths:
+  `PUT /api/jobs/{jid}`, `POST /api/jobs/{jid}/service-report/submit`,
+  and `mobile_sync._handle_job_close`.
+* Idempotency: unique `marketing_event_ledger` row keyed
+  `(tenant_id, customer_id, event_key="door_hanger_auto:{job_id}")`.
+  Insert-first so concurrent completions cannot double-send;
+  `DuplicateKeyError` = skip silently.
+* Opt-out fields honoured: `customer.unsubscribed`,
+  `customer.do_not_contact`, and `subscribers.status ==
+  "unsubscribed"` (Marketing M1 mirror). Manual endpoint bypasses
+  all three (admin override).
+* Skip paths still stamp the ledger `sent` so we do NOT retry-loop;
+  a `marketing_deliveries` row with `provider_status="skipped"` is
+  logged with the reason.
+* Non-blocking: dispatched via `asyncio.create_task(...)` — the
+  completion API returns 2xx before Resend is called.
+* Never raises: outer helper catches all exceptions, logs, returns
+  `{"status": "error", ...}`.
+
+### Tests
+`backend/tests/test_door_hanger_auto_send.py` — 8/8 passing:
+1. First completion → one ledger + one delivery + one Resend call.
+2. Repeat completion → no extra rows / no extra Resend calls.
+3. `could_not_service` → no ledger, no delivery, no Resend.
+4. No customer email → ledger sent, delivery `skipped`, no Resend.
+5. `customer.unsubscribed=True` → skip with reason
+   `customer_unsubscribed`.
+6. `customer.do_not_contact=True` → skip with reason
+   `customer_do_not_contact`.
+7. Manual endpoint AFTER auto-send → not blocked by the auto ledger
+   key; produces its own manual delivery row.
+8. Internal crash inside builder → helper never raises; returns
+   `{"status": "error"|...}`.
+
+Full `test_door_hanger_auto_send.py` + `test_door_hanger_email_body.py`
+suite → **12/12 passing** in 1.76s.

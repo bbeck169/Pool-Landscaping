@@ -125,6 +125,7 @@ async def _handle_job_close(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
         {"id": op.entity_id, "tenant_id": tenant_id}, {"_id": 0})
     if not job:
         raise ValueError("job not found")
+    _prev_status = (job.get("status") or "").lower()
     await _log_conflict(op, tenant_id, {"status": job.get("status"),
                                             "completed_at": job.get("completed_at")})
     await db.jobs.update_one(
@@ -135,6 +136,19 @@ async def _handle_job_close(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
                     "client_op_id": op.client_op_id,
                     "updated_at": now_iso()}},
     )
+    # Feb-2026 · Door-hanger auto-send on completion transition.
+    # Fires only on the pending→completed transition; mobile sync
+    # replays of an already-completed job (idempotent close) are
+    # silently skipped by the helper too, but this guard keeps
+    # semantics identical across write paths.
+    if _prev_status != "completed":
+        try:
+            from routers.workstream_service_log import (
+                schedule_auto_send_door_hanger,
+            )
+            schedule_auto_send_door_hanger(op.entity_id, tenant_id)
+        except Exception:
+            pass
     return {"server_id": op.entity_id, "server_ts": now_iso()}
 
 

@@ -1074,6 +1074,14 @@ async def update_job(jid: str, body: JobUpdate,
                                   f"Your {job.get('service_type', 'service')} is complete. View your report in the app.", job_id=jid)
             fresh = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
             await send_completion_email(fresh)
+            # Feb-2026 · Door-hanger auto-send on completion transition.
+            # Fire-and-forget so the PUT response returns immediately.
+            # Idempotency + skip rules live inside the helper.
+            try:
+                from routers.workstream_service_log import schedule_auto_send_door_hanger
+                schedule_auto_send_door_hanger(jid, tenant["id"])
+            except Exception as _dh:
+                logger.warning(f"door-hanger auto-send schedule failed: {_dh}")
             # True recurrence: auto-book the next filter/salt-cell cleaning on the cadence.
             from routers.maintenance import create_recurring_maintenance
             await create_recurring_maintenance(fresh)

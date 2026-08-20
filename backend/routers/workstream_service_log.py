@@ -350,69 +350,33 @@ def _format_chem_qty(qty: float, unit: str) -> str:
     return str(int(qty) if qty == int(qty) else qty)
 
 
-# ─── POST /api/jobs/{jid}/email-door-hanger ──────────────────────────
-@router.post("/jobs/{jid}/email-door-hanger")
-async def email_door_hanger(
-    jid: str,
-    user: dict = Depends(get_current_user),
-    tenant: dict = Depends(get_current_tenant),
-):
-    _require_admin_or_403(user)
-    job = await db.jobs.find_one(
-        {"id": jid, "tenant_id": tenant["id"]}, {"_id": 0},
-    )
-    if not job:
-        raise HTTPException(404, "Job not found")
-    cid = job.get("customer_id")
-    cust = None
-    if cid:
-        cust = await db.customers.find_one(
-            {"id": cid, "tenant_id": tenant["id"]},
-            {"_id": 0, "id": 1, "name": 1, "first_name": 1, "email": 1},
-        )
-    email = (cust or {}).get("email") or ""
-    if not email:
-        raise HTTPException(400, "Customer has no email on file")
+# ─── Door-hanger email · shared builder + dispatcher ─────────────────
+# Feb-2026 · Part A + Part B refactor.  The body composition and the
+# Resend dispatch are hoisted out of the POST endpoint so BOTH the
+# manual endpoint and the auto-send on job-completion path share a
+# single template + delivery record shape.  Only the dedupe primitive
+# differs — see :func:`maybe_auto_send_door_hanger` below.
 
-    # Idempotency: reject a second send within the cooldown window.
-    cutoff_iso = (
-        datetime.now(timezone.utc) - timedelta(seconds=_DOOR_HANGER_COOLDOWN_SECS)
-    ).isoformat().replace("+00:00", "Z")
-    recent = await db.marketing_deliveries.find_one(
-        {"tenant_id": tenant["id"],
-         "trigger_entity.kind": "job_door_hanger",
-         "trigger_entity.id": jid,
-         "sent_at": {"$gte": cutoff_iso}},
-        {"_id": 0, "id": 1, "sent_at": 1},
-    )
-    if recent:
-        return JSONResponse(
-            status_code=429,
-            content={
-                "ok": False,
-                "reason": "cooldown",
-                "cooldown_seconds": _DOOR_HANGER_COOLDOWN_SECS,
-                "last_delivery_id": recent.get("id"),
-                "last_sent_at": recent.get("sent_at"),
-            },
-        )
 
-    # Compose. Keep the body simple + branded; techs never call this
-    # endpoint so no tech-projection needed.
-    #
+async def _build_door_hanger_email(
+    *, job: Dict[str, Any], tenant: Dict[str, Any],
+    cust: Dict[str, Any], cid: Optional[str],
+) -> Dict[str, Any]:
+    """Compose the subject + HTML body for the door-hanger email.
+    Pure builder — no send, no DB writes beyond the read helpers.
+    Returns ``{"subject": str, "html": str}``.
+    """
     # P0 · Feb 2026 — resolve every service-report chunk via the same
     # helpers the Workstream Service Log page uses (chemistry,
     # chemicals used, checklist, notes, photos).  Pre-fix the door
-    # hanger read from ``job.notes`` / ``job.service_notes`` only —
-    # which meant every real tech submission produced an empty "Notes:
-    # —" email plus no chemistry, no chemicals, no checklist and no
-    # images.
+    # hanger read from ``job.notes`` / ``job.service_notes`` only.
     from services.service_report_view import (
         resolve_water_test, resolve_chemicals_used_with_cost,
         resolve_checklist_state, resolve_notes, resolve_photo_items,
     )
     from routers.checklists import DEFAULT_POOL_ITEMS, DEFAULT_LANDSCAPE_ITEMS
     kind = _classify(job)
+    jid = job.get("id") or ""
     water_test = await resolve_water_test(db, job, tenant["id"]) if kind == "pool" else []
     chems_used, chem_total_cents = await resolve_chemicals_used_with_cost(
         db, job, tenant["id"],
@@ -593,6 +557,80 @@ async def email_door_hanger(
         f"{tenant_phone}</p>"
         f"</div>"
     )
+    return {"subject": subject, "html": html}
+
+
+# ─── Opt-out signals ─────────────────────────────────────────────────
+# Door-hanger auto-send honours THREE signals (any true → skip):
+#   1. ``customer.unsubscribed`` (bool)              — legacy explicit flag
+#   2. ``customer.do_not_contact`` (bool)            — CRM DNC flag
+#   3. ``subscribers.status == "unsubscribed"``      — Marketing M1 mirror
+# The manual endpoint bypasses these checks — an admin clicking the
+# manual button is an explicit override.
+async def _customer_opt_out_reason(
+    tenant_id: str, cust: Optional[Dict[str, Any]], email: str,
+) -> Optional[str]:
+    c = cust or {}
+    if bool(c.get("unsubscribed")) is True:
+        return "customer_unsubscribed"
+    if bool(c.get("do_not_contact")) is True:
+        return "customer_do_not_contact"
+    if not email:
+        return None
+    try:
+        sub = await db.subscribers.find_one(
+            {"tenant_id": tenant_id, "email": email.strip().lower()},
+            {"_id": 0, "status": 1},
+        )
+        if sub and str(sub.get("status") or "").lower() == "unsubscribed":
+            return "subscriber_unsubscribed"
+    except Exception as exc:  # pragma: no cover
+        logger.warning(f"[door-hanger] subscriber lookup failed: {exc}")
+    return None
+
+
+async def _record_door_hanger_skip(
+    *, tenant_id: str, jid: str, cid: Optional[str],
+    email: str, reason: str, actor: str,
+) -> str:
+    """Log a ``skipped`` row to ``marketing_deliveries`` so ops can see
+    WHY a door hanger auto-fire didn't send.  Ledger still records
+    ``sent`` (see caller) so we don't retry-loop on the same job."""
+    did = new_id()
+    try:
+        await db.marketing_deliveries.insert_one({
+            "id": did, "tenant_id": tenant_id, "kind": "transactional",
+            "trigger_entity": {"kind": "job_door_hanger", "id": jid},
+            "customer_id": cid, "channel": "email",
+            "recipient_email": email or None,
+            "subject_rendered": None, "body_rendered": None,
+            "provider": "skipped",
+            "provider_status": "skipped",
+            "skip_reason": reason,
+            "actor": actor,
+            "attempts": 0, "mock": False,
+            "sent_at": now_iso(),
+        })
+    except Exception as exc:  # pragma: no cover
+        logger.warning(f"[door-hanger] skip-log insert failed: {exc}")
+    return did
+
+
+async def _compose_and_send_door_hanger(
+    *, job: Dict[str, Any], tenant: Dict[str, Any],
+    cust: Dict[str, Any], cid: Optional[str], email: str,
+    sent_by_user_id: Optional[str], actor: str,
+) -> Dict[str, Any]:
+    """Shared dispatcher used by BOTH the manual endpoint and the
+    auto-send hook.  Builds the body, calls Resend (or the mock),
+    and records the ``marketing_deliveries`` row.  Never raises —
+    exceptions are logged and surfaced via ``provider_status``."""
+    jid = job.get("id") or ""
+    composed = await _build_door_hanger_email(
+        job=job, tenant=tenant, cust=cust, cid=cid,
+    )
+    subject = composed["subject"]
+    html = composed["html"]
 
     delivery_id = new_id()
     provider_res: Dict[str, Any] = {"provider": "mock", "provider_status": "queued"}
@@ -602,10 +640,13 @@ async def email_door_hanger(
             to=email, subject=subject, html=html,
             category="transactional", tenant_id=tenant["id"],
             customer_id=cid,
-            idempotency_key=f"door-hanger:{jid}:{int(datetime.now(timezone.utc).timestamp() // _DOOR_HANGER_COOLDOWN_SECS)}",
+            idempotency_key=(
+                f"door-hanger:{actor}:{jid}:"
+                f"{int(datetime.now(timezone.utc).timestamp() // _DOOR_HANGER_COOLDOWN_SECS)}"
+            ),
         )
     except Exception as exc:  # pragma: no cover
-        logger.warning(f"[phase5a2] door-hanger email send failed: {exc}")
+        logger.warning(f"[door-hanger] email send failed: {exc}")
         provider_res = {"provider": "error", "provider_status": "failed"}
 
     doc = {
@@ -623,13 +664,14 @@ async def email_door_hanger(
         "provider_response_id": provider_res.get("provider_response_id"),
         "attempts": provider_res.get("attempts") or 1,
         "mock": provider_res.get("provider") == "mock",
+        "actor": actor,
         "sent_at": now_iso(),
-        "sent_by_user_id": user.get("id"),
+        "sent_by_user_id": sent_by_user_id,
     }
     try:
         await db.marketing_deliveries.insert_one(doc)
     except Exception as exc:  # pragma: no cover
-        logger.warning(f"[phase5a2] marketing_deliveries insert failed: {exc}")
+        logger.warning(f"[door-hanger] marketing_deliveries insert failed: {exc}")
 
     return {
         "ok": True,
@@ -638,3 +680,196 @@ async def email_door_hanger(
         "provider": provider_res.get("provider"),
         "sent_at": doc["sent_at"],
     }
+
+
+# ─── Auto-send on job-completion transition ──────────────────────────
+_AUTO_SEND_LEDGER_INDEX_READY = False
+
+
+async def _ensure_auto_send_index() -> None:
+    """Idempotent bootstrap of the unique index used by the
+    ``door_hanger_auto:{job_id}`` ledger row.  Reuses the same
+    ``marketing_event_ledger`` collection the drip-events dedupe uses;
+    the compound key ``(tenant_id, customer_id, event_key)`` is already
+    unique.  This function is a no-op on subsequent calls."""
+    global _AUTO_SEND_LEDGER_INDEX_READY
+    if _AUTO_SEND_LEDGER_INDEX_READY:
+        return
+    try:
+        # Piggy-back on the drip_events bootstrap so we have exactly
+        # one unique index on the collection.  Safe to call multiple
+        # times — Mongo dedupes by name.
+        from services.marketing.drip_events import _ensure_event_ledger_index
+        await _ensure_event_ledger_index()
+        _AUTO_SEND_LEDGER_INDEX_READY = True
+    except Exception as exc:  # pragma: no cover
+        logger.warning(f"[door-hanger] ledger index bootstrap failed: {exc}")
+
+
+async def maybe_auto_send_door_hanger(jid: str, tenant_id: str) -> Dict[str, Any]:
+    """Fire the door-hanger email once when a job transitions to
+    ``completed``.  Called fire-and-forget from every completion write
+    path via ``asyncio.create_task`` so the API response never blocks
+    on Resend or the ledger insert.
+
+    Idempotency contract:
+      * A UNIQUE row in ``marketing_event_ledger`` with
+        ``event_key = "door_hanger_auto:{job_id}"`` gates the whole
+        thing.  The insert is attempted BEFORE dispatch so two
+        concurrent completions cannot double-send.
+      * Manual ``POST /api/jobs/{jid}/email-door-hanger`` uses a
+        60-second cooldown against ``marketing_deliveries`` and is
+        intentionally NOT gated by this ledger key.
+
+    Skip contract (all silent — no exceptions):
+      * Job or customer missing.
+      * ``status != "completed"``.
+      * No customer email on file.
+      * Customer ``unsubscribed`` / ``do_not_contact`` flag set, or
+        the corresponding ``subscribers`` row is ``unsubscribed``.
+      * Ledger key already exists.
+
+    Returns a dict for logging + tests: ``{"status": ..., ...}``.
+    Never raises."""
+    try:
+        job = await db.jobs.find_one(
+            {"id": jid, "tenant_id": tenant_id}, {"_id": 0},
+        )
+        if not job:
+            return {"status": "skipped", "reason": "job_not_found"}
+        if (job.get("status") or "").lower() != "completed":
+            return {"status": "skipped", "reason": "status_not_completed"}
+        cid = job.get("customer_id")
+        if not cid:
+            return {"status": "skipped", "reason": "no_customer"}
+
+        # Dedupe barrier — insert-first so two concurrent completions
+        # can't race to double-send.  Any FAILURE to insert (dup or
+        # crash) bails out.
+        await _ensure_auto_send_index()
+        event_key = f"door_hanger_auto:{jid}"
+        try:
+            await db.marketing_event_ledger.insert_one({
+                "id": new_id(), "tenant_id": tenant_id,
+                "customer_id": cid, "event_key": event_key,
+                "trigger_type": "door_hanger_auto",
+                "correlation_id": jid,
+                "processed_at": now_iso(),
+                "meta": {"job_id": jid},
+            })
+        except Exception as exc:
+            if type(exc).__name__ == "DuplicateKeyError":
+                return {"status": "skipped", "reason": "already_sent"}
+            # Any OTHER exception — log and stop; don't double-send.
+            logger.warning(f"[door-hanger] ledger insert crashed: {exc}")
+            return {"status": "skipped", "reason": "ledger_error"}
+
+        # Load supporting docs.
+        cust = await db.customers.find_one(
+            {"id": cid, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1, "name": 1, "first_name": 1, "email": 1,
+             "unsubscribed": 1, "do_not_contact": 1},
+        ) or {}
+        tenant = await db.tenants.find_one(
+            {"id": tenant_id}, {"_id": 0},
+        ) or {"id": tenant_id}
+        email = (cust.get("email") or "").strip()
+
+        # Recipient skip checks — ledger already stamped ``sent`` so we
+        # do NOT retry on subsequent completions.
+        if not email:
+            await _record_door_hanger_skip(
+                tenant_id=tenant_id, jid=jid, cid=cid, email="",
+                reason="no_email", actor="auto",
+            )
+            return {"status": "skipped", "reason": "no_email"}
+        opt_out = await _customer_opt_out_reason(tenant_id, cust, email)
+        if opt_out:
+            await _record_door_hanger_skip(
+                tenant_id=tenant_id, jid=jid, cid=cid, email=email,
+                reason=opt_out, actor="auto",
+            )
+            return {"status": "skipped", "reason": opt_out}
+
+        result = await _compose_and_send_door_hanger(
+            job=job, tenant=tenant, cust=cust, cid=cid, email=email,
+            sent_by_user_id=None, actor="auto",
+        )
+        return {"status": "sent", **result}
+    except Exception as exc:  # pragma: no cover — belt-and-braces
+        logger.warning(f"[door-hanger] auto-send crashed: {exc}")
+        return {"status": "error", "error": str(exc)}
+
+
+def schedule_auto_send_door_hanger(jid: str, tenant_id: str) -> None:
+    """Fire-and-forget wrapper — used by write-path callers so the
+    HTTP response returns immediately.  Any exception is swallowed
+    inside :func:`maybe_auto_send_door_hanger`; this thin wrapper
+    only exists so callers don't need to import asyncio."""
+    try:
+        import asyncio
+        asyncio.create_task(maybe_auto_send_door_hanger(jid, tenant_id))
+    except Exception as exc:  # pragma: no cover
+        logger.warning(f"[door-hanger] auto-send schedule failed: {exc}")
+
+
+# ─── POST /api/jobs/{jid}/email-door-hanger (manual) ─────────────────
+@router.post("/jobs/{jid}/email-door-hanger")
+async def email_door_hanger(
+    jid: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Manual admin resend of the door-hanger email.  Kept as an
+    explicit override — does NOT consult the
+    ``door_hanger_auto:{job_id}`` ledger key so an admin can always
+    resend after an auto-fire.  A 60-second cooldown against
+    ``marketing_deliveries`` still protects against accidental
+    double-clicks on the button."""
+    _require_admin_or_403(user)
+    job = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not job:
+        raise HTTPException(404, "Job not found")
+    cid = job.get("customer_id")
+    cust = None
+    if cid:
+        cust = await db.customers.find_one(
+            {"id": cid, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "name": 1, "first_name": 1, "email": 1},
+        )
+    email = (cust or {}).get("email") or ""
+    if not email:
+        raise HTTPException(400, "Customer has no email on file")
+
+    # Manual-only 60s cooldown (auto-send is gated by the ledger key
+    # in ``maybe_auto_send_door_hanger``; manual bypasses that key on
+    # purpose — the admin is an explicit override).
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(seconds=_DOOR_HANGER_COOLDOWN_SECS)
+    ).isoformat().replace("+00:00", "Z")
+    recent = await db.marketing_deliveries.find_one(
+        {"tenant_id": tenant["id"],
+         "trigger_entity.kind": "job_door_hanger",
+         "trigger_entity.id": jid,
+         "actor": {"$ne": "auto"},
+         "sent_at": {"$gte": cutoff_iso}},
+        {"_id": 0, "id": 1, "sent_at": 1},
+    )
+    if recent:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "ok": False,
+                "reason": "cooldown",
+                "cooldown_seconds": _DOOR_HANGER_COOLDOWN_SECS,
+                "last_delivery_id": recent.get("id"),
+                "last_sent_at": recent.get("sent_at"),
+            },
+        )
+
+    return await _compose_and_send_door_hanger(
+        job=job, tenant=tenant, cust=cust or {}, cid=cid, email=email,
+        sent_by_user_id=user.get("id"), actor="manual",
+    )

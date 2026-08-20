@@ -449,12 +449,27 @@ async def submit_service_report(jid: str,
     )
     # Roll job status forward. Preserve existing lifecycle: use `completed` since
     # that already exists across the codebase.
+    _prev_status = (job.get("status") or "").lower()
     await db.jobs.update_one(
         {"id": jid, "tenant_id": tenant["id"]},
         {"$set": {"status": "completed",
                   "service_report_submitted_at": now,
                   "updated_at": now}},
     )
+    # Feb-2026 · Door-hanger auto-send on completion transition.
+    # Fire-and-forget so the submit response returns immediately.
+    # Only fires when this submit actually FLIPPED the status to
+    # completed (idempotent re-submits are already blocked above by
+    # the ``rep.get("submitted_at")`` check, but the extra guard keeps
+    # the transition semantics obvious).
+    if _prev_status != "completed":
+        try:
+            from routers.workstream_service_log import (
+                schedule_auto_send_door_hanger,
+            )
+            schedule_auto_send_door_hanger(jid, tenant["id"])
+        except Exception as _dh:
+            logger.warning(f"door-hanger auto-send schedule failed: {_dh}")
     # Mandatory clock-out when the entry originated from GPS auto-clock-in;
     # best-effort for manual entries (unchanged behavior for that case).
     clock_out_summary = None
