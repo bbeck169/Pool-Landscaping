@@ -11249,3 +11249,87 @@ Remaining (in order):
 **Hard-stopped at clean file boundary after #1** to preserve budget
 for the next work turn (per user's instruction "stop at a clean
 file boundary AFTER completing whichever item you're on").
+
+---
+
+## Feb-2026 · AI Concierge avatar parity (Queue #3 · SHIPPED)
+
+### Source of truth
+`frontend/src/components/ai/AIAvatar.jsx` — the same shared component
+the AI Employee Hub (`pages/aiops/AiOpsPages.jsx`) and the AI Dock
+use.  Lottie idle loop + pastel-initial fallback baked in.
+
+### What changed
+`frontend/src/pages/portal/PortalHome.jsx` — customer-facing Concierge
+picker + chat now render through `<AIAvatar>` (was `<PersonaAvatar>`).
+The `PersonaAvatar` import stays for legacy call sites elsewhere in
+the file — every ``portal-ai-…`` testId now flows through
+`<AIAvatar>`.
+
+Vitest `concierge-avatar-parity.test.jsx` (NEW, 5 cases) locks:
+* Hub uses `<AIAvatar>` (surfaces breakage if Hub is rewired).
+* Concierge imports the SAME shared component.
+* Picker + chat both render via `<AIAvatar>`.
+* Regression guard: no `<PersonaAvatar>` with `portal-ai-…` testids.
+* Fallback contract — every surface feeds `name` prop so the pastel-
+  initial fallback matches when `avatar_url` is null.
+
+### Mobile parity
+No customer-facing Concierge in `/app/mobile`.  Nothing to mirror.
+
+### Test roll-up
+Frontend 20/20 vitest passing.  Backend 93/93 pytest passing (regression sweep).
+
+---
+
+## Feb-2026 · Queue #2 EXPANDED SPEC — recorded (NOT started)
+
+User rescoped the first-login gate into a LARGE 4-sub-phase phase.
+Full brief captured verbatim in the message that added it — key
+locked decisions summarized here for the resume agent:
+
+**Data model**
+* `tos_documents` — versioned per (tenant, service_type∈{pool,landscaping}); status draft|published; at most one current published per (tenant, service_type) enforced by write-time supersede.
+* `tos_acceptances` — audit; version + service_type + source.
+* `customer.tos_status = {pool: {version, accepted_at} | null, landscaping: {...} | null}` + `tutorial_completed_at`.
+
+**Endpoints**
+* Admin CRUD + `POST /tos-documents/{id}/publish` (supersede + notify).
+* Customer `GET /portal/onboarding-state` returns `{needs_tutorial, pending_tos: [pool-first, then landscaping]}`.
+* Customer `POST /portal/tos/accept` writes audit + updates customer map.
+
+**Sanitizer** — `bleach.clean` allow-list; strip script/style/iframe/on-handlers; auto-inject `rel="noopener noreferrer"` + `target="_blank"` on external `<a>`.
+
+**Editor auth** — admin + super_admin only.
+
+**Sub-phases (hard-stop points A-D)**
+* 2A · Backend foundation + seed migration (existing content → pool v1) + 20+ pytest cases.
+* 2B · Admin UI at `/settings/legal/terms-of-service`; TipTap editor; two service-type tabs; draft/publish + confirm dialog; version history sidebar.
+* 2C · Customer portal `OnboardingGate` — Tutorial → pool ToS → landscaping ToS in order; partial-acceptance persistence; scroll-to-bottom + I Agree; dangerouslySetInnerHTML with client-side DOMPurify defence-in-depth.
+* 2D · Publish → notification email blast to customers with matching active `service_type`; door-hanger skip rules honored; `marketing_event_ledger` key `tos_update:{document_id}` for idempotency; non-blocking; magic-link deep-link back to portal.
+
+**Cross-cutting locked rules**
+* Legal audit trail — never hard-delete published/superseded rows.
+* Cross-service isolation — publishing pool ToS never notifies landscaping-only customers.
+* Both-service customer — gets both emails, both modals (pool first).
+* Version bump re-prompts ONLY the bumped ToS.
+
+**Position in queue** — slot #2, after #4 (chemical cost hide) lands.
+
+**Do not start** — needs a full fresh session's context runway.
+Hard-stop at any of 2A/2B/2C/2D boundaries.
+
+---
+
+## Feb-2026 · Queue state post-#3 ship
+
+Ordered remaining:
+1. ~~Send Portal Invite relocation~~ ✅
+2. First-login gate + Multi-ToS system + Admin editor + Notification (EXPANDED — 4 sub-phases, spec above)
+3. ~~AI Concierge avatar parity~~ ✅
+4. → **Hide chemical cost on customer-facing views** ← next
+5. Door hanger visual redesign (do not start until #2 lands)
+6. Resume 24h edit window
+
+**Hard-stopped at clean file boundary after #3.**  #4 starts fresh
+next session per the same context discipline.

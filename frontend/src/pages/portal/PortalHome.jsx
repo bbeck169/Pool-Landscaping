@@ -11,6 +11,14 @@ import ReferralSection from "@/pages/portal/ReferralSection";
 import MyReferralsSection from "@/pages/portal/MyReferralsSection";
 // Phase 30 · Feb-2026 — shared avatar components.
 import PersonaAvatar from "@/components/personas/PersonaAvatar";
+// Feb-2026 · AI Concierge avatar parity — reuse the SAME shared
+// <AIAvatar> the AI Employee Hub (``pages/aiops/AiOpsPages.jsx``)
+// and the internal AI Dock render for each persona. Guarantees
+// pixel-consistent branding across every AI-employee surface;
+// PersonaAvatar stays imported for legacy call sites elsewhere in
+// this file but the customer-facing Concierge picker + chat use
+// AIAvatar now.
+import AIAvatar from "@/components/ai/AIAvatar";
 import TechAvatar from "@/components/common/TechAvatar";
 
 const money = (n) =>
@@ -431,7 +439,13 @@ export default function PortalHome() {
                   }}
                   aria-hidden="true"
                 >
-                  <PersonaAvatar persona={emp} size={44} testid={`portal-ai-${emp.key}-avatar`} />
+                  <AIAvatar
+                    size={44}
+                    src={emp.avatar_url || undefined}
+                    name={emp.name}
+                    alt={emp.name}
+                    testId={`portal-ai-${emp.key}-avatar`}
+                  />
                 </div>
                 <div className="min-w-0">
                   <div
@@ -924,7 +938,13 @@ function CustomerAiChatPane({ employee, onClose }) {
               }}
               aria-hidden="true"
             >
-              <PersonaAvatar persona={employee} size={48} testid={`portal-ai-chat-avatar-${employee.key}`} />
+              <AIAvatar
+                size={48}
+                src={employee.avatar_url || undefined}
+                name={employee.name}
+                alt={employee.name}
+                testId={`portal-ai-chat-avatar-${employee.key}`}
+              />
             </div>
             <div className="min-w-0">
               <div
