@@ -4,13 +4,14 @@
   "version": "1.0.0",
   "scripts": {
     "preinstall": "./scripts/cmd-guard.js --preinstall",
-    "start": "expo start",
-    "tunnel": "expo start --tunnel",
+    "//scripts-note": "Feb-2026 · switched from bare ``expo`` to ``npx expo`` so any CI / build container that runs ``yarn <script>`` without ``./node_modules/.bin`` on PATH resolves the CLI correctly (previously showed as ``expo: command not found`` in emergent's EAS build Step #5).",
+    "start": "npx expo start",
+    "tunnel": "npx expo start --tunnel",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web",
-    "lint": "expo lint",
+    "android": "npx expo start --android",
+    "ios": "npx expo start --ios",
+    "web": "npx expo start --web",
+    "lint": "npx expo lint",
     "test": "jest --no-cache --forceExit"
   },
   "dependencies": {
