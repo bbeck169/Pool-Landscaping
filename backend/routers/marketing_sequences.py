@@ -3,6 +3,7 @@ tick handler.  Scheduler wiring + event hooks + frontend come in M5b/c.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +14,7 @@ from config import db, logger
 from utils import new_id, now_iso, require_admin
 from routers.tenants import get_current_tenant
 from services.marketing.render import render_subject_and_body, strip_html, DEFAULT_SAMPLE_CONTEXT
+from services.marketing.merge_tags import render_context
 
 router = APIRouter()
 
@@ -324,9 +326,21 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
         # Slice F · suppression enforcement — check the recipient's
         # opt-in state before rendering.  A suppressed contact halts
         # the enrolment cleanly with ``halt_reason="suppressed"``.
+        #
+        # P0 · Feb 2026 — fetch the FULL customer doc (widened from
+        # ``{email, phone}`` to ``{_id: 0}`` = everything except
+        # ``_id``) so ``{{customer.first_name}}`` renders the real
+        # first name instead of leaking the ``DEFAULT_SAMPLE_CONTEXT``
+        # placeholder ``"Sam"`` to every real recipient.  Same for the
+        # tenant doc — the previous sample-only render leaked the
+        # sample tenant phone ``+1 (623) 555-0100`` into every drip.
         cust = await db.customers.find_one(
             {"id": e["customer_id"], "tenant_id": e["tenant_id"]},
-            {"_id": 0, "email": 1, "phone": 1},
+            {"_id": 0},
+        ) or {}
+        tenant_doc = await db.tenants.find_one(
+            {"id": e["tenant_id"]},
+            {"_id": 0},
         ) or {}
         try:
             from routers.marketing_preferences import (
@@ -346,12 +360,42 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
                 continue
         except Exception:
             pass
-        # Render + record mock delivery
+        # P0 · Feb 2026 (Fix 2b) — worker claim to protect against
+        # concurrent scheduler ticks double-sending the same
+        # enrolment.  ``findOneAndUpdate`` under a filter that
+        # allows re-claim only after a 5-minute stale window; a
+        # ``None`` return means another worker already owns this
+        # tick — skip silently.
+        claim_now = datetime.now(timezone.utc)
+        claim_cutoff = (claim_now - timedelta(minutes=5)).isoformat()
+        claim_res = await db.marketing_drip_enrolments.find_one_and_update(
+            {"id": e["id"],
+             "$or": [
+                 {"claimed_at": {"$exists": False}},
+                 {"claimed_at": None},
+                 {"claimed_at": {"$lt": claim_cutoff}},
+             ]},
+            {"$set": {"claimed_at": claim_now.isoformat(),
+                       "claimed_by": os.environ.get("HOSTNAME") or "worker"}},
+            projection={"_id": 0, "id": 1},
+        )
+        if not claim_res:
+            # Another worker (or a previous crash still within the
+            # 5-min stale window) owns this tick.
+            continue
+        # Render + record real delivery
         tpl = await db.marketing_templates.find_one(
             {"id": step["template_id"], "tenant_id": e["tenant_id"]}, {"_id": 0},
         )
-        # Per-recipient render context — include unsubscribe URL.
-        _ctx = dict(DEFAULT_SAMPLE_CONTEXT)
+        # P0 · Feb 2026 — build the render context from the REAL
+        # customer + tenant docs (via the canonical ``render_context``
+        # helper), not from ``DEFAULT_SAMPLE_CONTEXT``.  The old code
+        # (``_ctx = dict(DEFAULT_SAMPLE_CONTEXT)``) was leaking the
+        # developer preview's ``"Sam"`` / ``sam@example.com`` /
+        # sample tenant number into every drip SMS + email that
+        # referenced ``{{customer.*}}`` or ``{{tenant.*}}``.  The
+        # unsubscribe URL is still injected as a flat-key override.
+        _ctx = render_context(customer=cust, tenant=tenant_doc)
         try:
             _ctx["unsubscribe_url"] = _unsub_url(e["customer_id"], e["tenant_id"])
         except Exception:

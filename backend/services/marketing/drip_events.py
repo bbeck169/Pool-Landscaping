@@ -26,6 +26,16 @@ drift versus per-tenant local time because:
 2. the M5 delivery layer is fully mocked — a couple hours' UTC drift
    has no downstream impact.  If a live provider ever lands, we
    revisit and iterate per-tenant scheduling then.
+
+P0 dedupe · Feb 2026 — see :func:`_ensure_event_ledger_index` and
+:func:`on_event`.  A ``marketing_event_ledger`` collection with a
+unique index on ``(tenant_id, customer_id, event_key)`` gates the
+fan-out at the top of :func:`on_event`.  If the insert fails on the
+unique key, the event has already been processed and we skip the
+enrolment loop entirely — this prevents a service-completion (or any
+other trigger) from double-enrolling the same customer across every
+active matching sequence when the caller retries or the domain event
+fires twice for the same underlying record.
 """
 from __future__ import annotations
 
@@ -82,6 +92,61 @@ async def enrol_customer_into_sequence(
     return doc["id"]
 
 
+# ─── Event ledger (Fix 2a — at-most-one fan-out per event) ────────────
+_LEDGER_INDEX_READY = False
+
+
+async def _ensure_event_ledger_index() -> None:
+    """Idempotent index bootstrap.  Called lazily from :func:`on_event`.
+
+    The unique key is ``(tenant_id, customer_id, event_key)`` where
+    ``event_key = f"{trigger_type}:{correlation_id}"``.  Insert-with-
+    unique-fail is our dedupe primitive: the second call for the same
+    event_key raises ``DuplicateKeyError``, which we catch and treat
+    as "already processed — skip".
+    """
+    global _LEDGER_INDEX_READY
+    if _LEDGER_INDEX_READY:
+        return
+    try:
+        await db.marketing_event_ledger.create_index(
+            [("tenant_id", 1), ("customer_id", 1), ("event_key", 1)],
+            unique=True,
+            name="uniq_tenant_customer_event",
+        )
+        _LEDGER_INDEX_READY = True
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[m5c] event ledger index bootstrap failed: %s", exc)
+
+
+def _correlation_from_meta(
+    trigger_type: str,
+    customer_id: str,
+    meta: Optional[Dict[str, Any]],
+) -> str:
+    """Resolve the ``correlation_id`` component of the ledger key.
+
+    Priority order:
+      1. Explicit ``meta["correlation_id"]``.
+      2. Trigger-specific meta keys — ``service_report_id``,
+         ``invoice_id``, ``estimate_id``, ``review_id``.
+      3. Fallback = ``f"{customer_id}:{YYYY-MM-DD-UTC}"`` so a
+         re-fire on the same day for the same customer still
+         collides on the unique index.  This keeps callers that
+         don't pass a domain id safe by default.
+    """
+    if isinstance(meta, dict):
+        cid = meta.get("correlation_id")
+        if cid:
+            return str(cid)
+        for k in ("service_report_id", "invoice_id", "estimate_id", "review_id"):
+            v = meta.get(k)
+            if v:
+                return str(v)
+    day = datetime.now(timezone.utc).date().isoformat()
+    return f"{customer_id}:{day}"
+
+
 # ─── Immediate event bus ──────────────────────────────────────────────
 _IMMEDIATE_TRIGGERS = {
     "service_completed", "invoice_sent", "customer_created", "review_left",
@@ -105,13 +170,59 @@ async def on_event(
 
     Returns::
 
-        {"enrolled": <int>, "skipped": <int>, "sequences": <int>}
+        {"enrolled": <int>, "skipped": <int>, "sequences": <int>,
+         "deduped": <0|1>}
+
+    P0 Fix 2a — the unique-index insert on ``marketing_event_ledger``
+    at the top of this function gates the entire fan-out.  If the
+    event has already been processed (same ``(tenant, customer,
+    event_key)``), the ``DuplicateKeyError`` is caught and we return
+    early with ``deduped=1`` — no enrolments are created, no SMS is
+    sent.  This is the root fix for the identical-duplicate SMS the
+    prod screenshot documented (messages #2 and #3 were the same
+    fan-out running twice on top of the same
+    ``service_completed`` event).
     """
-    outcome = {"enrolled": 0, "skipped": 0, "sequences": 0}
+    outcome = {"enrolled": 0, "skipped": 0, "sequences": 0, "deduped": 0}
     if trigger_type not in _IMMEDIATE_TRIGGERS:
         return outcome
     if not (tenant_id and customer_id):
         return outcome
+
+    # 1. Dedupe barrier — one row per (tenant, customer, event).
+    await _ensure_event_ledger_index()
+    correlation_id = _correlation_from_meta(trigger_type, customer_id, meta)
+    event_key = f"{trigger_type}:{correlation_id}"
+    try:
+        await db.marketing_event_ledger.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "customer_id": customer_id,
+            "event_key": event_key,
+            "trigger_type": trigger_type,
+            "correlation_id": correlation_id,
+            "processed_at": now_iso(),
+            "meta": meta or {},
+        })
+    except Exception as exc:  # DuplicateKeyError from the unique index.
+        # ``pymongo.errors.DuplicateKeyError`` — but we don't want to
+        # import pymongo here.  The class name check keeps this
+        # future-proof across driver versions.
+        if type(exc).__name__ == "DuplicateKeyError":
+            outcome["deduped"] = 1
+            logger.info(
+                "[m5c] event dedupe hit — trigger=%s tenant=%s customer=%s key=%s",
+                trigger_type, tenant_id, customer_id, event_key,
+            )
+            return outcome
+        # Any OTHER exception (e.g., mongo unavailable) — degrade to
+        # the pre-fix behaviour (attempt fan-out).  Never break the
+        # caller.
+        logger.warning(
+            "[m5c] event ledger insert crashed — continuing: %s", exc,
+        )
+
+    # 2. Fan-out to every matching active sequence.
     try:
         seqs = await db.marketing_sequences.find(
             {"tenant_id": tenant_id, "trigger_type": trigger_type,

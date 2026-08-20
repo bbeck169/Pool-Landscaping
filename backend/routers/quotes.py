@@ -319,11 +319,14 @@ async def create_quote(body: QuoteIn,
     except Exception:
         pass
     # Feb-2026 · Marketing Slice M5c — drip event bus (invoice_sent).
+    # P0 Fix 2a — pass the invoice id so the event ledger's unique
+    # index dedupes retries against the same document.
     try:
         if body.doc_type == "invoice" and doc.get("customer_id"):
             from services.marketing.drip_events import on_event as _drip_on_event
             await _drip_on_event(
                 "invoice_sent", tenant["id"], doc.get("customer_id"),
+                meta={"invoice_id": doc.get("id")},
             )
     except Exception:
         pass

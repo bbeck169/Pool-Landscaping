@@ -608,11 +608,15 @@ async def submit_service_report(jid: str,
     except Exception:
         pass
     # Feb-2026 · Marketing Slice M5c — drip event bus (service_completed).
+    # P0 Fix 2a — pass the service_report id so the event ledger's
+    # unique index dedupes retries against the same submission.
     try:
         if job.get("customer_id"):
             from services.marketing.drip_events import on_event as _drip_on_event
             await _drip_on_event(
                 "service_completed", tenant["id"], job.get("customer_id"),
+                meta={"service_report_id": (out or rep or {}).get("id"),
+                       "job_id": jid},
             )
     except Exception:
         pass

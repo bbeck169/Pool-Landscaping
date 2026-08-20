@@ -226,9 +226,13 @@ async def submit_review(
             logger.warning("review %s escalation failed: %s", rid, exc)
 
     # Feb-2026 · Marketing Slice M5c — drip event bus (review_left).
+    # P0 Fix 2a — pass the review id so retries dedupe cleanly.
     try:
         from services.marketing.drip_events import on_event as _drip_on_event
-        await _drip_on_event("review_left", tenant["id"], cid)
+        await _drip_on_event(
+            "review_left", tenant["id"], cid,
+            meta={"review_id": rid},
+        )
     except Exception:
         pass
 

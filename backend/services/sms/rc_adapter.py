@@ -138,12 +138,46 @@ class RingCentralSMSAdapter:
                     idempotency_key: Optional[str] = None,
                     tenant_id: Optional[str] = None,
                     customer_id: Optional[str] = None) -> Dict[str, Any]:
-        """Send an SMS via RingCentral. Never raises."""
+        """Send an SMS via RingCentral. Never raises.
+
+        P0 Fix 2b · Feb 2026 — when ``idempotency_key`` is provided the
+        adapter consults ``db.sms_idempotency`` for a prior successful
+        send with the same ``(tenant_id, idempotency_key)`` pair.  If
+        one exists we return its cached envelope instead of hitting
+        RC again — protecting against scheduler retry, worker
+        crash-restart, and any other caller re-issue.  A fresh send
+        upserts the record with the returned RC message id so future
+        retries hit the cache.
+        """
         addr_e164 = normalize_phone_e164(to)
         if not addr_e164:
             return {"provider": "ringcentral", "provider_status": "failed",
                     "provider_response_id": None, "attempts": 0,
                     "error": "invalid_phone"}
+
+        # 0. Idempotency cache — return cached envelope on repeat.
+        _terminal_ok = {"sent", "queued", "delivered", "mocked", "dry_run"}
+        _idem_key = str(idempotency_key) if idempotency_key else ""
+        if _idem_key and tenant_id:
+            try:
+                from config import db as _db
+                await _ensure_sms_idempotency_index()
+                cached = await _db.sms_idempotency.find_one(
+                    {"tenant_id": tenant_id, "idempotency_key": _idem_key},
+                    {"_id": 0, "envelope": 1},
+                )
+                if cached and cached.get("envelope"):
+                    env = dict(cached["envelope"])
+                    env["idempotent_replay"] = True
+                    logger.info(
+                        "[rc-sms] idempotency cache hit tenant=%s key=%s",
+                        tenant_id, _idem_key,
+                    )
+                    return env
+            except Exception as exc:  # pragma: no cover
+                logger.warning(
+                    "[rc-sms] idempotency lookup failed — continuing: %s", exc,
+                )
 
         # 1. Suppression check (marketing only).
         if await self._suppressed(tenant_id=tenant_id, to_e164=addr_e164,
@@ -183,7 +217,9 @@ class RingCentralSMSAdapter:
                 "[DRY-RUN] rc-sms send SKIPPED to=%s cat=%s len=%d tenant=%s",
                 addr_e164, category, len(body or ""), tenant_id,
             )
-            return verdict.dry_run_response(provider="ringcentral")
+            env = verdict.dry_run_response(provider="ringcentral")
+            await _cache_sms_envelope(tenant_id, _idem_key, env)
+            return env
 
         # 2. Graceful mocked mode when RC not configured.
         if not self.enabled:
@@ -191,8 +227,10 @@ class RingCentralSMSAdapter:
                 "[rc-sms] disabled — would have sent to %s cat=%s len=%d",
                 addr_e164, category, len(body or ""),
             )
-            return {"provider": "mock", "provider_status": "mocked",
+            env = {"provider": "mock", "provider_status": "mocked",
                     "provider_response_id": None, "attempts": 0, "error": None}
+            await _cache_sms_envelope(tenant_id, _idem_key, env)
+            return env
 
         # 3. Compliance suffix + hard cap.
         payload_body = _ensure_stop_suffix((body or "").strip(), category)
@@ -212,7 +250,7 @@ class RingCentralSMSAdapter:
                 # that are still being dispatched. Downstream marketing
                 # ledger treats "Queued" / "Sent" / "Delivered" as
                 # successful hand-offs.
-                return {"provider": "ringcentral",
+                env = {"provider": "ringcentral",
                         "provider_status": "sent",
                         "provider_response_id": (
                             str(res["message_id"])
@@ -220,6 +258,8 @@ class RingCentralSMSAdapter:
                         ),
                         "attempts": attempt, "error": None,
                         "rc_status": res.get("status")}
+                await _cache_sms_envelope(tenant_id, _idem_key, env)
+                return env
             except RingCentralError as exc:
                 last_err = exc
                 last_status = exc.status
@@ -261,6 +301,63 @@ class RingCentralSMSAdapter:
                 "error": f"{type(last_err).__name__}: {last_err}"
                 if last_err else "unknown",
                 "http_status": last_status}
+
+
+# ─── SMS idempotency cache (Fix 2b) ──────────────────────────────────
+_SMS_IDEM_INDEX_READY = False
+
+
+async def _ensure_sms_idempotency_index() -> None:
+    """Idempotent index bootstrap for the ``sms_idempotency``
+    collection.  Called lazily from :meth:`RingCentralSMSAdapter.send`."""
+    global _SMS_IDEM_INDEX_READY
+    if _SMS_IDEM_INDEX_READY:
+        return
+    try:
+        from config import db as _db
+        await _db.sms_idempotency.create_index(
+            [("tenant_id", 1), ("idempotency_key", 1)],
+            unique=True, name="uniq_tenant_idem_key",
+        )
+        _SMS_IDEM_INDEX_READY = True
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[rc-sms] idempotency index bootstrap failed: %s", exc)
+
+
+async def _cache_sms_envelope(
+    tenant_id: Optional[str],
+    idempotency_key: str,
+    envelope: Dict[str, Any],
+) -> None:
+    """Best-effort upsert of a send result into ``sms_idempotency``.
+
+    We ONLY cache envelopes whose ``provider_status`` is a terminal
+    success (``sent`` / ``queued`` / ``delivered`` / ``mocked`` /
+    ``dry_run``) — a ``failed`` result must not poison a future
+    retry.  Never raises.
+    """
+    if not (idempotency_key and tenant_id):
+        return
+    if (envelope or {}).get("provider_status") not in {
+        "sent", "queued", "delivered", "mocked", "dry_run",
+    }:
+        return
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        from config import db as _db
+        await _ensure_sms_idempotency_index()
+        await _db.sms_idempotency.update_one(
+            {"tenant_id": tenant_id, "idempotency_key": idempotency_key},
+            {"$set": {
+                "tenant_id": tenant_id,
+                "idempotency_key": idempotency_key,
+                "envelope": envelope,
+                "cached_at": _dt.now(_tz.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[rc-sms] idempotency cache write failed: %s", exc)
 
 
 _default = RingCentralSMSAdapter()
