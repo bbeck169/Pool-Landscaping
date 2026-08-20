@@ -11177,3 +11177,24 @@ Ordered queue that has NOT yet started. Each item is a self-contained phase.
    `_handle_job_edit` are written and import cleanly; ``test_job_edit_window.py``
    has 15 cases (UNRUN); frontend Edit button + Edit History component
    not yet started.
+
+---
+
+## Feb-2026 · Additional queue entry — Door hanger email visual redesign
+
+Added AFTER cost-suppression, BEFORE 24h edit window resume.
+
+Updated ordered queue:
+1. Send Portal Invite button relocation
+2. Customer first-login gate — Tutorial → ToS
+3. AI Concierge avatar parity with AI Employee Hub
+4. Hide chemical cost on customer-facing views (server-side ``?view=customer`` DTO variant preferred)
+5. **Door hanger email visual redesign** — content LOCKED, aesthetics only.
+   Section-builder helper extraction, table-based email-safe layout,
+   card-style sections, color-coded band chips, hero header,
+   footer band, larger CTA. All copy strings preserved verbatim.
+   Test 5 (no ``<style>`` blocks, no ``class=`` attributes) enforces
+   inline-only requirement. ``BAND_COLORS`` mapping added to
+   ``services/chemistry_bands.py`` as single source of truth for the
+   portal to adopt later.
+6. Resume 24h edit window
