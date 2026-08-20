@@ -11155,3 +11155,25 @@ Zero raw ppm/pH values in the customer-facing body.
 
 ### Auth situation on the portal service-report page
 Route `/portal/service-reports/:id` is customer-only — mounted inside the portal auth guard (`PortalGuard` wrapper), no dual-mode admin view. Band rendering is unconditional on this route (no role gate needed). Admin views live under `/admin/…` and use the exact-numeric renderer.
+
+---
+
+## Feb-2026 · Queued follow-ups (as of bands hotfix ship)
+
+Ordered queue that has NOT yet started. Each item is a self-contained phase.
+
+1. **Send Portal Invite button relocation** — move to main customer contact card;
+   disabled state when customer has no email; remove old placement.
+2. **Customer first-login gate** — Tutorial → ToS sequential modal on first
+   portal entry; per-customer persistence; `CURRENT_TOS_VERSION` re-prompt.
+3. **AI Concierge avatar parity** with AI Employee Hub — reuse existing
+   single-source avatar mapping already established in the AI Dock fix.
+4. **Hide chemical cost on customer-facing views** — door hanger email
+   Chemicals Used section + portal service-report Chemicals section;
+   name + amount stay, cost / $ / price / total stripped; internal
+   (tech/admin) views unchanged. Prefer server-side ``?view=customer``
+   DTO strip over template-only filter for defence-in-depth.
+5. **Resume 24h edit window** — backend PATCH + GET /edits + mobile sync
+   `_handle_job_edit` are written and import cleanly; ``test_job_edit_window.py``
+   has 15 cases (UNRUN); frontend Edit button + Edit History component
+   not yet started.
