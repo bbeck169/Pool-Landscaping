@@ -291,4 +291,29 @@ describe("DnD affordances are gone (numbered-order pivot)", () => {
     );
     expect(fs.existsSync(target)).toBe(false);
   });
+
+  it("CalendarSchedule renders `dayJobs` directly — no client-side sort that could re-introduce the Feb-2026 read-path mismatch", async () => {
+    // The read-path fix in ``backend/routers/jobs.py`` +
+    // ``schedule.py`` sorts by ``(scheduled_date, route_index,
+    // created_at)`` server-side. The frontend MUST trust that
+    // order — any local ``.sort()`` on the day's jobs would silently
+    // re-shuffle them and re-open the exact bug the fix closed.
+    const fs = await import("fs");
+    const path = await import("path");
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "..", "pages", "schedule", "CalendarSchedule.jsx"),
+      "utf-8",
+    );
+    // Non-comment lines only (strip ``//`` + block-comment leading ``*``).
+    const code = src
+      .split("\n")
+      .filter((l) => !/^\s*(?:\/\/|\*)/.test(l))
+      .join("\n");
+    // The only permitted ``.sort()`` calls on the day's jobs are
+    // inside ``NumberedReorder.jsx`` (build the ordered payload for
+    // the API) and the ``_TERMINAL`` filter derivation.  Any
+    // ``dayJobs.sort(`` / ``gridList.sort(`` / ``jobs.sort(`` at
+    // the schedule-page level would be a regression.
+    expect(code).not.toMatch(/\b(dayJobs|gridList)\.sort\s*\(/);
+  });
 });

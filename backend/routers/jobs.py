@@ -354,7 +354,18 @@ async def list_jobs(
     # Feb-2026 hygiene fix — ``limit`` param now actually caps the
     # to_list() call. Previously the query silently returned 1000
     # regardless of ``?limit=X``.
-    docs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(limit)
+    # Feb-2026 · route-order read-path fix — sort by ``scheduled_date``
+    # first, then by the admin-assigned ``route_index`` (writes come
+    # from ``POST /api/jobs/reorder``), then by ``created_at`` so
+    # same-day jobs with no admin-assigned order fall back to
+    # deterministic insertion order.  Mongo sorts ``None`` /
+    # missing-field values BEFORE any numeric ascending value; on
+    # tech-days where the admin hasn't touched the order, every job
+    # has ``route_index == None`` and the fallback ``created_at``
+    # sort determines the final order — same behavior as pre-fix.
+    docs = await db.jobs.find(q, {"_id": 0}).sort(
+        [("scheduled_date", 1), ("route_index", 1), ("created_at", 1)]
+    ).to_list(limit)
     # Phase 57.d — enrich every returned job with the assigned tech's
     # department + derived checklist_kind so schedule/dispatch cards +
     # mobile clients see the right form without a per-job GET.

@@ -189,3 +189,50 @@ def test_reorder_upserts_dispatch_route_orders():
         assert row["source"] == "schedule_reorder"
     finally:
         _cleanup_by_prefix()
+
+
+def test_reorder_read_path_returns_jobs_in_saved_order():
+    """Empirical round-trip: after ``POST /jobs/reorder``, the
+    subsequent ``GET /jobs`` must return the same tech-day's jobs in
+    the exact order we saved.  This is the guard that pinned the
+    Feb-2026 read-path bug — the sort was ``scheduled_date`` only,
+    so same-day jobs came back in natural collection (insertion)
+    order regardless of ``route_index``.  With the triple-key sort
+    ``(scheduled_date, route_index, created_at)`` this must pass.
+    """
+    _cleanup_by_prefix()
+    tok = _login("admin@aquaterra.com")
+    tenant_id = _tenant_of("admin@aquaterra.com")
+    ids = _run(_seed_jobs(tenant_id, TECH_A, 3))
+    try:
+        # Reverse the natural order so mistakenly sorting by
+        # insertion / created_at would produce a wrong result.
+        target = list(reversed(ids))
+        r = requests.post(f"{API}/jobs/reorder",
+                          headers={"Authorization": f"Bearer {tok}"},
+                          json={"tech_user_id": TECH_A, "date": DATE,
+                                "ordered_job_ids": target},
+                          timeout=15)
+        assert r.status_code == 200, r.text
+
+        # Refetch — filter to just the seeded tech-day rows.
+        list_r = requests.get(
+            f"{API}/jobs?limit=500",
+            headers={"Authorization": f"Bearer {tok}"},
+            timeout=15,
+        )
+        assert list_r.status_code == 200, list_r.text
+        rows = list_r.json()
+        rows = rows if isinstance(rows, list) else (
+            rows.get("jobs") or rows.get("items") or []
+        )
+        seen = [j["id"] for j in rows if j["id"] in set(target)]
+        assert seen == target, (
+            f"read-path returned wrong order\n"
+            f"  expected: {target}\n"
+            f"  got:      {seen}\n"
+            f"  full row route_indices: "
+            f"{[(j['id'][-4:], j.get('route_index')) for j in rows if j['id'] in set(target)]}"
+        )
+    finally:
+        _cleanup_by_prefix()

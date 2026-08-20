@@ -83,7 +83,14 @@ async def schedule_today(date: Optional[str] = None,
         ],
         "scheduled_date": {"$gte": start_iso, "$lte": end_iso},
     }
-    jobs = await db.jobs.find(job_q, {"_id": 0}).sort("scheduled_date", 1).to_list(200)
+    # Feb-2026 · route-order read-path fix — sort by
+    # ``scheduled_date`` first, then by the admin-assigned
+    # ``route_index`` (written by ``POST /api/jobs/reorder``).
+    # Fallback to Mongo's natural insertion order for untouched days
+    # via ``created_at`` as the tertiary key.
+    jobs = await db.jobs.find(job_q, {"_id": 0}).sort(
+        [("scheduled_date", 1), ("route_index", 1), ("created_at", 1)]
+    ).to_list(200)
 
     # Phase 16C follow-up · fetch customer gate codes + notes for the tech.
     cids = list({j.get("customer_id") for j in jobs if j.get("customer_id")})
@@ -140,6 +147,12 @@ async def schedule_today(date: Optional[str] = None,
             "customer_notes": cust.get("notes") or None,
             "job_notes": job_notes_raw or None,
             "service_note": service_note,
+            # Feb-2026 · route-order read-path fix — expose the
+            # admin-assigned ``route_index`` in the tech's day view
+            # payload so the client can visually surface + trust the
+            # server-side sort.  Null on tech-days the admin hasn't
+            # touched yet.
+            "route_index": j.get("route_index"),
         })
 
     for e in entries:
@@ -161,10 +174,19 @@ async def schedule_today(date: Optional[str] = None,
                 "end": b.get("end"),
             })
 
+    # Feb-2026 · route-order read-path fix — primary sort key is
+    # the admin-assigned ``route_index`` (writes from ``POST
+    # /api/jobs/reorder``).  Missing / null values sink to the
+    # bottom (via ``999999`` sentinel) so untouched tech-days keep
+    # their prior time-based ordering.  Secondary key is the
+    # existing time-based sort so shifts/breaks + route legs stay
+    # deterministic.
     def _sort_key(it):
-        k = (it.get("scheduled_start") or it.get("clock_in_at")
-             or it.get("start") or "")
-        return k or ""
+        ri = it.get("route_index")
+        primary = ri if isinstance(ri, int) else 999999
+        secondary = (it.get("scheduled_start") or it.get("clock_in_at")
+                     or it.get("start") or "")
+        return (primary, secondary)
     items.sort(key=_sort_key)
 
     # Route legs between consecutive jobs with coords
