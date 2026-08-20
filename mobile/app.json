@@ -1,10 +1,15 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "Pool & Landscaping of Vistancia",
+    "slug": "poolscape-audit",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
+    "splash": {
+      "image": "./assets/images/splash-image.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
     "scheme": "frontend",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -12,7 +17,7 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/PLACEHOLDER_EXPO_PROJECT_ID",
+      "url": "https://u.expo.dev/bdd4bc95-5d7c-46d8-8243-0b6ed1e9aa19",
       "enabled": false,
       "fallbackToCacheTimeout": 0,
       "checkAutomatically": "NEVER"
@@ -97,7 +102,10 @@
       "@config-plugins/react-native-webrtc"
     ],
     "extra": {
-      "mapboxToken": "$EXPO_PUBLIC_MAPBOX_TOKEN"
+      "mapboxToken": "$EXPO_PUBLIC_MAPBOX_TOKEN",
+      "eas": {
+        "projectId": "bdd4bc95-5d7c-46d8-8243-0b6ed1e9aa19"
+      }
     },
     "experiments": {
       "typedRoutes": true
