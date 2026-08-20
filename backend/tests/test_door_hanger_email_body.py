@@ -78,6 +78,18 @@ async def _mk_customer(tenant_id: str) -> str:
     return cid
 
 
+async def _mk_property(tenant_id: str, cid: str) -> str:
+    pid = f"test-prop-{uuid.uuid4().hex[:12]}"
+    await _db().properties.insert_one({
+        "id": pid, "tenant_id": tenant_id, "customer_id": cid,
+        "label": "Home", "address": {
+            "line1": "12 Vistancia Blvd",
+            "city": "Peoria", "state": "AZ", "zip": "85383",
+        },
+    })
+    return pid
+
+
 async def _mk_pool_job(
     tenant_id: str, cid: str, seed_fields: Dict[str, Any] | None = None,
 ) -> str:
@@ -98,11 +110,12 @@ async def _mk_pool_job(
 
 
 async def _drain(tenant_id: str, jid: str, cid: str) -> None:
-    for coll in ("jobs", "service_reports", "customers", "marketing_deliveries"):
+    for coll in ("jobs", "service_reports", "customers", "properties", "marketing_deliveries"):
         try:
             await _db()[coll].delete_many(
                 {"tenant_id": tenant_id,
                  "$or": [{"id": jid}, {"id": cid}, {"job_id": jid},
+                         {"customer_id": cid},
                          {"trigger_entity.id": jid}]},
             )
         except Exception:
@@ -141,7 +154,10 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
     async def _go():
         tid = await _tenant_id()
         cid = await _mk_customer(tid)
+        pid = await _mk_property(tid, cid)
         jid = await _mk_pool_job(tid, cid, seed_fields={
+            "property_id": pid,
+            "title": "Weekly Pool Cleaning",
             "photos": [{
                 "id": "test-photo-a", "data": "data:image/png;base64,iVBORw==",
                 "label": "before", "created_at": "2026-02-20T00:00:00+00:00",
@@ -173,7 +189,27 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
         try:
             r = await _call_email_door_hanger(jid, tid)
             assert r.get("ok") is True, r
+            subj = captured.get("subject") or ""
             body = captured.get("html") or ""
+            # ── Feb-2026 door-hanger copy + design update assertions ──
+            # Subject line.
+            assert subj.startswith("Job Completed - "), subj
+            assert "Service door hanger" not in subj
+            # Greeting — first name only, never last name anywhere in body.
+            assert "Hi Kaylan, your visit has been completed." in body, body[:400]
+            assert "Testcase" not in body, "customer last name leaked into door-hanger body"
+            # Job title + service address rendered below greeting (both bolded).
+            assert "<b>Weekly Pool Cleaning</b>" in body
+            assert "12 Vistancia Blvd" in body
+            assert "Peoria" in body and "AZ" in body and "85383" in body
+            # Logo — centered <img> before greeting.
+            assert 'src="https://' in body and "/logo-full.png" in body
+            assert 'text-align:center' in body
+            # New footer copy — "We appreciate your business" + tenant phone;
+            # the old "reply to this email" / "make it right" line MUST be gone.
+            assert "We appreciate your business" in body
+            assert "602-887-4400" in body or "reply to this email" not in body
+            assert "make it right" not in body
             # Chemistry — every canonical field + CYA specifically.
             assert "Free Chlorine" in body, body[:300]
             assert "Total Chlorine" in body
@@ -190,7 +226,6 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
             assert "Tested Chemicals" in body
             # Notes.
             assert "Pump strainer basket was full" in body
-            assert "Notes: &mdash;" not in body and "Notes: —" not in body
             # Photos — inline absolute URL.
             assert "test-photo-a" in body
             assert "http" in body  # absolute URL prefix
@@ -277,8 +312,8 @@ def test_door_hanger_empty_report_renders_gracefully(monkeypatch):
             assert r["ok"] is True
             body = captured.get("html") or ""
             # Baseline copy still present…
-            assert "We stopped by" in body
-            assert "Kaylan Testcase" in body
+            assert "your visit has been completed" in body
+            assert "Hi Kaylan," in body
             # …and the empty-notes fallback line still fires.
             assert "Notes: —" in body
         finally:

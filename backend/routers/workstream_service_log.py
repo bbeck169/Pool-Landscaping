@@ -368,7 +368,7 @@ async def email_door_hanger(
     if cid:
         cust = await db.customers.find_one(
             {"id": cid, "tenant_id": tenant["id"]},
-            {"_id": 0, "id": 1, "name": 1, "email": 1},
+            {"_id": 0, "id": 1, "name": 1, "first_name": 1, "email": 1},
         )
     email = (cust or {}).get("email") or ""
     if not email:
@@ -422,11 +422,64 @@ async def email_door_hanger(
     )
     notes_text = await resolve_notes(db, job, tenant["id"])
     photos = resolve_photo_items(job)
+    # Fetch the property doc for the footer service-address line.
+    prop = None
+    if job.get("property_id"):
+        prop = await db.properties.find_one(
+            {"id": job["property_id"], "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "address": 1, "label": 1},
+        )
 
-    company = "Pool & Landscaping of Vistancia"
-    customer_name = (cust or {}).get("name") or "Neighbor"
+    company = (tenant or {}).get("name") or "Pool & Landscaping of Vistancia"
+    # Feb-2026 · Door hanger copy — first name only in the greeting;
+    # never emit the customer's last name anywhere in this email
+    # (other templates unchanged).  Cascade: explicit ``first_name``
+    # field → first token of ``name`` → ``"Neighbor"`` fallback.
+    _first = (cust or {}).get("first_name") or ""
+    if not _first:
+        _first = ((cust or {}).get("name") or "").split(" ", 1)[0]
+    customer_first_name = _first.strip() or "Neighbor"
     completed = job.get("completed_at") or job.get("scheduled_date") or now_iso()
-    subject = f"Service door hanger — {company}"
+    subject = f"Job Completed - {company}"
+
+    # Feb-2026 · Door hanger copy + design update.
+    # Job title cascade: ``job.title`` → ``job.service_template.title``
+    # → ``job.service_type``.  Prod jobs use ``service_type`` most
+    # often; ``service_template.title`` shows up on template-created
+    # jobs.
+    job_title = (
+        job.get("title")
+        or (job.get("service_template") or {}).get("title")
+        or job.get("service_type")
+        or ""
+    )
+    # Service address — resolved from the enriched ``prop`` doc loaded
+    # earlier in the function.  Format: ``street, city, state zip``.
+    addr = (prop or {}).get("address") or {}
+    address_parts = [
+        (addr.get("line1") or "").strip(),
+        ", ".join(filter(None, [(addr.get("city") or "").strip(),
+                                    " ".join(filter(None, [(addr.get("state") or "").strip(),
+                                                            (addr.get("zip") or "").strip()]))])),
+    ]
+    service_address = " · ".join([p for p in address_parts if p])
+    if not service_address:
+        # Legacy jobs may denormalise the address onto the job itself.
+        service_address = (job.get("service_address") or "").strip()
+
+    # Tenant phone for footer.  Cascade: ``tenant.phone`` →
+    # ``tenant.rc_sms_from_number`` → tenant-specific hardcode.
+    tenant_phone = (
+        (tenant or {}).get("phone")
+        or (tenant or {}).get("rc_sms_from_number")
+        or "602-887-4400"   # TODO make per-tenant once ``tenant.phone`` is reliably seeded
+    )
+
+    # Logo — served from the front-end asset bundle at ``/logo-full.png``.
+    # Use the same base-URL resolver the photo links use so preview /
+    # prod render the correct absolute URL.
+    from services.service_report_view import _resolve_public_base_url
+    logo_url = f"{_resolve_public_base_url()}/logo-full.png"
 
     # ── Compose HTML fragments per section, hiding empty ones. ──
     def _row(label: str, value: str) -> str:
@@ -510,18 +563,34 @@ async def email_door_hanger(
             f"<div style=\"margin:4px 0\">{thumbs}</div>"
         )
 
+    # Header — centered logo + new "Your visit has been completed."
+    # greeting + job title + service address (both bolded).  Copy
+    # confirmed with the user Feb-2026.
+    logo_html = (
+        f"<div style=\"text-align:center;margin-bottom:20px\">"
+        f"<img src=\"{logo_url}\" alt=\"{company}\" "
+        f"width=\"200\" style=\"max-width:200px;height:auto;display:inline-block\"/>"
+        f"</div>"
+    )
+    header_html = (
+        f"<h2 style=\"color:#0F172A;margin:0 0 8px;\">Hi {customer_first_name}, your visit has been completed.</h2>"
+        + (f"<p style=\"margin:4px 0;font-size:15px\"><b>{job_title}</b></p>" if job_title else "")
+        + (f"<p style=\"margin:4px 0;font-size:14px;color:#334155\"><b>{service_address}</b></p>" if service_address else "")
+        + f"<p style=\"font-size:13px;color:#64748B;margin-top:8px\">Completed on <b>{str(completed)[:10]}</b>.</p>"
+    )
+
     html = (
         f"<div style=\"font-family:Inter,Arial,sans-serif;max-width:640px;color:#0F172A\">"
-        f"<h2 style=\"color:#0F172A;margin:0 0 8px;\">We stopped by, {customer_name}.</h2>"
-        f"<p>Your service was completed on <b>{str(completed)[:10]}</b>.</p>"
+        f"{logo_html}"
+        f"{header_html}"
         f"{water_html}"
         f"{chems_html}"
         f"{checklist_html}"
         f"{notes_html}"
         f"{photos_html}"
-        f"<p style=\"font-size:12px;color:#64748B;margin-top:16px\">If anything looks off, "
-        f"reply to this email or call us — we'll make it right.</p>"
-        f"<p style=\"margin-top:16px;font-weight:600;\">— {company}</p>"
+        f"<p style=\"font-size:13px;color:#334155;margin-top:24px;\">We appreciate your business<br/>"
+        f"<b>{company}</b><br/>"
+        f"{tenant_phone}</p>"
         f"</div>"
     )
 
