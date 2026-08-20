@@ -41,6 +41,16 @@ export default function ServiceReport() {
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
   const [submitting, setSubmitting] = useState(false);
   const [postSubmitToast, setPostSubmitToast] = useState("");
+  const [chemGateError, setChemGateError] = useState(null);
+  // Feb-2026 · Live client-side mirror of the backend chemistry
+  // gate.  Same rules as ``utils/chemistryGate.js`` — declared
+  // BEFORE the early-return branches so it obeys Rules of Hooks
+  // (a component that render-returns from ``if (busy && !report)``
+  // must call the same hooks on every render).
+  const coreMissingLive = React.useMemo(
+    () => missingCoreReadings(report?.chemical_readings || []),
+    [report?.chemical_readings],
+  );
   // Phase 22 · Feb 2026 — Share-visit clipboard state. Populated once
   // the report is submitted AND carries a ``public_uuid``.
   const [shareToast, setShareToast] = useState("");
@@ -242,15 +252,6 @@ export default function ServiceReport() {
       }
     } finally { setSubmitting(false); }
   };
-  const [chemGateError, setChemGateError] = useState(null);
-
-  // Feb-2026 · Live client-side mirror of the backend gate.  Same
-  // rules (see ``utils/chemistryGate.js``) so the button state
-  // matches the backend contract exactly.
-  const coreMissing = React.useMemo(
-    () => missingCoreReadings(report?.chemical_readings || []),
-    [report?.chemical_readings],
-  );
 
   const uncheckedCount = (report.checklist_items || []).filter((c) => !c.checked).length;
   const locked = !!report.submitted_at;
@@ -601,14 +602,14 @@ export default function ServiceReport() {
             <Save size={13} className="inline mr-1"/> Save now
           </button>
           <button onClick={submitAndClockOut}
-                  disabled={submitting || coreMissing.length > 0}
+                  disabled={submitting || coreMissingLive.length > 0}
                   title={
-                    coreMissing.length > 0
-                      ? `Missing: ${coreMissing.join(", ")}`
+                    coreMissingLive.length > 0
+                      ? `Missing: ${coreMissingLive.join(", ")}`
                       : undefined
                   }
                   className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
-                  style={{ background: coreMissing.length > 0 ? colors.muted : brandGradientCss }}
+                  style={{ background: coreMissingLive.length > 0 ? colors.muted : brandGradientCss }}
                   data-testid="svc-report-submit">
             <ShieldCheck size={14} className="inline mr-1"/>
             {submitting ? "Submitting…" : "Submit Report & Clock Out"}
@@ -622,7 +623,7 @@ export default function ServiceReport() {
              style={{ backgroundColor: "#FEF3C7", color: "#78350F",
                        border: "1px solid #FDE68A" }}>
           <b>Cannot submit yet.</b> Missing required chemistry readings:{" "}
-          {(chemGateError.missing_fields || []).join(", ")}.
+          {(chemGateError.missing_labels || chemGateError.missing_fields || []).join(", ")}.
           <button type="button" onClick={() => setChemGateError(null)}
                   className="ml-3 underline text-xs"
                   data-testid="chem-gate-error-dismiss">Dismiss</button>

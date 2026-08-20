@@ -596,9 +596,14 @@ async def _build_door_hanger_email(
         f"</div>"
     )
     header_html = (
-        f"<h2 style=\"color:#0F172A;margin:0 0 8px;\">Hi {customer_first_name}, your visit has been completed.</h2>"
-        # Feb-2026 · Addition 1 — Service Date line. Directly below the
-        # greeting, above the bolded job title. Muted body-weight text.
+        # Feb-2026 hotfix — greeting shrunk to match the job-title
+        # line (``font-size:15px``, non-bold, same color as body).
+        # Previously rendered as an ``<h2>`` which many email clients
+        # blew up to ~24px, making the first line dominate the visual
+        # hierarchy above the actual service info.  Kept as a ``<p>``
+        # for semantic honesty — it's a greeting, not a heading.
+        f"<p style=\"color:#0F172A;margin:0 0 8px;font-size:15px;font-weight:normal\">"
+        f"Hi {customer_first_name}, your visit has been completed.</p>"
         + (f"<p style=\"margin:4px 0;font-size:14px;color:#555\">Service Date: {service_date_line}</p>"
            if service_date_line else "")
         + (f"<p style=\"margin:4px 0;font-size:15px\"><b>{job_title}</b></p>" if job_title else "")

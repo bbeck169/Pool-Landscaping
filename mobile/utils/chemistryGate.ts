@@ -23,6 +23,10 @@ const LABEL: Record<string, string> = {
   cyanuric_acid: "CYA",
 };
 
+// Product-approved DISPLAY labels — mirror of backend
+// ``services/chemistry_gate.py :: DISPLAY_LABELS``.
+export const DISPLAY_LABELS = LABEL;
+
 const ALIASES: Record<string, string> = {
   free_cl: "free_chlorine",
   freecl: "free_chlorine",

@@ -201,7 +201,7 @@ export default function ServiceReportScreen() {
               detail && typeof detail === "object"
               && detail.detail === "chemistry_core_readings_missing"
             ) {
-              const missed = (detail.missing_fields || []).join(", ");
+              const missed = (detail.missing_labels || detail.missing_fields || []).join(", ");
               Alert.alert(
                 "Cannot submit yet",
                 `Missing required chemistry readings: ${missed}.`,

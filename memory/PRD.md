@@ -11000,3 +11000,67 @@ Full sweep (chemistry + regression):
 
 **Total: 68/68 passing in 5.50s.** Pre-existing unrelated failure
 `test_admin_cannot_undelete_job` untouched.
+
+---
+
+## Feb-2026 · Chemistry gate polish + Door-hanger greeting typography
+
+### Chemistry gate polish (Fix 1 · display labels + live UI verify)
+- **`services/chemistry_gate.py`** — added `DISPLAY_LABELS` map
+  alongside canonical `_LABEL`.  `assert_core_readings_present`
+  now emits BOTH `missing_fields` (canonical short — `free_cl`,
+  `total_cl`, `cya`) AND `missing_labels` (display — `Free Cl`,
+  `Total Cl`, `CYA`) in the 422 detail.  Index-aligned so a caller
+  can zip them.  Old `missing_fields` shape preserved for BC.
+- **`frontend/src/utils/chemistryGate.js`** — exported `DISPLAY_LABELS`
+  + `CANONICAL_SHORT_LABELS`.  The `missingCoreReadings()` helper
+  already returned display labels; kept that as the button-tooltip
+  source of truth.
+- **`mobile/utils/chemistryGate.ts`** — exported `DISPLAY_LABELS`
+  for parity.
+- **`ServiceReport.jsx`** — banner now prefers `missing_labels`
+  over `missing_fields`.  Also moved `chemGateError` `useState` +
+  `coreMissingLive` `useMemo` ABOVE the early-return branches to
+  obey Rules of Hooks (Vitest surfaced the violation during Fix 2
+  scripting; fixed pre-emptively).
+- **Vitest component test — `service-report-chemistry-gate.test.jsx`
+  (NEW, 5 cases)** — mounts `ServiceReport.jsx` with mocked
+  `api.get` + `useParams({id: "bb80b3ad-…"})` and asserts:
+    1. Only pH + Free Cl → button disabled + `title === "Missing: Total Cl, Alkalinity, CYA"`.
+    2. Optionals filled → button stays disabled + same title (optionals don't unblock).
+    3. All 5 cores → button enabled + `title` absent.
+    4. `0` and `-1.5` (stringified) → gate passes (real chemistry values).
+    5. Empty / whitespace / unparseable → gate blocks with correct labels.
+  Harness reused: existing Vitest + Testing-Library setup (no new
+  e2e framework added, per hotfix scope guard).
+
+### Door-hanger greeting typography (`_build_door_hanger_email`)
+- Swapped the greeting from `<h2>` (browser-default ~24px) to a
+  `<p style="font-size:15px; font-weight:normal">` matching the
+  job-title line.  Kept color `#0F172A` (body text).  Kept margins
+  (`margin:0 0 8px`) so vertical rhythm doesn't shift.
+- **Standardised font-size**: `15px` — the exact value the job-
+  title `<p><b>…</b></p>` line already uses.  No new sizes invented.
+- Service Date line untouched (`font-size:14px; color:#555`).
+  Water Test / Chemicals / Checklist / Notes / Photos / CTA /
+  Footer all untouched.
+- Test coverage extended in `test_door_hanger_email_body.py`:
+  * Regex-parses the greeting `<p>` and the job-title `<p>` inline
+    styles, asserts identical `font-size` values.
+  * Asserts greeting is NOT `<h2>`, NOT `<b>`, NOT `<strong>`.
+  * Asserts `font-weight:normal` on the greeting inline style.
+
+### Files changed
+- `backend/services/chemistry_gate.py`
+- `backend/tests/test_chemistry_required_readings_gate.py` — +1 test (canonical + display labels both present).
+- `backend/routers/workstream_service_log.py` — greeting typography.
+- `backend/tests/test_door_hanger_email_body.py` — new size-parity + no-bold assertions.
+- `frontend/src/utils/chemistryGate.js` — `DISPLAY_LABELS` export.
+- `frontend/src/pages/tech/ServiceReport.jsx` — hooks-order fix + `missing_labels` preference.
+- `frontend/src/test/service-report-chemistry-gate.test.jsx` — **NEW**, 5 cases.
+- `mobile/utils/chemistryGate.ts` — `DISPLAY_LABELS` export.
+- `mobile/app/(app)/service-report/[id].tsx` — `missing_labels` preference in Alert.
+
+### Test roll-up
+- Backend: **69/69 passing in 5.52s** (chemistry gate 12/12, door-hanger email body 9/9, door-hanger auto-send 8/8, workstream read paths, P0 SMS 5/5, Homeworks import inactive 7/7, portal auto-login 7/7, portal magic links 8/8, tech-name resolution 6/6).
+- Frontend: **5/5 Vitest passing in 134ms** (service-report chemistry-gate transitions).

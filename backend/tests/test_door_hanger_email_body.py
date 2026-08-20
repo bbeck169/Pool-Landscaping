@@ -198,6 +198,40 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
             # Greeting — first name only, never last name anywhere in body.
             assert "Hi Kaylan, your visit has been completed." in body, body[:400]
             assert "Testcase" not in body, "customer last name leaked into door-hanger body"
+            # Feb-2026 typography tweak — greeting now renders at the
+            # SAME font-size as the job-title line (matches product
+            # spec confirmed after live-inbox review).  The old
+            # ``<h2>`` was too visually loud in most email clients.
+            import re as _re
+            _greeting_re = _re.search(
+                r'<p\s+style="([^"]+)"[^>]*>\s*Hi Kaylan, your visit has been completed\.\s*</p>',
+                body,
+            )
+            assert _greeting_re, "greeting must render as a <p> with an inline style"
+            _greeting_style = _greeting_re.group(1)
+            _title_re = _re.search(
+                r'<p\s+style="([^"]+)"[^>]*>\s*<b>Weekly Pool Cleaning</b>\s*</p>',
+                body,
+            )
+            assert _title_re, "job title <p><b> line must be present"
+            _title_style = _title_re.group(1)
+            _greeting_size = _re.search(r'font-size:\s*(\d+px)', _greeting_style)
+            _title_size = _re.search(r'font-size:\s*(\d+px)', _title_style)
+            assert _greeting_size and _title_size, (
+                _greeting_style, _title_style,
+            )
+            assert _greeting_size.group(1) == _title_size.group(1), (
+                f"greeting size {_greeting_size.group(1)} must match "
+                f"job-title size {_title_size.group(1)}"
+            )
+            # Greeting MUST NOT render bold (it's a greeting, not a heading).
+            assert "<h2" not in body.lower() or "your visit has been completed" not in body.lower().split("<h2", 1)[-1][:200], "greeting must not use <h2>"
+            assert "<b>Hi Kaylan" not in body
+            assert "<strong>Hi Kaylan" not in body
+            # Explicit font-weight override on the greeting is normal/light.
+            assert "font-weight:normal" in _greeting_style or "font-weight: normal" in _greeting_style
+            # Service Date line stays SMALLER + muted (Fix must not touch it).
+            assert 'font-size:14px;color:#555' in body
             # Job title + service address rendered below greeting (both bolded).
             assert "<b>Weekly Pool Cleaning</b>" in body
             assert "12 Vistancia Blvd" in body

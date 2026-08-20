@@ -147,6 +147,24 @@ def test_helper_accepts_aliased_keys():
     assert r == []
 
 
+def test_422_payload_carries_both_canonical_and_display_labels():
+    """The 422 detail MUST expose both ``missing_fields`` (canonical
+    short) and ``missing_labels`` (display) so machine callers and
+    UI callers each have a direct source of truth."""
+    from services.chemistry_gate import assert_core_readings_present
+    with pytest.raises(HTTPException) as ei:
+        assert_core_readings_present({})  # nothing present
+    d = ei.value.detail
+    assert d["missing_fields"] == [
+        "free_cl", "total_cl", "alkalinity", "ph", "cya",
+    ]
+    assert d["missing_labels"] == [
+        "Free Cl", "Total Cl", "Alkalinity", "pH", "CYA",
+    ]
+    # Arrays are index-aligned so a caller can zip them safely.
+    assert len(d["missing_fields"]) == len(d["missing_labels"])
+
+
 # ═════════════════════════════════════════════════════════════════════
 # service-report submit path.
 # ═════════════════════════════════════════════════════════════════════
@@ -192,7 +210,13 @@ def test_submit_with_one_core_missing_raises_422():
             assert ei.value.status_code == 422
             detail = ei.value.detail
             assert detail["detail"] == "chemistry_core_readings_missing"
+            # Machine-friendly canonical short labels.
             assert set(detail["missing_fields"]) == {"ph", "cya"}
+            # Human-friendly display labels — used by every UI surface.
+            assert set(detail["missing_labels"]) == {"pH", "CYA"}
+            # Ordering of the two arrays is aligned.
+            assert (detail["missing_fields"].index("ph")
+                    == detail["missing_labels"].index("pH"))
             after = await _db().jobs.find_one({"id": jid}, {"_id": 0, "status": 1})
             assert after["status"] != "completed"
         finally:

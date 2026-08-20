@@ -35,13 +35,25 @@ CORE_READINGS: List[str] = [
     "cyanuric_acid",
 ]
 
-# UI-friendly labels for the error payload + missing-fields list.
+# UI-friendly SHORT labels for the ``missing_fields`` payload — used
+# by legacy API consumers and machine parsers (kebab-y snake case).
 _LABEL: Dict[str, str] = {
     "free_chlorine":  "free_cl",
     "total_chlorine": "total_cl",
     "alkalinity":     "alkalinity",
     "ph":             "ph",
     "cyanuric_acid":  "cya",
+}
+
+# Human-friendly DISPLAY labels for the ``missing_labels`` payload +
+# every UI surface (button tooltips, inline banners, mobile hints).
+# Product-approved wording (Feb-2026 spec).
+DISPLAY_LABELS: Dict[str, str] = {
+    "free_chlorine":  "Free Cl",
+    "total_chlorine": "Total Cl",
+    "alkalinity":     "Alkalinity",
+    "ph":             "pH",
+    "cyanuric_acid":  "CYA",
 }
 
 _ALIASES: Dict[str, str] = {
@@ -132,26 +144,38 @@ def normalize_readings(source: Any) -> Dict[str, Any]:
 
 
 def missing_core_readings(source: Any) -> List[str]:
-    """Return the UI-friendly label list of MISSING core readings.
+    """Return the machine-friendly SHORT label list of MISSING core
+    readings (matches ``missing_fields`` in the 422 payload).
     Empty list means the gate would pass."""
     norm = normalize_readings(source)
     return [_LABEL[k] for k in CORE_READINGS if not _is_valid_reading(norm.get(k))]
+
+
+def missing_core_reading_labels(source: Any) -> List[str]:
+    """Return the human-friendly DISPLAY label list of MISSING core
+    readings (matches ``missing_labels`` in the 422 payload).  Same
+    ordering as :func:`missing_core_readings`."""
+    norm = normalize_readings(source)
+    return [DISPLAY_LABELS[k] for k in CORE_READINGS if not _is_valid_reading(norm.get(k))]
 
 
 def assert_core_readings_present(source: Any) -> None:
     """Raise ``HTTPException(422)`` when any of the five core
     chemistry readings is missing.  Uses the same detail shape
     across every call site so the FE can key off ``detail`` and
-    render ``missing_fields`` inline.
+    render ``missing_fields`` / ``missing_labels`` inline.
     """
-    missing = missing_core_readings(source)
-    if not missing:
+    norm = normalize_readings(source)
+    missing_keys = [k for k in CORE_READINGS
+                    if not _is_valid_reading(norm.get(k))]
+    if not missing_keys:
         return
     raise HTTPException(
         status_code=422,
         detail={
             "detail": "chemistry_core_readings_missing",
-            "missing_fields": missing,
+            "missing_fields": [_LABEL[k] for k in missing_keys],
+            "missing_labels": [DISPLAY_LABELS[k] for k in missing_keys],
             "message": "Cannot close job — required chemistry readings missing",
         },
     )

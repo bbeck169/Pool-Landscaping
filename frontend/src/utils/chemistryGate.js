@@ -26,6 +26,22 @@ const LABEL = {
   cyanuric_acid: "CYA",
 };
 
+// Product-approved DISPLAY labels used by the button tooltip and the
+// inline warning banner.  Kept in exact lockstep with
+// ``backend/services/chemistry_gate.py :: DISPLAY_LABELS``.
+export const DISPLAY_LABELS = LABEL;
+
+// Legacy machine-friendly labels (kebab-y snake case) — matches the
+// 422 payload's ``missing_fields`` array.  Exposed so callers that
+// prefer to key on those (e.g. analytics) don't have to re-derive.
+export const CANONICAL_SHORT_LABELS = {
+  free_chlorine: "free_cl",
+  total_chlorine: "total_cl",
+  alkalinity: "alkalinity",
+  ph: "ph",
+  cyanuric_acid: "cya",
+};
+
 const ALIASES = {
   free_cl: "free_chlorine",
   freecl: "free_chlorine",
