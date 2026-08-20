@@ -228,14 +228,21 @@ async def get_service_log(
     # Enrich with technician_department so _classify() can pick pool/land.
     tid = job.get("technician_id")
     if tid:
+        # Fetch a doc under all four id shapes for department + phone.
         tech = await db.technicians.find_one(
-            {"id": tid, "tenant_id": tenant["id"]},
+            {"$or": [{"id": tid}, {"user_id": tid}], "tenant_id": tenant["id"]},
             {"_id": 0, "id": 1, "name": 1, "phone": 1, "department": 1},
         ) or {}
         job["_technician_department"] = tech.get("department")
+        # Name resolution goes through the shared cascade so a
+        # ``users.id``-shaped ``technician_id`` still renders.
+        from services.service_report_view import resolve_technician_names
+        _names = await resolve_technician_names(db, tenant["id"], [tid])
+        resolved_name = _names.get(tid) or tech.get("name") \
+            or job.get("technician_name") or "Unassigned"
         employee = {
-            "id": tech.get("id"),
-            "name": tech.get("name") or "Unassigned",
+            "id": tech.get("id") or tid,
+            "name": resolved_name,
             "phone": tech.get("phone"),
             "department": tech.get("department"),
         }

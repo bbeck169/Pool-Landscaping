@@ -339,13 +339,10 @@ async def list_workstream_jobs(
         ).to_list(len(cids) * 2)
         cmap = {c["id"]: c for c in cust_rows}
 
-    tmap: Dict[str, Dict[str, Any]] = {}
+    tmap_names: Dict[str, str] = {}
     if tids:
-        tech_rows = await db.technicians.find(
-            {"id": {"$in": tids}, "tenant_id": tenant["id"]},
-            {"_id": 0, "id": 1, "name": 1},
-        ).to_list(len(tids) * 2)
-        tmap = {t["id"]: t for t in tech_rows}
+        from services.service_report_view import resolve_technician_names
+        tmap_names = await resolve_technician_names(db, tenant["id"], tids)
 
     pmap: Dict[str, Dict[str, Any]] = {}
     if pids:
@@ -362,7 +359,7 @@ async def list_workstream_jobs(
         tid = d.get("technician_id")
         pid = d.get("property_id")
         cust = cmap.get(cid) if cid else None
-        tech = tmap.get(tid) if tid else None
+        tech_name = tmap_names.get(tid) if tid else None
         prop = pmap.get(pid) if pid else None
 
         addr = (prop or {}).get("address") or {}
@@ -384,7 +381,7 @@ async def list_workstream_jobs(
             "customer_name": (cust or {}).get("name") or d.get("customer_name") or "",
             "customer_is_vip": bool((cust or {}).get("is_vip")),
             "technician_id": tid,
-            "technician_name": (tech or {}).get("name") or d.get("technician_name") or "",
+            "technician_name": tech_name or d.get("technician_name") or "",
             "property_id": pid,
             "property_label": (prop or {}).get("label"),
             "property_address": prop_addr,

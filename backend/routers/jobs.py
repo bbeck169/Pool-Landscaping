@@ -1908,14 +1908,25 @@ async def compute_pool_service(tenant_id: str,
         week_start, week_end = _service_week(date_from or date_to)
 
     date_range = {"$gte": week_start, "$lte": week_end}
+    from utils import not_deleted_filter as _nd
     jobs = await db.jobs.find(
-        {"tenant_id": tenant_id, "scheduled_date": date_range},
+        {"tenant_id": tenant_id, "scheduled_date": date_range, **_nd()},
         {"_id": 0, "technician_id": 1, "technician_name": 1, "status": 1, "scheduled_date": 1},
     ).to_list(10000)
 
-    techs = {t["id"]: t["name"] async for t in db.technicians.find(
-        {"tenant_id": tenant_id}, {"_id": 0, "id": 1, "name": 1}
-    )}
+    tids = list({j.get("technician_id") for j in jobs if j.get("technician_id")})
+    from services.service_report_view import resolve_technician_names
+    techs = await resolve_technician_names(db, tenant_id, tids)
+    # Denormalized ``technician_name`` cache is a last-resort fallback
+    # for old jobs whose ``technician_id`` no longer resolves in any
+    # of the 4 cascade rungs.
+    cached_name_by_tid: dict = {}
+    for j in jobs:
+        tid_j = j.get("technician_id")
+        nm = (j.get("technician_name") or "").strip()
+        if tid_j and nm and tid_j not in cached_name_by_tid:
+            cached_name_by_tid[tid_j] = nm
+
     agg: dict = {}
     for j in jobs:
         tid = j.get("technician_id")
@@ -1931,7 +1942,9 @@ async def compute_pool_service(tenant_id: str,
     for tid, a in agg.items():
         rows.append({
             "technician_id": tid,
-            "technician_name": techs.get(tid, "Unknown"),
+            "technician_name": techs.get(tid)
+                                 or cached_name_by_tid.get(tid)
+                                 or "Unknown",
             "completed": a["completed"],
             "skipped": a["skipped"],
         })

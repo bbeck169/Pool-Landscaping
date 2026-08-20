@@ -314,3 +314,85 @@ def resolve_photo_items(job: dict) -> List[Dict[str, Any]]:
             "created_at": p.get("created_at"),
         })
     return out
+
+
+# ─── Tech-name resolver ──────────────────────────────────────────────
+async def resolve_technician_names(db, tenant_id: str, ids):
+    """4-rung cascade for a mixed bag of ``job.technician_id`` values.
+
+    ``job.technician_id`` is stored inconsistently across ~7 write
+    paths (mobile create, admin dispatch, scheduler autocreate,
+    service-report submit, reassign, quote→job, etc.).  Some paths
+    write a ``technicians.id``, some write a ``users.id``.  The
+    "correct long-term fix" is normalising every writer (queued as
+    the P2 Tech-ID fragmentation task); the fast fix is teaching the
+    reader to accept both shapes.
+
+    Cascade order:
+      1. ``db.technicians.id``
+      2. ``db.technicians.user_id``  (technician doc back-ref)
+      3. ``db.users.id``  (role in ``technician / landscaper / manager / admin``)
+      4. ``db.users`` — synthesise from ``first_name + last_name``
+
+    Returns ``{id: display_name}``.  Never raises.  Missing ids
+    simply don't appear in the map — the caller applies its own
+    ``"Unassigned"`` / ``"Unknown"`` copy.
+    """
+    ids = [str(x) for x in (ids or []) if x]
+    if not ids:
+        return {}
+    ids = list(dict.fromkeys(ids))  # de-dupe, preserve order
+    out: dict = {}
+
+    # 1. technicians.id  — canonical shape.
+    async for t in db.technicians.find(
+        {"tenant_id": tenant_id, "id": {"$in": ids}},
+        {"_id": 0, "id": 1, "name": 1},
+    ):
+        if t.get("name"):
+            out[t["id"]] = t["name"]
+
+    remaining = [i for i in ids if i not in out]
+    if not remaining:
+        return out
+
+    # 2. technicians.user_id  — back-ref shape.
+    async for t in db.technicians.find(
+        {"tenant_id": tenant_id, "user_id": {"$in": remaining}},
+        {"_id": 0, "user_id": 1, "name": 1},
+    ):
+        uid = t.get("user_id")
+        if uid and t.get("name") and uid not in out:
+            out[uid] = t["name"]
+
+    remaining = [i for i in ids if i not in out]
+    if not remaining:
+        return out
+
+    # 3-4. users.id  — direct user reference.
+    async for u in db.users.find(
+        {"tenant_id": tenant_id, "id": {"$in": remaining},
+         "role": {"$in": ["technician", "landscaper", "manager", "admin", "super_admin"]}},
+        {"_id": 0, "id": 1, "name": 1, "first_name": 1, "last_name": 1},
+    ):
+        if u.get("name"):
+            out[u["id"]] = u["name"]
+        else:
+            fn = (u.get("first_name") or "").strip()
+            ln = (u.get("last_name") or "").strip()
+            full = f"{fn} {ln}".strip()
+            if full:
+                out[u["id"]] = full
+    return out
+
+
+async def resolve_tech_name(db, job: dict, tenant_id: str) -> str:
+    """Single-value wrapper for callers with only one job in hand
+    (e.g., audit rows, email templates).  Returns the resolved
+    display name, then the cached ``job.technician_name`` fallback,
+    then ``""`` — the caller applies its own UI copy for empty."""
+    tid = (job or {}).get("technician_id")
+    if not tid:
+        return (job or {}).get("technician_name") or ""
+    m = await resolve_technician_names(db, tenant_id, [tid])
+    return m.get(tid) or (job or {}).get("technician_name") or ""
