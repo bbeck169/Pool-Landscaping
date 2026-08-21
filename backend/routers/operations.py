@@ -1,13 +1,22 @@
-# ruff: noqa: F403,F405
+# ruff: noqa: F401
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
-                   get_current_user, require_admin, send_sms, notify_customer, auth_response)
+                   get_current_user, require_admin, send_sms, notify_customer, auth_response,
+                   not_deleted_filter as _nd)
 from routers.tenants import get_current_tenant
-from models import *  # noqa: F403,F405
+# Feb-2026 · P5 — wildcard ``from models import *`` dropped. Router uses
+# only ``List`` / ``Optional`` from typing (already imported above). No
+# model classes are referenced here so no explicit ``from models`` line
+# is needed; models can evolve without silently widening this router's
+# namespace. ``_nd`` (soft-delete filter) is now imported at module top
+# instead of inline inside a subset of handlers, fixing a latent
+# NameError at ``operations.py:147`` that only fired when that endpoint
+# was hit (the wildcard hid this via ``models``'s own transitive re-
+# exports).
 
 router = APIRouter()
 

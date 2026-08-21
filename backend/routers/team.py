@@ -1,4 +1,4 @@
-# ruff: noqa: F403,F405
+# ruff: noqa: F401
 from fastapi import APIRouter, HTTPException, Depends, Query
 import os
 from typing import List, Optional
@@ -11,7 +11,11 @@ from routers.portal_admin import _random_password
 from services.notifications import emit as notify_emit
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
-from models import *  # noqa: F403,F405
+# Feb-2026 · P5 — wildcard ``from models import *`` dropped. Router
+# only references ``Any / List / Optional / BaseModel / EmailStr / re``,
+# each of which is already imported from typing / pydantic / stdlib
+# above. No model classes are consumed here so no explicit
+# ``from models`` line is needed.
 
 router = APIRouter()
 

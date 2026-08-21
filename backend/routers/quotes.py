@@ -1,6 +1,6 @@
-# ruff: noqa: F403,F405
+# ruff: noqa: F401
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 import re
 
@@ -9,7 +9,16 @@ from utils import (now_iso, new_id, hash_password, verify_password, create_token
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
 from routers.tenants import get_current_tenant
 from emailer import send_invoice_reminder_email
-from models import *  # noqa: F403,F405
+# Feb-2026 · P5 — wildcard ``from models import *`` replaced with the
+# concrete set actually used below. ``Any / Dict`` come from typing
+# (added to the typing import above); ``BaseModel`` / ``re`` are not
+# referenced by this router.
+from models import (
+    MaintBulkIn,
+    QuoteIn,
+    QuoteUpdate,
+    RecordPaymentIn,
+)
 
 router = APIRouter()
 
