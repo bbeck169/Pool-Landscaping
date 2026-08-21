@@ -105,6 +105,8 @@ KIND_LABELS: dict[str, str] = {
     "property.deleted":           "Property · Removed",
     # Phase 18 · Inventory (Feb 2026)
     "inventory_low_stock":        "Inventory · Low Stock",
+    # Feb-2026 · Optimize Route (tech→admin approval flow).
+    "route_optimization_request": "Route Optimization · Request",
 }
 
 # NB: two new channels added — ``push`` (Expo mobile push) + ``in_app`` alias

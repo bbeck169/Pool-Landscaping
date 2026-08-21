@@ -27,6 +27,7 @@ from routers import (
     referrals,
     public_social,
     route_optimization,
+    route_optimization_approval as _route_opt_approval,
     portal_chats, portal_appointments, portal_photos,
     employee_onboarding, assets, referral_tiers,
     seo_agentic, seo_phase17c,
@@ -640,8 +641,17 @@ api_router.include_router(marketing_campaigns_router.public_router)
 from routers import reviews_public_alias  # noqa: E402
 api_router.include_router(reviews_public_alias.router)
 
+# Feb-2026 · Optimize Route (tech→admin approval + 10 s undo).
+# Distinct namespace from route_optimization (immediate apply) and
+# dispatch_route_optimize (dispatch board flow); all three coexist.
+api_router.include_router(_route_opt_approval.router)
+
 app.include_router(api_router)
 app.include_router(public_social.router)
+
+# Feb-2026 · Optimize Route (tech→admin approval + 10s undo).
+# Distinct namespace from route_optimization (immediate apply) and
+# dispatch_route_optimize (dispatch board flow); all three coexist.
 
 # Phase 49 · Feb-2026 — Lana todos + reminders REST surface.
 from routers import lana_todos  # noqa: E402
