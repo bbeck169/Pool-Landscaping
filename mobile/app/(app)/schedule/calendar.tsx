@@ -1039,49 +1039,6 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           customerNote={job.customer_notes || job.account_notes}
           truncated={job.notes_truncated}
         />
-        {false && (() => {
-          const jobNote = job.notes && String(job.notes).trim() ? String(job.notes) : "";
-          const custNote = (job.customer_notes || job.account_notes)
-            ? String(job.customer_notes || job.account_notes).trim() : "";
-          if (!jobNote && !custNote) return null;
-          const full = [
-            jobNote ? jobNote + (job.notes_truncated ? "…" : "") : "",
-            custNote ? `Customer note: ${custNote}` : "",
-          ].filter(Boolean).join("\n\n");
-          return (
-            <Pressable
-              onPress={(e) => { e?.stopPropagation?.(); Alert.alert("Notes", full); }}
-              style={gStyles.notesCallout}
-              testID={`job-notes-callout-${job.id}`}
-            >
-              <Ionicons name="document-text-outline" size={12} color="#2563EB"
-                        style={{ marginTop: 1 }} />
-              <View style={{ flex: 1, minWidth: 0 }}>
-                {jobNote ? (
-                  <Text
-                    style={gStyles.notesCalloutJobText}
-                    numberOfLines={2}
-                    ellipsizeMode="tail"
-                    testID={`job-${job.id}-notes`}
-                  >
-                    {jobNote}{job.notes_truncated ? "…" : ""}
-                  </Text>
-                ) : null}
-                {custNote ? (
-                  <Text
-                    style={gStyles.notesCalloutCustText}
-                    numberOfLines={2}
-                    ellipsizeMode="tail"
-                    testID={`job-notes-preview-${job.id}`}
-                  >
-                    <Text style={{ fontWeight: "700" }}>Customer note: </Text>
-                    {custNote}
-                  </Text>
-                ) : null}
-              </View>
-            </Pressable>
-          );
-        })()}
         {job.address ? (
           <Text style={gStyles.addr} numberOfLines={1}>{job.address}</Text>
         ) : null}

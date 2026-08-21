@@ -71,11 +71,15 @@ class ReorderBody(BaseModel):
       * ``{tech_user_id, date, ordered_job_ids}`` — new (Feb-2026).
       * ``{job_ids}`` — legacy (GridPanel Rearrange mode). We infer
         ``tech_user_id`` + ``date`` from the first job.
+
+    Feb-2026 · P1 parity with the web ``MAX_ORDER_VALUE = 50`` guard in
+    ``NumberedReorder.jsx``. 50 aligns with the offline-cache window
+    and is safely above the busiest observed tech day (~30 stops).
     """
     tech_user_id: Optional[str] = None
     date: Optional[str] = Field(None, description="YYYY-MM-DD")
-    ordered_job_ids: Optional[List[str]] = None
-    job_ids: Optional[List[str]] = None
+    ordered_job_ids: Optional[List[str]] = Field(None, max_length=50)
+    job_ids: Optional[List[str]] = Field(None, max_length=50)
 
 
 @router.post("/jobs/reorder",
