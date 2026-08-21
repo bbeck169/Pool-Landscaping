@@ -45,12 +45,14 @@ export default function JobNotesCallout({
   customerNote,
   truncated = false,
 }) {
+  // Rules of Hooks — ``useState`` must be called on every render.
+  // Compute the derived values first and hoist the hook above the
+  // empty-state early return so the hook order stays stable.
+  const [expanded, setExpanded] = useState(false);
   const jobNote = (note && String(note).trim()) ? String(note) : "";
   const custNote = (customerNote && String(customerNote).trim()) ? String(customerNote).trim() : "";
-  if (!jobNote && !custNote) return null;
-
-  const [expanded, setExpanded] = useState(false);
   const showMoreEligible = _mayOverflow(jobNote) || _mayOverflow(custNote);
+  if (!jobNote && !custNote) return null;
 
   return (
     <div

@@ -40,13 +40,14 @@ export interface JobNotesCalloutProps {
 export default function JobNotesCallout({
   jobId, note, customerNote, truncated = false,
 }: JobNotesCalloutProps) {
+  // Rules of Hooks — keep ``useState`` above any early return so the
+  // hook order stays stable across renders. Matches the web sibling.
+  const [expanded, setExpanded] = useState(false);
   const jobNote = (note && String(note).trim()) ? String(note) : "";
   const custNote = (customerNote && String(customerNote).trim()) ? String(customerNote).trim() : "";
-  if (!jobNote && !custNote) return null;
-
-  const [expanded, setExpanded] = useState(false);
   const showMoreEligible = _mayOverflow(jobNote) || _mayOverflow(custNote);
   const clampLines = expanded ? undefined : 2;
+  if (!jobNote && !custNote) return null;
 
   return (
     <View style={s.wrap} testID={`job-notes-callout-${jobId}`}>

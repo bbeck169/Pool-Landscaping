@@ -56,7 +56,7 @@ def _now() -> datetime:
 
 
 def _auto_color(name: str) -> str:
-    h = int(hashlib.md5(name.encode("utf-8")).hexdigest()[:8], 16)  # noqa: S324
+    h = int(hashlib.sha256(name.encode("utf-8")).hexdigest()[:8], 16)  # non-security: stable name→color slot
     hue = (h % 360) / 360.0
     r, g, b = colorsys.hls_to_rgb(hue, 0.55, 0.65)
     return "#" + "".join(f"{int(round(x * 255)):02x}" for x in (r, g, b))

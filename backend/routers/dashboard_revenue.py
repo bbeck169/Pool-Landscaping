@@ -60,7 +60,7 @@ def _parse_range(start: str, end: str) -> tuple[str, str]:
 
 def _color_for(label: str) -> str:
     """Stable pastel hex derived from a hash of the category name."""
-    h = int(hashlib.md5(label.encode("utf-8")).hexdigest()[:8], 16)  # noqa: S324 — non-security
+    h = int(hashlib.sha256(label.encode("utf-8")).hexdigest()[:8], 16)  # non-security: stable label→color slot
     hue = (h % 360) / 360.0
     r, g, b = colorsys.hls_to_rgb(hue, 0.55, 0.68)
     return "#" + "".join(f"{int(round(x * 255)):02x}" for x in (r, g, b))
