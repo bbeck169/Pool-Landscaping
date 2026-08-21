@@ -385,6 +385,16 @@ export default function Login({ variant = "staff" } = {}) {
             />
           )}
         </div>
+        {/* Feb-2026 · P11b — Privacy Policy footer link (App Store item 4). */}
+        <div className="text-center pb-6 pt-4">
+          <a
+            href="/privacy-policy"
+            className="text-xs font-semibold underline opacity-70 hover:opacity-100"
+            data-testid="login-privacy-policy-link"
+          >
+            Privacy Policy
+          </a>
+        </div>
       </main>
     </div>
   );

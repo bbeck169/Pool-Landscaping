@@ -643,3 +643,19 @@
   - mobile/app.json (permission strings)
 - **Web files referenced**: None (backend-only endpoints)
 
+
+## Iteration 36 — Phase P11a: App Store config + privacy manifest cluster
+- **Commit**: a47777754349672cc85da45210845aa77b0c7dca
+- **Date**: 2026-08-21
+- **Changes**:
+  - Item 1: Regenerated icon.png from 512x512 RGBA to 1024x1024 RGB (no alpha) via image generation
+  - Item 2: Added expo.ios.privacyManifests block with 4 Required Reason API declarations
+  - Item 5: Added expo.ios.config.usesNonExemptEncryption = false
+  - Item 6: Added expo.ios.buildNumber = "1"
+  - Item 7: Added NSSpeechRecognitionUsageDescription to infoPlist
+  - JSON validity confirmed; 497 tests pass (same as before, 9 pre-existing failures unchanged)
+- **Files modified**:
+  - mobile/app.json (config + privacy manifest + buildNumber + encryption + speech perm)
+  - mobile/assets/images/icon.png (regenerated)
+- **Items NOT touched**: 3 (account deletion), 4 (privacy policy), 8, 9, 10
+

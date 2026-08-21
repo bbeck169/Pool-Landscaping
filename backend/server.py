@@ -127,6 +127,9 @@ from routers import (
 # Phase 9C · Feb 2026 — QuickBooks retirement helper (idempotent
 # boot migration + ALLOW_TEST_HOOKS-gated purge endpoint).
 from routers import quickbooks_cleanup
+# Phase 11b · Feb 2026 — Customer self-service account deletion
+# (App Store consumer-account guideline blocker item 3).
+from routers import customer_account as _p11b_customer_account  # noqa: E402
 # Phase 17 · Feb 2026 — Route Assignment Overrides + permanent moves.
 # Registered separately from the main include loop below so the
 # ``/dispatch/reassign`` and ``/dispatch/assignment-change-log``
@@ -211,6 +214,8 @@ from routers import ai_media_estimator as _p25_ai_media_router  # noqa: E402
 api_router.include_router(_p25_ai_media_router.router)
 from routers import integrations_supercool as _p26_supercool_router  # noqa: E402
 api_router.include_router(_p26_supercool_router.router)
+# Phase 11b · Feb 2026 — Customer account deletion.
+api_router.include_router(_p11b_customer_account.router)
 # Feb-2026 · Phase 1a — Homeworks (MCP via api.home.works) OAuth
 # lifecycle (DCR + authcode + PKCE). Token exchange only — MCP
 # tools/list / tools/call land in Phase 1b.

@@ -12,6 +12,9 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading, PrimaryButton } from "@/src/components/ui";
 import { Field } from "@/app/customer/new";
+// Feb-2026 · P11b — App Store consumer-account guideline blockers 3 + 4.
+import DeleteAccountSection from "@/src/components/portal/DeleteAccountSection";
+import * as Linking from "expo-linking";
 
 export default function PortalProfile() {
   const { user, logout } = useAuth();
@@ -136,6 +139,22 @@ export default function PortalProfile() {
           <Ionicons name="log-out-outline" size={20} color={colors.error} />
           <Text style={styles.logoutText}>Sign out</Text>
         </Pressable>
+
+        {/* Feb-2026 · P11b — Privacy Policy row (App Store item 4). */}
+        <Pressable
+          style={styles.privacyRow}
+          onPress={() => {
+            const webUrl = process.env.EXPO_PUBLIC_WEB_URL || "https://app.plofv.com";
+            Linking.openURL(`${webUrl}/privacy-policy`).catch(() => {});
+          }}
+          testID="portal-profile-privacy-policy-link"
+        >
+          <Ionicons name="shield-checkmark-outline" size={16} color={colors.muted} />
+          <Text style={styles.privacyText}>Privacy Policy</Text>
+        </Pressable>
+
+        {/* Feb-2026 · P11b — Delete-account danger section (App Store item 3). */}
+        <DeleteAccountSection />
       </KeyboardAwareScrollView>
     </View>
   );
@@ -152,6 +171,20 @@ const styles = StyleSheet.create({
   saved: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.success, marginTop: spacing.md, textAlign: "center" },
   logout: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, marginTop: spacing.xl, height: 52, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.error },
   logoutText: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.error },
+  privacyRow: {
+    marginTop: spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  privacyText: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+    textDecorationLine: "underline",
+  },
   errorBanner: {
     flexDirection: "row",
     alignItems: "flex-start",

@@ -13,6 +13,8 @@ import { api } from "@/api";
 import { brandGradientCss, colors } from "@/theme";
 import { useAuth } from "@/auth";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
+// Feb-2026 · P11b — App Store consumer-account guideline blockers 3 + 4.
+import DeleteAccountDangerCard from "@/components/portal/DeleteAccountDangerCard";
 
 
 const CHANNEL_LABELS = {
@@ -202,6 +204,24 @@ export default function PortalPreferences() {
           flag. The tour is force-opened via the ``forceOpen`` prop and
           only closed locally when the customer completes/skips it. */}
       <ReplayTourButton />
+
+      {/* Feb-2026 · P11b — Delete-account danger card (App Store
+          consumer-account guideline blocker item 3).  Only rendered
+          on the logged-in surface — token-based (magic link) callers
+          don't have a session to invalidate. */}
+      {!token ? <DeleteAccountDangerCard /> : null}
+
+      {/* Feb-2026 · P11b — Privacy Policy footer link (App Store item 4). */}
+      <div className="mt-6 text-center">
+        <a
+          href="/privacy-policy"
+          className="text-sm font-semibold underline"
+          style={{ color: colors.muted }}
+          data-testid="portal-preferences-privacy-policy-link"
+        >
+          Privacy Policy
+        </a>
+      </div>
     </div>
   );
 }
