@@ -30,12 +30,22 @@
  *     returns null (parent doesn't need to gate the render).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, StyleSheet, Pressable } from "react-native";
+import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+// Feb-2026 · Optimize Route (tech→admin approval + 10s undo).
+import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
+import { geolocate } from "@/src/utils/geolocate";
+import OptimizeRoutePreview from "@/src/components/schedule/OptimizeRoutePreview";
+
+const PINNED_STATUSES = new Set([
+  "completed", "could_not_service", "skipped", "canceled", "cancelled",
+]);
+const UNDO_WINDOW_MS = 10_000;
 
 // Dynamic require — throws in Expo Go without the dev-client. We
 // catch and render the fallback banner instead of crashing.
@@ -55,6 +65,7 @@ export type RouteMapJob = {
   status?: string | null;
   route_index?: number | null;
   route_order?: number | null;
+  scheduled_date?: string | null;
   customer_name?: string | null;
   address?: string | null;
   service_address?: any;
@@ -154,9 +165,32 @@ function jobAddress(job: RouteMapJob): string {
 
 export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: DailyRouteMapProps) {
   const router = useRouter();
+  const { user } = useAuth();
+  const role = ((user?.role as string) || "").toLowerCase();
+  const isAdmin = role === "admin" || role === "super_admin";
   const cameraRef = useRef<any>(null);
   const [expanded, setExpanded] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // ── Optimize Route state (Feb-2026) ───────────────────────────────
+  type Preview = {
+    proposed_order: string[];
+    miles_saved: number;
+    minutes_saved: number;
+    stops_affected: number;
+    no_change: boolean;
+    fallback_origin: boolean;
+  };
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [pendingSubmitted, setPendingSubmitted] = useState(false);
+  const [undoState, setUndoState] = useState<{ appliedId: string; expiresAt: number } | null>(null);
+  const [undoBusy, setUndoBusy] = useState(false);
+  const [suggestionToast, setSuggestionToast] = useState(false);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suggestionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Hydrate persisted expand/collapse state — only if a value was
   // ever written. First-load default is expanded.
@@ -214,6 +248,163 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
     cameraRef.current.fitBounds?.(ne, sw, [48, 48, 48, 48], 350);
   }, [pins, expanded]);
 
+  /* ── Optimize Route — auto-preview + handlers ───────────────────── */
+
+  const scheduleDate = useMemo(() => {
+    // Every job in ``jobs`` shares the currently-focused day; take the
+    // first non-empty scheduled_date. Falls back to today so /preview
+    // never receives an empty date string.
+    const d = jobs.find((j) => (j.scheduled_date || "").length >= 10)?.scheduled_date;
+    if (d && d.length >= 10) return d.slice(0, 10);
+    return new Date().toISOString().slice(0, 10);
+  }, [jobs]);
+
+  const reshufflableCount = useMemo(
+    () => pins.filter((p) => !PINNED_STATUSES.has((p.job.status || "").toLowerCase())).length,
+    [pins],
+  );
+
+  // Auto-fetch preview when the map is expanded and there are enough
+  // reshufflable stops to matter. Uses first pending stop as origin so
+  // no GPS request happens on mount. On-tap we re-fetch with real GPS.
+  useEffect(() => {
+    if (pendingSubmitted || undoState) { setPreview(null); return; }
+    if (!expanded || reshufflableCount < 2 || !scheduleDate) { setPreview(null); return; }
+    const firstPending = pins.find((p) => !PINNED_STATUSES.has((p.job.status || "").toLowerCase()));
+    if (!firstPending) { setPreview(null); return; }
+    let cancelled = false;
+    (async () => {
+      setPreviewLoading(true);
+      try {
+        const res: any = await api.post("/jobs/route-optimization/preview", {
+          date: scheduleDate,
+          current_lat: firstPending.coords.lat,
+          current_lng: firstPending.coords.lng,
+        });
+        if (!cancelled) {
+          setPreview({
+            proposed_order: res.proposed_order || [],
+            miles_saved: Number(res.miles_saved || res.estimated_miles_saved || 0),
+            minutes_saved: Number(res.minutes_saved || res.estimated_minutes_saved || 0),
+            stops_affected: Number(res.stops_affected || 0),
+            no_change: !!res.no_change,
+            fallback_origin: true,
+          });
+        }
+      } catch {
+        if (!cancelled) setPreview(null);
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [expanded, reshufflableCount, scheduleDate, pendingSubmitted, undoState, pins]);
+
+  // Cleanup any pending timers on unmount.
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      if (suggestionTimerRef.current) clearTimeout(suggestionTimerRef.current);
+    };
+  }, []);
+
+  const showPill =
+    reshufflableCount >= 2 &&
+    !pendingSubmitted &&
+    !undoState &&
+    preview !== null &&
+    !preview.no_change &&
+    preview.miles_saved > 0;
+
+  const onOptimizePillTap = useCallback(async () => {
+    // Ask for real GPS. Fall back to first-pending on denial.
+    const gps = await geolocate();
+    let usedFallback = false;
+    let lat = gps.lat;
+    let lng = gps.lng;
+    if (lat == null || lng == null) {
+      const firstPending = pins.find((p) => !PINNED_STATUSES.has((p.job.status || "").toLowerCase()));
+      if (!firstPending) return;
+      lat = firstPending.coords.lat;
+      lng = firstPending.coords.lng;
+      usedFallback = true;
+    }
+    try {
+      const res: any = await api.post("/jobs/route-optimization/preview", {
+        date: scheduleDate,
+        current_lat: lat,
+        current_lng: lng,
+      });
+      setPreview({
+        proposed_order: res.proposed_order || [],
+        miles_saved: Number(res.miles_saved || res.estimated_miles_saved || 0),
+        minutes_saved: Number(res.minutes_saved || res.estimated_minutes_saved || 0),
+        stops_affected: Number(res.stops_affected || 0),
+        no_change: !!res.no_change,
+        fallback_origin: usedFallback,
+      });
+      setModalOpen(true);
+    } catch {
+      /* silent — preview banner will remain in prior state */
+    }
+  }, [pins, scheduleDate]);
+
+  const onApply = useCallback(async () => {
+    if (!preview) return;
+    setApplyBusy(true);
+    try {
+      if (isAdmin) {
+        const res: any = await api.post("/jobs/route-optimization/apply", {
+          tech_user_id: userId,
+          date: scheduleDate,
+          proposed_order: preview.proposed_order,
+          miles_saved: preview.miles_saved,
+          minutes_saved: preview.minutes_saved,
+        });
+        setModalOpen(false);
+        setPreview(null);
+        // Start the 10s undo countdown.
+        const appliedId = res.applied_id;
+        const expiresAt = Date.now() + UNDO_WINDOW_MS;
+        setUndoState({ appliedId, expiresAt });
+        if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+        undoTimerRef.current = setTimeout(() => {
+          setUndoState(null);
+        }, UNDO_WINDOW_MS);
+      } else {
+        // Tech request path.
+        await api.post("/jobs/route-optimization/request", {
+          date: scheduleDate,
+          current_lat: undefined,
+          current_lng: undefined,
+        });
+        setModalOpen(false);
+        setPendingSubmitted(true);
+        setSuggestionToast(true);
+        if (suggestionTimerRef.current) clearTimeout(suggestionTimerRef.current);
+        suggestionTimerRef.current = setTimeout(() => setSuggestionToast(false), 4000);
+      }
+    } catch {
+      /* swallow — parent list still shows original order */
+    } finally {
+      setApplyBusy(false);
+    }
+  }, [preview, isAdmin, userId, scheduleDate]);
+
+  const onUndo = useCallback(async () => {
+    if (!undoState) return;
+    setUndoBusy(true);
+    try {
+      await api.post("/jobs/route-optimization/undo", { applied_id: undoState.appliedId });
+    } catch {
+      /* client can't do anything meaningful — server enforces the window */
+    } finally {
+      if (undoTimerRef.current) { clearTimeout(undoTimerRef.current); undoTimerRef.current = null; }
+      setUndoState(null);
+      setUndoBusy(false);
+    }
+  }, [undoState]);
+
   // Feature-level guard — 0 jobs scheduled = hide entire map.
   if (!jobs || jobs.length === 0) return null;
 
@@ -248,19 +439,39 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
           Route ({pins.length}{pins.length !== jobs.length ? ` of ${jobs.length}` : ""})
         </Text>
       </View>
-      <Pressable
-        onPress={toggleExpanded}
-        style={s.toggle}
-        hitSlop={8}
-        testID="schedule-daily-route-map-toggle"
-        accessibilityLabel={expanded ? "Collapse route map" : "Expand route map"}
-      >
-        <Ionicons
-          name={expanded ? "chevron-up" : "chevron-down"}
-          size={18}
-          color={colors.onSurface}
-        />
-      </Pressable>
+      <View style={s.headerRight}>
+        {showPill ? (
+          <Pressable
+            onPress={onOptimizePillTap}
+            style={s.optimizePill}
+            hitSlop={6}
+            testID="optimize-route-pill"
+            accessibilityLabel="Optimize route order"
+          >
+            <Ionicons name="flash-outline" size={12} color="#fff" />
+            <Text style={s.optimizePillText} testID="optimize-route-pill-savings">
+              Optimize · {preview!.miles_saved.toFixed(1)} mi
+            </Text>
+          </Pressable>
+        ) : null}
+        {previewLoading && !showPill ? (
+          <ActivityIndicator size="small" color={colors.muted}
+                              testID="optimize-route-preview-loading" />
+        ) : null}
+        <Pressable
+          onPress={toggleExpanded}
+          style={s.toggle}
+          hitSlop={8}
+          testID="schedule-daily-route-map-toggle"
+          accessibilityLabel={expanded ? "Collapse route map" : "Expand route map"}
+        >
+          <Ionicons
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={18}
+            color={colors.onSurface}
+          />
+        </Pressable>
+      </View>
     </View>
   );
 
@@ -360,6 +571,48 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
           ) : null}
         </View>
       )}
+
+      {/* Feb-2026 · Optimize Route — undo toast (10 s auto-dismiss). */}
+      {undoState ? (
+        <View style={s.undoToast} testID="optimize-route-undo-toast">
+          <Ionicons name="checkmark-circle" size={16} color="#fff" />
+          <Text style={s.undoText}>Route optimized</Text>
+          <Pressable
+            onPress={onUndo}
+            disabled={undoBusy}
+            style={[s.undoBtn, undoBusy && { opacity: 0.6 }]}
+            testID="optimize-route-undo-btn"
+            accessibilityLabel="Undo route optimization"
+          >
+            {undoBusy
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Text style={s.undoBtnLabel}>Undo</Text>}
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Feb-2026 · Optimize Route — tech "suggestion sent" toast. */}
+      {suggestionToast ? (
+        <View style={s.suggestionToast} testID="optimize-route-suggestion-toast">
+          <Ionicons name="paper-plane-outline" size={14} color="#fff" />
+          <Text style={s.suggestionText}>
+            Suggestion sent to dispatcher — you'll be notified when approved.
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Feb-2026 · Optimize Route — preview modal. */}
+      <OptimizeRoutePreview
+        visible={modalOpen}
+        stopsAffected={preview?.stops_affected || 0}
+        milesSaved={preview?.miles_saved || 0}
+        minutesSaved={preview?.minutes_saved || 0}
+        role={role}
+        fallbackOrigin={!!preview?.fallback_origin}
+        busy={applyBusy}
+        onApply={onApply}
+        onCancel={() => setModalOpen(false)}
+      />
     </View>
   );
 }
@@ -411,8 +664,38 @@ const s = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: colors.border,
   },
   headerLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
   headerTitle: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurface },
   toggle: { padding: 4 },
+  optimizePill: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: radius.pill, backgroundColor: colors.brand,
+  },
+  optimizePillText: {
+    fontFamily: font.bold, fontSize: 11, color: "#fff", letterSpacing: 0.3,
+  },
+  undoToast: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: "#111827",
+  },
+  undoText: { flex: 1, fontFamily: font.medium, fontSize: fontSize.sm, color: "#fff" },
+  undoBtn: {
+    paddingHorizontal: spacing.md, height: 30, borderRadius: radius.md,
+    backgroundColor: colors.brand,
+    alignItems: "center", justifyContent: "center",
+  },
+  undoBtnLabel: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff",
+                    letterSpacing: 0.3 },
+  suggestionToast: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: "#065F46",
+  },
+  suggestionText: {
+    flex: 1, fontFamily: font.medium, fontSize: fontSize.xs, color: "#fff", lineHeight: 16,
+  },
   banner: {
     flexDirection: "row", alignItems: "center", gap: 8,
     padding: spacing.md,
