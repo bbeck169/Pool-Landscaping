@@ -11724,3 +11724,68 @@ Coverage:
 * Legacy `TosGate.jsx` untouched.
 * Sonner toasts + `@/theme` + `@/api` + `@/auth` patterns match existing conventions.
 * Mounted alongside `<Outlet />`, not restructuring routes.
+
+---
+
+## Feb-2026 · Queue Item #2 · Sub-phase 2D — Publish Notification Blast · ✅ SHIPPED
+
+**New portal auto-login scope** (`services/portal_magic_links.py`)
+* `mint_portal_home_token(customer_id, tenant_id, *, ttl_hours=48)` — `sub="portal_home"`, 48h TTL. Reuses HS256 + `JWT_SECRET` — no new signing scheme.
+* `verify_portal_home_token(token)` — rejects wrong-scope with `401 token_wrong_scope`, expired/tampered with `401 token_invalid_or_expired`, malformed with `401 token_malformed`.
+* `build_portal_home_url(base_url, customer_id, tenant_id)` — stamps `/api/portal/auto-login?t={token}`.
+* `_classify_and_verify` in `routers/portal_auto_login.py` — 4th probe entry `("portal_home", verify_portal_home_token)`. On match → `default_target = "/portal/home"`, `resource_id = None`. All 4 scopes mutually exclusive (each verifier rejects any other scope with `token_wrong_scope`).
+
+**Blast worker** (`backend/routers/tos_multi.py`)
+* `publish_tos_document` — fires `asyncio.create_task(_run_publish_blast(...))` after the DB transition. Task-schedule failure caught and logged; publish endpoint still returns 200.
+* `_run_publish_blast` — upsert-first-then-dispatch matching `door_hanger_auto` / `elevated_followup_shown`:
+  1. Insert `marketing_event_ledger` row keyed `tos_update:{doc_id}` FIRST. `DuplicateKeyError` → blast skipped entirely (retry / race safe).
+  2. Query recipients via new `services.tos_service.customers_with_active_service` (reuses `classify_customer_services` so blast recipients ≡ customers who'll see the pending ToS on next login).
+  3. Per recipient → `_blast_one_customer` writes one `marketing_deliveries` row with status `sent` / `skipped` / `failed`. Skip reasons: `no_email`, `unsubscribed`, `do_not_contact`. Resend adapter failure → `status=failed`, `provider_status=failed`, error captured in `skip_reason` (truncated to 200 chars).
+* Every exception at the task boundary caught + logged — publish endpoint never depends on Resend availability.
+
+**Email template** — card-based inline-styles-only layout matching Slice 5 door-hanger visual system:
+* Subject: `Updated Terms of Service — {tenant.name}`
+* Hero header card (brand color background) with `UPDATED TERMS` eyebrow + company name
+* Body card with `Hi {first_name},` greeting + 2-sentence warm non-alarming copy ("We've updated our Terms of Service for {pool|landscaping} customers. Please review and accept the updated terms at your next portal visit — this email is for your records; the portal will prompt you when you sign in.")
+* `Review Updated Terms` CTA button pointing at `build_portal_home_url(...)` — auto-login → `/portal/home` → OnboardingGate (2C) picks up the new pending ToS
+* Footer: `We appreciate your business` + tenant name + phone
+
+**New index** (`services/tos_service.ensure_indexes`) — `marketing_event_ledger` compound unique on `(tenant_id, event_key)` name `uniq_tenant_event_key`. Idempotent — no-op if another module already owns it.
+
+**Tests** — `backend/tests/test_tos_multi_2d_publish_blast.py` (new). **8/8 pass**:
+1. Pool publish → per-recipient `marketing_deliveries` row for active-pool customers only.
+2. Landscaping-only customer NOT emailed on pool publish (cross-service isolation).
+3. Skip rules — `no_email` / `unsubscribed` / `do_not_contact` each logged with reason, no send.
+4. Second `_run_publish_blast` for same doc → ledger key blocks (only 1 send, only 1 ledger row).
+5. Resend adapter raises → `marketing_deliveries.status="failed"` + `provider_status="failed"` + error captured, worker never re-raises.
+6. Cross-scope replay: `portal_home` token rejected by all 3 other verifiers AND `portal_home` verifier rejects all 3 other tokens (401 `token_wrong_scope`).
+7. Auto-login route accepts `portal_home` token → 200 interstitial with `/portal/home` redirect + `localStorage.setItem('token', …)` seeded.
+8. Sequential pool + landscaping publish → dual-service customer gets both emails; 2 distinct ledger rows.
+
+**Full regression** — **144/144 backend tests pass** across 2A/2B/2D + portal magic-links (all 4 scopes) + portal auto-login (all 4 scopes) + door-hanger body + door-hanger auto-send + job-edit-window + portal DTO + chemistry bands. 2A/2B/2C code untouched.
+
+**Boot verified** — restart clean, `[slice-2a] multi-tos seed: N tenant(s) seeded` logs correctly. No errors.
+
+**Live-verify (deferred to user)**
+1. In admin editor: create a new pool draft (bump copy), Save Draft, then Publish.
+2. Watch Resend deliver to `brian@plofv.com` — capture `provider_response_id` from `marketing_deliveries` for that customer.
+3. Click `Review Updated Terms` from fresh incognito → auto-login interstitial → lands at `/portal/home`.
+4. OnboardingGate (2C) sees new pending pool ToS → accept modal renders.
+5. Scroll to bottom → `I Agree` → modal dismisses → portal home renders.
+6. Confirm the chain via logs: `[slice-2a]` seed → `POST /admin/tos-documents/{id}/publish` 200 → `[slice-2d] ledger insert` → Resend send → `[portal_auto_login] outcome=success resource_type=portal_home` → OnboardingGate `POST /customer-portal/tos/{id}/accept` → 200.
+
+**Hard-stop.** Multi-ToS phase complete.
+
+**Files changed this pass**
+- `backend/services/portal_magic_links.py` (+3 helpers)
+- `backend/routers/portal_auto_login.py` (+1 scope in `_classify_and_verify`, +1 branch in dispatcher)
+- `backend/services/tos_service.py` (+`customers_with_active_service`, +ledger unique index)
+- `backend/routers/tos_multi.py` (+blast worker, +email template, +publish hook)
+- `backend/tests/test_tos_multi_2d_publish_blast.py` (new, 8 cases)
+
+**Multi-ToS phase roll-up (2A + 2B + 2C + 2D)**
+- Backend: `tos_documents` + `tos_acceptances` + embedded `tos_status` + 4th auto-login scope + publish blast. All-in **154+ backend tests pass**.
+- Frontend: TipTap admin editor + customer OnboardingGate. **45 vitest pass**.
+- Legal audit invariants: never hard-delete a published/superseded doc; server-only HTML sanitizer with bleach allow-list; per-acceptance `ip` + `ua` capture.
+- Idempotency: publish blast keyed on `tos_update:{doc_id}` — same pattern as `door_hanger_auto` and `elevated_followup_shown`.
+- Cross-scope replay: 4 portal magic-link scopes (`job_view`, `portal_invoice_pay`, `portal_estimate_view`, `portal_home`) mutually exclusive by `sub` claim.
