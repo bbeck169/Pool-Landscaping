@@ -11605,3 +11605,36 @@ NEXT STEPS card with both buttons functional.
 **Queue state**
 1. ~~#4~~ ✅ · ~~#5~~ ✅ (+ ledger add-on) · ~~#6~~ ✅ · ~~#7~~ ✅
 2. Remaining: **Queue Item #2 — First-Login Gate + Multi-ToS** (paused, 4 sub-phases 2A→2D, needs its own fresh session).
+
+---
+
+## Feb-2026 · Queue Item #2 · Sub-phase 2A — Multi-ToS Backend Foundation · ✅ SHIPPED
+
+**Locked decisions carried in** — 1a (service classification from `service_type` on customer / active jobs / active recurring subscriptions), 2 yes-to-all (sequenced modals, partial-acceptance persistence, per-service version-bump re-prompt), 4a (TipTap → bleach server-sanitized), 5b (Draft/Publish manual button), 6b (admin AND super_admin edit).
+
+**Data model**
+* `tos_documents` — one row per `(tenant_id, service_type, version)`. Fields: `id`, `tenant_id`, `service_type ∈ {"pool","landscaping"}`, `version` (monotonic per (tenant, service_type)), `status ∈ {"draft","published","superseded"}`, `title`, `content_html` (server-sanitized), `content_json` (TipTap doc), `effective_date`, `created_at/by`, `published_at/by`, `superseded_at`.
+* `tos_acceptances` — one row per `(tenant_id, customer_id, document_id)` with a unique compound index. Fields: `id`, `tenant_id`, `customer_id`, `document_id`, `service_type`, `document_version`, `accepted_at`, `ip`, `ua`.
+* Embedded fast-lookup on `customers.tos_status.{pool|landscaping}` = `{document_id, version, accepted_at}` so `compute_pending_tos_for_customer` avoids a joined query.
+
+**Backend files**
+* `backend/services/tos_service.py` (new) — sanitizer (bleach allow-list with `<a>` hardening + `javascript:` block), service-type classifier (customer.service_type + customer.service_types + active jobs + active subs; completed jobs ignored), `current_published_docs`, `compute_pending_tos_for_customer` (canonical pool→landscaping order), `record_customer_acceptance` (atomic acceptance row + embedded-map update), `publish_document` (draft → published with atomic supersede of prior published row), `next_version_for`, `seed_pool_tos_from_legacy` (idempotent boot migration wrapping `TOS_MARKDOWN` in `<pre>`), `ensure_indexes`.
+* `backend/routers/tos_multi.py` (new) — admin CRUD (`GET/POST /admin/tos-documents`, `GET/PUT/POST /admin/tos-documents/{id}[/publish]`) + customer endpoints (`GET /customer-portal/onboarding-state`, `POST /customer-portal/tos/{document_id}/accept`). All admin writes go through the sanitizer. `PUT` rejects edits on non-draft rows with 409 (legal audit invariant). Publish is idempotent. Customer-portal handlers reject non-`role=customer` with 403.
+* `backend/server.py` — registered `tos_multi` router; boot hook adds `ensure_indexes` + `seed_pool_tos_from_legacy` per tenant (runs after existing `run_tos_backfill`). Seed logged as `[slice-2a] multi-tos seed: N tenant(s) seeded`.
+* `backend/requirements.txt` — added `bleach==6.4.0` (+ `webencodings==0.6.1` transitive).
+
+**Tests** — `backend/tests/test_tos_multi_2a.py` (new). **28/28 pass** (exceeds 20-case target).
+Coverage:
+- Sanitizer (5): strips `<script>/<style>/<iframe>`, preserves TipTap marks + lists + `<blockquote>` + `<hr>`, hardens external `<a>` with `rel="noopener noreferrer" target="_blank"`, blocks `javascript:`, empty/null returns `""`.
+- Classifier (5): explicit `service_types` list wins, free-form-string variants map correctly for both service types, active jobs contribute, `completed`/`cancelled`/`archived` jobs do NOT contribute, active recurring subscriptions contribute.
+- Documents / publish / supersede (4): version starts at 1, publish supersedes prior published row (non-destructive), repeat-publish idempotent, publishing a superseded doc rejects with `ValueError`.
+- Customer flow (8): pending includes only pool for pool-only customer, only landscaping for landscape-only customer, canonical order pool→landscaping for both-services customer, acceptance stamps row + embedded-map update, post-acceptance pending shrinks to zero, version bump re-triggers pending for THAT service_type only (partial-acceptance persistence), unknown-document acceptance rejects, unpublished-document acceptance rejects.
+- Legal audit (1): superseded rows remain queryable (never hard-deleted).
+- Seed migration (1): first run creates v1 published + wraps legacy markdown; second run no-ops; exactly 1 row per tenant.
+- Router smoke (4): admin route rejects tech, admin update rejects published, customer route rejects admin, `onboarding-state` DTO correct, `accept` route captures `ip`/`ua` + returns fresh pending list.
+
+**Full regression** — 136/136 pass across 2A + door-hanger body + portal magic-links + portal auto-login + job edit window + portal DTO + chemistry bands + door-hanger auto-send.
+
+**Live seed verified** — restarted backend, live tenant `affdfbfa-88b… Pool & Landscaping of Vistancia` now has a v1 published Pool ToS row titled "Pool Services — Terms of Service".
+
+**Hard-stop after 2A green** — ready for 2B in a fresh session (TipTap admin UI page).

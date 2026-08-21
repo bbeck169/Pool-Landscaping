@@ -179,6 +179,14 @@ api_router.include_router(marketing_campaigns_router.router)
 from routers import tos as _tos_router  # noqa: E402
 api_router.include_router(_tos_router.router)
 
+# Feb-2026 · Slice 2A — Multi-ToS backend foundation (Pool +
+# Landscaping split, admin CRUD, customer onboarding-state DTO).
+# Registered adjacent to the legacy single-ToS router so both
+# surfaces coexist during the 2A→2C rollout (2C removes the legacy
+# ``TosGate`` in favour of ``OnboardingGate``).
+from routers import tos_multi as _tos_multi_router  # noqa: E402
+api_router.include_router(_tos_multi_router.router)
+
 # Feb-2026 · mobile-flagged gaps — Auto Clock-In field + user self-PATCH
 # + orphan-customer repair. Registered alongside the ToS router since
 # they share the /users/me + /admin/users/{id} URL space.
@@ -836,6 +844,31 @@ async def _background_seed():
         logger.info(f"[bug-e] tos backfill: {tos_res}")
     except Exception as e:
         logger.warning(f"tos backfill crashed: {e}")
+
+    # Feb-2026 · Slice 2A — Multi-ToS foundation. Ensure indexes on
+    # the two new collections + seed a v1 published Pool ToS from
+    # the legacy ``TOS_MARKDOWN`` for every tenant that doesn't
+    # already have a pool row. Idempotent — repeat runs are cheap.
+    try:
+        from services.tos_service import (
+            ensure_indexes as _tos_multi_indexes,
+            seed_pool_tos_from_legacy as _tos_multi_seed,
+        )
+        await _tos_multi_indexes(db)
+        seeded = 0
+        async for _t in db.tenants.find({}, {"_id": 0, "id": 1}):
+            try:
+                r = await _tos_multi_seed(db, _t["id"])
+                if r:
+                    seeded += 1
+            except Exception as _seed_exc:
+                logger.warning(
+                    f"[slice-2a] pool ToS seed failed for tenant "
+                    f"{_t.get('id')}: {_seed_exc}"
+                )
+        logger.info(f"[slice-2a] multi-tos seed: {seeded} tenant(s) seeded")
+    except Exception as e:
+        logger.warning(f"[slice-2a] multi-tos boot init crashed: {e}")
 
     # Feb-2026 · Phase 21 — Rebrand AquaTerra → Pool & Landscaping of
     # Vistancia. Idempotent one-shot migration that updates the tenant
