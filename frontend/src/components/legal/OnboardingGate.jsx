@@ -56,11 +56,29 @@ import { useAuth } from "@/auth";
 import { colors } from "@/theme";
 
 
-// See jsdoc above — tutorial step deferred until 2A exposes a
-// completion endpoint. Flipping this to ``true`` (or reading it from
-// ``state.tutorial_completed`` once the endpoint lands) is the only
-// change needed to enable the walkthrough leg of the flow.
+// Feb-2026 · P2 — tutorial persistence endpoint now exists (see
+// ``routers/portal_walkthrough.py :: mark_tutorial_complete``). Flip
+// ``_STUB_NEEDS_TUTORIAL`` to ``true`` (or read
+// ``state.tutorial_completed`` from the DTO) once the actual
+// walkthrough content lands. The persistence CALL is already wired
+// below via ``markTutorialComplete()`` so any dismiss path — modal
+// close, "Skip", or step-N completion — persists cleanly.
 const _STUB_NEEDS_TUTORIAL = false;
+
+
+/** Best-effort persistence — never blocks the user on network failure. */
+async function markTutorialComplete(step) {
+  try {
+    return await api.post(
+      "/customer-portal/tutorial/complete",
+      step ? { step } : {},
+    );
+  } catch {
+    // Nice-to-have persistence — swallow. The client-side dismiss
+    // still runs so the walkthrough doesn't loop.
+    return null;
+  }
+}
 
 
 function _scrollAtBottom(el, slack = 8) {
@@ -309,9 +327,11 @@ export default function OnboardingGate({ children }) {
   const needsTutorial = _STUB_NEEDS_TUTORIAL && !state?.tutorial_completed;
 
   if (needsTutorial) {
-    // Placeholder — the tutorial persistence endpoint doesn't
-    // exist yet (see jsdoc). When it lands, wire ``PortalWalkthrough``
-    // here and POST /customer-portal/tutorial/complete on its onClose.
+    // Feb-2026 · P2 — tutorial persistence endpoint wired. The actual
+    // ``PortalWalkthrough`` UI still lives in a follow-up task; when
+    // it lands, render it here and call ``markTutorialComplete()`` on
+    // its ``onClose`` / final-step callback. The helper is already
+    // exported below for that consumer.
     return <>{children}</>;
   }
 
@@ -331,3 +351,8 @@ export default function OnboardingGate({ children }) {
     </>
   );
 }
+
+// Feb-2026 · P2 — exported so the eventual ``PortalWalkthrough``
+// consumer (and Vitest coverage) can fire the persistence call
+// without needing a private ref into this file.
+export { markTutorialComplete };

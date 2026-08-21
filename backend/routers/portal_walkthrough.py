@@ -109,6 +109,73 @@ async def mark_walkthrough_complete(
     return {"ok": True, "completed_at": ts}
 
 
+# ── Feb-2026 · P2 — ``tutorial/complete`` idempotent alias ─────────
+# The OnboardingGate walkthrough leg on the web portal needs an
+# endpoint to persist "user finished the tour" state. The pre-existing
+# ``/walkthrough/complete`` route above overwrites the timestamp on
+# every call (not idempotent) and returns a different response shape.
+#
+# Rather than churn the legacy contract, add a new route under
+# ``/tutorial/`` that: (a) REUSES the existing
+# ``portal_walkthrough_completed_at`` field so there's one source of
+# truth, (b) is strictly idempotent — re-calls return the ORIGINAL
+# timestamp with ``already_completed=true``, (c) accepts an optional
+# ``step`` for future per-step granularity (currently just stashed on
+# the customer doc as ``tutorial_last_step`` for auditing).
+from pydantic import BaseModel  # local import to keep the alias self-contained
+
+
+class _TutorialBody(BaseModel):
+    step: str | None = None
+
+
+@router.post("/customer-portal/tutorial/complete")
+async def mark_tutorial_complete(
+    body: _TutorialBody | None = None,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    cid = _require_customer(user)
+    tid = user["tenant_id"]
+
+    existing = await db.customers.find_one(
+        {"id": cid, "tenant_id": tid},
+        {"_id": 0, "portal_walkthrough_completed_at": 1},
+    ) or {}
+    prior = existing.get("portal_walkthrough_completed_at")
+
+    if prior and prior != "grandfathered":
+        # Idempotent — do not overwrite. Return the original timestamp.
+        return {"tutorial_completed_at": prior, "already_completed": True}
+
+    ts = now_iso()
+    set_doc: Dict[str, Any] = {
+        "portal_walkthrough_completed_at": ts,
+        "updated_at": ts,
+    }
+    if body and body.step:
+        # Future per-step granularity — stashed for auditing. Does NOT
+        # gate the completion timestamp.
+        set_doc["tutorial_last_step"] = body.step[:80]
+
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tid},
+        {"$set": set_doc},
+    )
+    if user.get("id"):
+        # Mirror onto the user-level flags the legacy route also flips,
+        # so downstream ``has_seen_customer_tour`` consumers stay in sync.
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {
+                "has_seen_customer_tour": True,
+                "customer_tour_seen_at": ts,
+                "portal_tour_completed_v2": True,
+                "portal_tour_completed_v2_at": ts,
+            }},
+        )
+    return {"tutorial_completed_at": ts, "already_completed": False}
+
+
 # ── Item 7 · user-level endpoints ───────────────────────────────────
 @router.post("/users/me/mark-tour-seen")
 async def mark_tour_seen(user: Dict[str, Any] = Depends(get_current_user)):
