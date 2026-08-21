@@ -79,14 +79,21 @@ async def _drop_null_tenant_rows() -> tuple[int, int, List[Dict[str, Any]]]:
 
 def _pick_survivor(docs: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Return the row that wins a duplicate group.  Winner has the
-    MOST non-null fields; tiebreak = ``updated_at`` ASCENDING (oldest
-    wins — matches the pre-refactor sort key exactly)."""
-    docs.sort(
-        key=lambda x: (
-            -sum(1 for v in x.values() if v not in (None, "", [], {})),
-            x.get("updated_at") or "",
-        ),
-    )
+    MOST non-null fields; tiebreak = ``updated_at`` DESCENDING (newest
+    wins, matches the module docstring).  Rows with a NULL / empty
+    ``updated_at`` sort LAST — they lose to any row with a real
+    timestamp when field counts are otherwise tied.
+
+    Feb-2026 · P8.5 — flipped ASC → DESC on ``updated_at`` per user
+    directive.  Implemented as a two-pass stable sort so the secondary
+    key can honour ``reverse=True`` independently of the primary key.
+    """
+    # Pass 1 (secondary): ``updated_at`` DESC, NULLs → "" → last.
+    docs.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
+    # Pass 2 (primary): field-population count DESC; stable ordering
+    # preserves the pass-1 tiebreak within each count bucket.
+    docs.sort(key=lambda x: -sum(
+        1 for v in x.values() if v not in (None, "", [], {})))
     return docs[0]
 
 

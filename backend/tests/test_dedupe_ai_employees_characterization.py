@@ -13,8 +13,9 @@ Observable contract (paraphrased from the code at
 * Phase 2 — within each tenant, groups by ``key``; per group with
   count>1, the survivor has the MOST non-null fields
   (``sum(v not in (None, "", [], {}))``); tiebreak = ``updated_at``
-  ASCENDING (earliest updated_at wins).  The docstring says "DESC" but
-  the code sorts ascending on the tuple — pinned here as-is.
+  DESCENDING (newest wins).  NULL / empty ``updated_at`` sorts LAST
+  (loses to any row with a real timestamp). Flipped ASC → DESC in
+  P8.5 to match the module docstring.
 * Phase 3 — inserts a single row into ``migration_log`` **iff** any
   merge/drop happened.  No mutations → no ``migration_log`` write.
 * Phase 4 — best-effort ``create_index`` for
@@ -171,13 +172,13 @@ def test_in_tenant_dupe_keeps_most_populated_row():
     assert r["in_tenant_dupes_merged"] >= 1
 
 
-# ── 4. Tie on field-count → OLDEST updated_at wins (docstring drift) ──
-def test_tiebreak_prefers_oldest_updated_at_on_equal_field_count():
-    """The docstring says ``updated_at DESC`` but the code sorts by
-    ``(-field_count, updated_at)`` ascending, so the OLDEST
-    ``updated_at`` ends up at ``full[0]`` and survives. Pinned as-is.
-    Flagged in the P8 report as a pre-existing docstring drift — NOT
-    fixed by this refactor.
+# ── 4. Tie on field-count → NEWEST updated_at wins (matches docstring) ──
+def test_dedupe_picks_newest_updated_at_survivor():
+    """P8.5 · flipped tiebreak — when non-null field counts are tied,
+    the row with the NEWEST ``updated_at`` survives (matches the
+    module docstring's ``updated_at DESC`` claim).  Previously pinned
+    as oldest-wins pre-P8.5; the code has been flipped to align with
+    the docstring per user directive.
     """
     key = f"p8-tie-{uuid.uuid4().hex[:6]}"
     older = _mk_employee(
@@ -191,9 +192,40 @@ def test_tiebreak_prefers_oldest_updated_at_on_equal_field_count():
         updated_at="2026-06-01T00:00:00+00:00",
     )
     _invoke()
-    assert _sync.ai_employees.find_one({"id": older}) is not None, \
-        "OLDEST updated_at must survive per current sort key ordering"
-    assert _sync.ai_employees.find_one({"id": newer}) is None
+    assert _sync.ai_employees.find_one({"id": newer}) is not None, \
+        "NEWEST updated_at must survive per newest-wins tiebreak"
+    assert _sync.ai_employees.find_one({"id": older}) is None
+
+
+# ── 4b. NULL updated_at loses to any row with a real timestamp ────
+def test_dedupe_null_updated_at_loses_to_real_timestamp():
+    """P8.5 · null-handling — when field counts are tied, a row with
+    ``updated_at = None`` sorts LAST and loses to any row with a real
+    ISO timestamp.  This pins the ``NULLs LAST`` semantics of the
+    flipped sort key.
+    """
+    key = f"p8-nullupd-{uuid.uuid4().hex[:6]}"
+    real_row = _mk_employee(
+        tenant_id=_TENANT_A, key=key,
+        extras={"description": "same fill"},
+        updated_at="2026-06-01T00:00:00+00:00",
+    )
+    # Compensate the missing ``updated_at`` non-null field with an
+    # extra key so the primary field-count sort ties and the
+    # ``updated_at`` tiebreak actually fires.
+    null_row = _mk_employee(
+        tenant_id=_TENANT_A, key=key,
+        extras={"description": "same fill", "avatar_url": "x"},
+    )
+    # Explicitly null out ``updated_at`` on the second row — the
+    # helper stamps a current-time ISO by default.
+    _sync.ai_employees.update_one(
+        {"id": null_row}, {"$set": {"updated_at": None}},
+    )
+    _invoke()
+    assert _sync.ai_employees.find_one({"id": real_row}) is not None, \
+        "row with real ``updated_at`` must survive NULL-timestamp peer"
+    assert _sync.ai_employees.find_one({"id": null_row}) is None
 
 
 # ── 5. Conversation refs are repointed BEFORE the loser is deleted ──
