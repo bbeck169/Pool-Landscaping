@@ -11638,3 +11638,41 @@ Coverage:
 **Live seed verified** — restarted backend, live tenant `affdfbfa-88b… Pool & Landscaping of Vistancia` now has a v1 published Pool ToS row titled "Pool Services — Terms of Service".
 
 **Hard-stop after 2A green** — ready for 2B in a fresh session (TipTap admin UI page).
+
+---
+
+## Feb-2026 · Queue Item #2 · Sub-phase 2B — Multi-ToS Admin Editor UI · ✅ SHIPPED
+
+**New page** `frontend/src/pages/settings/TosAdminEditor.jsx`
+* Two-tab layout (Pool ToS / Landscaping ToS) with per-tab draft list, published-version banner, and version-history sidebar.
+* TipTap 2.11 editor (already in `package.json`) — StarterKit + Underline + Link only. Toolbar renders 12 controls (Bold, Italic, Underline, H1/H2/H3, bulleted list, numbered list, link, unlink, undo, redo). Links auto-normalised to `target="_blank" rel="noopener noreferrer"` client-side; backend sanitizer applies the same hardening server-side (defense-in-depth).
+* Save Draft button posts to `POST /admin/tos-documents` when no doc selected, else `PUT /admin/tos-documents/{id}`. Sends BOTH `content_html` and `content_json`.
+* Publish button opens a confirm dialog copy-locked to `"This will notify all customers with active {service_type} service. Continue?"`. On confirm → `POST /admin/tos-documents/{id}/publish` → toast + list refresh. Cancel → no API call.
+* Selecting a `published` OR `superseded` version disables the editor + all inputs, and renders a `<AlertTriangle>` "Read-only. Create a new draft to make changes." banner with a **Create new draft** CTA that resets the form to a fresh draft state.
+* 409 `only_draft_documents_are_editable` from `PUT` renders an inline error banner ("Published versions can't be edited. Create a new draft to make changes.").
+
+**Route registered** in `frontend/src/App.js`:
+* `<Route path="settings/legal/terms-of-service" element={<AdminOnly><TosAdminEditor /></AdminOnly>} />` — registered BEFORE the legacy `settings/legal/:slug` route so the literal path wins.
+* `AdminOnly` guard allows admin + super_admin only; tech / customer / manager → auto-redirect.
+
+**Tests** `frontend/src/test/tos-admin-editor.test.jsx` (new) — **8/8 vitest pass**:
+1. All 12 toolbar buttons render (10 primary + undo/redo).
+2. Pool tab triggers `GET /admin/tos-documents?service_type=pool` and renders the published banner with version + `published_by` + `published_at`.
+3. Save Draft POSTs the expected body shape (`service_type`, `title`, `content_html`, `content_json.type=="doc"`) when no doc selected.
+4. Save Draft PUTs when an existing draft is auto-selected.
+5. Publish dialog: cancel → no POST; confirm → POST `/admin/tos-documents/{id}/publish`.
+6. Selecting a published version → editing banner + New Draft CTA rendered.
+7. 409 on PUT → inline banner surfaces the correct copy.
+8. Tab switch to landscaping → re-fetches with `service_type=landscaping`.
+
+**Regression** — frontend **38/38 pass** across 6 test suites (2B + job-edit-window + concierge-avatar-parity + portal-bands + portal-invite-relocation + phase27-portal-sections). Backend **106/106 pass** across 2A + door-hanger + portal magic-links + portal auto-login + job edit window.
+
+**Live verified** on preview at `/settings/legal/terms-of-service` — screenshot shows Pool tab with the v1 seeded ToS loaded, read-only banner active (since a published version is auto-selected), toolbar rendered, empty Drafts + Version history sidebars.
+
+**Hard-stop after 2B green** — ready for 2C in a fresh session (customer `OnboardingGate`).
+
+**Reuse notes**
+* TipTap 2.11 was already installed — reused, not upgraded.
+* Existing `settings/legal` route left untouched. Added a sibling literal route.
+* Existing settings page shell layout patterns from `AIBrainPage.jsx` reused (sonner toasts, header/subhead pattern, colors from `@/theme`).
+* Legacy `TosGate.jsx` NOT touched — that's 2C's evaluate/adapt/replace call.

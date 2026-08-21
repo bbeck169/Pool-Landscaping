@@ -196,6 +196,8 @@ import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPa
 import WarrantyPlans, { WarrantyContracts, WarrantyClaims, PortalWarranties } from "@/pages/warranties/WarrantyPages";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
+// Feb-2026 · Slice 2B — Multi-ToS admin editor (Pool + Landscaping).
+import TosAdminEditor from "@/pages/settings/TosAdminEditor";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
 // Phase 26 · Feb 2026 · Supercool MCP OAuth integration (super_admin only).
 import SupercoolIntegrationPage from "@/pages/settings/integrations/SupercoolIntegrationPage";
@@ -655,6 +657,10 @@ export default function App() {
             <Route path="settings/billing" element={<AdminOnly><BillingSettings /></AdminOnly>} />
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />
+            {/* Feb-2026 · Slice 2B — Multi-ToS admin editor. Registered
+                BEFORE the legacy ``/settings/legal/:slug`` route so the
+                literal path wins the match. */}
+            <Route path="settings/legal/terms-of-service" element={<AdminOnly><TosAdminEditor /></AdminOnly>} />
             <Route path="settings/integrations" element={<AdminOnly><IntegrationsHub /></AdminOnly>} />
             {/* Phase 54b · Feb-2026 — Wholesale supplier settings. */}
             <Route path="settings/suppliers" element={<AdminOrManagerForSuppliers><SupplierSettings /></AdminOrManagerForSuppliers>} />
