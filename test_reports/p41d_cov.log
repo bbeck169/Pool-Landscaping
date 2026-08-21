@@ -1,0 +1,970 @@
+....................................................F................... [ 45%]
+........................................................................ [ 91%]
+........F....                                                            [100%]
+=================================== FAILURES ===================================
+_________________ test_ae3_tenant_scoping_no_cross_tenant_data _________________
+
+admin_headers = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzZDY2ZjA1Ny0zMzAwLTRhZWQtYTMzNy00ZDRhODMyOTF...6ImFkbWluQGFxdWF0ZXJyYS5jb20iLCJyb2xlIjoiYWRtaW4iLCJleHAiOjE3ODY3Mjk1NjN9.kbNtTFYIkDedKb9aXinEFy7wTqwg2CIgf1vra53gQqM'}
+
+    def test_ae3_tenant_scoping_no_cross_tenant_data(admin_headers):
+        """A super-quick sanity check that Buddy's rollup didn't grab
+        numbers from another tenant. We compare Buddy's total_deals to
+        the direct GET /api/deals count."""
+        r = requests.get(f"{API}/deals", headers=admin_headers, timeout=15)
+        if r.status_code != 200:
+            pytest.skip("deals endpoint unavailable")
+        payload = r.json()
+        ground = len(payload) if isinstance(payload, list) else int(payload.get("count", 0))
+        eid = _emp_id(admin_headers, "buddy")
+        c = _new_conv(admin_headers, eid)
+        r = _send(admin_headers, eid, c["id"], "brief",
+                    action="buddy.weekly_growth_brief",
+                    action_params={"days": 365})
+        assert r.status_code == 201
+        signals = r.json()["action"]["draft"]["signals"]
+>       assert signals["deals"]["total_deals"] == ground, \
+            f"tenant leak: buddy={signals['deals']['total_deals']} vs api={ground}"
+E       AssertionError: tenant leak: buddy=212 vs api=200
+E       assert 212 == 200
+
+tests/test_ai_employees_ae3.py:339: AssertionError
+__ test_common_event_types_return_2xx[payment_intent.succeeded-event_object0] __
+  + Exception Group Traceback (most recent call last):
+  |   File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 87, in collapse_excgroups
+  |     yield
+  |   File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 190, in __call__
+  |     async with anyio.create_task_group() as task_group:
+  |   File "/root/.venv/lib/python3.11/site-packages/anyio/_backends/_asyncio.py", line 811, in __aexit__
+  |     raise BaseExceptionGroup(
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/root/.venv/lib/python3.11/site-packages/_pytest/runner.py", line 361, in from_call
+    |     result: TResult | None = func()
+    |                              ^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/_pytest/runner.py", line 250, in <lambda>
+    |     lambda: runtest_hook(item=item, **kwds),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_hooks.py", line 512, in __call__
+    |     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    |     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 167, in _multicall
+    |     raise exception
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 139, in _multicall
+    |     teardown.throw(exception)
+    |   File "/root/.venv/lib/python3.11/site-packages/_pytest/logging.py", line 865, in pytest_runtest_call
+    |     yield
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 139, in _multicall
+    |     teardown.throw(exception)
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 53, in run_old_style_hookwrapper
+    |     return result.get_result()
+    |            ^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_result.py", line 103, in get_result
+    |     raise exc.with_traceback(tb)
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 38, in run_old_style_hookwrapper
+    |     res = yield
+    |           ^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 139, in _multicall
+    |     teardown.throw(exception)
+    |   File "/root/.venv/lib/python3.11/site-packages/_pytest/capture.py", line 900, in pytest_runtest_call
+    |     return (yield)
+    |             ^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 139, in _multicall
+    |     teardown.throw(exception)
+    |   File "/root/.venv/lib/python3.11/site-packages/_pytest/skipping.py", line 268, in pytest_runtest_call
+    |     return (yield)
+    |             ^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 121, in _multicall
+    |     res = hook_impl.function(*args)
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/_pytest/runner.py", line 184, in pytest_runtest_call
+    |     item.runtest()
+    |   File "/root/.venv/lib/python3.11/site-packages/_pytest/python.py", line 1707, in runtest
+    |     self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_hooks.py", line 512, in __call__
+    |     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    |     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 167, in _multicall
+    |     raise exception
+    |   File "/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 121, in _multicall
+    |     res = hook_impl.function(*args)
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/_pytest/python.py", line 167, in pytest_pyfunc_call
+    |     result = testfunction(**testargs)
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/app/backend/tests/test_stripe_webhook_route_hotfix3.py", line 132, in test_common_event_types_return_2xx
+    |     r = client.post(
+    |         ^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/testclient.py", line 633, in post
+    |     return super().post(
+    |            ^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 1144, in post
+    |     return self.request(
+    |            ^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/testclient.py", line 516, in request
+    |     return super().request(
+    |            ^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 825, in request
+    |     return self.send(request, auth=auth, follow_redirects=follow_redirects)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 914, in send
+    |     response = self._send_handling_auth(
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    |     response = self._send_handling_redirects(
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    |     response = self._send_single_request(request)
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    |     response = transport.handle_request(request)
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/testclient.py", line 398, in handle_request
+    |     raise exc
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/testclient.py", line 395, in handle_request
+    |     portal.call(self.app, scope, receive, send)
+    |   File "/root/.venv/lib/python3.11/site-packages/anyio/from_thread.py", line 338, in call
+    |     return cast(T_Retval, self.start_task_soon(func, *args).result())
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/usr/local/lib/python3.11/concurrent/futures/_base.py", line 456, in result
+    |     return self.__get_result()
+    |            ^^^^^^^^^^^^^^^^^^^
+    |   File "/usr/local/lib/python3.11/concurrent/futures/_base.py", line 401, in __get_result
+    |     raise self._exception
+    |   File "/root/.venv/lib/python3.11/site-packages/anyio/from_thread.py", line 263, in _call_func
+    |     retval = await retval_or_awaitable
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/fastapi/applications.py", line 1054, in __call__
+    |     await super().__call__(scope, receive, send)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/applications.py", line 123, in __call__
+    |     await self.middleware_stack(scope, receive, send)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    |     raise exc
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    |     await self.app(scope, receive, _send)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    |     with collapse_excgroups():
+    |   File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    |     self.gen.throw(typ, value, traceback)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    |     raise exc
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    |     response = await self.dispatch_func(request, call_next)
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/app/backend/server.py", line 642, in dispatch
+    |     return await call_next(request)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    |     raise app_exc
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    |     await self.app(scope, receive_or_disconnect, send_no_error)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    |     await self.app(scope, receive, send)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 65, in __call__
+    |     await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    |     raise exc
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    |     await app(scope, receive, sender)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 756, in __call__
+    |     await self.middleware_stack(scope, receive, send)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 776, in app
+    |     await route.handle(scope, receive, send)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 297, in handle
+    |     await self.app(scope, receive, send)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 77, in app
+    |     await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    |     raise exc
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    |     await app(scope, receive, sender)
+    |   File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 72, in app
+    |     response = await func(request)
+    |                ^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 278, in app
+    |     raw_response = await run_endpoint_function(
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 191, in run_endpoint_function
+    |     return await dependant.call(**values)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/app/backend/routers/stripe_router.py", line 289, in post_webhook_alias
+    |     return await post_webhook(request)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/app/backend/routers/stripe_router.py", line 278, in post_webhook
+    |     result = await stripe_svc.handle_webhook_event(event)
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/app/backend/services/payments/stripe_charge.py", line 825, in handle_webhook_event
+    |     await db.stripe_charges.update_one(
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/motor/metaprogramming.py", line 74, in method
+    |     return framework.run_on_executor(
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/root/.venv/lib/python3.11/site-packages/motor/frameworks/asyncio/__init__.py", line 85, in run_on_executor
+    |     return loop.run_in_executor(_EXECUTOR, functools.partial(fn, *args, **kwargs))
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/usr/local/lib/python3.11/asyncio/base_events.py", line 817, in run_in_executor
+    |     self._check_closed()
+    |   File "/usr/local/lib/python3.11/asyncio/base_events.py", line 520, in _check_closed
+    |     raise RuntimeError('Event loop is closed')
+    | RuntimeError: Event loop is closed
+    +------------------------------------
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/backend/tests/test_stripe_webhook_route_hotfix3.py", line 132, in test_common_event_types_return_2xx
+    r = client.post(
+        ^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/testclient.py", line 633, in post
+    return super().post(
+           ^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 1144, in post
+    return self.request(
+           ^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/testclient.py", line 516, in request
+    return super().request(
+           ^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/testclient.py", line 398, in handle_request
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/testclient.py", line 395, in handle_request
+    portal.call(self.app, scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/anyio/from_thread.py", line 338, in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/concurrent/futures/_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/root/.venv/lib/python3.11/site-packages/anyio/from_thread.py", line 263, in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/applications.py", line 1054, in __call__
+    await super().__call__(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/applications.py", line 123, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/server.py", line 642, in dispatch
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 65, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 756, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 776, in app
+    await route.handle(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 297, in handle
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 77, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 72, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 278, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 191, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/routers/stripe_router.py", line 289, in post_webhook_alias
+    return await post_webhook(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/routers/stripe_router.py", line 278, in post_webhook
+    result = await stripe_svc.handle_webhook_event(event)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/services/payments/stripe_charge.py", line 825, in handle_webhook_event
+    await db.stripe_charges.update_one(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/motor/metaprogramming.py", line 74, in method
+    return framework.run_on_executor(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/motor/frameworks/asyncio/__init__.py", line 85, in run_on_executor
+    return loop.run_in_executor(_EXECUTOR, functools.partial(fn, *args, **kwargs))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/asyncio/base_events.py", line 817, in run_in_executor
+    self._check_closed()
+  File "/usr/local/lib/python3.11/asyncio/base_events.py", line 520, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+
+During handling of the above exception, another exception occurred:
+
+_mock_stripe_webhook = None, event_type = 'payment_intent.succeeded'
+event_object = {'id': 'pi_test_regr_1', 'amount_received': 1500, 'customer': 'cus_test'}
+
+    @pytest.mark.parametrize("event_type,event_object", [
+        ("payment_intent.succeeded",
+         {"id": "pi_test_regr_1", "amount_received": 1500, "customer": "cus_test"}),
+        ("checkout.session.completed",
+         {"id": "cs_test_regr_1", "customer": "cus_test", "payment_intent": "pi_test_regr_1"}),
+        ("invoice.paid",
+         {"id": "in_test_regr_1", "customer": "cus_test", "amount_paid": 1500}),
+        ("charge.refunded",
+         {"id": "ch_test_regr_1", "customer": "cus_test", "amount_refunded": 500}),
+    ])
+    def test_common_event_types_return_2xx(_mock_stripe_webhook, event_type, event_object):
+        """Each of the common event types the handler processes must
+        return 2xx so Stripe doesn't retry them. Payload verification is
+        mocked so we exercise only the routing + dispatch logic."""
+        payload = json.dumps({
+            "id": f"evt_{event_type.replace('.', '_')}",
+            "type": event_type,
+            "data": {"object": event_object},
+        }).encode()
+>       r = client.post(
+            "/api/stripe/webhook",
+            content=payload,
+            headers={"Content-Type": "application/json", "Stripe-Signature": "test-sig"},
+        )
+
+tests/test_stripe_webhook_route_hotfix3.py:132: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/root/.venv/lib/python3.11/site-packages/starlette/testclient.py:633: in post
+    return super().post(
+/root/.venv/lib/python3.11/site-packages/httpx/_client.py:1144: in post
+    return self.request(
+/root/.venv/lib/python3.11/site-packages/starlette/testclient.py:516: in request
+    return super().request(
+/root/.venv/lib/python3.11/site-packages/httpx/_client.py:825: in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/httpx/_client.py:914: in send
+    response = self._send_handling_auth(
+/root/.venv/lib/python3.11/site-packages/httpx/_client.py:942: in _send_handling_auth
+    response = self._send_handling_redirects(
+/root/.venv/lib/python3.11/site-packages/httpx/_client.py:979: in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/httpx/_client.py:1014: in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/starlette/testclient.py:398: in handle_request
+    raise exc
+/root/.venv/lib/python3.11/site-packages/starlette/testclient.py:395: in handle_request
+    portal.call(self.app, scope, receive, send)
+/root/.venv/lib/python3.11/site-packages/anyio/from_thread.py:338: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+/root/.venv/lib/python3.11/site-packages/anyio/from_thread.py:263: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/fastapi/applications.py:1054: in __call__
+    await super().__call__(scope, receive, send)
+/root/.venv/lib/python3.11/site-packages/starlette/applications.py:123: in __call__
+    await self.middleware_stack(scope, receive, send)
+/root/.venv/lib/python3.11/site-packages/starlette/middleware/errors.py:186: in __call__
+    raise exc
+/root/.venv/lib/python3.11/site-packages/starlette/middleware/errors.py:164: in __call__
+    await self.app(scope, receive, _send)
+/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py:189: in __call__
+    with collapse_excgroups():
+/usr/local/lib/python3.11/contextlib.py:158: in __exit__
+    self.gen.throw(typ, value, traceback)
+/root/.venv/lib/python3.11/site-packages/starlette/_utils.py:93: in collapse_excgroups
+    raise exc
+/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py:191: in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server.py:642: in dispatch
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py:165: in call_next
+    raise app_exc
+/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py:151: in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+/root/.venv/lib/python3.11/site-packages/starlette/middleware/cors.py:85: in __call__
+    await self.app(scope, receive, send)
+/root/.venv/lib/python3.11/site-packages/starlette/middleware/exceptions.py:65: in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py:64: in wrapped_app
+    raise exc
+/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py:53: in wrapped_app
+    await app(scope, receive, sender)
+/root/.venv/lib/python3.11/site-packages/starlette/routing.py:756: in __call__
+    await self.middleware_stack(scope, receive, send)
+/root/.venv/lib/python3.11/site-packages/starlette/routing.py:776: in app
+    await route.handle(scope, receive, send)
+/root/.venv/lib/python3.11/site-packages/starlette/routing.py:297: in handle
+    await self.app(scope, receive, send)
+/root/.venv/lib/python3.11/site-packages/starlette/routing.py:77: in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py:64: in wrapped_app
+    raise exc
+/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py:53: in wrapped_app
+    await app(scope, receive, sender)
+/root/.venv/lib/python3.11/site-packages/starlette/routing.py:72: in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/fastapi/routing.py:278: in app
+    raw_response = await run_endpoint_function(
+/root/.venv/lib/python3.11/site-packages/fastapi/routing.py:191: in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+routers/stripe_router.py:289: in post_webhook_alias
+    return await post_webhook(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+routers/stripe_router.py:278: in post_webhook
+    result = await stripe_svc.handle_webhook_event(event)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+services/payments/stripe_charge.py:825: in handle_webhook_event
+    await db.stripe_charges.update_one(
+/root/.venv/lib/python3.11/site-packages/motor/metaprogramming.py:74: in method
+    return framework.run_on_executor(
+/root/.venv/lib/python3.11/site-packages/motor/frameworks/asyncio/__init__.py:85: in run_on_executor
+    return loop.run_in_executor(_EXECUTOR, functools.partial(fn, *args, **kwargs))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/asyncio/base_events.py:817: in run_in_executor
+    self._check_closed()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_UnixSelectorEventLoop running=False closed=True debug=False>
+
+    def _check_closed(self):
+        if self._closed:
+>           raise RuntimeError('Event loop is closed')
+E           RuntimeError: Event loop is closed
+
+/usr/local/lib/python3.11/asyncio/base_events.py:520: RuntimeError
+=============================== warnings summary ===============================
+../../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
+  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+routers/marketing_studio.py:87
+  /app/backend/routers/marketing_studio.py:87: UserWarning: Field name "copy" in "ItemUpdate" shadows an attribute in parent "BaseModel"
+    class ItemUpdate(BaseModel):
+
+routers/templates_library.py:85
+  /app/backend/routers/templates_library.py:85: UserWarning: Field name "schema" in "DefinitionIn" shadows an attribute in parent "BaseModel"
+    class DefinitionIn(BaseModel):
+
+routers/templates_library.py:94
+  /app/backend/routers/templates_library.py:94: UserWarning: Field name "schema" in "DefinitionPatch" shadows an attribute in parent "BaseModel"
+    class DefinitionPatch(BaseModel):
+
+routers/portal_referrals.py:76
+  /app/backend/routers/portal_referrals.py:76: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    @validator("support_phone_number")
+
+routers/portal_referrals.py:114
+  /app/backend/routers/portal_referrals.py:114: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    @validator("friend_email")
+
+routers/mass_messaging.py:50
+  /app/backend/routers/mass_messaging.py:50: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    channels: List[str] = Field(..., min_items=1, max_items=2)
+
+routers/mass_messaging.py:50
+  /app/backend/routers/mass_messaging.py:50: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    channels: List[str] = Field(..., min_items=1, max_items=2)
+
+routers/customer_tags.py:165
+  /app/backend/routers/customer_tags.py:165: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    tags: List[str] = Field(default_factory=list, max_items=50)
+
+routers/gps_ingest.py:47
+  /app/backend/routers/gps_ingest.py:47: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    @validator("source")
+
+routers/gps_ingest.py:53
+  /app/backend/routers/gps_ingest.py:53: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    @validator("captured_at")
+
+routers/gps_stops.py:153
+  /app/backend/routers/gps_stops.py:153: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class RebuildBody(BaseModel):
+
+../../root/.venv/lib/python3.11/site-packages/pydantic/_internal/_config.py:386
+  /root/.venv/lib/python3.11/site-packages/pydantic/_internal/_config.py:386: UserWarning: Valid config keys have changed in V2:
+  * 'fields' has been removed
+    warnings.warn(message, UserWarning)
+
+server.py:1339
+  /app/backend/server.py:1339: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+../../root/.venv/lib/python3.11/site-packages/fastapi/applications.py:4495
+../../root/.venv/lib/python3.11/site-packages/fastapi/applications.py:4495
+  /root/.venv/lib/python3.11/site-packages/fastapi/applications.py:4495: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+server.py:1760
+  /app/backend/server.py:1760: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+---------- coverage: platform linux, python 3.11.15-final-0 ----------
+Name                                                   Stmts   Miss  Cover
+--------------------------------------------------------------------------
+comms_seed/__init__.py                                     0      0   100%
+comms_seed/seed_comms.py                                  73     73     0%
+comms_seed/system_data.py                                 32     32     0%
+config.py                                                 29      5    83%
+config_chemicals.py                                        2      2     0%
+config_chlorine_targets.py                                12      0   100%
+config_equipment_types.py                                  4      0   100%
+config_landscape_checklist.py                              2      2     0%
+config_tos.py                                             11      5    55%
+db_indexes.py                                             14     14     0%
+emailer.py                                                87     80     8%
+migrations/__init__.py                                     0      0   100%
+migrations/backfill_invoice_numbers.py                    74     74     0%
+migrations/rebrand_aquaterra_to_plofv.py                  58     58     0%
+migrations/seed_canonical_templates.py                    27     27     0%
+migrations/task_jj_dedupe_ai_employees.py                 53     53     0%
+migrations/transfer_integrations_to_brian.py             109    109     0%
+models.py                                                570     44    92%
+reviews_seed/__init__.py                                   0      0   100%
+reviews_seed/seed_reviews.py                              71     71     0%
+routers/__init__.py                                        0      0   100%
+routers/admin.py                                          47     28    40%
+routers/admin_checkins.py                                 80     47    41%
+routers/admin_users.py                                   184    144    22%
+routers/aeo.py                                           280    188    33%
+routers/aeo_digest.py                                     68     31    54%
+routers/ai_brain.py                                      252    187    26%
+routers/ai_credits.py                                     46     24    48%
+routers/ai_employees.py                                  979    835    15%
+routers/ai_estimator.py                                  226    160    29%
+routers/ai_media_estimator.py                             77     57    26%
+routers/ai_ops.py                                        187     89    52%
+routers/ai_visibility.py                                 307    252    18%
+routers/analytics.py                                     268    241    10%
+routers/assets.py                                        142     77    46%
+routers/attendance.py                                     66     47    29%
+routers/audits.py                                        148    100    32%
+routers/auth.py                                          265    218    18%
+routers/auto_clockin.py                                  145    116    20%
+routers/before_after.py                                  236    180    24%
+routers/billing.py                                       137     93    32%
+routers/budgets.py                                       329    275    16%
+routers/bulk_crm.py                                      241    181    25%
+routers/bulk_crm_p1.py                                    99     55    44%
+routers/business_os.py                                   402    260    35%
+routers/cad.py                                            54     25    54%
+routers/card.py                                           39     25    36%
+routers/cfo.py                                           737    632    14%
+routers/chat.py                                          359    273    24%
+routers/checkin_rewrite.py                               125     91    27%
+routers/checklists.py                                     53     38    28%
+routers/checks.py                                        889    719    19%
+routers/chemical_costs.py                                 93     72    23%
+routers/chemical_products.py                             158    119    25%
+routers/chemicals.py                                      40     30    25%
+routers/churn.py                                         163    131    20%
+routers/citations.py                                     346    285    18%
+routers/client_errors.py                                  57     32    44%
+routers/comms.py                                         603    417    31%
+routers/communications_log.py                            101     82    19%
+routers/config.py                                         18      2    89%
+routers/coverage.py                                       87     71    18%
+routers/csat.py                                          175    141    19%
+routers/customer_ai.py                                   280    242    14%
+routers/customer_categories.py                           193    148    23%
+routers/customer_equipment_photos.py                      73     48    34%
+routers/customer_portal.py                               306    253    17%
+routers/customer_reviews.py                              138     97    30%
+routers/customer_tags.py                                  81     55    32%
+routers/customer_tasks.py                                108     72    33%
+routers/customers.py                                     649    518    20%
+routers/d2d.py                                           220    177    20%
+routers/dashboard.py                                      78     69    12%
+routers/dashboard_revenue.py                             148    126    15%
+routers/directories.py                                   384    289    25%
+routers/dispatch.py                                      315    248    21%
+routers/dispatch_board.py                                230    181    21%
+routers/dispatch_reassign.py                             102     73    28%
+routers/dispatch_route_insert.py                         147    119    19%
+routers/dispatch_route_optimize.py                       122     94    23%
+routers/dispatch_savings.py                               11      3    73%
+routers/document_generators.py                           294    201    32%
+routers/driver_scorecard.py                               54     35    35%
+routers/dunning.py                                       320    254    21%
+routers/employee_onboarding.py                           155    104    33%
+routers/equipment_trackers.py                            243    191    21%
+routers/estimate_viewer.py                               276    220    20%
+routers/estimates.py                                     193    146    24%
+routers/estimator.py                                     435    319    27%
+routers/files.py                                         108     83    23%
+routers/finances.py                                      706    592    16%
+routers/gbp.py                                           260    185    29%
+routers/gbp_posts.py                                     139     95    32%
+routers/geofences.py                                     177    116    34%
+routers/google.py                                        188    161    14%
+routers/gps_ingest.py                                    130     86    34%
+routers/gps_live_positions.py                             74     62    16%
+routers/gps_route.py                                     121     98    19%
+routers/gps_settings.py                                  115     87    24%
+routers/gps_stops.py                                     101     75    26%
+routers/gps_user_controls.py                             186    152    18%
+routers/growth_playbook.py                               176    143    19%
+routers/handbook.py                                      232    165    29%
+routers/impexp.py                                        204    171    16%
+routers/income_categories.py                             148    106    28%
+routers/instaquote.py                                    399    271    32%
+routers/instaschedule.py                                 435    299    31%
+routers/integrations_admin.py                             20     10    50%
+routers/integrations_supercool.py                         83     55    34%
+routers/inventory.py                                     337    240    29%
+routers/inventory_reports.py                             224    178    21%
+routers/invoice_edit.py                                  201    161    20%
+routers/invoice_reconciliation.py                         21     11    48%
+routers/invoice_viewer.py                                175    150    14%
+routers/invoices_bulk_charge.py                          156    116    26%
+routers/invoices_mp15.py                                 178    147    17%
+routers/items.py                                         151    110    27%
+routers/job_media_line_items.py                          159    121    24%
+routers/job_requests.py                                  138     92    33%
+routers/jobs.py                                         1007    861    14%
+routers/keywords.py                                       51     29    43%
+routers/lana_todos.py                                     66     32    52%
+routers/lead_requests.py                                 223    184    17%
+routers/leads.py                                         525    447    15%
+routers/legal.py                                          78     48    38%
+routers/llmstxt_publish.py                                83     45    46%
+routers/local_seo_checklist.py                            59     42    29%
+routers/lumino_backfill.py                               110     81    26%
+routers/lumino_invoice_link_callback.py                   88     63    28%
+routers/lumino_link_request.py                            56     42    25%
+routers/lumino_return.py                                  50     35    30%
+routers/lumino_webhook.py                                  6      1    83%
+routers/lumino_zapier_bridge.py                          181    152    16%
+routers/maintenance.py                                   239    210    12%
+routers/marketing.py                                     166    115    31%
+routers/marketing_analytics.py                           269    239    11%
+routers/marketing_campaigns.py                           371    276    26%
+routers/marketing_forms.py                               380    290    24%
+routers/marketing_m1.py                                  475    352    26%
+routers/marketing_media.py                               165    124    25%
+routers/marketing_preferences.py                         160    112    30%
+routers/marketing_review_requests.py                     289    229    21%
+routers/marketing_segments.py                            107     66    38%
+routers/marketing_sequences.py                           239    177    26%
+routers/marketing_studio.py                              385    253    34%
+routers/marketing_templates.py                           218    150    31%
+routers/mass_messaging.py                                306    255    17%
+routers/measurements.py                                   35     12    66%
+routers/media_gen.py                                     149    103    31%
+routers/media_uploads.py                                 224    181    19%
+routers/mobile_push.py                                    44     25    43%
+routers/mobile_sync.py                                   136     97    29%
+routers/moderation_public_checkins.py                    171    124    27%
+routers/nfc_review_card.py                                40     27    32%
+routers/notifications.py                                  87     53    39%
+routers/onboarding.py                                     63     43    32%
+routers/operations.py                                    139    121    13%
+routers/ops.py                                           194    127    35%
+routers/outreach.py                                      313    220    30%
+routers/payments_summary.py                               60     45    25%
+routers/phase11.py                                       152     99    35%
+routers/pipelines.py                                     347    255    27%
+routers/pool_calculators.py                              489    363    26%
+routers/portal.py                                        146    109    25%
+routers/portal_admin.py                                  134    100    25%
+routers/portal_appointments.py                           106     78    26%
+routers/portal_chats.py                                  139    108    22%
+routers/portal_greeting.py                                70     54    23%
+routers/portal_media.py                                  103     84    18%
+routers/portal_photos.py                                  40     32    20%
+routers/portal_referrals.py                              135     94    30%
+routers/portal_videos.py                                  28     19    32%
+routers/portal_walkthrough.py                             78     59    24%
+routers/pricing_defaults_router.py                       130     94    28%
+routers/profit_report.py                                 171    146    15%
+routers/promo_codes.py                                   190    129    32%
+routers/properties.py                                    275    190    31%
+routers/property.py                                      312    238    24%
+routers/public_checkins.py                                75     57    24%
+routers/public_service_images.py                         134    112    16%
+routers/public_social.py                                  19     11    42%
+routers/public_widget.py                                  93     58    38%
+routers/qbo_router.py                                    168    101    40%
+routers/quickbooks_cleanup.py                             34     22    35%
+routers/quotes.py                                        518    464    10%
+routers/rank_tracker.py                                  196    158    19%
+routers/rbac.py                                           39     30    23%
+routers/realtime.py                                       96     72    25%
+routers/recommendations_queue.py                          66     49    26%
+routers/recurring_jobs.py                                233    178    24%
+routers/referral_rewards.py                              128    104    19%
+routers/referral_tiers.py                                 87     63    28%
+routers/referrals.py                                     295    237    20%
+routers/referrals_phase10.py                             118     88    25%
+routers/referrals_vesting.py                              93     74    20%
+routers/reflow_history.py                                 36     26    28%
+routers/render.py                                         84     59    30%
+routers/repair_calculator.py                             125     82    34%
+routers/replay_share.py                                  183    140    23%
+routers/reports.py                                       516    452    12%
+routers/resend_webhooks.py                                96     74    23%
+routers/review_sync.py                                    34     17    50%
+routers/reviews.py                                       580    447    23%
+routers/reviews_ai_reply.py                               47     29    38%
+routers/reviews_public_alias.py                           29     12    59%
+routers/ringcentral.py                                   475    411    13%
+routers/ringcentral_customer.py                           38     20    47%
+routers/ringcentral_jwt.py                               285    207    27%
+routers/route_optimization.py                            105     84    20%
+routers/schedule.py                                      198    161    19%
+routers/scorecard.py                                      77     42    45%
+routers/seo.py                                           266    198    26%
+routers/seo_agentic.py                                   697    579    17%
+routers/seo_analyzer.py                                  135    110    19%
+routers/seo_content_refresh.py                           164    128    22%
+routers/seo_phase17c.py                                  564    459    19%
+routers/seo_scans.py                                      91     65    29%
+routers/sequences.py                                     142     95    33%
+routers/service_categories.py                            128     88    31%
+routers/service_report_media.py                          194    158    19%
+routers/service_reports.py                               783    656    16%
+routers/signatures.py                                    168    134    20%
+routers/social.py                                        594    396    33%
+routers/stop_attribution.py                              145    111    23%
+routers/stripe_router.py                                 141     78    45%
+routers/team.py                                          216    177    18%
+routers/technicians.py                                    49     34    31%
+routers/templates_library.py                             314    230    27%
+routers/tenants.py                                       371    261    30%
+routers/time_off.py                                      136     88    35%
+routers/timeclock_landscaping.py                         107     79    26%
+routers/tos.py                                            50     33    34%
+routers/training.py                                      397    342    14%
+routers/training_nudge.py                                 84     64    24%
+routers/warranties.py                                    220    137    38%
+routers/weather.py                                        24     15    38%
+routers/weather_v2.py                                    141    115    18%
+routers/weekly_digest.py                                  44     25    43%
+routers/widget_analytics.py                              131     95    27%
+routers/widget_chat.py                                   139    105    24%
+routers/widget_config.py                                 203    164    19%
+routers/workforce.py                                     475    384    19%
+routers/workstream.py                                    159    127    20%
+routers/workstream_job_detail.py                         127    102    20%
+routers/workstream_service_log.py                        206    176    15%
+routers/zillow_adapter_api.py                             21      6    71%
+routers/zillow_admin.py                                   37     23    38%
+scripts/fix_landscape_tech_seed_drift.py                  68     11    84%
+scripts/migrate_invoices_to_quotes.py                    101     10    90%
+seed.py                                                  361    344     5%
+seed_frozen.py                                            37     37     0%
+server.py                                                749    547    27%
+services/__init__.py                                       0      0   100%
+services/add_card_links.py                                86     86     0%
+services/address_masker.py                                15      8    47%
+services/aeo_auditor.py                                  139    139     0%
+services/aeo_digest.py                                   206    179    13%
+services/aeo_fixes.py                                     84     73    13%
+services/aeo_generators.py                               126    113    10%
+services/aeo_visibility.py                               195    165    15%
+services/ai/__init__.py                                    0      0   100%
+services/ai/estimate_from_media.py                       201    167    17%
+services/ai_credits.py                                    67     51    24%
+services/ai_employee_tools.py                            267    267     0%
+services/ai_estimator.py                                 199    172    14%
+services/auto_invoice.py                                  75     75     0%
+services/auto_visit_email.py                             153    153     0%
+services/automation_engine.py                            184    184     0%
+services/autopilot_copy.py                                58     58     0%
+services/brand_mentions.py                               189    167    12%
+services/chat_attachment_hydration.py                     22     17    23%
+services/chemistry.py                                     46     38    17%
+services/comm_tokens.py                                  209    184    12%
+services/comms_email_adapter.py                           34     28    18%
+services/comms_env_guard.py                               52     52     0%
+services/comms_sms_adapter.py                             58     48    17%
+services/credits_apply.py                                 95     95     0%
+services/customer_import.py                              224    190    15%
+services/customer_multi_contact.py                       107    107     0%
+services/daily_review_digest.py                           86     86     0%
+services/dataforseo_client.py                             97     82    15%
+services/directory_seed.py                                35     35     0%
+services/driver_scorecard.py                             172    150    13%
+services/email/__init__.py                                 0      0   100%
+services/email/resend_adapter.py                         105     77    27%
+services/equipment_trackers_cron.py                      172    172     0%
+services/file_storage.py                                 106     85    20%
+services/geofence_engine.py                               51     41    20%
+services/google_maps/__init__.py                           0      0   100%
+services/google_maps/directions.py                        61     61     0%
+services/google_maps/geocoding.py                         62     62     0%
+services/gps_stop_detector.py                             91     61    33%
+services/gps_stops_batch.py                              118    101    14%
+services/inventory_alerts.py                             164    164     0%
+services/invoice_lookup.py                                14      0   100%
+services/invoice_numbering.py                             52     52     0%
+services/keyword_ideator.py                              135    108    20%
+services/lana/__init__.py                                  0      0   100%
+services/lana/intent.py                                   65     65     0%
+services/lana/reminder_cron.py                            19     19     0%
+services/lana/reminders.py                                47     34    28%
+services/lana/schedule_intent.py                          42     42     0%
+services/lana/todos.py                                    27     18    33%
+services/lead_conversion_notifications.py                 81     81     0%
+services/leads_side_effects.py                            94     94     0%
+services/llm_provider.py                                  97     97     0%
+services/llmstxt_publish.py                              218    190    13%
+services/lumino_reconciler.py                             73     58    21%
+services/lumino_zapier_dispatcher.py                      89     70    21%
+services/marketing/__init__.py                             0      0   100%
+services/marketing/drip_events.py                        116    116     0%
+services/marketing/merge_tags.py                         499    437    12%
+services/marketing/render.py                              29     19    34%
+services/marketing/segments.py                           159    142    11%
+services/marketing_campaigns.py                          312    277    11%
+services/marketing_media/storage_client.py                69     54    22%
+services/marketing_segments.py                            86     77    10%
+services/marketing_subscribers.py                         90     75    17%
+services/mcp_oauth_client.py                             378    324    14%
+services/media_provider.py                               158    130    18%
+services/monthly_pricing_digest.py                        77     77     0%
+services/notifications.py                                229    203    11%
+services/object_storage.py                                83     66    20%
+services/outreach_followups.py                            47     47     0%
+services/pay_link_builder.py                              16     16     0%
+services/payments/__init__.py                              3      0   100%
+services/payments/lumino_provider.py                     127    127     0%
+services/payments/provider_base.py                        41     12    71%
+services/payments/provider_factory.py                     21     12    43%
+services/payments/provider_mode.py                        13     13     0%
+services/payments/stripe_charge.py                       273    187    32%
+services/pool_dosing.py                                  164    149     9%
+services/pool_service_email.py                            60     60     0%
+services/price_increase_email.py                          73     61    16%
+services/property_data/__init__.py                         1      0   100%
+services/property_data/zillow_adapter.py                 168    116    31%
+services/qbo/__init__.py                                   0      0   100%
+services/qbo/client.py                                    60     44    27%
+services/qbo/match.py                                     66     56    15%
+services/qbo/oauth.py                                    160    127    21%
+services/qbo/sync.py                                      89     73    18%
+services/referral_watcher.py                             181    181     0%
+services/reports.py                                       39     39     0%
+services/response_drafts.py                              131    105    20%
+services/response_library.py                              63     49    22%
+services/reverse_geocoder.py                             124     98    21%
+services/review_auto_request.py                           32     32     0%
+services/review_scraper.py                               123    101    18%
+services/review_scraper_adapters/__init__.py               0      0   100%
+services/review_scraper_adapters/facebook_adapter.py      10     10     0%
+services/review_scraper_adapters/google_adapter.py        47     47     0%
+services/review_scraper_adapters/yelp_adapter.py          45     45     0%
+services/reviews_rate_limit.py                            31     21    32%
+services/ringcentral/__init__.py                           0      0   100%
+services/ringcentral/rc_client.py                        145    118    19%
+services/ringcentral_client.py                            42     31    26%
+services/route_events.py                                  61     51    16%
+services/route_reassign.py                                97     79    19%
+services/route_suggest.py                                109    109     0%
+services/scorecard_digest.py                             253    219    13%
+services/search_provider.py                               56     43    23%
+services/seo_scanner.py                                  343    309    10%
+services/service_price_market.py                          14      0   100%
+services/sms/__init__.py                                   0      0   100%
+services/sms/rc_adapter.py                               100    100     0%
+services/sse_broker.py                                    48     36    25%
+services/stop_attributor.py                              139    122    12%
+services/stop_geo.py                                      35     30    14%
+services/tenant_urls.py                                   12     12     0%
+services/time_off_accrual.py                              91     77    15%
+services/weekly_bulk_actions_digest.py                   108    108     0%
+services/weekly_digest.py                                150    130    13%
+services/weekly_reputation_digest.py                      85     85     0%
+services/zillow_rate_limit.py                            124     96    23%
+templates_seed/__init__.py                                 0      0   100%
+templates_seed/seed_templates.py                          61     61     0%
+tests/_phase34_asyncio.py                                 30      8    73%
+tests/conftest.py                                        102     32    69%
+tests/test_admin_users_soft_delete.py                    142      0   100%
+tests/test_ai_employees_ae2.py                           193      2    99%
+tests/test_ai_employees_ae3.py                           227      1    99%
+tests/test_ai_employees_rbac.py                           42      1    98%
+tests/test_config_public_show_demo_logins_default.py      69      0   100%
+tests/test_invoice_collection_unification.py             154      3    98%
+tests/test_phase21_landscape_seed_drift.py                51      0   100%
+tests/test_phase42_4_stripe_v15_audit.py                  46      0   100%
+tests/test_phase50.py                                    160      4    98%
+tests/test_phase50_1_avatar_url.py                        35      0   100%
+tests/test_stripe_webhook_route_hotfix3.py                43      0   100%
+training_seed/__init__.py                                  0      0   100%
+training_seed/seed_common.py                              85     85     0%
+training_seed/seed_landscape.py                          101    101     0%
+training_seed/seed_pool_supplemental.py                   81     81     0%
+training_seed/training_cpo.py                             91     91     0%
+utils.py                                                 166    135    19%
+utils_idempotency.py                                      36     36     0%
+--------------------------------------------------------------------------
+TOTAL                                                  61248  46947    23%
+
+Required test coverage of 2% reached. Total coverage: 23.35%
+=========================== short test summary info ============================
+FAILED tests/test_ai_employees_ae3.py::test_ae3_tenant_scoping_no_cross_tenant_data
+FAILED tests/test_stripe_webhook_route_hotfix3.py::test_common_event_types_return_2xx[payment_intent.succeeded-event_object0]
+2 failed, 155 passed, 17 warnings in 327.47s (0:05:27)
