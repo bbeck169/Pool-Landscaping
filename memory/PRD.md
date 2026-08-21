@@ -11789,3 +11789,121 @@ Coverage:
 - Legal audit invariants: never hard-delete a published/superseded doc; server-only HTML sanitizer with bleach allow-list; per-acceptance `ip` + `ua` capture.
 - Idempotency: publish blast keyed on `tos_update:{doc_id}` — same pattern as `door_hanger_auto` and `elevated_followup_shown`.
 - Cross-scope replay: 4 portal magic-link scopes (`job_view`, `portal_invoice_pay`, `portal_estimate_view`, `portal_home`) mutually exclusive by `sub` claim.
+
+
+## Feb-2026 · Session tail — Optimize Route feature + polish + Homeworks bug · ✅ SHIPPED
+
+### Optimize Route (full feature, 3 sub-phases, all shipped)
+
+Tech-suggests → admin-approves flow with a 10-second undo. Reused
+`services.route_events.log_event(kind="optimize_approval")` so the
+existing dispatch-board weekly-savings KPI picks up the new activity
+at zero cost.
+
+**A · Backend** — `services/route_optimizer.py` (haversine + NN + savings
+math), `routers/route_optimization_approval.py` (7 endpoints under
+`/api/jobs/route-optimization/*`), `services/notifications.py` kind
+label + `enqueue_for_tenant_admins()` reuse, `route_optimization_requests`
+collection with unique pending-per-`(tenant,tech,date)` semantics.
+Tests: `backend/tests/test_route_optimization_approval.py` · 10/10.
+
+**B · Mobile** — additive to `DailyRouteMap.tsx` (frozen chevron/pins
+untouched), new `OptimizeRoutePreview.tsx` modal, `src/utils/geolocate.ts`
+extracted from `OnMyWayButton.tsx` inline pattern (OnMyWayButton
+untouched). Header pill shows savings live ("Optimize · 2.4 mi"),
+tech Apply → `/request` + suggestion-sent toast + pill disables locally
+until unmount; admin Apply → `/apply` + 10 s undo toast.
+Tests: `mobile/__tests__/optimize-route-flow.test.tsx` · 8/8.
+
+**C · Web admin approval UI** — `RouteOptimizationApprovalModal.jsx`
+(Radix Dialog, tech/date header, 3-tile savings, before/after 2-column
+visualization, Approve · Reject-with-reason · Dismiss), `PendingRouteOptimizations.jsx`
+(top-of-board card, 30 s poll, `?optimize={id}` deep-link, non-admin
+returns null), mounted in `DispatchBoardPage.jsx` right after
+`<DispatchSavingsStrip />`. NotificationBell unchanged — backend's
+`href=/dispatch?optimize={id}` slots into the bell's generic
+row-click nav.
+Tests: `frontend/src/test/route-optimization-admin-approve.test.jsx` · 6/6.
+
+**E2E live-verify still owed** — mobile → web chain requires two
+concurrent browser sessions the sandbox can't drive; user manual
+capture pending.
+
+### Homeworks `Customer.discount` GraphQL bug · ✅ SHIPPED
+
+Root cause: Homeworks removed the scalar `discount` field from the
+`Customer` type in their live schema; our local `schema.graphql`
+snapshot at line 705 was stale. Both cohort page queries selected the
+field → `GRAPHQL_VALIDATION_FAILED` on every dry-run and real run.
+Delta Sync's `both_cohorts_failed_dry_run` was the aggregated fatal
+from the shared query failure.
+
+**Fix:** dropped the `discount` selection from `CUSTOMER_PAGE_QUERY`
+(inactive) and `ACTIVE_CUSTOMER_PAGE_QUERY` (active) in
+`services/homeworks_mcp/queries.py`. No mapper change — grep
+confirmed no downstream code read `customer["discount"]`. Estimate-level
+`discountPercent` / `discountAmount` untouched. Top-of-module drift
+note documents the removal + points to the original error signature.
+
+**Queue-button gating** already correct pre-fix (`HomeworksImportCenter.jsx:213`
+guards on `!!fatal`); the 1,317 / 1,496 candidate counts users saw
+were legit — they come from the id-only `COUNT_PAGE_QUERY` at
+`inactive_customers_importer.py:126` which succeeded before the sample
+fetch failed. No frontend changes required.
+
+Tests: `backend/tests/test_homeworks_discount_field_drop.py` · 6/6.
+
+### Job notes visibility polish · ✅ SHIPPED
+
+Shared amber-accented note chip replacing the inline blue-tinted card
+in `CalendarSchedule.jsx` and the inline text-button block in
+`TodaySchedule.jsx`, plus the mobile Pressable→Alert flow. Same
+visual treatment on all three surfaces:
+- 3 px amber-500 left border, amber-100 tinted bg, amber-200 border
+- 14 px body (web) / 13 px body (mobile), near-black text
+- `NotebookPen` (web) / `document-text-outline` (mobile) leading icon
+- 2-line clamp + inline `Show more` toggle when >100 chars or contains newline
+- Component returns `null` on empty notes
+
+Files: `frontend/src/components/schedule/JobNotesCallout.jsx`,
+`mobile/src/components/schedule/JobNotesCallout.tsx`.
+Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
+`mobile/__tests__/schedule-card-notes-visibility.test.tsx` · 3/3.
+
+### Follow-ups tracked for future sessions
+
+1. **[P2 · one release cycle out] Remove the dead-guarded IIFE**
+   in `mobile/app/(app)/schedule/calendar.tsx` — the old `Pressable`
+   → `Alert.alert` block was left under `false && (() => { … })()`
+   after the notes-polish extraction so any cached mobile client
+   compiling against the surrounding scope keeps typechecking during
+   the transition. Delete after one Expo update cycle has landed
+   (target: whichever mobile release ships two weeks after the polish
+   goes live).
+
+2. **[P3] Homeworks schema-drift nightly cron** — introspect the live
+   Homeworks `__schema` and diff against `services/homeworks_mcp/schema.graphql`;
+   alert on removed field names. Would have caught the `Customer.discount`
+   removal before it hit users. Parked as future-work per user greenlight.
+
+3. **[P1 · pending user assignment] Optimize Route E2E live-verify capture**
+   — mobile tech tap → admin web bell → approve → mobile route
+   reshuffles. Requires two concurrent browser sessions the sandbox
+   can't drive.
+
+4. **[P3 · surfaced not fixed] Pre-existing workspace vitest failures**
+   — 13 assertions across 3 files (`OpsHub.jsx` routes-enriched-names ·
+   6, `finance/recurring-jobs.tsx` LOC gate · 3, `phase30-portal-admin-avatar-coverage.test.jsx`
+   PersonaAvatar mounts · 4). None on modified surface; queued for a
+   dedicated cleanup pass at user discretion.
+
+5. **[P2 · queued but blocked]** Tech-visible `GET /request/{id}` endpoint
+   for the mobile Optimize pill so the pill re-enables when the admin
+   resolves — currently the tech's pending state is local-only
+   (disables until unmount / next session open). Trade-off flagged
+   in sub-phase B ship.
+
+6. **[P2 · queued but not started]** `/admin/tos-documents/{id}/acceptances`
+   audit-trail endpoint for Legal, "Restore this version" flow, and
+   `/portal/legal` per-customer terms history — deferred from the
+   Multi-ToS shipment.
