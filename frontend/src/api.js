@@ -148,5 +148,11 @@ export const api = {
       body: body ? JSON.stringify(body) : undefined,
     }),
   request: (p, opts) => request(p, opts),
+  // Feb-2026 · P7 hotfix — expose ``delete`` for API-verb parity with
+  // ``get / post / put / patch``.  Historical callers used ``del`` (a
+  // legacy alias to sidestep the ``delete`` reserved word in older JS);
+  // both names now point at the same request. New call sites should
+  // prefer ``.delete()``.
+  delete: (p) => request(p, { method: "DELETE" }),
   del: (p) => request(p, { method: "DELETE" }),
 };

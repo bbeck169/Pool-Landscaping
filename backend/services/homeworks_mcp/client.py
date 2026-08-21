@@ -37,6 +37,73 @@ _MAX_401_RETRIES = 1  # one refresh + retry cycle per call
 _SESSION_TTL_SECS = 30 * 60
 
 
+# ── Feb-2026 · P7 — defensive non-2xx logging ──────────────────────
+# Redact PII-ish top-level variable keys before logging outgoing
+# GraphQL variables. Deeper-nested values are already bounded by the
+# 500-char cap on the log line so they can't bleed a full payload.
+_REDACT_VARIABLE_KEYS = frozenset({
+    "email", "cc_email", "ccEmail", "phone", "cell", "fax", "password",
+    "token", "access_token", "refresh_token", "authorization",
+})
+
+import re as _re  # local alias — one-line greppable dep
+
+
+def _extract_op_name(query: str) -> str:
+    """Parse ``query <Name>`` / ``mutation <Name>`` from a GraphQL
+    string. Returns ``""`` when the query is anonymous."""
+    if not query:
+        return ""
+    m = _re.search(r"(?:query|mutation)\s+(\w+)", query)
+    return m.group(1) if m else ""
+
+
+def _redact_variables(variables: Any) -> Any:
+    """Return a shallow-redacted copy of ``variables`` — sensitive
+    top-level values become ``"***"``. Non-dict inputs pass through so
+    numeric ids / null still render usefully in the log line."""
+    if not isinstance(variables, dict):
+        return variables
+    out: Dict[str, Any] = {}
+    for k, v in variables.items():
+        if k in _REDACT_VARIABLE_KEYS and v is not None:
+            out[k] = "***"
+        else:
+            out[k] = v
+    return out
+
+
+def _log_non_2xx_defensive(
+    *, status: int, body: str, method: str,
+    params: Optional[Dict[str, Any]], tenant_id: str,
+) -> None:
+    """Emit a structured WARNING when Homeworks MCP returns a non-2xx.
+
+    Captures the outgoing GraphQL query prefix + redacted variables so
+    ops can distinguish a truly stale query (e.g. a re-introduced
+    ``Customer.discount`` selection) from a transient Homeworks-side
+    issue.  Bearer / refresh tokens are NEVER logged — headers stay
+    out of the payload by construction.
+    """
+    query_text = ""
+    op_name = method
+    variables_redacted: Any = None
+    if method == "tools/call":
+        args = (params or {}).get("arguments") or {}
+        query_text = str(args.get("query") or "")
+        op_name = str(
+            args.get("operationName") or _extract_op_name(query_text) or method
+        )
+        variables_redacted = _redact_variables(args.get("variables"))
+    logger.warning(
+        "[homeworks_mcp] non_2xx status=%s tenant=%s method=%s op=%s "
+        "query_prefix=%r variables=%s response_body=%r",
+        status, tenant_id, method, op_name,
+        query_text[:500], variables_redacted, (body or "")[:500],
+    )
+
+
+
 class MCPError(RuntimeError):
     """Any structural / transport / auth error from the MCP endpoint."""
 
@@ -198,6 +265,10 @@ class HomeworksMCPClient:
         if r.status_code == 401:
             raise MCPError("initialize_unauthorized")
         if r.status_code >= 400:
+            _log_non_2xx_defensive(
+                status=r.status_code, body=r.text,
+                method="initialize", params=None, tenant_id=self.tenant_id,
+            )
             raise MCPError(
                 f"initialize_http_{r.status_code}:{r.text[:200]}"
             )
@@ -266,6 +337,11 @@ class HomeworksMCPClient:
                 continue
 
             if r.status_code >= 400:
+                _log_non_2xx_defensive(
+                    status=r.status_code, body=r.text,
+                    method=method, params=payload.get("params"),
+                    tenant_id=self.tenant_id,
+                )
                 raise MCPError(
                     f"mcp_http_{r.status_code}:{r.text[:200]}",
                 )
