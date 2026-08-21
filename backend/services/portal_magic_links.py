@@ -257,3 +257,57 @@ def build_estimate_view_url(
         customer_id, estimate_id, tenant_id, ttl_hours=ttl_hours,
     )
     return f"{base_url.rstrip('/')}/api/portal/auto-login?t={token}"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Feb-2026 · Slice 2D — Portal-home auto-login (ToS-update blast + any
+# future notification that lands the customer on their portal home
+# without a specific resource anchor). Distinct ``sub`` claim so it
+# can't be replayed as any of the three resource-scoped tokens.
+# ═══════════════════════════════════════════════════════════════════════
+_TOKEN_SUB_PORTAL_HOME = "portal_home"
+_PORTAL_HOME_TTL_HOURS = 48
+
+
+def mint_portal_home_token(
+    customer_id: str, tenant_id: str,
+    *, ttl_hours: int = _PORTAL_HOME_TTL_HOURS,
+) -> str:
+    if not (customer_id and tenant_id):
+        raise ValueError("customer_id and tenant_id are required")
+    ttl = max(60, int(ttl_hours) * 3600)
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": _TOKEN_SUB_PORTAL_HOME,
+        "customer_id": customer_id,
+        "tenant_id": tenant_id,
+        "iat": now,
+        "exp": now + timedelta(seconds=ttl),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+
+
+def verify_portal_home_token(token: str) -> dict:
+    if not token:
+        raise HTTPException(401, "token_invalid_or_expired")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "token_invalid_or_expired")
+    except jwt.PyJWTError:
+        raise HTTPException(401, "token_invalid_or_expired")
+    if payload.get("sub") != _TOKEN_SUB_PORTAL_HOME:
+        raise HTTPException(401, "token_wrong_scope")
+    if not all(payload.get(k) for k in ("customer_id", "tenant_id")):
+        raise HTTPException(401, "token_malformed")
+    return payload
+
+
+def build_portal_home_url(
+    base_url: str, customer_id: str, tenant_id: str,
+    *, ttl_hours: int = _PORTAL_HOME_TTL_HOURS,
+) -> str:
+    token = mint_portal_home_token(
+        customer_id, tenant_id, ttl_hours=ttl_hours,
+    )
+    return f"{base_url.rstrip('/')}/api/portal/auto-login?t={token}"

@@ -401,6 +401,33 @@ async def seed_pool_tos_from_legacy(
     return row
 
 
+async def customers_with_active_service(
+    db, tenant_id: str, service_type: str,
+) -> List[Dict[str, Any]]:
+    """Feb-2026 · Slice 2D — recipient query for the publish blast.
+
+    Returns a list of customer docs (with fields the emailer needs)
+    whose classification includes ``service_type``. Reuses the
+    single-customer :func:`classify_customer_services` so the two
+    signals stay in lockstep — a customer who appears in this list
+    is exactly the same customer who'd see the pending ToS on next
+    login via ``compute_pending_tos_for_customer``.
+    """
+    if service_type not in SERVICE_TYPES:
+        return []
+    out: List[Dict[str, Any]] = []
+    async for c in db.customers.find(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "email": 1, "first_name": 1, "name": 1,
+         "service_type": 1, "service_types": 1,
+         "unsubscribed": 1, "do_not_contact": 1},
+    ):
+        services = await classify_customer_services(db, tenant_id, c)
+        if service_type in services:
+            out.append(c)
+    return out
+
+
 # ── Indexes ──────────────────────────────────────────────────────────
 async def ensure_indexes(db) -> None:
     """Idempotent index creation for the Multi-ToS collections."""
@@ -417,3 +444,13 @@ async def ensure_indexes(db) -> None:
     await db.tos_acceptances.create_index(
         [("tenant_id", 1), ("customer_id", 1)],
     )
+    # Feb-2026 · Slice 2D — dedupe the publish blast via the same
+    # compound unique index the door-hanger auto-send + elevated CTA
+    # ledger already rely on. Idempotent (no-op if already present).
+    try:
+        await db.marketing_event_ledger.create_index(
+            [("tenant_id", 1), ("event_key", 1)],
+            unique=True, name="uniq_tenant_event_key",
+        )
+    except Exception:  # pragma: no cover — another module owns it
+        pass

@@ -51,6 +51,7 @@ from services.portal_magic_links import (
     verify_job_view_token,
     verify_invoice_pay_token,
     verify_estimate_view_token,
+    verify_portal_home_token,
 )
 
 logger = logging.getLogger("portal.auto_login")
@@ -74,6 +75,7 @@ def _classify_and_verify(token: str):
         ("job", verify_job_view_token),
         ("invoice", verify_invoice_pay_token),
         ("estimate", verify_estimate_view_token),
+        ("portal_home", verify_portal_home_token),
     ):
         try:
             return kind, verify(token)
@@ -217,6 +219,15 @@ async def portal_auto_login(
         estimate_id = payload.get("estimate_id")
         default_target = f"/portal/estimates/{estimate_id}"
         resource_id = estimate_id
+    elif resource_type == "portal_home":
+        # Feb-2026 · Slice 2D — ToS-update blast (and any future
+        # notification that lands the customer at home without a
+        # specific resource anchor). The OnboardingGate rendered by
+        # AppLayout will detect any newly-pending ToS in
+        # ``/customer-portal/onboarding-state`` and open the accept
+        # modal automatically.
+        default_target = "/portal/home"
+        resource_id = None
     else:  # pragma: no cover — defensive
         _log("expired", customer_id=customer_id, from_ip=from_ip)
         return _expired_response()
