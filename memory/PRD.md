@@ -11676,3 +11676,51 @@ Coverage:
 * Existing `settings/legal` route left untouched. Added a sibling literal route.
 * Existing settings page shell layout patterns from `AIBrainPage.jsx` reused (sonner toasts, header/subhead pattern, colors from `@/theme`).
 * Legacy `TosGate.jsx` NOT touched — that's 2C's evaluate/adapt/replace call.
+
+---
+
+## Feb-2026 · Queue Item #2 · Sub-phase 2C — Customer Portal OnboardingGate · ✅ SHIPPED
+
+**New component** `frontend/src/components/legal/OnboardingGate.jsx`
+* Fetches `GET /customer-portal/onboarding-state` on mount, renders one blocking modal per entry in `pending_tos` (server-sorted pool → landscaping), advances via `POST /customer-portal/tos/{document_id}/accept`, unmounts when the array empties. On error the server-returned `pending_tos` snapshot swaps in — no client-side state divergence.
+* **Role-gated** — no-op unless `user.role === "customer"`. Admin / super_admin / technician / manager flow through untouched.
+* **Scroll-gate** — "I Agree" button disabled until the modal body reaches `scrollTop + clientHeight >= scrollHeight - 8`. Auto-enabled when the doc is short enough to fit without scrolling (30ms post-mount check).
+* **Blocking UI, escape-hatch preserved** — modal is full-viewport at `z-[85]` with backdrop; NO dismiss X, NO Reject button. But **children remain mounted** (rendered alongside the modal, not replaced), so the shell header + Sign Out button stay reachable at `z-50` above the backdrop-blocking overlay.
+* **DOMPurify NOT added** — dep isn't in `package.json`, scope guard forbids adding. Server-side `services/tos_service.sanitize_html` (bleach allow-list, `javascript:` blocked, external `<a>` auto-hardened) is the sole HTML gate. `dangerouslySetInnerHTML` used on the sanitized `content_html`.
+* **409 `document_not_published`** on accept → inline error banner ("This version is no longer active. Reloading…") + auto-refresh 400ms later so the freshly-published superseding version loads.
+
+**Legacy `TosGate.jsx` decision — REPLACE (via sibling), don't adapt**
+* Reasoning: legacy `TosGate` is single-doc (`/legal/tos`), non-loopable, gates on `user.must_accept_tos`, and posts to `/users/me/accept-tos`. Adapting would require rewriting 90% of the file AND blurring which system is authoritative for which audience. Cleaner to co-mount: legacy `TosGate` keeps admin single-doc flow untouched (self-gates on `must_accept_tos`, unrelated to `role`); new `OnboardingGate` handles customer per-service flow (self-gates on `role === "customer"`, orthogonal predicate). Predicates don't overlap.
+
+**Tutorial component — deferred with gap surfaced**
+* `PortalWalkthrough.jsx` exists in the customer portal but its completion is tracked client-side only. The 2A DTO exposes `tutorial_completed` (server-side) but **does not expose** a `POST /customer-portal/tutorial/complete` endpoint. The 2C scope guard freezes the 2A backend, so this iteration stubs `needs_tutorial=false` (`_STUB_NEEDS_TUTORIAL = false`) with a jsdoc pointer explaining what needs to land to enable the tutorial leg.
+* **Gap surfaced for a future 2A follow-up**: add `POST /customer-portal/tutorial/complete` that sets `customers.tutorial_completed_at` + returns fresh `onboarding-state`. One-line flip in `OnboardingGate` to wire it up.
+
+**Mount location** `frontend/src/layouts/AppLayout.jsx`
+* Wrapped the `<Outlet />` inside a single `<OnboardingGate>...</OnboardingGate>` block right after `<Breadcrumbs />`. Legacy `<TosGate />` still mounted above at line 341 — the two gates coexist by role predicate.
+
+**Tests** `frontend/src/test/portal-onboarding-gate.test.jsx` (new) — **7/7 vitest pass**:
+1. Non-customer role (admin / super_admin / technician / manager) → children render immediately, no API calls.
+2. Fully onboarded customer → children render, no modal, no accept POST.
+3. Pool + landscaping pending → pool renders first (asserts `data-service-type="pool"` + title); accept POSTs `/customer-portal/tos/d-pool/accept`; then landscaping renders; second accept unmounts the modal.
+4. Only landscaping pending → landscaping modal renders (skip pool).
+5. `I Agree` disabled until scroll bottom (jsdom trick: force `scrollHeight > clientHeight` on all elements, simulate scroll event, assert button toggles).
+6. 409 `document_not_published` → inline error banner + reload; modal stays open.
+7. Sign Out in header remains in the DOM while modal open.
+
+**Regression** — Frontend **45/45 pass** across 7 suites (2C + 2B + job-edit-window + concierge-avatar + portal-bands + portal-invite-relocation + phase27-portal-sections). Backend **106/106 pass** — 2A untouched.
+
+**Live-verified** in preview:
+* Reset `customer@aquaterra.com`'s `tos_status` to null + service_type to `Weekly Pool Service`.
+* Login → portal home rendered behind blocking modal.
+* Modal: blue header "POOL SERVICES · Pool Services — Terms of Service · Version 1 · Effective 2026-02-15", scrollable body, footer "Scroll to the bottom to enable the agree button" + disabled "I Agree" button.
+* Sign Out in top-right header reachable at all times.
+* Landscaping second-modal flow validated via vitest (test #3).
+
+**Hard-stop after 2C green** — ready for 2D in a fresh session.
+
+**Reuse honored**
+* No new WYSIWYG lib, no DOMPurify, no new tutorial component.
+* Legacy `TosGate.jsx` untouched.
+* Sonner toasts + `@/theme` + `@/api` + `@/auth` patterns match existing conventions.
+* Mounted alongside `<Outlet />`, not restructuring routes.

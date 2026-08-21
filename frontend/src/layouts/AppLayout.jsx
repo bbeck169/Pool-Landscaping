@@ -11,6 +11,10 @@ import LandscapingClockWidget from "@/components/LandscapingClockWidget";
 import AIDock from "@/components/AIDock/AIDock";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 import TosGate from "@/components/legal/TosGate";
+// Feb-2026 · Slice 2C — Customer portal per-service ToS gate. Sits
+// beside the legacy TosGate (admin single-doc flow) and self-gates
+// on ``role === "customer"`` so predicates don't overlap.
+import OnboardingGate from "@/components/legal/OnboardingGate";
 import ProfileCompletionGate from "@/components/portal/ProfileCompletionGate";
 import Breadcrumbs from "@/components/breadcrumbs/Breadcrumbs";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
@@ -563,7 +567,13 @@ function AppLayout() {
             metadata. Component hides itself on landing/auth pages. */}
         <Breadcrumbs />
 
-        <Outlet />
+        {/* Feb-2026 · Slice 2C — customer per-service ToS gate. Wraps
+            the outlet so pending pool + landscaping ToS acceptances
+            block route interaction. Self-gates on role === "customer";
+            no-op for admin / super_admin / technician / manager. */}
+        <OnboardingGate>
+          <Outlet />
+        </OnboardingGate>
 
         {/* Feb-2026 · Item 10 — Portal tour engine. Self-gates on
             role="customer" + has_seen_customer_tour so it renders
