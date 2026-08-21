@@ -18,6 +18,10 @@ from fastapi import APIRouter, Depends, Query
 
 from config import db
 from utils import require_admin, now_iso
+# Feb-2026 · P3 — 4-rung tech-name cascade so utilization rows carry
+# a fresh display name even when the job's ``technician_id`` points
+# at a ``users.id`` (not in the ``technicians`` table).
+from services.service_report_view import resolve_technician_names
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -312,11 +316,20 @@ async def tech_productivity(user: dict = Depends(require_admin),
             pass
 
     matrix = []
-    for t in techs:
-        tid = t["id"]
+    # Feb-2026 · P3 — union technicians.id + observed job.technician_id
+    # values so ``users.id``-shaped writes don't silently drop from the
+    # matrix. Single hydration call per request; ``resolve_technician_names``
+    # runs a max of three ``$in`` queries internally (technicians.id,
+    # technicians.user_id, users.id) — no N+1 per row.
+    observed_ids = {tid for tid in cells.keys() if tid}
+    known_tech_ids = {t["id"] for t in techs}
+    union_ids = observed_ids | known_tech_ids
+    names_map = await resolve_technician_names(db, tid_, list(union_ids)) if union_ids else {}
+    for tech_row_id in sorted(union_ids, key=lambda x: names_map.get(x, x)):
+        tid = tech_row_id
         row = {
             "technician_id": tid,
-            "technician_name": t.get("name") or "—",
+            "technician_name": names_map.get(tid) or tid,
             "cells": [],
             "total_jobs": 0,
         }

@@ -14,6 +14,10 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 
 from config import db, logger
 from utils import now_iso, new_id, require_admin, notify_customer
+# Feb-2026 · P3 — reuse the 4-rung tech-name cascade so exported
+# rows carry the CURRENT display name, not the stale snapshot that
+# job docs cache at write time.
+from services.service_report_view import resolve_technician_names
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -554,6 +558,17 @@ async def export_jobs(user: dict = Depends(require_admin),
     rows = await db.jobs.find({}, {"_id": 0}).sort("scheduled_date", -1).to_list(10000)
     if start or end:
         rows = [r for r in rows if _in_range(r.get("scheduled_date") or r.get("created_at"), start, end)]
+    # Feb-2026 · P3 — hydrate ``technician_name`` from the current
+    # users / technicians display name, overwriting any stale snapshot
+    # baked in at job-write time. Single ``$in`` query per request via
+    # ``resolve_technician_names`` — no N+1.
+    tenant_id = user.get("tenant_id") or ""
+    tech_ids = {r.get("technician_id") for r in rows if r.get("technician_id")}
+    names_map = await resolve_technician_names(db, tenant_id, list(tech_ids)) if tech_ids else {}
+    for r in rows:
+        tid = r.get("technician_id")
+        if tid:
+            r["technician_name"] = names_map.get(tid) or r.get("technician_name") or tid
     return {"filename": "jobs.csv", "content": _to_csv(rows, JOB_COLS), "count": len(rows)}
 
 
