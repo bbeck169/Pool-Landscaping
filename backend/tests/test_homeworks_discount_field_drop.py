@@ -78,6 +78,42 @@ def test_active_customer_query_drops_discount():
     )
 
 
+# ── 2b. Exhaustive guard across EVERY module-level query string ───
+# Feb-2026 · P6 hotfix — belt-and-braces so any FUTURE Customer query
+# added to ``queries.py`` inherits the drift protection without a
+# targeted test being written for it. Catches the exact bug shape
+# users reported on the Inactive Customers import (schema drift on
+# ``Customer.discount``) even if the offending query lives in a
+# not-yet-named module-level constant.
+@pytest.mark.parametrize(
+    "query_name",
+    [n for n, v in _q.__dict__.items()
+     if n.endswith("_QUERY") and isinstance(v, str) and "Customer" in v
+     and n not in ("CUSTOMER_ESTIMATES_QUERY",)],  # Estimate has legit discountPercent/Amount
+)
+def test_no_customer_type_query_selects_bare_discount(query_name):
+    """Any query that mentions ``Customer`` MUST NOT select the removed
+    scalar ``discount`` on the Customer body.  ``discountPercent`` /
+    ``discountAmount`` on OTHER types (Estimate, Invoice) remain legal.
+    """
+    q = getattr(_q, query_name)
+    # Only test queries that actually select from a ``customers(...)``
+    # or Customer body — skip queries that just NAME a Customer type
+    # (e.g. filter arguments, count-only shapes).
+    if not re.search(r"customers?\s*\(", q):
+        pytest.skip(f"{query_name} does not select from a Customer body")
+    body = _customer_body(q)
+    # A bare ``discount`` selection on its own line inside the Customer
+    # body is the failure shape. ``discountPercent`` / ``discountAmount``
+    # are LEGAL on nested Estimate / Invoice sub-selections so we only
+    # reject the standalone scalar.
+    assert not re.search(r"(^|\n)\s*discount\s*(\n|$)", body), (
+        f"{query_name} re-introduced Customer.discount — Homeworks removed "
+        f"this field, prod will 400. Drop the selection to match the "
+        f"CUSTOMER_PAGE_QUERY / ACTIVE_CUSTOMER_PAGE_QUERY fix."
+    )
+
+
 # ── 3. Estimate-level discount fields untouched ────────────────────
 def test_estimate_discount_fields_still_selected():
     # ``discountPercent`` / ``discountAmount`` live on the Estimate type

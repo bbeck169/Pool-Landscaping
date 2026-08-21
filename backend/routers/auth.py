@@ -353,6 +353,74 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
     return {"ok": True, "message": "If an account exists for that email, a reset link has been sent."}
 
 
+async def _load_reset_token(tok: str, ip: str) -> dict:
+    """Load ``password_reset_tokens`` row for ``tok`` and gate on
+    used / invalidated / expired branches. Emits the matching audit
+    event and raises ``HTTPException(400)`` with the user-facing
+    message on any failure branch; otherwise returns the row dict.
+
+    Feb-2026 · P6 refactor — extracted from ``reset_password`` so the
+    orchestrator stays <= 20 lines and each failure branch remains
+    independently characterization-testable.
+    """
+    row = await db.password_reset_tokens.find_one({"token": tok}, {"_id": 0})
+    if not row:
+        await _audit_auth("password_reset_complete", "", ip, "failure", "unknown_token")
+        raise HTTPException(400, "Invalid or expired reset link. Please request a new one.")
+    email = row.get("email", "")
+    if row.get("used_at"):
+        await _audit_auth("password_reset_complete", email, ip,
+                          "failure", "token_reused")
+        raise HTTPException(400, "This reset link has already been used. Please request a new one.")
+    if row.get("invalidated_at"):
+        await _audit_auth("password_reset_complete", email, ip,
+                          "failure", "token_invalidated")
+        raise HTTPException(400, "Invalid or expired reset link. Please request a new one.")
+    exp_raw = row.get("expires_at")
+    try:
+        exp_dt = (exp_raw if isinstance(exp_raw, datetime)
+                   else datetime.fromisoformat(exp_raw))
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        # Unparseable expiry — treat as expired (fail-closed).
+        exp_dt = datetime.now(timezone.utc) - timedelta(minutes=1)
+    if exp_dt < datetime.now(timezone.utc):
+        await _audit_auth("password_reset_complete", email, ip,
+                          "failure", "token_expired")
+        raise HTTPException(400, "This reset link has expired. Please request a new one.")
+    return row
+
+
+async def _apply_new_password(user_id: str, new_password: str) -> None:
+    """Persist the new bcrypt hash and clear lockout state so the
+    customer can sign in immediately with the new credential."""
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {
+            "password_hash": hash_password(new_password),
+            "failed_login_attempts": 0,
+            "lockout_until": None,
+            "must_change_password_on_next_login": False,
+            "password_updated_at": now_iso(),
+        }},
+    )
+
+
+async def _consume_reset_token(tok: str, ip: str, user_id: str) -> None:
+    """Mark ``tok`` as used and invalidate any OTHER unused tokens for
+    the same user — belt-and-braces so a leaked earlier link can't be
+    replayed after the customer resets."""
+    await db.password_reset_tokens.update_one(
+        {"token": tok},
+        {"$set": {"used_at": now_iso(), "used_ip": ip}},
+    )
+    await db.password_reset_tokens.update_many(
+        {"user_id": user_id, "used_at": None, "token": {"$ne": tok}},
+        {"$set": {"invalidated_at": now_iso()}},
+    )
+
+
 @router.post("/auth/reset-password")
 async def reset_password(request: Request, body: ResetPasswordRequest):
     """Complete a password reset started by ``/auth/forgot-password``.
@@ -367,63 +435,16 @@ async def reset_password(request: Request, body: ResetPasswordRequest):
     tok = (body.token or "").strip()
     if not tok:
         raise HTTPException(400, "Invalid or expired reset link. Please request a new one.")
-
     err = _password_policy_ok(body.new_password or "")
     if err:
         raise HTTPException(400, err)
-
-    row = await db.password_reset_tokens.find_one({"token": tok}, {"_id": 0})
-    if not row:
-        await _audit_auth("password_reset_complete", "", ip, "failure", "unknown_token")
-        raise HTTPException(400, "Invalid or expired reset link. Please request a new one.")
-    if row.get("used_at"):
-        await _audit_auth("password_reset_complete", row.get("email", ""), ip,
-                          "failure", "token_reused")
-        raise HTTPException(400, "This reset link has already been used. Please request a new one.")
-    if row.get("invalidated_at"):
-        await _audit_auth("password_reset_complete", row.get("email", ""), ip,
-                          "failure", "token_invalidated")
-        raise HTTPException(400, "Invalid or expired reset link. Please request a new one.")
-    # Expiry
-    exp_raw = row.get("expires_at")
-    try:
-        exp_dt = (exp_raw if isinstance(exp_raw, datetime)
-                   else datetime.fromisoformat(exp_raw))
-        if exp_dt.tzinfo is None:
-            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
-    except Exception:
-        exp_dt = datetime.now(timezone.utc) - timedelta(minutes=1)
-    if exp_dt < datetime.now(timezone.utc):
-        await _audit_auth("password_reset_complete", row.get("email", ""), ip,
-                          "failure", "token_expired")
-        raise HTTPException(400, "This reset link has expired. Please request a new one.")
-
+    row = await _load_reset_token(tok, ip)
     user = await db.users.find_one({"id": row["user_id"]})
     if not user:
         # Highly unlikely — but defensive.
         raise HTTPException(400, "Invalid or expired reset link. Please request a new one.")
-
-    new_hash = hash_password(body.new_password)
-    await db.users.update_one(
-        {"id": user["id"]},
-        {"$set": {
-            "password_hash": new_hash,
-            "failed_login_attempts": 0,
-            "lockout_until": None,
-            "must_change_password_on_next_login": False,
-            "password_updated_at": now_iso(),
-        }},
-    )
-    await db.password_reset_tokens.update_one(
-        {"token": tok},
-        {"$set": {"used_at": now_iso(), "used_ip": ip}},
-    )
-    # Any OTHER unused tokens for this user become invalid — belt-and-
-    # braces so a leaked earlier link can't be replayed.
-    await db.password_reset_tokens.update_many(
-        {"user_id": user["id"], "used_at": None, "token": {"$ne": tok}},
-        {"$set": {"invalidated_at": now_iso()}},
-    )
+    await _apply_new_password(user["id"], body.new_password)
+    await _consume_reset_token(tok, ip, user["id"])
     await _audit_auth("password_reset_complete", user.get("email", ""), ip,
                       "success", f"user_id={user['id']}")
     return {"ok": True, "message": "Password reset. Please sign in."}
