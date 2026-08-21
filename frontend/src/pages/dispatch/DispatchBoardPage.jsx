@@ -41,6 +41,8 @@ import OptimizeRouteModal from "@/pages/dispatch/OptimizeRouteModal";
 import UnscheduledJobsPanel from "@/pages/dispatch/UnscheduledJobsPanel";
 import AssignJobModal from "@/pages/dispatch/AssignJobModal";
 import DispatchSavingsStrip from "@/pages/dispatch/DispatchSavingsStrip";
+// Feb-2026 · Optimize Route (sub-phase C) — admin approval card + modal.
+import PendingRouteOptimizations from "@/pages/dispatch/PendingRouteOptimizations";
 import { PIN_COLOR_MODES, PIN_COLOR_BY_DAY, CREW_LEGEND, loadPinColorMode, savePinColorMode } from "@/pages/dispatch/dispatchColors";
 import formatAddress from "@/utils/formatAddress";
 
@@ -416,6 +418,7 @@ export default function DispatchBoardPage() {
           </p>
         </div>
         <DispatchSavingsStrip />
+        <PendingRouteOptimizations />
         <div className="flex items-center gap-2">
           <button
             type="button"

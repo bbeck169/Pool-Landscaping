@@ -21,6 +21,22 @@ time, Feb-2026):
   concept.
 * Notes: NO notes collection. Only ``Customer.description`` and
   ``Event.dispatchNotes``.
+
+Feb-2026 · schema drift — Homeworks removed the scalar ``discount``
+field from the ``Customer`` type at some point after our
+``schema.graphql`` snapshot. The old selection surfaced as::
+
+    GraphQL request failed with status 400:
+      Cannot query field "discount" on type "Customer".
+
+Both the inactive-cohort and active-cohort page queries dropped the
+``discount`` selection; no downstream consumer read the value (grep
+``discount`` on services/homeworks_mcp/, services/homeworks/, and
+routers/integrations_homeworks*.py returns only the query-string
+references). No mapping surface change required. If Homeworks
+reintroduces discount under a different name (``discountPercent``,
+``pricing.discount``, etc.), reinstate the selection here — the
+mapper doesn't need to change.
 """
 from __future__ import annotations
 
@@ -75,7 +91,6 @@ query InactiveCustomerPage($skip: SafeInt!, $take: SafeInt!) {
     location { latitude longitude }
     status
     description
-    discount
     credit
     outstanding
     lifetimePaid
@@ -253,7 +268,6 @@ query ActiveCustomerPage($skip: SafeInt!, $take: SafeInt!) {
     location { latitude longitude }
     status
     description
-    discount
     credit
     outstanding
     lifetimePaid
