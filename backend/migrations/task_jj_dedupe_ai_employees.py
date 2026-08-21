@@ -50,41 +50,54 @@ async def _migrate_conversation_refs(dropped_id: str, kept_id: str) -> int:
     return total
 
 
-async def dedupe_ai_employees() -> Dict[str, Any]:
-    """Task JJ — one-shot dedupe sweep.
+async def _drop_null_tenant_rows() -> tuple[int, int, List[Dict[str, Any]]]:
+    """Phase 1 — delete every ``ai_employees`` row with ``tenant_id:
+    None``.  Returns ``(dropped, refs_moved, merge_log_entries)``.
 
-    Deletes null-tenant legacy rows. For each duplicate group within a
-    tenant, keeps the row with the most non-null fields (fallback
-    ``updated_at DESC``) and repoints references before dropping the
-    others. Records the operation in the ``migration_log`` collection
-    so admins can audit exactly which rows were dropped.
+    Feb-2026 · P8 refactor — extracted from ``dedupe_ai_employees``
+    unchanged from the pre-refactor behavior: best-effort repoint of
+    conversation refs with ``kept_id=""`` (which effectively removes
+    them from any tenant-scoped chat), then a hard delete, then a
+    ``null_tenant_legacy`` audit entry appended to the merge log.
     """
-    before = await db.ai_employees.count_documents({})
-    null_tenant_dropped = 0
-    migrated_refs = 0
+    dropped = 0
+    refs_moved = 0
     merge_log: List[Dict[str, Any]] = []
-
-    # Phase 1 — drop the 9 legacy null-tenant rows. They have no
-    # tenant scope so no downstream conversation/action rows can be
-    # meaningfully attributed. Log them for audit.
     async for row in db.ai_employees.find(
         {"tenant_id": None}, {"_id": 0, "id": 1, "slug": 1, "name": 1},
     ):
         rid = row.get("id")
-        # Best-effort repoint of any accidental references. In
-        # practice these are always zero — the null-tenant rows were
-        # never callable through the tenant-scoped chat endpoints.
         moved = await _migrate_conversation_refs(rid, kept_id="")
-        migrated_refs += moved
+        refs_moved += moved
         await db.ai_employees.delete_one({"id": rid})
-        null_tenant_dropped += 1
+        dropped += 1
         merge_log.append({"tenant_id": None, "kind": "null_tenant_legacy",
                             "dropped_id": rid, "slug": row.get("slug"),
                             "name": row.get("name")})
+    return dropped, refs_moved, merge_log
 
-    # Phase 2 — de-dupe by (tenant_id, key) within each tenant. In
-    # the observed data this returned 0 groups but the migration is
-    # defensive to be idempotent.
+
+def _pick_survivor(docs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return the row that wins a duplicate group.  Winner has the
+    MOST non-null fields; tiebreak = ``updated_at`` ASCENDING (oldest
+    wins — matches the pre-refactor sort key exactly)."""
+    docs.sort(
+        key=lambda x: (
+            -sum(1 for v in x.values() if v not in (None, "", [], {})),
+            x.get("updated_at") or "",
+        ),
+    )
+    return docs[0]
+
+
+async def _dedupe_within_tenant_groups() -> tuple[int, List[Dict[str, Any]]]:
+    """Phase 2 — collapse ``(tenant_id, key)`` duplicate groups within
+    each tenant. Returns ``(refs_moved, merge_log_entries)``.
+
+    The aggregation pipeline, per-doc rehydration, sort key, ref
+    repointing, delete ordering, and merge_log entry shape all match
+    the pre-refactor implementation verbatim.
+    """
     pipeline = [
         {"$match": {"tenant_id": {"$ne": None},
                      "key": {"$ne": None}}},
@@ -94,26 +107,22 @@ async def dedupe_ai_employees() -> Dict[str, Any]:
                                              "updated_at": "$updated_at"}}}},
         {"$match": {"count": {"$gt": 1}}},
     ]
+    refs_moved = 0
+    merge_log: List[Dict[str, Any]] = []
     async for grp in db.ai_employees.aggregate(pipeline):
         docs = grp["docs"]
-        # Fetch each doc's full body to score field-population count.
         full: List[Dict[str, Any]] = []
         for d in docs:
             doc = await db.ai_employees.find_one({"id": d["id"]}, {"_id": 0})
             if doc:
                 full.append(doc)
-        # Score = number of non-null fields; tiebreak = updated_at DESC.
-        full.sort(
-            key=lambda x: (
-                -sum(1 for v in x.values() if v not in (None, "", [], {})),
-                x.get("updated_at") or "",
-            ),
-        )
-        keep = full[0]
+        keep = _pick_survivor(full)
         dropped_ids: List[str] = []
-        for d in full[1:]:
+        for d in full:
+            if d["id"] == keep["id"]:
+                continue
             moved = await _migrate_conversation_refs(d["id"], keep["id"])
-            migrated_refs += moved
+            refs_moved += moved
             await db.ai_employees.delete_one({"id": d["id"]})
             dropped_ids.append(d["id"])
         merge_log.append({
@@ -123,27 +132,37 @@ async def dedupe_ai_employees() -> Dict[str, Any]:
             "dropped_ids": dropped_ids,
             "kind": "in_tenant_dupe",
         })
+    return refs_moved, merge_log
 
-    # Phase 3 — write the migration log row so we can audit later.
-    if merge_log:
-        try:
-            await db.migration_log.insert_one({
-                "id": "task-jj-dedupe-" + str(before),
-                "task": "task-jj-ai-employees-dedupe",
-                "before": before,
-                "after": await db.ai_employees.count_documents({}),
-                "null_tenant_dropped": null_tenant_dropped,
-                "in_tenant_merges": len([m for m in merge_log
-                                                if m.get("kind") == "in_tenant_dupe"]),
-                "migrated_refs": migrated_refs,
-                "sample": merge_log[:20],
-            })
-        except Exception as e:                                       # noqa: BLE001
-            logger.warning(f"[task-jj] migration_log write failed: {e}")
 
-    # Phase 4 — install the unique compound index. Guarantees no
-    # future insert can duplicate. Partial-filter skips legacy rows
-    # (should be none after Phase 1) that might lack ``key``.
+async def _write_migration_log(*, before: int, null_tenant_dropped: int,
+                                 merge_log: List[Dict[str, Any]],
+                                 migrated_refs: int) -> None:
+    """Phase 3 — best-effort insert into ``migration_log`` so admins
+    can audit exactly which rows were dropped. Caller must only invoke
+    when ``merge_log`` is non-empty (no-op runs must not persist a
+    row — pinned by ``test_migration_log_written_only_when_work_happens``).
+    """
+    try:
+        await db.migration_log.insert_one({
+            "id": "task-jj-dedupe-" + str(before),
+            "task": "task-jj-ai-employees-dedupe",
+            "before": before,
+            "after": await db.ai_employees.count_documents({}),
+            "null_tenant_dropped": null_tenant_dropped,
+            "in_tenant_merges": len([m for m in merge_log
+                                            if m.get("kind") == "in_tenant_dupe"]),
+            "migrated_refs": migrated_refs,
+            "sample": merge_log[:20],
+        })
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning(f"[task-jj] migration_log write failed: {e}")
+
+
+async def _ensure_unique_tenant_key_index() -> None:
+    """Phase 4 — best-effort ``create_index`` for the compound unique
+    ``(tenant_id, key)`` index. Idempotent — a repeat call is a no-op
+    when the index already exists."""
     try:
         await db.ai_employees.create_index(
             [("tenant_id", 1), ("key", 1)],
@@ -157,10 +176,31 @@ async def dedupe_ai_employees() -> Dict[str, Any]:
     except Exception as e:                                       # noqa: BLE001
         logger.warning(f"[task-jj] index install failed: {e}")
 
+
+async def dedupe_ai_employees() -> Dict[str, Any]:
+    """Task JJ — one-shot dedupe sweep.
+
+    Deletes null-tenant legacy rows. For each duplicate group within a
+    tenant, keeps the row with the most non-null fields (fallback
+    ``updated_at DESC``) and repoints references before dropping the
+    others. Records the operation in the ``migration_log`` collection
+    so admins can audit exactly which rows were dropped.
+    """
+    before = await db.ai_employees.count_documents({})
+    null_dropped, null_refs, null_log = await _drop_null_tenant_rows()
+    dupe_refs, dupe_log = await _dedupe_within_tenant_groups()
+    merge_log = null_log + dupe_log
+    migrated_refs = null_refs + dupe_refs
+    if merge_log:
+        await _write_migration_log(
+            before=before, null_tenant_dropped=null_dropped,
+            merge_log=merge_log, migrated_refs=migrated_refs,
+        )
+    await _ensure_unique_tenant_key_index()
     result = {
         "before": before,
         "after": await db.ai_employees.count_documents({}),
-        "null_tenant_dropped": null_tenant_dropped,
+        "null_tenant_dropped": null_dropped,
         "in_tenant_dupes_merged": len(
             [m for m in merge_log if m.get("kind") == "in_tenant_dupe"]),
         "conversation_refs_migrated": migrated_refs,
