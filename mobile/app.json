@@ -89,7 +89,7 @@
       [
         "@rnmapbox/maps",
         {
-          "RNMapboxMapsDownloadToken": "$EXPO_PUBLIC_MAPBOX_TOKEN"
+          "RNMapboxMapsDownloadToken": "$RNMAPBOX_MAPS_DOWNLOAD_TOKEN"
         }
       ],
       [
