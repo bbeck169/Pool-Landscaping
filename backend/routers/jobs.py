@@ -882,6 +882,20 @@ async def get_job(jid: str,
     doc = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Job not found")
+    # Feb-2026 · P4.5 — mirror the soft-delete two-branch check that the
+    # PATCH edit handler uses at lines ~1286-1297.  Super_admin gets a
+    # 409 so restore tooling knows the row still exists; every other
+    # role gets a stock 404 so the mere existence of a soft-deleted
+    # job doesn't leak.
+    if doc.get("deleted_at"):
+        role = (user.get("role") or "").lower()
+        if role == "super_admin":
+            raise HTTPException(
+                status_code=409,
+                detail={"detail": "job_soft_deleted",
+                        "message": "Job is soft-deleted; restore first."},
+            )
+        raise HTTPException(404, "Job not found")
     if user.get("role") == "technician" and doc.get("technician_id") != user.get("technician_id"):
         raise HTTPException(403, "Not your job")
     if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):

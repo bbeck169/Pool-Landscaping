@@ -99,17 +99,11 @@ def test_list_jobs_excludes_soft_deleted_by_default(admin_h, aquaterra_tid):
         _cleanup([alive_1, alive_2, gone])
 
 
-# ── 2. Get-by-id · 404 on soft-deleted (xfail — bug pinned) ──────
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "GET /jobs/{jid} at routers/jobs.py:878-901 does not apply the "
-        "deleted_at filter. Documented gap; scheduled for a follow-up "
-        "phase. When the fix lands this xfail will flip to XPASS and "
-        "CI will tell the maintainer to remove the decorator."
-    ),
-)
+# ── 2. Get-by-id · 404 on soft-deleted ─────────────────────────────
 def test_get_job_by_id_returns_404_when_soft_deleted(admin_h, aquaterra_tid):
+    """P4.5 — soft-delete gate landed on ``get_job()``; the xfail was
+    lifted and this test now proves the non-super-admin branch (stock
+    404 so the mere existence of the soft-deleted row doesn't leak)."""
     tid = aquaterra_tid
     gone = _seed_job(tid, deleted=True)
     try:
@@ -119,6 +113,39 @@ def test_get_job_by_id_returns_404_when_soft_deleted(admin_h, aquaterra_tid):
         )
     finally:
         _cleanup([gone])
+
+
+def test_get_job_by_id_returns_409_when_soft_deleted_for_super_admin(aquaterra_tid):
+    """Super_admin gets a 409 with ``detail == "job_soft_deleted"`` so
+    restore tooling can distinguish "row is gone" (404) from "row is
+    soft-deleted, restore first" (409). Sibling of the 404 test above."""
+    from utils import hash_password
+    su_email = f"test_p45_su_{uuid.uuid4().hex[:6]}@example.com"
+    su_id = f"test_p45_su_{uuid.uuid4().hex[:8]}"
+    tid = aquaterra_tid
+    _sync.users.insert_one({
+        "id": su_id, "tenant_id": tid, "email": su_email,
+        "name": "TEST P4.5 super admin", "role": "super_admin",
+        "active": True, "password_hash": hash_password("password123"),
+    })
+    gone = _seed_job(tid, deleted=True)
+    try:
+        su_h = _hdrs(su_email)
+        r = requests.get(f"{API}/jobs/{gone}", headers=su_h, timeout=15)
+        assert r.status_code == 409, (
+            f"expected 409 for super_admin on soft-deleted job, "
+            f"got {r.status_code}: {r.text}"
+        )
+        body = r.json()
+        # FastAPI wraps HTTPException(detail=dict) as ``{"detail": {...}}``.
+        inner = body.get("detail") or {}
+        if isinstance(inner, dict):
+            assert inner.get("detail") == "job_soft_deleted", inner
+        else:
+            assert inner == "job_soft_deleted", body
+    finally:
+        _cleanup([gone])
+        _sync.users.delete_one({"id": su_id})
 
 
 # ── 3. ?include_deleted=true surfaces soft-deleted (super_admin) ──
