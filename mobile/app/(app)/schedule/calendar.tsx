@@ -61,6 +61,8 @@ import ScheduleMap from "@/src/components/schedule/ScheduleMap";
 // header, numbered pins by route_index, status-colored, tap for
 // callout with Open→job checklist. Hides itself when 0 jobs.
 import DailyRouteMap from "@/src/components/schedule/DailyRouteMap";
+// Feb-2026 · Schedule polish — amber-accented job-notes chip.
+import JobNotesCallout from "@/src/components/schedule/JobNotesCallout";
 import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 import type { HourlyEntry } from "@/src/api/weather";
 
@@ -1031,7 +1033,13 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             ``account_notes`` follow with a "Customer note:"
             prefix.  Tap the call-out to see the full text via
             an Alert.  Empty on all three ⇒ nothing rendered. */}
-        {(() => {
+        <JobNotesCallout
+          jobId={job.id}
+          note={job.notes}
+          customerNote={job.customer_notes || job.account_notes}
+          truncated={job.notes_truncated}
+        />
+        {false && (() => {
           const jobNote = job.notes && String(job.notes).trim() ? String(job.notes) : "";
           const custNote = (job.customer_notes || job.account_notes)
             ? String(job.customer_notes || job.account_notes).trim() : "";

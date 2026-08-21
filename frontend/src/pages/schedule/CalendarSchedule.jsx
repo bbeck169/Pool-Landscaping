@@ -25,6 +25,8 @@ import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
 import { format, parse, startOfWeek, getDay, addDays, startOfDay, endOfDay, startOfQuarter, endOfMonth } from "date-fns";
 import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
+// Feb-2026 · Schedule polish — amber-accented job-notes chip.
+import JobNotesCallout from "@/components/schedule/JobNotesCallout";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
          CheckCircle2, Move as MoveIcon, ArrowUp, ArrowDown, FileText,
          Save as SaveIcon, Star, Check, Trash2, Loader2, UsersRound,
@@ -1657,59 +1659,16 @@ function GridPanel({
                       />
                     </div>
                   ) : null}
-                  {/* Feb-2026 · schedule polish — combined notes
-                      call-out.  Job-level ``notes`` render first;
-                      customer-level ``customer_notes`` /
-                      ``account_notes`` follow with a small
-                      "Customer note:" prefix.  Native ``title``
-                      attribute gives the full text on hover; the
-                      visible text is line-clamp-2. Empty on all
-                      three ⇒ nothing rendered. */}
-                  {(() => {
-                    const jobNote = (j.notes && String(j.notes).trim()) ? String(j.notes) : "";
-                    const custNote = (j.customer_notes || j.account_notes) ? String(j.customer_notes || j.account_notes).trim() : "";
-                    if (!jobNote && !custNote) return null;
-                    const tooltip = [
-                      jobNote ? jobNote + (j.notes_truncated ? "…" : "") : "",
-                      custNote ? `Customer note: ${custNote}` : "",
-                    ].filter(Boolean).join("\n\n");
-                    return (
-                      <div
-                        className="mt-1 rounded-md p-2 text-[11px]"
-                        style={{
-                          background: "#EFF6FF",
-                          color: "#1E3A8A",
-                          border: "1px solid #BFDBFE",
-                          borderLeft: "4px solid #3B82F6",
-                          display: "flex", gap: 6,
-                        }}
-                        title={tooltip}
-                        data-testid={`job-notes-callout-${j.id}`}
-                      >
-                        <StickyNote size={12} style={{ flexShrink: 0, marginTop: 1, color: "#2563EB" }} />
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          {jobNote ? (
-                            <div
-                              className="line-clamp-2"
-                              data-testid={`job-${j.id}-notes`}
-                            >
-                              {jobNote}{j.notes_truncated ? "…" : ""}
-                            </div>
-                          ) : null}
-                          {custNote ? (
-                            <div
-                              className="line-clamp-2"
-                              style={{ color: "#3730A3", marginTop: jobNote ? 3 : 0 }}
-                              data-testid={`job-notes-preview-${j.id}`}
-                            >
-                              <span style={{ fontWeight: 700, opacity: 0.85 }}>Customer note: </span>
-                              {custNote}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })()}
+                  {/* Feb-2026 · Schedule polish — amber-accented job
+                      notes chip. Shared component with TodaySchedule +
+                      mobile so techs see the same treatment everywhere.
+                      Component self-hides when both notes are empty. */}
+                  <JobNotesCallout
+                    jobId={j.id}
+                    note={j.notes}
+                    customerNote={j.customer_notes || j.account_notes}
+                    truncated={j.notes_truncated}
+                  />
                   <div className="flex items-center gap-2 mt-1 text-xs" style={{ color: colors.muted }}>
                     <FileText size={11} />
                     <span>{jobHours(j)}</span>

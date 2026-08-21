@@ -14,6 +14,8 @@ import { BulkReorderModal } from "@/pages/schedule/NumberedReorder";
 // user request. File still exists at ``pages/aitools/`` — imported
 // by the admin Dashboard.
 import ServiceNotePill from "@/components/schedule/ServiceNotePill";
+// Feb-2026 · Schedule polish — amber-accented job-notes chip.
+import JobNotesCallout from "@/components/schedule/JobNotesCallout";
 // Phase 27 · Feb-2026 — Global avatar swap for dense layouts.
 // Compact tech avatar rendered next to the customer line so
 // admins/dispatchers can spot the assigned tech at a glance
@@ -933,26 +935,17 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                         {j.gate_code}
                       </span>
                     )}
-                    {notesFull && (
-                      <button onClick={(e) => { e.stopPropagation(); toggleExpand(j.id); }}
-                              className="inline-flex items-start gap-1 text-xs text-left"
-                              style={{ color: colors.onSurfaceSecondary }}
-                              data-testid={`schedule-card-notes-${j.id}`}>
-                        <StickyNote size={11} className="mt-0.5 flex-shrink-0"
-                                    style={{ color: colors.muted }}/>
-                        <span data-testid={`job-notes-preview-${j.id}`}>
-                          <span className="font-semibold">Notes: </span>
-                          {isExpanded ? notesFull : notesPreview}
-                          {notesFull.length > 100 && (
-                            <span className="ml-1 font-semibold" style={{ color: colors.brand }}>
-                              {isExpanded ? "less" : "more"}
-                            </span>
-                          )}
-                        </span>
-                      </button>
-                    )}
                   </div>
                 )}
+                {/* Feb-2026 · Schedule polish — amber-accented job notes.
+                    Own row (below the gate/service chips) so the full
+                    2-line clamp + "Show more" toggle isn't squeezed by
+                    the wrap. Component self-hides when notes are empty. */}
+                <JobNotesCallout
+                  jobId={j.id}
+                  note={notesFull}
+                  customerNote={j.customer_notes || j.account_notes}
+                />
 
                 <div className="flex items-center justify-between mt-2">
                   <div className="flex items-center gap-1 text-xs" style={{ color: colors.muted }}>
