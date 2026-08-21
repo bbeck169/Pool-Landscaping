@@ -13,7 +13,7 @@ Endpoints (all tenant-scoped):
 """
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from config import db, logger
@@ -45,7 +45,14 @@ POOL_READING_FIELDS_DEFAULT = [
     # a UI order change only — no data migration required.
     {"key": "combined_chlorine", "name": "Combined Chlorine", "unit": "ppm",  "type": "select",
      "ideal": "0–0.2",    "min": 0,    "max": 20,   "step": 0.1},
-    {"key": "chlorine",          "name": "Free Chlorine",     "unit": "ppm",  "type": "select",
+    # Feb-2026 · P12B — was ``"chlorine"``; renamed to the canonical
+    # ``"free_chlorine"`` so it matches ``chemistry_gate.CORE_READINGS``
+    # verbatim.  The bare ``"chlorine"`` key had no entry in the
+    # gate's ``_ALIASES`` map so techs filling every visible field
+    # still got ``chemistry_core_readings_missing``.  A belt-and-
+    # braces alias was also added in ``chemistry_gate._ALIASES`` for
+    # any tenant that persisted the old key via ``PUT /settings/service-templates``.
+    {"key": "free_chlorine",     "name": "Free Chlorine",     "unit": "ppm",  "type": "select",
      "ideal": "1–3",      "min": 0,    "max": 20,   "step": 0.1},
     {"key": "ph",                "name": "pH",                "unit": "",     "type": "select",
      "ideal": "7.4–7.6",  "min": 6,    "max": 8.5,  "step": 0.1},
@@ -421,9 +428,31 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
 
 # ─── POST submit (lock + mark job status) ──────────────────────────────────
 @router.post("/jobs/{jid}/service-report/submit")
-async def submit_service_report(jid: str,
-                                user: dict = Depends(get_current_user),
-                                tenant: dict = Depends(get_current_tenant)):
+async def submit_service_report(
+    jid: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    # Feb-2026 · P12A — Preventive 520 mitigation.  Cloudflare's
+    # 100-second origin timeout was firing on prod (``app.plofv.com``)
+    # even though the same handler ran in ~650ms on preview — heavy
+    # side-effects (Resend email, RingCentral SMS, automation-engine
+    # emits) were pushing the tail past the ingress limit.  This
+    # handler now:
+    #   1. Runs only inline work needed for the response body +
+    #      state mutations that gate future requests.
+    #   2. Fires every downstream HTTP-driven side-effect via
+    #      ``BackgroundTasks`` so the ingress-level TTL is only
+    #      bounded by Mongo write latency.
+    #   3. Logs structured ``start`` / ``end`` events with
+    #      ``elapsed_ms`` so ops can see the sync path duration in
+    #      the prod log stream on any future regression.
+    import time as _time_p12a
+    _sr_start = _time_p12a.monotonic()
+    logger.info(
+        f"service_report_submit start job={jid} tenant={tenant['id']}"
+    )
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
@@ -596,18 +625,26 @@ async def submit_service_report(jid: str,
             # Comms Phase 3 — auto-invoice from a submitted service
             # report still fires invoice.created so admins can wire a
             # confirmation email/SMS on it.
+            # Feb-2026 · P12A — fired as a BackgroundTask so a slow
+            # Resend / webhook adapter cannot push the request past
+            # Cloudflare's 100s edge timeout on prod.
             try:
-                from services.automation_engine import emit as _emit
-                await _emit(
-                    "invoice.created",
-                    {"invoice": invoice,
-                      "customer": {"id": invoice.get("customer_id"),
-                                    "name": invoice.get("customer_name")},
-                      "source": "service_report_auto"},
-                    tenant_id=tenant["id"],
-                    entity_kind="invoice", entity_id=inv_id,
-                    customer_id=invoice.get("customer_id"),
-                )
+                async def _emit_invoice_created(_inv=invoice, _tid=tenant["id"], _cid=invoice.get("customer_id")):
+                    try:
+                        from services.automation_engine import emit as _emit
+                        await _emit(
+                            "invoice.created",
+                            {"invoice": _inv,
+                              "customer": {"id": _cid,
+                                            "name": _inv.get("customer_name")},
+                              "source": "service_report_auto"},
+                            tenant_id=_tid,
+                            entity_kind="invoice", entity_id=_inv["id"],
+                            customer_id=_cid,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(f"[p12a-bg] invoice.created emit failed: {e}")
+                background_tasks.add_task(_emit_invoice_created)
             except Exception:
                 pass
     except Exception as e:
@@ -617,44 +654,65 @@ async def submit_service_report(jid: str,
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id}, {"_id": 0}
     )
     # Comms Phase 3 — fire service_report.finalized. Non-blocking.
+    # Feb-2026 · P12A — deferred to BackgroundTasks so Resend /
+    # webhook fan-out cannot bound the response tail latency.
     try:
-        from services.automation_engine import emit as _emit
-        await _emit(
-            "service_report.finalized",
-            {"service_report": out or rep, "job": job,
-              "customer": {"id": job.get("customer_id"),
-                            "name": job.get("customer_name")}},
-            tenant_id=tenant["id"],
-            entity_kind="service_report",
-            entity_id=(out or rep or {}).get("id") or "",
-            customer_id=job.get("customer_id"),
-        )
+        async def _emit_finalized(_out=out or rep, _job=job, _tid=tenant["id"]):
+            try:
+                from services.automation_engine import emit as _emit
+                await _emit(
+                    "service_report.finalized",
+                    {"service_report": _out, "job": _job,
+                      "customer": {"id": _job.get("customer_id"),
+                                    "name": _job.get("customer_name")}},
+                    tenant_id=_tid,
+                    entity_kind="service_report",
+                    entity_id=(_out or {}).get("id") or "",
+                    customer_id=_job.get("customer_id"),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[p12a-bg] service_report.finalized emit failed: {e}")
+        background_tasks.add_task(_emit_finalized)
     except Exception:
         pass
     # Feb-2026 · Marketing Slice M5c — drip event bus (service_completed).
     # P0 Fix 2a — pass the service_report id so the event ledger's
     # unique index dedupes retries against the same submission.
+    # Feb-2026 · P12A — deferred; drip fan-out talks to Resend / SMS
+    # adapters downstream so must not bound response latency.
     try:
         if job.get("customer_id"):
-            from services.marketing.drip_events import on_event as _drip_on_event
-            await _drip_on_event(
-                "service_completed", tenant["id"], job.get("customer_id"),
-                meta={"service_report_id": (out or rep or {}).get("id"),
-                       "job_id": jid},
-            )
+            async def _drip_bg(_tid=tenant["id"], _cid=job["customer_id"],
+                                 _sr_id=(out or rep or {}).get("id"), _jid=jid):
+                try:
+                    from services.marketing.drip_events import on_event as _drip_on_event
+                    await _drip_on_event(
+                        "service_completed", _tid, _cid,
+                        meta={"service_report_id": _sr_id, "job_id": _jid},
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[p12a-bg] drip service_completed failed: {e}")
+            background_tasks.add_task(_drip_bg)
     except Exception:
         pass
     # Feb-2026 · Marketing Slice M6 — enqueue automated review request
     # when the tenant has opted in.  Non-blocking + duplicate-guarded.
+    # Feb-2026 · P12A — deferred.  Enqueue itself writes to a Mongo
+    # queue collection which is fast, but the underlying scheduler
+    # sometimes flushes an immediate first-send inline — deferring
+    # here removes that tail from the request path unconditionally.
     try:
         if job.get("customer_id"):
-            from routers.marketing_review_requests import (
-                enqueue_from_service_completed,
-            )
-            await enqueue_from_service_completed(
-                tenant["id"], job.get("customer_id"),
-                (out or rep or {}).get("id"),
-            )
+            async def _review_bg(_tid=tenant["id"], _cid=job["customer_id"],
+                                    _sr_id=(out or rep or {}).get("id")):
+                try:
+                    from routers.marketing_review_requests import (
+                        enqueue_from_service_completed,
+                    )
+                    await enqueue_from_service_completed(_tid, _cid, _sr_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[p12a-bg] review request enqueue failed: {e}")
+            background_tasks.add_task(_review_bg)
     except Exception:
         pass
     # Phase 56.20 — Auto End-of-Visit Customer Email.
@@ -695,17 +753,98 @@ async def submit_service_report(jid: str,
 
     email_result_status = None
     sms_result_status = None
-    if auto_send_completion and not already_notified.get("email_sent_at"):
+    # Feb-2026 · P12A — Resend (visit-summary email) + RingCentral
+    # (companion SMS) are the two biggest external HTTP calls in
+    # this endpoint.  Both are deferred to BackgroundTasks so
+    # neither can hold the request past Cloudflare's 100s edge
+    # timeout on prod.  We stamp ``queued`` inline so the response
+    # shape (``customer_notified.email_status`` / ``sms_status``)
+    # stays populated for the client; the background task later
+    # UPDATE_ONE's the persisted row with the real provider status.
+    _tech_uid = user["id"]
+    _tenant_id = tenant["id"]
+
+    async def _bg_send_visit_summary_email(_tenant=tenant, _job=job,
+                                              _report=out or rep,
+                                              _tid=_tenant_id, _jid=jid,
+                                              _uid=_tech_uid):
         try:
             from services.auto_visit_email import send_visit_summary_email
-            email_row = await send_visit_summary_email(tenant, job, out or rep)
-            if email_row and email_row.get("id"):
-                out["visit_summary_email_id"] = email_row["id"]
-                out["visit_summary_email_status"] = email_row.get("status")
-                email_result_status = email_row.get("status") or "sent"
-        except Exception as e:
-            logger.warning(f"auto visit-summary email failed: {e}")
-            email_result_status = "failed"
+            email_row = await send_visit_summary_email(_tenant, _job, _report)
+            if email_row:
+                await db.service_reports.update_one(
+                    {"tenant_id": _tid, "job_id": _jid, "tech_id": _uid},
+                    {"$set": {
+                        "visit_summary_email_id": email_row.get("id"),
+                        "visit_summary_email_status": email_row.get("status"),
+                        "customer_notified.email_status": email_row.get("status") or "sent",
+                        "customer_notified.email_sent_at":
+                            now_iso() if email_row.get("status") in (
+                                "sent", "queued", "dry_run", "mocked",
+                            ) else None,
+                    }},
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[p12a-bg] auto visit-summary email failed: {e}")
+            await db.service_reports.update_one(
+                {"tenant_id": _tid, "job_id": _jid, "tech_id": _uid},
+                {"$set": {"customer_notified.email_status": "failed"}},
+            )
+
+    async def _bg_send_completion_sms(_tenant=tenant, _job=job, _tid=_tenant_id,
+                                          _jid=jid, _uid=_tech_uid):
+        try:
+            customer = await db.customers.find_one(
+                {"id": _job.get("customer_id"), "tenant_id": _tid},
+                {"_id": 0, "phone": 1, "name": 1},
+            ) or {}
+            phone = customer.get("phone") or ""
+            if not phone:
+                await db.service_reports.update_one(
+                    {"tenant_id": _tid, "job_id": _jid, "tech_id": _uid},
+                    {"$set": {"customer_notified.sms_status": "no_phone"}},
+                )
+                return
+            tname = _tenant.get("name") or "Your service"
+            import os as _os_task_u
+            app_url = _os_task_u.environ.get("APP_PUBLIC_URL", "").rstrip("/")
+            portal_link = f"{app_url}/portal/service-reports"
+            sms_body = (
+                f"Your {tname} service is complete. "
+                f"View your report: {portal_link}"
+            )
+            from services.sms.rc_adapter import send as _send_sms
+            sms_res = await _send_sms(
+                to=phone, body=sms_body,
+                category="transactional",
+                tenant_id=_tid,
+                customer_id=_job.get("customer_id"),
+            )
+            provider_status = sms_res.get("provider_status") or "sent"
+            logger.info(
+                "[task-u] completion sms to=%s status=%s job=%s",
+                phone, provider_status, _jid,
+            )
+            await db.service_reports.update_one(
+                {"tenant_id": _tid, "job_id": _jid, "tech_id": _uid},
+                {"$set": {
+                    "customer_notified.sms_status": provider_status,
+                    "customer_notified.sms_sent_at":
+                        now_iso() if provider_status in (
+                            "sent", "queued", "dry_run", "mocked",
+                        ) else None,
+                }},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[task-u] completion SMS failed: {e}")
+            await db.service_reports.update_one(
+                {"tenant_id": _tid, "job_id": _jid, "tech_id": _uid},
+                {"$set": {"customer_notified.sms_status": "failed"}},
+            )
+
+    if auto_send_completion and not already_notified.get("email_sent_at"):
+        background_tasks.add_task(_bg_send_visit_summary_email)
+        email_result_status = "queued"
     else:
         email_result_status = "skipped_idempotent" if already_notified.get("email_sent_at") else "tenant_disabled"
 
@@ -714,38 +853,8 @@ async def submit_service_report(jid: str,
     # the guarded RC adapter so preview only sends live to allow-
     # listed recipients.
     if auto_send_completion and not already_notified.get("sms_sent_at"):
-        try:
-            customer = await db.customers.find_one(
-                {"id": job.get("customer_id"), "tenant_id": tenant["id"]},
-                {"_id": 0, "phone": 1, "name": 1},
-            ) or {}
-            phone = customer.get("phone") or ""
-            if phone:
-                tname = tenant.get("name") or "Your service"
-                import os as _os_task_u
-                app_url = _os_task_u.environ.get("APP_PUBLIC_URL", "").rstrip("/")
-                portal_link = f"{app_url}/portal/service-reports"
-                sms_body = (
-                    f"Your {tname} service is complete. "
-                    f"View your report: {portal_link}"
-                )
-                from services.sms.rc_adapter import send as _send_sms
-                sms_res = await _send_sms(
-                    to=phone, body=sms_body,
-                    category="transactional",
-                    tenant_id=tenant["id"],
-                    customer_id=job.get("customer_id"),
-                )
-                sms_result_status = sms_res.get("provider_status") or "sent"
-                logger.info(
-                    "[task-u] completion sms to=%s status=%s job=%s",
-                    phone, sms_result_status, jid,
-                )
-            else:
-                sms_result_status = "no_phone"
-        except Exception as e:
-            logger.warning(f"[task-u] completion SMS failed: {e}")
-            sms_result_status = "failed"
+        background_tasks.add_task(_bg_send_completion_sms)
+        sms_result_status = "queued"
     else:
         sms_result_status = "skipped_idempotent" if already_notified.get("sms_sent_at") else "tenant_disabled"
 
@@ -776,6 +885,21 @@ async def submit_service_report(jid: str,
         }
     if invoice_id:
         out["invoice_id"] = invoice_id
+    # Feb-2026 · P12A — structured end log with elapsed_ms so the
+    # tail duration of the SYNC path is greppable in the prod log
+    # stream on any future 520 regression.  WARN when > 50s so the
+    # log processor picks up the outlier automatically.
+    _sr_elapsed_ms = int((_time_p12a.monotonic() - _sr_start) * 1000)
+    if _sr_elapsed_ms > 50_000:
+        logger.warning(
+            f"service_report_submit slow job={jid} tenant={tenant['id']} "
+            f"elapsed_ms={_sr_elapsed_ms}"
+        )
+    else:
+        logger.info(
+            f"service_report_submit end job={jid} tenant={tenant['id']} "
+            f"elapsed_ms={_sr_elapsed_ms}"
+        )
     return out
 
 

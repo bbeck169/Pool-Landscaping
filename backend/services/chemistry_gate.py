@@ -60,6 +60,15 @@ _ALIASES: Dict[str, str] = {
     "free_cl":            "free_chlorine",
     "freecl":             "free_chlorine",
     "free chlorine":      "free_chlorine",
+    # Feb-2026 · P12B — the pre-refactor default pool template used
+    # a BARE ``"chlorine"`` key for the Free-Chlorine field.  The
+    # template has since been renamed to ``"free_chlorine"``, but
+    # any tenant that persisted the old key via
+    # ``PUT /settings/service-templates`` before the fix still
+    # writes ``chemical_readings[].key = "chlorine"``.  Fold onto
+    # ``free_chlorine`` so those tenants stop hitting a phantom
+    # ``chemistry_core_readings_missing`` on submit.
+    "chlorine":           "free_chlorine",
     "total_cl":           "total_chlorine",
     "totalcl":            "total_chlorine",
     "total chlorine":     "total_chlorine",

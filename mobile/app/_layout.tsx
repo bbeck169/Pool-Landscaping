@@ -56,6 +56,21 @@ export default function RootLayout() {
     return unsub;
   }, []);
 
+  // Phase P11c — Mapbox token placeholder guard (__DEV__ only).
+  // Warns at startup if the public token is still a placeholder so
+  // devs don't waste time debugging blank map screens.
+  useEffect(() => {
+    if (!__DEV__) return;
+    const token = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? "";
+    if (!token || token.startsWith("pk.REPLACE_ME")) {
+      console.warn(
+        '[Mapbox] ⚠️  EXPO_PUBLIC_MAPBOX_TOKEN is a placeholder ("pk.REPLACE_ME") or missing.\n' +
+          "Map screens will fail. Get a free public token from:\n" +
+          "https://account.mapbox.com/access-tokens/",
+      );
+    }
+  }, []);
+
   // If the CDN is unreachable we fall through on error rather than wedging
   // the app — icons will tofu, but the app still boots.
   if (!ready) return null;

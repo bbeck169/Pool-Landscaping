@@ -659,3 +659,20 @@
   - mobile/assets/images/icon.png (regenerated)
 - **Items NOT touched**: 3 (account deletion), 4 (privacy policy), 8, 9, 10
 
+
+
+## Iteration 30 — Phase P11c: App Store Handoff Docs (Items 8, 9, 10)
+- **Commit**: f4bf293d225e08022b4b8f28302f0f1ef05cdbb2
+- **Date**: 2026-08-21
+- **Changes**:
+  - **Item 8 (Data Collection)**: Created comprehensive App Store Connect privacy questionnaire mapping — 22 Apple data sub-types audited against backend DB collections (`gps_pings`, `users`, `customers`, `leads`, `jobs`, `files`, `invoices`, `stripe_charges`) and mobile SDKs (`expo-location`, `expo-image-picker`, `react-native-webrtc`). Includes copy-paste answers for App Store Connect and privacy nutrition label summary.
+  - **Item 9 (Mapbox Token)**: Documented public (`pk.`) vs secret (`sk.`) token wiring, EAS Secrets setup, and security checklist. Added `__DEV__`-gated startup guard in `_layout.tsx` that warns if EXPO_PUBLIC_MAPBOX_TOKEN is a placeholder. Updated `.env.example` with annotated Mapbox entries.
+  - **Item 10 (Screenshots)**: Documented all required App Store screenshot sizes (6.7", 6.5", 5.5", iPad 12.9", iPad 13"), recommended 5 optimal screens with marketing captions, and outlined 4 capture methods (Xcode Simulator, physical device, react-native-view-shot, Fastlane).
+  - Lint: `_layout.tsx` clean ✅
+  - Pre-existing: Mapbox web CSS bundling error (`mapbox-gl/dist/mapbox-gl.css`) — not introduced by this change.
+- **Files created**:
+  - `/app/memory/appstore_submission_handoff.md`
+- **Files modified**:
+  - `/app/mobile/app/_layout.tsx` (added Mapbox `__DEV__` guard useEffect, +15 lines)
+  - `/app/mobile/.env.example` (rewritten with full annotated Mapbox entries)
+- **Web files referenced**: None (backend `server.py` scanned for DB collections only)

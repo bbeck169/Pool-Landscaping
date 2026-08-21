@@ -122,7 +122,10 @@ POOL_READINGS = [
     # in service_reports.py so legacy Field Report + Pool Checklist share
     # the same top-of-form sequence.
     {"key": "combined_chlorine", "label": "Combined Chlorine", "unit": "ppm", "ideal": "0–0.2", "min": 0, "max": 0.2},
-    {"key": "chlorine", "label": "Free Chlorine", "unit": "ppm", "ideal": "1–3", "min": 1, "max": 3},
+    # Feb-2026 · P12B — was ``"chlorine"``; renamed to the canonical
+    # ``"free_chlorine"`` so legacy Field Report + Pool Checklist stay
+    # in lockstep with ``chemistry_gate.CORE_READINGS``.
+    {"key": "free_chlorine", "label": "Free Chlorine", "unit": "ppm", "ideal": "1–3", "min": 1, "max": 3},
     {"key": "ph", "label": "pH", "unit": "", "ideal": "7.4–7.6", "min": 7.4, "max": 7.6},
     {"key": "alkalinity", "label": "Total Alkalinity", "unit": "ppm", "ideal": "80–120", "min": 80, "max": 120},
     {"key": "cyanuric", "label": "Cyanuric Acid", "unit": "ppm", "ideal": "30–50", "min": 30, "max": 50},
