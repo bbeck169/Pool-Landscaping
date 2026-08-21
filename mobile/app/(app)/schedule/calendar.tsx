@@ -57,6 +57,10 @@ import { getStatusBorderColor } from "@/src/utils/scheduleStatus";
 import OnMyWayButton from "@/src/components/schedule/OnMyWayButton";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
 import ScheduleMap from "@/src/components/schedule/ScheduleMap";
+// Feb-2026 — Daily Route Map (@rnmapbox/maps). Collapsible per-tech
+// header, numbered pins by route_index, status-colored, tap for
+// callout with Open→job checklist. Hides itself when 0 jobs.
+import DailyRouteMap from "@/src/components/schedule/DailyRouteMap";
 import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 import type { HourlyEntry } from "@/src/api/weather";
 
@@ -495,6 +499,7 @@ export default function ScheduleCalendar() {
           onOpenJob={(id: string) => router.push(`/job/${id}/checklist` as any)}
           onNewJob={() => router.push(`/job/new?date=${focusISO}` as any)}
           isAdmin={isAdmin}
+          userId={user?.id || ""}
           hourlyData={hourlyData}
           weatherWidget={(isTech || isAdmin) ? <WeatherWidget onHourlyLoaded={setHourlyData} /> : null}
           onOpenEdit={isAdmin ? ((jobRow: Job) => setEditingJob(jobRow)) : undefined}
@@ -613,7 +618,7 @@ function GridView(props: any) {
     focus, setFocus, jobs, loading, checked, onToggle, canWrite,
     rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
     onBulkComplete, onBulkDelete, onOpenMove, onOpenReassign, moveOpen, setMoveOpen, moveDate, setMoveDate,
-    onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData,
+    onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData, userId,
     weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection, role,
     gridSubMode, setGridSubMode, dayJobs, setReorderList,
   } = props;
@@ -737,6 +742,12 @@ function GridView(props: any) {
           testID="on-my-way-next-btn"
         />
       ) : null}
+
+      {/* Feb-2026 · Daily Route Map — collapsible @rnmapbox/maps view
+          for the currently-selected day. Hides itself when 0 jobs.
+          Per-tech expand/collapse state persists in AsyncStorage
+          keyed by user_id. */}
+      <DailyRouteMap jobs={dayJobs || jobs} userId={userId} />
 
       {/* List | Map toggle */}
       <View style={gStyles.subModeRow} testID="grid-sub-mode-toggle">
