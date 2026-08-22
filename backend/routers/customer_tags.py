@@ -817,3 +817,151 @@ async def set_customer_tags(
         await _recompute_usage(tenant["id"], name)
 
     return {"ok": True, "tags": cleaned}
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · P38 — AI-suggested duplicate tags (pure-Python fuzzy).
+# ═════════════════════════════════════════════════════════════════════
+import difflib as _difflib
+import time as _time
+
+_DUPE_RATIO_THRESHOLD = 0.8
+_DUPE_CACHE_TTL_S = 60
+# In-memory per-tenant cache. Keyed on tenant_id; value is
+# (expires_at_epoch, payload_dict). The cache is a UX optimization
+# for admin refreshes; it's fine if it evicts on process restart.
+_DUPE_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def _dupe_cluster_signature(labels: list[str]) -> str:
+    return "|".join(sorted(l.lower() for l in labels))
+
+
+@router.post("/internal/customer-tags/reset-dupe-cache",
+                tags=["customer-tags"])
+async def reset_dupe_cache(
+    body: _P33hReset,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Test/support helper — clears the server-side suggest-duplicates
+    cache for a tenant so a subsequent GET rebuilds fresh. Same RBAC
+    as the sibling self-heal reset."""
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin", "manager"):
+        raise HTTPException(403, "Not allowed")
+    tid = body.tenant_id or tenant["id"]
+    _DUPE_CACHE.pop(tid, None)
+    return {"ok": True, "tenant_id": tid}
+
+
+@router.get("/customer-tags/suggest-duplicates", tags=["customer-tags"])
+async def suggest_duplicate_tags(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return clusters of near-duplicate tag labels.
+
+    Uses ``difflib.SequenceMatcher`` (Python stdlib — deterministic,
+    no LLM cost) with a 0.8 ratio threshold. Exact case-variant
+    duplicates ("pool" vs "Pool") always cluster because their
+    ``name_lower`` compare identically (ratio 1.0).
+
+    Suggested canonical selection:
+        1. Highest ``usage_count`` (most-tagged wins)
+        2. Tie-break: longest label ("Landscaping" over "Landscape")
+        3. Tie-break 2: alphabetically first
+    """
+    _require_admin_or_manager(user)
+    tid = tenant["id"]
+
+    # Cache hit?
+    hit = _DUPE_CACHE.get(tid)
+    if hit and hit[0] > _time.time():
+        return hit[1]
+
+    # Load active tags for the tenant.
+    tags = await db.customer_tags.find(
+        {"tenant_id": tid, "is_active": True},
+        {"_id": 0},
+    ).to_list(length=None)
+
+    # Build clusters via union-find over pairs meeting the ratio threshold.
+    n = len(tags)
+    parent = list(range(n))
+
+    def _find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def _union(a: int, b: int) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for i in range(n):
+        li = (tags[i].get("name_lower") or (tags[i].get("name") or "").lower())
+        for j in range(i + 1, n):
+            lj = (tags[j].get("name_lower")
+                     or (tags[j].get("name") or "").lower())
+            if not li or not lj:
+                continue
+            ratio = _difflib.SequenceMatcher(None, li, lj).ratio()
+            if ratio >= _DUPE_RATIO_THRESHOLD:
+                _union(i, j)
+
+    # Group tags by root.
+    buckets: dict[int, list[dict]] = {}
+    for i in range(n):
+        buckets.setdefault(_find(i), []).append(tags[i])
+
+    clusters: list[dict] = []
+    for group in buckets.values():
+        if len(group) < 2:
+            continue
+        # Suggested-canonical heuristic.
+        group_sorted = sorted(
+            group,
+            key=lambda t: (
+                -int(t.get("usage_count") or 0),
+                -len(t.get("name") or ""),
+                (t.get("name") or "").lower(),
+            ),
+        )
+        canonical = group_sorted[0]
+        # Confidence = MAX pairwise ratio inside the cluster (the
+        # strongest evidence of similarity in the group). Min-pair
+        # ratio would under-report tri-clusters where two labels
+        # differ pairwise but both closely match a third.
+        pair_ratios: list[float] = []
+        labels_lower = [(t.get("name_lower")
+                           or (t.get("name") or "").lower()) for t in group]
+        for a in range(len(labels_lower)):
+            for b in range(a + 1, len(labels_lower)):
+                pair_ratios.append(_difflib.SequenceMatcher(
+                    None, labels_lower[a], labels_lower[b]).ratio())
+        confidence = round(max(pair_ratios), 2) if pair_ratios else 1.0
+        clusters.append({
+            "tag_ids": [t["id"] for t in group_sorted],
+            "labels": [t.get("name") or "" for t in group_sorted],
+            "suggested_canonical": canonical.get("name") or "",
+            "suggested_canonical_id": canonical.get("id"),
+            "confidence": confidence,
+            "signature": _dupe_cluster_signature(
+                [t.get("name") or "" for t in group]),
+        })
+
+    # Deterministic cluster order — highest confidence first, then
+    # alphabetical on canonical label.
+    clusters.sort(key=lambda c: (-c["confidence"],
+                                       c["suggested_canonical"].lower()))
+
+    payload = {
+        "ok": True,
+        "clusters": clusters,
+        "ratio_threshold": _DUPE_RATIO_THRESHOLD,
+    }
+    _DUPE_CACHE[tid] = (_time.time() + _DUPE_CACHE_TTL_S, payload)
+    return payload

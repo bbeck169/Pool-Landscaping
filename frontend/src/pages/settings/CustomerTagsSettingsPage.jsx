@@ -18,6 +18,31 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/api";
 
 
+// ─────────────────────────────────────────────────────────────────
+// Feb-2026 · P38 — dismissed-cluster signature store.
+// Kept in ``sessionStorage`` (no backend collection per spec) so a
+// tab-scoped "not now" hides a cluster until the next login.
+// ─────────────────────────────────────────────────────────────────
+const _P38_SS_KEY = "p38.dismissedDupeSignatures";
+
+function _readDismissed() {
+  try {
+    const raw = sessionStorage.getItem(_P38_SS_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw));
+  } catch (_e) {
+    return new Set();
+  }
+}
+
+function _writeDismissed(setLike) {
+  try {
+    sessionStorage.setItem(_P38_SS_KEY,
+      JSON.stringify(Array.from(setLike)));
+  } catch (_e) { /* best-effort */ }
+}
+
+
 export default function CustomerTagsSettingsPage() {
   const [rows, setRows] = useState([]);
   const [includeInactive, setIncludeInactive] = useState(false);
@@ -28,6 +53,11 @@ export default function CustomerTagsSettingsPage() {
   const [renaming, setRenaming] = useState({});  // id → new label
   const [mergeState, setMergeState] = useState(null);
   // ^ null | { canonicalId, victimIds: Set<string> }
+
+  // P38 · Suggested-duplicates state.
+  const [suggestions, setSuggestions] = useState([]);  // clusters[]
+  const [suggestionsLoaded, setSuggestionsLoaded] = useState(false);
+  const [dismissed, setDismissed] = useState(() => _readDismissed());
 
   const load = useCallback(async () => {
     setErr("");
@@ -41,6 +71,54 @@ export default function CustomerTagsSettingsPage() {
   }, [includeInactive]);
 
   useEffect(() => { load(); }, [load]);
+
+  // P38 · Load suggested-duplicate clusters. Best-effort — a failure
+  // must not block the primary catalog UI.
+  const loadSuggestions = useCallback(async () => {
+    try {
+      const res = await api.get("/customer-tags/suggest-duplicates");
+      const clusters = Array.isArray(res?.clusters) ? res.clusters : [];
+      setSuggestions(clusters);
+    } catch (_e) {
+      setSuggestions([]);
+    } finally {
+      setSuggestionsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => { loadSuggestions(); }, [loadSuggestions]);
+
+  const dismissSuggestion = useCallback((signature) => {
+    setDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(signature);
+      _writeDismissed(next);
+      return next;
+    });
+  }, []);
+
+  const quickMerge = useCallback(async (cluster) => {
+    const canonical_id = cluster.suggested_canonical_id;
+    const victim_ids = (cluster.tag_ids || []).filter(
+      (id) => id !== canonical_id);
+    if (!canonical_id || victim_ids.length === 0) return;
+    setBusy(true); setErr(""); setOk("");
+    try {
+      const res = await api.post("/customer-tags/merge", {
+        canonical_id, victim_ids,
+      });
+      setOk(`Merged ${res?.merged_victims || victim_ids.length} tag(s) `
+              + `into "${cluster.suggested_canonical}". `
+              + `${res?.customers_updated || 0} customer(s) updated.`);
+      await Promise.all([load(), loadSuggestions()]);
+    } catch (e) {
+      const msg = e?.body?.detail?.message || e?.body?.detail
+                     || e?.message || "Merge failed";
+      setErr(typeof msg === "string" ? msg : "Merge failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [load, loadSuggestions]);
 
   const submitNew = useCallback(async () => {
     const label = newLabel.trim();
@@ -149,6 +227,12 @@ export default function CustomerTagsSettingsPage() {
     [rows],
   );
 
+  // P38 · Filter dismissed clusters out of the visible list.
+  const visibleSuggestions = useMemo(
+    () => suggestions.filter((c) => !dismissed.has(c.signature)),
+    [suggestions, dismissed],
+  );
+
   return (
     <div className="max-w-3xl mx-auto p-6" data-testid="customer-tags-page">
       <h1 className="text-2xl font-bold mb-1" style={{ color: "#0F172A" }}>
@@ -207,6 +291,86 @@ export default function CustomerTagsSettingsPage() {
               style={{ background: "rgba(16,185,129,0.06)", color: "#065F46" }}
               data-testid="customer-tags-ok">
           {ok}
+        </div>
+      ) : null}
+
+      {/* P38 · Suggested duplicates */}
+      {suggestionsLoaded && visibleSuggestions.length > 0 ? (
+        <section
+          data-testid="customer-tags-suggestions"
+          className="mb-6 border rounded p-3"
+          style={{ borderColor: "#FDE68A", background: "#FFFBEB" }}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h2 className="text-sm font-bold" style={{ color: "#78350F" }}>
+                Suggested duplicates
+              </h2>
+              <p className="text-xs" style={{ color: "#92400E" }}>
+                Near-duplicate labels we found in your catalog. Merge to
+                consolidate; dismiss to hide until next login.
+              </p>
+            </div>
+            <span
+              data-testid="customer-tags-suggestions-count"
+              className="text-xs font-semibold px-2 py-0.5 rounded"
+              style={{ background: "#FDE68A", color: "#78350F" }}>
+              {visibleSuggestions.length}
+            </span>
+          </div>
+          <ul className="space-y-2">
+            {visibleSuggestions.map((c) => {
+              const victims = (c.labels || []).filter(
+                (l) => l !== c.suggested_canonical);
+              return (
+                <li
+                  key={c.signature}
+                  data-testid={`customer-tags-suggestion-${c.signature}`}
+                  className="flex items-center gap-2 bg-white border rounded p-2"
+                  style={{ borderColor: "#FDE68A" }}
+                >
+                  <div className="flex-1 text-sm" style={{ color: "#0F172A" }}>
+                    <span className="font-semibold">{c.suggested_canonical}</span>
+                    <span className="mx-1" style={{ color: "#94A3B8" }}>←</span>
+                    <span>{victims.join(", ")}</span>
+                    <span
+                      className="ml-2 text-xs px-1.5 py-0.5 rounded"
+                      style={{ background: "#F1F5F9", color: "#475569" }}
+                      data-testid={`customer-tags-suggestion-confidence-${c.signature}`}
+                    >
+                      {Math.round((c.confidence || 0) * 100)}% match
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => quickMerge(c)}
+                    disabled={busy}
+                    data-testid={`customer-tags-suggestion-merge-${c.signature}`}
+                    className="px-2 py-1 text-xs font-semibold rounded"
+                    style={{ background: "#0EA5E9", color: "#fff",
+                                opacity: busy ? 0.6 : 1 }}
+                  >Merge</button>
+                  <button
+                    type="button"
+                    onClick={() => dismissSuggestion(c.signature)}
+                    data-testid={`customer-tags-suggestion-dismiss-${c.signature}`}
+                    className="px-2 py-1 text-xs rounded border"
+                    style={{ borderColor: "#E5E7EB", color: "#475569" }}
+                  >Dismiss</button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+      {suggestionsLoaded && visibleSuggestions.length === 0
+          && suggestions.length === 0 ? (
+        <div
+          data-testid="customer-tags-suggestions-empty"
+          className="text-xs mb-4"
+          style={{ color: "#94A3B8" }}
+        >
+          No duplicate suggestions right now.
         </div>
       ) : null}
 
