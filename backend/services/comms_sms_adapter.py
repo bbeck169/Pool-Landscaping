@@ -73,7 +73,7 @@ async def send_sms(tenant_id: str, to_phone: str, body: str,
     """Send an SMS (or log a mock). Never raises.
 
     Returns a dict with:
-        - ``status``: ``sent`` | ``mocked`` | ``failed`` | ``skipped_opted_out``
+        - ``status``: ``sent`` | ``mocked`` | ``failed`` | ``skipped_opted_out`` | ``deferred``
         - ``provider_id``: RingCentral message id when real send succeeds; ``None`` otherwise
         - ``error``: exception summary on failed sends
         - ``character_count`` / ``segment_count``: metrics on the rendered body
@@ -83,6 +83,25 @@ async def send_sms(tenant_id: str, to_phone: str, body: str,
         return {"status": "failed", "error": "empty recipient phone", **stats}
     if await _is_opted_out(tenant_id, to_phone):
         return {"status": "skipped_opted_out", **stats}
+
+    # Feb-2026 · P34 — Automation quiet-hours gate. See the mirror
+    # comment in ``comms_email_adapter.send_email``.
+    try:
+        from services.quiet_hours import (
+            is_within_send_window as _p34_ok,
+            defer_send as _p34_defer,
+        )
+        from services.quiet_hours_context import is_bypassing as _p34_bypass
+        if not _p34_bypass() and not await _p34_ok(tenant_id):
+            deferred_id = await _p34_defer(
+                tenant_id, "sms",
+                {"to_phone": to_phone, "body": body, "mms_url": mms_url},
+            )
+            return {"status": "deferred", "deferred_id": deferred_id,
+                     "provider_id": None, **stats}
+    except Exception as _e34:
+        logger.warning("[p34] quiet-hours gate errored — failing open: %s",
+                          _e34)
 
     if os.environ.get("SMS_MOCK_MODE", "1") == "1":
         logger.info(

@@ -63,6 +63,8 @@ import ServiceCategoriesPage from "@/pages/settings/ServiceCategoriesPage";
 import JobOutcomeReasonsPage from "@/pages/settings/JobOutcomeReasonsPage";
 // Feb-2026 · P29b — Muted Reasons admin (super_admin / admin / manager).
 import MutedReasonsPage from "@/pages/settings/MutedReasonsPage";
+// Feb-2026 · P34 — Automation quiet-hours admin (super_admin / admin / manager).
+import QuietHoursPage from "@/pages/settings/QuietHoursPage";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import SupplierSettings from "@/pages/settings/SupplierSettings";
 import SupplierSyncAnalytics from "@/pages/reports/SupplierSyncAnalytics";
@@ -683,6 +685,10 @@ export default function App() {
             <Route path="settings/job-outcome-reasons" element={<AdminOnly><JobOutcomeReasonsPage /></AdminOnly>} />
             {/* Feb-2026 · P29b — Muted Reasons manager (super_admin / admin / manager). */}
             <Route path="settings/muted-reasons" element={<AdminOrManagerForMutedReasons><MutedReasonsPage /></AdminOrManagerForMutedReasons>} />
+            {/* Feb-2026 · P34 — Quiet-hours settings (super_admin / admin / manager).
+                Reuses the AdminOrManagerForMutedReasons gate since the role set
+                is identical — no need for a third bespoke wrapper. */}
+            <Route path="settings/quiet-hours" element={<AdminOrManagerForMutedReasons><QuietHoursPage /></AdminOrManagerForMutedReasons>} />
             <Route path="settings/billing" element={<AdminOnly><BillingSettings /></AdminOnly>} />
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />

@@ -146,6 +146,10 @@ export const ADMIN_NAV_V2 = [
     // super_admin all see it in the nav (route wrapper enforces the
     // three-role gate); no `hard_rule` so managers keep visibility.
     { to: "/settings/muted-reasons", label: "Muted Reasons", icon: AlertTriangleIcon, feature: "settings", subsection: "Schedule & Dispatch" },
+    // Feb-2026 · P34 — Automation quiet-hours window. Same role set
+    // as muted-reasons (super_admin / admin / manager); route wrapper
+    // handles enforcement so no `hard_rule` here either.
+    { to: "/settings/quiet-hours", label: "Quiet Hours", icon: AlertTriangleIcon, feature: "settings", subsection: "Schedule & Dispatch" },
     // Workforce
     { to: "/team?t=team",              label: "Team",             icon: UsersRound,  feature: "jobs", subsection: "Workforce" },
     { to: "/admin/users",              label: "Team (admin)",     icon: UserCog,     feature: "settings", subsection: "Workforce" },

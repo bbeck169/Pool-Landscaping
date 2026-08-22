@@ -12236,3 +12236,69 @@ Preview DB currently has 5 customers, 0 with tags — nothing to backfill. Migra
 - VIP badge / Mark Muted button / muted-reason UI untouched
 - Historical `customers.tags` snapshots stay immutable on catalog rename (existing `PATCH` rename does propagate — pre-existing behavior, not changed here)
 - Auto-persist wrapped in try/except at both call-sites
+
+---
+
+## Phase P34 · Feb-2026 — Automation quiet-hours window
+
+### Investigation summary (before code)
+- **~25 direct callers** of `send_sms()` / `send_email()` across the codebase — Option B (patch each call-site) rejected. Went with Option A hybrid: gate at two adapter chokepoints (`services/comms_sms_adapter.py::send_sms` + `services/comms_email_adapter.py::send_email`), inheriting coverage for all 25 callers.
+- **APScheduler `AsyncIOScheduler`** already runs 38 jobs in `server.py`. Added 1 new interval job (5 min) matching the existing style.
+
+### Files added
+- `backend/services/quiet_hours.py` — `is_within_send_window`, `next_send_window_open`, `defer_send`, `claim_pending_batch`. Handles same-day + overnight windows.
+- `backend/services/quiet_hours_context.py` — `contextvars`-backed `bypass_gate()` for the release worker to skip the gate on re-dispatch.
+- `backend/services/quiet_hours_release.py` — `run_release_tick()` used by both scheduler + on-demand endpoint.
+- `backend/routers/quiet_hours_settings.py` — `GET/PATCH /api/settings/quiet-hours` + `POST /api/internal/quiet-hours/release`.
+- `backend/migrations/task_p34_quiet_hours_defaults.py` — one-shot backfill (dry-run default).
+- `backend/tests/test_quiet_hours_p34.py` — **16/16 green**.
+- `frontend/src/pages/settings/QuietHoursPage.jsx` — settings UI.
+- `frontend/src/test/phase34-quiet-hours-settings.test.jsx` — **5/5 green**.
+
+### Files touched
+- `backend/services/comms_sms_adapter.py` + `.../comms_email_adapter.py` — insert quiet-hours gate at the top of each send; returns `status="deferred"` with the row id when out-of-window.
+- `backend/server.py` — router registration + APScheduler wiring.
+- `frontend/src/App.js` — route wired behind `AdminOrManagerForMutedReasons` gate (identical role set; reused rather than duplicated).
+- `frontend/src/nav/adminNav.js` — nav entry under "Schedule & Dispatch" next to Muted Reasons.
+
+### Deferred send row shape (`outbound_deferred`)
+```
+{ id, tenant_id, channel: "sms"|"email", payload: {...adapter args...},
+  scheduled_for: ISO-UTC (next window-open), created_at, created_by,
+  released_at, status: "pending"|"releasing"|"sent"|"failed",
+  provider_id?, release_result? }
+```
+Enough context to re-dispatch identically after the window opens (no ephemeral in-process state).
+
+### Backfill migration output (preview DB)
+```
+committed: True · total_tenants: 24 · backfilled: 24 · missing_timezone_warnings: 0
+```
+All 24 preview tenants now carry `quiet_hours_enabled=false` + defaults; existing sends continue unchanged.
+
+### Judgment calls (transparent)
+1. **Did NOT gate the `resend.Emails.send` SDK-level monkey-patch** (`services/comms/sdk_intercept.py`). That layer has no tenant context. The two canonical adapters (`send_sms`/`send_email`) carry the tenant_id and are the ONLY authorized send paths in the codebase — every marketing / drip / reminder / lead-notification path routes through them. Any bare `resend.Emails.send` call is a legacy pattern outside our automation surface and is not gated.
+2. **Release worker uses `contextvars`-based bypass** rather than a marker in the payload/headers dict. Rationale: `send_sms` has no headers surface, so headers-based marker would only work for email. `contextvars` is task-scoped and safe under concurrency.
+3. **Windows with `start == end`** are hard-rejected (400 on PATCH) — otherwise it means "always closed" and would silently start dropping mail forever.
+4. **Fail-open on gate errors** — if `is_within_send_window` throws for any reason, the adapter logs a warning and sends anyway. Prevents a bug in the gate from becoming an outage.
+
+### Results
+- **P34 backend tests: 16/16 green** — pure time-logic + settings RBAC + release worker + idempotency + backfill idempotency.
+- **P34 frontend tests: 5/5 green.**
+- **P15b + P25 → P34 combined backend sweep: 90/90 green.**
+- Scheduler boots cleanly: `scheduler: p34 quiet-hours release tick registered (every 5 min)`.
+- `/api/openapi.json` still 200.
+- Pre-existing `test_config_public_returns_show_demo_logins` untouched.
+
+### Deploy notes for `app.plofv.com`
+- Redeploy required.
+- Run `python -m migrations.task_p34_quiet_hours_defaults --commit` from the backend container once. Idempotent.
+- All existing tenants ship with `quiet_hours_enabled=false` — no behavior change until an admin flips it on via the new settings page.
+
+### Guardrails honored
+- `bbeck169/Pool-Landscaping.git` ignored.
+- `test_config_public_returns_show_demo_logins` untouched.
+- BackgroundTasks flows unchanged (the two adapters are already async; the wrapper adds only an `await`).
+- `quiet_hours_enabled=false` default → no silent behavior change on existing tenants.
+- Transactional messages ARE gated per explicit user decision — no carve-outs added.
+- Deferred rows carry full payload context — safe to dispatch after any interruption (worker restart, cold-start, redeploy).

@@ -39,6 +39,30 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
     if await _is_opted_out(tenant_id, to_email):
         return {"status": "skipped_opted_out"}
 
+    # Feb-2026 · P34 — Automation quiet-hours gate. If the tenant has
+    # enabled quiet hours and ``now`` is outside the window, persist
+    # this send into ``outbound_deferred`` for the release worker to
+    # dispatch when the window re-opens. Any failure here fails open
+    # so we never silently drop mail on a gate bug.
+    try:
+        from services.quiet_hours import (
+            is_within_send_window as _p34_ok,
+            defer_send as _p34_defer,
+        )
+        from services.quiet_hours_context import is_bypassing as _p34_bypass
+        if not _p34_bypass() and not await _p34_ok(tenant_id):
+            deferred_id = await _p34_defer(
+                tenant_id, "email",
+                {"to_email": to_email, "subject": subject, "html": html,
+                  "from_name": from_name, "from_email": from_email,
+                  "headers": headers},
+            )
+            return {"status": "deferred",
+                     "deferred_id": deferred_id, "provider_id": None}
+    except Exception as _e34:
+        logger.warning("[p34] quiet-hours gate errored — failing open: %s",
+                          _e34)
+
     key = os.environ.get("RESEND_API_KEY")
     if not key:
         return {"status": "not_sent_missing_key"}

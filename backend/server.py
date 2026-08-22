@@ -182,8 +182,10 @@ api_router.include_router(marketing_campaigns_router.router)
 # match over the legacy legal-CMS ``GET /api/legal/{slug}`` handler.
 from routers import tos as _tos_router  # noqa: E402
 from routers import muted_reasons as _p29_muted_reasons  # noqa: E402
+from routers import quiet_hours_settings as _p34_quiet_hours  # noqa: E402
 api_router.include_router(_tos_router.router)
 api_router.include_router(_p29_muted_reasons.router)
+api_router.include_router(_p34_quiet_hours.router)
 
 # Feb-2026 · Slice 2A — Multi-ToS backend foundation (Pool +
 # Landscaping split, admin CRUD, customer onboarding-state DTO).
@@ -1090,6 +1092,18 @@ async def _background_seed():
         scheduler.add_job(dunning.run_dunning_scan, "interval",
                             minutes=60, id="dunning_scan",
                             replace_existing=True)
+        # Feb-2026 · P34 — Automation quiet-hours release worker.
+        # Runs every 5 minutes; picks up any deferred SMS / email
+        # rows whose ``scheduled_for`` has passed and dispatches them.
+        try:
+            from services.quiet_hours_release import run_release_tick as _p34_tick
+            scheduler.add_job(_p34_tick, "interval",
+                                minutes=5, id="p34_quiet_hours_release",
+                                replace_existing=True)
+            logger.info("scheduler: p34 quiet-hours release tick registered "
+                            "(every 5 min)")
+        except Exception as _e34:  # noqa: BLE001
+            logger.warning("[p34] scheduler wiring failed: %s", _e34)
         # Phase 17 · Feb-2026 — QBO daily inbound read-sync.
         try:
             import os as _os
