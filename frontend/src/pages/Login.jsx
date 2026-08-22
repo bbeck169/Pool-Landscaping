@@ -385,8 +385,8 @@ export default function Login({ variant = "staff" } = {}) {
             />
           )}
         </div>
-        {/* Feb-2026 · P11b + P21b — Legal footer links (App Store item 4). */}
-        <div className="text-center pb-6 pt-4 flex items-center justify-center gap-4">
+        {/* Feb-2026 · P11b + P21b + P23 — Legal footer links (App Store item 4). */}
+        <div className="text-center pb-6 pt-4 flex items-center justify-center gap-4 flex-wrap">
           <a
             href="/privacy-policy"
             className="text-xs font-semibold underline opacity-70 hover:opacity-100"
@@ -401,6 +401,14 @@ export default function Login({ variant = "staff" } = {}) {
             data-testid="login-terms-of-service-link"
           >
             Terms of Service
+          </a>
+          <span className="text-xs opacity-40">·</span>
+          <a
+            href="/ai-transparency"
+            className="text-xs font-semibold underline opacity-70 hover:opacity-100"
+            data-testid="login-ai-transparency-link"
+          >
+            AI Transparency
           </a>
         </div>
       </main>

@@ -203,6 +203,18 @@ export default function PrivacyPolicy() {
         <H2 id="vendors">4. Third Parties We Share Data With</H2>
         <P>We share limited categories of your data with the following service providers, each bound by their own privacy policies and data-processing agreements with us:</P>
         <VendorTable />
+        {/* Feb-2026 · P23 — Cross-link to the public AI Transparency page. */}
+        <P>
+          For a plain-English, feature-by-feature breakdown of which AI-powered surfaces send what to our AI providers &mdash; including the Admin Copilot exception referenced in the OpenAI / Anthropic row above &mdash; see our{" "}
+          <Link
+            to="/ai-transparency"
+            className="underline"
+            style={{ color: colors.brand }}
+            data-testid="privacy-policy-ai-transparency-link"
+          >
+            AI Transparency page
+          </Link>.
+        </P>
 
         {/* ─────────── 6. Data Retention ─────────── */}
         <H2 id="retention">5. Data Retention</H2>

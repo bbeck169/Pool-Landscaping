@@ -211,8 +211,8 @@ export default function PortalPreferences() {
           don't have a session to invalidate. */}
       {!token ? <DeleteAccountDangerCard /> : null}
 
-      {/* Feb-2026 · P11b — Privacy Policy footer link (App Store item 4). */}
-      <div className="mt-6 text-center">
+      {/* Feb-2026 · P11b + P21b + P23 — Legal footer links (App Store item 4). */}
+      <div className="mt-6 text-center flex items-center justify-center gap-4 flex-wrap">
         <a
           href="/privacy-policy"
           className="text-sm font-semibold underline"
@@ -220,6 +220,24 @@ export default function PortalPreferences() {
           data-testid="portal-preferences-privacy-policy-link"
         >
           Privacy Policy
+        </a>
+        <span className="text-sm" style={{ color: colors.muted, opacity: 0.5 }}>·</span>
+        <a
+          href="/terms-of-service"
+          className="text-sm font-semibold underline"
+          style={{ color: colors.muted }}
+          data-testid="portal-preferences-terms-of-service-link"
+        >
+          Terms of Service
+        </a>
+        <span className="text-sm" style={{ color: colors.muted, opacity: 0.5 }}>·</span>
+        <a
+          href="/ai-transparency"
+          className="text-sm font-semibold underline"
+          style={{ color: colors.muted }}
+          data-testid="portal-preferences-ai-transparency-link"
+        >
+          AI Transparency
         </a>
       </div>
     </div>

@@ -11953,3 +11953,20 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 **Deferred**
 - Formal attorney review of the Copilot carve-out language in the Privacy Policy vendor table.
 - If policy stakeholders decide the Copilot carve-out is unacceptable, next step is redacting tool outputs before feeding them to the Claude follow-up round-trip (will degrade Copilot answer quality on name-based queries).
+
+---
+
+## Phase P23 — Public AI Transparency page (Feb 24, 2026)
+
+**Delivered**
+- `frontend/src/pages/AiTransparency.jsx` — public page at `/ai-transparency` with mandatory `ATTORNEY REVIEW REQUIRED` header (Apple Guideline 5.1.1). 5 sections: (1) At-a-glance summary box with 3 headline claims, (2) per-surface table listing every AI code path enumerated in P22, (3) rights & choices (audit request / opt-out / delete / cross-link), (4) provider commitments (no training use, no ad networks, no automated legal decisions), (5) how to report a concern (`cs@plofv.com`, 5-business-day SLA).
+- `frontend/src/App.js` — public `/ai-transparency` route wired alongside `/privacy-policy` and `/terms-of-service`.
+- `frontend/src/pages/Login.jsx` — footer now renders 3 links: Privacy Policy · Terms of Service · AI Transparency (`login-ai-transparency-link`).
+- `frontend/src/pages/portal/PortalPreferences.jsx` — customer-portal preferences footer gains the same 3-link parity.
+- `frontend/src/pages/PrivacyPolicy.jsx` — Section 4 (vendor table) now cross-links to the AI Transparency page (`privacy-policy-ai-transparency-link`).
+- `frontend/src/test/phase23-ai-transparency-content.test.jsx` — 13 assertions covering render, effective date, all 5 sections, at-a-glance headline claims, every P22 surface named in the table, Admin Copilot disclosure keywords, provider commitments, contact email, cross-link to privacy policy, back-to-home link, attorney-review flag presence, Login footer 3-link render, and Privacy Policy → AI Transparency cross-link. All green.
+
+**Deferred**
+- Attorney sign-off on the 11 factual claims on the AI Transparency page (rolled into the pending attorney-review pass for P21 / P21b / P22).
+- Mobile-side link parity via `expo-linking` — no existing Privacy/ToS link on mobile Login screen; deferred to a mobile-legal-links phase.
+- Cookie banner intentionally not shipped (out of scope per P23 non-goals).
