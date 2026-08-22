@@ -11907,3 +11907,17 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
    audit-trail endpoint for Legal, "Restore this version" flow, and
    `/portal/legal` per-customer terms history — deferred from the
    Multi-ToS shipment.
+
+---
+
+## Phase P21b — Public Terms of Service (Feb 24, 2026)
+
+**Delivered**
+- `frontend/src/pages/TermsOfService.jsx` — 17-section public ToS with `ATTORNEY REVIEW REQUIRED` header comment and Apple Guideline 5.1.1 reference. Section 16 (General Provisions) covers Severability, Entire Agreement, Assignment, No Waiver, and Notices, with `TODO(force-majeure)` and `TODO(export-control)` attorney hooks alongside pre-existing `TODO(pricing)`, `TODO(refund)`, `TODO(liability-cap)`, and `TODO(arbitration)` markers.
+- `frontend/src/App.js` — public `/terms-of-service` route wired (no auth gate, mirrors `/privacy-policy`).
+- `frontend/src/pages/Login.jsx` — footer now renders both Privacy Policy and Terms of Service links (`login-terms-of-service-link` data-testid).
+- `frontend/src/test/phase21b-terms-of-service-content.test.jsx` — 8 assertions covering entity/address, effective date, all 17 numbered headings, General Provisions hooks, privacy-policy cross-link, contact block, and attorney-review flag presence. All green.
+
+**Deferred**
+- Attorney sign-off on the 6 `TODO(...)` markers (pricing, refund, liability cap, arbitration, force-majeure, export-control).
+- Mobile-side link parity via `expo-linking` (parallel to what PrivacyPolicy already ships).

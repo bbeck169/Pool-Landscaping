@@ -93,6 +93,7 @@ import BroadcastsPage from "@/pages/marketing/BroadcastsPage";
 import CommunicationsLogPage from "@/pages/marketing/CommunicationsLogPage";
 import PortalPreferences from "@/pages/portal/PortalPreferences";
 import PrivacyPolicy from "@/pages/PrivacyPolicy";
+import TermsOfService from "@/pages/TermsOfService";
 import PortalVideos from "@/pages/portal/PortalVideos";
 import {
   CommsTemplatesLibrary, CommsEmailBuilder, CommsSmsBuilder,
@@ -504,6 +505,8 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           {/* Feb-2026 · P11b — Privacy Policy placeholder (App Store item 4). */}
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          {/* Feb-2026 · P21b — Public Terms of Service (App Store item 4). */}
+          <Route path="/terms-of-service" element={<TermsOfService />} />
           {/* Feb 2026 · Hotfix #2 (Option C) — customer-facing login
               surface. Renders the same Login page but with the
               demo-tiles block permanently disabled (no gate, no
