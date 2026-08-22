@@ -353,7 +353,7 @@ async def post_widget_message(
             if _created and _created.get("lead", {}).get("id") == lead_id:
                 try:
                     from services.lead_notifications import send_lead_alert_notifications
-                    send_lead_alert_notifications(
+                    await send_lead_alert_notifications(
                         lead=_created["lead"], tenant=tenant,
                         background_tasks=background_tasks,
                     )

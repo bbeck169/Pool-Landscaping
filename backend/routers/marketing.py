@@ -198,7 +198,7 @@ async def submit_public_form(slug: str, body: dict, request: Request,
             tenant_doc = await db.tenants.find_one(
                 {"id": tid}, {"_id": 0}) or {"id": tid}
             from services.lead_notifications import send_lead_alert_notifications
-            send_lead_alert_notifications(
+            await send_lead_alert_notifications(
                 lead=lead, tenant=tenant_doc,
                 background_tasks=background_tasks,
             )
@@ -243,7 +243,7 @@ async def submit_form(fid: str, body: FormSubmitIn, request: Request,
         tenant_doc = await db.tenants.find_one(
             {"id": tid}, {"_id": 0}) or {"id": tid}
         from services.lead_notifications import send_lead_alert_notifications
-        send_lead_alert_notifications(
+        await send_lead_alert_notifications(
             lead=lead, tenant=tenant_doc,
             background_tasks=background_tasks,
         )

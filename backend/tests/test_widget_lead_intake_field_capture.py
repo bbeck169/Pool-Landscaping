@@ -176,10 +176,10 @@ def test_public_form_submit_fires_lead_alert_helper(p17_public_form):
     """P18 integration — after a widget submit, the notification
     helper is called with the freshly-inserted lead + tenant, and
     the call carries the widget-captured name/phone/email/message."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch, AsyncMock
     with patch(
         "services.lead_notifications.send_lead_alert_notifications",
-        MagicMock(return_value={"sms_queued": 0, "email_queued": 0}),
+        AsyncMock(return_value={"sms_queued": 0, "email_queued": 0}),
     ) as m:
         r = requests.post(
             f"{API}/public/forms/{p17_public_form['slug']}/submit",

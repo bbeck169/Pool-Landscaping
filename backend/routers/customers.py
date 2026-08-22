@@ -702,6 +702,136 @@ def _p26_client_ip(request) -> str:
             return ""
 
 
+# ─── P27 · Feb-2026 · Mute / Unmute customer ──────────────────────────
+# Muted = full silent-mode. Marketing drips, seasonal reminders,
+# reactivation campaigns, autobilling, route optimization, and P18
+# lead alerts all check ``is_muted`` and skip the customer. Mute is
+# reversible; the underlying doc is NOT soft-deleted (see P25/P26 for
+# that surface). Muted rows carry ``is_active=False`` too so every
+# existing "active only" query naturally excludes them without a
+# code change.
+#
+# Permissions:
+#   * mute   — admin OR super_admin (tech + customer → 403)
+#   * unmute — admin OR super_admin (tech + customer → 403)  [P27 addendum]
+
+
+async def _p27_write_audit(
+    *, event: str, cid: str, tenant_id: str, user: dict, request: Request,
+    extra: Optional[dict] = None,
+) -> None:
+    entry = {
+        "id": new_id(),
+        "tenant_id": tenant_id,
+        "event": event,
+        "customer_id": cid,
+        "actor_id": user.get("id"),
+        "actor_email": user.get("email"),
+        "actor_role": (user.get("role") or "").lower(),
+        "ip": _p26_client_ip(request),
+        "user_agent": (request.headers.get("user-agent") or "")[:400],
+        "created_at": now_iso(),
+    }
+    if extra:
+        entry.update(extra)
+    try:
+        await db.audit_logs.insert_one(entry)
+    except Exception:
+        logger.exception("[P27] audit log insert failed event=%s cid=%s",
+                            event, cid)
+
+
+@router.patch("/customers/{cid}/mute")
+async def mute_customer(
+    cid: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Feb-2026 · P27 — Mute a customer. Full silent-mode: marketing,
+    autobilling, route optimization, and P18 lead alerts skip the
+    row.  Idempotent: muting an already-muted customer returns 200
+    with ``{muted: false, reason: "already_muted"}``.
+
+    Auth: admin OR super_admin (tech + customer → 403 role_not_permitted).
+    """
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin"):
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": "role_not_permitted",
+                      "message": "Only admin or super_admin can mute a customer."},
+        )
+    from utils import not_deleted_filter as _nd_cust
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"], **_nd_cust()},
+        {"_id": 0, "id": 1, "is_muted": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "Customer not found")
+    if doc.get("is_muted"):
+        return {"muted": False, "reason": "already_muted", "customer_id": cid}
+    muted_at = now_iso()
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"$set": {
+            "is_muted": True,
+            "muted_at": muted_at,
+            "muted_by": user.get("id"),
+            # Muted rows are also functionally inactive so every
+            # existing ``is_active=True`` audience filter excludes
+            # them without a per-site code change.
+            "is_active": False,
+        }},
+    )
+    await _p27_write_audit(event="customer_mute", cid=cid,
+                              tenant_id=tenant["id"], user=user, request=request)
+    logger.info("[P27] customer_mute actor=%s cid=%s", user.get("email"), cid)
+    return {"muted": True, "customer_id": cid, "muted_at": muted_at}
+
+
+@router.patch("/customers/{cid}/unmute")
+async def unmute_customer(
+    cid: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Feb-2026 · P27 (+ addendum) — Unmute a customer. Restores
+    ``is_active=True`` and clears the muted-at breadcrumb. Idempotent.
+
+    Auth: admin OR super_admin (tech + customer → 403). The P27
+    addendum widened this from super_admin-only.
+    """
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin"):
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": "role_not_permitted",
+                      "message": "Only admin or super_admin can unmute a customer."},
+        )
+    from utils import not_deleted_filter as _nd_cust
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"], **_nd_cust()},
+        {"_id": 0, "id": 1, "is_muted": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "Customer not found")
+    if not doc.get("is_muted"):
+        return {"unmuted": False, "reason": "not_muted", "customer_id": cid}
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"$set": {"is_active": True},
+         "$unset": {"is_muted": "", "muted_at": "", "muted_by": ""}},
+    )
+    await _p27_write_audit(event="customer_unmute", cid=cid,
+                              tenant_id=tenant["id"], user=user, request=request)
+    logger.info("[P27] customer_unmute actor=%s cid=%s", user.get("email"), cid)
+    return {"unmuted": True, "customer_id": cid}
+
+
+
+
 @router.get("/customers/{cid}/deactivation-preview")
 async def deactivation_preview(cid: str,
                                 user: dict = Depends(require_admin),

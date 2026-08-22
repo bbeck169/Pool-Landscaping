@@ -141,7 +141,39 @@ async def _send_lead_alert_email(*, to: str, subject: str, html: str,
         logger.warning(f"[p18-bg] lead alert email failed to={to} err={e}")
 
 
-def send_lead_alert_notifications(
+async def _is_contact_muted_in_tenant(
+    *, tenant_id: str, phone: Optional[str], email: Optional[str],
+) -> Optional[str]:
+    """Feb-2026 · P27 — return the muted-customer id if this lead's
+    phone or email matches any muted customer in ``tenant_id``, else
+    None.  Full silent-mode: if it matches, the caller MUST skip
+    fan-out to preserve the muted customer's opt-out.
+    """
+    if not tenant_id:
+        return None
+    match: List[Dict[str, Any]] = []
+    p = (phone or "").strip()
+    e = (email or "").strip().lower()
+    if not p and not e:
+        return None
+    conds: List[Dict[str, Any]] = []
+    if p:
+        conds.append({"phone": p})
+    if e:
+        conds.append({"email": e})
+    if not conds:
+        return None
+    q = {"tenant_id": tenant_id, "is_muted": True,
+          "$or": conds}
+    try:
+        doc = await db.customers.find_one(q, {"_id": 0, "id": 1})
+    except Exception:
+        logger.exception("[P27] muted-contact lookup failed")
+        return None
+    return (doc or {}).get("id")
+
+
+async def send_lead_alert_notifications(
     *,
     lead: Dict[str, Any],
     tenant: Dict[str, Any],
@@ -150,13 +182,38 @@ def send_lead_alert_notifications(
     """Fan out lead-alert SMS + email to the tenant-configured
     recipient lists.  Every send is deferred via ``BackgroundTasks``
     so the caller's response returns immediately.  Returns
-    ``{sms_queued, email_queued}`` counts for observability + tests.
+    ``{sms_queued, email_queued, muted_suppressed_customer_id?}`` for
+    observability + tests.
 
     No-op when both recipient lists are empty (tenant hasn't opted in).
     Cross-tenant safe by construction: the caller MUST pass the
     tenant doc that owns the lead — this helper does NO tenant
     lookup on its own.
+
+    Feb-2026 · P27 — before fanning out, we check if the lead's
+    phone/email matches a MUTED customer in the same tenant. If it
+    does, we suppress the alert entirely and log the suppression.
+    A muted customer's inbound touch must never trigger an alert
+    (that's the whole point of the "silent-mode" contract).
     """
+    from typing import cast  # noqa: F401 — retained for type-clarity in tests
+
+    muted_cid = await _is_contact_muted_in_tenant(
+        tenant_id=tenant.get("id") or "",
+        phone=lead.get("phone"),
+        email=lead.get("email"),
+    )
+    if muted_cid:
+        logger.info(
+            "[p27] lead alert suppressed — matches muted customer %s "
+            "(tenant=%s, lead=%s)",
+            muted_cid, tenant.get("id"), lead.get("id"),
+        )
+        return {
+            "sms_queued": 0, "email_queued": 0,
+            "muted_suppressed_customer_id": muted_cid,
+        }
+
     sms_recips = list(tenant.get("lead_alert_sms_recipients") or [])
     email_recips = list(tenant.get("lead_alert_email_recipients") or [])
     if not sms_recips and not email_recips:

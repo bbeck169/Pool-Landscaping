@@ -99,9 +99,15 @@ async def build_candidate_day_routes(
 
     # 2) Load all geocoded active customers so we can materialize
     #    their lat/lng for both explicit orders and fallback routes.
+    #    Feb-2026 · P27 — explicit ``is_muted != True`` filter for
+    #    defense-in-depth (muted rows already carry ``is_active=False``
+    #    which the existing branch below excludes, but a future patch
+    #    that reintroduces ``is_active=True`` on a muted row must
+    #    still be excluded from route optimization).
     cust_rows = await db.customers.find(
         {"tenant_id": tenant_id,
           "service_lat": {"$exists": True, "$ne": None},
+          "is_muted": {"$ne": True},
           "$or": [{"is_active": {"$ne": False}}, {"is_active": {"$exists": False}}]},
         {"_id": 0, "id": 1, "name": 1, "service_lat": 1, "service_lng": 1,
           "service_days": 1, "assigned_tech_ids": 1},

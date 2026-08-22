@@ -11996,3 +11996,32 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 **Deferred**
 - Nested customer-scoped read audit (`properties.py`, `invoices_mp15.py`, `ringcentral_customer.py`) — carried over from P25.
 - Pre-existing `test_soft_delete_jwt_gate.py::test_config_public_returns_show_demo_logins` (stripe key missing from `/config/public`) — user explicitly deferred.
+
+---
+
+## Phase P27 — Muted customer category (Feb 24, 2026)
+
+**Delivered**
+- **Data model**: new `is_muted: bool` + `muted_at: iso` + `muted_by: user_id` on `customers`. Muted rows also carry `is_active: False` so every existing `is_active=True` audience filter naturally excludes them without a per-site code change. No migration needed.
+- **Endpoints** — `routers/customers.py`:
+  - `PATCH /customers/{cid}/mute` — admin OR super_admin (tech/customer → 403 `role_not_permitted`); idempotent 200 `{muted: false, reason: "already_muted"}`.
+  - `PATCH /customers/{cid}/unmute` — admin OR super_admin (per P27 addendum); idempotent 200 `{unmuted: false, reason: "not_muted"}`.
+  - Both write to `audit_logs` (events `customer_mute` / `customer_unmute`) with actor id/email/role, ip, user_agent.
+- **Filter enforcement**:
+  - `services/route_suggest.py` — added `is_muted: {$ne: True}` to the geocoded-customers audience query.
+  - `services/recurring_autogen.py` — pre-check on customer doc; skips autogen with `[p27] recurring autogen skipped` log line when muted.
+  - `services/lead_notifications.py` — converted `send_lead_alert_notifications` to `async`, added `_is_contact_muted_in_tenant` helper that matches inbound lead phone/email against muted customers in the same tenant; suppresses the entire fan-out and returns `muted_suppressed_customer_id`. All 5 async router callers updated to `await`. The P18 test suite migrated to a sync `_send_sync` shim wrapping `asyncio.get_event_loop().run_until_complete` (8/8 still green).
+- **Frontend**:
+  - New `components/customers/MuteControl.jsx` — pill + confirm modal with silent-mode warning banner on the mute path; visible to admin+super_admin.
+  - `pages/customers/CustomersList.jsx` — Muted badge (dark-red pill) + MuteControl button rendered per row when `isAdmin && !c.deleted_at`.
+- **Tests**:
+  - `backend/tests/test_customer_mute_unmute.py` — 6/6 green.
+  - `frontend/src/test/phase27-mute-control.test.jsx` — 6/6 green.
+
+**Regression sweep** — 32/32 backend across P25/P26/P27/P11b/P18; 40/40 frontend across P21/P21b/P23/P26/P27.
+
+**Deferred**
+- Retroactive check for muted-customer inbound comms (phone/email match on incoming SMS/email webhooks — currently only lead alerts are gated).
+- Marketing drip enrolment write path (`services/marketing/drip_events.py:91`, `routers/marketing_forms.py:810`) — muted rows are already excluded because they carry `is_active=False`, but a defense-in-depth explicit filter is a follow-up.
+- Nested customer-scoped read audit (still queued from P25).
+- `stripe_publishable_key` in `/config/public` (still deferred).

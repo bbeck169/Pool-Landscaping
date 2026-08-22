@@ -399,7 +399,7 @@ async def public_submit(token: str, request: Request,
             tenant_doc = await db.tenants.find_one(
                 {"id": _created["tenant_id"]}, {"_id": 0}) or {}
             from services.lead_notifications import send_lead_alert_notifications
-            send_lead_alert_notifications(
+            await send_lead_alert_notifications(
                 lead=_created["lead"], tenant=tenant_doc,
                 background_tasks=background_tasks,
             )

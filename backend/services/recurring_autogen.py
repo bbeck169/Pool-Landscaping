@@ -105,8 +105,18 @@ async def _generate_next(tpl: dict, *, count: int, from_date: date,
 
     cust = await _db.customers.find_one(
         {"id": tpl.get("customer_id"), "tenant_id": tenant_id},
-        {"_id": 0, "name": 1, "address": 1},
+        {"_id": 0, "name": 1, "address": 1, "is_muted": 1},
     ) or {}
+    # Feb-2026 · P27 — muted customers are excluded from recurring
+    # job auto-generation (part of the "silent-mode" contract).
+    if cust.get("is_muted"):
+        logger.info(
+            "[p27] recurring autogen skipped — customer %s is muted "
+            "(template=%s, tenant=%s)",
+            tpl.get("customer_id"), tpl.get("id"), tenant_id,
+        )
+        return {"inserted": 0, "skipped": 0, "dates": [],
+                  "muted_customer_id": tpl.get("customer_id")}
     tech_id = tpl.get("assigned_tech_id")
     tech = None
     if tech_id:

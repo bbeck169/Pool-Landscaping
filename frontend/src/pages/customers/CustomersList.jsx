@@ -8,6 +8,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { PageHeader, TagChip, Chip, Skeleton, EmptyState, Button, Modal, Toast } from "@/components/ui-kit";
 import CustomersTagFilterDropdown from "@/components/customers/CustomersTagFilterDropdown";
 import RestoreCustomerButton from "@/components/customers/RestoreCustomerButton";
+import MuteControl from "@/components/customers/MuteControl";
 import {
   BulkActionBar,
   BulkConfirmModal,
@@ -771,6 +772,43 @@ export default function CustomersList() {
                                 ? "Customer restored (PII stays scrubbed)"
                                 : "Customer restored",
                             });
+                            load();
+                          }}
+                          onError={(msg) =>
+                            setToast({ tone: "error", message: msg })
+                          }
+                        />
+                      ) : null}
+                      {/* Feb-2026 · P27 — Muted badge + Mute/Unmute pill. */}
+                      {c.is_muted ? (
+                        <span
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                          style={{
+                            backgroundColor: "#450A0A",
+                            color: "#FCA5A5",
+                          }}
+                          data-testid={`muted-badge-${c.id}`}
+                          title="Muted — silent mode across marketing, autobilling, route optimization, and lead alerts"
+                        >
+                          MUTED
+                        </span>
+                      ) : null}
+                      {!c.deleted_at && isAdmin ? (
+                        <MuteControl
+                          customer={c}
+                          canMute={isAdmin}
+                          canUnmute={isAdmin}
+                          onChange={(res) => {
+                            const label = res?.muted
+                              ? "Customer muted"
+                              : res?.unmuted
+                              ? "Customer unmuted"
+                              : res?.reason === "already_muted"
+                              ? "Customer was already muted"
+                              : res?.reason === "not_muted"
+                              ? "Customer was not muted"
+                              : "Done";
+                            setToast({ tone: "success", message: label });
                             load();
                           }}
                           onError={(msg) =>

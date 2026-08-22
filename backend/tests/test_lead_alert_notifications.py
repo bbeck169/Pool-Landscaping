@@ -39,6 +39,15 @@ def _run(bg: BackgroundTasks) -> None:
     asyncio.get_event_loop().run_until_complete(_drain())
 
 
+def _send_sync(**kwargs):
+    """Feb-2026 · P27 — the P18 helper became async in P27 (muted
+    customer contact match check). Existing sync tests wrap the
+    coroutine here to avoid a broad rewrite."""
+    return asyncio.get_event_loop().run_until_complete(
+        send_lead_alert_notifications(**kwargs),
+    )
+
+
 LEAD_A = {
     "id": "lead-a1",
     "name": "Alice", "phone": "+15551110001",
@@ -61,7 +70,7 @@ def test_empty_recipients_are_a_no_op():
     bg = BackgroundTasks()
     with patch("services.sms.rc_adapter.send", AsyncMock()) as sms_mock, \
          patch("services.email.resend_adapter.send", AsyncMock()) as email_mock:
-        counts = send_lead_alert_notifications(
+        counts = _send_sync(
             lead=LEAD_A, tenant=tenant, background_tasks=bg,
         )
         _run(bg)
@@ -79,7 +88,7 @@ def test_sms_only_recipients_fire_only_ringcentral():
     with patch("services.sms.rc_adapter.send",
                  AsyncMock(return_value={"provider_status": "sent"})) as sms_mock, \
          patch("services.email.resend_adapter.send", AsyncMock()) as email_mock:
-        counts = send_lead_alert_notifications(
+        counts = _send_sync(
             lead=LEAD_A, tenant=tenant, background_tasks=bg,
         )
         _run(bg)
@@ -101,7 +110,7 @@ def test_email_only_recipients_fire_only_resend():
     with patch("services.sms.rc_adapter.send", AsyncMock()) as sms_mock, \
          patch("services.email.resend_adapter.send",
                  AsyncMock(return_value={"status": "sent"})) as email_mock:
-        counts = send_lead_alert_notifications(
+        counts = _send_sync(
             lead=LEAD_A, tenant=tenant, background_tasks=bg,
         )
         _run(bg)
@@ -127,7 +136,7 @@ def test_both_configured_fires_both_channels():
                  AsyncMock(return_value={"provider_status": "sent"})) as sms_mock, \
          patch("services.email.resend_adapter.send",
                  AsyncMock(return_value={"status": "sent"})) as email_mock:
-        counts = send_lead_alert_notifications(
+        counts = _send_sync(
             lead=LEAD_A, tenant=tenant, background_tasks=bg,
         )
         _run(bg)
@@ -150,7 +159,7 @@ def test_cross_tenant_isolation():
     with patch("services.sms.rc_adapter.send",
                  AsyncMock(return_value={"provider_status": "sent"})) as sms_mock:
         # Tenant A's lead — must only fire to tenant A's recipient.
-        send_lead_alert_notifications(
+        _send_sync(
             lead=LEAD_A, tenant=tenant_a, background_tasks=bg,
         )
         _run(bg)
@@ -162,7 +171,7 @@ def test_cross_tenant_isolation():
     bg2 = BackgroundTasks()
     with patch("services.sms.rc_adapter.send",
                  AsyncMock(return_value={"provider_status": "sent"})) as sms_mock2:
-        send_lead_alert_notifications(
+        _send_sync(
             lead=LEAD_B, tenant=tenant_b, background_tasks=bg2,
         )
         _run(bg2)
