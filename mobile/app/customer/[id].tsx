@@ -16,6 +16,8 @@ import ServiceNotes from "@/src/components/customers/ServiceNotes";
 import SendCreateSheet from "@/src/components/customers/SendCreateSheet";
 import CustomerTagsSection from "@/src/components/customers/CustomerTagsSection";
 import DemoAccountToggle from "@/src/components/comms/DemoAccountToggle";
+// Feb-2026 · P29b — Mobile parity for the web mute picker.
+import MuteControlSheet from "@/src/components/customers/MuteControlSheet";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -250,6 +252,36 @@ export default function CustomerDetail() {
         {/* Legacy inactive badge retained (invisible) for prior tests referencing this testID. */}
         {!isActive ? (
           <View style={{ height: 0, opacity: 0 }} testID="customer-inactive-badge" />
+        ) : null}
+        {/* Feb-2026 · P29b — Mobile mute-picker parity. Admin + super_admin
+            only (matches the web MuteControl gating). */}
+        {isAdmin ? (
+          <MuteControlSheet
+            customer={c}
+            canMute
+            canUnmute
+            onChange={(payload) => {
+              if (!payload) return;
+              if (payload.muted) {
+                setC((prev: any) => ({
+                  ...prev,
+                  is_muted: true,
+                  is_active: false,
+                  muted_at: payload.muted_at,
+                  muted_reason: payload.muted_reason ?? null,
+                }));
+              } else if (payload.unmuted) {
+                setC((prev: any) => ({
+                  ...prev,
+                  is_muted: false,
+                  is_active: true,
+                  muted_at: undefined,
+                  muted_reason: undefined,
+                }));
+              }
+            }}
+            onError={(msg) => Alert.alert("Update failed", msg)}
+          />
         ) : null}
         <View style={styles.card}>
           <ContactRow icon="call-outline" value={c.phone} onPress={() => c.phone && Linking.openURL(`tel:${c.phone}`)} />

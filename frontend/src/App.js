@@ -61,6 +61,8 @@ import PricebookCostComparison from "@/pages/reports/PricebookCostComparison";
 import SupplierSpendReport from "@/pages/reports/SupplierSpendReport";
 import ServiceCategoriesPage from "@/pages/settings/ServiceCategoriesPage";
 import JobOutcomeReasonsPage from "@/pages/settings/JobOutcomeReasonsPage";
+// Feb-2026 · P29b — Muted Reasons admin (super_admin / admin / manager).
+import MutedReasonsPage from "@/pages/settings/MutedReasonsPage";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import SupplierSettings from "@/pages/settings/SupplierSettings";
 import SupplierSyncAnalytics from "@/pages/reports/SupplierSyncAnalytics";
@@ -461,6 +463,22 @@ function AdminOrManagerForSuppliers({ children }) {
 }
 
 
+// Feb-2026 · P29b — Muted Reasons manager. Admin/super_admin/manager
+// may CRUD the tenant's picker list. Techs + customers redirect out.
+// Mirrors AdminOrManagerForSuppliers but named for the muted-reasons
+// surface so future changes stay scoped.
+function AdminOrManagerForMutedReasons({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  const role = user?.role || "";
+  const allowed = role === "admin" || role === "super_admin" || role === "manager";
+  if (!user || !allowed) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+
 // Phase 21 · Feb 2026 · Vanity slug editor — super_admin gated.
 // Anyone else lands on `/` (unauthorized surface for this app).
 function SuperAdminOnly({ children }) {
@@ -663,6 +681,8 @@ export default function App() {
             <Route path="admin/reports/supplier-spend" element={<AdminOnly><SupplierSpendReport /></AdminOnly>} />
             <Route path="settings/service-categories" element={<AdminOnly><ServiceCategoriesPage /></AdminOnly>} />
             <Route path="settings/job-outcome-reasons" element={<AdminOnly><JobOutcomeReasonsPage /></AdminOnly>} />
+            {/* Feb-2026 · P29b — Muted Reasons manager (super_admin / admin / manager). */}
+            <Route path="settings/muted-reasons" element={<AdminOrManagerForMutedReasons><MutedReasonsPage /></AdminOrManagerForMutedReasons>} />
             <Route path="settings/billing" element={<AdminOnly><BillingSettings /></AdminOnly>} />
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />

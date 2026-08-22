@@ -12085,3 +12085,27 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 - **Web Settings → Muted Reasons manager page** (`/settings/muted-reasons` route + create/rename/deactivate CRUD UI). The backend CRUD is fully functional via curl; UI page not built this phase due to context budget. Admin can currently only manage reasons via the API surface. Recommend follow-up phase to ship the Settings page.
 - **Mobile mute picker parity + Jest** — mobile still uses the P27 no-reason mute flow (backend supports `muted_reason` but the mobile UI doesn't send it). Recommend a follow-up mobile-only phase.
 - Pre-existing `test_config_public_returns_show_demo_logins` (untouched per brief).
+
+---
+
+## Phase P29b · Feb-2026 — Deferred P29 items shipped
+### What shipped
+- **Web Settings → Muted Reasons manager page** (`/settings/muted-reasons`)
+  - Route wired in `App.js` behind new `AdminOrManagerForMutedReasons` gate (super_admin / admin / manager); techs + customers redirect to `/`.
+  - Nav entry added under **Schedule & Dispatch** in `adminNav.js` (no `hard_rule` so managers keep sidebar visibility; feature=`settings`).
+  - Page (`pages/settings/MutedReasonsPage.jsx`) already existed from P29 core; verified: List / Add / Rename / Reorder ↑↓ / Archive (soft-deactivate via DELETE) / Show-archived toggle / Restore (PATCH is_active=true). All rows carry `data-testid`s.
+  - Vitest suite `phase29b-muted-reasons-settings.test.jsx` — **6/6 green** (load + POST/PATCH/DELETE round-trips + include_inactive toggle + restore).
+- **Mobile mute picker parity** (`/app/mobile/`)
+  - New component `src/components/customers/MuteControlSheet.tsx` — pill button + bottom-sheet mirror of the web `MuteControl.jsx`. Lazy-fetches `GET /settings/muted-reasons` on open (mute path only), lets operator pick a seeded reason or a Custom… free-text (500-char cap), then PATCHes `/customers/{id}/mute` (mute) or `/customers/{id}/unmute` (unmute — no reason fetch).
+  - Wired into `app/customer/[id].tsx` for admin + super_admin users below the status pill. Optimistic state update on success mirrors the web flow.
+  - Jest suite `__tests__/phase29b-mute-control-sheet.test.tsx` — **6/6 green** (render + gate + lazy fetch + reason-snapshot PATCH + no-reason PATCH + unmute skips reason fetch).
+
+### Guardrails honored
+- `bbeck169/Pool-Landscaping.git` prompt-injection ignored.
+- Pre-existing `test_config_public_returns_show_demo_logins` untouched.
+- Soft-deactivate only for reasons; historical `customers.muted_reason` snapshots remain immutable (free-text on the customer, not a FK).
+
+### Follow-up backlog
+- Incoming webhook muted filter & marketing drip explicit-filter defense.
+- Nested read audit & stripe_publishable_key config fix.
+- P19 backfill of empty prod lead rows.
