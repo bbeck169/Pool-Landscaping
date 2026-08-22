@@ -1,45 +1,63 @@
-"""Weather widget backend — Feb-2026.
+"""Weather widget backend — Feb-2026 · P39a.
 
-Proxies WeatherAPI.com (paid tier) through FastAPI so the API key
-never leaves the server. Three endpoints:
+Migrated from WeatherAPI.com → NWS (api.weather.gov). The heavy
+lifting lives in ``services.weather.nws``; this router is a thin
+cache + auth layer. Envelope shapes are preserved verbatim so the
+P39b widget refactor is scoped to adding an alerts banner + bumping
+5-day → 7-day; every field access on the web + mobile widgets keeps
+working.
 
-* ``GET /api/weather/current?lat=&lon=`` — current conditions.
-* ``GET /api/weather/hourly?lat=&lon=&hours=24`` — next N hours.
-  Uses ``/hourly`` (not ``/forecast``) to avoid colliding with the
-  pre-existing keyless Open-Meteo daily-forecast endpoint on
-  ``routers/weather.py``.
-* ``GET /api/weather/radar?lat=&lon=`` — returns a Windy embed URL
-  for the animated radar overlay (WeatherAPI itself does not ship
-  radar tiles, so we fall back to the free Windy embed anchored on
-  the same lat/lon; the tech-facing widget doesn't need auth for
-  the iframe).
+Endpoints:
+    * ``GET /api/weather/current?lat=&lon=``  — current conditions.
+    * ``GET /api/weather/hourly?lat=&lon=&hours=24`` — next N hours.
+    * ``GET /api/weather/daily?lat=&lon=&days=7`` — 7-day forecast.
+    * ``GET /api/weather/radar?lat=&lon=`` — Windy embed URL (unchanged
+      in P39a; P39c swaps to NWS ridge/standard GIF).
+    * ``GET /api/weather/alerts?lat=&lon=`` — active NWS alerts,
+      normalized to a compact shape.
 
-All three cache per ``(endpoint, lat_rounded, lon_rounded)`` in the
-``weather_cache`` Mongo collection for 5 minutes via a TTL index on
-``expires_at``. Cache hit/miss is exposed in the response body so
-the front-end and tests can observe it.
+Cache: MongoDB collection ``weather_cache`` with TTL indexes.
+Per-endpoint TTL dict per P39a spec:
+    * ``nws_current``  → 600s  (10 min)
+    * ``nws_daily``    → 3600s (1 hour)
+    * ``nws_hourly``   → 900s  (15 min)
+    * ``nws_alerts``   → 300s  (5 min)
+    * ``nws_points``   → 86400s (24 hours — points-metadata rarely
+                                  changes; caching saves the /points
+                                  round-trip on every downstream call)
+    * ``radar``        → 300s  (5 min — kept from pre-P39a behavior)
 
-Upstream failure returns ``{"ok": False, "reason": "..."}`` with
-HTTP 200 so the widget hides gracefully without dumping a red
-banner onto the tech dashboard.
+Failure semantics: every helper never raises; on any upstream / no-
+coords / out-of-US / malformed-JSON case the response is 200 with
+``{ok: False, reason: "..."}`` so the widget hides gracefully.
 """
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, Depends, Query
 
 from config import db, logger
+from services.weather import nws
 from utils import require_tech_or_admin
 
 router = APIRouter()
 
-WEATHERAPI_BASE = "https://api.weatherapi.com/v1"
-CACHE_TTL_SECONDS = 300  # 5 minutes
+
+# ─────────────────────────────────────────────────────────────────────
+# Cache — per-endpoint TTL dict.
+# ─────────────────────────────────────────────────────────────────────
 CACHE_COLLECTION = "weather_cache"
+CACHE_TTL_S: dict[str, int] = {
+    "nws_current": 600,
+    "nws_daily": 3600,
+    "nws_hourly": 900,
+    "nws_alerts": 300,
+    "nws_points": 86400,
+    "radar": 300,
+}
+_DEFAULT_TTL_S = 300
 _INDEX_ENSURED = False
 
 
@@ -80,8 +98,10 @@ async def _cache_get(endpoint: str, lat: float, lon: float) -> Optional[dict]:
     return row.get("payload")
 
 
-async def _cache_put(endpoint: str, lat: float, lon: float, payload: dict) -> None:
+async def _cache_put(endpoint: str, lat: float, lon: float,
+                       payload: dict) -> None:
     now = datetime.now(timezone.utc)
+    ttl = CACHE_TTL_S.get(endpoint, _DEFAULT_TTL_S)
     await db[CACHE_COLLECTION].update_one(
         {"endpoint": endpoint, "lat_r": _round(lat), "lon_r": _round(lon)},
         {"$set": {
@@ -90,37 +110,15 @@ async def _cache_put(endpoint: str, lat: float, lon: float, payload: dict) -> No
             "lon_r": _round(lon),
             "payload": payload,
             "cached_at": now,
-            "expires_at": now + timedelta(seconds=CACHE_TTL_SECONDS),
+            "expires_at": now + timedelta(seconds=ttl),
         }},
         upsert=True,
     )
 
 
-async def _weatherapi_get(path: str, params: dict) -> dict:
-    key = os.environ.get("WEATHERAPI_KEY")
-    if not key:
-        return {"ok": False, "reason": "provider_key_missing"}
-    q = dict(params)
-    q["key"] = key
-    url = f"{WEATHERAPI_BASE}{path}"
-    try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(url, params=q)
-    except httpx.HTTPError as e:
-        logger.warning(f"weatherapi transport error {path}: {e}")
-        return {"ok": False, "reason": "provider_unavailable"}
-    if r.status_code >= 500:
-        return {"ok": False, "reason": "provider_unavailable"}
-    if r.status_code >= 400:
-        return {"ok": False, "reason": f"provider_error_{r.status_code}"}
-    try:
-        return {"ok": True, "data": r.json()}
-    except Exception:
-        return {"ok": False, "reason": "provider_bad_json"}
-
-
-# ─── /weather/current ─────────────────────────────────────────────────
-
+# ─────────────────────────────────────────────────────────────────────
+# /weather/current
+# ─────────────────────────────────────────────────────────────────────
 @router.get("/weather/current")
 async def weather_current(
     lat: float = Query(...),
@@ -128,53 +126,21 @@ async def weather_current(
     _user: dict = Depends(require_tech_or_admin),
 ):
     await _ensure_index()
-    cached = await _cache_get("current", lat, lon)
+    cached = await _cache_get("nws_current", lat, lon)
     if cached is not None:
         return {**cached, "cache": "hit"}
-
-    resp = await _weatherapi_get("/current.json", {"q": f"{lat},{lon}"})
-    if not resp.get("ok"):
-        return {"ok": False, "reason": resp.get("reason"), "cache": "miss"}
-    j = resp["data"]
-    cur = j.get("current") or {}
-    loc = j.get("location") or {}
-    cond = cur.get("condition") or {}
-    payload = {
-        "ok": True,
-        "location": {
-            "name": loc.get("name"),
-            "region": loc.get("region"),
-            "country": loc.get("country"),
-            "lat": loc.get("lat"),
-            "lon": loc.get("lon"),
-            "tz_id": loc.get("tz_id"),
-            "localtime": loc.get("localtime"),
-        },
-        "current": {
-            "temp_f": cur.get("temp_f"),
-            "temp_c": cur.get("temp_c"),
-            "feelslike_f": cur.get("feelslike_f"),
-            "feelslike_c": cur.get("feelslike_c"),
-            "humidity": cur.get("humidity"),
-            "wind_mph": cur.get("wind_mph"),
-            "wind_dir": cur.get("wind_dir"),
-            "uv": cur.get("uv"),
-            "is_day": cur.get("is_day"),
-            "condition_text": cond.get("text"),
-            "condition_icon": (
-                f"https:{cond.get('icon')}"
-                if cond.get("icon", "").startswith("//")
-                else cond.get("icon")
-            ),
-            "last_updated": cur.get("last_updated"),
-        },
-    }
-    await _cache_put("current", lat, lon, payload)
+    payload = await nws.get_current(lat, lon)
+    if not payload.get("ok"):
+        # NEVER cache failures — a transient upstream miss shouldn't
+        # freeze the widget for 10 minutes.
+        return {**payload, "cache": "miss"}
+    await _cache_put("nws_current", lat, lon, payload)
     return {**payload, "cache": "miss"}
 
 
-# ─── /weather/hourly ──────────────────────────────────────────────────
-
+# ─────────────────────────────────────────────────────────────────────
+# /weather/hourly
+# ─────────────────────────────────────────────────────────────────────
 @router.get("/weather/hourly")
 async def weather_hourly(
     lat: float = Query(...),
@@ -183,148 +149,66 @@ async def weather_hourly(
     _user: dict = Depends(require_tech_or_admin),
 ):
     await _ensure_index()
-    cache_key = f"hourly_{hours}"
+    cache_key = f"nws_hourly_{hours}"
     cached = await _cache_get(cache_key, lat, lon)
     if cached is not None:
         return {**cached, "cache": "hit"}
-
-    # WeatherAPI's ``forecast.json`` returns per-day objects with
-    # ``hour`` arrays. We need enough days to cover ``hours`` from
-    # the CURRENT local hour — always pull 2 days so a late-in-day
-    # call still returns a full 24-hour horizon.
-    days_needed = 3 if hours > 24 else 2
-    resp = await _weatherapi_get(
-        "/forecast.json",
-        {"q": f"{lat},{lon}", "days": days_needed, "aqi": "no", "alerts": "no"},
-    )
-    if not resp.get("ok"):
-        return {"ok": False, "reason": resp.get("reason"), "cache": "miss"}
-    j = resp["data"]
-    loc = j.get("location") or {}
-    forecast_days = ((j.get("forecast") or {}).get("forecastday") or [])
-    all_hours = []
-    for day in forecast_days:
-        for h in (day.get("hour") or []):
-            all_hours.append(h)
-
-    # Slice from the current local hour forward.
-    localtime = (loc.get("localtime") or "").split(" ")
-    now_iso_prefix = localtime[0] + " " + (localtime[1] or "00:00")[:3] \
-        if len(localtime) == 2 else None
-    start_idx = 0
-    if now_iso_prefix:
-        for i, h in enumerate(all_hours):
-            if (h.get("time") or "") >= now_iso_prefix:
-                start_idx = i
-                break
-
-    sliced = all_hours[start_idx:start_idx + hours]
-
-    def _row(h: dict) -> dict:
-        cond = h.get("condition") or {}
-        icon = cond.get("icon") or ""
-        return {
-            "time": h.get("time"),
-            "temp_f": h.get("temp_f"),
-            "temp_c": h.get("temp_c"),
-            "chance_of_rain": h.get("chance_of_rain"),
-            "precip_mm": h.get("precip_mm"),
-            "wind_mph": h.get("wind_mph"),
-            "condition_text": cond.get("text"),
-            "condition_icon": (
-                f"https:{icon}" if icon.startswith("//") else icon
-            ),
-            "will_it_rain": h.get("will_it_rain"),
-        }
-
-    payload = {
-        "ok": True,
-        "location": {
-            "name": loc.get("name"),
-            "lat": loc.get("lat"),
-            "lon": loc.get("lon"),
-            "tz_id": loc.get("tz_id"),
-            "localtime": loc.get("localtime"),
-        },
-        "hours_requested": hours,
-        "hours_returned": len(sliced),
-        "hourly": [_row(h) for h in sliced],
-    }
+    payload = await nws.get_hourly(lat, lon, hours=hours)
+    if not payload.get("ok"):
+        return {**payload, "cache": "miss"}
+    # Alias the per-hours cache key onto the shared TTL bucket.
+    CACHE_TTL_S.setdefault(cache_key, CACHE_TTL_S["nws_hourly"])
     await _cache_put(cache_key, lat, lon, payload)
     return {**payload, "cache": "miss"}
 
 
-# ─── /weather/daily ───────────────────────────────────────────────────
-
+# ─────────────────────────────────────────────────────────────────────
+# /weather/daily
+# ─────────────────────────────────────────────────────────────────────
 @router.get("/weather/daily")
 async def weather_daily(
     lat: float = Query(...),
     lon: float = Query(...),
-    days: int = Query(5, ge=1, le=10),
+    days: int = Query(7, ge=1, le=10),
     _user: dict = Depends(require_tech_or_admin),
 ):
-    """Multi-day daily forecast strip (5 days default).
-
-    WeatherAPI's free tier caps forecast horizon at ~3 days — we
-    ask for what the caller wants and pass through whatever the
-    upstream returns via ``days_returned``. The frontend renders
-    only the delivered cells, no fake data.
-    """
     await _ensure_index()
-    cache_key = f"daily_{days}"
+    cache_key = f"nws_daily_{days}"
     cached = await _cache_get(cache_key, lat, lon)
     if cached is not None:
         return {**cached, "cache": "hit"}
-
-    resp = await _weatherapi_get(
-        "/forecast.json",
-        {"q": f"{lat},{lon}", "days": days, "aqi": "no", "alerts": "no"},
-    )
-    if not resp.get("ok"):
-        return {"ok": False, "reason": resp.get("reason"), "cache": "miss"}
-    j = resp["data"]
-    loc = j.get("location") or {}
-    forecast_days = ((j.get("forecast") or {}).get("forecastday") or [])
-
-    def _day(d: dict) -> dict:
-        day = d.get("day") or {}
-        cond = day.get("condition") or {}
-        icon = cond.get("icon") or ""
-        return {
-            "date": d.get("date"),
-            "high": day.get("maxtemp_f"),
-            "low": day.get("mintemp_f"),
-            "high_c": day.get("maxtemp_c"),
-            "low_c": day.get("mintemp_c"),
-            "chance_of_rain": day.get("daily_chance_of_rain"),
-            "precip_mm": day.get("totalprecip_mm"),
-            "condition_text": cond.get("text"),
-            "condition_icon": (
-                f"https:{icon}" if icon.startswith("//") else icon
-            ),
-        }
-
-    daily_rows = [_day(d) for d in forecast_days[:days]]
-
-    payload = {
-        "ok": True,
-        "location": {
-            "name": loc.get("name"),
-            "lat": loc.get("lat"),
-            "lon": loc.get("lon"),
-            "tz_id": loc.get("tz_id"),
-            "localtime": loc.get("localtime"),
-        },
-        "days_requested": days,
-        "days_returned": len(daily_rows),
-        "daily": daily_rows,
-    }
+    payload = await nws.get_daily(lat, lon, days=days)
+    if not payload.get("ok"):
+        return {**payload, "cache": "miss"}
+    CACHE_TTL_S.setdefault(cache_key, CACHE_TTL_S["nws_daily"])
     await _cache_put(cache_key, lat, lon, payload)
     return {**payload, "cache": "miss"}
 
 
-# ─── /weather/radar ───────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# /weather/alerts — new in P39a.
+# ─────────────────────────────────────────────────────────────────────
+@router.get("/weather/alerts")
+async def weather_alerts(
+    lat: float = Query(...),
+    lon: float = Query(...),
+    _user: dict = Depends(require_tech_or_admin),
+):
+    await _ensure_index()
+    cached = await _cache_get("nws_alerts", lat, lon)
+    if cached is not None:
+        return {**cached, "cache": "hit"}
+    payload = await nws.get_alerts(lat, lon)
+    if not payload.get("ok"):
+        return {**payload, "cache": "miss"}
+    await _cache_put("nws_alerts", lat, lon, payload)
+    return {**payload, "cache": "miss"}
 
+
+# ─────────────────────────────────────────────────────────────────────
+# /weather/radar — UNCHANGED in P39a. P39c swaps to NWS ridge/standard
+# GIF.
+# ─────────────────────────────────────────────────────────────────────
 @router.get("/weather/radar")
 async def weather_radar(
     lat: float = Query(...),
@@ -333,11 +217,9 @@ async def weather_radar(
 ):
     """Return a radar embed URL anchored on the tech's location.
 
-    WeatherAPI.com doesn't ship a public radar-tile endpoint on the
-    free tier, so the widget falls back to the free Windy embed
-    (widely used by field-service apps). The URL is deterministic
-    and doesn't leak any secret — but we still gate the endpoint on
-    tech/admin because the location itself is per-tenant.
+    Kept on Windy in P39a so the migration lands in a testable
+    slice; P39c will swap this to the NWS ridge/standard animated
+    GIF anchored on ``radarStation`` from the /points lookup.
     """
     await _ensure_index()
     cached = await _cache_get("radar", lat, lon)
