@@ -196,6 +196,12 @@ export default function CustomersList() {
 
   useEffect(() => {
     load();
+    // Feb-2026 · P40 — tab-count badges must refresh alongside every
+    // list refresh so a mute/activate/bulk action can't leave a
+    // stale "MUTED 4" chip while the envelope reports 7 rows. Counts
+    // are 3 cheap ``count_documents`` calls; running them on tab /
+    // filter / page changes is the durable "can't drift" fix.
+    loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, includeDeleted, page]);
 
@@ -223,6 +229,10 @@ export default function CustomersList() {
   }, [page]);
 
   useEffect(() => {
+    // Feb-2026 · P40 — one-shot on mount is fine; the effect above
+    // that runs on filter/tab/page changes also fires ``loadCounts``,
+    // so this initial-mount call primes the badges before the first
+    // filter change.
     loadCounts();
   }, []);
 
@@ -406,7 +416,11 @@ export default function CustomersList() {
       });
       sonnerToast.success(`${res.updated_count || 0} customer${(res.updated_count || 0) === 1 ? "" : "s"} reassigned`);
       setSelected(new Set());
+      // Feb-2026 · P40 — refresh counts alongside; assigned_owner
+      // change doesn't shift cohorts today but keeping the pattern
+      // consistent avoids a future regression.
       load();
+      loadCounts();
     } catch (e) { sonnerToast.error(e?.message || "Reassign failed"); }
   };
 
@@ -943,7 +957,12 @@ export default function CustomersList() {
                               ? "Customer was not muted"
                               : "Done";
                             setToast({ tone: "success", message: label });
+                            // Feb-2026 · P40 — mute/unmute changes
+                            // the muted cohort but not any load()
+                            // dep, so counts wouldn't otherwise
+                            // refresh via the useEffect.
                             load();
+                            loadCounts();
                           }}
                           onError={(msg) =>
                             setToast({ tone: "error", message: msg })
@@ -1065,7 +1084,11 @@ export default function CustomersList() {
                               ? "Customer was not muted"
                               : "Done";
                             setToast({ tone: "success", message: label });
+                            // Feb-2026 · P40 — refresh tab counts
+                            // alongside the list; see the identical
+                            // handler above for rationale.
                             load();
+                            loadCounts();
                           }}
                           onError={(msg) =>
                             setToast({ tone: "error", message: msg })
