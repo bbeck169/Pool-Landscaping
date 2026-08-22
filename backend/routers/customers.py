@@ -216,8 +216,26 @@ class CustomerListCount(BaseModel):
     count: int
 
 
+# ─────────────────────────────────────────────────────────────────
+# Feb-2026 · P35 — pagination response shape (opt-in).
+# The endpoint keeps returning a bare ``List[CustomerListItem]``
+# when neither ``page`` nor ``page_size`` is supplied so the 20+
+# existing bare-array callers (jobs, comms, quotes, estimator,
+# workstream, warranties, invoices, reviews, tracking, D2D, AI
+# tools, finance) stay untouched. When either query param is
+# present, the endpoint returns the paginated envelope below.
+# ─────────────────────────────────────────────────────────────────
+class CustomerListPage(BaseModel):
+    items: List[CustomerListItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 @router.get("/customers",
-    response_model=Union[List[CustomerListItem], CustomerListCount],
+    response_model=Union[List[CustomerListItem], CustomerListCount,
+                            CustomerListPage],
     summary="List customers",
     responses={200: {"description": (
         "Customer rows scoped to the caller's tenant. Each row includes "
@@ -226,7 +244,12 @@ class CustomerListCount(BaseModel):
         "the customer. Zero when none exist. Used by the customers list "
         "to render a `N properties` chip when ≥2.\n\n"
         "When ``count_only=true``, the response is a compact "
-        "``{\"count\": int}`` object instead of the row array."
+        "``{\"count\": int}`` object instead of the row array.\n\n"
+        "**Feb-2026 · P35 pagination (opt-in).** When either ``page`` "
+        "or ``page_size`` is supplied, the response becomes a paginated "
+        "envelope: ``{items, total, page, page_size, total_pages}``. "
+        "Callers that do not pass either param continue to receive the "
+        "legacy bare-array response verbatim."
     )}})
 async def list_customers(
     user: dict = Depends(get_current_user),
@@ -240,6 +263,8 @@ async def list_customers(
     is_muted: Optional[bool] = Query(None, description="Feb-2026 · P28 admin/super_admin only — filter to muted (true) or non-muted (false); absent = no filter"),
     count_only: bool = False,
     include_deleted: bool = Query(False, description="Feb-2026 · P25 super_admin only — include soft-deleted customers"),
+    page: Optional[int] = Query(None, description="Feb-2026 · P35 — 1-indexed page number. Presence of this OR page_size flips the response into a paginated envelope."),
+    page_size: Optional[int] = Query(None, description="Feb-2026 · P35 — page size (1..500). Presence of this OR page flips the response into a paginated envelope."),
 ):
     # RBAC: only staff (admin/technician/super_admin) may list customer records. Customers use /me.
     if user.get("role") not in ("admin", "technician", "super_admin"):
@@ -307,7 +332,62 @@ async def list_customers(
         ]
     if count_only:
         return {"count": await db.customers.count_documents(q)}
-    docs = await db.customers.find(q, {"_id": 0}).sort("name", 1).to_list(2000)
+
+    # ─────────────────────────────────────────────────────────────
+    # Feb-2026 · P35 — pagination. Opt-in via ``page`` or ``page_size``.
+    # Validation is manual so we can raise 400 (rather than FastAPI's
+    # default 422) with a clear, machine-readable ``detail`` code.
+    # ─────────────────────────────────────────────────────────────
+    _paginated = (page is not None) or (page_size is not None)
+    if _paginated:
+        if page is None:
+            page = 1
+        if page_size is None:
+            page_size = 100
+        if page < 1:
+            raise HTTPException(
+                status_code=400,
+                detail={"detail": "invalid_page",
+                          "message": "page must be >= 1",
+                          "page": page},
+            )
+        if page_size < 1 or page_size > 500:
+            raise HTTPException(
+                status_code=400,
+                detail={"detail": "invalid_page_size",
+                          "message": "page_size must be between 1 and 500",
+                          "page_size": page_size},
+            )
+
+    # The ``unscheduled`` and ``missing_card`` filters run in Python
+    # AFTER the Mongo query (see below), so paginating at the DB layer
+    # would produce wrong totals when either is set. We branch: the
+    # common case (no Python post-filter) uses Mongo-side skip/limit
+    # + count_documents (efficient); the rarer case pulls the full
+    # filtered set and slices in Python (correct).
+    _needs_python_postfilter = bool(unscheduled) or bool(missing_card)
+
+    if _paginated and not _needs_python_postfilter:
+        # Fast path — DB-side pagination.
+        total = await db.customers.count_documents(q)
+        skip = (page - 1) * page_size
+        docs = await (db.customers.find(q, {"_id": 0})
+                          .sort("name", 1)
+                          .skip(skip).limit(page_size)
+                          .to_list(page_size))
+    elif _paginated and _needs_python_postfilter:
+        # Correct-but-slower path — Python-side slice after post-filters.
+        # Uncapped fetch so ``total`` reflects the true filtered count
+        # for tenants past the legacy 2000-row ceiling. The skip/limit
+        # is applied AFTER unscheduled / missing_card below.
+        docs = await (db.customers.find(q, {"_id": 0})
+                          .sort("name", 1)
+                          .to_list(length=None))
+    else:
+        # Legacy path — no pagination requested. Keep the 2000-row
+        # ceiling to preserve exact backwards-compat with all bare-array
+        # callers (they've been living with this cap since Phase 34f).
+        docs = await db.customers.find(q, {"_id": 0}).sort("name", 1).to_list(2000)
     # If unscheduled=true, filter out customers who have any non-completed/cancelled job.
     if unscheduled:
         from utils import not_deleted_filter as _nd
@@ -354,6 +434,29 @@ async def list_customers(
         docs = [d for d in docs
                 if d.get("effective_require_card_on_file")
                 and not d.get("has_card_on_file")]
+
+    # Feb-2026 · P35 — pagination response assembly. The paginated
+    # envelope is only produced when the caller opted in via the
+    # ``page`` / ``page_size`` query params; every other caller gets
+    # the legacy bare-array response verbatim.
+    if _paginated:
+        if _needs_python_postfilter:
+            # Total reflects the count AFTER unscheduled/missing_card
+            # post-filters (i.e. the count the pager should paginate).
+            total = len(docs)
+            skip = (page - 1) * page_size
+            docs = docs[skip: skip + page_size]
+        # else: ``total`` was already computed via count_documents
+        # above; ``docs`` was already sliced by skip/limit at the DB.
+        _total_pages = 0 if total == 0 else (
+            (total + page_size - 1) // page_size)
+        return {
+            "items": docs,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": _total_pages,
+        }
     return docs
 
 

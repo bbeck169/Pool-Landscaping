@@ -23,6 +23,14 @@ export default function Customers() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
+  // Feb-2026 · P35 — mobile infinite-scroll pagination. Initial load
+  // fetches page 1 (100 rows); ``onEndReached`` on the FlatList pulls
+  // the next page and appends. Total pages is read from the response
+  // envelope so we can short-circuit at the tail.
+  const _PAGE_SIZE = 100;
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
   // Bulk-inactive confirm modal state (mobile mirror of the web modal).
   const [inactiveModalOpen, setInactiveModalOpen] = useState(false);
   const [inactiveBusy, setInactiveBusy] = useState(false);
@@ -30,17 +38,37 @@ export default function Customers() {
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
   const bulk = useBulkSelect(visibleIds);
 
-  const load = useCallback(async (s: string) => {
+  const load = useCallback(async (s: string, targetPage: number = 1) => {
     try {
-      const q = s ? `?search=${encodeURIComponent(s)}` : "";
-      setItems(await api.get(`/customers${q}`));
+      const qp = new URLSearchParams();
+      if (s) qp.set("search", s);
+      qp.set("page", String(targetPage));
+      qp.set("page_size", String(_PAGE_SIZE));
+      const res: any = await api.get(`/customers?${qp.toString()}`);
+      // P35 envelope: {items, total, page, page_size, total_pages}.
+      // Defensive: legacy bare-array fallback for pre-P35 backends.
+      const rows = Array.isArray(res) ? res : (res?.items || []);
+      const tp = Number.isFinite(res?.total_pages)
+        ? res.total_pages
+        : (rows.length ? 1 : 0);
+      setTotalPages(tp);
+      setPage(targetPage);
+      setItems((prev) => targetPage <= 1 ? rows : [...prev, ...rows]);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { load(search); }, [load, search]));
+  const loadMore = useCallback(() => {
+    if (loadingMore) return;
+    if (page >= totalPages) return;
+    setLoadingMore(true);
+    load(search, page + 1);
+  }, [loadingMore, page, totalPages, search, load]);
+
+  useFocusEffect(useCallback(() => { load(search, 1); }, [load, search]));
 
   const exitSelectMode = () => { setSelectMode(false); bulk.clear(); };
 
@@ -151,7 +179,9 @@ export default function Customers() {
           data={items}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ padding: spacing.lg, paddingTop: spacing.sm, paddingBottom: selectMode ? 100 : spacing["3xl"] }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(search); }} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(search, 1); }} />}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
           renderItem={({ item }) => (
             <Pressable
               style={[styles.row, bulk.selected.has(item.id) && styles.rowSelected]}

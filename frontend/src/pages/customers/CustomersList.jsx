@@ -9,6 +9,7 @@ import { PageHeader, TagChip, Chip, Skeleton, EmptyState, Button, Modal, Toast }
 import CustomersTagFilterDropdown from "@/components/customers/CustomersTagFilterDropdown";
 import RestoreCustomerButton from "@/components/customers/RestoreCustomerButton";
 import MuteControl from "@/components/customers/MuteControl";
+import CustomersPager from "@/components/customers/CustomersPager";
 
 
 // Feb-2026 · P28 — tiny relative-time formatter for the Muted saved
@@ -84,6 +85,17 @@ export default function CustomersList() {
   const [counts, setCounts] = useState({ active: null, inactive: null });
 
   const [rows, setRows] = useState(null);
+  // Feb-2026 · P35 — server-side pagination. Page is URL-synced so
+  // refresh preserves position. Page size is fixed at 100 to match
+  // the phase brief; the response envelope drives ``total`` and
+  // ``totalPages``.
+  const _PAGE_SIZE = 100;
+  const [page, setPage] = useState(() => {
+    const raw = parseInt(searchParams.get("page") || "1", 10);
+    return Number.isFinite(raw) && raw >= 1 ? raw : 1;
+  });
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   // Feb-2026 · Tag chip filter bar — multi-select AND semantics.
   // Client-side filter after the initial fetch (backend GET
   // /customers only supports single-tag today).
@@ -140,13 +152,24 @@ export default function CustomersList() {
     if (missingCardOnly) params.set("missing_card", "true");
     // Feb-2026 · P26 — super_admin escape hatch to see soft-deleted rows.
     if (includeDeleted && isSuperAdmin) params.set("include_deleted", "true");
+    // Feb-2026 · P35 — always request the paginated envelope.
+    params.set("page", String(page));
+    params.set("page_size", String(_PAGE_SIZE));
     try {
-      const data = await api.get(`/customers${params.toString() ? "?" + params : ""}`);
-      setRows(data || []);
+      const data = await api.get(`/customers?${params.toString()}`);
+      // Envelope-shaped when page/page_size present (Strategy B).
+      const items = Array.isArray(data) ? data : (data?.items || []);
+      setRows(items);
+      setTotal(Number.isFinite(data?.total) ? data.total : items.length);
+      setTotalPages(Number.isFinite(data?.total_pages)
+        ? data.total_pages
+        : (items.length ? 1 : 0));
       setSelected(new Set());
     } catch (e) {
       setToast({ tone: "error", message: e.message });
       setRows([]);
+      setTotal(0);
+      setTotalPages(0);
     }
   };
 
@@ -174,7 +197,30 @@ export default function CustomersList() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchDeb, tag, scope, tab, missingCardOnly, includeDeleted, page]);
+
+  // Feb-2026 · P35 — any filter or tab change resets pagination to
+  // page 1 so the user doesn't land on an empty page after narrowing
+  // the result set. The load effect above then fires with page=1.
+  const _firstFilterEffect = useRef(true);
+  useEffect(() => {
+    if (_firstFilterEffect.current) {
+      _firstFilterEffect.current = false;
+      return;
+    }
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, includeDeleted]);
+
+  // Feb-2026 · P35 — URL sync for ``page``. ``page=1`` is the default
+  // so it's dropped from the URL to keep the query string tidy.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (page > 1) next.set("page", String(page));
+    else next.delete("page");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
 
   useEffect(() => {
     loadCounts();
@@ -475,7 +521,13 @@ export default function CustomersList() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="customers-page">
       <PageHeader
         title="Customers"
-        subtitle={`${(filtered || []).length} shown`}
+        subtitle={
+          total > 0
+            ? `Showing ${((page - 1) * _PAGE_SIZE + 1).toLocaleString()}-`
+              + `${Math.min(page * _PAGE_SIZE, total).toLocaleString()} of `
+              + `${total.toLocaleString()}`
+            : `${(filtered || []).length} shown`
+        }
         right={
           <>
             <Button variant="ghost" onClick={doExport} testid="customers-export">
@@ -719,6 +771,16 @@ export default function CustomersList() {
               setSelectedTags={setSelectedTags}
             />
           )}
+          {/* Feb-2026 · P35 — top pager. Hides itself when total_pages
+              < 2. Shares state with the bottom pager below. */}
+          <CustomersPager
+            page={page}
+            total_pages={totalPages}
+            total={total}
+            page_size={_PAGE_SIZE}
+            onPageChange={setPage}
+            testidPrefix="customers-pager-top"
+          />
           <table className="w-full text-sm" data-testid="customers-table">
             <thead>
               <tr style={{ backgroundColor: colors.surfaceSecondary }}>
@@ -1023,6 +1085,15 @@ export default function CustomersList() {
               ))}
             </tbody>
           </table>
+          {/* Feb-2026 · P35 — bottom pager. Same state as the top pager. */}
+          <CustomersPager
+            page={page}
+            total_pages={totalPages}
+            total={total}
+            page_size={_PAGE_SIZE}
+            onPageChange={setPage}
+            testidPrefix="customers-pager-bottom"
+          />
           </>
         )}
       </div>
