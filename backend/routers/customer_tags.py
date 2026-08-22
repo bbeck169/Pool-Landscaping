@@ -76,9 +76,14 @@ def _validate_name(raw: Optional[str]) -> str:
 
 
 async def _upsert_tag(tenant_id: str, name: str, color: Optional[str],
-                       created_by: str) -> dict:
+                       created_by: str, *, auto_created: bool = False) -> dict:
     """Idempotent single-tag upsert. Case-insensitive uniqueness on
-    ``name_lower``. Returns the persisted doc (existing or new)."""
+    ``name_lower``. Returns the persisted doc (existing or new).
+
+    Feb-2026 · P33 — ``auto_created`` stamps the origin when the tag
+    was born by side-effect (customer create/update path) vs the
+    admin explicitly adding it via the tag admin. Existing rows are
+    left untouched — we never rewrite the flag once set."""
     trimmed = _validate_name(name)
     name_lower = trimmed.lower()
     existing = await db.customer_tags.find_one(
@@ -95,6 +100,7 @@ async def _upsert_tag(tenant_id: str, name: str, color: Optional[str],
         "created_by": created_by,
         "created_at": now_iso(),
         "usage_count": 0,
+        "auto_created": bool(auto_created),
     }
     await db.customer_tags.insert_one(doc)
     return {k: v for k, v in doc.items() if k != "_id"}
@@ -243,11 +249,61 @@ async def list_customer_tags(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
-    _require_admin_or_manager(user)
+    # Feb-2026 · P33 — any authenticated staff can READ the registry
+    # so the customer-form tag picker + list-page "All tags" filter
+    # can populate for techs too. Writes (POST / PATCH / DELETE) stay
+    # admin-or-manager gated below.
+    if user.get("role") not in ("admin", "super_admin", "manager", "technician"):
+        raise HTTPException(403, "Not allowed")
     rows = await db.customer_tags.find(
         {"tenant_id": tenant["id"]}, {"_id": 0}
     ).sort([("usage_count", -1), ("name_lower", 1)]).to_list(500)
     return {"items": rows, "total": len(rows)}
+
+
+# Feb-2026 · P33 — Best-effort auto-persist hook used by the customer
+# POST + PUT paths. Iterates every tag string on the incoming payload
+# and idempotently upserts it into the tenant catalog. Wrapped by the
+# caller in try/except so any failure never blocks the customer save.
+# Existing rows are respected (no reactivation of admin-archived tags —
+# the current schema doesn't archive, but the ``auto_created`` flag on
+# net-new rows lets the settings page distinguish origin later).
+async def auto_persist_customer_tags(
+    tenant_id: str, actor_id: str, tags: Optional[List[str]],
+) -> int:
+    """Returns the count of NEW catalog rows inserted (0 if all
+    incoming tags were already present)."""
+    if not tags:
+        return 0
+    inserted = 0
+    for raw in tags:
+        if not isinstance(raw, str):
+            continue
+        s = raw.strip()
+        if not s:
+            continue
+        # Validate loosely — reuse the existing 40-char cap but
+        # swallow validation errors rather than blowing up the save.
+        try:
+            trimmed = _validate_name(s)
+        except HTTPException:
+            continue
+        existed = await db.customer_tags.find_one(
+            {"tenant_id": tenant_id, "name_lower": trimmed.lower()},
+            {"_id": 0, "id": 1},
+        )
+        if existed:
+            continue
+        try:
+            await _upsert_tag(
+                tenant_id, trimmed, None, actor_id or "system",
+                auto_created=True,
+            )
+            inserted += 1
+        except Exception:
+            # Best-effort — never break the customer write.
+            continue
+    return inserted
 
 
 # ═════════════════════════════════════════════════════════════════

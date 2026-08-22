@@ -898,9 +898,12 @@ export default function CustomersList() {
                           <Star size={10} fill="#F59E0B" color="#F59E0B" /> VIP
                         </span>
                       ) : null}
-                      {(c.tags || []).map((t) => (
-                        <TagChip tag={t} key={t} testid={`row-${c.id}-tag-${t}`} />
-                      ))}
+                      {/* Feb-2026 · P33 — Per-row tag chips removed by
+                          product ask. Tag data still lives on `c.tags`
+                          and remains editable on the customer detail
+                          / edit form; only the row rendering is gone.
+                          The tenant catalog + "All tags" filter above
+                          are now the authoritative surface. */}
                       {c.waitlisted ? <Chip label="Waitlist" tone="warning" /> : null}
                       {(c.properties_count || 0) >= 2 ? (
                         <Chip

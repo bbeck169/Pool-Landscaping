@@ -89,10 +89,20 @@ def scratch_customer():
 # ═════════════════════════════════════════════════════════════════
 # RBAC
 # ═════════════════════════════════════════════════════════════════
-def test_list_forbidden_for_non_admin_non_manager(tech_headers, customer_headers):
-    for hdrs in (tech_headers, customer_headers):
-        r = requests.get(f"{API}/customer-tags", headers=hdrs, timeout=10)
-        assert r.status_code == 403
+def test_list_open_to_technician_but_customer_still_forbidden(
+    tech_headers, customer_headers,
+):
+    """Feb-2026 · P33 — GET was widened from admin/manager to ANY
+    authenticated staff (needed by row-form pickers + the list-page
+    "All tags" filter). Technician now 200s. Customer role still
+    hits the tenant-scoping wall and 4xx's."""
+    r_tech = requests.get(f"{API}/customer-tags",
+                              headers=tech_headers, timeout=10)
+    assert r_tech.status_code == 200, r_tech.text
+
+    r_cust = requests.get(f"{API}/customer-tags",
+                              headers=customer_headers, timeout=10)
+    assert r_cust.status_code in (401, 403), r_cust.text
 
 
 def test_create_forbidden_for_non_admin_non_manager(tech_headers, customer_headers):

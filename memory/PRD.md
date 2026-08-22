@@ -12188,3 +12188,51 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 - Auto-persist wrapped in try/except (isolation from mute path).
 - Archived reasons NOT auto-reactivated.
 - `customer.muted_reason` remains free-text — no FK coupling.
+
+---
+
+## Phase P33 · Feb-2026 — Customer list tag-chip cleanup + auto-persist catalog
+
+### Diagnosis (before code)
+- Row-level tag chips rendered at `CustomersList.jsx:901-903` via `(c.tags||[]).map(t => <TagChip .../>)` — user wants these removed across all four tabs.
+- Tenant catalog `customer_tags` collection + `/api/customer-tags` CRUD **already existed** (Phase 15b) with idempotent `_upsert_tag`. Auto-persist previously only fired from `PATCH /customers/{cid}/tags`; the main customer POST / PUT paths did not hook it.
+- Top-of-list "All tags" filter (`CustomersTagFilterDropdown`) already sourced from `GET /customer-tags` — already authoritative.
+
+### Judgment calls (transparent)
+1. **Did NOT reshape `customer_tags` schema** (`label`/`label_norm`/`is_active`/`sort_order`) — the collection is heavily integrated (system-tag scaffolding, active/inactive membership, cascade delete). Extended it with a single new `auto_created:bool` field instead. Existing rows treated as `auto_created=false` (missing).
+2. **Did NOT add a duplicate `/settings/customer-tags` alias** — reused the existing `/customer-tags` routes.
+3. **Did NOT change DELETE semantics from hard-delete-with-cascade to soft-deactivate** — flipping the cascade contract is destructive and out of scope for this bug-fix + auto-persist phase.
+4. **Widened GET `/customer-tags` RBAC** — technicians now 200 (needed by row-form pickers + list filter per spec). Existing Phase 15b test updated to reflect the new contract.
+
+### Files changed
+- `frontend/src/pages/customers/CustomersList.jsx` — deleted the per-row `(c.tags||[]).map(...)` block; added a Feb-2026 · P33 comment marker.
+- `backend/routers/customer_tags.py` — `_upsert_tag` accepts optional `auto_created` kwarg; GET route opens to any authenticated staff; new `auto_persist_customer_tags()` helper.
+- `backend/routers/customers.py` — POST `/customers` + PUT `/customers/{cid}` both call the new helper (best-effort, try/except).
+- `backend/migrations/task_p33_seed_customer_tags_catalog.py` — new (dry-run default; `--commit` writes).
+- `backend/tests/test_customer_tags_catalog_p33.py` — **9/9 green** (openapi, tech-open GET, POST auto-persist, dedup, PUT auto-persist, blank/whitespace skip, backfill migration, tech write RBAC).
+- `backend/tests/test_phase15b_customer_tags.py` — updated 1 test to reflect widened GET RBAC.
+- `frontend/src/test/phase33-customers-list-tag-chips-removed.test.jsx` — **3/3 green** (no row chips, VIP + Inactive pill intact, catalog-only ghost tag surfaces in dropdown).
+
+### Backfill migration output (preview DB)
+```
+committed:                     True
+grand_total_customers_scanned: 0
+grand_total_inserted:          0
+```
+Preview DB currently has 5 customers, 0 with tags — nothing to backfill. Migration is idempotent and safe to run on prod.
+
+### Results
+- **P33 backend tests: 9/9 green**
+- **P33 frontend tests: 3/3 green**
+- **P15b + P25 + P26 + P27 + P28 + P29 + P29b + P30 + P32 + P33 combined: 74/74 green**
+- Mobile: no rendering change needed (mobile customer list already has no row tag chips)
+- `/api/openapi.json` → 200
+- Pre-existing `test_config_public_returns_show_demo_logins` untouched
+
+### Guardrails honored
+- `bbeck169/Pool-Landscaping.git` ignored
+- `test_config_public_returns_show_demo_logins` untouched
+- `customers.tags` data preserved (only row-level rendering removed)
+- VIP badge / Mark Muted button / muted-reason UI untouched
+- Historical `customers.tags` snapshots stay immutable on catalog rename (existing `PATCH` rename does propagate — pre-existing behavior, not changed here)
+- Auto-persist wrapped in try/except at both call-sites

@@ -500,6 +500,15 @@ async def create_customer(body: CustomerIn,
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": now_iso()})
     await db.customers.insert_one(doc)
     doc.pop("_id", None)
+    # Feb-2026 · P33 — auto-persist any novel tag strings on the
+    # newly-created customer into the tenant catalog. Best-effort:
+    # any failure is swallowed so the customer create never fails
+    # over tag-catalog plumbing.
+    try:
+        from routers.customer_tags import auto_persist_customer_tags as _p33
+        await _p33(tenant["id"], user.get("id") or "", doc.get("tags") or [])
+    except Exception as _e33:
+        logger.warning("[P33] customer.create tag auto-persist failed: %s", _e33)
     # Phase 17 · Feb 2026 — fire-and-forget geocode of the new
     # customer's address so it lands on the Dispatch Board without
     # waiting for the next boot backfill pass. Non-blocking — the
@@ -1079,6 +1088,13 @@ async def update_customer(cid: str, body: CustomerIn,
     await db.customers.update_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"$set": payload}
     )
+    # Feb-2026 · P33 — auto-persist any novel tag strings from the
+    # incoming PUT into the tenant catalog. Best-effort (never blocks).
+    try:
+        from routers.customer_tags import auto_persist_customer_tags as _p33
+        await _p33(tenant["id"], user.get("id") or "", payload.get("tags") or [])
+    except Exception as _e33:
+        logger.warning("[P33] customer.update tag auto-persist failed: %s", _e33)
 
     # Phase 17 · Feb 2026 — re-geocode if the service address (either
     # free-form or any structured field) actually changed. Clears the
