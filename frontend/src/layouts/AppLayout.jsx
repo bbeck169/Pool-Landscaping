@@ -41,6 +41,7 @@ import {
   DollarSign,
   Shield,
   Clock,
+  Timer,
   Sparkles,
   DoorOpen,
   Wand2,
@@ -200,6 +201,15 @@ const QUICK_NAV_RAIL = [
   { key: "payments",   to: "/payments",   label: "Payments",   Icon: CreditCard,     roles: ["super_admin", "admin", "manager"] },
   { key: "customers",  to: "/customers",  label: "Customers",  Icon: Users,          roles: ["super_admin", "admin", "manager"] },
   { key: "estimates",  to: "/estimates",  label: "Estimates",  Icon: FileText,       roles: ["super_admin", "admin", "manager"] },
+  // Feb-2026 · P20 — three managerial quick-links.  Same role gate
+  // as the Invoices / Payments / Customers / Estimates cohort:
+  // techs / customers / dispatchers do NOT see these.
+  { key: "pool-report", to: "/admin/reports/pool-service",
+    label: "Pool Report", Icon: Waves, roles: ["super_admin", "admin", "manager"] },
+  { key: "time-clock",  to: "/landscape/time-clock",
+    label: "Time Clock",  Icon: Clock, roles: ["super_admin", "admin", "manager"] },
+  { key: "job-timers",  to: "/job-timers?t=avgtime",
+    label: "Job Timers",  Icon: Timer, roles: ["super_admin", "admin", "manager"] },
 ];
 
 function QuickNavRail({ role }) {

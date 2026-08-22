@@ -82,6 +82,12 @@ const _EXPECTED_ORDER_SUPER = [
   "rail-nav-payments",
   "rail-nav-customers",
   "rail-nav-estimates",
+  // Feb-2026 · P20 — three managerial quick-links appended after
+  // Estimates. Same role gate ([super_admin, admin, manager]) so
+  // they appear in the super_admin snapshot too.
+  "rail-nav-pool-report",
+  "rail-nav-time-clock",
+  "rail-nav-job-timers",
 ];
 
 
