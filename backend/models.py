@@ -196,6 +196,10 @@ class JobArriveIn(BaseModel):
     site_lat: Optional[float] = None
     site_lng: Optional[float] = None
     price: Optional[float] = None
+    # Feb-2026 · P37a — optional accuracy metadata from the mobile
+    # geofence event; used only for the audit log breadcrumb, never
+    # gates the timer start.
+    accuracy: Optional[float] = None
 
 
 class FieldReportUpdate(BaseModel):

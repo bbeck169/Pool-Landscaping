@@ -496,11 +496,41 @@ async def submit_service_report(
     # Roll job status forward. Preserve existing lifecycle: use `completed` since
     # that already exists across the codebase.
     _prev_status = (job.get("status") or "").lower()
+    # Feb-2026 · P37a — auto-stop the job timer on service-report
+    # submit path. Mirrors the PUT /jobs/{jid} status→completed
+    # branch. Only stamps if the timer is currently running.
+    _stop_updates: dict = {"status": "completed",
+                                "service_report_submitted_at": now,
+                                "updated_at": now}
+    if job.get("timer_started_at") and not job.get("timer_stopped_at"):
+        try:
+            from datetime import datetime as _dt
+            _st = _dt.fromisoformat(str(job["timer_started_at"]).replace("Z", "+00:00"))
+            _en = _dt.fromisoformat(now.replace("Z", "+00:00"))
+            _dur = int(max(0, (_en - _st).total_seconds()))
+        except Exception:
+            _dur = 0
+        _stop_updates["timer_stopped_at"] = now
+        _stop_updates["timer_duration_seconds"] = _dur
+        _stop_updates["timer_stop_method"] = "service_report_submitted"
+        # Audit-log breadcrumb (best-effort; never blocks submit).
+        try:
+            await db.audit_logs.insert_one({
+                "id": _submit_updates.get("id") or None,
+                "tenant_id": tenant["id"],
+                "actor_id": user.get("id"),
+                "actor_email": user.get("email"),
+                "event": "job_timer_auto_stop",
+                "at": now,
+                "payload": {"job_id": jid, "method": "service_report_submitted",
+                                "duration_seconds": _dur},
+            })
+        except Exception:
+            pass
+
     await db.jobs.update_one(
         {"id": jid, "tenant_id": tenant["id"]},
-        {"$set": {"status": "completed",
-                  "service_report_submitted_at": now,
-                  "updated_at": now}},
+        {"$set": _stop_updates},
     )
     # Feb-2026 · Door-hanger auto-send on completion transition.
     # Fire-and-forget so the submit response returns immediately.

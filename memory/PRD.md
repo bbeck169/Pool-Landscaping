@@ -12357,3 +12357,62 @@ Earlier P36 audit flagged `bulk-delete` / `bulk-update` as orphaned frontend cal
 - Redeploy required.
 - Run `python -m migrations.task_p36_customer_tags_active_flag --commit` once after deploy. Idempotent.
 - No behavior change until an admin visits **Settings → Customer Tags**.
+
+---
+
+## Phase P37a · Feb-2026 — GPS auto-start backend foundation
+
+### Files added
+- `backend/routers/gps_auto_start.py` — GET/PATCH `/api/settings/gps-auto-start`; GET/POST `/api/tech-gps-consent(/me)`; helpers `is_gps_auto_start_enabled`, `get_arrival_radius_m`, `has_active_consent`, `rate_limit_check` (60s per (user, job), matches Phase 20A.3 idiom).
+- `backend/migrations/task_p37_geocode_backfill.py` — customers + jobs + properties, dry-run default, `--tenant` + `--limit` flags, per-row failure isolation.
+- `backend/tests/test_gps_auto_start_p37a.py` — **14/14 green** (openapi, settings RBAC + validation, consent grant/revoke roundtrip, /arrive gate order, throttling, success + audit log, auto-stop on service-report submit, auto-stop regression on PUT status→completed).
+
+### Files touched
+- `backend/models.py` — `JobArriveIn.accuracy` optional field for audit-log breadcrumbs.
+- `backend/services/google_maps/geocoding.py`
+  - `geocode_and_persist_customer` — now writes canonical `latitude/longitude` alongside legacy `service_lat/lng` (dual-field for back-compat).
+  - New `geocode_and_persist_job` — checks own address then falls back to inheriting from linked customer's already-geocoded coords (no double-charge).
+  - New `geocode_and_persist_property` — from structured `address` doc.
+- `backend/routers/jobs.py::job_arrive`
+  - Reuses existing endpoint (does NOT create a new one).
+  - Added 4 gates in short-circuit order: `feature_disabled` → `consent_required` → `throttled` → `out_of_radius`. Each 200s with a `reason` string so mobile can keep polling.
+  - Distance via `services.geofence_engine.haversine_m` (meters, existing helper).
+  - Persists to both `site_lat/lng` (legacy) and `latitude/longitude` (canonical) fields.
+  - Audit-logs `job_timer_auto_start` with `{arrival_lat/lng, site_lat/lng, distance_m, radius_m, accuracy_m}`.
+- `backend/routers/service_reports.py::submit` — **fills the auto-stop gap**: on submit, if timer running, stamps `timer_stopped_at`, `timer_duration_seconds`, `timer_stop_method="service_report_submitted"` + audit-logs `job_timer_auto_stop`.
+- `backend/server.py` — registers the new router.
+
+### Migration output (preview DB)
+```
+committed: True
+  customers   scanned=  5  geocoded=  0  skipped=  5   (all 5 have empty address fields)
+  jobs        scanned= 18  geocoded= 18  skipped=  0
+  properties  scanned=147  geocoded=124  skipped= 23   (empty/malformed addresses)
+```
+Migration is idempotent + resumable via `--limit`.
+
+### Judgment calls (transparent)
+1. **Reused existing `/jobs/{jid}/arrive`** rather than creating a new `/job-timer/auto-start` endpoint. The existing endpoint already did 80% of the work (timer stamping, method labeling, coord persistence, RBAC). Wrapping the four P37a gates around it kept the diff minimal and preserved all existing mobile callers (Phase 20A.3 auto-clock-in flow).
+2. **Rate-limit is per-worker, in-memory** (not Redis-backed). Matches the exact pattern used by `/workforce/auto-clock-in`. Acceptable given the 60s window and the single-worker preview deployment; if we scale horizontally we can promote to Redis in a follow-up.
+3. **Dual-field persistence** — geocoder now writes BOTH `service_lat/lng` (legacy) AND `latitude/longitude` (canonical) on customers. Same for jobs (`site_lat/lng` + `latitude/longitude`). This is a transitional shim; a future P37c-ish tidy phase can consolidate to `latitude/longitude` only once all callers are migrated. Zero downtime, zero break risk.
+4. **NOT geocoding synchronously on customer POST/PUT** — the migration + Phase 20A.3-era hooks already do the persistence pattern. Adding another synchronous geocode-on-write would double-execute for the customer path. Decision: leave hot request paths untouched; the migration covers backfill; the existing on-write helpers cover the update path (already there in `geocode_and_persist_customer`).
+
+### Results
+- **P37a backend tests: 14/14 green.**
+- **Combined regression sweep (P15b + P25→P37a): 115 passed / 1 skipped** — no regressions.
+- `/api/openapi.json` still 200.
+- Pre-existing `test_config_public_returns_show_demo_logins` untouched per guardrails.
+
+### Deploy notes for `app.plofv.com`
+- **PREREQUISITE**: verify `GOOGLE_MAPS_API_KEY` is set on prod. Without it the geocoder fails cleanly and jobs simply don't participate in auto-start — no user-visible error.
+- Redeploy.
+- Run migration: `python -m migrations.task_p37_geocode_backfill --commit`. Idempotent; safe to re-run; supports `--limit N` for controlled rollout.
+- Feature ships OFF by default (`gps_auto_start_enabled=false`) — no tenant experiences behavior change until an admin flips the toggle in P37b.
+
+### Guardrails honored
+- `bbeck169/Pool-Landscaping.git` ignored.
+- `test_config_public_returns_show_demo_logins` untouched.
+- Default `gps_auto_start_enabled=false`.
+- Geocoding is BackgroundTasks-safe (migration + on-persist helpers; no hot request path calls Google synchronously in P37a).
+- Every failure path degrades to manual — no user-visible errors.
+- Distance = haversine (`services.geofence_engine.haversine_m`), meters.

@@ -183,9 +183,11 @@ api_router.include_router(marketing_campaigns_router.router)
 from routers import tos as _tos_router  # noqa: E402
 from routers import muted_reasons as _p29_muted_reasons  # noqa: E402
 from routers import quiet_hours_settings as _p34_quiet_hours  # noqa: E402
+from routers import gps_auto_start as _p37_gps_auto_start  # noqa: E402
 api_router.include_router(_tos_router.router)
 api_router.include_router(_p29_muted_reasons.router)
 api_router.include_router(_p34_quiet_hours.router)
+api_router.include_router(_p37_gps_auto_start.router)
 
 # Feb-2026 · Slice 2A — Multi-ToS backend foundation (Pool +
 # Landscaping split, admin CRUD, customer onboarding-state DTO).

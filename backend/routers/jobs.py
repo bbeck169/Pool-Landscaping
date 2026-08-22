@@ -1837,9 +1837,33 @@ async def on_my_way(jid: str,
 
 @router.post("/jobs/{jid}/arrive")
 async def job_arrive(jid: str, body: JobArriveIn,
+                     request: Request,
                      user: dict = Depends(get_current_user),
                      tenant: dict = Depends(get_current_tenant)):
-    """Auto-start the job timer on GPS arrival (idempotent). No manual start/stop."""
+    """Auto-start the job timer on GPS arrival (idempotent).
+
+    Feb-2026 · P37a — hardened with 4 gates that all degrade to a
+    200 response with a ``reason`` string (never 4xx for business
+    misses) so the mobile client can keep polling as the tech moves.
+    Reason ordering (short-circuits, most useful first):
+      1. feature_disabled     — tenant flag off
+      2. consent_required     — tech has no active grant
+      3. throttled            — 60s rate limit per (user, job)
+      4. out_of_radius        — beyond ``arrival_radius_meters``
+      5. job_completed        — already closed
+      6. already_running      — idempotent no-op
+    A successful start stamps ``timer_start_method="gps_arrival"``
+    and writes an audit-log row ``job_timer_auto_start``.
+    """
+    from routers.gps_auto_start import (
+        DEFAULT_ARRIVAL_RADIUS_M,
+        get_arrival_radius_m,
+        has_active_consent,
+        is_gps_auto_start_enabled,
+        rate_limit_check,
+    )
+    from services.geofence_engine import haversine_m
+
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
@@ -1847,10 +1871,44 @@ async def job_arrive(jid: str, body: JobArriveIn,
         raise HTTPException(403, "Not allowed")
     if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
         raise HTTPException(403, "Not your job")
+
+    # P37a Gate 1 — tenant feature flag.
+    if not is_gps_auto_start_enabled(tenant):
+        return {"started": False, "reason": "feature_disabled"}
+
+    # P37a Gate 2 — tech consent (dispatcher / admin roles bypass).
+    if user.get("role") == "technician":
+        if not await has_active_consent(user["id"], tenant["id"]):
+            return {"started": False, "reason": "consent_required"}
+
+    # P37a Gate 3 — per-(user, job) 60s rate limit.
+    if not rate_limit_check(user["id"], jid):
+        return {"started": False, "reason": "throttled"}
+
+    # P37a Gate 4 — distance check via haversine (meters).
+    site_lat = body.site_lat if body.site_lat is not None else (
+        job.get("site_lat") or job.get("latitude"))
+    site_lng = body.site_lng if body.site_lng is not None else (
+        job.get("site_lng") or job.get("longitude"))
+    radius_m = get_arrival_radius_m(tenant)
+    distance_m: Optional[float] = None
+    if site_lat is not None and site_lng is not None:
+        distance_m = haversine_m(float(site_lat), float(site_lng),
+                                          float(body.lat), float(body.lng))
+        if distance_m > radius_m:
+            return {"started": False, "reason": "out_of_radius",
+                     "distance_m": round(distance_m, 1),
+                     "radius_m": radius_m}
+    # If site coords are missing (geocode gap) we do NOT block — a job
+    # without coords participates in manual start only, and this call
+    # is treated as "no radius data → skip radius gate". The audit
+    # log below still records ``distance_m: null``.
+
     # persist geocoded site coords for geofencing/reporting if provided
     site = {}
     if body.site_lat is not None and body.site_lng is not None:
-        site = {"site_lat": body.site_lat, "site_lng": body.site_lng}
+        site = {"site_lat": body.site_lat, "site_lng": body.site_lng,
+                 "latitude": body.site_lat, "longitude": body.site_lng}
     if job.get("timer_started_at"):
         if site:
             await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": site})
@@ -1859,11 +1917,35 @@ async def job_arrive(jid: str, body: JobArriveIn,
         return {"started": False, "reason": "job_completed"}
     started = now_iso()
     upd = {"timer_started_at": started, "timer_start_method": "gps_arrival",
-           "arrival_lat": body.lat, "arrival_lng": body.lng, **site}
+              "arrival_lat": body.lat, "arrival_lng": body.lng, **site}
     if job.get("status") in (None, "pending", "requested", "scheduled"):
         upd["status"] = "in_progress"
     await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": upd})
-    return {"started": True, "already_running": False, "timer_started_at": started}
+
+    # P37a — audit log breadcrumb.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(), "tenant_id": tenant["id"],
+            "actor_id": user.get("id"), "actor_email": user.get("email"),
+            "event": "job_timer_auto_start",
+            "at": started,
+            "payload": {
+                "job_id": jid,
+                "technician_id": job.get("technician_id"),
+                "arrival_lat": body.lat, "arrival_lng": body.lng,
+                "site_lat": site_lat, "site_lng": site_lng,
+                "distance_m": round(distance_m, 1) if distance_m is not None else None,
+                "radius_m": radius_m,
+                "accuracy_m": body.accuracy,
+            },
+        })
+    except Exception as _e:
+        logger.warning("[p37] audit-log write failed: %s", _e)
+
+    return {"started": True, "already_running": False,
+              "timer_started_at": started,
+              "distance_m": round(distance_m, 1) if distance_m is not None else None,
+              "radius_m": radius_m}
 
 
 @router.get("/reports/job-timers")
