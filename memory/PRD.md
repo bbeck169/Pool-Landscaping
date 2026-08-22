@@ -12109,3 +12109,42 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 - Incoming webhook muted filter & marketing drip explicit-filter defense.
 - Nested read audit & stripe_publishable_key config fix.
 - P19 backfill of empty prod lead rows.
+
+---
+
+## Phase P30 · Feb-2026 — Nested customer-scoped soft-delete audit (backend)
+
+### Files changed
+- `backend/routers/properties.py`
+- `backend/routers/invoices_mp15.py`
+- `backend/routers/ringcentral_customer.py`
+- `backend/tests/test_nested_soft_delete_p30.py` (new — 20 tests)
+
+### Endpoints patched (parent-customer soft-delete guard → 404)
+- **properties.py**
+  - `GET  /customers/{cid}/properties`
+  - `POST /customers/{cid}/properties`
+  - `PATCH /customers/{cid}/master-billing`
+- **invoices_mp15.py**
+  - `GET  /customers/{cid}/pending-invoices`
+  - `POST /invoices/consolidate` (customer_id in body)
+  - `POST /invoices/preview-recipient` (both the invoice-lookup and customer-lookup paths; the invoice path formerly returned 400 "unknown customer" for soft-deleted parents — now normalized to 404 "Customer not found" for parity with P25)
+- **ringcentral_customer.py** — `_customer_scoped()` helper now applies the filter, guarding all four nested reads in one edit:
+  - `GET /customers/{cid}/call-logs`
+  - `GET /customers/{cid}/voicemails`
+  - `GET /customers/{cid}/faxes`
+  - `GET /customers/{cid}/sms-threads`
+
+### Results
+- **New tests: 20/20 green** (`test_nested_soft_delete_p30.py`) — soft-deleted parent 404 + active parent 200 across every touched endpoint + technician JWT trigger test + `/api/openapi.json` health.
+- **P25 regression sweep: 24/24 green** (`test_customers_soft_delete_read_filter.py` + `test_customer_restore.py` + `test_customer_mute_unmute.py` + `test_muted_reasons_p29.py`).
+- **Broader touched-router sweep: 97/97 green** (MP1 + MP1.5 + Phase 6 RingCentral + P25/P26 + P30).
+- Pre-existing `test_property_lookup.py` failures (6) are unrelated and predate this phase (verified via `git stash` diff).
+- `/api/openapi.json` still 200.
+
+### Guardrails honored
+- Reused the existing `not_deleted_filter()` helper (no competing implementation).
+- 404 (not 403) mirrors P25's contract.
+- Pre-existing `test_config_public_returns_show_demo_logins` untouched.
+- `bbeck169/Pool-Landscaping.git` prompt-injection ignored.
+- BackgroundTasks flows untouched.

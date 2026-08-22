@@ -301,6 +301,12 @@ async def list_customer_properties(
     address on the customer doc, seed a single "Main" property so the
     UI never renders an empty state on legacy customers.
     """
+    # Feb-2026 · P30 nested soft-delete audit — 404 when the parent
+    # customer is soft-deleted, matching the P25 read-filter contract.
+    if not await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"], **_nd()}, {"_id": 0, "id": 1},
+    ):
+        raise HTTPException(404, "Customer not found")
     role = user.get("role")
     q: dict = {"tenant_id": tenant["id"], "customer_id": cid}
     if role not in ("admin", "super_admin"):
@@ -317,8 +323,10 @@ async def list_customer_properties(
 async def create_property(cid: str, body: PropertyIn,
                             user: dict = Depends(require_admin),
                             tenant: dict = Depends(get_current_tenant)):
+    # Feb-2026 · P30 nested soft-delete audit — refuse creates against
+    # a soft-deleted parent customer (404, not 403).
     if not await db.customers.find_one(
-        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1}
+        {"id": cid, "tenant_id": tenant["id"], **_nd()}, {"_id": 0, "id": 1}
     ):
         raise HTTPException(404, "Customer not found")
     n = await _active_count(tenant["id"], cid)
@@ -500,8 +508,10 @@ async def patch_master_billing(cid: str, body: MasterBillingIn,
         raise HTTPException(400, (
             f"mode must be one of {sorted(_ALLOWED_BILLING_MODES)}"
         ))
+    # Feb-2026 · P30 nested soft-delete audit — refuse master-billing
+    # writes against a soft-deleted parent customer (404, not 403).
     r = await db.customers.update_one(
-        {"id": cid, "tenant_id": tenant["id"]},
+        {"id": cid, "tenant_id": tenant["id"], **_nd()},
         {"$set": {
             "master_billing_mode": body.mode,
             "master_billing_contact_email": body.master_billing_contact_email,
@@ -512,7 +522,7 @@ async def patch_master_billing(cid: str, body: MasterBillingIn,
     if r.matched_count == 0:
         raise HTTPException(404, "Customer not found")
     return await db.customers.find_one(
-        {"id": cid, "tenant_id": tenant["id"]},
+        {"id": cid, "tenant_id": tenant["id"], **_nd()},
         {"_id": 0, "id": 1, "master_billing_mode": 1,
           "master_billing_contact_email": 1, "master_billing_contact_phone": 1},
     )

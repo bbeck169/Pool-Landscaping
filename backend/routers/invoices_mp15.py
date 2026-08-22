@@ -38,6 +38,7 @@ from config import db, logger
 from routers.tenants import get_current_tenant
 from routers.properties import resolve_invoice_recipient
 from utils import get_current_user, new_id, now_iso, require_admin
+from utils import not_deleted_filter as _nd
 
 router = APIRouter(tags=["Invoices MP1.5"])
 
@@ -119,8 +120,9 @@ async def customer_pending_invoices(
     """List every unpaid, un-consolidated invoice for a customer,
     grouped by property. Techs cannot access — admin-only.
     """
+    # Feb-2026 · P30 nested soft-delete audit — 404 when parent is soft-deleted.
     cust = await db.customers.find_one(
-        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+        {"id": cid, "tenant_id": tenant["id"], **_nd()}, {"_id": 0}
     )
     if not cust:
         raise HTTPException(404, "Customer not found")
@@ -198,8 +200,10 @@ async def consolidate_customer_invoices(
     ``consolidated_into_invoice_id`` field on each child links back to
     the parent.
     """
+    # Feb-2026 · P30 nested soft-delete audit — refuse consolidation
+    # against a soft-deleted parent customer (404, not 403).
     cust = await db.customers.find_one(
-        {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
+        {"id": body.customer_id, "tenant_id": tenant["id"], **_nd()}, {"_id": 0}
     )
     if not cust:
         raise HTTPException(404, "Customer not found")
@@ -388,12 +392,15 @@ async def preview_recipient(
         )
         if not inv:
             raise HTTPException(404, "Invoice not found")
+        # Feb-2026 · P30 nested soft-delete audit — resolving via an
+        # invoice must also refuse when the parent customer is
+        # soft-deleted (404, not 403).
         cust = await db.customers.find_one(
-            {"id": inv.get("customer_id"), "tenant_id": tenant["id"]},
+            {"id": inv.get("customer_id"), "tenant_id": tenant["id"], **_nd()},
             {"_id": 0},
         )
         if not cust:
-            raise HTTPException(400, "Invoice references an unknown customer")
+            raise HTTPException(404, "Customer not found")
         prop = None
         if inv.get("property_id"):
             prop = await db.properties.find_one(
@@ -403,8 +410,9 @@ async def preview_recipient(
     else:
         if not body.customer_id:
             raise HTTPException(400, "Provide invoice_id OR customer_id")
+        # Feb-2026 · P30 nested soft-delete audit — 404 on soft-deleted parent.
         cust = await db.customers.find_one(
-            {"id": body.customer_id, "tenant_id": tenant["id"]},
+            {"id": body.customer_id, "tenant_id": tenant["id"], **_nd()},
             {"_id": 0},
         )
         if not cust:
@@ -461,7 +469,6 @@ async def migrate_invoices_estimates_property_id() -> Dict[str, int]:
         job_ids.discard(None)
         if not job_ids:
             return None
-        from utils import not_deleted_filter as _nd
         jobs = await db.jobs.find(
             {"tenant_id": doc.get("tenant_id"), "id": {"$in": list(job_ids)}, **_nd()},
             {"_id": 0, "id": 1, "property_id": 1},

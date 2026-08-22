@@ -8,14 +8,20 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import db
-from utils import get_current_user, require_admin
+from utils import get_current_user, require_admin, not_deleted_filter as _nd
 from routers.tenants import get_current_tenant
 
 router = APIRouter(tags=["ringcentral_customer"])
 
 
 async def _customer_scoped(cid: str, tenant: dict, user: dict) -> dict:
-    cust = await db.customers.find_one({"id": cid, "tenant_id": tenant["id"]}, {"_id": 0})
+    # Feb-2026 · P30 nested soft-delete audit — parent-customer guard.
+    # Mirrors the P25 read-filter behavior: soft-deleted customers 404
+    # (not 403) so techs / clients with a cached id can't fetch the
+    # customer's comms after deletion.
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"], **_nd()}, {"_id": 0},
+    )
     if not cust:
         raise HTTPException(404, "customer not found")
     return cust
