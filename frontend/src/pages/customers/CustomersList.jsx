@@ -7,6 +7,7 @@ import { colors } from "@/theme";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PageHeader, TagChip, Chip, Skeleton, EmptyState, Button, Modal, Toast } from "@/components/ui-kit";
 import CustomersTagFilterDropdown from "@/components/customers/CustomersTagFilterDropdown";
+import RestoreCustomerButton from "@/components/customers/RestoreCustomerButton";
 import {
   BulkActionBar,
   BulkConfirmModal,
@@ -40,6 +41,12 @@ export default function CustomersList() {
     effectiveRole === "admin" || effectiveRole === "super_admin";
   const isAdminOrManager =
     isAdmin || role === "manager" || effectiveRole === "manager";
+  // Feb-2026 · P26 — super_admin-only escape hatch to browse
+  // soft-deleted customers and Restore them.  Gated to super_admin
+  // to match the P25 backend contract (403 for lower roles).
+  const isSuperAdmin =
+    role === "super_admin" || effectiveRole === "super_admin";
+  const [includeDeleted, setIncludeDeleted] = useState(false);
 
   // Phase 56.2 — active | inactive tabs. `all` retained as a legacy escape
   // hatch (used to be the default) — accessible via `?tab=all` for admins
@@ -104,6 +111,8 @@ export default function CustomersList() {
     if (tab === "active") params.set("is_active", "true");
     else if (tab === "inactive") params.set("is_active", "false");
     if (missingCardOnly) params.set("missing_card", "true");
+    // Feb-2026 · P26 — super_admin escape hatch to see soft-deleted rows.
+    if (includeDeleted && isSuperAdmin) params.set("include_deleted", "true");
     try {
       const data = await api.get(`/customers${params.toString() ? "?" + params : ""}`);
       setRows(data || []);
@@ -127,7 +136,7 @@ export default function CustomersList() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDeb, tag, scope, tab, missingCardOnly]);
+  }, [searchDeb, tag, scope, tab, missingCardOnly, includeDeleted]);
 
   useEffect(() => {
     loadCounts();
@@ -577,6 +586,26 @@ export default function CustomersList() {
             Missing card
           </button>
         )}
+        {/* Feb-2026 · P26 — super_admin-only "Show deleted" toggle. */}
+        {isSuperAdmin && (
+          <button
+            onClick={() => setIncludeDeleted((v) => !v)}
+            data-testid="customers-filter-include-deleted"
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+            style={{
+              backgroundColor: includeDeleted ? "#FEE2E2" : colors.surfaceSecondary,
+              color: includeDeleted ? "#991B1B" : colors.onSurfaceSecondary,
+              border: `1px solid ${includeDeleted ? "#FCA5A5" : colors.border}`,
+            }}
+            title="Super_admin: include soft-deleted customers in the list"
+          >
+            <span
+              className="inline-block w-2 h-2 rounded-full"
+              style={{ backgroundColor: includeDeleted ? "#B91C1C" : "#94A3B8" }}
+            />
+            Show deleted
+          </button>
+        )}
       </div>
 
       {/* Bulk-actions toolbar (visible when selection exists) */}
@@ -687,7 +716,13 @@ export default function CustomersList() {
                 <tr
                   key={c.id}
                   className="cursor-pointer hover:bg-zinc-50 transition"
-                  style={{ borderTop: `1px solid ${colors.divider}` }}
+                  style={{
+                    borderTop: `1px solid ${colors.divider}`,
+                    // Feb-2026 · P26 — soft-deleted rows visually
+                    // distinct so super_admin can tell them apart
+                    // from the active list at a glance.
+                    opacity: c.deleted_at ? 0.6 : 1,
+                  }}
                   onClick={() => navigate(`/customers/${c.id}`)}
                   data-testid={`customer-row-${c.id}`}
                 >
@@ -716,9 +751,33 @@ export default function CustomersList() {
                           title="Card on file required — none saved"
                         />
                       ) : null}
-                      <span className="font-semibold" style={{ color: colors.onSurface }}>
+                      <span
+                        className="font-semibold"
+                        style={{
+                          color: colors.onSurface,
+                          textDecoration: c.deleted_at ? "line-through" : "none",
+                        }}
+                      >
                         {c.name}
                       </span>
+                      {/* Feb-2026 · P26 — Restore pill for super_admin. */}
+                      {c.deleted_at && isSuperAdmin ? (
+                        <RestoreCustomerButton
+                          customer={c}
+                          onRestored={(res) => {
+                            setToast({
+                              tone: "success",
+                              message: res?.was_anonymized
+                                ? "Customer restored (PII stays scrubbed)"
+                                : "Customer restored",
+                            });
+                            load();
+                          }}
+                          onError={(msg) =>
+                            setToast({ tone: "error", message: msg })
+                          }
+                        />
+                      ) : null}
                       {lockedFailures[c.id] ? (
                         <LockedPill reason={lockedFailures[c.id]}
                                      testid={`bulk-locked-pill-${c.id}`} />

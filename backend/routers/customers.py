@@ -1,5 +1,5 @@
 # ruff: noqa: F403,F405
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timezone, timedelta
@@ -605,6 +605,101 @@ async def get_customer(cid: str,
         doc.pop("stripe_customer_id", None)
         doc.pop("stripe_default_payment_method_id", None)
     return doc
+
+
+# ─── P26 · Feb-2026 · Super_admin customer restore ──────────────────────
+
+@router.patch("/customers/{cid}/restore")
+async def restore_customer(
+    cid: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Feb-2026 · P26 — Super_admin restore surface for soft-deleted
+    customers (companion to the P25 read-filter). Clears ``deleted_at``
+    and — if the row was P11b-anonymized — ``anonymized_at`` as well.
+
+    Idempotent: restoring a live customer is a 200 with
+    ``restored=false, reason=not_soft_deleted`` (not a 400) so the UI
+    can safely retry. A restored anonymized customer surfaces the
+    ``was_anonymized=true`` flag so the caller can warn the operator
+    the PII fields (name/email/phone/address) were already scrubbed
+    and will NOT come back — P11b anonymization is one-way.
+
+    Auth: super_admin only. Every other role → 403 role_not_permitted.
+    """
+    role = (user.get("role") or "").lower()
+    if role != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": "role_not_permitted",
+                      "message": "Only super_admin can restore a customer."},
+        )
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "deleted_at": 1, "anonymized_at": 1, "name": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "Customer not found")
+    # Idempotent branch — the UI can safely retry a Restore click.
+    if not doc.get("deleted_at"):
+        return {
+            "restored": False,
+            "reason": "not_soft_deleted",
+            "customer_id": cid,
+            "was_anonymized": bool(doc.get("anonymized_at")),
+        }
+    was_anonymized = bool(doc.get("anonymized_at"))
+    unset: dict = {"deleted_at": ""}
+    if was_anonymized:
+        unset["anonymized_at"] = ""
+    restored_at = datetime.now(timezone.utc).isoformat()
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"$unset": unset, "$set": {"restored_at": restored_at}},
+    )
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "event": "customer_restore",
+            "customer_id": cid,
+            "actor_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "actor_role": role,
+            "was_anonymized": was_anonymized,
+            "ip": _p26_client_ip(request),
+            "user_agent": (request.headers.get("user-agent") or "")[:400],
+            "restored_at": restored_at,
+            "created_at": restored_at,
+        })
+    except Exception:
+        logger.exception("[P26] audit log insert failed for restore of %s", cid)
+    logger.info(
+        "[P26] customer_restore actor=%s cid=%s was_anonymized=%s",
+        user.get("email"), cid, was_anonymized,
+    )
+    return {
+        "restored": True,
+        "customer_id": cid,
+        "was_anonymized": was_anonymized,
+        "restored_at": restored_at,
+    }
+
+
+def _p26_client_ip(request) -> str:
+    try:
+        from services._shared.http import client_ip as _shared_ip
+        return _shared_ip(request)
+    except Exception:
+        try:
+            xff = (request.headers.get("x-forwarded-for") or "").split(",")
+            if xff and xff[0].strip():
+                return xff[0].strip()[:64]
+            return (getattr(request.client, "host", "") or "")[:64]
+        except Exception:
+            return ""
 
 
 @router.get("/customers/{cid}/deactivation-preview")

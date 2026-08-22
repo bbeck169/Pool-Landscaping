@@ -11983,3 +11983,16 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 
 **Deferred**
 - Nested customer-scoped reads in `properties.py`, `invoices_mp15.py`, `ringcentral_customer.py` — these were not FAIL sites in the P25 spec but should be given the same helper in a follow-up sweep.
+
+---
+
+## Phase P26 — Restore Customer endpoint + super_admin UI (Feb 24, 2026)
+
+**Delivered**
+- `routers/customers.py::restore_customer` — `PATCH /customers/{cid}/restore`; super_admin only (403 `role_not_permitted` for other roles); 404 for missing id; idempotent 200 `{restored: false, reason: "not_soft_deleted"}` for live rows; happy path `$unset {deleted_at, anonymized_at?}` + sets `restored_at`; response flags `was_anonymized` so UI can warn about P11b PII scrub. Audit log entry to `db.audit_logs` with actor_id/email/role, ip (via P16 `services/_shared/http.client_ip`), user_agent, and `was_anonymized`.
+- `components/customers/RestoreCustomerButton.jsx` — inline pill button + confirmation modal with anonymized-warning branch; wired into `pages/customers/CustomersList.jsx` behind super_admin gate + `Show deleted` toggle that sets `?include_deleted=true`. Deleted rows render at 60% opacity with strike-through name; success toast + list reload on restore.
+- Tests: `backend/tests/test_customer_restore.py` (6/6 green) + `frontend/src/test/phase26-restore-customer-button.test.jsx` (6/6 green).
+
+**Deferred**
+- Nested customer-scoped read audit (`properties.py`, `invoices_mp15.py`, `ringcentral_customer.py`) — carried over from P25.
+- Pre-existing `test_soft_delete_jwt_gate.py::test_config_public_returns_show_demo_logins` (stripe key missing from `/config/public`) — user explicitly deferred.
