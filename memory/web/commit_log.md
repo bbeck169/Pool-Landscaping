@@ -1,0 +1,20 @@
+## Iteration 1 — Web-Mobile Parity Audit (Aug 2026)
+- **Commit**: a1d6ab3915f769e9599906f773f6263c74b0f4d6
+- **Date**: 2026-08-22
+- **Changes**: No code changes — audit-only iteration
+  - Verified frontend compiles cleanly (only webpack deprecation warnings)
+  - Verified Login, Dashboard, Schedule, Customers, Invoices pages render correctly
+  - Checked recent mobile changes (DailyRouteMap, DeleteAccountSection, PrivacyPolicy link)
+  - Confirmed all recent mobile features already have web equivalents:
+    - Delete Account → PortalPreferences.jsx (DeleteAccountDangerCard component)
+    - Privacy Policy link → PortalPreferences.jsx footer link
+    - DailyRouteMap → web has its own ScheduleMap.jsx implementation
+  - Dashboard shows a 500 error from `/api/dashboard` endpoint — this is a backend issue, not frontend
+  - `/api/config/features` returns ERR_ABORTED — backend endpoint issue
+  - WebSocket `ws://localhost:443/ws` connection refused — expected in container environment
+- **Files modified**: None
+- **Mobile files referenced**: 
+  - mobile/app/portal/profile.tsx (Delete Account + Privacy Policy additions)
+  - mobile/src/components/portal/DeleteAccountSection.tsx (new component)
+  - mobile/src/components/schedule/DailyRouteMap.native.tsx (new component)
+  - mobile/app/_layout.tsx (Mapbox token guard)
