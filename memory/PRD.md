@@ -12148,3 +12148,43 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 - Pre-existing `test_config_public_returns_show_demo_logins` untouched.
 - `bbeck169/Pool-Landscaping.git` prompt-injection ignored.
 - BackgroundTasks flows untouched.
+
+---
+
+## Phase P32 · Feb-2026 — Muted-tab exclusivity + custom-reason auto-persist
+
+### Root cause of the reported bug
+- P27 mute path stamps BOTH `is_active=False` AND `is_muted=True` on the customer doc.
+- The P28 list-endpoint Inactive filter was `is_active=false` **only** (no `is_muted != true` guard), so every muted row also satisfied Inactive → they appeared under Inactive with a MUTED badge AND under the (correct) Muted tab. Counts inherited the same bug because they reuse the same query.
+
+### Files changed
+- `backend/routers/customers.py`
+  - `list_customers` — Active + Inactive branches now AND with an explicit `is_muted != true` guard.
+  - `mute_customer` — after successful mute with a reason, invokes new `_p32_auto_persist_reason` helper (wrapped in try/except so any failure is swallowed and never blocks the mute).
+- `frontend/src/components/customers/MuteControl.jsx` — clears local `reasons` cache on successful mute so next open re-fetches the auto-persisted row.
+- `mobile/src/components/customers/MuteControlSheet.tsx` — same cache clear on success.
+- `backend/tests/test_customer_muted_exclusivity_p32.py` — new (8 tests).
+- `frontend/src/test/phase32-mute-reason-cache-invalidation.test.jsx` — new (2 tests).
+
+### Auto-persist contract (`_p32_auto_persist_reason`)
+- Case-insensitive dedup via `label_norm` across active + archived rows for the tenant.
+- Missing → insert `is_active=true`, next `sort_order+10`, `auto_created=true`, audit event `muted_reason_auto_created`.
+- Matches active → no-op.
+- Matches archived → NO reactivation; customer.muted_reason snapshot still stored on the customer as free-text (historical snapshots stay immutable).
+- Empty / whitespace reason → skip entirely.
+- Wrapped in try/except at the call-site so a Mongo failure never unwinds the mute.
+
+### Results
+- **New backend tests: 8/8 green** (`test_customer_muted_exclusivity_p32.py`) covering Active/Inactive/Muted/All exclusivity, novel auto-persist, active-reason no-dup, archived-reason no-reactivate, and no-reason skip path.
+- **New frontend tests: 2/2 green** (`phase32-mute-reason-cache-invalidation.test.jsx`) covering cache clear on mute + cache untouched on unmute.
+- **P25/P26/P27/P28/P29/P29b/P30/P32 combined backend sweep: 52/52 green.**
+- **Mobile Jest MuteControlSheet: 6/6 green.**
+- `/api/openapi.json` still 200. Live curl confirms Muted count endpoint reachable and returns integer.
+
+### Guardrails honored
+- `bbeck169/Pool-Landscaping.git` ignored.
+- `test_config_public_returns_show_demo_logins` untouched.
+- Reused `not_deleted_filter()` helper.
+- Auto-persist wrapped in try/except (isolation from mute path).
+- Archived reasons NOT auto-reactivated.
+- `customer.muted_reason` remains free-text — no FK coupling.

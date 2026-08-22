@@ -91,6 +91,9 @@ export default function MuteControlSheet({
       setOpen(false);
       setSelectedReasonId("");
       setCustomReason("");
+      // Feb-2026 · P32 — drop the cached reason list on mute so the
+      // next open re-fetches any server-side auto-persisted reason.
+      if (!isMuted) setReasons([]);
       onChange?.(res);
     } catch (err: any) {
       onError?.(err?.message || `Failed to ${isMuted ? "unmute" : "mute"} customer`);

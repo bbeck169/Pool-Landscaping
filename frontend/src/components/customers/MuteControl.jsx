@@ -82,6 +82,11 @@ export default function MuteControl({
       setOpen(false);
       setSelectedReasonId("");
       setCustomReason("");
+      // Feb-2026 · P32 — after a successful mute, drop the cached
+      // reason list so the next open re-fetches. This picks up any
+      // reason auto-created server-side (see P32 auto-persist in
+      // ``mute_customer``).
+      if (!isMuted) setReasons([]);
       onChange?.(res);
     } catch (err) {
       onError?.(err?.message || `Failed to ${isMuted ? "unmute" : "mute"} customer`);

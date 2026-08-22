@@ -276,10 +276,25 @@ async def list_customers(
     # Phase 56.2 — active/inactive cohort filter. Rows created before the
     # `is_active` field existed default to active per Phase 34f semantics,
     # so a `True` filter must match {is_active: True} OR field-absent.
+    #
+    # Feb-2026 · P32 — Muted-tab exclusivity. Muted rows are stamped
+    # ``is_active=False`` by the P27 mute path, so without an explicit
+    # ``is_muted != true`` guard they leak into the Inactive tab (and
+    # its count). Fix: the ``is_active`` cohort filters MUST also
+    # exclude muted rows. Muted lives in its own tab; Active + Inactive
+    # cover the non-muted world.
+    _NOT_MUTED = {"$or": [{"is_muted": {"$ne": True}},
+                             {"is_muted": {"$exists": False}}]}
     if is_active is True:
-        q["$and"] = q.get("$and", []) + [{"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]}]
+        q["$and"] = q.get("$and", []) + [
+            {"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]},
+            _NOT_MUTED,
+        ]
     elif is_active is False:
-        q["is_active"] = False
+        q["$and"] = q.get("$and", []) + [
+            {"is_active": False},
+            _NOT_MUTED,
+        ]
     # Feb-2026 · P28 — muted saved view. Absent = no filter. True =
     # only muted rows. False = non-muted (both explicit-False and
     # legacy field-missing, since P27 only stamps ``is_muted`` on
@@ -812,8 +827,66 @@ async def mute_customer(
                               extra=({"muted_reason": reason} if reason else None))
     logger.info("[P27] customer_mute actor=%s cid=%s reason=%s",
                     user.get("email"), cid, (reason or "-"))
+    # Feb-2026 · P32 — best-effort auto-persist of a novel custom reason
+    # into ``muted_reasons`` so it appears in the picker next time.
+    # Rules (see phase brief):
+    #   * Case-insensitive dedup via ``label_norm`` across active +
+    #     archived rows for this tenant.
+    #   * If the label matches an ACTIVE row → no-op.
+    #   * If it matches an ARCHIVED row → do NOT reactivate. Respect
+    #     the admin's intentional archive; the customer.muted_reason
+    #     snapshot on the row already captures the label.
+    #   * If missing → insert a new active row with next sort_order +
+    #     an ``auto_created=true`` breadcrumb, and audit-log it.
+    # A failure here MUST NEVER block the mute — swallowed + logged.
+    if reason:
+        try:
+            await _p32_auto_persist_reason(reason, tenant["id"], user, request)
+        except Exception as e:
+            logger.warning("[P32] muted_reason auto-persist failed cid=%s: %s",
+                              cid, e)
     return {"muted": True, "customer_id": cid, "muted_at": muted_at,
              "muted_reason": reason}
+
+
+async def _p32_auto_persist_reason(reason: str, tenant_id: str,
+                                       user: dict, request: Request) -> None:
+    """Feb-2026 · P32 — Idempotent auto-persist of a mute reason into
+    ``muted_reasons``. See ``mute_customer`` for the full contract.
+    Kept as a private helper so the mute path stays terse and the
+    audit-log call is co-located with the insert."""
+    label = reason.strip()
+    if not label:
+        return
+    norm = label.lower()
+    existing = await db.muted_reasons.find_one(
+        {"tenant_id": tenant_id, "label_norm": norm},
+        {"_id": 0, "id": 1, "is_active": 1},
+    )
+    if existing is not None:
+        # Matches an active or archived row — either way, do nothing.
+        # Archived-match intentionally does not reactivate.
+        return
+    last = await db.muted_reasons.find(
+        {"tenant_id": tenant_id}, {"_id": 0, "sort_order": 1},
+    ).sort("sort_order", -1).limit(1).to_list(1)
+    next_sort = int((last[0].get("sort_order") if last else 0) or 0) + 10
+    now = now_iso()
+    new_row = {
+        "id": new_id(), "tenant_id": tenant_id, "label": label[:120],
+        "label_norm": norm[:120],
+        "is_active": True, "sort_order": next_sort,
+        "auto_created": True,
+        "created_at": now, "created_by": user.get("id"),
+        "updated_at": now, "updated_by": user.get("id"),
+    }
+    await db.muted_reasons.insert_one(new_row)
+    await _p27_write_audit(event="muted_reason_auto_created",
+                              cid=new_row["id"], tenant_id=tenant_id,
+                              user=user, request=request,
+                              extra={"label": label[:120]})
+    logger.info("[P32] muted_reason auto-created tenant=%s label=%r",
+                    tenant_id, label[:120])
 
 
 @router.patch("/customers/{cid}/unmute")
