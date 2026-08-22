@@ -10,6 +10,7 @@ import CustomersTagFilterDropdown from "@/components/customers/CustomersTagFilte
 import RestoreCustomerButton from "@/components/customers/RestoreCustomerButton";
 import MuteControl from "@/components/customers/MuteControl";
 import CustomersPager from "@/components/customers/CustomersPager";
+import ImportCsvModalP41 from "@/pages/customers/ImportCsvModalP41";
 
 
 // Feb-2026 · P28 — tiny relative-time formatter for the Muted saved
@@ -113,6 +114,9 @@ export default function CustomersList() {
   const [selected, setSelected] = useState(new Set());
   const [bulkTag, setBulkTag] = useState("");
   const [importOpen, setImportOpen] = useState(false);
+  // Feb-2026 · P41 — new CSV import (merge semantics). Sibling to the
+  // legacy ``importOpen`` modal above.
+  const [importCsvOpen, setImportCsvOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const [activationConfirm, setActivationConfirm] = useState(null); // {customer, nextActive}
   const [activationBusy, setActivationBusy] = useState(false);
@@ -550,6 +554,15 @@ export default function CustomersList() {
             <Button variant="ghost" onClick={() => setImportOpen(true)} testid="customers-import">
               <Upload size={16} /> Import
             </Button>
+            {isAdminOrManager ? (
+              <Button
+                variant="ghost"
+                onClick={() => setImportCsvOpen(true)}
+                testid="import-csv-btn"
+              >
+                <Upload size={16} /> Import CSV
+              </Button>
+            ) : null}
             <Button onClick={() => navigate("/customers/new")} testid="customers-new-button">
               <Plus size={16} /> New Customer
             </Button>
@@ -1122,6 +1135,12 @@ export default function CustomersList() {
       </div>
 
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); loadCounts(); }} setToast={setToast} />
+      <ImportCsvModalP41
+        open={importCsvOpen}
+        onClose={() => setImportCsvOpen(false)}
+        onDone={() => { load(); loadCounts(); }}
+        setToast={setToast}
+      />
 
       <Modal
         open={!!activationConfirm}

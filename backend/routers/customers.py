@@ -2103,3 +2103,412 @@ async def public_add_card_attach(token: str, body: dict = Body(...)):
         "exp_year": row.get("exp_year"),
         "is_default": bool(row.get("is_default")),
     }
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · P41 — CSV import for customers (web-only, admin/manager).
+# ─────────────────────────────────────────────────────────────────────
+# Import contract (locked with user):
+#   * 12 fields, header row required, case/space/underscore tolerant.
+#   * User picks Active OR Inactive per import; every row lands with
+#     that ``is_active`` flag.
+#   * Duplicates by email OR phone (against non-soft-deleted rows in
+#     the same tenant) are SKIPPED — no update, no create.
+#   * Required per-row: First Name + Last Name + Service Address.
+#   * Empty billing address → falls back to service address.
+#   * Batch cap 5000. Reject BEFORE any insert.
+#   * Geocoding is queued as a fire-and-forget BackgroundTask with a
+#     5-concurrent-request throttle.
+#   * Single ``customer_csv_import`` audit-log entry per call.
+# ═════════════════════════════════════════════════════════════════════
+from fastapi import UploadFile, File, Form, BackgroundTasks
+import csv as _p41_csv
+import io as _p41_io
+import re as _p41_re
+
+from utils import not_deleted_filter as _p41_not_deleted
+
+_P41_REQUIRED_HEADERS = (
+    "first_name", "last_name", "service_address", "service_city",
+    "service_state", "service_zip_code", "billing_address", "billing_city",
+    "billing_state", "billing_zip_code", "email", "phone_number",
+)
+_P41_ROW_REQUIRED = ("first_name", "last_name", "service_address")
+_P41_MAX_ROWS = 5000
+_P41_GEOCODE_CONCURRENCY = 5
+# The 10 non-name customer fields eligible for fill-in-blanks merge.
+# Names are handled separately (only filled when BOTH first + last are
+# blank on the existing row).
+_P41_MERGE_FIELDS = (
+    ("service_address", "service_address"),
+    ("service_city",    "service_city"),
+    ("service_state",   "service_state"),
+    ("service_zip",     "service_zip_code"),
+    ("billing_address", "billing_address"),
+    ("billing_city",    "billing_city"),
+    ("billing_state",   "billing_state"),
+    ("billing_zip",     "billing_zip_code"),
+    ("email",           "email"),
+    ("phone",           "phone_number"),
+)
+
+
+def _p41_is_blank(value) -> bool:
+    """Field-is-missing helper. ``None`` / missing / empty / whitespace
+    are blank. ``False`` and ``0`` are populated (spec)."""
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
+def _p41_normalize_header(raw: str) -> str:
+    """Header normalizer: strip, lower, whitespace→underscore.
+    ``First Name`` → ``first_name``; ``FIRST_NAME`` → ``first_name``."""
+    return _p41_re.sub(r"\s+", "_", (raw or "").strip().lower())
+
+
+def _p41_normalize_email(raw: str) -> str:
+    return (raw or "").strip().lower()
+
+
+def _p41_normalize_phone(raw: str) -> str:
+    """Strip everything except digits and an optional leading ``+``.
+    Empty string stays empty."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    has_plus = s.startswith("+")
+    digits = _p41_re.sub(r"\D", "", s)
+    return ("+" + digits) if has_plus else digits
+
+
+_P41_EMAIL_RE = _p41_re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+async def _p41_run_geocode(customer_id: str, tenant_id: str,
+                             sem) -> None:
+    try:
+        from services.google_maps.geocoding import (
+            geocode_and_persist_customer as _gp,
+        )
+        async with sem:
+            await _gp(customer_id, tenant_id)
+    except Exception as exc:  # pragma: no cover — best-effort
+        logger.warning("[P41] geocode failed customer=%s err=%s",
+                          customer_id, exc)
+
+
+async def _p41_geocode_batch(customer_ids: List[str], tenant_id: str) -> None:
+    """Background driver — throttles concurrent geocodes to 5."""
+    import asyncio as _a
+    sem = _a.Semaphore(_P41_GEOCODE_CONCURRENCY)
+    await _a.gather(*[
+        _p41_run_geocode(cid, tenant_id, sem) for cid in customer_ids
+    ])
+
+
+@router.post("/customers/import-csv", tags=["customers"],
+                operation_id="customers.importCsv")
+async def import_customers_csv(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    target_status: str = Form(...),
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    # RBAC — super_admin + admin + manager. Tech 403.
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin", "owner", "manager"):
+        raise HTTPException(403, "Admin or manager access required")
+
+    ts = (target_status or "").strip().lower()
+    if ts not in ("active", "inactive"):
+        raise HTTPException(400, "target_status must be 'active' or 'inactive'")
+    is_active_target = ts == "active"
+
+    # Decode + parse CSV.
+    try:
+        raw = await file.read()
+        if not raw:
+            raise HTTPException(400, "empty_file")
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            try:
+                text = raw.decode("latin-1")
+            except Exception:
+                raise HTTPException(400, "unsupported_file_type")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "unsupported_file_type")
+
+    # Header sniff — accept CSV only. A completely non-CSV upload will
+    # either fail here or produce a row-count of 0 with a missing-header
+    # error, so both surface a clear 400.
+    reader = _p41_csv.DictReader(_p41_io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(400, {"error": "unsupported_file_type",
+                                       "detail": "no_header_row"})
+    fieldmap = {_p41_normalize_header(fn): fn for fn in reader.fieldnames}
+    missing = [h for h in _P41_REQUIRED_HEADERS if h not in fieldmap]
+    if missing:
+        raise HTTPException(400, {"error": "missing_headers",
+                                       "missing_headers": missing})
+
+    # Stream all rows into memory FIRST so we can enforce the 5000 cap
+    # before doing any writes (spec: never partial-import beyond cap).
+    rows: List[dict] = []
+    for r in reader:
+        rows.append(r)
+        if len(rows) > _P41_MAX_ROWS:
+            raise HTTPException(400, {"error": "too_many_rows",
+                                           "max_rows": _P41_MAX_ROWS})
+
+    tenant_id = tenant["id"]
+    actor_id = user.get("id") or ""
+
+    def _pick(row: dict, key: str) -> str:
+        src = fieldmap.get(key)
+        if not src:
+            return ""
+        return (row.get(src) or "").strip()
+
+    created_ids: List[str] = []
+    updated_count = 0
+    skipped_no_new_data = 0
+    merges_sample: List[dict] = []
+    row_errors: List[dict] = []
+
+    for idx, row in enumerate(rows, start=2):  # header = row 1
+        try:
+            first_name = _pick(row, "first_name")
+            last_name = _pick(row, "last_name")
+            service_address = _pick(row, "service_address")
+
+            if not (first_name and last_name and service_address):
+                row_errors.append({"row": idx, "reason": "missing_required"})
+                continue
+
+            email_norm = _p41_normalize_email(_pick(row, "email"))
+            if email_norm and not _P41_EMAIL_RE.match(email_norm):
+                row_errors.append({"row": idx, "reason": "invalid_email"})
+                continue
+
+            phone_norm = _p41_normalize_phone(_pick(row, "phone_number"))
+            if phone_norm and len(_p41_re.sub(r"\D", "", phone_norm)) < 7:
+                row_errors.append({"row": idx, "reason": "invalid_phone"})
+                continue
+
+            # Billing-address fallback applies to the CSV row BEFORE the
+            # merge check (per spec) so the filled billing_address
+            # participates in the fill-in-blanks pass normally.
+            b_addr = _pick(row, "billing_address")
+            if not b_addr:
+                b_addr = service_address
+                b_city = _pick(row, "service_city")
+                b_state = _pick(row, "service_state")
+                b_zip = _pick(row, "service_zip_code")
+            else:
+                b_city = _pick(row, "billing_city")
+                b_state = _pick(row, "billing_state")
+                b_zip = _pick(row, "billing_zip_code")
+
+            s_city = _pick(row, "service_city")
+            s_state = _pick(row, "service_state")
+            s_zip = _pick(row, "service_zip_code")
+
+            # ── Match candidate selection ──────────────────────────
+            # ``not_deleted_filter()`` scopes the match to live rows so
+            # a CSV row matching only a soft-deleted customer creates
+            # a NEW row (spec).
+            matched_by_email = None
+            matched_by_phone = None
+            if email_norm:
+                matched_by_email = await db.customers.find_one({
+                    "tenant_id": tenant_id, **_p41_not_deleted(),
+                    "email": email_norm,
+                }, {"_id": 0})
+            if phone_norm:
+                matched_by_phone = await db.customers.find_one({
+                    "tenant_id": tenant_id, **_p41_not_deleted(),
+                    "phone": phone_norm,
+                }, {"_id": 0})
+
+            # Ambiguous: email hits one customer, phone hits a
+            # different customer. Do NOT auto-pick.
+            if (matched_by_email and matched_by_phone
+                    and matched_by_email.get("id")
+                        != matched_by_phone.get("id")):
+                row_errors.append({
+                    "row": idx, "reason": "ambiguous_duplicate",
+                    "detail": (f"matches customer {matched_by_email['id']} "
+                                  f"by email and customer "
+                                  f"{matched_by_phone['id']} by phone"),
+                })
+                continue
+
+            existing = matched_by_email or matched_by_phone
+
+            if existing:
+                # ── Cross-status flag ──────────────────────────────
+                # If the row matches a customer whose is_active differs
+                # from the requested target list, emit a
+                # ``matched_in_other_status`` row-flag so the admin
+                # sees in the post-import report that the row did
+                # NOT move to the target list. The merge itself still
+                # proceeds normally (spec: is_active is never flipped).
+                existing_is_active = bool(existing.get("is_active", True))
+                if existing_is_active != is_active_target:
+                    if existing_is_active:
+                        _msg = ("Customer exists in Active list; row "
+                                    "will not be moved to Inactive. Fields "
+                                    "merged in place.")
+                    else:
+                        _msg = ("Customer exists in Inactive list; row "
+                                    "will not be moved to Active. Fields "
+                                    "merged in place.")
+                    row_errors.append({
+                        "row": idx,
+                        "reason": "matched_in_other_status",
+                        "detail": _msg,
+                    })
+
+                # ── Fill-in-blanks merge ───────────────────────────
+                csv_field_values = {
+                    "service_address": service_address,
+                    "service_city":    s_city,
+                    "service_state":   s_state,
+                    "service_zip":     s_zip,
+                    "billing_address": b_addr,
+                    "billing_city":    b_city,
+                    "billing_state":   b_state,
+                    "billing_zip":     b_zip,
+                    "email":           email_norm,
+                    "phone":           phone_norm,
+                }
+                to_set: dict = {}
+                for db_key, _csv_key in _P41_MERGE_FIELDS:
+                    incoming = csv_field_values.get(db_key) or ""
+                    if not incoming:
+                        continue
+                    if _p41_is_blank(existing.get(db_key)):
+                        to_set[db_key] = incoming
+                # Names — fill only when BOTH existing first + last
+                # are blank (avoid partial-name overwrites, spec).
+                if (_p41_is_blank(existing.get("first_name"))
+                        and _p41_is_blank(existing.get("last_name"))):
+                    to_set["first_name"] = first_name
+                    to_set["last_name"] = last_name
+                    to_set["name"] = f"{first_name} {last_name}".strip()
+
+                if not to_set:
+                    skipped_no_new_data += 1
+                    continue
+
+                # NEVER flip is_active on merge (spec).
+                to_set["updated_at"] = now_iso()
+                await db.customers.update_one(
+                    {"id": existing["id"], "tenant_id": tenant_id},
+                    {"$set": to_set},
+                )
+                updated_count += 1
+                if len(merges_sample) < 20:
+                    merges_sample.append({
+                        "row": idx,
+                        "customer_id": existing["id"],
+                        "fields_filled": [k for k in to_set
+                                              if k != "updated_at"],
+                    })
+                continue
+
+            # ── No match — insert a brand-new customer ─────────────
+            composed_name = f"{first_name} {last_name}".strip()
+            doc = {
+                "id": new_id(),
+                "tenant_id": tenant_id,
+                "first_name": first_name,
+                "last_name": last_name,
+                "name": composed_name,
+                "email": email_norm,
+                "phone": phone_norm,
+                "address": ", ".join(p for p in [
+                    service_address, s_city,
+                    f"{s_state} {s_zip}".strip() if (s_state or s_zip) else "",
+                ] if p),
+                "service_address": service_address,
+                "service_city": s_city,
+                "service_state": s_state,
+                "service_zip": s_zip,
+                "billing_address": b_addr,
+                "billing_city": b_city,
+                "billing_state": b_state,
+                "billing_zip": b_zip,
+                "tags": [],
+                "is_active": is_active_target,
+                "status": "active" if is_active_target else "inactive",
+                "is_muted": False,
+                "created_at": now_iso(),
+                "created_by": actor_id,
+                "imported_at": now_iso(),
+                "import_source": "csv",
+            }
+            _sync_customer_names(doc)
+            await db.customers.insert_one(doc)
+            created_ids.append(doc["id"])
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            row_errors.append({
+                "row": idx, "reason": "unknown_error",
+                "detail": str(exc)[:200],
+            })
+
+    # ``matched_in_other_status`` is an INFO row-flag, not an error.
+    # Exclude it from the ``errored`` count while keeping the entry
+    # in ``row_errors`` for admin visibility (spec).
+    _errored_count = sum(
+        1 for e in row_errors
+        if e.get("reason") != "matched_in_other_status")
+
+    # Audit log — single summary entry per import.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(), "tenant_id": tenant_id,
+            "actor_id": actor_id, "actor_email": user.get("email"),
+            "event": "customer_csv_import", "at": now_iso(),
+            "payload": {
+                "target_status": ts,
+                "total_rows": len(rows),
+                "created": len(created_ids),
+                "updated": updated_count,
+                "skipped_no_new_data": skipped_no_new_data,
+                "errored": _errored_count,
+                "row_errors_sample": row_errors[:20],
+                "merges_sample": merges_sample,
+                # Observable from any process — the number of newly-
+                # created customer ids queued for background geocoding.
+                # Merged rows are intentionally NOT re-geocoded.
+                "geocode_queued": len(created_ids),
+            },
+        })
+    except Exception as exc:  # pragma: no cover — best-effort
+        logger.warning("[P41] audit insert failed: %s", exc)
+
+    # Queue background geocoding — only for NEW customers. Merged rows
+    # keep whatever geocoding state the existing customer already has
+    # (spec: don't re-geocode).
+    if created_ids:
+        background_tasks.add_task(
+            _p41_geocode_batch, list(created_ids), tenant_id)
+
+    return {
+        "ok": True,
+        "created": len(created_ids),
+        "updated": updated_count,
+        "skipped_no_new_data": skipped_no_new_data,
+        "errored": _errored_count,
+        "row_errors": row_errors,
+    }
