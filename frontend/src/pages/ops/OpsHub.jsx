@@ -2816,42 +2816,90 @@ function JobTimers() {
   // Feb-2026 · P37b — surface GPS-arrival / service-report-submit
   // origin badges next to the job title so dispatchers can see at a
   // glance which timers auto-started vs manual.
-  return <SimplePage endpoint="/jobs" title="Active timers" empty="No active timers"
-    filter={(j) => j.status === "active" && j.timer_started_at}
-    render={(j) => (
-      <span data-testid={`job-timer-row-${j.id}`}>
-        {j.title} — {j.technician_name} — started {j.timer_started_at}
-        {j.timer_start_method === "gps_arrival" ? (
-          <span
-            data-testid={`timer-start-badge-${j.id}`}
-            style={{ marginLeft: 8, padding: "1px 6px",
-                       background: "#E0F2FE", color: "#075985",
-                       borderRadius: 4, fontSize: 11, fontWeight: 600 }}
-          >
-            Started {new Date(j.timer_started_at).toTimeString().slice(0,5)} via GPS arrival
+  //
+  // Feb-2026 · P37b.1 — start-method filter chip row above the
+  // list so dispatchers can slice the active-timer set by how the
+  // timer started. "manual" bucket also includes null / undefined /
+  // legacy pre-P37 rows that were started by the manual UI.
+  const [methodFilter, setMethodFilter] = React.useState("all");
+
+  const _matches = (j) => {
+    if (methodFilter === "all") return true;
+    if (methodFilter === "auto") return j.timer_start_method === "gps_arrival";
+    // "manual" bucket = anything that isn't gps_arrival, including
+    // null / undefined / "manual" / any future start method.
+    return j.timer_start_method !== "gps_arrival";
+  };
+
+  const _chip = (key, label) => {
+    const active = methodFilter === key;
+    return (
+      <button
+        key={key}
+        type="button"
+        onClick={() => setMethodFilter(key)}
+        data-testid={`job-timer-filter-${key}`}
+        className="text-xs font-semibold px-3 py-1 rounded-full transition"
+        style={{
+          background: active ? colors.brand : colors.surfaceSecondary,
+          color: active ? "#fff" : colors.onSurface,
+          border: `1px solid ${active ? colors.brand : colors.border}`,
+          marginRight: 6,
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
+
+  return (
+    <>
+      <div
+        className="mb-2 flex items-center gap-1"
+        data-testid="job-timer-filter-row"
+      >
+        {_chip("all", "All")}
+        {_chip("auto", "Auto")}
+        {_chip("manual", "Manual")}
+      </div>
+      <SimplePage endpoint="/jobs" title="Active timers" empty="No active timers"
+        filter={(j) => j.status === "active" && j.timer_started_at && _matches(j)}
+        render={(j) => (
+          <span data-testid={`job-timer-row-${j.id}`}>
+            {j.title} — {j.technician_name} — started {j.timer_started_at}
+            {j.timer_start_method === "gps_arrival" ? (
+              <span
+                data-testid={`timer-start-badge-${j.id}`}
+                style={{ marginLeft: 8, padding: "1px 6px",
+                           background: "#E0F2FE", color: "#075985",
+                           borderRadius: 4, fontSize: 11, fontWeight: 600 }}
+              >
+                Started {new Date(j.timer_started_at).toTimeString().slice(0,5)} via GPS arrival
+              </span>
+            ) : null}
+            {j.timer_stop_method === "service_report_submitted" ? (
+              <span
+                data-testid={`timer-stop-badge-${j.id}`}
+                style={{ marginLeft: 6, padding: "1px 6px",
+                           background: "#F1F5F9", color: "#334155",
+                           borderRadius: 4, fontSize: 11, fontWeight: 600 }}
+              >
+                Stopped via service report
+              </span>
+            ) : j.timer_stop_method === "job_completed" ? (
+              <span
+                data-testid={`timer-stop-badge-${j.id}`}
+                style={{ marginLeft: 6, padding: "1px 6px",
+                           background: "#F1F5F9", color: "#334155",
+                           borderRadius: 4, fontSize: 11, fontWeight: 600 }}
+              >
+                Stopped via job completion
+              </span>
+            ) : null}
           </span>
-        ) : null}
-        {j.timer_stop_method === "service_report_submitted" ? (
-          <span
-            data-testid={`timer-stop-badge-${j.id}`}
-            style={{ marginLeft: 6, padding: "1px 6px",
-                       background: "#F1F5F9", color: "#334155",
-                       borderRadius: 4, fontSize: 11, fontWeight: 600 }}
-          >
-            Stopped via service report
-          </span>
-        ) : j.timer_stop_method === "job_completed" ? (
-          <span
-            data-testid={`timer-stop-badge-${j.id}`}
-            style={{ marginLeft: 6, padding: "1px 6px",
-                       background: "#F1F5F9", color: "#334155",
-                       borderRadius: 4, fontSize: 11, fontWeight: 600 }}
-          >
-            Stopped via job completion
-          </span>
-        ) : null}
-      </span>
-    )} />;
+        )} />
+    </>
+  );
 }
 function AvgJobTime() {
   const [rows] = useList("/jobs");

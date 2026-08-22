@@ -1,17 +1,19 @@
 /**
- * Task 1 · Feb-2026 — Mobile mirror of the web ``CustomerTagsCard``.
+ * Feb-2026 · P36-followup — Mobile mirror of the web ``CustomerTagsCard``.
  *
  * Chip render of attached tags + tap-to-add bottom sheet with
  * search, existing-tag selection, and an inline "Create new: <query>"
- * affordance. Reuses the same backend surface as the web:
+ * affordance. Backend surface (parity with web):
  *
- *   * GET  /customer-tags                            — global list
- *   * POST /customer-tags/{id}/attach {customer_id}  — attach
- *   * POST /customer-tags/{id}/detach {customer_id}  — detach
- *   * POST /customer-tags        {name, color}       — create new
+ *   * GET   /customer-tags                          — global catalog
+ *   * PATCH /customers/{cid}/tags {tags:[name,...]} — full replace
  *
- * The web picker also exposes a bulk PATCH but that's out of scope
- * for the mobile customer detail (single-customer view only).
+ * Feb-2026 · P36-followup fix — the previous mobile impl called
+ * ``POST /customer-tags/{id}/attach|detach``, which never existed
+ * on the backend and failed silently. Web uses PATCH /tags with a
+ * full-replace payload; this file mirrors that. The backend PATCH
+ * auto-persists (P33) any name not already in the catalog and is a
+ * no-op on archived-tag reattach (P36).
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -35,6 +37,13 @@ type Props = {
   onChange?: (nextTags: Tag[]) => void;
 };
 
+// Convert an attached-tags array to the {tags:[name,...]} payload
+// the backend PATCH endpoint expects (see backend routers/customer_tags.py
+// ``_CustomerTagsSet``).
+function _toPayload(tags: Tag[]): { tags: string[] } {
+  return { tags: tags.map((t) => t.name).filter(Boolean) };
+}
+
 export default function CustomerTagsSection({
   customerId, value, onChange,
 }: Props) {
@@ -43,11 +52,13 @@ export default function CustomerTagsSection({
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const detach = async (tag: Tag) => {
+    const next = attached.filter((t) => t.id !== tag.id);
     try {
-      await api.post(`/customer-tags/${tag.id}/detach`, { customer_id: customerId });
-      const next = attached.filter((t) => t.id !== tag.id);
+      // Feb-2026 · P36-followup — full-replace via PATCH; the web
+      // widget uses the same endpoint and shape.
+      await api.patch(`/customers/${customerId}/tags`, _toPayload(next));
       onChange?.(next);
-    } catch { /* silent */ }
+    } catch { /* silent — parent stays on old value until next reload */ }
   };
 
   return (
@@ -151,9 +162,10 @@ function TagPickerSheet({
 
   const attach = async (tag: Tag) => {
     setBusy(tag.id);
+    const next = [...attached, tag];
     try {
-      await api.post(`/customer-tags/${tag.id}/attach`,
-                        { customer_id: customerId });
+      // Feb-2026 · P36-followup — full-replace PATCH.
+      await api.patch(`/customers/${customerId}/tags`, _toPayload(next));
       onAttached(tag);
       onClose();
     } catch { /* silent */ }
@@ -164,10 +176,19 @@ function TagPickerSheet({
     if (!name) return;
     setBusy("__create__");
     try {
-      const t = await api.post("/customer-tags", { name });
-      await api.post(`/customer-tags/${t.id}/attach`,
-                        { customer_id: customerId });
-      onAttached(t);
+      // Feb-2026 · P36-followup — the PATCH endpoint auto-persists
+      // any name missing from the catalog (P33 wiring). No need for
+      // a separate ``POST /customer-tags`` call. Synthesize a Tag
+      // for the parent's ``onChange`` callback; the real id lands
+      // when the parent's next GET /customer-tags refresh runs.
+      const synthetic: Tag = {
+        id: `pending:${name.toLowerCase()}`,
+        name,
+        color: "#DBEAFE",
+      };
+      const next = [...attached, synthetic];
+      await api.patch(`/customers/${customerId}/tags`, _toPayload(next));
+      onAttached(synthetic);
       onClose();
     } catch { /* silent */ }
     finally { setBusy(null); }
