@@ -12025,3 +12025,20 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 - Marketing drip enrolment write path (`services/marketing/drip_events.py:91`, `routers/marketing_forms.py:810`) — muted rows are already excluded because they carry `is_active=False`, but a defense-in-depth explicit filter is a follow-up.
 - Nested customer-scoped read audit (still queued from P25).
 - `stripe_publishable_key` in `/config/public` (still deferred).
+
+---
+
+## Phase P28 — Muted customers saved view (Feb 24, 2026)
+
+**Delivered**
+- `routers/customers.py::list_customers` — new `is_muted: Optional[bool] = Query(None)` param. True → only muted rows. False → non-muted (via `$or: [{is_muted:{$ne:True}}, {is_muted:{$exists:False}}]` to catch legacy field-missing rows). Absent → no filter. Admin/manager/super_admin only; tech role 403.
+- `pages/customers/CustomersList.jsx` — new **Muted** tab in `TAB_DEFS` (admin-gated). Non-admin guard extended so tech landing on `?tab=muted` redirects to Active. `loadCounts()` conditionally fetches muted count for admins. Empty-state text tailored to the Muted tab. Rows on the Muted tab render a "Muted \<ago\>" label via a tiny `_p28RelativeTime` helper (testid `muted-since-{cid}`).
+- Backend `tests/test_customers_muted_saved_view.py` — **1/1 green** covering true/false/absent filter branches + tech 403.
+- Frontend `test/phase28-customers-muted-saved-view.test.jsx` — **3/3 green** covering admin visibility, tech hidden, click-to-query round-trip.
+
+**Regression** — 27/27 backend + 19/19 frontend across P25/P26/P27/P28 + P11b + P18. No regressions.
+
+**Deferred**
+- P24 AI-employee avatar loss audit + backfill — was queued behind P25/P26/P27 and dropped from the queue when P25 arrived; requires user redispatch.
+- Retroactive muted-contact check on inbound webhook comms (still queued from P27).
+- Marketing drip enrolment explicit `is_muted` filter (still queued).

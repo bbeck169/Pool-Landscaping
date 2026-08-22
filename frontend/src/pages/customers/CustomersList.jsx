@@ -9,6 +9,31 @@ import { PageHeader, TagChip, Chip, Skeleton, EmptyState, Button, Modal, Toast }
 import CustomersTagFilterDropdown from "@/components/customers/CustomersTagFilterDropdown";
 import RestoreCustomerButton from "@/components/customers/RestoreCustomerButton";
 import MuteControl from "@/components/customers/MuteControl";
+
+
+// Feb-2026 · P28 — tiny relative-time formatter for the Muted saved
+// view's "Muted <ago>" per-row label. Purely a display helper; falls
+// back to the raw ISO string when parsing fails.
+function _p28RelativeTime(iso) {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (isNaN(t)) return iso;
+  const diffMs = Date.now() - t;
+  if (diffMs < 0) return "just now";
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  const y = Math.floor(mo / 12);
+  return `${y}y ago`;
+}
+
 import {
   BulkActionBar,
   BulkConfirmModal,
@@ -84,9 +109,9 @@ export default function CustomersList() {
   const [missingCardOnly, setMissingCardOnly] = useState(false);
   const searchDeb = useDebounced(q);
 
-  // Non-admin users cannot land on the inactive cohort — redirect to active.
+  // Non-admin users cannot land on the inactive or muted cohort — redirect to active.
   useEffect(() => {
-    if (!isAdmin && tab === "inactive") setTab("active");
+    if (!isAdmin && (tab === "inactive" || tab === "muted")) setTab("active");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
@@ -111,6 +136,7 @@ export default function CustomersList() {
     if (scope === "unscheduled") params.set("unscheduled", "true");
     if (tab === "active") params.set("is_active", "true");
     else if (tab === "inactive") params.set("is_active", "false");
+    else if (tab === "muted") params.set("is_muted", "true");
     if (missingCardOnly) params.set("missing_card", "true");
     // Feb-2026 · P26 — super_admin escape hatch to see soft-deleted rows.
     if (includeDeleted && isSuperAdmin) params.set("include_deleted", "true");
@@ -126,11 +152,22 @@ export default function CustomersList() {
 
   const loadCounts = async () => {
     try {
-      const [a, i] = await Promise.all([
+      const promises = [
         api.get("/customers?is_active=true&count_only=true"),
         api.get("/customers?is_active=false&count_only=true"),
-      ]);
-      setCounts({ active: a?.count ?? 0, inactive: i?.count ?? 0 });
+      ];
+      // Feb-2026 · P28 — muted-count endpoint is admin/manager/
+      // super_admin only; tech role 403s. Skip the call for tech to
+      // avoid a noisy request that will always fail.
+      if (isAdmin) {
+        promises.push(api.get("/customers?is_muted=true&count_only=true"));
+      }
+      const results = await Promise.all(promises);
+      setCounts({
+        active: results[0]?.count ?? 0,
+        inactive: results[1]?.count ?? 0,
+        muted: isAdmin ? (results[2]?.count ?? 0) : null,
+      });
     } catch { /* silent — counts are advisory */ }
   };
 
@@ -430,6 +467,7 @@ export default function CustomersList() {
   const TAB_DEFS = [
     { k: "active", label: "Active", count: counts.active, testid: "tab-active" },
     { k: "inactive", label: "Inactive", count: counts.inactive, testid: "tab-inactive", adminOnly: true },
+    { k: "muted", label: "Muted", count: counts.muted, testid: "tab-muted", adminOnly: true },
     { k: "all", label: "All", count: null, testid: "tab-all", adminOnly: true },
   ];
 
@@ -661,8 +699,12 @@ export default function CustomersList() {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={Users}
-            title="No customers"
-            hint="Try adjusting filters or import a CSV to get started."
+            title={tab === "muted" ? "No muted customers" : "No customers"}
+            hint={
+              tab === "muted"
+                ? "Muted customers are excluded from marketing, autobilling, route optimization, and lead alerts. Nothing to review right now."
+                : "Try adjusting filters or import a CSV to get started."
+            }
           />
         ) : (
           <>
@@ -791,6 +833,17 @@ export default function CustomersList() {
                           title="Muted — silent mode across marketing, autobilling, route optimization, and lead alerts"
                         >
                           MUTED
+                        </span>
+                      ) : null}
+                      {/* Feb-2026 · P28 — relative-time muted-at label on the Muted saved view. */}
+                      {c.is_muted && tab === "muted" && c.muted_at ? (
+                        <span
+                          className="text-[10px] font-normal"
+                          style={{ color: colors.muted }}
+                          data-testid={`muted-since-${c.id}`}
+                          title={c.muted_at}
+                        >
+                          Muted {_p28RelativeTime(c.muted_at)}
                         </span>
                       ) : null}
                       {!c.deleted_at && isAdmin ? (

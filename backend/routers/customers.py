@@ -237,6 +237,7 @@ async def list_customers(
     unscheduled: Optional[bool] = None,
     is_active: Optional[bool] = None,
     missing_card: Optional[bool] = None,
+    is_muted: Optional[bool] = Query(None, description="Feb-2026 · P28 admin/super_admin only — filter to muted (true) or non-muted (false); absent = no filter"),
     count_only: bool = False,
     include_deleted: bool = Query(False, description="Feb-2026 · P25 super_admin only — include soft-deleted customers"),
 ):
@@ -246,6 +247,10 @@ async def list_customers(
     # Phase 12 · Feb 2026 — the ``missing_card`` filter is admin/manager
     # only. Technicians see the plain list.
     if missing_card and user.get("role") not in ("admin", "manager", "super_admin"):
+        raise HTTPException(403, "Not allowed")
+    # Feb-2026 · P28 — the muted saved view is admin/manager/super_admin
+    # only. Technicians never see the Muted tab.
+    if is_muted is not None and user.get("role") not in ("admin", "manager", "super_admin"):
         raise HTTPException(403, "Not allowed")
     # Feb-2026 · P25 — soft-delete read-filter. Mirror the P4/P4.5 job
     # list pattern: default filters out ``deleted_at`` (both null and
@@ -275,6 +280,16 @@ async def list_customers(
         q["$and"] = q.get("$and", []) + [{"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]}]
     elif is_active is False:
         q["is_active"] = False
+    # Feb-2026 · P28 — muted saved view. Absent = no filter. True =
+    # only muted rows. False = non-muted (both explicit-False and
+    # legacy field-missing, since P27 only stamps ``is_muted`` on
+    # mute — non-muted rows have no such field).
+    if is_muted is True:
+        q["is_muted"] = True
+    elif is_muted is False:
+        q["$and"] = q.get("$and", []) + [
+            {"$or": [{"is_muted": {"$ne": True}}, {"is_muted": {"$exists": False}}]}
+        ]
     if count_only:
         return {"count": await db.customers.count_documents(q)}
     docs = await db.customers.find(q, {"_id": 0}).sort("name", 1).to_list(2000)
