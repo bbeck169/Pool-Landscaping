@@ -846,6 +846,17 @@ export default function CustomersList() {
                           Muted {_p28RelativeTime(c.muted_at)}
                         </span>
                       ) : null}
+                      {/* Feb-2026 · P29 — muted reason snapshot. Blank for historical rows. */}
+                      {c.is_muted && tab === "muted" && c.muted_reason ? (
+                        <span
+                          className="text-[10px] font-normal italic"
+                          style={{ color: colors.muted }}
+                          data-testid={`muted-reason-${c.id}`}
+                          title={c.muted_reason}
+                        >
+                          · {c.muted_reason}
+                        </span>
+                      ) : null}
                       {!c.deleted_at && isAdmin ? (
                         <MuteControl
                           customer={c}

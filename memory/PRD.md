@@ -12058,3 +12058,30 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 
 **Deferred**
 - Pre-existing `test_soft_delete_jwt_gate.py::test_config_public_returns_show_demo_logins` (still deferred per user).
+
+---
+
+## Phase P29 — Editable Muted Reason (Feb 24, 2026)
+
+**Shipped (backend + web)**
+- `customers.muted_reason` optional field (<=500 chars, whitespace-trimmed, empty → null). Stamped on mute; cleared on unmute.
+- New collection `muted_reasons` (tenant-scoped) with soft-active flag + case-insensitive uniqueness of label.
+- `PATCH /api/customers/{cid}/mute` — accepts optional `muted_reason` in body; audit log carries it.
+- `PATCH /api/customers/{cid}/unmute` — clears `muted_reason` via `$unset`.
+- New router `routers/muted_reasons.py`:
+  - `GET /api/settings/muted-reasons` (any staff, incl. tech — needed by picker)
+  - `POST /api/settings/muted-reasons` (super_admin/admin/manager)
+  - `PATCH /api/settings/muted-reasons/{rid}` (same RBAC)
+  - `DELETE /api/settings/muted-reasons/{rid}` (soft-deactivate; never hard-deletes)
+  - Every write to `audit_logs` (`muted_reason_create/_update/_deactivate`).
+- Seed migration `backend/migrations/task_p29_seed_muted_reasons.py` — dry-run default; `--commit` seeds. **Run on preview DB with `--commit`: seeded 5 reasons across 24 tenants (120 rows) — all existing tenants now carry the defaults.**
+- Frontend `MuteControl` — lazily loads reasons on modal open, renders dropdown + "Custom…" fallback, submits `muted_reason: <label>` (canned or custom text). Unmute path deliberately skips the reasons fetch.
+- Frontend `CustomersList` — Muted saved view now renders `· {muted_reason}` per row when present (`data-testid="muted-reason-{cid}"`); blank for historical rows (no placeholder).
+- Backend tests `test_muted_reasons_p29.py` — **6/6 green** (persist, whitespace-null normalisation, backwards-compat without reason, unmute clears, CRUD RBAC + duplicate 409 + soft-deactivate hide, seeded defaults visible).
+- Frontend tests `phase29-mute-reason-picker.test.jsx` — **5/5 green** (P27 back-compat 5/5 also still green = 10 mute-modal assertions total).
+- Live curl proof: `PATCH /customers/{cid}/mute {muted_reason:"Billing dispute"}` → 200 with reason echoed; `GET /customers?is_muted=true` returns the row with the field.
+
+**Deferred (transparently)**
+- **Web Settings → Muted Reasons manager page** (`/settings/muted-reasons` route + create/rename/deactivate CRUD UI). The backend CRUD is fully functional via curl; UI page not built this phase due to context budget. Admin can currently only manage reasons via the API surface. Recommend follow-up phase to ship the Settings page.
+- **Mobile mute picker parity + Jest** — mobile still uses the P27 no-reason mute flow (backend supports `muted_reason` but the mobile UI doesn't send it). Recommend a follow-up mobile-only phase.
+- Pre-existing `test_config_public_returns_show_demo_logins` (untouched per brief).

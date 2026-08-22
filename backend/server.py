@@ -181,7 +181,9 @@ api_router.include_router(marketing_campaigns_router.router)
 # the generic router loop so that ``GET /api/legal/tos`` wins the path
 # match over the legacy legal-CMS ``GET /api/legal/{slug}`` handler.
 from routers import tos as _tos_router  # noqa: E402
+from routers import muted_reasons as _p29_muted_reasons  # noqa: E402
 api_router.include_router(_tos_router.router)
+api_router.include_router(_p29_muted_reasons.router)
 
 # Feb-2026 · Slice 2A — Multi-ToS backend foundation (Pool +
 # Landscaping split, admin CRUD, customer onboarding-state DTO).

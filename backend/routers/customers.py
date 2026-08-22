@@ -1,5 +1,5 @@
 # ruff: noqa: F403,F405
-from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, Body
 from pydantic import BaseModel, ConfigDict
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timezone, timedelta
@@ -760,15 +760,16 @@ async def _p27_write_audit(
 async def mute_customer(
     cid: str,
     request: Request,
+    body: Optional[Dict[str, Any]] = Body(default=None),
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Feb-2026 · P27 — Mute a customer. Full silent-mode: marketing,
-    autobilling, route optimization, and P18 lead alerts skip the
-    row.  Idempotent: muting an already-muted customer returns 200
-    with ``{muted: false, reason: "already_muted"}``.
+    """Feb-2026 · P27 (+ P29 muted_reason snapshot) — Mute a customer.
+    Full silent-mode. Idempotent. Auth: admin OR super_admin.
 
-    Auth: admin OR super_admin (tech + customer → 403 role_not_permitted).
+    P29: optional ``muted_reason`` free-text snapshot (<=500 chars,
+    trimmed; empty → null). NOT a foreign key to ``muted_reasons`` —
+    renaming a reason must not retroactively change historical rows.
     """
     role = (user.get("role") or "").lower()
     if role not in ("admin", "super_admin"):
@@ -784,25 +785,35 @@ async def mute_customer(
     )
     if not doc:
         raise HTTPException(404, "Customer not found")
+    # P29 — normalise reason (trim; empty/whitespace → None; cap 500).
+    raw_reason = (body or {}).get("muted_reason") if isinstance(body, dict) else None
+    reason: Optional[str] = None
+    if isinstance(raw_reason, str):
+        s = raw_reason.strip()
+        if s:
+            reason = s[:500]
     if doc.get("is_muted"):
         return {"muted": False, "reason": "already_muted", "customer_id": cid}
     muted_at = now_iso()
+    set_fields = {
+        "is_muted": True,
+        "muted_at": muted_at,
+        "muted_by": user.get("id"),
+        "is_active": False,
+    }
+    if reason is not None:
+        set_fields["muted_reason"] = reason
     await db.customers.update_one(
         {"id": cid, "tenant_id": tenant["id"]},
-        {"$set": {
-            "is_muted": True,
-            "muted_at": muted_at,
-            "muted_by": user.get("id"),
-            # Muted rows are also functionally inactive so every
-            # existing ``is_active=True`` audience filter excludes
-            # them without a per-site code change.
-            "is_active": False,
-        }},
+        {"$set": set_fields},
     )
     await _p27_write_audit(event="customer_mute", cid=cid,
-                              tenant_id=tenant["id"], user=user, request=request)
-    logger.info("[P27] customer_mute actor=%s cid=%s", user.get("email"), cid)
-    return {"muted": True, "customer_id": cid, "muted_at": muted_at}
+                              tenant_id=tenant["id"], user=user, request=request,
+                              extra=({"muted_reason": reason} if reason else None))
+    logger.info("[P27] customer_mute actor=%s cid=%s reason=%s",
+                    user.get("email"), cid, (reason or "-"))
+    return {"muted": True, "customer_id": cid, "muted_at": muted_at,
+             "muted_reason": reason}
 
 
 @router.patch("/customers/{cid}/unmute")
@@ -837,7 +848,8 @@ async def unmute_customer(
     await db.customers.update_one(
         {"id": cid, "tenant_id": tenant["id"]},
         {"$set": {"is_active": True},
-         "$unset": {"is_muted": "", "muted_at": "", "muted_by": ""}},
+         "$unset": {"is_muted": "", "muted_at": "", "muted_by": "",
+                      "muted_reason": ""}},
     )
     await _p27_write_audit(event="customer_unmute", cid=cid,
                               tenant_id=tenant["id"], user=user, request=request)

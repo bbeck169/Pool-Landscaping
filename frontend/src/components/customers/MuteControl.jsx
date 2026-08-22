@@ -9,7 +9,7 @@
 // Component renders a single pill button whose label + confirm-modal
 // copy depend on the row's ``is_muted`` state.
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { api } from "@/api";
 
 
@@ -22,6 +22,10 @@ export default function MuteControl({
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Feb-2026 · P29 — reason picker state. Loaded lazily on modal open.
+  const [reasons, setReasons] = useState([]);
+  const [selectedReasonId, setSelectedReasonId] = useState("");
+  const [customReason, setCustomReason] = useState("");
   const isMuted = Boolean(customer?.is_muted);
 
   const gated = isMuted ? !canUnmute : !canMute;
@@ -37,7 +41,17 @@ export default function MuteControl({
     stop(e);
     if (gated || busy) return;
     setOpen(true);
-  }, [gated, busy, stop]);
+    // Feb-2026 · P29 — lazily load the reason list only when the
+    // operator opens the modal on the MUTE path. Unmute doesn't
+    // need reasons. Silent-fail on network error — the picker just
+    // renders with only the "Custom…" option available.
+    if (!isMuted && reasons.length === 0) {
+      api.get("/settings/muted-reasons").then((res) => {
+        const rows = Array.isArray(res?.items) ? res.items : [];
+        setReasons(rows);
+      }).catch(() => { /* silent */ });
+    }
+  }, [gated, busy, stop, isMuted, reasons.length]);
 
   const closeModal = useCallback((e) => {
     if (e) stop(e);
@@ -50,15 +64,31 @@ export default function MuteControl({
     setBusy(true);
     try {
       const path = isMuted ? "unmute" : "mute";
-      const res = await api.patch(`/customers/${cid}/${path}`, {});
+      // Feb-2026 · P29 — resolve reason: dropdown selection wins
+      // unless "Custom" was chosen. Empty string / whitespace → null
+      // (backend also trims + normalises).
+      let body = {};
+      if (!isMuted) {
+        let reasonText = "";
+        if (selectedReasonId === "__custom__") {
+          reasonText = customReason.trim();
+        } else if (selectedReasonId) {
+          const r = reasons.find((x) => x.id === selectedReasonId);
+          reasonText = r?.label || "";
+        }
+        if (reasonText) body = { muted_reason: reasonText.slice(0, 500) };
+      }
+      const res = await api.patch(`/customers/${cid}/${path}`, body);
       setOpen(false);
+      setSelectedReasonId("");
+      setCustomReason("");
       onChange?.(res);
     } catch (err) {
       onError?.(err?.message || `Failed to ${isMuted ? "unmute" : "mute"} customer`);
     } finally {
       setBusy(false);
     }
-  }, [cid, isMuted, onChange, onError, stop]);
+  }, [cid, isMuted, reasons, selectedReasonId, customReason, onChange, onError, stop]);
 
   if (gated) return null;
 
@@ -105,20 +135,51 @@ export default function MuteControl({
                 autobilling, and route optimization will resume.
               </p>
             ) : (
-              <div
-                className="text-sm mb-3 p-3 rounded border"
-                style={{
-                  borderColor: "#FCA5A5",
-                  background: "rgba(220, 38, 38, 0.06)",
-                  color: "#7F1D1D",
-                }}
-                data-testid={`mute-control-warning-${cid}`}
-              >
-                <b>Silent-mode warning.</b> Muting this customer stops
-                all marketing, reactivation, autobilling, and lead
-                alerts from their contact info. Only an admin or
-                super_admin can undo this.
-              </div>
+              <>
+                <div
+                  className="text-sm mb-3 p-3 rounded border"
+                  style={{
+                    borderColor: "#FCA5A5",
+                    background: "rgba(220, 38, 38, 0.06)",
+                    color: "#7F1D1D",
+                  }}
+                  data-testid={`mute-control-warning-${cid}`}
+                >
+                  <b>Silent-mode warning.</b> Muting this customer stops
+                  all marketing, reactivation, autobilling, and lead
+                  alerts from their contact info. Only an admin or
+                  super_admin can undo this.
+                </div>
+                {/* Feb-2026 · P29 — optional reason picker. */}
+                <div className="text-sm mb-2" style={{ color: "#334155" }}>
+                  Reason (optional)
+                </div>
+                <select
+                  value={selectedReasonId}
+                  onChange={(e) => setSelectedReasonId(e.target.value)}
+                  data-testid={`mute-control-reason-select-${cid}`}
+                  className="w-full text-sm px-3 py-2 rounded border mb-2"
+                  style={{ borderColor: "#E5E7EB", background: "#fff" }}
+                >
+                  <option value="">— No reason —</option>
+                  {reasons.map((r) => (
+                    <option key={r.id} value={r.id}>{r.label}</option>
+                  ))}
+                  <option value="__custom__">Custom…</option>
+                </select>
+                {selectedReasonId === "__custom__" ? (
+                  <input
+                    type="text"
+                    maxLength={500}
+                    placeholder="Type a reason (max 500 chars)…"
+                    value={customReason}
+                    onChange={(e) => setCustomReason(e.target.value)}
+                    data-testid={`mute-control-reason-custom-${cid}`}
+                    className="w-full text-sm px-3 py-2 rounded border mb-2"
+                    style={{ borderColor: "#E5E7EB", background: "#fff" }}
+                  />
+                ) : null}
+              </>
             )}
 
             <div className="flex items-center justify-end gap-2 mt-4">
