@@ -15,6 +15,35 @@ Adds:
 The Copilot NEVER mutates data. Every tool auto-injects
 ``tenant_id`` from the authenticated admin session so the LLM
 cannot query across tenants.
+
+Feb-2026 · P22 — Privacy audit note
+-----------------------------------
+The Copilot tools (``list_customers``, ``get_customer``,
+``communications_log``) are DESIGNED to answer admin queries such as
+"find customer Garcia's account" and "when did we last message Jane".
+By nature the LLM receives customer names, emails, phones, and
+service addresses in the tool-result JSON that is fed back as a
+follow-up ``UserMessage``.
+
+This is an **intentional carve-out** from the P21 Privacy Policy
+claim that we do not send customer PII to LLM providers. The carve-
+out is disclosed in the Privacy Policy (§4 vendor table entry for
+"OpenAI / Anthropic (via Emergent LLM Key)").  The claim, restated
+precisely, is:
+
+  * Standard operational LLM surfaces (Marina auto-reply, Vizzy
+    call prep, Dexter analytics, Churn scoring, Retention drafts,
+    Check-in rewrites, Review replies, etc.) do NOT send raw
+    customer PII to LLM providers — they use symbolic references
+    and redaction.
+  * The Admin Copilot is an EXCEPTION: authenticated admin users
+    may explicitly request customer data via natural-language
+    queries. Per our Emergent LLM Key agreement with Anthropic,
+    these requests are subject to a zero-retention policy and are
+    not used for model training.
+
+Any future addition of a new tool that returns customer PII must be
+disclosed the same way.
 """
 from __future__ import annotations
 

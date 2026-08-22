@@ -11921,3 +11921,35 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 **Deferred**
 - Attorney sign-off on the 6 `TODO(...)` markers (pricing, refund, liability cap, arbitration, force-majeure, export-control).
 - Mobile-side link parity via `expo-linking` (parallel to what PrivacyPolicy already ships).
+
+---
+
+## Phase P22 — AI/LLM PII redaction audit (Feb 24, 2026)
+
+**Delivered**
+- `backend/services/ai/pii_redactor.py` — new `redact_pii(text, address_fields=None)` helper. Scrubs emails + phones (E.164, US grouped/dashed/dotted, 10-digit, +1-lead); optional explicit-address scrub; names left alone (documented rationale).
+- **RED-site refactor** (8 sites across 7 files) — customer/user PII removed from LLM prompts:
+  - `routers/reviews_ai_reply.py` — reviewer name → `[REVIEWER]` in prompt, substituted into the LLM output post-generation
+  - `routers/ai_employees.py::_vizzy_prep_call` — customer name/email/phone dropped from `signals`; `[CUSTOMER …]` ref + redacted notes only
+  - `routers/ai_employees.py::_dexter_top_customers_report` — LLM sees `Customer_1..N` refs; real names re-attached to the response *after* the LLM call
+  - `routers/churn.py::_signal_bundle` — `customer_name` key removed
+  - `routers/churn.py::_retention_campaign_draft` — `Customer_N` refs in prompt; comms layer substitutes real names when sending
+  - `routers/portal.py::generate_ai_reply` (Marina) — customer name removed from system prompt
+  - `routers/business_os.py` (Lana) — operator name/email removed from system prompt (role + tenant business name only)
+  - `routers/checkin_rewrite.py::_build_prompt` — customer name dropped; exact street address dropped; coarse "City, ST" hint preserved for SEO; tech's rough draft is `redact_pii`'d as defense-in-depth
+- **Copilot carve-out (disclosed)** — `routers/ai_brain.py` (Admin Copilot with `list_customers`/`get_customer`/`communications_log` tools) is designed to send customer data to Claude. Documented in the module docstring; disclosed in the Privacy Policy vendor table entry for OpenAI/Anthropic under the Emergent LLM Key zero-retention agreement.
+- **Privacy Policy update** — `frontend/src/pages/PrivacyPolicy.jsx` OpenAI/Anthropic vendor row rewritten to spell out (a) the operational surfaces that do NOT send PII, and (b) the Admin Copilot exception under Anthropic's zero-retention policy.
+- **Tests (32 new)**
+  - `tests/test_ai_pii_redaction.py` — 24 unit tests (emails, phones in every US format + E.164, non-PII passthrough, edge cases, explicit-address opt-in, coercion)
+  - `tests/test_no_raw_customer_field_in_llm_prompts.py` — 8 tests: static-grep guard across every backend file mentioning `LlmChat`/`UserMessage` (with `CARVE_OUT_FILES = {"routers/ai_brain.py"}`), per-site source pins for Marina/Lana/Vizzy/Dexter, LLM-mock capture for `reviews_ai_reply.generate_reply` proving the reviewer name never enters the prompt yet is substituted into the output.
+  - `tests/test_checkin_rewrite.py::test_unit_build_prompt_includes_context_bits` updated + new `test_unit_build_prompt_drops_exact_street_address` pin.
+
+**Verification snapshot**
+- All 32 new P22 assertions green (`services/ai/pii_redactor.py`, static-grep guard, per-site pins).
+- Pre-existing suites re-run: `test_ai_employees_ae1..ae4` (all 112 pass), `test_business_os.py` + `test_phase49_lana_intents.py` + `test_customer_portal_ai_slice*` (only pre-existing flakes remain, replicated on clean pre-P22 stash), `test_checkin_rewrite.py` (5/5 unit pass; the HTTP integration `test_happy_path` 429 is a pre-existing rate-limiter env leak).
+- `/api/openapi.json` → 200 OK.
+- P21/P21b frontend Vitest suites still green (15/15).
+
+**Deferred**
+- Formal attorney review of the Copilot carve-out language in the Privacy Policy vendor table.
+- If policy stakeholders decide the Copilot carve-out is unacceptable, next step is redacting tool outputs before feeding them to the Claude follow-up round-trip (will degrade Copilot answer quality on name-based queries).

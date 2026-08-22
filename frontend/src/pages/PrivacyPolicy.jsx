@@ -62,7 +62,7 @@ const VENDORS = [
   {
     name: "OpenAI / Anthropic (via Emergent LLM Key)",
     purpose: "AI-assisted service note summarization + admin copilots",
-    data: "Redacted service notes; job summaries. We do NOT send customer names, addresses, or phone numbers to LLM providers.",
+    data: "Redacted service notes; job summaries; anonymized customer references for operational LLM features (Marina auto-reply, Vizzy call prep, Dexter analytics, churn scoring, retention drafts, check-in rewrites, review replies) — these do NOT send customer names, emails, phones, or exact addresses. NOTE: the Admin Copilot is an intentional exception — when an authenticated administrator explicitly queries customer data (e.g. \"find customer Garcia\"), the requested customer records including name, email, phone, and service address are sent to the LLM provider under Anthropic's zero-retention agreement and are not used for training.",
     href: "https://openai.com/policies/privacy-policy",
   },
   {

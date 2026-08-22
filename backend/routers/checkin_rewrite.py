@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -172,11 +173,33 @@ class RewriteBody(BaseModel):
 
 
 def _build_prompt(draft: str, ctx: Optional[RewriteContext]) -> tuple[str, str]:
-    """Return (system_prompt, user_prompt) for the LLM."""
+    """Return (system_prompt, user_prompt) for the LLM.
+
+    Feb-2026 · P22 — Privacy policy compliance:
+    * Customer's full personal name is NEVER passed to the LLM.
+    * Customer's exact street address is NEVER passed — only the
+      generic ``[LOCATION]`` marker plus the free-text "Address /
+      location" *label* the caller wanted rewritten into SEO copy
+      (which is typically a city + neighbourhood, not a specific
+      residence). Callers wanting to inject the customer's exact
+      street address should stop doing so.
+    * The technician's rough ``draft`` is redacted for emails and
+      phone numbers before send — defence-in-depth against a tech
+      pasting "call customer at 555-1234" into their note.
+    """
+    from services.ai.pii_redactor import redact_pii
+
     biz = (ctx.business_name if ctx and ctx.business_name else "").strip()
     cat = (ctx.service_category if ctx and ctx.service_category else "").strip()
-    addr = (ctx.address if ctx and ctx.address else "").strip()
-    name = (ctx.customer_name if ctx and ctx.customer_name else "").strip()
+    # Address field is preserved on the API for backwards
+    # compatibility but we do NOT interpolate it verbatim. Extract
+    # a coarse "city, state" hint if the caller passed one; else
+    # drop it entirely.
+    raw_addr = (ctx.address if ctx and ctx.address else "").strip()
+    addr_hint = _coarse_location_hint(raw_addr)
+    # Customer name is NEVER sent to the LLM (P21 §4 claim). The
+    # rewritten copy is customer-facing but does not need the
+    # customer's own name to read naturally.
 
     system_prompt = (
         "You are a professional copywriter for a home-service field business. "
@@ -189,6 +212,8 @@ def _build_prompt(draft: str, ctx: Optional[RewriteContext]) -> tuple[str, str]:
         "location, and business name once each, woven in naturally. "
         "Never keyword-stuff.\n"
         "  * If a fact is not in the draft or context, do not invent it.\n"
+        "  * Refer to the customer generically ('the homeowner', 'the "
+        "client') — never invent a personal name.\n"
         "  * Output ONLY the rewritten paragraph text. No preamble, no bullet "
         "points, no headings, no explanations, no quotation marks."
     )
@@ -198,18 +223,46 @@ def _build_prompt(draft: str, ctx: Optional[RewriteContext]) -> tuple[str, str]:
         ctx_bits.append(f"Business: {biz}")
     if cat:
         ctx_bits.append(f"Service category: {cat}")
-    if addr:
-        ctx_bits.append(f"Address / location: {addr}")
-    if name:
-        ctx_bits.append(f"Customer: {name}")
+    if addr_hint:
+        ctx_bits.append(f"Service area: {addr_hint}")
     ctx_block = "\n".join(ctx_bits) if ctx_bits else "(no additional context)"
 
+    # Redact any incidental email/phone that leaked into the tech's
+    # rough note. Address of the specific property is not auto-
+    # detectable so it isn't touched here.
+    safe_draft = redact_pii(draft.strip(),
+                              address_fields=[raw_addr] if raw_addr else None)
+
     user_prompt = (
-        f"Draft check-in note:\n\"\"\"\n{draft.strip()}\n\"\"\"\n\n"
+        f"Draft check-in note:\n\"\"\"\n{safe_draft}\n\"\"\"\n\n"
         f"Context:\n{ctx_block}\n\n"
         f"Rewrite the draft now."
     )
     return system_prompt, user_prompt
+
+
+def _coarse_location_hint(address: str) -> str:
+    """Turn ``123 N 83rd Ave, Peoria, AZ 85382`` into ``Peoria, AZ``.
+
+    Falls back to an empty string when the address cannot be
+    de-specified — the SEO rewrite still runs, just without a
+    location keyword.
+    """
+    if not address:
+        return ""
+    # Naive but safe: take last two comma-separated segments if
+    # available; strip zip digits from the last segment.
+    parts = [p.strip() for p in address.split(",") if p.strip()]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return ""  # single-segment strings almost always contain the
+                    # street; better to drop than leak.
+    tail = parts[-1]
+    # Strip trailing zip.
+    tail = re.sub(r"\s+\d{5}(?:-\d{4})?$", "", tail).strip()
+    city = parts[-2]
+    return f"{city}, {tail}".strip(", ")
 
 
 async def _call_emergent_text(system_prompt: str, user_prompt: str) -> str:

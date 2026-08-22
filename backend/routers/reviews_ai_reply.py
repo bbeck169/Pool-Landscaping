@@ -68,16 +68,25 @@ async def generate_reply(
         else "The customer is unhappy — apologise, take ownership, "
              "commit to making it right, and offer a soft CTA to reach out."
     )
+    # Feb-2026 · P22 — Do NOT interpolate the reviewer's name into
+    # the LLM prompt. Use a symbolic placeholder that the LLM will
+    # echo back verbatim; we substitute the real reviewer name into
+    # the LLM's OUTPUT post-generation. This keeps the P21 privacy
+    # policy claim ("we do not send customer names to LLM providers")
+    # verifiably true for this surface.
+    from services.ai.pii_redactor import redact_pii
     user_prompt = (
         f"Draft a short (60–90 words), warm, on-brand reply to this "
         f"{rating}★ review.\n\n"
         f"{stance}\n\n"
-        f"Reviewer name: {review_author or 'the customer'}\n"
-        f"Review text: {review_text}\n\n"
+        f"Reviewer name: [REVIEWER]\n"
+        f"Review text: {redact_pii(review_text)}\n\n"
         f"Rules:\n"
         f"- Use a natural, human tone. Do not sound like a form letter.\n"
         f"- Reference specifics from the review when possible.\n"
         f"- Never promise things outside our services.\n"
+        f"- Address the reviewer as [REVIEWER] — the app will "
+        f"substitute the real name after generation.\n"
         f"- Sign with the company name at the end.\n"
     )
     key = os.environ.get("EMERGENT_LLM_KEY")
@@ -95,6 +104,12 @@ async def generate_reply(
         msg = UserMessage(text=user_prompt)
         response = await chat.send_message(msg)
         text = (response or "").strip()
+        # Post-generation substitute — the reviewer's real name is
+        # NEVER in the prompt but IS in the final published reply.
+        if text and review_author:
+            text = text.replace("[REVIEWER]", review_author)
+        elif text:
+            text = text.replace("[REVIEWER]", "there")
         return text or _fallback_reply(rating, review_author)
     except Exception as e:
         logger.warning(f"[review-reply] LLM failed: {e}")

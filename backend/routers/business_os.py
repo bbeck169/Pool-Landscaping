@@ -935,8 +935,12 @@ async def lana_chat(body: LanaChatIn,
 
     system = (
         f"{LANA_SYSTEM}\n\n"
-        f"You are speaking with {user.get('name') or user.get('email')} "
-        f"(role={user.get('role')}) at tenant {tenant.get('name')}.\n"
+        # Feb-2026 · P22 — Do NOT interpolate the operator's real name
+        # or email into the LLM system prompt. Role is sufficient
+        # context for Lana to answer operational questions. The
+        # tenant business name is public (GBP / website) and safe.
+        f"You are speaking with a {user.get('role') or 'staff member'} "
+        f"at tenant {tenant.get('name')}.\n"
         f"Live context: {open_jobs} open jobs, {open_tasks} open tasks.\n"
         f"Known SOPs: {sop_titles or 'none'}.\n"
         f"Defined roles: {role_titles or 'none'}.\n"

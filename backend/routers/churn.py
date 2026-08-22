@@ -72,7 +72,11 @@ async def _signal_bundle(tenant_id: str, customer_id: str) -> Dict[str, Any]:
         scores = [x.get("score") for x in csat if x.get("score") is not None]
         if scores: nps_avg = round(sum(scores) / len(scores), 1)
     return {
-        "customer_name": customer.get("name"),
+        # Feb-2026 · P22 — Anonymized signals only; the LLM sees no
+        # customer_name / email / phone / address. Real name is
+        # re-attached to the caller's response payload (upstream of
+        # this function) but never fed into the LLM prompt.
+        "customer_ref": f"[CUSTOMER {(customer_id or '')[-6:]}]",
         "tenure_days": (
             (datetime.now(timezone.utc)
               - datetime.fromisoformat(customer.get("created_at",
@@ -305,18 +309,22 @@ async def create_retention_campaign(
         return {"campaign_id": None, "target_count": 0, "tokens_used": 0,
                  "mocked": False, "reason": "no customers match threshold"}
 
-    # 3) LLM prompt — hydrate names + last service.
+    # 3) LLM prompt — anonymized rows only (Feb-2026 · P22).
+    #    Real customer names are NOT sent to the LLM. The LLM sees
+    #    "Customer_1..Customer_N" refs and returns copy with those
+    #    same refs; downstream comms substitute real names when
+    #    sending the actual email/SMS.
     prompt_rows: List[Dict[str, Any]] = []
     customer_ids: List[str] = []
-    for c in candidates:
+    for i, c in enumerate(candidates, start=1):
         cid = c["customer_id"]
         customer_ids.append(cid)
         cust = await db.customers.find_one(
             {"id": cid, "tenant_id": tid},
-            {"_id": 0, "name": 1, "last_service_date": 1},
+            {"_id": 0, "last_service_date": 1},
         ) or {}
         prompt_rows.append({
-            "name": cust.get("name") or "Customer",
+            "customer_ref": f"Customer_{i}",
             "last_service_date": (
                 cust.get("last_service_date")
                 or (c.get("signals_snapshot") or {}).get("last_service_date")
@@ -328,7 +336,11 @@ async def create_retention_campaign(
 
     prompt = (
         f"Draft a retention pitch for these {len(prompt_rows)} at-risk "
-        f"customers (channel: {body.channel}):\n"
+        f"customers (channel: {body.channel}). Customers are "
+        f"identified by symbolic Customer_N references only — the "
+        f"real names will be substituted by our comms layer before "
+        f"sending. Do NOT ask for real names; refer to each customer "
+        f"as {{{{Customer_N}}}} in any templated pieces:\n"
         + json.dumps(prompt_rows, ensure_ascii=False, default=str)
     )
 

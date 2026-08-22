@@ -61,7 +61,11 @@ async def generate_ai_reply(cid: str, incoming: str):
         )
         system = (
             f"You are Marina, a warm, professional customer support agent for Pool & Landscaping of Vistancia. "
-            f"You are messaging with {cust.get('name', 'a valued customer')}.\n"
+            # Feb-2026 · P22 — Do NOT interpolate the customer's real
+            # name into the LLM prompt; the customer's own message
+            # arrives via ``user_text`` and the reply flows back into
+            # the portal thread where the name is already visible.
+            f"You are messaging with a valued customer.\n"
             f"BILLING: Their current outstanding balance is ${balance:.2f} across {len(unpaid)} unpaid invoice(s): {inv_summary}. "
             f"Answer billing questions using ONLY this info; to pay, tell them to open the Invoices section. Never invent charges.\n"
             f"SCHEDULING: If they want to book or reschedule service, offer these open windows and ask them to tap one to request it: "

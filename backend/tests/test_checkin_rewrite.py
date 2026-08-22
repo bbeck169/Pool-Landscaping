@@ -152,9 +152,28 @@ def test_unit_build_prompt_includes_context_bits():
     assert "professional copywriter" in sys_p.lower()
     assert "Pool Cleaning" in user_p
     assert "AquaTerra" in user_p
-    assert "Phoenix, AZ" in user_p
-    assert "Jane Doe" in user_p
+    # Feb-2026 · P22 — customer name is intentionally NOT interpolated
+    # into the LLM prompt (Privacy Policy §4). The city-level location
+    # hint IS preserved for SEO keyword density.
+    assert "Phoenix" in user_p
+    assert "Jane Doe" not in user_p
     assert "cleaned filter" in user_p
+
+
+def test_unit_build_prompt_drops_exact_street_address():
+    # P22 pin — a specific residential street address must not
+    # appear in the LLM prompt; only the coarse "city, state" hint.
+    ctx = checkin_rewrite.RewriteContext(
+        service_category="Pool Cleaning",
+        customer_name="Jane Doe",
+        address="16165 N 83rd Ave, Peoria, AZ 85382",
+        business_name="AquaTerra",
+    )
+    _sys_p, user_p = checkin_rewrite._build_prompt("filter swap", ctx)
+    assert "16165" not in user_p
+    assert "83rd Ave" not in user_p
+    # But coarse "Peoria, AZ" hint survives for SEO keyword density.
+    assert "Peoria" in user_p
 
 
 def test_unit_build_prompt_no_context_still_valid():

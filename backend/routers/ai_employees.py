@@ -1885,21 +1885,28 @@ async def _vizzy_prep_call(*, tenant, params, system_prompt, user_text):
         {"_id": 0, "id": 1, "title": 1, "status": 1, "total": 1},
     ).sort("created_at", -1).to_list(10)
 
+    # Feb-2026 · P22 — Privacy policy claim (P21 §4) forbids sending
+    # customer names/phones/emails to LLM providers.  We keep the
+    # ``customer`` block ONLY for read-only tenant context on the
+    # server side; the LLM prompt sees a redacted, symbolic view.
+    from services.ai.pii_redactor import redact_pii
     signals = {
-        "customer": {"name": cust.get("name"),
-                        "email": cust.get("email"),
-                        "phone": cust.get("phone"),
-                        "notes": (cust.get("notes") or "")[:400],
-                        "is_vip": cust.get("is_vip") or False},
+        # Symbolic reference — no PII. Real name/email/phone are used
+        # AFTER the LLM returns (by the admin UI + downstream comms).
+        "customer_ref": f"[CUSTOMER {cid[-6:]}]",
+        "is_vip": cust.get("is_vip") or False,
+        "notes": redact_pii((cust.get("notes") or "")[:400]),
         "recent_jobs": recent_jobs,
         "open_invoices": open_invoices,
         "open_estimates": open_estimates,
     }
     prompt = (
         "Assemble a call-prep sheet for the admin. Keep it short "
-        "(≤ 180 words). Sections: Customer snapshot; Talking points "
-        "(3 bullets); Outstanding items (list open invoice #s + "
-        "amount-owed, open estimates). Data:\n" + str(signals)
+        "(≤ 180 words). Sections: Customer snapshot (refer to them "
+        "generically as 'the customer' or by [CUSTOMER …] ref); "
+        "Talking points (3 bullets); Outstanding items (list open "
+        "invoice #s + amount-owed, open estimates). Data:\n"
+        + str(signals)
     )
     r = await _llm_chat(system_prompt, prompt, history=[])
     return r["text"], None
@@ -2174,6 +2181,9 @@ async def _dexter_top_customers_report(*, tenant, params, system_prompt, user_te
     else:
         return f"Unknown metric `{metric}`. Try revenue, visits, or chemicals_cost.", None
     # Hydrate customer names.
+    # Feb-2026 · P22 — Privacy policy compliance: LLM sees anonymized
+    # rows only. Real customer names are re-attached in the response
+    # payload AFTER the LLM call (see ``ranking`` return below).
     ids = [r["customer_id"] for r in ranking if r.get("customer_id")]
     names = {}
     async for c in db.customers.find(
@@ -2181,14 +2191,27 @@ async def _dexter_top_customers_report(*, tenant, params, system_prompt, user_te
         {"_id": 0, "id": 1, "name": 1},
     ):
         names[c["id"]] = c.get("name")
-    for row in ranking:
-        row["name"] = names.get(row.get("customer_id"), "?")
+    # Anonymized ranking for the LLM prompt (no PII).
+    anon_ranking = []
+    for i, row in enumerate(ranking, start=1):
+        anon_ranking.append(
+            {**{k: v for k, v in row.items() if k != "customer_id"},
+              "customer_ref": f"Customer_{i}"}
+        )
     prompt = (
-        f"Top 20 customers by {metric} over the last {period_days}d:\n"
-        f"{ranking}\n\nWrite a 3-sentence summary highlighting the top "
-        f"3 and any notable pattern."
+        f"Top {len(anon_ranking)} customers by {metric} over the last "
+        f"{period_days}d (identified only by symbolic Customer_N "
+        f"reference — do NOT ask for real names):\n"
+        f"{anon_ranking}\n\nWrite a 3-sentence summary highlighting "
+        f"the top 3 and any notable pattern. Refer to customers by "
+        f"their Customer_N reference; the app will substitute real "
+        f"names in the display."
     )
     r = await _llm_chat(system_prompt, prompt, history=[])
+    # Attach real names to the ranking we return to the caller —
+    # the LLM never saw them.
+    for row in ranking:
+        row["name"] = names.get(row.get("customer_id"), "?")
     return r["text"] + f"\n\n(ranking: {ranking})", None
 
 
