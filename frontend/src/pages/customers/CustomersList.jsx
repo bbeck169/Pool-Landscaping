@@ -283,7 +283,12 @@ export default function CustomersList() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.get("/customer-tags");
+        // Feb-2026 · P44 — the customers-list "All tags" dropdown only
+        // shows tags that are currently in use on ≥1 non-soft-deleted
+        // customer. Do NOT propagate ``only_used`` to the settings page
+        // or the customer edit-form tag picker — both need the full
+        // catalog for archive / re-use flows.
+        const res = await api.get("/customer-tags?only_used=true");
         setAllTags(res?.items || []);
       } catch { setAllTags([]); }
     })();

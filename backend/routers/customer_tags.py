@@ -31,7 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from config import db
-from utils import get_current_user, new_id, now_iso
+from utils import get_current_user, new_id, now_iso, not_deleted_filter
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -380,10 +380,62 @@ async def reset_self_heal_cache(
     return {"ok": True, "tenant_id": tid}
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · P44 — Used-tag distinct cache. Per-tenant, 60s TTL. The
+# customers.tags distinct set is authoritative — the stored per-row
+# ``usage_count`` may drift (spec). Cached because the customers-list
+# page hits ``GET /customer-tags?only_used=true`` on every mount and
+# tab switch. Reset via ``POST /internal/customer-tags/reset-usage-
+# cache`` (test hook, parallels the P38 dupe-cache reset).
+# ═════════════════════════════════════════════════════════════════════
+import time as _p44_time
+
+_USED_TAG_CACHE_TTL_S = 60
+_TAG_USAGE_CACHE: dict[str, tuple[float, set[str]]] = {}
+
+
+async def _get_used_tag_names_lower(tenant_id: str) -> set[str]:
+    hit = _TAG_USAGE_CACHE.get(tenant_id)
+    if hit and hit[0] > _p44_time.time():
+        return hit[1]
+    raw = await db.customers.distinct(
+        "tags",
+        {"tenant_id": tenant_id, **not_deleted_filter()},
+    )
+    used: set[str] = set()
+    for v in raw or []:
+        if isinstance(v, str):
+            trimmed = v.strip().lower()
+            if trimmed:  # whitespace-only strings don't count as usage
+                used.add(trimmed)
+    _TAG_USAGE_CACHE[tenant_id] = (
+        _p44_time.time() + _USED_TAG_CACHE_TTL_S, used)
+    return used
+
+
+@router.post("/internal/customer-tags/reset-usage-cache",
+                tags=["customer-tags"])
+async def reset_usage_cache(
+    body: _P33hReset,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Test/support helper — clears the P44 used-tag distinct cache
+    for a tenant so a subsequent GET rebuilds fresh. Same RBAC as the
+    sibling reset endpoints."""
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin", "manager"):
+        raise HTTPException(403, "Not allowed")
+    tid = body.tenant_id or tenant["id"]
+    _TAG_USAGE_CACHE.pop(tid, None)
+    return {"ok": True, "tenant_id": tid}
+
+
 @router.get("/customer-tags", tags=["customer-tags"],
              operation_id="customerTags.list")
 async def list_customer_tags(
     include_inactive: bool = False,
+    only_used: bool = False,
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
@@ -412,6 +464,15 @@ async def list_customer_tags(
     rows = await db.customer_tags.find(q, {"_id": 0}).sort(
         [("sort_order", 1), ("usage_count", -1), ("name_lower", 1)],
     ).to_list(500)
+
+    # Feb-2026 · P44 — hide zero-usage tags from the customers-list
+    # "All tags" dropdown. Trust the distinct set on ``customers.tags``
+    # (stored ``usage_count`` may be stale — spec).
+    if only_used:
+        used_lower = await _get_used_tag_names_lower(tenant["id"])
+        rows = [r for r in rows if (r.get("name_lower") or "").strip()
+                    in used_lower]
+
     return {"items": rows, "total": len(rows)}
 
 
