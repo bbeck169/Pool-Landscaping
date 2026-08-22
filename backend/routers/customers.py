@@ -238,6 +238,7 @@ async def list_customers(
     is_active: Optional[bool] = None,
     missing_card: Optional[bool] = None,
     count_only: bool = False,
+    include_deleted: bool = Query(False, description="Feb-2026 · P25 super_admin only — include soft-deleted customers"),
 ):
     # RBAC: only staff (admin/technician/super_admin) may list customer records. Customers use /me.
     if user.get("role") not in ("admin", "technician", "super_admin"):
@@ -246,7 +247,20 @@ async def list_customers(
     # only. Technicians see the plain list.
     if missing_card and user.get("role") not in ("admin", "manager", "super_admin"):
         raise HTTPException(403, "Not allowed")
+    # Feb-2026 · P25 — soft-delete read-filter. Mirror the P4/P4.5 job
+    # list pattern: default filters out ``deleted_at`` (both null and
+    # missing key); ``?include_deleted=true`` is super_admin-only and
+    # surfaces the soft-deleted rows for restore tooling. P11b
+    # anonymized customers also carry ``deleted_at`` so they're hidden
+    # too. Non-super_admin passing ``include_deleted=true`` is rejected
+    # rather than silently ignored, so the UI catches accidental use.
     q: dict = {"tenant_id": tenant["id"]}
+    is_super = (user.get("role") == "super_admin")
+    if include_deleted and not is_super:
+        raise HTTPException(403, "Only super_admin can include soft-deleted customers")
+    if not include_deleted:
+        from utils import not_deleted_filter as _nd_cust
+        q.update(_nd_cust())
     if search:
         rx = {"$regex": search, "$options": "i"}
         q["$or"] = [{"name": rx}, {"email": rx}, {"phone": rx}, {"address": rx}]
@@ -563,6 +577,21 @@ async def get_customer(cid: str,
     )
     if not doc:
         raise HTTPException(404, "Customer not found")
+    # Feb-2026 · P25 — mirror the P4.5 soft-delete two-branch check
+    # from ``get_job``. Super_admin sees a 409 (so restore tooling
+    # knows the row still exists); every other role gets a 404 so
+    # the mere existence of a soft-deleted customer doesn't leak.
+    # Covers both admin-driven bulk soft-deletes and P11b account-
+    # anonymization (both stamp ``deleted_at``).
+    if doc.get("deleted_at"):
+        role = (user.get("role") or "").lower()
+        if role == "super_admin":
+            raise HTTPException(
+                status_code=409,
+                detail={"detail": "customer_soft_deleted",
+                          "message": "Customer is soft-deleted; restore first."},
+            )
+        raise HTTPException(404, "Customer not found")
     from utils import not_deleted_filter as _nd_cust
     jobs = await db.jobs.find(
         {"customer_id": cid, "tenant_id": tenant["id"], **_nd_cust()}, {"_id": 0}
@@ -585,8 +614,10 @@ async def deactivation_preview(cid: str,
     """Phase 34f — dry-run for the Active/Inactive toggle confirm dialog.
     Returns the counts that WOULD be affected if the caller flipped
     `is_active` from true → false right now. Does not mutate anything."""
+    # Feb-2026 · P25 — hide soft-deleted / P11b-anonymized customers.
+    from utils import not_deleted_filter as _nd_cust
     if not await db.customers.find_one(
-        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1}
+        {"id": cid, "tenant_id": tenant["id"], **_nd_cust()}, {"_id": 0, "id": 1}
     ):
         raise HTTPException(404, "Customer not found")
     today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -922,8 +953,10 @@ async def get_service_note_for_schedule(cid: str, service_type: str = Query(...)
     Accessible to techs (they can only see notes for their own visits;
     RBAC on the tenant is already enforced by the dependency). Admins
     see everything."""
+    # Feb-2026 · P25 — hide soft-deleted / P11b-anonymized customers.
+    from utils import not_deleted_filter as _nd_cust
     doc = await db.customers.find_one(
-        {"id": cid, "tenant_id": tenant["id"]},
+        {"id": cid, "tenant_id": tenant["id"], **_nd_cust()},
         {"_id": 0, "id": 1, "service_notes": 1, "name": 1},
     )
     if not doc:

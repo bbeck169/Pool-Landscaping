@@ -11970,3 +11970,16 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 - Attorney sign-off on the 11 factual claims on the AI Transparency page (rolled into the pending attorney-review pass for P21 / P21b / P22).
 - Mobile-side link parity via `expo-linking` — no existing Privacy/ToS link on mobile Login screen; deferred to a mobile-legal-links phase.
 - Cookie banner intentionally not shipped (out of scope per P23 non-goals).
+
+---
+
+## Phase P25 — Customers soft-delete read-filter (Feb 24, 2026)
+
+**Delivered** — `routers/customers.py`:
+- `GET /customers` (list) now merges `not_deleted_filter()`; new `?include_deleted=true` param, super_admin-only (403 for admin/tech).
+- `GET /customers/{cid}` two-branch: 404 for non-super_admin, 409 `{"detail":"customer_soft_deleted"}` for super_admin — mirrors P4.5 `get_job`.
+- `GET /customers/{cid}/deactivation-preview` and `GET /customers/{cid}/service-notes-for-schedule` merge `not_deleted_filter()` so deleted IDs 404.
+- Tests: `tests/test_customers_soft_delete_read_filter.py` (6/6 green) covering list default, detail 404/409 branches, include_deleted RBAC, cross-tenant isolation, P11b anonymized rows.
+
+**Deferred**
+- Nested customer-scoped reads in `properties.py`, `invoices_mp15.py`, `ringcentral_customer.py` — these were not FAIL sites in the P25 spec but should be given the same helper in a follow-up sweep.
