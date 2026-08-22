@@ -251,6 +251,13 @@ class EmployeePatch(BaseModel):
     # persona portraits committed under
     # ``/app/frontend/public/avatars/personas/{key}.jpg``.
     avatar_url: Optional[str] = Field(None, max_length=1024)
+    # Feb-2026 · P24 — guard field. The PATCH endpoint refuses to
+    # clear ``avatar_url`` unless the caller explicitly opts in with
+    # ``clear_avatar=true``. Without this, a client submitting a
+    # partial form that happens to include ``avatar_url: null``
+    # would silently wipe the persona portrait. Bug reported on
+    # production 2026-02.
+    clear_avatar: Optional[bool] = Field(None)
     # Task RR · Feb 2026 — per-persona data read scope.
     # ``customer_scoped`` (default for all seeded personas) restricts
     # tool calls to the caller's OWN customer data. ``tenant_all``
@@ -546,6 +553,30 @@ async def patch_employee(eid: str, body: EmployeePatch,
                           user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
     updates = {k: v for k, v in body.dict(exclude_unset=True).items()}
+    # Feb-2026 · P24 — the ``clear_avatar`` flag is a UX signal, not
+    # a persisted field. Strip it out and translate it into an
+    # explicit avatar_url wipe.
+    clear_avatar = bool(updates.pop("clear_avatar", False))
+    # P24 guard — never silently null ``avatar_url``. If the client
+    # sent ``avatar_url`` but not ``clear_avatar=true``, and the value
+    # is None or empty, drop it from the update so we don't wipe an
+    # existing portrait. This blocks the "partial form submit ships
+    # {avatar_url:null} and wipes the row" class of bugs which the
+    # P24 audit found had been happening on prod.
+    if "avatar_url" in updates:
+        av = updates["avatar_url"]
+        if av is None or (isinstance(av, str) and not av.strip()):
+            if not clear_avatar:
+                updates.pop("avatar_url", None)
+                logger.info(
+                    "[p24] avatar_url null/empty in PATCH payload without "
+                    "clear_avatar=true — silently dropping to preserve "
+                    "existing portrait (eid=%s)", eid,
+                )
+    elif clear_avatar:
+        # Caller sent ``clear_avatar=true`` but no ``avatar_url`` key
+        # at all — honour the explicit intent.
+        updates["avatar_url"] = None
     if not updates:
         return await _get_employee(tenant["id"], eid, expected_audience="admin")
     # Task RR · Feb 2026 — only super_admin can flip a persona to

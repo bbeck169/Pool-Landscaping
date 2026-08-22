@@ -97,6 +97,45 @@ def _pick_survivor(docs: List[Dict[str, Any]]) -> Dict[str, Any]:
     return docs[0]
 
 
+# Feb-2026 · P24 — fields that must survive a dedupe merge if the
+# survivor's own copy is missing. Kept intentionally narrow — we only
+# fill in values the survivor is *empty on*; we never overwrite a
+# populated survivor field with a loser's value. Order does not
+# matter; the first non-empty loser value wins per field.
+_P24_PRESERVE_FIELDS = (
+    "avatar_url",     # <-- the reported bug (persona portraits vanishing)
+    "avatar_emoji",   # less critical but same class of loss
+    "system_prompt",  # an admin-edited prompt shouldn't be lost if
+                        #  it happened to only exist on a loser
+    "read_access_scope",     # RR-scope config
+    "brand_voice_snippet",   # T1 fix (AE1)
+    "audience",
+)
+
+
+def _merge_preservable_fields(
+    survivor: Dict[str, Any], all_docs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Return the ``$set`` dict for a fill-in-blanks merge from losers
+    into the survivor. Never overwrites a value the survivor already
+    has; empty-string and ``None`` on the survivor count as missing.
+    """
+    merged: Dict[str, Any] = {}
+    for f in _P24_PRESERVE_FIELDS:
+        current = survivor.get(f)
+        if current not in (None, "", [], {}):
+            continue
+        for loser in all_docs:
+            if loser.get("id") == survivor.get("id"):
+                continue
+            candidate = loser.get(f)
+            if candidate not in (None, "", [], {}):
+                merged[f] = candidate
+                break
+    return merged
+
+
+
 async def _dedupe_within_tenant_groups() -> tuple[int, List[Dict[str, Any]]]:
     """Phase 2 — collapse ``(tenant_id, key)`` duplicate groups within
     each tenant. Returns ``(refs_moved, merge_log_entries)``.
@@ -124,6 +163,19 @@ async def _dedupe_within_tenant_groups() -> tuple[int, List[Dict[str, Any]]]:
             if doc:
                 full.append(doc)
         keep = _pick_survivor(full)
+        # Feb-2026 · P24 — fill-in-blanks merge from losers → survivor
+        # BEFORE deleting the losers. Prior behaviour dropped losers
+        # whole, which meant an older row's ``avatar_url`` could be
+        # lost forever if the newest-wins survivor happened not to
+        # have one. Only fills fields that are None/empty on the
+        # survivor; never overwrites populated survivor values.
+        merged_fields = _merge_preservable_fields(keep, full)
+        if merged_fields:
+            await db.ai_employees.update_one(
+                {"id": keep["id"]},
+                {"$set": merged_fields},
+            )
+            keep.update(merged_fields)
         dropped_ids: List[str] = []
         for d in full:
             if d["id"] == keep["id"]:
@@ -137,6 +189,7 @@ async def _dedupe_within_tenant_groups() -> tuple[int, List[Dict[str, Any]]]:
             "key": grp["_id"]["key"],
             "kept_id": keep["id"],
             "dropped_ids": dropped_ids,
+            "merged_fields": sorted(merged_fields.keys()),
             "kind": "in_tenant_dupe",
         })
     return refs_moved, merge_log

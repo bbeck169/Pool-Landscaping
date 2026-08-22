@@ -12042,3 +12042,19 @@ Tests: `frontend/src/test/schedule-card-notes-visibility.test.jsx` · 4/4,
 - P24 AI-employee avatar loss audit + backfill — was queued behind P25/P26/P27 and dropped from the queue when P25 arrived; requires user redispatch.
 - Retroactive muted-contact check on inbound webhook comms (still queued from P27).
 - Marketing drip enrolment explicit `is_muted` filter (still queued).
+
+---
+
+## Phase P24 — AI employee avatar loss fix (Feb 24, 2026)
+
+**Delivered**
+- **Router guard** — `routers/ai_employees.py::patch_employee` now silently drops `avatar_url=None`/empty from the update payload unless the caller opts in with the new `clear_avatar=true` flag on the `EmployeePatch` model. Logs `[p24] avatar_url null/empty in PATCH payload ... silently dropping` when the guard fires.
+- **Dedupe merge** — `migrations/task_jj_dedupe_ai_employees.py` now runs a fill-in-blanks merge from losers → survivor BEFORE the loser deletes. Preserved fields: `avatar_url`, `avatar_emoji`, `system_prompt`, `read_access_scope`, `brand_voice_snippet`, `audience`. Never overwrites populated survivor fields. `merged_fields` list added to the migration_log entry for auditability.
+- **Backfill script** — `migrations/task_p24_backfill_ai_employee_avatars.py`. Dry-run default; `--commit` writes. Three-tier recovery: audit log (`ai_employee_updates`) → seeded persona default (`DEFAULT_EMPLOYEES` table) → DiceBear-by-id fallback. Idempotent (skips populated rows).
+  - Preview DB current state: 260/260 rows already carry an avatar (`restored=0, seeded_default=0, dicebear=0, skipped=0`) — no lost avatars on preview.
+  - End-to-end verified with 2 seeded broken rows → dicebear recovery fired correctly → cleanup ran.
+- **Tests** — `tests/test_ai_employees_avatar_persistence.py` (5/5 green): PATCH without avatar_url preserves, PATCH with new value updates, PATCH with `avatar_url=null` WITHOUT clear_avatar drops (bug fix pin), PATCH with `clear_avatar=true` wipes, dedupe merge promotes loser's avatar_url when the field-count-tiebreak survivor has none.
+- **Regression** — 10/10 P8/P8.5 characterization + 5/5 P24 = 15/15 green. `/api/openapi.json` → 200.
+
+**Deferred**
+- Pre-existing `test_soft_delete_jwt_gate.py::test_config_public_returns_show_demo_logins` (still deferred per user).
