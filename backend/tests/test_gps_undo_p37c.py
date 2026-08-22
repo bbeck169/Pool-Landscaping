@@ -150,3 +150,134 @@ def test_openapi_lists_undo_route():
     r = requests.get(f"{API}/openapi.json", timeout=15)
     assert r.status_code == 200
     assert "/api/jobs/{jid}/timer/undo-start" in (r.json().get("paths") or {})
+
+
+# ═════════════════════════════════════════════════════════════════
+# Feb-2026 · P37c bug-fix — status-restore + server-authoritative
+# grace window.
+# ═════════════════════════════════════════════════════════════════
+def _seed_pre_arrival(tid: str, tech_user: dict, *,
+                       started_delta_s: int = 5,
+                       pre_arrival_status: str = "scheduled",
+                       current_status: str = "in_progress") -> str:
+    """Seed a job as if /arrive just fired: running timer +
+    pre_arrival_status snapshot + auto-advanced status."""
+    jid = f"TEST_p37c_j_{uuid.uuid4().hex[:8]}"
+    tech_id = tech_user.get("technician_id") or tech_user["id"]
+    started_at = (datetime.now(tz=timezone.utc)
+                    - timedelta(seconds=started_delta_s)).isoformat()
+    _sync.jobs.insert_one({
+        "id": jid, "tenant_id": tid,
+        "technician_id": tech_id,
+        "customer_id": f"TEST_p37c_c_{uuid.uuid4().hex[:6]}",
+        "service_type": "Landscape", "kind": "landscape",
+        "status": current_status,
+        "pre_arrival_status": pre_arrival_status,
+        "timer_started_at": started_at,
+        "timer_start_method": "gps_arrival",
+        "arrival_lat": 33.5806, "arrival_lng": -112.2374,
+        "created_at": "2026-06-01T09:00:00+00:00",
+    })
+    return jid
+
+
+def test_undo_restores_status_from_snapshot(tech_h, tech_user, aquaterra_tid):
+    """Bug 1 pin: /arrive flips scheduled → in_progress; undo restores
+    it. pre_arrival_status is unset after."""
+    jid = _seed_pre_arrival(aquaterra_tid, tech_user,
+                                pre_arrival_status="scheduled",
+                                current_status="in_progress",
+                                started_delta_s=5)
+    r = requests.post(f"{API}/jobs/{jid}/timer/undo-start",
+                         headers=tech_h, json={}, timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["undone"] is True
+    assert body.get("restored_status") == "scheduled"
+    row = _sync.jobs.find_one({"id": jid})
+    assert row.get("status") == "scheduled"
+    assert row.get("timer_started_at") is None
+    assert row.get("timer_start_method") is None
+    assert row.get("arrival_lat") is None
+    assert row.get("arrival_lng") is None
+    # Snapshot must be scrubbed so a subsequent arrive → undo cycle
+    # doesn't restore a stale value.
+    assert row.get("pre_arrival_status") is None
+
+
+def test_undo_does_not_clobber_completed_status(tech_h, tech_user,
+                                                     aquaterra_tid):
+    """Edge-case pin: dispatcher flipped to ``completed`` mid-grace.
+    Undo must NOT roll status back to ``scheduled`` — operator
+    decisions win. Timer fields still unset."""
+    jid = _seed_pre_arrival(aquaterra_tid, tech_user,
+                                pre_arrival_status="scheduled",
+                                current_status="completed",
+                                started_delta_s=5)
+    r = requests.post(f"{API}/jobs/{jid}/timer/undo-start",
+                         headers=tech_h, json={}, timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Endpoint reports no restore happened.
+    assert body.get("restored_status") is None
+    row = _sync.jobs.find_one({"id": jid})
+    # Status untouched.
+    assert row.get("status") == "completed"
+    # Timer fields still cleared.
+    assert row.get("timer_started_at") is None
+    assert row.get("timer_start_method") is None
+    # Snapshot still gets scrubbed so a re-arrive can re-snapshot fresh.
+    assert row.get("pre_arrival_status") is None
+
+
+def test_undo_no_snapshot_leaves_status_alone(tech_h, tech_user,
+                                                    aquaterra_tid):
+    """Backfill safety: legacy rows without ``pre_arrival_status``
+    (started before the P37c bug-fix landed) should not have their
+    status touched — only the timer is cleared."""
+    jid = _seed_running_job(aquaterra_tid, tech_user, started_delta_s=5)
+    # _seed_running_job leaves status="in_progress" without snapshot.
+    r = requests.post(f"{API}/jobs/{jid}/timer/undo-start",
+                         headers=tech_h, json={}, timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("restored_status") is None
+    row = _sync.jobs.find_one({"id": jid})
+    assert row.get("status") == "in_progress"
+    assert row.get("timer_started_at") is None
+
+
+def test_undo_ignores_client_within_seconds_outside_grace(tech_h, tech_user,
+                                                               aquaterra_tid):
+    """Bug 2 pin: client sends ``within_seconds: 999999`` on a timer
+    that started 5 minutes ago → server ignores the client value,
+    enforces the 60s ceiling, rejects with ``outside_grace_window``."""
+    jid = _seed_running_job(aquaterra_tid, tech_user, started_delta_s=300)
+    r = requests.post(f"{API}/jobs/{jid}/timer/undo-start",
+                         headers=tech_h,
+                         json={"within_seconds": 999999},
+                         timeout=15)
+    assert r.status_code == 400, r.text
+    body = r.json()
+    assert body["detail"]["detail"] == "outside_grace_window"
+    # Response echoes the server's 60s ceiling, NOT the client's number.
+    assert body["detail"]["grace_seconds"] == 60
+    row = _sync.jobs.find_one({"id": jid})
+    assert row.get("timer_started_at") is not None
+
+
+def test_undo_ignores_client_within_seconds_inside_grace(tech_h, tech_user,
+                                                               aquaterra_tid):
+    """Bug 2 companion pin: even a legitimate small value from the
+    client is ignored — the endpoint uses the server 60s window
+    regardless. Inside 60s the undo still succeeds."""
+    jid = _seed_running_job(aquaterra_tid, tech_user, started_delta_s=10)
+    r = requests.post(f"{API}/jobs/{jid}/timer/undo-start",
+                         headers=tech_h,
+                         json={"within_seconds": 5},  # would reject if honored
+                         timeout=15)
+    # 10s elapsed but client asked for a 5s window — if the server
+    # honored the client value this would be 400. Server ignores it,
+    # so 200.
+    assert r.status_code == 200, r.text
+    assert r.json()["undone"] is True

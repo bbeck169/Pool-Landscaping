@@ -1918,7 +1918,14 @@ async def job_arrive(jid: str, body: JobArriveIn,
     started = now_iso()
     upd = {"timer_started_at": started, "timer_start_method": "gps_arrival",
               "arrival_lat": body.lat, "arrival_lng": body.lng, **site}
+    # Feb-2026 · P37c bug-fix — snapshot the pre-arrival status when
+    # /arrive auto-advances to ``in_progress`` so /timer/undo-start
+    # can restore it. Only snapshot on the actual flip (not on the
+    # no-op paths above, which return early). Undo consults this
+    # field and unsets it after restore so nothing lingers on the
+    # doc past a single arrive → undo cycle.
     if job.get("status") in (None, "pending", "requested", "scheduled"):
+        upd["pre_arrival_status"] = job.get("status") or "scheduled"
         upd["status"] = "in_progress"
     await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": upd})
 
@@ -1953,9 +1960,20 @@ async def job_arrive(jid: str, body: JobArriveIn,
 # Called by the mobile undo banner (30s local push) and by dispatch
 # fallback UIs. Server-side enforces the 60s wall so we never trust
 # a stale client clock.
+#
+# Feb-2026 · P37c bug-fix — the grace window is 100% server-authoritative.
+# The request body is intentionally empty; any client-supplied
+# ``within_seconds`` is ignored (Pydantic default ``extra='ignore'``
+# drops the field silently). The 60s ceiling is a module-level
+# constant so accidental drift can't happen.
 # ═════════════════════════════════════════════════════════════════
+_P37C_UNDO_GRACE_S = 60
+
+
 class JobTimerUndoIn(BaseModel):
-    within_seconds: Optional[int] = 60
+    """Empty body — the endpoint takes no client input. Kept as a model
+    so FastAPI still parses the JSON body if one is sent."""
+    pass
 
 
 @router.post("/jobs/{jid}/timer/undo-start")
@@ -1985,7 +2003,9 @@ async def undo_job_timer_start(jid: str, body: JobTimerUndoIn,
         elapsed = int(max(0, (_now - _st).total_seconds()))
     except Exception:
         raise HTTPException(400, "Timer start time malformed")
-    grace = int(body.within_seconds or 60)
+    # Feb-2026 · P37c bug-fix — grace is a server constant. Ignore
+    # anything a client might have tried to pass.
+    grace = _P37C_UNDO_GRACE_S
     if elapsed > grace:
         raise HTTPException(
             status_code=400,
@@ -1993,11 +2013,22 @@ async def undo_job_timer_start(jid: str, body: JobTimerUndoIn,
                       "message": f"Timer started {elapsed}s ago; grace window is {grace}s.",
                       "elapsed_seconds": elapsed, "grace_seconds": grace},
         )
+    # Feb-2026 · P37c bug-fix — restore status alongside the timer
+    # unset. Only restore when the row is still in the auto-advanced
+    # ``in_progress`` state AND a pre-arrival snapshot exists; a
+    # dispatcher flipping the row to ``completed`` inside the grace
+    # window is honored (do not clobber operator decisions).
+    _pre = job.get("pre_arrival_status")
+    _cur = job.get("status")
+    _unset = {"timer_started_at": "", "timer_start_method": "",
+                 "arrival_lat": "", "arrival_lng": "",
+                 "pre_arrival_status": ""}
+    _set: dict = {"updated_at": now_iso()}
+    if _cur == "in_progress" and _pre:
+        _set["status"] = _pre
     await db.jobs.update_one(
         {"id": jid, "tenant_id": tenant["id"]},
-        {"$unset": {"timer_started_at": "", "timer_start_method": "",
-                      "arrival_lat": "", "arrival_lng": ""},
-          "$set": {"updated_at": now_iso()}},
+        {"$unset": _unset, "$set": _set},
     )
     try:
         await db.audit_logs.insert_one({
@@ -2007,11 +2038,14 @@ async def undo_job_timer_start(jid: str, body: JobTimerUndoIn,
             "at": now_iso(),
             "payload": {"job_id": jid, "elapsed_seconds": elapsed,
                             "prev_method": job.get("timer_start_method"),
-                            "prev_started_at": started_iso},
+                            "prev_started_at": started_iso,
+                            "restored_status": _set.get("status"),
+                            "pre_arrival_status": _pre},
         })
     except Exception as _e:
         logger.warning("[p37c] audit-log write failed: %s", _e)
-    return {"undone": True, "elapsed_seconds": elapsed}
+    return {"undone": True, "elapsed_seconds": elapsed,
+              "restored_status": _set.get("status")}
 
 
 @router.get("/reports/job-timers")
