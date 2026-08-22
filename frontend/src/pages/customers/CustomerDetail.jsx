@@ -307,6 +307,19 @@ export default function CustomerDetail() {
               <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>
                 {customer.name}
               </h1>
+              {customer.customer_since ? (
+                <span
+                  data-testid="customer-since-label"
+                  title={customer.customer_since}
+                  className="text-xs font-medium px-2 py-1 rounded"
+                  style={{ background: colors.surfaceSecondary,
+                              color: colors.onSurfaceSecondary }}
+                >
+                  {`Customer since ${new Date(customer.customer_since)
+                      .toLocaleDateString(undefined, {
+                          month: "long", year: "numeric" })}`}
+                </span>
+              ) : null}
               {/* Feb-2026 Customer Detail Additions — VIP toggle button
                   replaces the previous read-only badge. Left-clicking the
                   star flips is_vip; the small edit affordance opens the

@@ -597,6 +597,9 @@ async def create_customer(body: CustomerIn,
                           user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
     doc = body.dict()
+    # Feb-2026 · P42 — never set ``customer_since`` at create time.
+    # Only the lifecycle helper is allowed to write this field.
+    doc.pop("customer_since", None)
     _sync_customer_names(doc)
     _apply_multi_contact(doc)
     _apply_vip_stamp(doc, existing=None)
@@ -1162,6 +1165,17 @@ async def _apply_activation_cascade(cid: str, tenant_id: str, user: dict,
                 )
         except Exception:
             pass
+    # Feb-2026 · P42 — on inactive → active flips, stamp
+    # ``customer_since`` if this is the customer's first crossing of
+    # the "converted" threshold AND they already have ≥1 job. Safe
+    # no-op otherwise (immutable once set, requires ≥1 job).
+    if reactivating:
+        try:
+            from services.customer_lifecycle import stamp_customer_since
+            await stamp_customer_since(cid, tenant_id)
+        except Exception as _p42_exc:  # pragma: no cover — best-effort
+            logger.warning("[p42] cascade stamp failed cid=%s err=%s",
+                              cid, _p42_exc)
     return cancelled_job_count, deactivated_recurring_count
 
 
@@ -1183,6 +1197,10 @@ async def update_customer(cid: str, body: CustomerIn,
 
     payload = body.dict()
     _sync_customer_names(payload)
+    # Feb-2026 · P42 — ``customer_since`` is immutable on the write
+    # path. Existing stamps are preserved; blank-out attempts are
+    # rejected here by never letting the payload touch the field.
+    payload.pop("customer_since", None)
     # Feb-2026 Customer Detail Additions — normalize arrays + sync
     # scalars + auto-stamp VIP transitions BEFORE persisting.
     _apply_multi_contact(payload)

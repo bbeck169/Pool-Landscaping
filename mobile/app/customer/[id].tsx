@@ -223,6 +223,18 @@ export default function CustomerDetail() {
         }
       />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}>
+        {c.customer_since ? (
+          <Text
+            testID="mobile-customer-since-label"
+            style={{
+              fontSize: 12,
+              color: colors.muted,
+              marginBottom: spacing.sm,
+            }}
+          >
+            {`Customer since ${new Date(c.customer_since).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`}
+          </Text>
+        ) : null}
         {c.is_vip ? (
           <View style={styles.vipBadge} testID="vip-badge">
             <Ionicons name="star" size={14} color="#92400E" />

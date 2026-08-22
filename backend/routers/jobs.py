@@ -1,5 +1,5 @@
 # ruff: noqa: F403,F405
-from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request
+from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request, BackgroundTasks
 from pydantic import BaseModel, ConfigDict
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
@@ -547,6 +547,7 @@ async def list_jobs(
 
 @router.post("/jobs")
 async def create_job(body: JobIn,
+                     background_tasks: BackgroundTasks,
                      user: dict = Depends(require_admin),
                      tenant: dict = Depends(get_current_tenant)):
     doc = body.dict()
@@ -626,6 +627,14 @@ async def create_job(body: JobIn,
                 entity_kind="job", entity_id=doc["id"],
                 customer_id=doc.get("customer_id"),
             )
+    except Exception:
+        pass
+    # Feb-2026 · P42 — "converted" threshold stamp. Safe no-op when
+    # the customer doesn't (yet) meet both conditions.
+    try:
+        from services.customer_lifecycle import stamp_customer_since
+        background_tasks.add_task(
+            stamp_customer_since, body.customer_id, tenant["id"])
     except Exception:
         pass
     return doc

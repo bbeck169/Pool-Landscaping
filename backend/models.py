@@ -94,6 +94,12 @@ class CustomerIn(BaseModel):
     # back as ``None``.
     import_batch_id: Optional[str] = None
     is_active: Optional[bool] = True
+    # Feb-2026 · P42 — auto-populated by the lifecycle helper when the
+    # customer crosses the "converted" threshold (active + ≥1 job).
+    # Read-only in practice — API surfaces it back but any write is
+    # ignored by the router paths (immutable once set). Kept Optional
+    # so legacy docs read back as ``None``.
+    customer_since: Optional[str] = None
 
     @field_validator("pool_gallons")
     @classmethod
