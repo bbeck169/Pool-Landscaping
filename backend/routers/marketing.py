@@ -1,5 +1,5 @@
 # ruff: noqa: F403,F405
-from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends, Query, Request
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 
@@ -173,7 +173,8 @@ async def get_public_form(slug: str, request: Request):
 
 
 @router.post("/public/forms/{slug}/submit")
-async def submit_public_form(slug: str, body: dict, request: Request):
+async def submit_public_form(slug: str, body: dict, request: Request,
+                                background_tasks: BackgroundTasks):
     form = await db.forms.find_one({"$or": [{"slug": slug}, {"id": slug}]}, {"_id": 0})
     if not form or form.get("status") != "published":
         raise HTTPException(404, "Form not found")
@@ -185,10 +186,24 @@ async def submit_public_form(slug: str, body: dict, request: Request):
     await db.form_submissions.insert_one(sub)
     dest = (form.get("destination") or "lead").lower()
     if dest == "lead":
-        await db.leads.insert_one(_lead_row_from_form_values(
+        lead = _lead_row_from_form_values(
             tid=tid, vals=vals,
             source_label=form.get("name") or "Web Form",
-        ))
+        )
+        await db.leads.insert_one(lead)
+        # Feb-2026 · P18 — instant SMS+email alert to tenant-configured
+        # recipients.  Deferred via BackgroundTasks; no-op when both
+        # recipient lists are empty.
+        try:
+            tenant_doc = await db.tenants.find_one(
+                {"id": tid}, {"_id": 0}) or {"id": tid}
+            from services.lead_notifications import send_lead_alert_notifications
+            send_lead_alert_notifications(
+                lead=lead, tenant=tenant_doc,
+                background_tasks=background_tasks,
+            )
+        except Exception as _e:  # noqa: BLE001
+            logger.warning(f"[p18] lead alert dispatch failed: {_e}")
     return {"ok": True, "redirect_url": form.get("redirect_url")}
 
 
@@ -207,7 +222,8 @@ async def preview_form(fid: str,
 
 
 @router.post("/forms/{fid}/submit")
-async def submit_form(fid: str, body: FormSubmitIn, request: Request):
+async def submit_form(fid: str, body: FormSubmitIn, request: Request,
+                        background_tasks: BackgroundTasks):
     """Legacy public form submission — creates a submission record and a new lead."""
     form = await db.forms.find_one({"id": fid}, {"_id": 0})
     if not form:
@@ -222,6 +238,17 @@ async def submit_form(fid: str, body: FormSubmitIn, request: Request):
         source_label=form.get("name", "Web Form"),
     )
     await db.leads.insert_one(lead)
+    # Feb-2026 · P18 — same lead-alert fan-out as the /public path.
+    try:
+        tenant_doc = await db.tenants.find_one(
+            {"id": tid}, {"_id": 0}) or {"id": tid}
+        from services.lead_notifications import send_lead_alert_notifications
+        send_lead_alert_notifications(
+            lead=lead, tenant=tenant_doc,
+            background_tasks=background_tasks,
+        )
+    except Exception as _e:  # noqa: BLE001
+        logger.warning(f"[p18] lead alert dispatch failed: {_e}")
     return {"ok": True, "lead_created": True}
 
 

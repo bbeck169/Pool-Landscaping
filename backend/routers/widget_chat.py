@@ -31,7 +31,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from config import db, logger, EMERGENT_LLM_KEY
@@ -210,6 +210,11 @@ async def _upsert_lead(conv: Dict[str, Any], tenant_id: str, *,
         "created_at": now_iso(),
     }
     await db.leads.insert_one(lead_doc)
+    # Feb-2026 · P18 — mark last created lead so the caller
+    # endpoint can fan out to tenant-configured SMS+email recipients.
+    _upsert_lead._last_created = {                              # type: ignore[attr-defined]
+        "lead": lead_doc, "tenant_id": tenant_id,
+    }
     return lead_id
 
 
@@ -290,6 +295,7 @@ async def get_widget_conversation(
 async def post_widget_message(
     cid: str,
     body: WidgetMsgIn,
+    background_tasks: BackgroundTasks,
     tenant: Dict[str, Any] = Depends(require_widget_auth),
 ):
     """Send a visitor turn + get the assistant reply.
@@ -340,6 +346,20 @@ async def post_widget_message(
         if lead_id and lead_id != conv.get("lead_id"):
             new_lead_created = True
             conv_updates["lead_id"] = lead_id
+            # Feb-2026 · P18 — dispatch tenant-configured SMS+email
+            # lead alerts on brand-new widget-chat leads.  Deferred
+            # via BackgroundTasks; no-op when recipient lists empty.
+            _created = getattr(_upsert_lead, "_last_created", None)
+            if _created and _created.get("lead", {}).get("id") == lead_id:
+                try:
+                    from services.lead_notifications import send_lead_alert_notifications
+                    send_lead_alert_notifications(
+                        lead=_created["lead"], tenant=tenant,
+                        background_tasks=background_tasks,
+                    )
+                except Exception as _e:  # noqa: BLE001
+                    logger.warning(f"[p18] widget-chat alert failed: {_e}")
+                _upsert_lead._last_created = None                       # type: ignore[attr-defined]
 
     # 5) Build the LLM system prompt with a live capture-state hint so
     #    the model knows whether it still needs to ask for contact info.

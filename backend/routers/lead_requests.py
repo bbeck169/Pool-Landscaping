@@ -8,7 +8,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Form
 from pydantic import BaseModel, Field
 
 from config import db, logger, APP_PUBLIC_URL, RESEND_API_KEY, EMAIL_FROM
@@ -338,11 +338,15 @@ async def _create_lead_from_payload(dispatch: dict, payload: dict, files_meta: l
         "created_at": now_iso(),
     }
     await db.leads.insert_one(lead)
+    _create_lead_from_payload._last_created = {                 # type: ignore[attr-defined]
+        "lead": lead, "tenant_id": dispatch.get("tenant_id"),
+    }
     return lead_id
 
 
 @router.post("/public/lead-request/{token}/submit")
-async def public_submit(token: str, request: Request):
+async def public_submit(token: str, request: Request,
+                          background_tasks: BackgroundTasks):
     """Multipart-friendly submit. Fields land in the form-data body plus
     optional `files` uploads (up to 10 x 20MB)."""
     d = await db.lead_request_dispatches.find_one({"generated_token": token}, {"_id": 0})
@@ -388,6 +392,20 @@ async def public_submit(token: str, request: Request):
         raise HTTPException(400, f"Missing required fields: {', '.join(missing)}")
 
     lead_id = await _create_lead_from_payload(d, payload, files_meta)
+    # Feb-2026 · P18 — dispatch tenant-configured lead alerts.
+    _created = getattr(_create_lead_from_payload, "_last_created", None)
+    if _created and _created.get("lead", {}).get("id") == lead_id:
+        try:
+            tenant_doc = await db.tenants.find_one(
+                {"id": _created["tenant_id"]}, {"_id": 0}) or {}
+            from services.lead_notifications import send_lead_alert_notifications
+            send_lead_alert_notifications(
+                lead=_created["lead"], tenant=tenant_doc,
+                background_tasks=background_tasks,
+            )
+        except Exception as _e:  # noqa: BLE001
+            logger.warning(f"[p18] lead-request alert dispatch failed: {_e}")
+        _create_lead_from_payload._last_created = None              # type: ignore[attr-defined]
     await db.lead_request_dispatches.update_one(
         {"id": d["id"]},
         {"$set": {"submitted_at": now_iso(), "resulting_lead_id": lead_id}}

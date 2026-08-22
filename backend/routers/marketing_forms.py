@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
 from config import db, logger
@@ -411,6 +411,7 @@ async def get_widget_form(fid: str,
 @router.post("/widget/form/{fid}/submit", status_code=201)
 async def submit_widget_form(fid: str, body: FormSubmit,
                                 request: Request,
+                                background_tasks: BackgroundTasks,
                                 tenant: Dict[str, Any] = Depends(require_widget_auth)):
     form = await db.marketing_forms.find_one(
         {"id": fid, "tenant_id": tenant["id"], "active": {"$ne": False}},
@@ -485,6 +486,23 @@ async def submit_widget_form(fid: str, body: FormSubmit,
             name=name, email=email, phone=phone, notes=notes,
             page_url=body.page_url,
         )
+        # Feb-2026 · P18 — dispatch tenant-configured lead alerts to
+        # the SMS+email recipient lists when the upsert path created a
+        # brand-new lead row (existing-lead reuse skips the fan-out
+        # since the tenant already knows).
+        _created = getattr(_upsert_lead_from_submission,
+                              "_last_created", None)
+        if _created and _created.get("lead", {}).get("id") == lead_id:
+            try:
+                from services.lead_notifications import send_lead_alert_notifications
+                send_lead_alert_notifications(
+                    lead=_created["lead"], tenant=tenant,
+                    background_tasks=background_tasks,
+                )
+            except Exception as _e:  # noqa: BLE001
+                logger.warning(f"[p18] lead alert dispatch failed: {_e}")
+            # Reset so a duplicate call in the same request doesn't re-fire.
+            _upsert_lead_from_submission._last_created = None      # type: ignore[attr-defined]
     if creates in ("customer", "both") and (email or phone):
         customer_id = await _upsert_customer_from_submission(
             tenant_id=tenant["id"],
@@ -613,7 +631,7 @@ async def _upsert_lead_from_submission(
     if existing:
         return existing["id"]
     lead_id = new_id()
-    await db.leads.insert_one({
+    lead_doc = {
         "id": lead_id,
         "tenant_id": tenant_id,
         "name": name or "Form visitor",
@@ -622,11 +640,21 @@ async def _upsert_lead_from_submission(
         "source": f"form:{form.get('slug') or form.get('id')}",
         "status": "new",
         "notes": (notes or "")[:500],
+        "message": notes or "",
         "meta": {"form_id": form.get("id"),
                  "submission_id": submission_id,
                  "page_url": page_url},
         "created_at": now_iso(),
-    })
+    }
+    await db.leads.insert_one(lead_doc)
+    # Feb-2026 · P18 — expose the created lead + tenant on the
+    # module-level context so the outer widget-form endpoint can
+    # dispatch the P18 SMS+email alert to tenant-configured
+    # recipients.  Piggybacks on the return signature to avoid
+    # threading BackgroundTasks through every helper.
+    _upsert_lead_from_submission._last_created = {          # type: ignore[attr-defined]
+        "lead": lead_doc, "tenant_id": tenant_id,
+    }
     return lead_id
 
 
