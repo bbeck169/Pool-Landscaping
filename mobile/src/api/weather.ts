@@ -64,8 +64,26 @@ export const fetchDailyWeather = (
 ): Promise<{ ok: boolean; daily: DailyEntry[] }> =>
   api.get(`/weather/daily?lat=${lat}&lon=${lon}&days=${days}`);
 
+export type WeatherAlert = {
+  event?: string;
+  severity?: string;
+  headline?: string;
+  expires_at?: string;
+  url?: string;
+};
+
 export const fetchWeatherRadar = (
   lat: number,
   lon: number
 ): Promise<{ ok: boolean; embed_url: string }> =>
   api.get(`/weather/radar?lat=${lat}&lon=${lon}`);
+
+// Feb-2026 · P39b — active NWS alerts for the tech's location.
+// Envelope: {ok, alerts: WeatherAlert[]}. Returns ok:false on
+// out-of-US or upstream error — caller must render nothing on
+// ok:false (never surface an error banner).
+export const fetchWeatherAlerts = (
+  lat: number,
+  lon: number
+): Promise<{ ok: boolean; alerts?: WeatherAlert[]; reason?: string }> =>
+  api.get(`/weather/alerts?lat=${lat}&lon=${lon}`);

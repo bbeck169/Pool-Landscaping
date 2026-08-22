@@ -19,8 +19,8 @@ import { WebView } from "react-native-webview";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import {
   fetchTenantLocation, fetchCurrentWeather, fetchHourlyWeather,
-  fetchDailyWeather, fetchWeatherRadar,
-  CurrentWeather, HourlyEntry, DailyEntry,
+  fetchDailyWeather, fetchWeatherRadar, fetchWeatherAlerts,
+  CurrentWeather, HourlyEntry, DailyEntry, WeatherAlert,
 } from "@/src/api/weather";
 
 const REFRESH_MS = 5 * 60 * 1000;
@@ -35,6 +35,9 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
   const [radarOpen, setRadarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  // Feb-2026 · P39b — active NWS alerts banner + expand-collapse.
+  const [alerts, setAlerts] = useState<WeatherAlert[]>([]);
+  const [alertsExpanded, setAlertsExpanded] = useState(false);
   const coordsRef = useRef<{ lat: number; lon: number } | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -47,10 +50,12 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
         coordsRef.current = coords;
       }
       const { lat, lon } = coords;
-      const [cur, hr, dy] = await Promise.all([
+      const [cur, hr, dy, al] = await Promise.all([
         fetchCurrentWeather(lat, lon).catch(() => null),
         fetchHourlyWeather(lat, lon).catch(() => null),
-        fetchDailyWeather(lat, lon).catch(() => null),
+        // Feb-2026 · P39b — bumped 5 → 7 days.
+        fetchDailyWeather(lat, lon, 7).catch(() => null),
+        fetchWeatherAlerts(lat, lon).catch(() => null),
       ]);
       if (cur && cur.ok !== false) setCurrent(cur);
       if (hr?.hourly) {
@@ -58,6 +63,8 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
         onHourlyLoaded?.(hr.hourly);
       }
       if (dy?.daily) setDaily(dy.daily);
+      // ok:false or reject → banner just doesn't render.
+      setAlerts(al && al.ok !== false && al.alerts ? al.alerts : []);
       if (!cur && !hr && !dy) setFailed(true);
       else setFailed(false);
     } catch {
@@ -95,8 +102,93 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
   );
   if (failed || !current) return null;
 
+  // Feb-2026 · P39b — alerts banner severity coloring.
+  const _severityRank = (s?: string): "red" | "amber" | "slate" => {
+    const t = String(s || "").toLowerCase();
+    if (t === "extreme" || t === "severe") return "red";
+    if (t === "moderate") return "amber";
+    return "slate";
+  };
+  const _palette = (rank: "red" | "amber" | "slate") => {
+    if (rank === "red") return { bg: "#FEE2E2", border: "#FCA5A5", fg: "#7F1D1D" };
+    if (rank === "amber") return { bg: "#FEF3C7", border: "#FCD34D", fg: "#78350F" };
+    return { bg: "#E2E8F0", border: "#94A3B8", fg: "#1E293B" };
+  };
+  const _rank = { red: 0, amber: 1, slate: 2 };
+  const _sortedAlerts = [...alerts].sort(
+    (a, b) => _rank[_severityRank(a.severity)] - _rank[_severityRank(b.severity)]
+  );
+  const _topRank = _sortedAlerts.length
+    ? _severityRank(_sortedAlerts[0].severity) : "slate";
+  const _bannerPalette = _palette(_topRank);
+  const _visibleAlerts = alertsExpanded
+    ? _sortedAlerts : _sortedAlerts.slice(0, 1);
+  const _hiddenCount = Math.max(0, _sortedAlerts.length - _visibleAlerts.length);
+  const _truncate = (s: string | undefined, n = 180) =>
+    !s ? "" : (s.length > n ? s.slice(0, n - 1) + "…" : s);
+  const _fmtExpires = (iso?: string) => {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return "";
+      const h = d.getHours();
+      const m = String(d.getMinutes()).padStart(2, "0");
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      return `${h12}:${m}${h >= 12 ? "pm" : "am"}`;
+    } catch { return ""; }
+  };
+
   return (
     <View testID="weather-widget" style={styles.container}>
+      {/* Feb-2026 · P39b — Alerts banner. Above current conditions,
+          same severity palette as web. Multi-alert case: first row
+          visible + "and N more" pill that expands the list inline. */}
+      {_sortedAlerts.length > 0 && (
+        <View
+          testID="mobile-weather-alerts-banner"
+          style={[styles.alertsBanner, {
+            backgroundColor: _bannerPalette.bg,
+            borderColor: _bannerPalette.border,
+          }]}
+        >
+          {_visibleAlerts.map((a, i) => (
+            <View
+              key={i}
+              testID={`mobile-weather-alert-item-${i}`}
+              style={[styles.alertRow, i > 0 && {
+                borderTopWidth: 1, borderTopColor: _bannerPalette.border,
+                marginTop: 8, paddingTop: 8,
+              }]}
+            >
+              <Text style={[styles.alertEvent, { color: _bannerPalette.fg }]}>
+                {a.event || "Alert"}
+              </Text>
+              <Text style={[styles.alertHeadline, { color: _bannerPalette.fg }]}>
+                {_truncate(a.headline, 180)}
+              </Text>
+              {a.expires_at ? (
+                <Text style={[styles.alertExpires, { color: _bannerPalette.fg }]}>
+                  Expires {_fmtExpires(a.expires_at)}
+                </Text>
+              ) : null}
+            </View>
+          ))}
+          {_hiddenCount > 0 && (
+            <Pressable
+              testID="mobile-weather-alerts-more-pill"
+              onPress={() => setAlertsExpanded(true)}
+              style={[styles.alertsMorePill, {
+                backgroundColor: _bannerPalette.fg,
+              }]}
+            >
+              <Text style={[styles.alertsMorePillText, {
+                color: _bannerPalette.bg,
+              }]}>and {_hiddenCount} more</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+
       {/* Current conditions */}
       <View style={styles.currentRow}>
         <View style={styles.currentLeft}>
@@ -108,6 +200,12 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
           <MiniStat icon="arrow-down" value={`${Math.round(current.low || 0)}°`} />
           <MiniStat icon="water-outline" value={`${current.humidity || 0}%`} />
           <MiniStat icon="speedometer-outline" value={`${Math.round(current.wind_mph || 0)} mph`} />
+          {/* Feb-2026 · P39b — UV; NWS doesn't publish so render "—" on null. */}
+          <MiniStat
+            icon="sunny-outline"
+            value={current.uv == null ? "UV —" : `UV ${current.uv}`}
+            testID="mobile-weather-current-uv"
+          />
         </View>
       </View>
 
@@ -137,14 +235,18 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
         </View>
       )}
 
-      {/* 5-day forecast */}
+      {/* 7-day forecast — Feb-2026 · P39b bumped 5 → 7 */}
       {daily.length > 0 && (
         <View testID="weather-5day-forecast">
-          <Text style={styles.sectionLabel}>5-Day Forecast</Text>
-          {daily.slice(0, 5).map((d, i) => {
+          <Text style={styles.sectionLabel}>7-Day Forecast</Text>
+          {daily.slice(0, 7).map((d, i) => {
             const dayName = new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
             return (
-              <View key={i} style={styles.dailyRow}>
+              <View
+                key={i}
+                style={styles.dailyRow}
+                testID={`mobile-weather-day-${i}`}
+              >
                 <Text style={styles.dailyDay}>{i === 0 ? "Today" : dayName}</Text>
                 <Text style={styles.dailyCondition} numberOfLines={1}>{d.condition}</Text>
                 {d.chance_of_rain >= 30 && (
@@ -219,9 +321,9 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
   );
 }
 
-function MiniStat({ icon, value }: { icon: string; value: string }) {
+function MiniStat({ icon, value, testID }: { icon: string; value: string; testID?: string }) {
   return (
-    <View style={styles.miniStat}>
+    <View style={styles.miniStat} testID={testID}>
       <Ionicons name={icon as any} size={12} color={colors.muted} />
       <Text style={styles.miniStatText}>{value}</Text>
     </View>
@@ -265,4 +367,23 @@ const styles = StyleSheet.create({
   radarModal: { flex: 1, backgroundColor: colors.surface },
   radarHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: spacing.lg, paddingTop: Platform.OS === "ios" ? 56 : spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border },
   radarTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface },
+  // Feb-2026 · P39b — alerts banner styles.
+  alertsBanner: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  alertRow: {},
+  alertEvent: { fontFamily: font.bold, fontSize: fontSize.sm },
+  alertHeadline: { fontFamily: font.regular, fontSize: fontSize.xs, marginTop: 2 },
+  alertExpires: { fontFamily: font.medium, fontSize: 10, marginTop: 2, opacity: 0.8 },
+  alertsMorePill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 8, paddingVertical: 2,
+    borderRadius: 999, marginTop: spacing.sm,
+  },
+  alertsMorePillText: {
+    fontFamily: font.bold, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.8,
+  },
 });

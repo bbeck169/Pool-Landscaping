@@ -46,6 +46,9 @@ export default function WeatherWidget({ user }) {
   const [radar, setRadar] = React.useState(null);
   const [radarOpen, setRadarOpen] = React.useState(false);
   const [hidden, setHidden] = React.useState(false);
+  // Feb-2026 · P39b — NWS active alerts banner.
+  const [alerts, setAlerts] = React.useState([]);
+  const [alertsExpanded, setAlertsExpanded] = React.useState(false);
 
   const role = (user?.role || "").toLowerCase();
   const allowed = role === "technician" || role === "admin" || role === "super_admin";
@@ -66,9 +69,15 @@ export default function WeatherWidget({ user }) {
 
   const load = React.useCallback(async () => {
     try {
-      const [cur, dl] = await Promise.all([
+      const [cur, dl, al] = await Promise.all([
         api.get(`/weather/current?lat=${lat}&lon=${lon}`),
-        api.get(`/weather/daily?lat=${lat}&lon=${lon}&days=5`),
+        // Feb-2026 · P39b — bumped 5 → 7 days (NWS supports up to 10;
+        // P39a spec puts the widget at 7).
+        api.get(`/weather/daily?lat=${lat}&lon=${lon}&days=7`),
+        // Feb-2026 · P39b — active alerts (safety-critical banner
+        // above current conditions). ``ok:false`` (out-of-US /
+        // upstream error) is fine — banner just doesn't render.
+        api.get(`/weather/alerts?lat=${lat}&lon=${lon}`).catch(() => null),
       ]);
       if (cur?.ok === false) {
         setHidden(true);
@@ -76,8 +85,10 @@ export default function WeatherWidget({ user }) {
       }
       setCurrent(cur);
       // Daily is optional — a graceful ok:false just hides the
-      // 5-day strip without collapsing the whole widget.
+      // 7-day strip without collapsing the whole widget.
       setDaily(dl?.ok === false ? null : dl);
+      // Alerts is optional — never blocks the widget.
+      setAlerts(al?.ok === false || !al ? [] : (al.alerts || []));
       setHidden(false);
     } catch {
       setHidden(true);
@@ -126,7 +137,51 @@ export default function WeatherWidget({ user }) {
       return dateStr;
     }
   };
-  const dailyRows = (daily?.daily || []).slice(0, 5);
+  const dailyRows = (daily?.daily || []).slice(0, 7);
+
+  // Feb-2026 · P39b — alerts banner styling by severity.
+  // Extreme + Severe → red; Moderate → amber; Minor/Unknown → slate.
+  const _severityRank = (s) => {
+    const t = String(s || "").toLowerCase();
+    if (t === "extreme" || t === "severe") return "red";
+    if (t === "moderate") return "amber";
+    return "slate";
+  };
+  const _alertPalette = (rank) => {
+    if (rank === "red") return { bg: "#FEE2E2", border: "#FCA5A5", fg: "#7F1D1D" };
+    if (rank === "amber") return { bg: "#FEF3C7", border: "#FCD34D", fg: "#78350F" };
+    return { bg: "#E2E8F0", border: "#94A3B8", fg: "#1E293B" };
+  };
+  // Ordered by severity descending so the highest-priority alert
+  // drives the banner container color and appears first. Inline
+  // rather than ``useMemo`` — cheap sort, and keeping hook count
+  // stable across the early-return branch above.
+  const _rank = { red: 0, amber: 1, slate: 2 };
+  const _sortedAlerts = [...(alerts || [])].sort(
+    (a, b) => _rank[_severityRank(a.severity)] - _rank[_severityRank(b.severity)]
+  );
+  const _topRank = _sortedAlerts.length ? _severityRank(_sortedAlerts[0].severity) : "slate";
+  const _bannerPalette = _alertPalette(_topRank);
+  const _fmtExpires = (iso) => {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return "";
+      const h = d.getHours();
+      const m = d.getMinutes();
+      const hour12 = h % 12 === 0 ? 12 : h % 12;
+      const mm = String(m).padStart(2, "0");
+      return `${hour12}:${mm}${h >= 12 ? "pm" : "am"}`;
+    } catch { return ""; }
+  };
+  const _truncate = (s, n = 180) => {
+    if (!s) return "";
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  };
+  const _visibleAlerts = alertsExpanded
+    ? _sortedAlerts
+    : _sortedAlerts.slice(0, 1);
+  const _hiddenAlertCount = Math.max(0, _sortedAlerts.length - _visibleAlerts.length);
 
   return (
     <div
@@ -137,6 +192,58 @@ export default function WeatherWidget({ user }) {
       }}
       data-testid="weather-widget"
     >
+      {/* Feb-2026 · P39b — Alerts banner. Rendered ABOVE current
+          conditions because severe-weather alerts are safety-critical
+          and must be seen first. Container tint matches the top-ranked
+          alert's severity (Extreme/Severe = red, Moderate = amber,
+          Minor/Unknown = slate). Multi-alert case shows the first plus
+          an "and N more" pill that expands the list inline. */}
+      {_sortedAlerts.length > 0 ? (
+        <div
+          className="px-4 py-2.5 border-b"
+          style={{
+            background: _bannerPalette.bg,
+            borderColor: _bannerPalette.border,
+            color: _bannerPalette.fg,
+          }}
+          data-testid="weather-alerts-banner"
+        >
+          {_visibleAlerts.map((a, i) => (
+            <div
+              key={i}
+              className={i === 0 ? "" : "mt-2 pt-2 border-t"}
+              style={i === 0 ? undefined
+                : { borderColor: _bannerPalette.border }}
+              data-testid={`weather-alert-item-${i}`}
+            >
+              <div className="text-sm font-bold">{a.event || "Alert"}</div>
+              <div className="text-xs mt-0.5">
+                {_truncate(a.headline || "", 180)}
+              </div>
+              {a.expires_at ? (
+                <div className="text-[10px] mt-0.5 opacity-80">
+                  Expires {_fmtExpires(a.expires_at)}
+                </div>
+              ) : null}
+            </div>
+          ))}
+          {_hiddenAlertCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setAlertsExpanded(true)}
+              className="inline-block mt-2 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+              style={{
+                background: _bannerPalette.fg,
+                color: _bannerPalette.bg,
+              }}
+              data-testid="weather-alerts-more-pill"
+            >
+              and {_hiddenAlertCount} more
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Row 1 — current conditions */}
       <div className="flex items-center gap-4 px-4 py-3">
         {cur.condition_icon ? (
@@ -174,7 +281,9 @@ export default function WeatherWidget({ user }) {
             <span className="inline-flex items-center gap-1">
               <Wind size={12} /> {cur.wind_mph ?? "—"} mph {cur.wind_dir || ""}
             </span>
-            <span>UV {cur.uv ?? "—"}</span>
+            <span data-testid="weather-current-uv">
+              UV {cur.uv == null ? "—" : cur.uv}
+            </span>
           </div>
         </div>
         <button
