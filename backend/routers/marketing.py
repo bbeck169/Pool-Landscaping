@@ -15,6 +15,56 @@ from models import (
 router = APIRouter()
 
 
+# ── Feb-2026 · P17 — Widget-lead field extraction ─────────────────
+# Legacy public-form endpoints (``/public/forms/{slug}/submit`` and
+# ``/forms/{fid}/submit``) previously did a naive
+# ``vals.get("phone", "")`` / ``vals.get("email", "")`` /
+# ``vals.get("name", "Website Visitor")`` extraction, which silently
+# dropped every submission whose form fields used the common
+# ``full_name`` / ``email_address`` / ``phone_number`` aliases.
+# The prod symptom (``app.plofv.com/leads``) was leads landing with
+# empty contact columns + the hardcoded "Website Visitor" fallback
+# name.  This helper mirrors the alias-tolerant extractor in
+# ``routers/marketing_forms.py::_first_str`` so both intake paths
+# now capture the same field-name universe.
+def _first_str(d: dict, keys: List[str]) -> Optional[str]:
+    for k in keys:
+        v = (d or {}).get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _lead_row_from_form_values(*, tid: str, vals: dict, source_label: str) -> dict:
+    """Build the ``leads`` insert doc from a form-submission ``vals``
+    dict, tolerating every common field-name alias.  The returned
+    doc is safe to insert directly into ``db.leads``."""
+    name = _first_str(vals, ["name", "full_name", "fullname"])
+    email = _first_str(vals, ["email", "email_address"])
+    phone = _first_str(vals, ["phone", "phone_number", "tel", "mobile"])
+    message = _first_str(vals, ["message", "notes", "details", "comments"])
+    address = _first_str(vals, ["address", "street_address", "service_address"])
+    service_interest = _first_str(
+        vals, ["service_interest", "requested_service", "service", "interest"],
+    )
+    return {
+        "id": new_id(),
+        "tenant_id": tid,
+        "name": name or "Website Visitor",
+        "phone": phone or "",
+        "email": email or "",
+        "address": address or "",
+        "service_address": address or "",
+        "service_interest": service_interest or None,
+        "message": message or "",
+        "source": source_label or "Web Form",
+        "status": "new",
+        "notes": message or "",
+        "est_value": 0.0,
+        "created_at": now_iso(),
+    }
+
+
 async def _resolve_public_tenant(request: Request, form: dict | None = None) -> str:
     """Public endpoints: prefer the form's own tenant_id, else X-Tenant-Slug header,
     else custom domain, else default tenant."""
@@ -135,14 +185,10 @@ async def submit_public_form(slug: str, body: dict, request: Request):
     await db.form_submissions.insert_one(sub)
     dest = (form.get("destination") or "lead").lower()
     if dest == "lead":
-        await db.leads.insert_one({
-            "id": new_id(), "tenant_id": tid,
-            "name": vals.get("name", "Website Visitor"),
-            "phone": vals.get("phone", ""), "email": vals.get("email", ""),
-            "source": form.get("name") or "Web Form", "status": "new",
-            "notes": vals.get("message") or vals.get("notes") or "",
-            "created_at": now_iso(),
-        })
+        await db.leads.insert_one(_lead_row_from_form_values(
+            tid=tid, vals=vals,
+            source_label=form.get("name") or "Web Form",
+        ))
     return {"ok": True, "redirect_url": form.get("redirect_url")}
 
 
@@ -171,13 +217,10 @@ async def submit_form(fid: str, body: FormSubmitIn, request: Request):
     sub = {"id": new_id(), "tenant_id": tid, "form_id": fid,
            "values": vals, "created_at": now_iso()}
     await db.form_submissions.insert_one(sub)
-    lead = {
-        "id": new_id(), "tenant_id": tid,
-        "name": vals.get("name", "Website Visitor"),
-        "phone": vals.get("phone", ""), "email": vals.get("email", ""),
-        "source": form.get("name", "Web Form"), "status": "new",
-        "notes": vals.get("message", vals.get("notes", "")), "est_value": 0.0, "created_at": now_iso(),
-    }
+    lead = _lead_row_from_form_values(
+        tid=tid, vals=vals,
+        source_label=form.get("name", "Web Form"),
+    )
     await db.leads.insert_one(lead)
     return {"ok": True, "lead_created": True}
 

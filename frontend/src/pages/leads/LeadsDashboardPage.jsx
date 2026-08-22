@@ -538,11 +538,43 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
                     className="p-1"><X size={18} color={colors.muted} /></button>
           </div>
 
-          <div className="mb-4 text-sm">
+          <div className="mb-4 text-sm" data-testid="lead-contact-block">
             {lead.email && <div><b>Email:</b> {lead.email}</div>}
             {lead.phone && <div><b>Phone:</b> {lead.phone}</div>}
             {lead.address && <div><b>Address:</b> {lead.address}</div>}
+            {lead.service_address && lead.service_address !== lead.address && (
+              <div data-testid="lead-service-address">
+                <b>Service address:</b> {lead.service_address}
+              </div>
+            )}
+            {lead.service_interest && (
+              <div data-testid="lead-service-interest">
+                <b>Interested in:</b> {lead.service_interest}
+              </div>
+            )}
           </div>
+
+          {/* Feb-2026 · P17 — display the customer's inquiry
+              message when the widget captured one.  Falls back
+              silently for legacy leads that never had a message
+              field (e.g. pre-P17 "Website Visitor" rows). */}
+          {lead.message && (
+            <div
+              className="mb-4 p-3 rounded-lg text-sm"
+              style={{ background: "#F0F9FF", border: "1px solid #BAE6FD" }}
+              data-testid="lead-message-block"
+            >
+              <div
+                className="text-[10px] font-bold uppercase mb-1"
+                style={{ color: "#075985" }}
+              >
+                Inquiry message
+              </div>
+              <div style={{ color: "#0C4A6E", whiteSpace: "pre-wrap" }}>
+                {lead.message}
+              </div>
+            </div>
+          )}
 
           {isReferral(lead) ? (
             <div
