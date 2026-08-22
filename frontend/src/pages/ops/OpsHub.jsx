@@ -2812,7 +2812,47 @@ function LogHistory() {
     </Card>
   );
 }
-function JobTimers() { return <SimplePage endpoint="/jobs" title="Active timers" empty="No active timers" filter={(j) => j.status === "active" && j.timer_started_at} render={(j) => `${j.title} — ${j.technician_name} — started ${j.timer_started_at}`} />; }
+function JobTimers() {
+  // Feb-2026 · P37b — surface GPS-arrival / service-report-submit
+  // origin badges next to the job title so dispatchers can see at a
+  // glance which timers auto-started vs manual.
+  return <SimplePage endpoint="/jobs" title="Active timers" empty="No active timers"
+    filter={(j) => j.status === "active" && j.timer_started_at}
+    render={(j) => (
+      <span data-testid={`job-timer-row-${j.id}`}>
+        {j.title} — {j.technician_name} — started {j.timer_started_at}
+        {j.timer_start_method === "gps_arrival" ? (
+          <span
+            data-testid={`timer-start-badge-${j.id}`}
+            style={{ marginLeft: 8, padding: "1px 6px",
+                       background: "#E0F2FE", color: "#075985",
+                       borderRadius: 4, fontSize: 11, fontWeight: 600 }}
+          >
+            Started {new Date(j.timer_started_at).toTimeString().slice(0,5)} via GPS arrival
+          </span>
+        ) : null}
+        {j.timer_stop_method === "service_report_submitted" ? (
+          <span
+            data-testid={`timer-stop-badge-${j.id}`}
+            style={{ marginLeft: 6, padding: "1px 6px",
+                       background: "#F1F5F9", color: "#334155",
+                       borderRadius: 4, fontSize: 11, fontWeight: 600 }}
+          >
+            Stopped via service report
+          </span>
+        ) : j.timer_stop_method === "job_completed" ? (
+          <span
+            data-testid={`timer-stop-badge-${j.id}`}
+            style={{ marginLeft: 6, padding: "1px 6px",
+                       background: "#F1F5F9", color: "#334155",
+                       borderRadius: 4, fontSize: 11, fontWeight: 600 }}
+          >
+            Stopped via job completion
+          </span>
+        ) : null}
+      </span>
+    )} />;
+}
 function AvgJobTime() {
   const [rows] = useList("/jobs");
   const done = (rows || []).filter((j) => j.status === "completed" && j.duration_minutes);

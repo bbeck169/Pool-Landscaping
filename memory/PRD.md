@@ -12416,3 +12416,43 @@ Migration is idempotent + resumable via `--limit`.
 - Geocoding is BackgroundTasks-safe (migration + on-persist helpers; no hot request path calls Google synchronously in P37a).
 - Every failure path degrades to manual — no user-visible errors.
 - Distance = haversine (`services.geofence_engine.haversine_m`), meters.
+
+---
+
+## Phase P37b · Feb-2026 — Web timer badges + GPS auto-start settings page
+
+### Files added
+- `frontend/src/components/jobs/TimerBadges.jsx` — reusable `<TimerStartBadge>` + `<TimerStopBadge>` + composite `<TimerBadges>`. Show-only, field-driven — never inferred client-side.
+- `frontend/src/pages/settings/GpsAutoStartPage.jsx` — mirrors QuietHoursPage.jsx.
+- `frontend/src/test/phase37b-gps-auto-start-settings.test.jsx` — **4/4 green** (renders defaults, PATCH shape correctness, 400 invalid_radius error, disabled greying).
+- `frontend/src/test/phase37b-timer-badges.test.jsx` — **8/8 green** (start GPS badge, absent-field no-render, legacy-value no-render, both stop-method badges, unknown-value fail-safe, composite render, null-job safety).
+
+### Files touched
+- `frontend/src/pages/ops/OpsHub.jsx::JobTimers` — surfaces the origin badges inline in the "Active timers" list. Reads server-provided `timer_start_method` / `timer_stop_method` values only.
+- `frontend/src/App.js` — new route wired behind reused `AdminOrManagerForMutedReasons` gate.
+- `frontend/src/nav/adminNav.js` — nav entry under Schedule & Dispatch next to Muted Reasons + Quiet Hours + Customer Tags.
+
+### Judgment calls (transparent)
+1. **Reusable `TimerBadges.jsx` component built but inlined into `OpsHub::JobTimers`** — `SimplePage`'s render function accepts JSX, and the badges are visually simple (~6 lines each), so inlining was clearer than importing here. The component is still exported + tested for future job-detail / schedule-board integrations.
+2. **Only `OpsHub::JobTimers` got badges** — that's the ONLY existing render site that reads `timer_started_at` / `timer_start_method` in the entire web codebase (verified via grep). Job cards on the schedule board don't currently display timer state; job detail pages don't either. Adding badges to non-existent surfaces was out of scope; when future views start rendering timer state, they should import the reusable `TimerBadges.jsx` component.
+3. **PATCH body uses full openapi field names** — `gps_auto_start_enabled` + `arrival_radius_meters` (not the shorter `enabled` used by QuietHoursPage) — the tester flagged this in the phase brief and the test explicitly pins it via `toEqual` rather than `toMatchObject` so any regression is caught immediately.
+4. **Radius input is always interactable, greyed only visually when disabled** — matches the QuietHoursPage UX so admins can prep a value before flipping the toggle.
+
+### Results
+- **P37b Vitest: 12/12 green.**
+- **Combined frontend regression (P28 + P29b + P33 + P34 + P36 + P37b): 37/37 green.**
+- App.js + OpsHub.jsx both parse cleanly.
+- No backend/API changes (P37a already exposed the endpoints).
+
+### Deploy notes for `app.plofv.com`
+- Redeploy (frontend-only phase).
+- No migration needed.
+- Feature ships OFF (`gps_auto_start_enabled=false` on every tenant per P37a) — admins can now flip it via **Settings → GPS Auto-Start**.
+- Badges only appear on jobs that carry the P37a `timer_start_method`/`timer_stop_method` fields — legacy jobs render nothing (safe by design).
+
+### Guardrails honored
+- `bbeck169/Pool-Landscaping.git` ignored.
+- Mobile untouched (that's P37c).
+- Backend untouched (P37a already covers).
+- Manual timer flow preserved — this phase only adds display; nothing was removed or gated.
+- Badges are field-driven — no client-side inference.

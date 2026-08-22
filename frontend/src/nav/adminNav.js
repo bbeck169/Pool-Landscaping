@@ -153,6 +153,9 @@ export const ADMIN_NAV_V2 = [
     // Feb-2026 · P36 — Customer Tags settings manager. Same role set
     // as muted-reasons + quiet-hours; nav placement kept adjacent.
     { to: "/settings/customer-tags", label: "Customer Tags", icon: AlertTriangleIcon, feature: "settings", subsection: "Schedule & Dispatch" },
+    // Feb-2026 · P37b — GPS auto-start. Same role set as the other
+    // Schedule & Dispatch settings surfaces; route wrapper enforces.
+    { to: "/settings/gps-auto-start", label: "GPS Auto-Start", icon: AlertTriangleIcon, feature: "settings", subsection: "Schedule & Dispatch" },
     // Workforce
     { to: "/team?t=team",              label: "Team",             icon: UsersRound,  feature: "jobs", subsection: "Workforce" },
     { to: "/admin/users",              label: "Team (admin)",     icon: UserCog,     feature: "settings", subsection: "Workforce" },

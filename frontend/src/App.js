@@ -67,6 +67,8 @@ import MutedReasonsPage from "@/pages/settings/MutedReasonsPage";
 import QuietHoursPage from "@/pages/settings/QuietHoursPage";
 // Feb-2026 · P36 — Customer Tags settings manager (super_admin / admin / manager).
 import CustomerTagsSettingsPage from "@/pages/settings/CustomerTagsSettingsPage";
+// Feb-2026 · P37b — GPS auto-start settings (super_admin / admin / manager).
+import GpsAutoStartPage from "@/pages/settings/GpsAutoStartPage";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import SupplierSettings from "@/pages/settings/SupplierSettings";
 import SupplierSyncAnalytics from "@/pages/reports/SupplierSyncAnalytics";
@@ -694,6 +696,9 @@ export default function App() {
             {/* Feb-2026 · P36 — Customer Tags settings (super_admin / admin / manager).
                 Same role set — reuse the same gate. */}
             <Route path="settings/customer-tags" element={<AdminOrManagerForMutedReasons><CustomerTagsSettingsPage /></AdminOrManagerForMutedReasons>} />
+            {/* Feb-2026 · P37b — GPS auto-start settings (super_admin / admin / manager).
+                Same role set — reuse the same gate. */}
+            <Route path="settings/gps-auto-start" element={<AdminOrManagerForMutedReasons><GpsAutoStartPage /></AdminOrManagerForMutedReasons>} />
             <Route path="settings/billing" element={<AdminOnly><BillingSettings /></AdminOnly>} />
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />
