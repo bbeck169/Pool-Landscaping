@@ -857,7 +857,15 @@ export default function CustomersList() {
                           · {c.muted_reason}
                         </span>
                       ) : null}
-                      {!c.deleted_at && isAdmin ? (
+                      {/* Feb-2026 · P37-UX — On the Muted tab the
+                          Mark Muted / Unmute pill stays inline with
+                          the row's status chips so operators can
+                          audit + unmute in place. On Active / Inactive
+                          / All tabs the control moves into the
+                          right-aligned action-button cluster (see
+                          below) so all row-level actions sit
+                          together. */}
+                      {!c.deleted_at && isAdmin && tab === "muted" ? (
                         <MuteControl
                           customer={c}
                           canMute={isAdmin}
@@ -971,6 +979,36 @@ export default function CustomersList() {
                             <UserX size={12} /> Mark inactive
                           </button>
                         )
+                      ) : null}
+                      {/* Feb-2026 · P37-UX — Mark Muted / Unmute pill
+                          lives next to the Mark inactive (Active tab)
+                          or Reactivate (Inactive tab) button so all
+                          row-level actions sit together on the right.
+                          On the Muted tab the pill stays inline with
+                          the status chips (see above) — this branch
+                          intentionally skips render there. */}
+                      {!c.deleted_at && isAdmin && tab !== "muted" ? (
+                        <MuteControl
+                          customer={c}
+                          canMute={isAdmin}
+                          canUnmute={isAdmin}
+                          onChange={(res) => {
+                            const label = res?.muted
+                              ? "Customer muted"
+                              : res?.unmuted
+                              ? "Customer unmuted"
+                              : res?.reason === "already_muted"
+                              ? "Customer was already muted"
+                              : res?.reason === "not_muted"
+                              ? "Customer was not muted"
+                              : "Done";
+                            setToast({ tone: "success", message: label });
+                            load();
+                          }}
+                          onError={(msg) =>
+                            setToast({ tone: "error", message: msg })
+                          }
+                        />
                       ) : null}
                       <button
                         onClick={() => navigate(`/customers/${c.id}`)}
