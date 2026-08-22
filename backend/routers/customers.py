@@ -260,6 +260,10 @@ async def list_customers(
     unscheduled: Optional[bool] = None,
     is_active: Optional[bool] = None,
     missing_card: Optional[bool] = None,
+    # Feb-2026 · P43 — data-quality filters. Both compose as AND when
+    # active together. Whitespace-only fields are treated as missing.
+    missing_email: Optional[bool] = False,
+    missing_phone: Optional[bool] = False,
     is_muted: Optional[bool] = Query(None, description="Feb-2026 · P28 admin/super_admin only — filter to muted (true) or non-muted (false); absent = no filter"),
     count_only: bool = False,
     include_deleted: bool = Query(False, description="Feb-2026 · P25 super_admin only — include soft-deleted customers"),
@@ -330,6 +334,29 @@ async def list_customers(
         q["$and"] = q.get("$and", []) + [
             {"$or": [{"is_muted": {"$ne": True}}, {"is_muted": {"$exists": False}}]}
         ]
+    # Feb-2026 · P43 — "No email" / "No phone number" data-quality
+    # chips. Null, missing key, empty string, and whitespace-only all
+    # count as missing. Predicates compose into ``$and`` so they
+    # honor both the list branch AND ``count_only=true`` (P40
+    # unified-predicate contract).
+    if missing_email:
+        q["$and"] = q.get("$and", []) + [{
+            "$or": [
+                {"email": None},
+                {"email": ""},
+                {"email": {"$exists": False}},
+                {"email": {"$regex": r"^\s*$"}},
+            ],
+        }]
+    if missing_phone:
+        q["$and"] = q.get("$and", []) + [{
+            "$or": [
+                {"phone": None},
+                {"phone": ""},
+                {"phone": {"$exists": False}},
+                {"phone": {"$regex": r"^\s*$"}},
+            ],
+        }]
     if count_only:
         return {"count": await db.customers.count_documents(q)}
 

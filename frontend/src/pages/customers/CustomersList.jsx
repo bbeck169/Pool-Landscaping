@@ -123,6 +123,13 @@ export default function CustomersList() {
   // Phase 12 · Feb 2026 — "Missing card" filter chip state must live
   // ABOVE ``load()`` since it participates in the request query.
   const [missingCardOnly, setMissingCardOnly] = useState(false);
+  // Feb-2026 · P43 — data-quality chips. Hydrated from ``?missing_email=1``
+  // / ``?missing_phone=1`` and re-serialized on toggle. Both chips
+  // compose as AND on the backend (see routers/customers.py).
+  const [missingEmail, setMissingEmail] = useState(
+    () => searchParams.get("missing_email") === "1");
+  const [missingPhone, setMissingPhone] = useState(
+    () => searchParams.get("missing_phone") === "1");
   const searchDeb = useDebounced(q);
 
   // Non-admin users cannot land on the inactive or muted cohort — redirect to active.
@@ -154,6 +161,9 @@ export default function CustomersList() {
     else if (tab === "inactive") params.set("is_active", "false");
     else if (tab === "muted") params.set("is_muted", "true");
     if (missingCardOnly) params.set("missing_card", "true");
+    // Feb-2026 · P43 — data-quality filters.
+    if (missingEmail) params.set("missing_email", "true");
+    if (missingPhone) params.set("missing_phone", "true");
     // Feb-2026 · P26 — super_admin escape hatch to see soft-deleted rows.
     if (includeDeleted && isSuperAdmin) params.set("include_deleted", "true");
     // Feb-2026 · P35 — always request the paginated envelope.
@@ -179,15 +189,23 @@ export default function CustomersList() {
 
   const loadCounts = async () => {
     try {
+      // Feb-2026 · P43 — tab counts must reflect the active P43 chips
+      // so the badges stay in sync with the list (P40 unified-predicate
+      // contract). Compose the shared suffix once.
+      const p43 = [];
+      if (missingEmail) p43.push("missing_email=true");
+      if (missingPhone) p43.push("missing_phone=true");
+      const p43Suffix = p43.length ? `&${p43.join("&")}` : "";
       const promises = [
-        api.get("/customers?is_active=true&count_only=true"),
-        api.get("/customers?is_active=false&count_only=true"),
+        api.get(`/customers?is_active=true&count_only=true${p43Suffix}`),
+        api.get(`/customers?is_active=false&count_only=true${p43Suffix}`),
       ];
       // Feb-2026 · P28 — muted-count endpoint is admin/manager/
       // super_admin only; tech role 403s. Skip the call for tech to
       // avoid a noisy request that will always fail.
       if (isAdmin) {
-        promises.push(api.get("/customers?is_muted=true&count_only=true"));
+        promises.push(api.get(
+          `/customers?is_muted=true&count_only=true${p43Suffix}`));
       }
       const results = await Promise.all(promises);
       setCounts({
@@ -207,7 +225,27 @@ export default function CustomersList() {
     // filter / page changes is the durable "can't drift" fix.
     loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDeb, tag, scope, tab, missingCardOnly, includeDeleted, page]);
+  }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
+       missingPhone, includeDeleted, page]);
+
+  // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
+  // first invocation so hydrating chips from the URL on mount does
+  // not thrash the page cursor.
+  const _p43FirstToggle = useRef(true);
+  useEffect(() => {
+    if (_p43FirstToggle.current) {
+      _p43FirstToggle.current = false;
+      return;
+    }
+    const next = new URLSearchParams(searchParams);
+    if (missingEmail) next.set("missing_email", "1");
+    else next.delete("missing_email");
+    if (missingPhone) next.set("missing_phone", "1");
+    else next.delete("missing_phone");
+    setSearchParams(next, { replace: true });
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missingEmail, missingPhone]);
 
   // Feb-2026 · P35 — any filter or tab change resets pagination to
   // page 1 so the user doesn't land on an empty page after narrowing
@@ -704,6 +742,41 @@ export default function CustomersList() {
             Missing card
           </button>
         )}
+        {/* Feb-2026 · P43 — data-quality chips: "No email" + "No phone
+            number". Independent toggles that compose as AND on the
+            backend. Admin/manager/tech all see them (read-only data). */}
+        <button
+          onClick={() => setMissingEmail((v) => !v)}
+          data-testid="filter-chip-missing-email"
+          className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+          style={{
+            backgroundColor: missingEmail ? "#DBEAFE" : colors.surfaceSecondary,
+            color: missingEmail ? "#1E3A8A" : colors.onSurfaceSecondary,
+            border: `1px solid ${missingEmail ? "#93C5FD" : colors.border}`,
+          }}
+        >
+          <span
+            className="inline-block w-2 h-2 rounded-full"
+            style={{ backgroundColor: missingEmail ? "#1E40AF" : "#94A3B8" }}
+          />
+          No email
+        </button>
+        <button
+          onClick={() => setMissingPhone((v) => !v)}
+          data-testid="filter-chip-missing-phone"
+          className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+          style={{
+            backgroundColor: missingPhone ? "#DBEAFE" : colors.surfaceSecondary,
+            color: missingPhone ? "#1E3A8A" : colors.onSurfaceSecondary,
+            border: `1px solid ${missingPhone ? "#93C5FD" : colors.border}`,
+          }}
+        >
+          <span
+            className="inline-block w-2 h-2 rounded-full"
+            style={{ backgroundColor: missingPhone ? "#1E40AF" : "#94A3B8" }}
+          />
+          No phone number
+        </button>
         {/* Feb-2026 · P26 — super_admin-only "Show deleted" toggle. */}
         {isSuperAdmin && (
           <button
