@@ -12302,3 +12302,58 @@ All 24 preview tenants now carry `quiet_hours_enabled=false` + defaults; existin
 - `quiet_hours_enabled=false` default → no silent behavior change on existing tenants.
 - Transactional messages ARE gated per explicit user decision — no carve-outs added.
 - Deferred rows carry full payload context — safe to dispatch after any interruption (worker restart, cold-start, redeploy).
+
+---
+
+## Phase P36 · Feb-2026 — Tag Settings Manager + tag merge tool
+
+### Diagnosis (confirmed before code)
+- No backend caller relied on `customer_tags` hard-delete-with-cascade (system-tag flow uses `$pull`/`$addToSet` directly, not DELETE). Safe to migrate to soft-archive universally.
+- `AdminTagsList.jsx` bulk endpoints are NOT orphaned — they live in `routers/bulk_crm_p1.py` (my P33-era audit missed that file). Only `mobile/CustomerTagsSection.tsx`'s `/attach` + `/detach` calls are truly orphaned; queued as follow-up.
+
+### Schema extension
+Added on `customer_tags` docs (missing = active): `is_active: bool`, `archived_at`, `archived_by`, `sort_order: int`, `merged_into_id?`, `merged_into_name?` (stamped by merge).
+
+### Files added
+- `backend/migrations/task_p36_customer_tags_active_flag.py` — idempotent backfill (0 rows to backfill on preview since no legacy customer_tags rows existed).
+- `backend/tests/test_customer_tags_manager_p36.py` — **11 passed / 1 skipped** (system-tag scaffolding not seeded on the preview tenant).
+- `frontend/src/pages/settings/CustomerTagsSettingsPage.jsx` — mirror of `MutedReasonsPage.jsx` + merge modal.
+- `frontend/src/test/phase36-customer-tags-manager.test.jsx` — **8/8 green**.
+
+### Files touched
+- `backend/routers/customer_tags.py` —
+  - `_upsert_tag`: **explicit archived-row no-op branch** with a code comment naming the P29b parity contract (per your refinement #1). Also stamps `is_active=True, sort_order=0` on all new rows.
+  - GET: adds `?include_inactive=true`; default hides `is_active=false`; new sort order `sort_order, usage_count, name_lower`.
+  - PATCH: accepts `is_active` + `sort_order`; stamps `archived_at/by` on archive path.
+  - DELETE: now **soft-archive**; response `{ok, archived, id}`; leaves `customers.tags` snapshots intact.
+  - New `POST /customer-tags/{tag_id}/restore` — flips `is_active=True`, clears archive stamps.
+  - New `POST /customer-tags/merge` — canonical + victims contract; audit-logs; idempotent on re-run.
+- `frontend/src/App.js` — route wired behind reused `AdminOrManagerForMutedReasons` gate.
+- `frontend/src/nav/adminNav.js` — nav entry under Schedule & Dispatch.
+
+### Explicit archived-row no-op (per refinement #1)
+`_upsert_tag` already short-circuited on any existing row, but the P36 code comment now names the P29b parity contract explicitly. A dedicated test (`test_auto_persist_does_not_reactivate_archived_row`) verifies: POST /customers with an archived-tag string keeps the catalog row at `is_active=false`, no duplicate insert, and the customer's `tags` snapshot still stores the label.
+
+### Migration output (preview DB)
+```
+committed: True · would_backfill: 0 · backfilled: 0
+```
+No legacy rows without `is_active` — all customer_tags rows either predate P33 (already backfilled) or were created via the P33 auto-persist path (which now stamps `is_active=True` inline).
+
+### Results
+- **P36 backend: 11 passed / 1 skipped** — archive/restore, PATCH is_active alias, DELETE soft-archive with immutable customer snapshots, merge happy-path (3 customers, canonical dedup, victims archived, audit written), merge idempotency (0 on re-run), merge canonical==victim 400, merge tech 403, merge system-tag 400 (skipped when scaffolding absent), restore tech 403, archived no-op parity, openapi.
+- **P36 frontend: 8/8 green** — load, add, duplicate-409 error surface, rename, archive, include-inactive, restore, merge submit.
+- **Combined backend regression (P15b + P25→P36): 101 passed / 1 skipped.**
+- `/api/openapi.json` still 200.
+- Pre-existing `test_config_public_returns_show_demo_logins` untouched.
+
+### Judgment call correction
+Earlier P36 audit flagged `bulk-delete` / `bulk-update` as orphaned frontend calls — WRONG. They exist in `routers/bulk_crm_p1.py`. The correct queue entry below only covers the mobile `/attach` + `/detach` gap.
+
+### P36-followup: orphaned frontend endpoints (queued for a separate phase)
+- `mobile/src/components/customers/CustomerTagsSection.tsx:47,155,168` — calls `POST /customer-tags/{id}/attach` and `POST /customer-tags/{id}/detach`. Neither endpoint exists on the backend. The web equivalent uses `PATCH /customers/{cid}/tags` (which does exist). Fix: either add attach/detach endpoints server-side or refactor the mobile component to use the existing bulk-tags PATCH. Zero customer impact today (component is used sporadically), non-urgent.
+
+### Deploy notes for `app.plofv.com`
+- Redeploy required.
+- Run `python -m migrations.task_p36_customer_tags_active_flag --commit` once after deploy. Idempotent.
+- No behavior change until an admin visits **Settings → Customer Tags**.

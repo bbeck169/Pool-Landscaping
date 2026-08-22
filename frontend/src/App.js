@@ -65,6 +65,8 @@ import JobOutcomeReasonsPage from "@/pages/settings/JobOutcomeReasonsPage";
 import MutedReasonsPage from "@/pages/settings/MutedReasonsPage";
 // Feb-2026 · P34 — Automation quiet-hours admin (super_admin / admin / manager).
 import QuietHoursPage from "@/pages/settings/QuietHoursPage";
+// Feb-2026 · P36 — Customer Tags settings manager (super_admin / admin / manager).
+import CustomerTagsSettingsPage from "@/pages/settings/CustomerTagsSettingsPage";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import SupplierSettings from "@/pages/settings/SupplierSettings";
 import SupplierSyncAnalytics from "@/pages/reports/SupplierSyncAnalytics";
@@ -689,6 +691,9 @@ export default function App() {
                 Reuses the AdminOrManagerForMutedReasons gate since the role set
                 is identical — no need for a third bespoke wrapper. */}
             <Route path="settings/quiet-hours" element={<AdminOrManagerForMutedReasons><QuietHoursPage /></AdminOrManagerForMutedReasons>} />
+            {/* Feb-2026 · P36 — Customer Tags settings (super_admin / admin / manager).
+                Same role set — reuse the same gate. */}
+            <Route path="settings/customer-tags" element={<AdminOrManagerForMutedReasons><CustomerTagsSettingsPage /></AdminOrManagerForMutedReasons>} />
             <Route path="settings/billing" element={<AdminOnly><BillingSettings /></AdminOnly>} />
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />

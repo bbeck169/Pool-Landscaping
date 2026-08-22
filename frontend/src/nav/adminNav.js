@@ -150,6 +150,9 @@ export const ADMIN_NAV_V2 = [
     // as muted-reasons (super_admin / admin / manager); route wrapper
     // handles enforcement so no `hard_rule` here either.
     { to: "/settings/quiet-hours", label: "Quiet Hours", icon: AlertTriangleIcon, feature: "settings", subsection: "Schedule & Dispatch" },
+    // Feb-2026 · P36 — Customer Tags settings manager. Same role set
+    // as muted-reasons + quiet-hours; nav placement kept adjacent.
+    { to: "/settings/customer-tags", label: "Customer Tags", icon: AlertTriangleIcon, feature: "settings", subsection: "Schedule & Dispatch" },
     // Workforce
     { to: "/team?t=team",              label: "Team",             icon: UsersRound,  feature: "jobs", subsection: "Workforce" },
     { to: "/admin/users",              label: "Team (admin)",     icon: UserCog,     feature: "settings", subsection: "Workforce" },

@@ -83,7 +83,16 @@ async def _upsert_tag(tenant_id: str, name: str, color: Optional[str],
     Feb-2026 · P33 — ``auto_created`` stamps the origin when the tag
     was born by side-effect (customer create/update path) vs the
     admin explicitly adding it via the tag admin. Existing rows are
-    left untouched — we never rewrite the flag once set."""
+    left untouched — we never rewrite the flag once set.
+
+    Feb-2026 · P36 — Explicit archived-row no-op branch (P29b
+    muted-reasons parity contract). When ``name_lower`` matches an
+    existing row with ``is_active=False``, this helper returns the
+    archived row AS-IS: no ``$set is_active=true``, no re-insert, no
+    metadata touch. The customer's ``tags`` array still carries the
+    label as a free-text snapshot; the admin's intentional archive
+    is respected. The only way to re-activate an archived tag is the
+    admin explicit ``POST /customer-tags/{id}/restore`` endpoint."""
     trimmed = _validate_name(name)
     name_lower = trimmed.lower()
     existing = await db.customer_tags.find_one(
@@ -101,6 +110,10 @@ async def _upsert_tag(tenant_id: str, name: str, color: Optional[str],
         "created_at": now_iso(),
         "usage_count": 0,
         "auto_created": bool(auto_created),
+        # P36 — every new row is active by default; archive is an
+        # explicit admin action via DELETE or PATCH is_active=false.
+        "is_active": True,
+        "sort_order": 0,
     }
     await db.customer_tags.insert_one(doc)
     return {k: v for k, v in doc.items() if k != "_id"}
@@ -246,6 +259,7 @@ async def apply_customer_status(*, tenant_id: str,
 @router.get("/customer-tags", tags=["customer-tags"],
              operation_id="customerTags.list")
 async def list_customer_tags(
+    include_inactive: bool = False,
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
@@ -255,9 +269,17 @@ async def list_customer_tags(
     # admin-or-manager gated below.
     if user.get("role") not in ("admin", "super_admin", "manager", "technician"):
         raise HTTPException(403, "Not allowed")
-    rows = await db.customer_tags.find(
-        {"tenant_id": tenant["id"]}, {"_id": 0}
-    ).sort([("usage_count", -1), ("name_lower", 1)]).to_list(500)
+
+    # Feb-2026 · P36 — hide archived (is_active=False) rows by default.
+    # Rows created before P36 have no ``is_active`` field and are
+    # treated as active (matches the migration's default).
+    q: dict = {"tenant_id": tenant["id"]}
+    if not include_inactive:
+        q["$or"] = [{"is_active": {"$ne": False}},
+                       {"is_active": {"$exists": False}}]
+    rows = await db.customer_tags.find(q, {"_id": 0}).sort(
+        [("sort_order", 1), ("usage_count", -1), ("name_lower", 1)],
+    ).to_list(500)
     return {"items": rows, "total": len(rows)}
 
 
@@ -347,6 +369,10 @@ async def create_customer_tag(
 class _TagPatch(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
+    # Feb-2026 · P36 — admins may toggle archive/active via PATCH as
+    # an alternative to DELETE / POST /restore. Same RBAC applies.
+    is_active: Optional[bool] = None
+    sort_order: Optional[int] = None
 
 
 @router.patch("/customer-tags/{tag_id}", tags=["customer-tags"],
@@ -388,6 +414,19 @@ async def update_customer_tag(
         upd["name_lower"] = new_name.lower()
     if body.color is not None:
         upd["color"] = body.color
+    if body.sort_order is not None:
+        upd["sort_order"] = int(body.sort_order)
+    # Feb-2026 · P36 — PATCH archive/restore alias for the settings page.
+    if body.is_active is not None:
+        if row.get("is_system") and body.is_active is False:
+            raise HTTPException(400, "system_tag_readonly")
+        upd["is_active"] = bool(body.is_active)
+        if body.is_active is False:
+            upd["archived_at"] = now_iso()
+            upd["archived_by"] = user.get("id")
+        else:
+            upd["archived_at"] = None
+            upd["archived_by"] = None
     if not upd:
         return row
     upd["updated_at"] = now_iso()
@@ -413,9 +452,14 @@ async def update_customer_tag(
 
 
 # ═════════════════════════════════════════════════════════════════
-# DELETE /customer-tags/{tag_id}
-# System tags are locked. Deleting cascades: the tag string is
-# removed from every customer that carries it.
+# DELETE /customer-tags/{tag_id} — soft-archive (P36)
+# ─────────────────────────────────────────────────────────────────
+# Feb-2026 · P36 — DELETE is now a soft-deactivate. The catalog row
+# is flipped to ``is_active=False`` + ``archived_at/by`` stamped;
+# ``customers.tags`` snapshots are LEFT INTACT (immutable, matches
+# the P29b muted-reasons contract). To rewrite existing customer
+# references, use the merge endpoint below. To reactivate an
+# archived tag, POST /customer-tags/{id}/restore.
 # ═════════════════════════════════════════════════════════════════
 @router.delete("/customer-tags/{tag_id}", tags=["customer-tags"],
                  operation_id="customerTags.delete")
@@ -432,14 +476,161 @@ async def delete_customer_tag(
         raise HTTPException(404, "Tag not found")
     if row.get("is_system"):
         raise HTTPException(400, "system_tag_readonly")
-    name = row["name"]
-    # Cascade: strip the tag from every customer that carries it.
-    await db.customers.update_many(
-        {"tenant_id": tenant["id"], "tags": name},
-        {"$pull": {"tags": name}})
-    await db.customer_tags.delete_one(
-        {"id": tag_id, "tenant_id": tenant["id"]})
-    return {"ok": True, "removed_from_customers": True}
+    await db.customer_tags.update_one(
+        {"id": tag_id, "tenant_id": tenant["id"]},
+        {"$set": {"is_active": False,
+                    "archived_at": now_iso(),
+                    "archived_by": user.get("id"),
+                    "updated_at": now_iso()}},
+    )
+    return {"ok": True, "archived": True, "id": tag_id}
+
+
+# ═════════════════════════════════════════════════════════════════
+# POST /customer-tags/{tag_id}/restore — reactivate an archived tag
+# ═════════════════════════════════════════════════════════════════
+@router.post("/customer-tags/{tag_id}/restore", tags=["customer-tags"],
+                operation_id="customerTags.restore")
+async def restore_customer_tag(
+    tag_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _require_admin_or_manager(user)
+    row = await db.customer_tags.find_one(
+        {"id": tag_id, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "Tag not found")
+    await db.customer_tags.update_one(
+        {"id": tag_id, "tenant_id": tenant["id"]},
+        {"$set": {"is_active": True,
+                    "archived_at": None,
+                    "archived_by": None,
+                    "updated_at": now_iso()}},
+    )
+    return {"ok": True, "restored": True, "id": tag_id}
+
+
+# ═════════════════════════════════════════════════════════════════
+# POST /customer-tags/merge — collapse victim tags into a canonical
+# ─────────────────────────────────────────────────────────────────
+# Feb-2026 · P36 — merges N victim tag labels into a canonical tag.
+# For every customer that carries any victim label, the label is
+# rewritten to the canonical label (deduplicated case-insensitively
+# in the array). Victims are archived (soft-deactivate). Idempotent
+# on re-run — if victims are already archived and no customer
+# references them, returns 200 with ``customers_updated=0``.
+# ═════════════════════════════════════════════════════════════════
+class _TagMerge(BaseModel):
+    canonical_id: str
+    victim_ids: List[str] = Field(default_factory=list, min_items=1)
+
+
+@router.post("/customer-tags/merge", tags=["customer-tags"],
+                operation_id="customerTags.merge")
+async def merge_customer_tags(
+    body: _TagMerge,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _require_admin_or_manager(user)
+
+    if body.canonical_id in body.victim_ids:
+        raise HTTPException(400, "canonical_cannot_be_victim")
+
+    canonical = await db.customer_tags.find_one(
+        {"id": body.canonical_id, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not canonical:
+        raise HTTPException(404, "canonical_tag_not_found")
+
+    victims: List[dict] = []
+    for vid in body.victim_ids:
+        v = await db.customer_tags.find_one(
+            {"id": vid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if not v:
+            raise HTTPException(404, f"victim_tag_not_found: {vid}")
+        if v.get("is_system"):
+            raise HTTPException(400, "system_tag_readonly")
+        victims.append(v)
+
+    canonical_name = canonical["name"]
+    victim_names = [v["name"] for v in victims]
+
+    # Rewrite every customer that carries at least one victim label.
+    # Do it customer-by-customer so we can dedup case-insensitively
+    # against any existing canonical membership.
+    q_touch = {"tenant_id": tenant["id"],
+                 "tags": {"$in": victim_names}}
+    affected_ids: List[str] = []
+    async for c in db.customers.find(
+        q_touch, {"_id": 0, "id": 1, "tags": 1},
+    ):
+        existing_tags: List[str] = list(c.get("tags") or [])
+        # Remove any victim labels; keep everything else.
+        remaining = [t for t in existing_tags if t not in victim_names]
+        # Add canonical if not already present (case-insensitive).
+        has_canon = any((isinstance(t, str) and t.lower() == canonical_name.lower())
+                            for t in remaining)
+        if not has_canon:
+            remaining.append(canonical_name)
+        await db.customers.update_one(
+            {"id": c["id"], "tenant_id": tenant["id"]},
+            {"$set": {"tags": remaining, "updated_at": now_iso()}},
+        )
+        affected_ids.append(c["id"])
+
+    # Archive each victim tag (soft-deactivate). Skip already-archived
+    # to keep the operation idempotent.
+    victims_archived_now: List[str] = []
+    for v in victims:
+        if v.get("is_active") is False:
+            continue
+        await db.customer_tags.update_one(
+            {"id": v["id"], "tenant_id": tenant["id"]},
+            {"$set": {"is_active": False,
+                        "archived_at": now_iso(),
+                        "archived_by": user.get("id"),
+                        "updated_at": now_iso(),
+                        "merged_into_id": canonical["id"],
+                        "merged_into_name": canonical_name}},
+        )
+        victims_archived_now.append(v["id"])
+
+    # Usage-count refresh on canonical (victims are archived so their
+    # counts stop mattering).
+    await _recompute_usage(tenant["id"], canonical_name)
+
+    # Audit log — full before/after payload for the merge.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(), "tenant_id": tenant["id"],
+            "actor_id": user.get("id"), "actor_email": user.get("email"),
+            "event": "customer_tag_merge",
+            "at": now_iso(),
+            "payload": {
+                "canonical_id": canonical["id"],
+                "canonical_name": canonical_name,
+                "victim_ids": body.victim_ids,
+                "victim_names": victim_names,
+                "customers_updated": affected_ids,
+                "victims_archived_now": victims_archived_now,
+            },
+        })
+    except Exception:
+        # Best-effort audit; never block the merge.
+        pass
+
+    return {
+        "ok": True,
+        "canonical_id": canonical["id"],
+        "canonical_label": canonical_name,
+        "merged_victims": len(victims),
+        "victims_archived_now": len(victims_archived_now),
+        "customers_updated": len(affected_ids),
+    }
 
 
 # ═════════════════════════════════════════════════════════════════
