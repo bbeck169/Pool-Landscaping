@@ -69,7 +69,7 @@ export default function WeatherWidget({ user }) {
 
   const load = React.useCallback(async () => {
     try {
-      const [cur, dl, al] = await Promise.all([
+      const [cur, dl, al, rd] = await Promise.all([
         api.get(`/weather/current?lat=${lat}&lon=${lon}`),
         // Feb-2026 · P39b — bumped 5 → 7 days (NWS supports up to 10;
         // P39a spec puts the widget at 7).
@@ -78,6 +78,11 @@ export default function WeatherWidget({ user }) {
         // above current conditions). ``ok:false`` (out-of-US /
         // upstream error) is fine — banner just doesn't render.
         api.get(`/weather/alerts?lat=${lat}&lon=${lon}`).catch(() => null),
+        // Feb-2026 · P39c — NWS ridge/standard radar loop URL.
+        // Pre-fetch so the Radar button can be hidden proactively on
+        // out-of-US / no_radar_station tenants (avoid teasing a
+        // click that would open an empty modal).
+        api.get(`/weather/radar?lat=${lat}&lon=${lon}`).catch(() => null),
       ]);
       if (cur?.ok === false) {
         setHidden(true);
@@ -89,6 +94,8 @@ export default function WeatherWidget({ user }) {
       setDaily(dl?.ok === false ? null : dl);
       // Alerts is optional — never blocks the widget.
       setAlerts(al?.ok === false || !al ? [] : (al.alerts || []));
+      // Radar is optional — Radar button hides when ok:false.
+      setRadar(rd?.ok === false || !rd ? null : rd);
       setHidden(false);
     } catch {
       setHidden(true);
@@ -109,16 +116,20 @@ export default function WeatherWidget({ user }) {
     };
   }, [allowed, load]);
 
-  const openRadar = async () => {
-    if (!radar) {
-      try {
-        const r = await api.get(`/weather/radar?lat=${lat}&lon=${lon}`);
-        if (r?.ok !== false) setRadar(r);
-        else return;
-      } catch { return; }
-    }
-    setRadarOpen(true);
+  const openRadar = () => {
+    // Feb-2026 · P39c — radar is pre-fetched in ``load()``. If it
+    // came back ok:false the button below is hidden entirely and
+    // this handler will never fire; keeping the guard defensively.
+    if (radar?.loop_url) setRadarOpen(true);
   };
+  // Feb-2026 · P39c — cache-busting refresh for the NWS GIF. The
+  // GIF is refreshed server-side ~every 10 min but the browser
+  // caches by URL, so we append ``?t=<Date.now()>`` when the user
+  // asks for a fresh loop.
+  const [radarBust, setRadarBust] = React.useState(0);
+  const _radarSrc = radar?.loop_url
+    ? (radarBust ? `${radar.loop_url}?t=${radarBust}` : radar.loop_url)
+    : null;
 
   if (!allowed || hidden || !current?.ok || !hourly?.ok) return null;
 
@@ -286,18 +297,20 @@ export default function WeatherWidget({ user }) {
             </span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={openRadar}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full transition"
-          style={{
-            background: colors.brand,
-            color: "#fff",
-          }}
-          data-testid="weather-radar-open"
-        >
-          <RadarIcon size={13} /> Radar
-        </button>
+        {radar?.loop_url ? (
+          <button
+            type="button"
+            onClick={openRadar}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full transition"
+            style={{
+              background: colors.brand,
+              color: "#fff",
+            }}
+            data-testid="weather-radar-open"
+          >
+            <RadarIcon size={13} /> Radar
+          </button>
+        ) : null}
       </div>
 
       {/* Row 2 — 24h horizontal strip */}
@@ -389,8 +402,12 @@ export default function WeatherWidget({ user }) {
         </div>
       ) : null}
 
-      {/* Radar modal */}
-      {radarOpen && radar?.embed_url ? (
+      {/* Feb-2026 · P39c — Radar modal. Windy iframe swapped for the
+          NWS ridge/standard animated GIF anchored on the point's
+          radar_station code. Browser handles caching; no server-side
+          cache. Refresh button appends a timestamp query param to
+          bust the browser cache when the user asks for a fresh loop. */}
+      {radarOpen && radar?.loop_url ? (
         <div
           className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
           onClick={() => setRadarOpen(false)}
@@ -407,22 +424,44 @@ export default function WeatherWidget({ user }) {
               <span className="text-sm font-bold" style={{ color: colors.onSurface }}>
                 Live radar — {current?.location?.name || ""}
               </span>
-              <button
-                type="button"
-                onClick={() => setRadarOpen(false)}
-                className="p-1 rounded-md hover:bg-gray-100"
-                data-testid="weather-radar-close"
-              >
-                <X size={16} />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setRadarBust(Date.now())}
+                  className="p-1 rounded-md hover:bg-gray-100"
+                  title="Refresh radar loop"
+                  data-testid="weather-radar-refresh"
+                >
+                  <RadarIcon size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRadarOpen(false)}
+                  className="p-1 rounded-md hover:bg-gray-100"
+                  data-testid="weather-radar-close"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
-            <iframe
-              title="radar"
-              src={radar.embed_url}
-              className="w-full h-[70vh]"
-              frameBorder="0"
-              data-testid="weather-radar-iframe"
+            <img
+              src={_radarSrc}
+              alt={`NEXRAD radar loop for ${radar.radar_station}`}
+              loading="lazy"
+              className="w-full h-[70vh] object-contain bg-black"
+              data-testid="weather-radar-img"
             />
+            <div
+              className="px-4 py-2 text-[11px] border-t"
+              style={{
+                borderColor: colors.border,
+                color: colors.onSurfaceSecondary,
+                background: colors.surface,
+              }}
+              data-testid="weather-radar-station"
+            >
+              NEXRAD radar station: {radar.radar_station}
+            </div>
           </div>
         </div>
       ) : null}

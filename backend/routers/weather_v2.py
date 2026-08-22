@@ -55,7 +55,9 @@ CACHE_TTL_S: dict[str, int] = {
     "nws_hourly": 900,
     "nws_alerts": 300,
     "nws_points": 86400,
-    "radar": 300,
+    # Feb-2026 · P39c — radar deliberately absent from this dict.
+    # The NWS ridge/standard GIF is refreshed server-side ~every
+    # 10 min; browser cache on the <img src> handles freshness.
 }
 _DEFAULT_TTL_S = 300
 _INDEX_ENSURED = False
@@ -206,39 +208,58 @@ async def weather_alerts(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# /weather/radar — UNCHANGED in P39a. P39c swaps to NWS ridge/standard
-# GIF.
+# /weather/radar — Feb-2026 · P39c: swap from Windy iframe to NWS
+# ridge/standard animated GIF. NWS refreshes the loop GIF server-side
+# every ~10 min so we skip our own cache entirely — browser cache on
+# the ``<img src>`` handles freshness cheaply. When the /points lookup
+# doesn't yield a ``radarStation`` (out-of-US or metadata gap) we
+# return the graceful failure envelope so the widget hides the
+# radar section without a broken image.
 # ─────────────────────────────────────────────────────────────────────
+_NWS_RIDGE_STANDARD = "https://radar.weather.gov/ridge/standard"
+
+
 @router.get("/weather/radar")
 async def weather_radar(
     lat: float = Query(...),
     lon: float = Query(...),
     _user: dict = Depends(require_tech_or_admin),
 ):
-    """Return a radar embed URL anchored on the tech's location.
+    """Return an NWS ridge/standard radar-loop URL anchored on the
+    NEXRAD site closest to ``(lat, lon)``.
 
-    Kept on Windy in P39a so the migration lands in a testable
-    slice; P39c will swap this to the NWS ridge/standard animated
-    GIF anchored on ``radarStation`` from the /points lookup.
+    Response shape (P39c):
+        {
+          "ok": true,
+          "provider": "nws",
+          "radar_station": "KIWA",
+          "loop_url":  "https://radar.weather.gov/ridge/standard/KIWA_loop.gif",
+          "still_url": "https://radar.weather.gov/ridge/standard/KIWA_0.gif",
+          "refreshed_at": "2026-06-01T15:00:00+00:00",
+          "lat": ..., "lon": ...
+        }
+
+    Failure envelope:
+        {"ok": false, "reason": "out_of_us" | "no_radar_station" | ...}
     """
     await _ensure_index()
-    cached = await _cache_get("radar", lat, lon)
-    if cached is not None:
-        return {**cached, "cache": "hit"}
-
-    embed = (
-        "https://embed.windy.com/embed2.html"
-        f"?lat={lat:.4f}&lon={lon:.4f}&detailLat={lat:.4f}&detailLon={lon:.4f}"
-        "&zoom=8&level=surface&overlay=radar&product=radar"
-        "&menu=&message=true&marker=&calendar=now&pressure=&type=map"
-        "&location=coordinates&detail=&metricWind=mph&metricTemp=%C2%B0F&radarRange=-1"
-    )
-    payload = {
+    pts = await nws.get_points(lat, lon)
+    if not pts.get("ok"):
+        # Propagate the exact upstream reason (out_of_us / upstream_error
+        # / no_coords) so the frontend can render a matching helper
+        # message instead of a broken <img>.
+        return {"ok": False, "reason": pts.get("reason", "upstream_error"),
+                  "lat": lat, "lon": lon}
+    station = pts.get("radar_station")
+    if not station:
+        return {"ok": False, "reason": "no_radar_station",
+                  "lat": lat, "lon": lon}
+    return {
         "ok": True,
-        "provider": "windy",
-        "embed_url": embed,
-        "lat": lat,
-        "lon": lon,
+        "provider": "nws",
+        "radar_station": station,
+        "loop_url": f"{_NWS_RIDGE_STANDARD}/{station}_loop.gif",
+        "still_url": f"{_NWS_RIDGE_STANDARD}/{station}_0.gif",
+        "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        "lat": lat, "lon": lon,
     }
-    await _cache_put("radar", lat, lon, payload)
-    return {**payload, "cache": "miss"}

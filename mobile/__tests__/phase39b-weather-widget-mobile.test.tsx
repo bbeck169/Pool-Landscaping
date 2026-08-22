@@ -77,6 +77,10 @@ beforeEach(() => {
   mockFetchHourly.mockResolvedValue({ ok: true, hourly: [] });
   mockFetchDaily.mockResolvedValue(_daily(7));
   mockFetchAlerts.mockResolvedValue({ ok: true, alerts: [] });
+  // Feb-2026 · P39c — radar is now pre-fetched by loadAll; default
+  // to ok:false so the Radar button is hidden in tests that don't
+  // set an explicit radar payload.
+  mockFetchRadar.mockResolvedValue({ ok: false, reason: "out_of_us" });
 });
 
 

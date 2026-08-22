@@ -6,15 +6,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, AppState, Modal, Platform, Linking, Pressable,
+  ActivityIndicator, AppState, Modal, Platform, Pressable, Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-// Phase 30.5 (Feb-2026) · ``react-native-webview`` throws
-// "React Native WebView does not support this platform." when
-// mounted on ``Platform.OS === "web"`` (Expo web bundle). The
-// import itself is safe on all platforms — only the mount is
-// gated (see radar Modal below).
-import { WebView } from "react-native-webview";
+// Feb-2026 · P39c — the Windy iframe / WebView is replaced by the
+// NWS ridge/standard animated GIF. ``<Image>`` renders on native +
+// web out of the box; no more ``react-native-webview`` gating.
 
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import {
@@ -31,8 +28,13 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
   const [current, setCurrent] = useState<CurrentWeather | null>(null);
   const [hourly, setHourly] = useState<HourlyEntry[]>([]);
   const [daily, setDaily] = useState<DailyEntry[]>([]);
-  const [radarUrl, setRadarUrl] = useState<string | null>(null);
+  // Feb-2026 · P39c — radar is now an NWS envelope
+  // ``{ok, provider:"nws", radar_station, loop_url, still_url, ...}``.
+  // Prefetched with the other endpoints so we can hide the Radar
+  // button up-front when the tenant is outside NWS coverage.
+  const [radar, setRadar] = useState<any | null>(null);
   const [radarOpen, setRadarOpen] = useState(false);
+  const [radarBust, setRadarBust] = useState(0);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   // Feb-2026 · P39b — active NWS alerts banner + expand-collapse.
@@ -50,12 +52,16 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
         coordsRef.current = coords;
       }
       const { lat, lon } = coords;
-      const [cur, hr, dy, al] = await Promise.all([
+      const [cur, hr, dy, al, rd] = await Promise.all([
         fetchCurrentWeather(lat, lon).catch(() => null),
         fetchHourlyWeather(lat, lon).catch(() => null),
         // Feb-2026 · P39b — bumped 5 → 7 days.
         fetchDailyWeather(lat, lon, 7).catch(() => null),
         fetchWeatherAlerts(lat, lon).catch(() => null),
+        // Feb-2026 · P39c — pre-fetch radar so the button hides on
+        // out-of-US / no_radar_station tenants without teasing an
+        // empty modal.
+        fetchWeatherRadar(lat, lon).catch(() => null),
       ]);
       if (cur && cur.ok !== false) setCurrent(cur);
       if (hr?.hourly) {
@@ -65,6 +71,9 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
       if (dy?.daily) setDaily(dy.daily);
       // ok:false or reject → banner just doesn't render.
       setAlerts(al && al.ok !== false && al.alerts ? al.alerts : []);
+      // ok:false or reject → button hides + modal never opens.
+      setRadar(rd && (rd as any).ok !== false && (rd as any).loop_url
+        ? rd : null);
       if (!cur && !hr && !dy) setFailed(true);
       else setFailed(false);
     } catch {
@@ -87,12 +96,10 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
     return () => sub.remove();
   }, [loadAll]);
 
-  const openRadar = async () => {
-    if (!coordsRef.current) return;
-    try {
-      const r = await fetchWeatherRadar(coordsRef.current.lat, coordsRef.current.lon);
-      if (r?.embed_url) { setRadarUrl(r.embed_url); setRadarOpen(true); }
-    } catch {}
+  const openRadar = () => {
+    // Feb-2026 · P39c — radar is pre-fetched in loadAll(); guard is
+    // defensive (button below is hidden when ``radar`` is null).
+    if (radar?.loop_url) setRadarOpen(true);
   };
 
   if (loading) return (
@@ -266,52 +273,52 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
         </View>
       )}
 
-      {/* Radar button */}
-      <TouchableOpacity testID="weather-radar-open" style={styles.radarBtn} onPress={openRadar} activeOpacity={0.7}>
-        <Ionicons name="navigate-outline" size={16} color={colors.brand} />
-        <Text style={styles.radarBtnText}>Live Radar</Text>
-      </TouchableOpacity>
+      {/* Radar button — hidden when radar.ok:false (out-of-US). */}
+      {radar?.loop_url ? (
+        <TouchableOpacity testID="weather-radar-open" style={styles.radarBtn} onPress={openRadar} activeOpacity={0.7}>
+          <Ionicons name="navigate-outline" size={16} color={colors.brand} />
+          <Text style={styles.radarBtnText}>Live Radar</Text>
+        </TouchableOpacity>
+      ) : null}
 
-      {/* Radar modal */}
+      {/* Feb-2026 · P39c — Radar modal. Windy WebView swapped for
+          the NWS ridge/standard animated GIF. Cross-platform
+          ``<Image>`` handles native + web; cache-busted by appending
+          ``?t=<bust>`` when the user taps the refresh button. */}
       <Modal visible={radarOpen} animationType="slide" onRequestClose={() => setRadarOpen(false)}>
         <View style={styles.radarModal}>
           <View style={styles.radarHeader}>
             <Text style={styles.radarTitle}>Live Radar</Text>
-            <TouchableOpacity onPress={() => setRadarOpen(false)}>
-              <Ionicons name="close" size={24} color={colors.onSurface} />
-            </TouchableOpacity>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TouchableOpacity
+                testID="mobile-weather-radar-refresh"
+                onPress={() => setRadarBust(Date.now())}
+              >
+                <Ionicons name="refresh" size={22} color={colors.onSurface} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setRadarOpen(false)}>
+                <Ionicons name="close" size={24} color={colors.onSurface} />
+              </TouchableOpacity>
+            </View>
           </View>
-          {radarUrl ? (
-            Platform.OS === "web" ? (
-              // Phase 30.5 · Feb-2026 — Expo web fallback.
-              // ``react-native-webview`` is a native-only module and
-              // renders the red "React Native WebView does not
-              // support this platform." error when mounted in the
-              // web bundle. On web we render an HTML ``<iframe>``
-              // pointing at the same Windy embed URL (embed2.html
-              // is explicitly designed for iframe embedding) plus a
-              // graceful-degradation "Open in a new tab" link in
-              // case a tenant CSP blocks the frame.
-              <View style={{ flex: 1 }} testID="weather-radar-web-fallback">
-                {React.createElement("iframe" as any, {
-                  src: radarUrl,
-                  style: { flex: 1, width: "100%", height: "100%", border: 0 },
-                  allow: "fullscreen",
-                  title: "Live Radar",
-                  "data-testid": "weather-radar-iframe",
-                })}
-                <Pressable
-                  testID="weather-radar-open-external"
-                  onPress={() => Linking.openURL(radarUrl)}
-                  style={styles.radarExternalBtn}
-                >
-                  <Ionicons name="open-outline" size={14} color={colors.brand} />
-                  <Text style={styles.radarExternalBtnText}>Open radar in a new tab</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <WebView source={{ uri: radarUrl }} style={{ flex: 1 }} />
-            )
+          {radar?.loop_url ? (
+            <>
+              <Image
+                testID="mobile-weather-radar-img"
+                source={{ uri: radarBust
+                  ? `${radar.loop_url}?t=${radarBust}`
+                  : radar.loop_url }}
+                accessibilityLabel={`NEXRAD radar loop for ${radar.radar_station}`}
+                resizeMode="contain"
+                style={{ flex: 1, width: "100%", backgroundColor: "#000" }}
+              />
+              <Text
+                testID="mobile-weather-radar-station"
+                style={styles.radarStationCaption}
+              >
+                NEXRAD radar station: {radar.radar_station}
+              </Text>
+            </>
           ) : (
             <ActivityIndicator style={{ flex: 1 }} color={colors.brand} />
           )}
@@ -367,6 +374,13 @@ const styles = StyleSheet.create({
   radarModal: { flex: 1, backgroundColor: colors.surface },
   radarHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: spacing.lg, paddingTop: Platform.OS === "ios" ? 56 : spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border },
   radarTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface },
+  // Feb-2026 · P39c — station caption below the radar image.
+  radarStationCaption: {
+    fontFamily: font.medium, fontSize: fontSize.xs,
+    color: colors.onSurfaceMuted,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    borderTopWidth: 1, borderTopColor: colors.border,
+  },
   // Feb-2026 · P39b — alerts banner styles.
   alertsBanner: {
     borderRadius: radius.md,
