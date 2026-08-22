@@ -1948,6 +1948,72 @@ async def job_arrive(jid: str, body: JobArriveIn,
               "radius_m": radius_m}
 
 
+# ═════════════════════════════════════════════════════════════════
+# Feb-2026 · P37c — undo a GPS-arrival start within the grace window.
+# Called by the mobile undo banner (30s local push) and by dispatch
+# fallback UIs. Server-side enforces the 60s wall so we never trust
+# a stale client clock.
+# ═════════════════════════════════════════════════════════════════
+class JobTimerUndoIn(BaseModel):
+    within_seconds: Optional[int] = 60
+
+
+@router.post("/jobs/{jid}/timer/undo-start")
+async def undo_job_timer_start(jid: str, body: JobTimerUndoIn,
+                                     request: Request,
+                                     user: dict = Depends(get_current_user),
+                                     tenant: dict = Depends(get_current_tenant)):
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if user.get("role") == "customer":
+        raise HTTPException(403, "Not allowed")
+    if (user.get("role") == "technician"
+        and job.get("technician_id") != user.get("technician_id")):
+        raise HTTPException(403, "Not your job")
+    started_iso = job.get("timer_started_at")
+    if not started_iso:
+        raise HTTPException(400, {"detail": "no_active_timer",
+                                       "message": "No active timer to undo."})
+    if job.get("timer_stopped_at"):
+        raise HTTPException(400, {"detail": "timer_already_stopped",
+                                       "message": "Cannot undo a stopped timer."})
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        _st = _dt.fromisoformat(str(started_iso).replace("Z", "+00:00"))
+        _now = _dt.now(tz=_tz.utc)
+        elapsed = int(max(0, (_now - _st).total_seconds()))
+    except Exception:
+        raise HTTPException(400, "Timer start time malformed")
+    grace = int(body.within_seconds or 60)
+    if elapsed > grace:
+        raise HTTPException(
+            status_code=400,
+            detail={"detail": "outside_grace_window",
+                      "message": f"Timer started {elapsed}s ago; grace window is {grace}s.",
+                      "elapsed_seconds": elapsed, "grace_seconds": grace},
+        )
+    await db.jobs.update_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"$unset": {"timer_started_at": "", "timer_start_method": "",
+                      "arrival_lat": "", "arrival_lng": ""},
+          "$set": {"updated_at": now_iso()}},
+    )
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(), "tenant_id": tenant["id"],
+            "actor_id": user.get("id"), "actor_email": user.get("email"),
+            "event": "job_timer_undo_start",
+            "at": now_iso(),
+            "payload": {"job_id": jid, "elapsed_seconds": elapsed,
+                            "prev_method": job.get("timer_start_method"),
+                            "prev_started_at": started_iso},
+        })
+    except Exception as _e:
+        logger.warning("[p37c] audit-log write failed: %s", _e)
+    return {"undone": True, "elapsed_seconds": elapsed}
+
+
 @router.get("/reports/job-timers")
 async def job_timers_report(technician_id: Optional[str] = None, customer_id: Optional[str] = None,
                             q: Optional[str] = None,

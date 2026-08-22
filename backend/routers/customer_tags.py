@@ -22,7 +22,10 @@ Registry rules:
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import List, Optional
+
+logger = logging.getLogger("pool_crm")
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -256,6 +259,127 @@ async def apply_customer_status(*, tenant_id: str,
 # ═════════════════════════════════════════════════════════════════
 # GET /customer-tags — list registry
 # ═════════════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════════════
+# Feb-2026 · P33h — Lazy self-heal top-up.
+# The customers list "All tags" filter renders from GET /customer-tags.
+# On any tenant where the P33 seed migration was skipped (e.g. prod
+# redeploy before ops ran ``task_p33_seed_customer_tags_catalog``)
+# the catalog stays empty except for the two system-tag rows, so the
+# dropdown looks broken even though the customers themselves carry
+# tag strings. Self-heal: on each GET, aggregate the distinct tag
+# strings on ``customers.tags`` and upsert any that are missing from
+# the catalog. Rate-limited to once per tenant per ``_SELF_HEAL_TTL_S``
+# seconds so a customers-list page load doesn't hammer the DB.
+# ═════════════════════════════════════════════════════════════════
+import time as _p33h_time
+_SELF_HEAL_TTL_S = 300  # 5 minutes per tenant
+_SELF_HEAL_LAST: dict[str, float] = {}
+_SELF_HEAL_COUNTER: dict[str, int] = {}  # test hook — counts aggregate calls
+
+
+async def _self_heal_catalog(tenant_id: str) -> None:
+    """Best-effort top-up. Wrapped by the caller in try/except; any
+    failure here is swallowed by the caller."""
+    now = _p33h_time.time()
+    last = _SELF_HEAL_LAST.get(tenant_id, 0.0)
+    if now - last < _SELF_HEAL_TTL_S:
+        return
+    _SELF_HEAL_LAST[tenant_id] = now
+    _SELF_HEAL_COUNTER[tenant_id] = _SELF_HEAL_COUNTER.get(tenant_id, 0) + 1
+
+    # Aggregate distinct tag strings on this tenant's customers.
+    distinct = await db.customers.distinct(
+        "tags", {"tenant_id": tenant_id, "tags": {"$exists": True, "$ne": []}},
+    )
+    if not distinct:
+        return
+    # Filter + normalize.
+    cleaned: list[str] = []
+    for raw in distinct:
+        if not isinstance(raw, str):
+            continue
+        s = raw.strip()
+        if not s:
+            continue
+        try:
+            cleaned.append(_validate_name(s))
+        except HTTPException:
+            continue
+    if not cleaned:
+        return
+    # De-dup case-insensitively on the incoming set first.
+    seen_norm: dict[str, str] = {}
+    for label in cleaned:
+        seen_norm.setdefault(label.lower(), label)
+
+    # Check the catalog for existing rows (active OR archived).
+    existing = await db.customer_tags.find(
+        {"tenant_id": tenant_id,
+          "name_lower": {"$in": list(seen_norm.keys())}},
+        {"_id": 0, "name_lower": 1},
+    ).to_list(len(seen_norm) + 10)
+    have = {r["name_lower"] for r in existing}
+    to_insert = [
+        {"label": v, "norm": k}
+        for k, v in seen_norm.items() if k not in have
+    ]
+    if not to_insert:
+        return
+    # Compute next sort_order once.
+    last_sort = 0
+    last_row = await db.customer_tags.find(
+        {"tenant_id": tenant_id}, {"_id": 0, "sort_order": 1},
+    ).sort("sort_order", -1).limit(1).to_list(1)
+    if last_row:
+        try:
+            last_sort = int(last_row[0].get("sort_order") or 0)
+        except Exception:
+            last_sort = 0
+    now_stamp = now_iso()
+    docs = []
+    for i, item in enumerate(to_insert, start=1):
+        docs.append({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "name": item["label"],
+            "name_lower": item["norm"],
+            "color": _pick_color(item["label"]),
+            "is_system": False,
+            "created_by": "self_heal",
+            "created_at": now_stamp,
+            "usage_count": 0,
+            "auto_created": True,
+            "is_active": True,
+            "sort_order": last_sort + (i * 10),
+        })
+    if docs:
+        await db.customer_tags.insert_many(docs)
+        logger.info("[p33h] self-heal top-up tenant=%s inserted=%s",
+                        tenant_id, len(docs))
+
+
+# Feb-2026 · P33h — internal test/support helper. Clears the per-tenant
+# self-heal window so the next GET re-runs the aggregate. Admin only.
+class _P33hReset(BaseModel):
+    tenant_id: Optional[str] = None
+
+
+@router.post("/internal/customer-tags/reset-self-heal",
+                tags=["customer-tags"])
+async def reset_self_heal_cache(
+    body: _P33hReset,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin", "manager"):
+        raise HTTPException(403, "Not allowed")
+    tid = body.tenant_id or tenant["id"]
+    _SELF_HEAL_LAST.pop(tid, None)
+    _SELF_HEAL_COUNTER.pop(tid, None)
+    return {"ok": True, "tenant_id": tid}
+
+
 @router.get("/customer-tags", tags=["customer-tags"],
              operation_id="customerTags.list")
 async def list_customer_tags(
@@ -269,6 +393,14 @@ async def list_customer_tags(
     # admin-or-manager gated below.
     if user.get("role") not in ("admin", "super_admin", "manager", "technician"):
         raise HTTPException(403, "Not allowed")
+
+    # Feb-2026 · P33h — lazy self-heal top-up. Silent on failure so a
+    # bug here never 500s the customers-list page.
+    try:
+        await _self_heal_catalog(tenant["id"])
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[p33h] self-heal error tenant=%s: %s",
+                          tenant.get("id"), _e)
 
     # Feb-2026 · P36 — hide archived (is_active=False) rows by default.
     # Rows created before P36 have no ``is_active`` field and are
