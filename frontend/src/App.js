@@ -281,6 +281,7 @@ import ReportsHub from "@/pages/reports/ReportsHub";
 import BusinessSummary from "@/pages/reports/BusinessSummary";
 import Forecast from "@/pages/reports/Forecast";
 import CustomerRetentionReport from "@/pages/reports/CustomerRetentionReport";
+import GpsAutoStartAudit from "@/pages/reports/GpsAutoStartAudit";
 import IncomeByCategory from "@/pages/reports/IncomeByCategoryPage";
 import {
   RevenueByCity, RevenueByCrew, RevenueByCustomer, GrossSales, InvoicedItems,
@@ -971,6 +972,8 @@ export default function App() {
             <Route path="reports/business-summary" element={<AdminOnly><BusinessSummary /></AdminOnly>} />
             <Route path="reports/forecast" element={<AdminOnly><Forecast /></AdminOnly>} />
             <Route path="reports/customer-retention" element={<AdminOnly><CustomerRetentionReport /></AdminOnly>} />
+            {/* Feb-2026 · P37d — Dispatcher GPS Auto-Start audit. */}
+            <Route path="reports/gps-auto-start-audit" element={<AdminOrManagerForProfitReport><GpsAutoStartAudit /></AdminOrManagerForProfitReport>} />
             <Route path="reports/revenue-by-city" element={<AdminOnly><RevenueByCity /></AdminOnly>} />
             <Route path="reports/revenue-by-crew" element={<AdminOnly><RevenueByCrew /></AdminOnly>} />
             <Route path="reports/revenue-by-customer" element={<AdminOnly><RevenueByCustomer /></AdminOnly>} />

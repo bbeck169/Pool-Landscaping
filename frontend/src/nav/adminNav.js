@@ -254,6 +254,10 @@ export const ADMIN_NAV_V2 = [
     { to: "/reports/business-summary",    label: "Business Summary",  icon: PieChart,  feature: "reports" },
     { to: "/reports/forecast",            label: "Forecast",          icon: TrendingUp, feature: "reports" },
     { to: "/reports/customer-retention",  label: "Customer Retention",icon: Users,      feature: "reports" },
+    // Feb-2026 · P37d — dispatcher-facing GPS Auto-Start audit
+    // dashboard. Ops uses this to tune the 75m radius default and
+    // diagnose consent / throttle patterns.
+    { to: "/reports/gps-auto-start-audit", label: "GPS Auto-Start Audit", icon: MapPin,   feature: "reports" },
     { to: "/reports/revenue-slices",      label: "Revenue Slices",    icon: PieChart,  feature: "reports" },
     { to: "/admin/recurring-jobs",         label: "Recurring Jobs",      icon: CalendarClock, feature: "scheduling" },
     { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports" },

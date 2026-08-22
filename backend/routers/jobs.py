@@ -1864,6 +1864,47 @@ async def job_arrive(jid: str, body: JobArriveIn,
     )
     from services.geofence_engine import haversine_m
 
+    # Feb-2026 · P37d — every /arrive outcome now writes an audit row
+    # so the ops dashboard can compute the true arrival distribution.
+    # Previously only the ``started`` branch logged, which under-
+    # counted throttled / out-of-radius / feature-disabled events.
+    _radius_hint: Optional[int] = None
+    _distance_hint: Optional[float] = None
+    _consent_state_hint: str = "not_required"
+
+    async def _log(outcome: str, *, distance_m: Optional[float] = None,
+                     radius_m: Optional[int] = None,
+                     consent_state: Optional[str] = None,
+                     extra: Optional[dict] = None) -> None:
+        try:
+            payload = {
+                "job_id": jid,
+                "technician_id": job.get("technician_id"),
+                "arrival_lat": body.lat, "arrival_lng": body.lng,
+                "site_lat": (body.site_lat if body.site_lat is not None
+                                else (job.get("site_lat") or job.get("latitude"))),
+                "site_lng": (body.site_lng if body.site_lng is not None
+                                else (job.get("site_lng") or job.get("longitude"))),
+                "distance_m": (round(distance_m, 1)
+                                    if distance_m is not None else None),
+                "radius_m": radius_m if radius_m is not None else _radius_hint,
+                "accuracy_m": body.accuracy,
+                "outcome": outcome,
+                "consent_state": consent_state or _consent_state_hint,
+                "arrived_at": now_iso(),
+            }
+            if extra:
+                payload.update(extra)
+            await db.audit_logs.insert_one({
+                "id": new_id(), "tenant_id": tenant["id"],
+                "actor_id": user.get("id"), "actor_email": user.get("email"),
+                "event": "job_timer_auto_start",
+                "at": payload["arrived_at"],
+                "payload": payload,
+            })
+        except Exception as _e:
+            logger.warning("[p37] audit-log write failed: %s", _e)
+
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
@@ -1874,15 +1915,20 @@ async def job_arrive(jid: str, body: JobArriveIn,
 
     # P37a Gate 1 — tenant feature flag.
     if not is_gps_auto_start_enabled(tenant):
+        await _log("feature_disabled")
         return {"started": False, "reason": "feature_disabled"}
 
     # P37a Gate 2 — tech consent (dispatcher / admin roles bypass).
     if user.get("role") == "technician":
         if not await has_active_consent(user["id"], tenant["id"]):
+            _consent_state_hint = "missing"
+            await _log("consent_required", consent_state="missing")
             return {"started": False, "reason": "consent_required"}
+        _consent_state_hint = "active"
 
     # P37a Gate 3 — per-(user, job) 60s rate limit.
     if not rate_limit_check(user["id"], jid):
+        await _log("throttled")
         return {"started": False, "reason": "throttled"}
 
     # P37a Gate 4 — distance check via haversine (meters).
@@ -1891,11 +1937,15 @@ async def job_arrive(jid: str, body: JobArriveIn,
     site_lng = body.site_lng if body.site_lng is not None else (
         job.get("site_lng") or job.get("longitude"))
     radius_m = get_arrival_radius_m(tenant)
+    _radius_hint = radius_m
     distance_m: Optional[float] = None
     if site_lat is not None and site_lng is not None:
         distance_m = haversine_m(float(site_lat), float(site_lng),
                                           float(body.lat), float(body.lng))
+        _distance_hint = distance_m
         if distance_m > radius_m:
+            await _log("out_of_radius", distance_m=distance_m,
+                          radius_m=radius_m)
             return {"started": False, "reason": "out_of_radius",
                      "distance_m": round(distance_m, 1),
                      "radius_m": radius_m}
@@ -1912,8 +1962,12 @@ async def job_arrive(jid: str, body: JobArriveIn,
     if job.get("timer_started_at"):
         if site:
             await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": site})
+        await _log("already_running", distance_m=distance_m,
+                      radius_m=radius_m)
         return {"started": True, "already_running": True, "timer_started_at": job["timer_started_at"]}
     if job.get("status") == "completed":
+        await _log("job_completed", distance_m=distance_m,
+                      radius_m=radius_m)
         return {"started": False, "reason": "job_completed"}
     started = now_iso()
     upd = {"timer_started_at": started, "timer_start_method": "gps_arrival",
@@ -1929,25 +1983,8 @@ async def job_arrive(jid: str, body: JobArriveIn,
         upd["status"] = "in_progress"
     await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": upd})
 
-    # P37a — audit log breadcrumb.
-    try:
-        await db.audit_logs.insert_one({
-            "id": new_id(), "tenant_id": tenant["id"],
-            "actor_id": user.get("id"), "actor_email": user.get("email"),
-            "event": "job_timer_auto_start",
-            "at": started,
-            "payload": {
-                "job_id": jid,
-                "technician_id": job.get("technician_id"),
-                "arrival_lat": body.lat, "arrival_lng": body.lng,
-                "site_lat": site_lat, "site_lng": site_lng,
-                "distance_m": round(distance_m, 1) if distance_m is not None else None,
-                "radius_m": radius_m,
-                "accuracy_m": body.accuracy,
-            },
-        })
-    except Exception as _e:
-        logger.warning("[p37] audit-log write failed: %s", _e)
+    # P37a — audit log breadcrumb (P37d — extended to log outcome=started).
+    await _log("started", distance_m=distance_m, radius_m=radius_m)
 
     return {"started": True, "already_running": False,
               "timer_started_at": started,
