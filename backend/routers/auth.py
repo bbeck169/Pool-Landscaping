@@ -19,10 +19,12 @@ LOCKOUT_MINUTES = 15
 
 
 def _client_ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """Feb-2026 · P16B — delegates to the shared ``services._shared.http``
+    helper so the same IP-resolution semantics live in one place.
+    Fallback preserved as ``"unknown"`` to match every existing audit
+    row grep-able in prod logs."""
+    from services._shared.http import client_ip as _shared_client_ip
+    return _shared_client_ip(request, default="unknown")
 
 
 async def _audit_auth(event: str, email: str, ip: str, status: str, details: str = ""):

@@ -45,6 +45,14 @@ POOL_READING_FIELDS_DEFAULT = [
     # a UI order change only — no data migration required.
     {"key": "combined_chlorine", "name": "Combined Chlorine", "unit": "ppm",  "type": "select",
      "ideal": "0–0.2",    "min": 0,    "max": 20,   "step": 0.1},
+    # Feb-2026 · P16A — added ``total_cl`` because the ``chemistry_gate``
+    # requires it as a CORE reading, but the pre-P16 default template
+    # never exposed the field.  Result: techs following the default
+    # UI reliably hit ``chemistry_core_readings_missing`` unless an
+    # admin had customized the template.  Placed AFTER combined_chlorine
+    # so ``total = free + combined`` reads in the natural mental order.
+    {"key": "total_cl",          "name": "Total Chlorine",    "unit": "ppm",  "type": "select",
+     "ideal": "1–3",      "min": 0,    "max": 20,   "step": 0.1},
     # Feb-2026 · P12B — was ``"chlorine"``; renamed to the canonical
     # ``"free_chlorine"`` so it matches ``chemistry_gate.CORE_READINGS``
     # verbatim.  The bare ``"chlorine"`` key had no entry in the
@@ -500,6 +508,16 @@ async def submit_service_report(
     # completed (idempotent re-submits are already blocked above by
     # the ``rep.get("submitted_at")`` check, but the extra guard keeps
     # the transition semantics obvious).
+    #
+    # Feb-2026 · P16D — verified inline-safe: the underlying
+    # ``schedule_auto_send_door_hanger`` at
+    # ``routers/workstream_service_log.py:1234`` is a thin
+    # ``asyncio.create_task(maybe_auto_send_door_hanger(...))``
+    # wrapper — it schedules on the running loop and returns
+    # immediately.  The scheduled coroutine itself handles ALL
+    # external work (ledger lookup, customer fetch, email adapter
+    # call) after the response has been sent, and swallows any
+    # exception via its own try/except.  Kept in the sync path.
     if _prev_status != "completed":
         try:
             from routers.workstream_service_log import (

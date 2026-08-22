@@ -69,10 +69,11 @@ def _require_customer(user: Dict[str, Any]) -> str:
 
 
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for") or ""
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return (request.client.host if request.client else "") or ""
+    """Feb-2026 · P16B — delegates to the shared ``services._shared.http``
+    helper.  Empty-string default preserved so pre-P16 rows in
+    ``account_deletion_events`` remain grep-consistent."""
+    from services._shared.http import client_ip as _shared_client_ip
+    return _shared_client_ip(request, default="")
 
 
 @router.delete("/customer-portal/account")

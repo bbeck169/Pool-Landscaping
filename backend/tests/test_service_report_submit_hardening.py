@@ -232,6 +232,68 @@ def test_default_pool_template_uses_canonical_free_chlorine_key():
     )
 
 
+# ── 4b. P16A — default pool template exposes ``total_cl`` too ────
+def test_default_pool_template_exposes_total_cl():
+    """P16A — the pre-P16 default template omitted ``total_cl``, so
+    techs following the default UI reliably hit
+    ``chemistry_core_readings_missing`` because the gate requires
+    all 5 core readings (free_chlorine, total_chlorine, ph,
+    alkalinity, cyanuric_acid) but the UI only surfaced 4 of them
+    unless an admin had customized the template.
+
+    Pins the field's presence + shape.  Uses key ``total_cl`` which
+    the gate aliases to ``total_chlorine`` via
+    ``chemistry_gate._ALIASES``."""
+    from routers.service_reports import POOL_READING_FIELDS_DEFAULT
+    from services.chemistry_gate import _canonical_key
+    keys = {f["key"] for f in POOL_READING_FIELDS_DEFAULT}
+    assert "total_cl" in keys, (
+        f"``total_cl`` must be present in the default template; "
+        f"present keys: {sorted(keys)}"
+    )
+    # Alias-folds to the canonical CORE reading name.
+    assert _canonical_key("total_cl") == "total_chlorine"
+    # Shape check — same "type: select" contract as the other rows.
+    total_cl_field = next(f for f in POOL_READING_FIELDS_DEFAULT
+                          if f["key"] == "total_cl")
+    assert total_cl_field["type"] == "select"
+    assert total_cl_field["unit"] == "ppm"
+    assert total_cl_field["min"] == 0
+    assert total_cl_field["max"] > 0
+
+
+# ── 4c. P16A — legacy Field Report ``POOL_READINGS`` mirrors the addition ──
+def test_legacy_pool_readings_also_exposes_total_cl():
+    """P16A · parallel — the legacy Field Report list in
+    ``routers/jobs.py::POOL_READINGS`` MUST stay in lockstep with
+    ``POOL_READING_FIELDS_DEFAULT`` so admins running the older Field
+    Report UI don't hit the same missing-field trap."""
+    from routers.jobs import POOL_READINGS
+    keys = [f["key"] for f in POOL_READINGS]
+    assert "total_cl" in keys, (
+        f"legacy POOL_READINGS must mirror ``total_cl``; keys: {keys}"
+    )
+
+
+# ── 4d. P16A — submit with all 5 core readings passes without 422 ──
+def test_submit_with_full_core_readings_passes_gate(p12_env):
+    """End-to-end proof: a submit carrying all 5 core readings
+    (including the newly-exposed ``total_cl``) returns 200 with
+    ``submitted_at`` populated — the chemistry gate does NOT trip."""
+    tok = _login(p12_env["tech"]["email"])
+    hdrs = {"Authorization": f"Bearer {tok}"}
+    # The p12_env fixture already seeded the report with all 5 core
+    # readings — proving the endpoint returns 200 confirms the gate
+    # accepts the payload shape ``total_cl`` (aliased) + the four
+    # canonical peers.
+    r = requests.post(
+        f"{API}/jobs/{p12_env['job_id']}/service-report/submit",
+        headers=hdrs, timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json().get("submitted_at"), r.json()
+
+
 # ── 5. `chlorine` alias folds onto `free_chlorine` in the gate ───
 def test_gate_alias_maps_bare_chlorine_to_free_chlorine():
     """Belt-and-braces: a tenant that persisted the OLD template

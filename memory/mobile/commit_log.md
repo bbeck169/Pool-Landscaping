@@ -676,3 +676,53 @@
   - `/app/mobile/app/_layout.tsx` (added Mapbox `__DEV__` guard useEffect, +15 lines)
   - `/app/mobile/.env.example` (rewritten with full annotated Mapbox entries)
 - **Web files referenced**: None (backend `server.py` scanned for DB collections only)
+
+
+## Iteration 31 — Phase P13: Fix Mapbox env var deprecation in app.json
+- **Commit**: f4bf293d225e08022b4b8f28302f0f1ef05cdbb2 (uncommitted changes on top)
+- **Date**: 2026-08-21
+- **Changes**:
+  - Removed deprecated `RNMapboxMapsDownloadToken` property from `@rnmapbox/maps` plugin config in `app.json`. Plugin now reads `RNMAPBOX_MAPS_DOWNLOAD_TOKEN` directly from env at build time (empty `{}` options object).
+  - Updated `.env.example` Mapbox secret token comment block to explain that the plugin auto-reads the env var and that EAS secret provisioning is required for cloud builds.
+  - JSON validity confirmed. Zero occurrences of deprecated PascalCase key remain.
+  - No changes to `backend/` or `frontend/`.
+- **Files modified**:
+  - `/app/mobile/app.json` (line 148-152: plugin options `{ "RNMapboxMapsDownloadToken": "..." }` → `{}`)
+  - `/app/mobile/.env.example` (expanded Mapbox secret token comment)
+- **NOTE**: This code change alone does NOT fix the 401 Mapbox download error. User MUST run: `eas secret:create --scope project --name RNMAPBOX_MAPS_DOWNLOAD_TOKEN --value <fresh sk. token>`
+
+
+## Iteration 32 — Phase P14: Split DailyRouteMap into platform-specific files
+- **Commit**: f4bf293d225e08022b4b8f28302f0f1ef05cdbb2 (uncommitted changes on top)
+- **Date**: 2026-08-21
+- **Changes**:
+  - Renamed `DailyRouteMap.tsx` → `DailyRouteMap.native.tsx` (unchanged Mapbox implementation)
+  - Created `DailyRouteMap.web.tsx` — web fallback with zero @rnmapbox/maps imports; renders a dashed placeholder card matching the ScheduleMap.web.tsx pattern
+  - Created `DailyRouteMap.tsx` — barrel re-export selector (pattern b, matching ScheduleMap.tsx precedent)
+  - Created `__tests__/daily-route-map-web.test.tsx` — 4 tests proving web variant never triggers @rnmapbox/maps import
+  - Web bundle verification: Mapbox CSS error (`mapbox-gl/dist/mapbox-gl.css`) is GONE. Next web error is unrelated expo-sqlite WASM issue.
+  - Consumer imports unchanged: `calendar.tsx`, `schedule-daily-route-map.test.tsx`, `optimize-route-flow.test.tsx`
+  - No Platform.OS guards removed (none existed as workarounds)
+  - Jest: 70 suites (67 pass / 3 pre-existing fail), 512 tests (503 pass / 9 pre-existing fail)
+  - No changes to `backend/` or `frontend/`
+- **Files created**: `DailyRouteMap.web.tsx`, `DailyRouteMap.tsx` (selector), `__tests__/daily-route-map-web.test.tsx`
+- **Files renamed**: `DailyRouteMap.tsx` → `DailyRouteMap.native.tsx`
+- **Files deleted**: none (original renamed)
+
+
+## Iteration 33 — Phase P15: Fix expo-sqlite WASM web bundle error
+- **Commit**: f4bf293d225e08022b4b8f28302f0f1ef05cdbb2 (uncommitted changes on top)
+- **Date**: 2026-08-21
+- **Changes**:
+  - **Case A** applied: single wrapper module `src/lib/offline/cache.ts` was the only direct importer of expo-sqlite.
+  - Renamed `cache.ts` → `cache.native.ts` (SQLite implementation, unchanged)
+  - Created `cache.web.ts` — in-memory Map-backed shim with same public API (12 exports)
+  - Created `cache.ts` — barrel re-export selector (matching ScheduleMap/DailyRouteMap pattern)
+  - Created `__tests__/offline-cache-web.test.tsx` — 6 tests proving web shim works without expo-sqlite
+  - **Web bundle: BUILDS SUCCESSFULLY** — `Bundled 11615ms (2190 modules)` — zero errors
+  - Consumer imports unchanged: auth.tsx, login.tsx, apiCache.ts, calendar.tsx, checklist.tsx, job/[id].tsx
+  - No Platform.OS guards removed (none existed)
+  - Jest: 71 suites (68 pass / 3 pre-existing fail), 518 tests (509 pass / 9 pre-existing fail)
+  - No changes to `backend/` or `frontend/`. No new deps installed.
+- **Files created**: `cache.web.ts`, `cache.ts` (selector), `__tests__/offline-cache-web.test.tsx`
+- **Files renamed**: `cache.ts` → `cache.native.ts`

@@ -81,7 +81,14 @@ async def get_walkthrough_status(user: Dict[str, Any] = Depends(get_current_user
     }
 
 
-@router.post("/customer-portal/walkthrough/complete")
+# Feb-2026 · P16C — legacy walkthrough completion route.  Kept
+# online for existing mobile clients (pre-P2 builds) that still
+# POST here.  New callers MUST use
+# ``POST /customer-portal/tutorial/complete`` (below) which is
+# idempotent + returns the pre-existing timestamp on repeat calls.
+# The ``deprecated=True`` decorator flag surfaces this to the
+# generated OpenAPI schema so client SDKs render the strike-through.
+@router.post("/customer-portal/walkthrough/complete", deprecated=True)
 async def mark_walkthrough_complete(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
