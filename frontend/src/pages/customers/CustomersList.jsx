@@ -534,7 +534,23 @@ export default function CustomersList() {
     }
   };
 
-  const nextScheduled = (c) => c.next_scheduled_at || "—";
+  // Feb-2026 · P45 — "Next visit" formatter.
+  // • null / empty / unparseable  → "—"
+  // • current year                → "Aug 23"
+  // • different year              → "Aug 23, 2027"
+  // Tolerates both full-ISO ("2026-08-23T09:00:00+00:00") and
+  // date-only ("2026-09-01") shapes from ``db.jobs.scheduled_date``.
+  const nextScheduled = (c) => {
+    const raw = c.next_scheduled_at;
+    if (!raw) return "—";
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return "—";
+    const thisYear = new Date().getFullYear();
+    const opts = d.getFullYear() === thisYear
+      ? { month: "short", day: "numeric" }
+      : { month: "short", day: "numeric", year: "numeric" };
+    return d.toLocaleDateString(undefined, opts);
+  };
 
   // Phase 56.2 — inline activation toggle from list rows. Confirms via
   // modal, calls shared PATCH endpoint, optimistically updates the list.

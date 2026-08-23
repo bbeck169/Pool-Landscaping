@@ -445,6 +445,53 @@ async def list_customers(
         for d in docs:
             d["properties_count"] = counts.get(d["id"], 0)
 
+    # ─────────────────────────────────────────────────────────────
+    # Feb-2026 · P45 — hydrate ``next_scheduled_at`` (earliest upcoming
+    # job's ``scheduled_date``) per row via a single batched aggregate.
+    # Consumed by the customers-list "Next visit" column. Rules:
+    #   • status ∈ {"pending", "scheduled"} — inclusion whitelist so
+    #     future terminal variants (cancelled, canceled, no_show,
+    #     missed, skipped, could_not_service, completed) can't leak in.
+    #   • scheduled_date ≥ today's UTC date at 00:00Z (inclusive of
+    #     today).
+    #   • soft-deleted jobs excluded via ``not_deleted_filter()``.
+    #   • tenant-scoped.
+    # ISO strings sort lexicographically for both full-ISO
+    # ("2026-08-23T09:00:00+00:00") and date-only ("2026-09-01")
+    # shapes because both lead with Y-M-D, so ``$sort`` +
+    # ``$first`` returns the correct earliest either way.
+    # NOT applied on the ``count_only=true`` branch (returned above).
+    # ─────────────────────────────────────────────────────────────
+    if docs:
+        from datetime import datetime as _p45_dt, timezone as _p45_tz
+        from utils import not_deleted_filter as _p45_nd
+        today_utc_iso = _p45_dt.now(_p45_tz.utc).strftime("%Y-%m-%d")
+        try:
+            p45_pipeline = [
+                {"$match": {
+                    "tenant_id": tenant["id"],
+                    "customer_id": {"$in": [d["id"] for d in docs]},
+                    "status": {"$in": ["pending", "scheduled"]},
+                    "scheduled_date": {"$gte": today_utc_iso},
+                    **_p45_nd(),
+                }},
+                {"$sort": {"scheduled_date": 1}},
+                {"$group": {
+                    "_id": "$customer_id",
+                    "next_scheduled_at": {"$first": "$scheduled_date"},
+                }},
+            ]
+            next_map = {
+                row["_id"]: row.get("next_scheduled_at")
+                async for row in db.jobs.aggregate(p45_pipeline)
+            }
+        except Exception as _p45_exc:  # noqa: BLE001
+            logger.warning("[p45] next_scheduled hydrate failed: %s",
+                              _p45_exc)
+            next_map = {}
+        for d in docs:
+            d["next_scheduled_at"] = next_map.get(d["id"])
+
     # Phase 12 · Feb 2026 — augment each row with the derived card fields.
     tenant_default_require = bool(tenant.get("require_card_on_file_default", True))
     for d in docs:
