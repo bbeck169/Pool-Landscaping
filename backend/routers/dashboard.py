@@ -4,7 +4,8 @@ from datetime import datetime, timezone, timedelta
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
-                   get_current_user, require_admin, send_sms, notify_customer, auth_response)
+                   get_current_user, require_admin, send_sms, notify_customer, auth_response,
+                   not_deleted_filter as _nd)
 from routers.tenants import get_current_tenant
 # Bucket A2 · Feb-2026 — wildcard removed; dashboard.py does not reference
 # any symbol from ``models`` (verified via AST diff against models exports).
@@ -22,7 +23,6 @@ async def dashboard(user: dict = Depends(get_current_user),
         pending = await db.jobs.count_documents({**base, "status": "pending"})
         active = await db.jobs.count_documents({**base, "status": "active"})
         completed = await db.jobs.count_documents({**base, "status": "completed"})
-        from utils import not_deleted_filter as _nd
         upcoming = await db.jobs.find(
             {**base, "status": {"$in": ["pending", "active"]}, **_nd()}, {"_id": 0}
         ).sort("scheduled_date", 1).to_list(10)
