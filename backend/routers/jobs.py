@@ -358,21 +358,35 @@ async def list_jobs(
     # Phase 51.I fix — recurring-template origin filter.
     if recurring_template_id:
         q["recurring_template_id"] = recurring_template_id
-    # Feb-2026 hygiene fix — ``limit`` param now actually caps the
-    # to_list() call. Previously the query silently returned 1000
-    # regardless of ``?limit=X``.
-    # Feb-2026 · route-order read-path fix — sort by ``scheduled_date``
-    # first, then by the admin-assigned ``route_index`` (writes come
-    # from ``POST /api/jobs/reorder``), then by ``created_at`` so
-    # same-day jobs with no admin-assigned order fall back to
-    # deterministic insertion order.  Mongo sorts ``None`` /
-    # missing-field values BEFORE any numeric ascending value; on
-    # tech-days where the admin hasn't touched the order, every job
-    # has ``route_index == None`` and the fallback ``created_at``
-    # sort determines the final order — same behavior as pre-fix.
-    docs = await db.jobs.find(q, {"_id": 0}).sort(
-        [("scheduled_date", 1), ("route_index", 1), ("created_at", 1)]
-    ).to_list(limit)
+    # Feb-2026 · D2-hotfix — schedule reorder read-path.  The previous
+    # ``.sort([("scheduled_date", 1), ("route_index", 1), ("created_at",
+    # 1)])`` sorted by the FULL ``scheduled_date`` string as primary,
+    # which — because most jobs persist ``scheduled_date`` as a full
+    # ISO datetime like ``2026-08-22T11:00:00+00:00`` — meant
+    # ``route_index`` never got a chance to influence ordering within a
+    # day (the time portion of ``scheduled_date`` decided every
+    # comparison first).  As a result admin-assigned reorderings via
+    # ``POST /api/jobs/reorder`` persisted correctly to Mongo but
+    # visually "reverted" on refresh because the CalendarSchedule +
+    # mobile schedule both consume this endpoint.
+    #
+    # Fix: normalize ``scheduled_date`` to the ``YYYY-MM-DD`` day prefix
+    # in-pipeline (so multi-day queries still order by day first), then
+    # sort by ``route_index`` within that day, and only THEN fall back
+    # to ``scheduled_date`` (time portion) + ``created_at`` for
+    # untouched days.  ``$ifNull`` sends missing / null route indexes
+    # to a large sentinel so they sink to the end within their day.
+    pipeline: list[dict] = [
+        {"$match": q},
+        {"$addFields": {
+            "_day": {"$substrCP": [{"$ifNull": ["$scheduled_date", ""]}, 0, 10]},
+            "_ri":  {"$ifNull": ["$route_index", 999999]},
+        }},
+        {"$sort": {"_day": 1, "_ri": 1, "scheduled_date": 1, "created_at": 1}},
+        {"$limit": int(limit)},
+        {"$project": {"_id": 0, "_day": 0, "_ri": 0}},
+    ]
+    docs = await db.jobs.aggregate(pipeline).to_list(limit)
     # Phase 57.d — enrich every returned job with the assigned tech's
     # department + derived checklist_kind so schedule/dispatch cards +
     # mobile clients see the right form without a per-job GET.
