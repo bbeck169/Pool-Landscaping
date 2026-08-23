@@ -648,6 +648,7 @@ async def jobs_recurrence_preview(body: dict, user: dict = Depends(require_admin
     body: { start_date: "YYYY-MM-DD", cadence: "weekly|biweekly|monthly", count?: int }
     """
     from datetime import date, timedelta
+    from services.recurrence_math import advance_months, MONTH_STEP
     start_raw = body.get("start_date")
     cadence = body.get("cadence", "weekly")
     count = int(body.get("count", 4))
@@ -660,19 +661,17 @@ async def jobs_recurrence_preview(body: dict, user: dict = Depends(require_admin
     step = {"weekly": 7, "biweekly": 14}.get(cadence)
     dates: list[str] = []
     cur = start
-    for _ in range(max(1, min(24, count))):
+    for i in range(max(1, min(24, count))):
         dates.append(cur.isoformat())
         if step:
             cur = cur + timedelta(days=step)
-        elif cadence == "monthly":
-            m = cur.month + 1
-            y = cur.year + (1 if m > 12 else 0)
-            m = m if m <= 12 else m - 12
-            try:
-                cur = cur.replace(year=y, month=m)
-            except ValueError:
-                # e.g. Jan 31 -> Feb 28
-                cur = cur.replace(year=y, month=m, day=28)
+        elif cadence in MONTH_STEP:
+            # Feb-2026 · P47 — monthly / quarterly / semi_annual all
+            # step by whole months. Anchor to ``start`` so the "Nth
+            # of the month" survives month-length clamping (Jan 31
+            # + quarterly → Apr 30, next → Jul 31, not Jul 30).
+            cur = advance_months(start, MONTH_STEP[cadence] * (i + 1),
+                                        start.day)
         else:
             raise HTTPException(400, f"Unknown cadence: {cadence}")
     return {"cadence": cadence, "count": len(dates), "dates": dates}

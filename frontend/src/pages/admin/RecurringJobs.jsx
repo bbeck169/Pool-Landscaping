@@ -19,6 +19,8 @@ const FREQ_OPTIONS = [
   { value: "weekly", label: "Weekly" },
   { value: "biweekly", label: "Bi-weekly" },
   { value: "monthly", label: "Monthly" },
+  { value: "quarterly", label: "Quarterly (every 3 months)" },
+  { value: "semi_annual", label: "Semi-annual (every 6 months)" },
   { value: "custom", label: "Custom (every N days)" },
 ];
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];

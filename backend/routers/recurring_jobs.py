@@ -31,7 +31,7 @@ from routers.tenants import get_current_tenant
 
 router = APIRouter(tags=["recurring_jobs"])
 
-VALID_FREQ = {"weekly", "biweekly", "monthly", "custom"}
+VALID_FREQ = {"weekly", "biweekly", "monthly", "quarterly", "semi_annual", "custom"}
 
 # Feb-2026 · Monthly nth-weekday recurrence (RFC 5545 BYDAY + BYSETPOS).
 VALID_MONTHLY_PATTERN = {"day_of_month", "nth_weekday"}
@@ -120,6 +120,18 @@ def _validate(body: RecurringJobIn | RecurringJobPatch) -> None:
             if wd is None:
                 raise HTTPException(422,
                     "monthly_weekday (0=Mon…6=Sun) is required for nth_weekday pattern")
+    # Feb-2026 · P47 — quarterly / semi_annual reuse the classic
+    # day_of_month sub-mode. ``nth_weekday`` is intentionally NOT
+    # supported for the new cadences — quarterly-3rd-Friday is out
+    # of scope per spec.
+    if freq in ("quarterly", "semi_annual"):
+        if body.day_of_month is None:
+            raise HTTPException(422,
+                f"day_of_month is required for {freq}")
+        if (getattr(body, "monthly_pattern", None)
+                and body.monthly_pattern == "nth_weekday"):
+            raise HTTPException(422,
+                f"monthly_pattern=nth_weekday is not supported for {freq}")
 
 
 def _nth_weekday_of_month(year: int, month: int, nth: str, weekday: int) -> Optional[date]:
@@ -236,6 +248,36 @@ def _next_occurrences(tpl: Dict[str, Any], anchor: date,
                 m += 1
                 if m > 12:
                     m = 1; y += 1
+    elif freq in ("quarterly", "semi_annual"):
+        # Feb-2026 · P47 — step by 3 (quarterly) or 6 (semi_annual)
+        # months, reusing the same day-of-month clamp as monthly's
+        # classic mode. ``nth_weekday`` is not supported for these
+        # cadences (validated on create). Sunday-skip semantics
+        # match the monthly branch: Sundays are included regardless
+        # of ``allow_sunday``.
+        from services.recurrence_math import advance_months, MONTH_STEP
+        step_months = MONTH_STEP[freq]
+        candidate_dom = dom or 1
+        # Anchor to start_date so the "Nth of the month" survives
+        # month-length clamping — we always compute from ``start``
+        # + N*step_months rather than compounding the previous
+        # (possibly clamped) date.
+        n = 0
+        # Fast-forward past ``walker`` so the first emitted date is
+        # ≥ walker.
+        while True:
+            candidate = advance_months(start, step_months * n,
+                                              candidate_dom)
+            if candidate >= walker:
+                break
+            n += 1
+        while len(out) < max_count:
+            candidate = advance_months(start, step_months * n,
+                                              candidate_dom)
+            if candidate > hard_stop:
+                break
+            out.append(candidate)
+            n += 1
     elif freq == "custom":
         step = timedelta(days=interval)
         # Anchor cadence to start_date so custom stays aligned.

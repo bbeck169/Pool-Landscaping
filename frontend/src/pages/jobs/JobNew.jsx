@@ -20,6 +20,8 @@ const CADENCES = [
   { k: "weekly", label: "Weekly" },
   { k: "biweekly", label: "Bi-weekly" },
   { k: "monthly", label: "Monthly" },
+  { k: "quarterly", label: "Quarterly (every 3 months)" },
+  { k: "semi_annual", label: "Semi-annual (every 6 months)" },
 ];
 
 export default function JobNew({

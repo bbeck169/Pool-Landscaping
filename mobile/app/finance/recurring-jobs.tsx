@@ -28,7 +28,7 @@ type RecurringJob = {
   customer_id?: string;
   customer_name?: string;
   service_type?: string;
-  frequency: "weekly" | "biweekly" | "monthly" | "custom";
+  frequency: "weekly" | "biweekly" | "monthly" | "quarterly" | "semi_annual" | "custom";
   day_of_week?: number;
   day_of_month?: number;
   interval_days?: number;
@@ -49,7 +49,7 @@ const NTH_WEEK_OPTS: NonNullable<RecurringJob["monthly_nth_week"]>[] =
 const NTH_WEEK_LABELS: Record<string, string> = {
   first: "1st", second: "2nd", third: "3rd", fourth: "4th", last: "Last",
 };
-const FREQ_OPTS: RecurringJob["frequency"][] = ["weekly", "biweekly", "monthly"];
+const FREQ_OPTS: RecurringJob["frequency"][] = ["weekly", "biweekly", "monthly", "quarterly", "semi_annual"];
 
 function todayIso(): string {
   return dayjs().format("YYYY-MM-DD");
