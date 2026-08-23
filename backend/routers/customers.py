@@ -256,6 +256,12 @@ async def list_customers(
     tenant: dict = Depends(get_current_tenant),
     search: Optional[str] = None,
     tag: Optional[str] = None,
+    # Feb-2026 · P46 — multi-tag AND filter (spec: repeatable/CSV).
+    # When BOTH plural and singular are supplied, plural takes
+    # precedence (see composition below). Backwards-compat is
+    # preserved for the 20+ existing single-tag callers.
+    tags: Optional[List[str]] = Query(None),
+    city: Optional[str] = None,
     waitlisted: Optional[bool] = None,
     unscheduled: Optional[bool] = None,
     is_active: Optional[bool] = None,
@@ -270,8 +276,14 @@ async def list_customers(
     page: Optional[int] = Query(None, description="Feb-2026 · P35 — 1-indexed page number. Presence of this OR page_size flips the response into a paginated envelope."),
     page_size: Optional[int] = Query(None, description="Feb-2026 · P35 — page size (1..500). Presence of this OR page flips the response into a paginated envelope."),
 ):
-    # RBAC: only staff (admin/technician/super_admin) may list customer records. Customers use /me.
-    if user.get("role") not in ("admin", "technician", "super_admin"):
+    # RBAC: only staff (admin/manager/technician/super_admin) may list
+    # customer records. Customers use /me.
+    # Feb-2026 · P46 — manager was previously omitted from this allow-
+    # list even though downstream checks (missing_card, is_muted) treat
+    # manager as allowed. That inconsistency shipped as a 403 for
+    # every manager list request. Fix: fold manager in.
+    if user.get("role") not in ("admin", "manager", "technician",
+                                     "super_admin"):
         raise HTTPException(403, "Not allowed")
     # Phase 12 · Feb 2026 — the ``missing_card`` filter is admin/manager
     # only. Technicians see the plain list.
@@ -300,6 +312,25 @@ async def list_customers(
         q["$or"] = [{"name": rx}, {"email": rx}, {"phone": rx}, {"address": rx}]
     if tag:
         q["tags"] = tag
+    # Feb-2026 · P46 — multi-tag AND filter. When both singular and
+    # plural are supplied, plural wins (spec). Empty / whitespace-only
+    # values are stripped so a URL like ``?tags=&tags=Pool`` behaves
+    # correctly.
+    tags_clean = [t.strip() for t in (tags or []) if (t or "").strip()]
+    if tags_clean:
+        q["tags"] = {"$all": tags_clean}
+    # Feb-2026 · P46 — case-insensitive city match across the three
+    # address surfaces (P41-imported structured columns + legacy free-
+    # form ``address``). ``re.escape`` neutralizes user-typed regex
+    # metacharacters so a period or asterisk in a city name is safe.
+    if city and city.strip():
+        import re as _p46_re
+        rx = {"$regex": _p46_re.escape(city.strip()), "$options": "i"}
+        q["$and"] = q.get("$and", []) + [{
+            "$or": [{"service_city": rx},
+                        {"billing_city": rx},
+                        {"address": rx}],
+        }]
     if waitlisted is not None:
         q["waitlisted"] = bool(waitlisted)
     # Phase 56.2 — active/inactive cohort filter. Rows created before the

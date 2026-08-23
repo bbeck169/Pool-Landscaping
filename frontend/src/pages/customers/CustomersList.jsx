@@ -130,6 +130,22 @@ export default function CustomersList() {
     () => searchParams.get("missing_email") === "1");
   const [missingPhone, setMissingPhone] = useState(
     () => searchParams.get("missing_phone") === "1");
+  // Feb-2026 · P46 — ``city`` filter state must live above ``load()``
+  // so its dep-array reference during render doesn't hit the TDZ.
+  // Hydrated from ``?city=<value>``; URL sync lives further down.
+  // Feb-2026 · P46 — ``city`` filter state must live above ``load()``
+  // so its dep-array reference during render doesn't hit the TDZ.
+  // Hydrated from ``?city=<value>`` on mount; URL sync lives further
+  // down. Reads ``window.location.search`` (not the react-router
+  // ``searchParams`` object) to stay parity-locked with the sibling
+  // ``selectedTags`` initializer above — both survive full-page
+  // refresh + history.replaceState round-trips identically.
+  const [city, setCity] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("city")
+                || "";
+    } catch { return ""; }
+  });
   const searchDeb = useDebounced(q);
 
   // Non-admin users cannot land on the inactive or muted cohort — redirect to active.
@@ -164,6 +180,11 @@ export default function CustomersList() {
     // Feb-2026 · P43 — data-quality filters.
     if (missingEmail) params.set("missing_email", "true");
     if (missingPhone) params.set("missing_phone", "true");
+    // Feb-2026 · P46 — city + multi-tag now flow through the backend
+    // so pagination + tab counts stay honest. Repeat the ``tags``
+    // key per selected value so backend gets a proper list.
+    if (city && city.trim()) params.set("city", city.trim());
+    for (const t of selectedTags) params.append("tags", t);
     // Feb-2026 · P26 — super_admin escape hatch to see soft-deleted rows.
     if (includeDeleted && isSuperAdmin) params.set("include_deleted", "true");
     // Feb-2026 · P35 — always request the paginated envelope.
@@ -195,6 +216,14 @@ export default function CustomersList() {
       const p43 = [];
       if (missingEmail) p43.push("missing_email=true");
       if (missingPhone) p43.push("missing_phone=true");
+      // Feb-2026 · P46 — tab counts must also honor city + multi-tag
+      // filters so tab badges match the paginated envelope's total.
+      if (city && city.trim()) {
+        p43.push(`city=${encodeURIComponent(city.trim())}`);
+      }
+      for (const t of selectedTags) {
+        p43.push(`tags=${encodeURIComponent(t)}`);
+      }
       const p43Suffix = p43.length ? `&${p43.join("&")}` : "";
       const promises = [
         api.get(`/customers?is_active=true&count_only=true${p43Suffix}`),
@@ -226,7 +255,7 @@ export default function CustomersList() {
     loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
-       missingPhone, includeDeleted, page]);
+       missingPhone, includeDeleted, page, city, selectedTags]);
 
   // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
   // first invocation so hydrating chips from the URL on mount does
@@ -258,7 +287,8 @@ export default function CustomersList() {
     }
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDeb, tag, scope, tab, missingCardOnly, includeDeleted]);
+  }, [searchDeb, tag, scope, tab, missingCardOnly, includeDeleted,
+       city, selectedTags]);
 
   // Feb-2026 · P35 — URL sync for ``page``. ``page=1`` is the default
   // so it's dropped from the URL to keep the query string tidy.
@@ -311,6 +341,20 @@ export default function CustomersList() {
   // alphabetical, search-filtered) is owned by
   // ``CustomersTagFilterDropdown`` — no local sortedTags needed.
 
+  // Feb-2026 · P46 — URL sync for ``city`` (state declared above near
+  // the P43 chips so its dep-array reference in ``load()`` doesn't
+  // hit the TDZ). Strips the param on empty.
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (city && city.trim()) p.set("city", city.trim());
+      else p.delete("city");
+      const q = p.toString();
+      window.history.replaceState(null, "",
+        window.location.pathname + (q ? "?" + q : ""));
+    } catch { /* silent */ }
+  }, [city]);
+
   const cities = useMemo(() => {
     const s = new Set();
     (rows || []).forEach((r) => {
@@ -320,27 +364,21 @@ export default function CustomersList() {
     return Array.from(s).sort();
   }, [rows]);
 
-  const [city, setCity] = useState("");
   // Phase 12 · Feb 2026 — server-side filter reads ``missingCardOnly``
   // via the ``missing_card=true`` query param (set inside ``load()``).
   // The client-side ``filtered`` memo also mirrors the same predicate
   // so switching cohorts doesn't briefly show stale rows.
+  // Feb-2026 · P46 — ``city`` and ``selectedTags`` filters now flow
+  // through the backend as query params so pagination + tab counts
+  // stay honest. Only ``missingCardOnly`` stays as a defensive
+  // client-side mirror of the same server predicate.
   const filtered = useMemo(() => {
     if (!rows) return null;
     let out = rows;
-    if (city) out = out.filter((r) => (r.address || "").includes(city));
     if (missingCardOnly) out = out.filter((r) =>
       r.effective_require_card_on_file && !r.has_card_on_file);
-    // Feb-2026 · Chip filter bar — AND semantics on selected tags.
-    if (selectedTags.size > 0) {
-      out = out.filter((r) => {
-        const rowTags = new Set(r.tags || []);
-        for (const t of selectedTags) if (!rowTags.has(t)) return false;
-        return true;
-      });
-    }
     return out;
-  }, [rows, city, missingCardOnly, selectedTags]);
+  }, [rows, missingCardOnly]);
 
   const toggle = (id) => {
     const next = new Set(selected);
