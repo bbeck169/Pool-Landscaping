@@ -34,6 +34,20 @@ const ROLE_OPTIONS = [
   { value: "owner", label: "Owner" },
 ];
 
+// Feb-2026 · Multi-category tech assignment — inline department
+// dropdown per row for tech-role users.  Options mirror
+// ``SuggestDepartmentsModal.DEPT_OPTIONS`` + an explicit
+// "Unassigned" that maps to ``null`` on the wire.  Non-tech rows
+// (admin, owner, office) render "—" instead of a dropdown; the
+// backend restricts ``admin`` to ``both | null`` anyway.
+const TECH_ROLES = new Set(["pool_tech", "landscape_tech", "technician"]);
+const DEPT_OPTIONS = [
+  { value: "",                label: "Unassigned" },
+  { value: "pool_tech",       label: "Pool tech" },
+  { value: "landscape_tech",  label: "Landscape tech" },
+  { value: "both",            label: "Both" },
+];
+
 export default function AdminUsersList() {
   const [rows, setRows] = useState(null);
   const [role, setRole] = useState("");
@@ -105,6 +119,32 @@ export default function AdminUsersList() {
     } catch (e) { toast.error(e?.message || "Activation update failed"); }
   };
 
+  // Feb-2026 · Multi-category tech assignment — optimistic inline
+  // department change per row.  Non-blocking: paint the new value
+  // immediately, revert + toast on API failure.  Empty string on
+  // the wire → ``null`` (unassigned).
+  const doDeptChange = async (row, nextValueRaw) => {
+    const nextDept = nextValueRaw === "" ? null : nextValueRaw;
+    const prevDept = row.department ?? null;
+    if (nextDept === prevDept) return;
+    setRows((prev) => (prev || []).map((r) =>
+      r.id === row.id ? { ...r, department: nextDept } : r,
+    ));
+    try {
+      await api.put(`/admin/users/${row.id}/department`, {
+        department: nextDept,
+      });
+      const label = DEPT_OPTIONS.find((o) => o.value === (nextDept || ""))?.label
+                    || (nextDept || "Unassigned");
+      toast.success(`${row.name || row.email || "User"} → ${label}`);
+    } catch (e) {
+      setRows((prev) => (prev || []).map((r) =>
+        r.id === row.id ? { ...r, department: prevDept } : r,
+      ));
+      toast.error(e?.message || "Department update failed");
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="admin-users-page">
       <div className="flex items-center justify-between mb-4">
@@ -172,13 +212,14 @@ export default function AdminUsersList() {
               <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Name</th>
               <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Email</th>
               <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Role</th>
+              <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Department</th>
               <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>Active</th>
               <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Comms</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && rows !== null ? (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-sm"
+              <tr><td colSpan={7} className="px-3 py-6 text-center text-sm"
                        style={{ color: colors.muted }} data-testid="admin-users-empty">
                 No users match this filter.
               </td></tr>
@@ -207,6 +248,27 @@ export default function AdminUsersList() {
                                   border: `1px solid ${colors.border}` }}>
                     {r.role || "—"}
                   </span>
+                </td>
+                <td className="px-3 py-3 text-xs">
+                  {TECH_ROLES.has((r.role || "").toLowerCase()) ? (
+                    <select
+                      value={r.department || ""}
+                      onChange={(e) => doDeptChange(r, e.target.value)}
+                      className="text-xs font-semibold px-2 py-1.5 rounded-lg"
+                      style={{ backgroundColor: colors.surfaceSecondary,
+                                color: colors.onSurfaceSecondary,
+                                border: `1px solid ${colors.border}` }}
+                      data-testid={`admin-user-dept-select-${r.id}`}
+                    >
+                      {DEPT_OPTIONS.map((o) => (
+                        <option key={o.value || "unassigned"} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span style={{ color: colors.muted }}>—</span>
+                  )}
                 </td>
                 <td className="px-3 py-3 hidden lg:table-cell text-xs" style={{ color: colors.muted }}>
                   {r.is_active !== false ? "Active" : "Inactive"}

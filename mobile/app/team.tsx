@@ -31,6 +31,19 @@ import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bul
 
 const TECH_ROLES = ["pool_tech", "landscape_tech", "technician"];
 
+// Feb-2026 · Multi-category tech assignment — options mirror the
+// web ``AdminUsersList`` inline dropdown.  Empty ``value`` maps to
+// ``null`` on the wire (unassigned).
+const DEPT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "",                label: "Unassigned" },
+  { value: "pool_tech",       label: "Pool tech" },
+  { value: "landscape_tech",  label: "Landscape tech" },
+  { value: "both",            label: "Both" },
+];
+const DEPT_LABEL: Record<string, string> = Object.fromEntries(
+  DEPT_OPTIONS.map((o) => [o.value || "null", o.label]),
+);
+
 export default function Team() {
   const { user } = useAuth();
   const [items, setItems] = useState<any[]>([]);
@@ -42,6 +55,10 @@ export default function Team() {
   const [resetTarget, setResetTarget] = useState<any>(null);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [actionTarget, setActionTarget] = useState<any>(null);
+  // Feb-2026 · Multi-category tech assignment — separate target so
+  // the dept-picker sheet can open independently from the action
+  // sheet without losing the row context on the parent tap.
+  const [deptTarget, setDeptTarget] = useState<any>(null);
 
   const myRole = (user?.role || "").toLowerCase();
   const isSuperAdmin = myRole === "super_admin";
@@ -81,6 +98,42 @@ export default function Team() {
 
   const canUndeleteRow = (row: any) => isSuperAdmin && !!row.deleted_at;
 
+  // Feb-2026 · Multi-category tech assignment — admins can edit
+  // dept for any non-deleted tech-role row (admin/owner/office
+  // stay unassigned or "both" only on the backend).
+  const canEditDeptRow = (row: any) => {
+    if (!isAdmin) return false;
+    if (row.deleted_at) return false;
+    return TECH_ROLES.includes((row.role || "").toLowerCase());
+  };
+
+  // Feb-2026 · Multi-category tech assignment — optimistic dept
+  // update, mirrors the web AdminUsersList.doDeptChange.  Empty
+  // ``nextDeptRaw`` maps to ``null`` on the wire.
+  const doDeptChange = async (row: any, nextDeptRaw: string) => {
+    const nextDept = nextDeptRaw === "" ? null : nextDeptRaw;
+    const prevDept = row.department ?? null;
+    if (nextDept === prevDept) { setDeptTarget(null); return; }
+    setItems((prev) => prev.map((r) =>
+      r.id === row.id ? { ...r, department: nextDept } : r,
+    ));
+    setDeptTarget(null);
+    try {
+      await api.put(`/admin/users/${row.id}/department`, {
+        department: nextDept,
+      });
+      Alert.alert(
+        "Department updated",
+        `${row.name || row.email} → ${DEPT_LABEL[nextDept || "null"] || "Unassigned"}`,
+      );
+    } catch (e: any) {
+      setItems((prev) => prev.map((r) =>
+        r.id === row.id ? { ...r, department: prevDept } : r,
+      ));
+      Alert.alert("Department update failed", e?.message || "Try again");
+    }
+  };
+
   const doUndelete = async (row: any) => {
     try {
       await api.post(`/users/${row.id}/undelete`, {});
@@ -97,7 +150,8 @@ export default function Team() {
     const cReset = canResetRow(item);
     const cDelete = canDeleteRow(item);
     const cUndelete = canUndeleteRow(item);
-    const anyKebab = cReset || cDelete || cUndelete;
+    const cEditDept = canEditDeptRow(item);
+    const anyKebab = cReset || cDelete || cUndelete || cEditDept;
     const role = (item.role || "unknown").toLowerCase();
     const isItemAdmin = role === "admin" || role === "super_admin";
 
@@ -132,6 +186,14 @@ export default function Team() {
             )}
           </View>
           <Text style={styles.sub}>{item.email}</Text>
+          {TECH_ROLES.includes((item.role || "").toLowerCase()) && (
+            <View style={styles.deptChip} testID={`team-row-dept-chip-${item.id}`}>
+              <Ionicons name="pricetag-outline" size={11} color={colors.muted} />
+              <Text style={styles.deptChipText}>
+                {DEPT_LABEL[item.department || "null"] || "Unassigned"}
+              </Text>
+            </View>
+          )}
         </View>
         <View style={styles.rolePill}>
           <Ionicons
@@ -192,10 +254,24 @@ export default function Team() {
         canReset={actionTarget ? canResetRow(actionTarget) : false}
         canDelete={actionTarget ? canDeleteRow(actionTarget) : false}
         canUndelete={actionTarget ? canUndeleteRow(actionTarget) : false}
+        canEditDept={actionTarget ? canEditDeptRow(actionTarget) : false}
+        currentDeptLabel={
+          actionTarget
+            ? (DEPT_LABEL[actionTarget.department || "null"] || "Unassigned")
+            : ""
+        }
         onClose={() => setActionTarget(null)}
         onReset={(t) => { setActionTarget(null); setResetTarget(t); }}
         onDelete={(t) => { setActionTarget(null); setDeleteTarget(t); }}
         onUndelete={(t) => { setActionTarget(null); doUndelete(t); }}
+        onEditDept={(t) => { setActionTarget(null); setDeptTarget(t); }}
+      />
+
+      {/* Feb-2026 · Multi-category tech assignment — dept picker */}
+      <DepartmentPickerModal
+        target={deptTarget}
+        onClose={() => setDeptTarget(null)}
+        onPick={(t, v) => doDeptChange(t, v)}
       />
 
       {/* Reset Password Modal */}
@@ -221,10 +297,13 @@ export default function Team() {
 
 /* ---------- Action Sheet Modal (kebab replacement) ---------- */
 function ActionSheetModal({
-  target, canReset, canDelete, canUndelete, onClose, onReset, onDelete, onUndelete,
+  target, canReset, canDelete, canUndelete, canEditDept, currentDeptLabel,
+  onClose, onReset, onDelete, onUndelete, onEditDept,
 }: {
   target: any; canReset: boolean; canDelete: boolean; canUndelete: boolean;
-  onClose: () => void; onReset: (t: any) => void; onDelete: (t: any) => void; onUndelete: (t: any) => void;
+  canEditDept: boolean; currentDeptLabel: string;
+  onClose: () => void; onReset: (t: any) => void; onDelete: (t: any) => void;
+  onUndelete: (t: any) => void; onEditDept: (t: any) => void;
 }) {
   if (!target) return null;
   return (
@@ -233,6 +312,19 @@ function ActionSheetModal({
         <View style={m.actionSheet} testID={`team-action-sheet-${target.id}`}>
           <View style={m.sheetHandle} />
           <Text style={m.sheetName}>{target.name || target.email}</Text>
+          {canEditDept && (
+            <Pressable
+              style={m.sheetItem}
+              onPress={() => onEditDept(target)}
+              testID={`team-row-edit-dept-btn-${target.id}`}
+            >
+              <Ionicons name="pricetag-outline" size={18} color={colors.onSurface} />
+              <View style={{ flex: 1 }}>
+                <Text style={m.sheetLabel}>Set department</Text>
+                <Text style={m.sheetSubLabel}>Current: {currentDeptLabel}</Text>
+              </View>
+            </Pressable>
+          )}
           {canReset && (
             <Pressable style={m.sheetItem} onPress={() => onReset(target)} testID={`team-row-reset-btn-${target.id}`}>
               <Ionicons name="key-outline" size={18} color={colors.onSurface} />
@@ -253,6 +345,65 @@ function ActionSheetModal({
           )}
           <Pressable style={[m.sheetItem, { marginTop: spacing.sm }]} onPress={onClose} testID="team-action-cancel">
             <Text style={[m.sheetLabel, { color: colors.muted, textAlign: "center", flex: 1 }]}>Cancel</Text>
+          </Pressable>
+        </View>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/* ---------- Department Picker Modal (Feb-2026 multi-category) ---------- */
+function DepartmentPickerModal({
+  target, onClose, onPick,
+}: {
+  target: any;
+  onClose: () => void;
+  onPick: (t: any, value: string) => void;
+}) {
+  if (!target) return null;
+  const current = target.department || "";
+  return (
+    <Modal visible={!!target} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={m.overlay} onPress={onClose}>
+        <View style={m.actionSheet} testID={`team-dept-picker-${target.id}`}>
+          <View style={m.sheetHandle} />
+          <Text style={m.sheetName}>Set department</Text>
+          <Text style={[m.sheetSubLabel, { textAlign: "center", marginBottom: spacing.md }]}>
+            {target.name || target.email}
+          </Text>
+          {DEPT_OPTIONS.map((o) => {
+            const isCurrent = current === o.value;
+            return (
+              <Pressable
+                key={o.value || "unassigned"}
+                style={m.sheetItem}
+                onPress={() => onPick(target, o.value)}
+                testID={`team-dept-picker-option-${o.value || "unassigned"}-${target.id}`}
+              >
+                <Ionicons
+                  name={isCurrent ? "checkmark-circle" : "ellipse-outline"}
+                  size={18}
+                  color={isCurrent ? colors.brand : colors.muted}
+                />
+                <Text
+                  style={[
+                    m.sheetLabel,
+                    isCurrent && { color: colors.brand, fontFamily: font.bold },
+                  ]}
+                >
+                  {o.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+          <Pressable
+            style={[m.sheetItem, { marginTop: spacing.sm }]}
+            onPress={onClose}
+            testID="team-dept-picker-cancel"
+          >
+            <Text style={[m.sheetLabel, { color: colors.muted, textAlign: "center", flex: 1 }]}>
+              Cancel
+            </Text>
           </Pressable>
         </View>
       </Pressable>
@@ -471,6 +622,20 @@ const styles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 18,
     alignItems: "center", justifyContent: "center",
   },
+  // Feb-2026 · Multi-category tech assignment — compact department
+  // chip under the email on each tech row, so admins can see the
+  // current setting at a glance without opening the action sheet.
+  deptChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    marginTop: 4, alignSelf: "flex-start",
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingHorizontal: 8, paddingVertical: 2,
+  },
+  deptChipText: {
+    fontFamily: font.semibold, fontSize: 11, color: colors.onSurfaceSecondary,
+  },
   toggleBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
@@ -501,6 +666,9 @@ const m = StyleSheet.create({
     paddingVertical: 14, borderTopWidth: 1, borderTopColor: colors.border,
   },
   sheetLabel: { fontFamily: font.medium, fontSize: fontSize.base, color: colors.onSurface },
+  sheetSubLabel: {
+    fontFamily: font.regular, fontSize: fontSize.xs, color: colors.muted, marginTop: 2,
+  },
   overlayCenter: {
     justifyContent: "center", paddingHorizontal: spacing.lg,
   },
