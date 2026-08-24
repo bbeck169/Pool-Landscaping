@@ -10,6 +10,16 @@ import os
 import logging
 
 from config import client, db, logger
+# Feb-2026 · D2 production boot hardening — three env-gated flags
+# that let a production web worker skip demo seeds, boot-time index
+# creation, and APScheduler registration.  Defaults are ON in dev /
+# preview and OFF in production (see ``backend/boot_flags.py``).
+from boot_flags import (
+    should_seed_demo_data as _should_seed_demo_data,
+    should_run_startup_indexes as _should_run_startup_indexes,
+    should_enable_scheduler as _should_enable_scheduler,
+    snapshot as _boot_flags_snapshot,
+)
 from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_landscape_tech_carlos, seed_pool_tech_mike, auto_heal_demo_passwords_if_needed, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job, align_demo_tech_departments, seed_manager_user
 from routers import (
     notifications as notifications_router,
@@ -783,6 +793,21 @@ app.add_middleware(_WidgetCorsMiddleware)
 scheduler = AsyncIOScheduler(timezone="UTC")
 
 
+# Feb-2026 · D2 — read the three boot-hardening flags ONCE at
+# import so every guard site references a stable module-level
+# constant.  The flag helpers themselves stay env-aware for tests.
+_SEED_DEMO_DATA: bool = _should_seed_demo_data()
+_RUN_STARTUP_INDEXES: bool = _should_run_startup_indexes()
+_ENABLE_SCHEDULER: bool = _should_enable_scheduler()
+
+# Feb-2026 · D2 — log the boot-hardening flag snapshot ONCE at
+# module import so ops can grep the boot log to confirm posture.
+try:
+    logger.info(f"[boot_flags] snapshot={_boot_flags_snapshot()}")
+except Exception:  # pragma: no cover — defensive; never block boot
+    pass
+
+
 # ── Cold-start optimization ───────────────────────────────────────────
 # Only the demo-admin `seed()` + a Mongo ping stay on the sync boot path
 # so that /api/auth/login is answerable within ~1s of process start.
@@ -813,7 +838,8 @@ async def _background_seed():
         except Exception as e:
             logger.warning(f"seed step {name} skipped: {e}")
 
-    await step("seed_extras", seed_extras())
+    if _SEED_DEMO_DATA:
+        await step("seed_extras", seed_extras())
     # Backfill income category — kept as a raw update, not a helper.
     try:
         SEEDS_PHASE = "income_category_backfill"
@@ -833,7 +859,10 @@ async def _background_seed():
     await step("marketing_templates", marketing_studio._seed_templates())
     await step("sequences", sequences.ensure_sequences_seeded())
     await step("ai_employees", ai_ops.ensure_ai_employees_seeded())
-    await step("onboarding_demo", onboarding._seed_completed_for_demo())
+    # ``onboarding_demo`` is demo-only — flips the aquaterra demo
+    # tenant's onboarding checklist to "completed".  Skip in prod.
+    if _SEED_DEMO_DATA:
+        await step("onboarding_demo", onboarding._seed_completed_for_demo())
     await step("lead_request_form", lead_requests._seed_lead_request_form())
     await step("tenant_backfill", tenants.run_tenant_backfill())
     await step("super_admin", tenants._seed_super_admin())
@@ -954,21 +983,30 @@ async def _background_seed():
 
     # Feb-2026 · Phase 26 — MCP OAuth 2.1 client indexes (Supercool).
     # Creates the state TTL index + unique connection/tool_catalog keys.
+    # Feb-2026 · D2 — skipped in prod.
     try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
         from services import mcp_oauth_client as _mcp
         await _mcp.ensure_indexes()
     except Exception as e:
         logger.warning(f"mcp_oauth ensure_indexes crashed: {e}")
 
     # Feb-2026 · Phase B — image generation indexes.
+    # Feb-2026 · D2 — skipped in prod.
     try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
         from routers import media_gen as _phaseb_media
         await _phaseb_media.ensure_indexes()
     except Exception as e:
         logger.warning(f"media_gen ensure_indexes crashed: {e}")
 
     # Feb-2026 · 24h post-completion edit-window audit indexes.
+    # Feb-2026 · D2 — skipped in prod.
     try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
         await db.job_edits.create_index([
             ("tenant_id", 1), ("job_id", 1), ("edited_at", -1),
         ], name="job_edits_by_job")
@@ -995,24 +1033,34 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"brian integrations transfer crashed: {e}")
 
-    await step("landscaping_user", seed_landscaping_user())
-    await step("landscape_tech_carlos", seed_landscape_tech_carlos())
-    # Phase 41.1b · Feb 2026 — idempotent backfill of mike@aquaterra.com
-    # (pool tech). Historically he lived only inside the one-shot
-    # ``seed()`` bulk seed, which early-returns when users exist —
-    # any deployment where another user was created first never got
-    # Mike, leaving `test_ai_employees_ae1.py` + `test_phase50.py`
-    # with a 401-on-login fixture failure. Now backfilled on every boot.
-    await step("pool_tech_mike", seed_pool_tech_mike())
-    # Phase 5A follow-up · Feb 2026 — realign Mike (pool) / Carlos
-    # (landscape) + seed the manager role-gate test account. Both are
-    # idempotent and safe to run on every boot.
-    await step("align_demo_tech_departments", align_demo_tech_departments())
-    await step("seed_manager_user", seed_manager_user())
-    # Phase 53c · Feb-2026 — heal any drift where the demo manager
-    # got promoted to admin by an unrelated migration. Idempotent.
-    from seed import seed_demo_manager as _seed_demo_manager
-    await step("seed_demo_manager", _seed_demo_manager())
+    # Feb-2026 · D2 — the following demo tech users + demo-only
+    # data seeds skip in production (APP_ENV=production or
+    # SEED_DEMO_DATA=false).  Each ``seed_*_user`` also individually
+    # gates on SEED_DEMO_USERS=1 inside seed.py; the outer
+    # SEED_DEMO_DATA guard here is the belt-and-braces defense for
+    # a prod pod that gets misconfigured.
+    if _SEED_DEMO_DATA:
+        await step("landscaping_user", seed_landscaping_user())
+        await step("landscape_tech_carlos", seed_landscape_tech_carlos())
+        # Phase 41.1b · Feb 2026 — idempotent backfill of mike@aquaterra.com
+        # (pool tech). Historically he lived only inside the one-shot
+        # ``seed()`` bulk seed, which early-returns when users exist —
+        # any deployment where another user was created first never got
+        # Mike, leaving `test_ai_employees_ae1.py` + `test_phase50.py`
+        # with a 401-on-login fixture failure. Now backfilled on every boot.
+        await step("pool_tech_mike", seed_pool_tech_mike())
+        # Phase 5A follow-up · Feb 2026 — realign Mike (pool) / Carlos
+        # (landscape) + seed the manager role-gate test account. Both are
+        # idempotent and safe to run on every boot.
+        await step("align_demo_tech_departments", align_demo_tech_departments())
+        await step("seed_manager_user", seed_manager_user())
+        # Phase 53c · Feb-2026 — heal any drift where the demo manager
+        # got promoted to admin by an unrelated migration. Idempotent.
+        from seed import seed_demo_manager as _seed_demo_manager
+        await step("seed_demo_manager", _seed_demo_manager())
+    # ``auto_heal_demo_passwords`` already self-gates on APP_ENV=production
+    # inside seed.py — left unconditional here so the log line still
+    # prints (helps ops confirm the safe-in-prod posture).
     await step("auto_heal_demo_passwords", auto_heal_demo_passwords_if_needed())
     try:
         from comms_seed.seed_comms import seed_comms as _seed_comms
@@ -1025,21 +1073,34 @@ async def _background_seed():
         await step("reviews_phase1_seed", _seed_reviews())
     except Exception as _e:
         logger.warning(f"seed_reviews failed: {_e}")
-    await step("business_os", business_os.seed_business_os())
-    await step("tech_today_demo", seed_tech_today_demo())
-    await step("prior_readings", seed_prior_readings())
-    await step("phase51k_finance", seed_phase51k_finance())
-    await step("mike_today_job", seed_mike_today_job())
-    await step("chemical_costs", chemical_costs.seed_chemical_costs())
-    # Phase 18 · Feb-2026 — Auto-seed the 8 core pool chemicals into
-    # every tenant's inventory_items. Idempotent by ``sku=P18-<slug>``;
-    # existing rows keep their tuned reorder_point (per user decision).
-    try:
-        from services.inventory_alerts import seed_chemicals_all_tenants
-        await step("inventory_alerts_seed", seed_chemicals_all_tenants())
-    except Exception as _e:  # noqa: BLE001
-        logger.warning(f"inventory_alerts seed skipped: {_e}")
+    # Feb-2026 · D2 — the following are demo/sample data.  Skip in prod.
+    if _SEED_DEMO_DATA:
+        await step("business_os", business_os.seed_business_os())
+        await step("tech_today_demo", seed_tech_today_demo())
+        await step("prior_readings", seed_prior_readings())
+        await step("phase51k_finance", seed_phase51k_finance())
+        await step("mike_today_job", seed_mike_today_job())
+        # Feb-2026 · D2 — AMBIGUOUS.  ``chemical_costs`` +
+        # ``inventory_alerts_seed`` + ``pricebook_suppliers`` seed
+        # per-tenant rows that could either be reference data (real
+        # tenants would want them) or demo-only.  Per the user's
+        # instruction we default to gating them off in prod so a
+        # fresh production tenant does not get demo pool chemicals
+        # / suppliers.  Revisit if a production tenant needs the
+        # reference catalogue — most likely we'd promote these to
+        # unconditional migrations at that point.
+        await step("chemical_costs", chemical_costs.seed_chemical_costs())
+        # Phase 18 · Feb-2026 — Auto-seed the 8 core pool chemicals into
+        # every tenant's inventory_items. Idempotent by ``sku=P18-<slug>``;
+        # existing rows keep their tuned reorder_point (per user decision).
+        try:
+            from services.inventory_alerts import seed_chemicals_all_tenants
+            await step("inventory_alerts_seed", seed_chemicals_all_tenants())
+        except Exception as _e:  # noqa: BLE001
+            logger.warning(f"inventory_alerts seed skipped: {_e}")
     # Directories subsystem · Phase D1 (Feb 2026) — global catalogue.
+    # Unconditional: this is reference data (the master list of
+    # third-party AI directories) that real production tenants use.
     try:
         from services.directory_seed import ensure_seeded as _dir_seed
         await step("directory_catalogue", _dir_seed())
@@ -1049,17 +1110,33 @@ async def _background_seed():
     # Phase 56-a · Aug-2026 — Pricebook Suppliers per-tenant seed.
     # Idempotent: inserts the 13 default rows only if tenant has zero
     # docs. Respects user-side deletes (no re-seed once populated).
-    try:
-        from services.pricebook_suppliers_seed import (
-            seed_all_tenants as _seed_pb_suppliers,
-        )
-        await step("pricebook_suppliers", _seed_pb_suppliers())
-    except Exception as _e:                                       # noqa: BLE001
-        logger.warning(f"pricebook_suppliers seed skipped: {_e}")
+    # Feb-2026 · D2 — AMBIGUOUS (see chemical_costs note above).
+    # Gated off in prod as a safety default.
+    if _SEED_DEMO_DATA:
+        try:
+            from services.pricebook_suppliers_seed import (
+                seed_all_tenants as _seed_pb_suppliers,
+            )
+            await step("pricebook_suppliers", _seed_pb_suppliers())
+        except Exception as _e:                                       # noqa: BLE001
+            logger.warning(f"pricebook_suppliers seed skipped: {_e}")
 
     # Scheduler registration (needs the DB but not auth).
     try:
         SEEDS_PHASE = "scheduler"
+        # Feb-2026 · D2 — gate the entire APScheduler registration +
+        # ``.start()`` behind ``ENABLE_SCHEDULER``.  Raising here
+        # short-circuits into the same ``except`` handler below, which
+        # logs at WARN and moves on.  In production a dedicated
+        # worker process runs ``python -m scripts.run_scheduler``
+        # (which sets ``ENABLE_SCHEDULER=true`` for its own env)
+        # while web workers keep the flag off so they don't compete
+        # on job execution.
+        if not _ENABLE_SCHEDULER:
+            raise RuntimeError(
+                "scheduler disabled by ENABLE_SCHEDULER=false — "
+                "run scripts.run_scheduler in a dedicated process"
+            )
         scheduler.add_job(seo.run_due_publishes, "interval", minutes=10,
                             id="seo_drip", replace_existing=True)
         scheduler.add_job(finances.run_monthly_chem_billing, "interval",
@@ -1574,24 +1651,33 @@ async def startup():
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.
+    # Feb-2026 · D2 — skipped in prod (RUN_STARTUP_INDEXES=false);
+    # ops runs ``python -m scripts.ensure_indexes`` instead.
     try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
         from scripts.create_session_indexes import ensure_on_boot as _idx_boot
         await _idx_boot()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[Phase13-W2] session index create failed: {e}")
     # Phase 51a · Feb 2026 — Walkie-Talkie indexes + tenant bootstrap.
+    # Feb-2026 · D2 — the ``_walkie_ensure_indexes`` +
+    # ``ensure_live_session_indexes`` sub-calls are skipped in prod
+    # (RUN_STARTUP_INDEXES=false); the tenant channel bootstrap
+    # below runs unconditionally because it's not an index.
     try:
         from services.walkie.channels import (
             ensure_indexes as _walkie_ensure_indexes,
             bootstrap_standard_channels as _walkie_bootstrap,
         )
-        await _walkie_ensure_indexes(db)
-        # Phase 52.1a · Feb-2026 — live-session indexes.
-        try:
-            from routers.walkie_signaling import ensure_live_session_indexes as _live_indexes
-            await _live_indexes()
-        except Exception as _live_idx_exc:  # pragma: no cover
-            logger.warning(f"[Phase52.1a] live-session index bootstrap: {_live_idx_exc}")
+        if _RUN_STARTUP_INDEXES:
+            await _walkie_ensure_indexes(db)
+            # Phase 52.1a · Feb-2026 — live-session indexes.
+            try:
+                from routers.walkie_signaling import ensure_live_session_indexes as _live_indexes
+                await _live_indexes()
+            except Exception as _live_idx_exc:  # pragma: no cover
+                logger.warning(f"[Phase52.1a] live-session index bootstrap: {_live_idx_exc}")
         # Bootstrap the standard channels for every existing tenant.
         tenants = await db.tenants.find({}, {"_id": 0, "id": 1}).to_list(length=None)
         for t in tenants:
@@ -1609,7 +1695,11 @@ async def startup():
     # could still be live on a freshly-deployed pod until the first
     # recurring-jobs call. Idempotent: no-op when the partial index
     # is already present.
+    # Feb-2026 · D2 — skipped in prod (RUN_STARTUP_INDEXES=false);
+    # the lazy-fire from /recurring-jobs/* still closes the gap.
     try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
         from routers.recurring_jobs import _ensure_indexes as _rj_ensure_indexes
         await _rj_ensure_indexes()
         idx_info = await db.jobs.index_information()
@@ -1666,14 +1756,21 @@ async def startup():
     SEEDS_STARTED_AT = datetime.now(_tz.utc).isoformat()
     # Deployment audit (Phase 58.a) — ensure the deploy-blocker indexes
     # documented in db_indexes.py exist. Idempotent.
+    # Feb-2026 · D2 — skipped in prod (RUN_STARTUP_INDEXES=false);
+    # ops runs ``python -m scripts.ensure_indexes`` instead.
     try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
         from db_indexes import ensure_deployment_indexes
         await ensure_deployment_indexes()
     except Exception as e:
         logger.warning(f"ensure_deployment_indexes crashed: {e}")
 
     # MR0 · Feb-2026 — Public check-in moderation queue indexes.
+    # Feb-2026 · D2 — skipped in prod.
     try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
         from routers.public_checkins import ensure_public_checkins_indexes
         await ensure_public_checkins_indexes()
     except Exception as e:
@@ -1692,7 +1789,13 @@ async def startup():
     # + kick off a fire-and-forget geocode backfill so /dispatch has
     # pins to render on first admin visit. The backfill sleeps between
     # calls so it never bursts through Google's per-second quota.
+    # Feb-2026 · D2 — the create_index is skipped in prod
+    # (RUN_STARTUP_INDEXES=false); ops runs scripts.ensure_indexes
+    # instead. The geocode backfill kick-off below remains
+    # unconditional — it's a data migration, not an index.
     try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
         from pymongo import GEOSPHERE
         await db.customers.create_index(
             [("service_location", GEOSPHERE)],
@@ -1827,6 +1930,16 @@ async def startup():
             await _qb_migrate()
         except Exception as _qb_exc:
             logger.warning(f"[startup] qb-cleanup migration failed: {_qb_exc}")
+    except Exception as e:
+        logger.warning(f"[phase6] rc boot banner/migration crashed: {e}")
+
+    # Feb-2026 · D2 — split off the inline call_logs / voicemails /
+    # rc_subscriptions indexes so they can be gated independently
+    # of the banner + qb migration.  Skipped in prod (ops runs
+    # scripts.ensure_indexes).
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
         from pymongo import ASCENDING as _A, DESCENDING as _D
         await db.call_logs.create_index(
             [("tenant_id", _A), ("session_id", _A)],
@@ -1847,7 +1960,7 @@ async def startup():
             unique=True, name="uniq_rc_sub",
         )
     except Exception as e:
-        logger.warning(f"[phase6] rc boot init crashed: {e}")
+        logger.warning(f"[phase6] rc index create crashed: {e}")
 
     # Phase 56.3.A — idempotent one-shot: back-fill first_name / last_name
     # on any legacy customer doc that only has the combined `name` field.
