@@ -44,6 +44,16 @@ const DEPT_LABEL: Record<string, string> = Object.fromEntries(
   DEPT_OPTIONS.map((o) => [o.value || "null", o.label]),
 );
 
+// Feb-2026 · Multi-category tech assignment P1 follow-up — same
+// legacy→modern map as ``backend/migrations/normalize_user_department_tokens.py``.
+// Used ONLY by the chip fallback / one-tap Normalize on rows whose
+// stored value pre-dates the migration.
+const LEGACY_DEPT_MAP: Record<string, string> = {
+  pool:        "pool_tech",
+  landscape:   "landscape_tech",
+  landscaping: "landscape_tech",
+};
+
 export default function Team() {
   const { user } = useAuth();
   const [items, setItems] = useState<any[]>([]);
@@ -186,14 +196,37 @@ export default function Team() {
             )}
           </View>
           <Text style={styles.sub}>{item.email}</Text>
-          {TECH_ROLES.includes((item.role || "").toLowerCase()) && (
-            <View style={styles.deptChip} testID={`team-row-dept-chip-${item.id}`}>
-              <Ionicons name="pricetag-outline" size={11} color={colors.muted} />
-              <Text style={styles.deptChipText}>
-                {DEPT_LABEL[item.department || "null"] || "Unassigned"}
-              </Text>
-            </View>
-          )}
+          {TECH_ROLES.includes((item.role || "").toLowerCase()) && (() => {
+            const cur = (item.department || "").toString();
+            const isKnown = cur === "" || DEPT_OPTIONS.some((o) => o.value === cur);
+            const legacyTarget = LEGACY_DEPT_MAP[cur.toLowerCase()] || null;
+            if (!isKnown && legacyTarget) {
+              // Legacy stored value — surface it AND make the pill a
+              // one-tap Normalize (admin only; techs see the badge
+              // read-only via canEditDeptRow gate below).
+              return (
+                <Pressable
+                  onPress={() => canEditDeptRow(item) && doDeptChange(item, legacyTarget)}
+                  testID={`team-row-dept-legacy-${item.id}`}
+                >
+                  <View style={styles.deptChipLegacy}>
+                    <Ionicons name="alert-circle-outline" size={11} color="#92400E" />
+                    <Text style={styles.deptChipLegacyText}>
+                      Legacy: {cur}{canEditDeptRow(item) ? "  · tap to fix" : ""}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            }
+            return (
+              <View style={styles.deptChip} testID={`team-row-dept-chip-${item.id}`}>
+                <Ionicons name="pricetag-outline" size={11} color={colors.muted} />
+                <Text style={styles.deptChipText}>
+                  {DEPT_LABEL[cur || "null"] || "Unassigned"}
+                </Text>
+              </View>
+            );
+          })()}
         </View>
         <View style={styles.rolePill}>
           <Ionicons
@@ -635,6 +668,17 @@ const styles = StyleSheet.create({
   },
   deptChipText: {
     fontFamily: font.semibold, fontSize: 11, color: colors.onSurfaceSecondary,
+  },
+  deptChipLegacy: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    marginTop: 4, alignSelf: "flex-start",
+    backgroundColor: "#FEF3C7",  // amber-100 — matches the web warningBg default
+    borderWidth: 1, borderColor: "#F59E0B",
+    borderRadius: radius.pill,
+    paddingHorizontal: 8, paddingVertical: 2,
+  },
+  deptChipLegacyText: {
+    fontFamily: font.semibold, fontSize: 11, color: "#92400E",
   },
   toggleBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",

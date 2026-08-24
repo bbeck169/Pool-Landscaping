@@ -250,23 +250,61 @@ export default function AdminUsersList() {
                   </span>
                 </td>
                 <td className="px-3 py-3 text-xs">
-                  {TECH_ROLES.has((r.role || "").toLowerCase()) ? (
-                    <select
-                      value={r.department || ""}
-                      onChange={(e) => doDeptChange(r, e.target.value)}
-                      className="text-xs font-semibold px-2 py-1.5 rounded-lg"
-                      style={{ backgroundColor: colors.surfaceSecondary,
-                                color: colors.onSurfaceSecondary,
-                                border: `1px solid ${colors.border}` }}
-                      data-testid={`admin-user-dept-select-${r.id}`}
-                    >
-                      {DEPT_OPTIONS.map((o) => (
-                        <option key={o.value || "unassigned"} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
+                  {TECH_ROLES.has((r.role || "").toLowerCase()) ? (() => {
+                    const cur = r.department || "";
+                    const isKnown = cur === "" || DEPT_OPTIONS.some((o) => o.value === cur);
+                    if (!isKnown) {
+                      // Feb-2026 · Multi-category tech assignment P1
+                      // follow-up — a row can carry a legacy stored
+                      // value (``"pool"`` / ``"landscaping"``) if the
+                      // normalize_user_department_tokens migration
+                      // hasn't run on this env yet.  Surface it
+                      // explicitly + offer a one-click Normalize so
+                      // the admin isn't stuck on a blank select.
+                      const mapped = ({ pool: "pool_tech", landscape: "landscape_tech",
+                                          landscaping: "landscape_tech" }[cur.toLowerCase()])
+                                     || null;
+                      return (
+                        <div className="flex items-center gap-1.5"
+                              data-testid={`admin-user-dept-legacy-${r.id}`}>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[10px]"
+                                 style={{ backgroundColor: colors.warningBg || "#FEF3C7",
+                                           color: colors.warningText || "#92400E",
+                                           border: `1px solid ${colors.border}` }}>
+                            Legacy: {cur}
+                          </span>
+                          {mapped && (
+                            <button
+                              type="button"
+                              className="text-xs font-semibold underline"
+                              style={{ color: colors.brand || colors.primary }}
+                              onClick={() => doDeptChange(r, mapped)}
+                              data-testid={`admin-user-dept-normalize-${r.id}`}
+                            >
+                              Normalize
+                            </button>
+                          )}
+                        </div>
+                      );
+                    }
+                    return (
+                      <select
+                        value={cur}
+                        onChange={(e) => doDeptChange(r, e.target.value)}
+                        className="text-xs font-semibold px-2 py-1.5 rounded-lg"
+                        style={{ backgroundColor: colors.surfaceSecondary,
+                                  color: colors.onSurfaceSecondary,
+                                  border: `1px solid ${colors.border}` }}
+                        data-testid={`admin-user-dept-select-${r.id}`}
+                      >
+                        {DEPT_OPTIONS.map((o) => (
+                          <option key={o.value || "unassigned"} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    );
+                  })() : (
                     <span style={{ color: colors.muted }}>—</span>
                   )}
                 </td>

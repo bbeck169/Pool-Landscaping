@@ -867,6 +867,23 @@ async def _background_seed():
     await step("tenant_backfill", tenants.run_tenant_backfill())
     await step("super_admin", tenants._seed_super_admin())
 
+    # Feb-2026 · Multi-category tech assignment · P1 follow-up —
+    # normalize legacy ``users.department`` tokens (``"pool"`` /
+    # ``"landscaping"``) into the modern enum accepted by
+    # ``PUT /admin/users/{uid}/department``.  Idempotent — second
+    # run reports 0 updates.  MUST run BEFORE
+    # ``align_demo_tech_departments`` so the demo alignment sees
+    # already-modern values.  Unconditional (not gated by
+    # ``SEED_DEMO_DATA``) because this is a one-shot production
+    # upgrade, not demo data.
+    try:
+        from migrations.normalize_user_department_tokens import (
+            run as _normalize_dept_run,
+        )
+        await step("normalize_user_departments", _normalize_dept_run())
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"normalize_user_departments skipped: {e}")
+
     # Feb-2026 · Slice GH0 post-fix — mirror the sync-boot dev-domain
     # seed after ``tenant_backfill`` so a fresh cold boot (where the
     # aquaterra tenant didn't exist yet at sync-startup) still gets

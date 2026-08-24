@@ -198,4 +198,38 @@ describe("AdminUsersList · inline department dropdown", () => {
       ),
     );
   });
+
+  it("renders a Legacy pill + Normalize button when the stored value is legacy", async () => {
+    // Row carrying the legacy ``"pool"`` token — the case that
+    // fails today's ``PUT`` regex.  The safety-net UI must surface
+    // it explicitly and offer a one-click Normalize that PUTs the
+    // mapped modern value.
+    apiGetMock.mockResolvedValueOnce([
+      { id: "u-legacy-pool", name: "Mike Legacy", email: "ml@a.com",
+        role: "technician", department: "pool" },
+      { id: "u-legacy-land", name: "Luis Legacy", email: "ll@a.com",
+        role: "pool_tech",  department: "landscaping" },
+    ]);
+    apiPutMock.mockResolvedValueOnce({ ok: true });
+    render(<MemoryRouter><AdminUsersList /></MemoryRouter>);
+
+    const legacyBadge = await screen.findByTestId(
+      "admin-user-dept-legacy-u-legacy-pool",
+    );
+    expect(legacyBadge.textContent).toMatch(/Legacy: pool/);
+    // No select rendered for the legacy row.
+    expect(screen.queryByTestId("admin-user-dept-select-u-legacy-pool"))
+      .toBeNull();
+
+    // Normalize button PUTs the mapped modern value.
+    fireEvent.click(screen.getByTestId(
+      "admin-user-dept-normalize-u-legacy-pool",
+    ));
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith(
+        "/admin/users/u-legacy-pool/department",
+        { department: "pool_tech" },
+      ),
+    );
+  });
 });

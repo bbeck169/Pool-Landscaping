@@ -163,4 +163,29 @@ describe("mobile /team · inline department picker", () => {
       expect.stringMatching(/boom/),
     );
   });
+
+  it("renders a Legacy pill and one-tap normalizes when admin", async () => {
+    // Legacy stored value that pre-dates the migration.  Admin
+    // taps the pill → PUTs the mapped modern value.
+    mockGet.mockResolvedValueOnce([
+      { id: "u-legacy", name: "Mike Legacy", email: "ml@a.com",
+        role: "technician", department: "pool" },
+    ]);
+    mockPut.mockResolvedValueOnce({ ok: true });
+    const { getByTestId, findByTestId } = render(<Team />);
+    const legacyBadge = await findByTestId("team-row-dept-legacy-u-legacy");
+    // The badge surfaces the legacy value + the "tap to fix" affordance.
+    // ``findAllByText`` isn't needed — the composite Text has the exact string.
+    expect(legacyBadge).toBeTruthy();
+    // No normal chip rendered for the legacy row (would be a
+    // separate testID).
+    // Tap → PUT with the mapped modern value.
+    fireEvent.press(legacyBadge);
+    await waitFor(() =>
+      expect(mockPut).toHaveBeenCalledWith(
+        "/admin/users/u-legacy/department",
+        { department: "pool_tech" },
+      ),
+    );
+  });
 });

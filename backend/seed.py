@@ -99,8 +99,12 @@ async def seed_landscaping_user():
     tenant_id = tenant["id"] if tenant else None
     if existing:
         upd = {}
-        if (existing.get("department") or "").lower() != "landscaping":
-            upd["department"] = "landscaping"
+        # Feb-2026 · Multi-category tech assignment — accept
+        # ``landscape_tech`` OR the legacy ``"landscaping"`` on read,
+        # but always WRITE the modern enum so the row survives the
+        # ``PUT /admin/users/{uid}/department`` regex.
+        if (existing.get("department") or "").lower() not in ("landscape_tech", "landscaping"):
+            upd["department"] = "landscape_tech"
         if existing.get("role") not in ("technician", "landscaping_technician"):
             upd["role"] = "technician"
         if tenant_id and existing.get("tenant_id") != tenant_id:
@@ -123,7 +127,7 @@ async def seed_landscaping_user():
         "email": email,
         "password_hash": hash_password("password123"),
         "role": "technician",
-        "department": "landscaping",
+        "department": "landscape_tech",
         "avatar": "",
         "technician_id": tech_id,
         "active": True,
@@ -154,8 +158,10 @@ async def seed_landscape_tech_carlos():
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         upd = {}
-        if (existing.get("department") or "").lower() != "landscaping":
-            upd["department"] = "landscaping"
+        # Feb-2026 · Multi-category tech assignment — see landscaper
+        # helper above; accept legacy on read, always WRITE modern.
+        if (existing.get("department") or "").lower() not in ("landscape_tech", "landscaping"):
+            upd["department"] = "landscape_tech"
         if existing.get("role") != "technician":
             upd["role"] = "technician"
         if tenant_id and existing.get("tenant_id") != tenant_id:
@@ -178,7 +184,7 @@ async def seed_landscape_tech_carlos():
         "email": email,
         "password_hash": hash_password("password123"),
         "role": "technician",
-        "department": "landscaping",
+        "department": "landscape_tech",
         "avatar": "",
         "technician_id": tech_id,
         "active": True,
@@ -229,8 +235,12 @@ async def seed_pool_tech_mike():
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         upd = {}
-        if (existing.get("department") or "").lower() != "pool":
-            upd["department"] = "pool"
+        # Feb-2026 · Multi-category tech assignment — accept
+        # ``pool_tech`` OR the legacy ``"pool"`` on read, but always
+        # WRITE the modern enum so the row survives the
+        # ``PUT /admin/users/{uid}/department`` regex.
+        if (existing.get("department") or "").lower() not in ("pool_tech", "pool"):
+            upd["department"] = "pool_tech"
         if existing.get("role") != "technician":
             upd["role"] = "technician"
         if tenant_id and existing.get("tenant_id") != tenant_id:
@@ -258,7 +268,7 @@ async def seed_pool_tech_mike():
         "id": tech_id, "name": "Mike Rivera", "email": email,
         "phone": "480-555-0142", "specialty": "Pool Maintenance",
         "avatar": av, "active": True, "created_at": now_iso(),
-        "department": "pool",
+        "department": "pool_tech",
         **({"tenant_id": tenant_id} if tenant_id else {}),
     })
     await db.users.insert_one({
@@ -267,7 +277,7 @@ async def seed_pool_tech_mike():
         "email": email,
         "password_hash": hash_password("password123"),
         "role": "technician",
-        "department": "pool",
+        "department": "pool_tech",
         "avatar": av,
         "technician_id": tech_id,
         "active": True,
@@ -275,18 +285,27 @@ async def seed_pool_tech_mike():
         **({"tenant_id": tenant_id} if tenant_id else {}),
     })
     from config import logger as _lg
-    _lg.info("[phase41.1b] seeded mike@aquaterra.com (role=technician, department=pool)")
+    _lg.info("[phase41.1b] seeded mike@aquaterra.com (role=technician, department=pool_tech)")
     return {"created": True, "email": email}
 
 
 async def align_demo_tech_departments():
-    """Idempotent. Ensures ``mike@aquaterra.com`` sits in the ``pool``
-    department and ``carlos@aquaterra.com`` sits in ``landscaping``.
-    No-ops for any other user; safe to call on every boot."""
+    """Idempotent. Ensures ``mike@aquaterra.com`` sits in the
+    ``pool_tech`` department and ``carlos@aquaterra.com`` sits in
+    ``landscape_tech``. No-ops for any other user; safe to call on
+    every boot.
+
+    Feb-2026 · Multi-category tech assignment follow-up — the two
+    target values used to be the legacy tokens ``"pool"`` /
+    ``"landscaping"``, which the new
+    ``PUT /admin/users/{uid}/department`` enum regex rejects.
+    Modernized alongside the ``normalize_user_department_tokens``
+    migration so the two align on every boot.
+    """
     from config import logger as _lg
     fixes = 0
-    _MIKE_DEPT = "pool"
-    _CARLOS_DEPT = "landscaping"
+    _MIKE_DEPT = "pool_tech"
+    _CARLOS_DEPT = "landscape_tech"
 
     async def _fix(email: str, want: str):
         nonlocal fixes
@@ -849,7 +868,9 @@ async def seed_phase51k_finance():
     ):
         dept = (u.get("department") or "").lower()
         role = u.get("role")
-        if dept == "landscaping":
+        # Feb-2026 · Multi-category tech assignment — accept both the
+        # legacy ``"landscaping"`` and modern ``"landscape_tech"``.
+        if dept in ("landscaping", "landscape_tech"):
             rate = 3000
         elif role == "technician":
             rate = 2500
