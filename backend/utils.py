@@ -56,9 +56,32 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
+def assert_account_can_authenticate(user: dict) -> None:
+    """Single gate every token-issuing path must pass.
+
+    ``get_current_user`` hard-401s a soft-deleted (``deleted_at``) or
+    deactivated (``active is False``) user on the very next request. If a
+    login path is allowed to mint a token for such a user the client gets
+    ``200 + access_token`` and is then 401'd on every subsequent call --
+    and any client that logs out on 401 (the mobile app does, via
+    ``registerLogoutOn401``) is thrown into an infinite login loop:
+    sign in succeeds, the session is wiped a moment later, back to the
+    login screen. Reject at issue time using the exact same predicates
+    ``get_current_user`` enforces so the two can never drift apart again.
+    """
+    if user.get("deleted_at"):
+        raise HTTPException(
+            status_code=401,
+            detail="This account has been removed. Contact your administrator.",
+        )
+    if user.get("active") is False:
+        raise HTTPException(status_code=403, detail="Account is deactivated")
+
+
 def create_token(user: dict, impersonator_id: str = None) -> str:
     # Impersonation tokens carry an `act` (actor) claim (RFC 8693) identifying the
     # admin behind the session and use a shorter expiry.
+    assert_account_can_authenticate(user)
     exp_minutes = 30 if impersonator_id else TOKEN_EXPIRE_MINUTES
     payload = {
         "sub": user["id"],

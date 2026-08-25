@@ -78,6 +78,17 @@ async def login(request: Request, body: LoginRequest):
     # 3) Success -> reset counters
     if user.get("failed_login_attempts") or user.get("lockout_until"):
         await db.users.update_one({"id": user["id"]}, {"$set": {"failed_login_attempts": 0, "lockout_until": None}})
+    # Soft-deleted accounts cannot obtain a token. ``get_current_user``
+    # already hard-401s them ("account_deleted") on the next request, so
+    # minting a token here produced a 200-then-401 loop that the mobile
+    # client turns into an endless sign-in bounce. Checked here for the
+    # audit row; ``create_token`` enforces it for every other issue path.
+    if user.get("deleted_at"):
+        await _audit_auth("login", email, ip, "failure", "account soft-deleted")
+        raise HTTPException(
+            status_code=401,
+            detail="This account has been removed. Contact your administrator.",
+        )
     # SEC-004 hotfix — deactivated accounts cannot obtain a token.
     if user.get("active") is False:
         await _audit_auth("login", email, ip, "failure", "account deactivated")
