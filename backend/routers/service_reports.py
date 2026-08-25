@@ -1813,11 +1813,29 @@ async def list_my_service_reports(
     )]
     if not job_ids:
         return []
+    # Feb-2026 · P1 hotfix — the submit path stamps ``submitted_at``
+    # on the service_report doc but has never updated the ``status``
+    # field, so the prior filter of
+    # ``status ∈ {submitted, completed, final}`` matched ZERO reports in
+    # real tenant data (every submitted row is ``status=None``, with
+    # the submitted-lifecycle tracked via ``submitted_at``).  Filter on
+    # the actual write-side signal instead — customer isolation is
+    # already enforced by the ``job_ids`` join above.
     rows = await db.service_reports.find(
         {"tenant_id": tenant["id"], "job_id": {"$in": job_ids},
-         "status": {"$in": ["submitted", "completed", "final"]}},
+         "submitted_at": {"$ne": None}},
         {"_id": 0},
     ).sort("submitted_at", -1).to_list(200)
+
+    # Feb-2026 · P1 hotfix — resolve tech names via the shared cascade.
+    # ``sr.get("tech_name")`` was always None (the field is never
+    # written on the service_report doc; only ``tech_id`` is stamped),
+    # so the portal rendered "Technician not recorded" on every visit.
+    from services.service_report_view import resolve_technician_names
+    _tech_ids = list({r.get("tech_id") for r in rows if r.get("tech_id")})
+    _name_map = await resolve_technician_names(
+        db, tenant["id"], _tech_ids,
+    ) if _tech_ids else {}
 
     out = []
     for sr in rows:
@@ -1829,7 +1847,7 @@ async def list_my_service_reports(
             "service_type": job.get("service_type") or job.get("job_type"),
             "scheduled_start": job.get("scheduled_start"),
             "submitted_at": sr.get("submitted_at"),
-            "tech_name": sr.get("tech_name"),
+            "tech_name": _name_map.get(sr.get("tech_id")) or "",
             "customer_notes": sr.get("customer_notes") or "",
         })
     return out
@@ -1868,6 +1886,19 @@ async def get_my_service_report(
         "address": job.get("address"),
         "scheduled_start": job.get("scheduled_start"),
     }
+    # Feb-2026 · P1 hotfix — populate ``tech_name`` (never persisted on
+    # the report doc; see the list-endpoint comment above). Falls back
+    # to ``effective_tid(job)`` when the report's ``tech_id`` doesn't
+    # resolve — covers legacy reports where ``tech_id`` was never
+    # stamped or points at a shape the cascade misses.
+    from services.service_report_view import resolve_technician_names
+    from services.job_assignee import effective_tid
+    _tid = sr.get("tech_id") or effective_tid(job)
+    if _tid:
+        _names = await resolve_technician_names(db, tenant["id"], [_tid])
+        sr["tech_name"] = _names.get(_tid) or ""
+    else:
+        sr["tech_name"] = ""
     return sr
 
 
