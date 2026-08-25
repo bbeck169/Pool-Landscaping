@@ -76,19 +76,32 @@ async def schedule_today(date: Optional[str] = None,
     # tech who's a member of a crew ALSO sees that crew's jobs on
     # their personal ``/schedule/today``. ``crew.tech_ids`` is
     # populated with the caller's ``user_id`` (see
-    # ``routers/ops.py::create_crew``), so we query with
-    # ``user["id"]``. The identity-mismatch between this endpoint
-    # (``user.id``) and ``jobs.py::scope_jobs_query``
-    # (``user.technician_id``) is a pre-existing P2 — parked, not
-    # touched here.
+    # ``routers/ops.py::create_crew``), so the crew clause below
+    # queries with ``user["id"]``.
+    #
+    # Feb-2026 · P2→P0 · Identity-mismatch hotfix. Legacy jobs are
+    # stamped with ``technician_id = user.id``; post-``bulk-reassign``
+    # (jobs.py::_lookup_tech_user :: canonical_tech_id) jobs are
+    # stamped with ``technician_id = user.technician_id``. Real
+    # tenants have BOTH shapes co-existing. The prior code queried
+    # only ``user.id`` and hid every job on the newer shape — techs
+    # would see a partial or empty schedule. Union BOTH ids so we
+    # don't hide legitimate jobs. Same defensive posture as
+    # ``service_reports.py::_authorize_report``.
+    _tech_ids = list(filter(None, [user.get("id"), user.get("technician_id")]))
     tech_or_clauses: list = [
-        {"assigned_technician_id": user["id"]},
-        {"technician_id": user["id"]},
-        {"assigned_to": user["id"]},
+        {"assigned_technician_id": {"$in": _tech_ids}},
+        {"technician_id": {"$in": _tech_ids}},
+        {"assigned_to": {"$in": _tech_ids}},
     ]
+    # Feb-2026 · P2→P0 · Same identity-union treatment for the crew
+    # prefetch — ``crews.tech_ids`` is written with ``user.id`` today
+    # (via ``ops.py::create_crew``) but the field has legacy rows
+    # from a prior seed migration that stored ``technicians.id``.
+    # Match either so no crew memberships are silently skipped.
     my_crew_ids = [
         c["id"] async for c in db.crews.find(
-            {"tenant_id": tid, "tech_ids": user["id"]},
+            {"tenant_id": tid, "tech_ids": {"$in": _tech_ids}},
             {"_id": 0, "id": 1},
         )
     ]

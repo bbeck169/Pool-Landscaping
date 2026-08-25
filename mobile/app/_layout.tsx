@@ -11,6 +11,11 @@ import { useFonts } from "expo-font";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider, useAuth } from "@/src/auth";
 import { ImpersonationBanner } from "@/src/components/ImpersonationBanner";
+// Feb-2026 · P2→P0 tech-cluster diagnostic — root error boundary so
+// any uncaught JS throw during render surfaces as a visible diagnostic
+// screen instead of the silent blank-white that hid the Android home
+// crash from us in the field.
+import { RootErrorBoundary } from "@/src/components/RootErrorBoundary";
 // Phase 30.4 · Feb-2026 — global destructive-confirmation modal host.
 // Mount once at the root so ``showConfirm({...})`` from any screen
 // opens an in-app modal we can guarantee renders (vs
@@ -79,16 +84,18 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <KeyboardProvider>
-          <AuthProvider>
-            <SyncManagerProvider>
-              <StripeConfigProvider>
-                <ImpersonationBanner />
-                <PushTapRouter />
-                <Stack screenOptions={{ headerShown: false }} />
-                <ConfirmModalHost />
-              </StripeConfigProvider>
-            </SyncManagerProvider>
-          </AuthProvider>
+          <RootErrorBoundary>
+            <AuthProvider>
+              <SyncManagerProvider>
+                <StripeConfigProvider>
+                  <ImpersonationBanner />
+                  <PushTapRouter />
+                  <Stack screenOptions={{ headerShown: false }} />
+                  <ConfirmModalHost />
+                </StripeConfigProvider>
+              </SyncManagerProvider>
+            </AuthProvider>
+          </RootErrorBoundary>
         </KeyboardProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

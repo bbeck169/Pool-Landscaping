@@ -94,17 +94,27 @@ async def _resolve_job_coords(job: dict, tenant_id: str) -> Optional[tuple[float
     return None
 
 
-async def _load_day_jobs(tenant_id: str, tech_user_id: str, date: str
-                          ) -> list[dict[str, Any]]:
-    """Fetch a tech's jobs for a date, sorted by current route_index."""
+async def _load_day_jobs(tenant_id: str,
+                          tech_user_ids: list[str],
+                          date: str) -> list[dict[str, Any]]:
+    """Fetch a tech's jobs for a date, sorted by current route_index.
+
+    Feb-2026 · P2→P0 · Identity-mismatch hotfix. Legacy jobs are
+    stamped with ``technician_id = user.id``; post-``bulk-reassign``
+    (jobs.py::_lookup_tech_user :: canonical_tech_id) jobs are
+    stamped with ``technician_id = user.technician_id``. Real
+    tenants have BOTH shapes co-existing. Callers must pass the
+    tech's full identity set (``user.id`` + ``user.technician_id``,
+    de-duped and None-stripped) so we don't hide legitimate jobs.
+    """
     import re
     date_prefix = re.escape(date)
     q = {
         "tenant_id": tenant_id,
         "$or": [
-            {"tech_user_id": tech_user_id},
-            {"assigned_to": tech_user_id},
-            {"technician_id": tech_user_id},
+            {"tech_user_id": {"$in": tech_user_ids}},
+            {"assigned_to": {"$in": tech_user_ids}},
+            {"technician_id": {"$in": tech_user_ids}},
         ],
         "$and": [{
             "$or": [
@@ -119,6 +129,36 @@ async def _load_day_jobs(tenant_id: str, tech_user_id: str, date: str
                                                        ("scheduled_start", 1)]):
         jobs.append(j)
     return jobs
+
+
+def _route_scope_ids_for(user_doc: dict[str, Any]) -> list[str]:
+    """Return the de-duped, None-stripped identity list for a tech.
+
+    Used by every read-path in this router so route optimize / apply /
+    undo consistently match jobs stamped with either ``user.id`` OR
+    ``user.technician_id``.
+    """
+    return list(filter(None, [user_doc.get("id"),
+                              user_doc.get("technician_id")]))
+
+
+async def _resolve_target_scope_ids(caller: dict[str, Any],
+                                      target_user_id: str) -> list[str]:
+    """Feb-2026 · P2→P0 · identity-mismatch resolution.
+
+    Returns the ``[user.id, user.technician_id]`` scope-id set for the
+    target tech (falling back to just ``target_user_id`` if the users
+    row cannot be found — safe: matches the historical single-id
+    behavior). Zero DB round-trips when the caller IS the target
+    (common tech-self case).
+    """
+    if caller.get("id") == target_user_id:
+        return _route_scope_ids_for(caller)
+    row = await db.users.find_one({"id": target_user_id},
+                                    {"_id": 0, "id": 1, "technician_id": 1})
+    if not row:
+        return [target_user_id]
+    return _route_scope_ids_for(row) or [target_user_id]
 
 
 async def _hydrate_geo(jobs: list[dict[str, Any]], tenant_id: str
@@ -229,7 +269,9 @@ async def preview(body: PreviewBody,
     elif body.tech_user_id and body.tech_user_id != caller["id"]:
         raise HTTPException(403, "Cannot preview another user's route")
 
-    jobs = await _load_day_jobs(tenant_id, tech_id, body.date)
+    jobs = await _load_day_jobs(tenant_id,
+                                  await _resolve_target_scope_ids(caller, tech_id),
+                                  body.date)
     if not jobs:
         raise HTTPException(404, "no_jobs_for_tech_on_date")
 
@@ -316,7 +358,9 @@ async def request_(body: RequestBody,
         raise HTTPException(422, "no_optimization_available")
 
     # Load pre-existing route_index map for undo/audit + before_order.
-    day_jobs = await _load_day_jobs(tenant_id, tech_id, body.date)
+    day_jobs = await _load_day_jobs(tenant_id,
+                                      await _resolve_target_scope_ids(caller, tech_id),
+                                      body.date)
     before_order = [j["id"] for j in day_jobs
                      if j["id"] in prev["proposed_order"]]
     before_index_map = {j["id"]: j.get("route_index")
