@@ -12,6 +12,24 @@ import { render, fireEvent } from "@testing-library/react-native";
 
 /* ── Mocks ─────────────────────────────────────────────────────────── */
 
+// Feb-2026 · Safety-net gate. Mutable ref so tests can flip the config
+// per-scenario without re-isolating modules (which breaks React's hook
+// singleton). Default: key PRESENT so pre-existing tests still render
+// the MapView.
+const mockConstantsRef: { expoConfig: any } = {
+  expoConfig: {
+    android: { config: { googleMaps: { apiKey: "TEST_KEY_STUB" } } },
+  },
+};
+jest.mock("expo-constants", () => ({
+  __esModule: true,
+  default: {
+    get expoConfig() {
+      return mockConstantsRef.expoConfig;
+    },
+  },
+}));
+
 jest.mock("expo-location", () => ({
   getForegroundPermissionsAsync: jest.fn().mockResolvedValue({ status: "granted" }),
   requestForegroundPermissionsAsync: jest.fn().mockResolvedValue({ status: "granted" }),
@@ -98,5 +116,73 @@ describe("ScheduleMap", () => {
 
     fireEvent.press(getByTestId("schedule-map-close-card"));
     expect(queryByTestId("schedule-map-info-card")).toBeNull();
+  });
+});
+
+/* ── Feb-2026 · P0 safety net — Android Google Maps API key gate ──── */
+describe("ScheduleMap · Android Google Maps API key safety net", () => {
+  const RN = require("react-native");
+  const originalPlatformOS = RN.Platform.OS;
+  const originalExpoConfig = mockConstantsRef.expoConfig;
+
+  afterEach(() => {
+    RN.Platform.OS = originalPlatformOS;
+    mockConstantsRef.expoConfig = originalExpoConfig;
+  });
+
+  test("renders fallback banner on Android when apiKey is missing", () => {
+    RN.Platform.OS = "android";
+    mockConstantsRef.expoConfig = { android: { config: { googleMaps: {} } } };
+    const { getByTestId, getByText, queryByTestId } = render(
+      <ScheduleMap jobs={JOBS_WITH_COORDS} />,
+    );
+    expect(getByTestId("schedule-map-no-key")).toBeTruthy();
+    expect(
+      getByText("Map unavailable — Google Maps API key not configured"),
+    ).toBeTruthy();
+    // MapView must NOT be attempted when the key is missing.
+    expect(queryByTestId("schedule-map-view")).toBeNull();
+    expect(queryByTestId("map-view")).toBeNull();
+  });
+
+  test("renders fallback banner on Android when expoConfig.android is undefined", () => {
+    RN.Platform.OS = "android";
+    mockConstantsRef.expoConfig = {};
+    const { getByTestId } = render(<ScheduleMap jobs={JOBS_WITH_COORDS} />);
+    expect(getByTestId("schedule-map-no-key")).toBeTruthy();
+  });
+
+  test("renders fallback banner on Android when apiKey is empty string", () => {
+    RN.Platform.OS = "android";
+    mockConstantsRef.expoConfig = {
+      android: { config: { googleMaps: { apiKey: "   " } } },
+    };
+    const { getByTestId } = render(<ScheduleMap jobs={JOBS_WITH_COORDS} />);
+    expect(getByTestId("schedule-map-no-key")).toBeTruthy();
+  });
+
+  test("renders MapView on Android when apiKey IS configured", () => {
+    RN.Platform.OS = "android";
+    mockConstantsRef.expoConfig = {
+      android: { config: { googleMaps: { apiKey: "AIzaSy_REAL_KEY" } } },
+    };
+    const { queryByTestId, queryAllByTestId } = render(
+      <ScheduleMap jobs={JOBS_WITH_COORDS} />,
+    );
+    expect(queryByTestId("schedule-map-no-key")).toBeNull();
+    const pins = queryAllByTestId(/^schedule-map-pin-/);
+    expect(pins.length).toBe(4);
+  });
+
+  test("iOS does NOT gate on Android apiKey (Apple Maps default, no key required)", () => {
+    RN.Platform.OS = "ios";
+    // Deliberately omit the key entirely — iOS must ignore it.
+    mockConstantsRef.expoConfig = {};
+    const { queryByTestId, queryAllByTestId } = render(
+      <ScheduleMap jobs={JOBS_WITH_COORDS} />,
+    );
+    expect(queryByTestId("schedule-map-no-key")).toBeNull();
+    const pins = queryAllByTestId(/^schedule-map-pin-/);
+    expect(pins.length).toBe(4);
   });
 });
