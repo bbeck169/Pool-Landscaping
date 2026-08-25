@@ -38,13 +38,25 @@ _ASSIGNABLE_ROLES = {"admin", "technician"}
 _ROLE_DEPT_COMBOS = {
     ("technician", "pool"):        "Pool Tech",
     ("technician", "landscaping"): "Landscape Tech",
+    # Feb-2026 · Cross-trained technician (pool + landscape). Distinct
+    # from ("admin","both") below — this combo has ZERO admin RBAC;
+    # it's just a tech who works both service lines. Parity with the
+    # ``AdminUsersList`` / mobile ``/team`` pickers which have offered
+    # "Both" via the modern-enum PUT /admin/users/{id}/department for
+    # a while — the /team unified picker was the missing surface.
+    ("technician", "both"):        "Tech (Both)",
     ("admin", None):               "Admin",
     ("admin", "both"):             "All (Admin + Pool + Landscape)",
 }
 # Departments that are valid for a given role. Anything outside this
 # whitelist → 400.
 _VALID_DEPTS_BY_ROLE = {
-    "technician": {"pool", "landscaping", None},
+    # Feb-2026 · "both" now allowed for technicians (cross-trained
+    # pool + landscape). Downstream gates already accept "both" — see
+    # ``routers/timeclock_landscaping.py::_require_landscaping`` which
+    # allows ``dept in ("landscaping", "both")``. There is no pool-only
+    # timeclock gate today (audit Feb-2026).
+    "technician": {"pool", "landscaping", "both", None},
     "admin":      {"both", None},
 }
 

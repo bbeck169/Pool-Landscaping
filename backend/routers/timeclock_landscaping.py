@@ -14,7 +14,9 @@ Schema (`timeclock_punches`):
      lat, lng, accuracy_m, source: "mobile"|"web", geo_denied: bool}
 
 Rules:
-- Only users with `department == "landscaping"` may punch. Others → 403.
+- Users with `department in ("landscaping", "both")` may punch — cross-
+  trained techs included. Admins / super-admins always pass. All other
+  callers (pool-only techs, customers, unassigned techs) → 403.
 - Single open shift per user per day; a second `in` without an `out`
   returns 409 (`already_clocked_in`).
 - Punching `out` without a matching `in` returns 409 (`no_open_shift`).

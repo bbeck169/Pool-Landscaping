@@ -599,9 +599,19 @@ const ROLE_OPTIONS = [
     badgeBg: "#DBEAFE", badgeFg: "#1E3A8A", filterColor: "#1E3A8A" },
   { value: "landscape_tech",  label: "Landscape Tech",  role: "technician", department: "landscaping",
     badgeBg: "#DCFCE7", badgeFg: "#166534", filterColor: "#166534" },
+  // Feb-2026 · Cross-trained tech (pool + landscape). Non-admin — this
+  // is distinct from the admin+both "All" combo below (which grants
+  // admin RBAC plus dual tech surface). Backend combo enum:
+  // ("technician","both") = "Tech (Both)" — see routers/team.py.
+  { value: "tech_both",       label: "Tech (Both)",     role: "technician", department: "both",
+    badgeBg: "#CCFBF1", badgeFg: "#0F766E", filterColor: "#0F766E" },
   { value: "admin",           label: "Admin",           role: "admin",      department: null,
     badgeBg: "#F3E8FF", badgeFg: "#6B21A8", filterColor: "#6B21A8" },
-  { value: "all",             label: "All",             role: "admin",      department: "both",
+  // Feb-2026 · Relabelled from the terse "All" — matches the backend
+  // canonical label `_ROLE_DEPT_COMBOS[("admin","both")]` verbatim so
+  // there is no drift between the picker chip, the badge, the toast
+  // and the audit log.
+  { value: "all",             label: "All (Admin + Pool + Landscape)", role: "admin", department: "both",
     badgeBg: "#FEF3C7", badgeFg: "#92400E", filterColor: "#92400E" },
 ];
 
@@ -611,6 +621,10 @@ function _roleKey(user) {
   if (role === "super_admin") return "super_admin";
   if (role === "admin" && dept === "both") return "all";
   if (role === "admin") return "admin";
+  // Feb-2026 · cross-trained tech comes BEFORE the single-dept checks
+  // so a stored `technician + both` row resolves to the new
+  // "Tech (Both)" combo instead of falling through to "unassigned".
+  if (role === "technician" && dept === "both") return "tech_both";
   if (role === "technician" && dept === "pool") return "pool_tech";
   if (role === "technician" && dept === "landscaping") return "landscape_tech";
   return "unassigned";
@@ -731,6 +745,11 @@ function TeamRoster() {
             { key: "all",            label: "All roles" },
             { key: "pool_tech",      label: "Pool Tech" },
             { key: "landscape_tech", label: "Landscape Tech" },
+            // Feb-2026 · cross-trained tech filter chip. Filters rows
+            // whose `_roleKey()` returns "tech_both" — the base
+            // `filtered` useMemo above already handles `k === filter`
+            // for any non-special key, so no sub-filter needed.
+            { key: "tech_both",      label: "Tech (Both)" },
             { key: "admin",          label: "Admin" },
             { key: "all_both",       label: "All (Both)" },
             { key: "unassigned",     label: "Unassigned" },
