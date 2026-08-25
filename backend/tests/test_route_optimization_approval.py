@@ -147,15 +147,24 @@ def test_preview_math_correctness(tech_h, tid_aquaterra, tech_id_mike):
         d = r.json()
         assert d["date"] == date
         assert d["tech_user_id"] == tech
-        # 4 stops, all reshufflable, NN from (33.44,-112.04) should
-        # pick the nearest first (slot 1 = 33.44,-112.05).
-        assert d["proposed_order"][0] == jids[1]
+        # 4 stops, all reshufflable — the proposed_order must be a
+        # complete permutation of the seeded stops. Post-Feb-2026 the
+        # optimizer swapped from crow-fly nearest-neighbor to Google
+        # Directions (`optimize:true`) with a Haversine fallback, so
+        # the specific first-stop identity is no longer deterministic
+        # — it depends on the road network. But the fixture is
+        # geographically perverse enough that ANY sensible optimizer
+        # must reorder the input.
+        assert set(d["proposed_order"]) == set(jids)
+        assert d["proposed_order"] != jids
         # Miles saved is > 0 given the perverse layout.
         assert d["miles_saved"] > 0
         assert d["minutes_saved"] >= 0
         assert d["stops_affected"] > 0
         assert d["no_change"] is False
         assert d["origin"]["source"] == "device_gps"
+        # Algorithm badge is one of the two valid values.
+        assert d["algorithm"] in ("google_directions", "haversine_fallback")
     finally:
         _cleanup_jobs(tid, tech, date)
 

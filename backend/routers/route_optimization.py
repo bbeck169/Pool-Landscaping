@@ -21,6 +21,10 @@ from utils import now_iso, new_id, get_current_user
 from utils import not_deleted_filter as _nd
 from routers.tenants import get_current_tenant
 from services.stop_geo import resolve_stop_geo
+from services.route_optimizer import (
+    GOOGLE_DIRECTIONS_MAX_WAYPOINTS,
+    try_google_directions_optimize,
+)
 
 # Reuse the existing Haversine + settings helpers.
 from routers.workforce import _haversine_m, _settings  # type: ignore
@@ -121,6 +125,25 @@ async def optimize_route(
             "legs": [], "cached": False, "algorithm": "trivial",
         }
 
+    # Feb-2026 · Google Routes API v2 hard cap. Beyond 25 intermediates
+    # the modern Routes API rejects the request; per spec we return a
+    # clean 400 with a friendly message instead of silently degrading.
+    if len(jobs_with_geo) > GOOGLE_DIRECTIONS_MAX_WAYPOINTS:
+        raise HTTPException(
+            400,
+            {
+                "code": "too_many_stops",
+                "max_waypoints": GOOGLE_DIRECTIONS_MAX_WAYPOINTS,
+                "actual": len(jobs_with_geo),
+                "message": (
+                    f"Route optimization supports up to "
+                    f"{GOOGLE_DIRECTIONS_MAX_WAYPOINTS} stops per day — "
+                    f"this day has {len(jobs_with_geo)}. Split the day "
+                    f"or reduce the stop count to try again."
+                ),
+            },
+        )
+
     job_ids = [j["id"] for j in jobs_with_geo]
     whash = _waypoints_hash(job_ids, body.start_lat, body.start_lng)
     cached = await db.route_optimizations.find_one(
@@ -131,6 +154,70 @@ async def optimize_route(
     if cached:
         cached["cached"] = True
         return cached
+
+    # Feb-2026 · Try Google Routes API v2 first. Returns None on any
+    # failure (network / quota / missing key / >25 waypoints already
+    # guarded above); we then fall through to the pure-Python Haversine
+    # nearest-neighbor loop below. The savings chip on the client stays
+    # correct in both branches because it computes savings vs its own
+    # baseline (Haversine of original order) rather than trusting the
+    # server's total_distance_m as the "before" number.
+    google_waypoints = [
+        {
+            "id": j["id"],
+            "lat": j.get("site_lat") if j.get("site_lat") is not None else j.get("lat"),
+            "lng": j.get("site_lng") if j.get("site_lng") is not None else j.get("lng"),
+        }
+        for j in jobs_with_geo
+    ]
+    google_start_lat = body.start_lat if body.start_lat is not None else google_waypoints[0]["lat"]
+    google_start_lng = body.start_lng if body.start_lng is not None else google_waypoints[0]["lng"]
+    google = None
+    if google_start_lat is not None and google_start_lng is not None:
+        google = await try_google_directions_optimize(
+            start_lat=float(google_start_lat),
+            start_lng=float(google_start_lng),
+            waypoints=google_waypoints,
+        )
+
+    if google is not None:
+        by_id = {j["id"]: j for j in jobs_with_geo}
+        ordered = [by_id[wp["id"]] for wp in google["ordered_waypoints"]
+                    if wp["id"] in by_id]
+        legs: list = []
+        for i in range(1, len(ordered)):
+            leg_google = google["legs"][i - 1] if i - 1 < len(google["legs"]) else {}
+            legs.append({
+                "from_job_id": ordered[i - 1]["id"],
+                "to_job_id": ordered[i]["id"],
+                "distance_m": int(leg_google.get("distance_m") or 0),
+                "duration_s": int(leg_google.get("duration_s") or 0),
+                "polyline": None,
+            })
+        out = {
+            "ordered_job_ids": [j["id"] for j in ordered],
+            "total_distance_m": int(google["total_distance_m"]),
+            "total_duration_s": int(google["total_duration_s"]),
+            "legs": legs,
+            "cached": False,
+            "algorithm": "google_directions",
+            "date": date_str,
+            "waypoints_hash": whash,
+            "tenant_id": tenant["id"],
+            "user_id": target_uid,
+            "computed_at": now_iso(),
+        }
+        await db.route_optimizations.insert_one(dict(out))
+        try:
+            from routers.realtime import bus
+            await bus.broadcast(target_uid, {
+                "type": "route_optimized",
+                "payload": {"ordered_job_ids": out["ordered_job_ids"],
+                            "total_distance_m": out["total_distance_m"]},
+            })
+        except Exception as e:
+            logger.warning(f"WS notify (route_optimized) failed: {e}")
+        return out
 
     # Nearest-neighbor from the start (or first job).
     start = (body.start_lat, body.start_lng) if body.start_lat and body.start_lng else None
@@ -172,7 +259,7 @@ async def optimize_route(
         "total_duration_s": _estimate_duration_s(total_m),
         "legs": legs,
         "cached": False,
-        "algorithm": "nearest_neighbor",
+        "algorithm": "haversine_fallback",
         "date": date_str,
         "waypoints_hash": whash,
         "tenant_id": tenant["id"],

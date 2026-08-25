@@ -28,7 +28,8 @@ import JobNotesCallout from "@/components/schedule/JobNotesCallout";
 // the prominent top-level next-job CTA and as the compact inline
 // affordance on each job card.
 import OnMyWayButton from "@/components/schedule/OnMyWayButton";
-import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, StickyNote, Route as RouteIcon, RotateCcw, Star } from "lucide-react";
+import ScheduleMap from "@/pages/schedule/ScheduleMap";
+import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, StickyNote, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide } from "lucide-react";
 
 const GOOGLE_LIBS = ["places"];
 
@@ -354,6 +355,47 @@ export default function TodaySchedule() {
     try { localStorage.setItem("schedule_view_mode", m); } catch {}
   };
 
+  // Feb-2026 · List | Map sub-mode toggle within the "list" view mode
+  // — matches the mobile calendar UX (see mobile/app/(app)/schedule/
+  // calendar.tsx :: gridSubMode). Persists per-user so a tech's
+  // preferred surface is remembered across sessions.
+  const [gridSubMode, setGridSubMode] = useState(() => {
+    try { return localStorage.getItem("schedule_grid_sub_mode") || "list"; }
+    catch { return "list"; }
+  });
+  const setSubMode = (m) => {
+    setGridSubMode(m);
+    try { localStorage.setItem("schedule_grid_sub_mode", m); } catch {}
+  };
+
+  // Self-color map for the schedule map pins — a tech's Today view
+  // renders single-tech pins; falling back to the ScheduleMap's built-in
+  // slate-gray color when the user has no ``display_color_hex`` picked.
+  const selfColorMap = useMemo(() => {
+    if (!user?.id) return undefined;
+    const m = new Map();
+    if (user.display_color_hex) m.set(user.id, user.display_color_hex);
+    // Also map the technician_id form so jobs seeded against either id
+    // pick up the same pin color.
+    if (user.technician_id && user.display_color_hex) {
+      m.set(user.technician_id, user.display_color_hex);
+    }
+    return m;
+  }, [user?.id, user?.technician_id, user?.display_color_hex]);
+
+  // Count of jobs in today's list that actually resolve to map-safe
+  // coords (see ScheduleMap.jsx :: pins). Used to show the fallback
+  // empty-state message when the tech's day has zero mappable stops.
+  const mappableCount = useMemo(() => {
+    return orderedJobItems.filter((j) => {
+      const lat = Number(j?.location_lat ?? j?.site_lat ?? j?.lat);
+      const lng = Number(j?.location_lng ?? j?.site_lng ?? j?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+      if (lat === 0 && lng === 0) return false;
+      return true;
+    }).length;
+  }, [orderedJobItems]);
+
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" data-testid="today-schedule-page">
       {/* Feb-2026 · numbered-order reorder — admin-only pill at
@@ -442,6 +484,30 @@ export default function TodaySchedule() {
               </button>
             ))}
           </div>
+          {/* Feb-2026 · List | Map sub-mode toggle. Only meaningful
+              in the "list" viewMode; timeline mode keeps its own
+              rendering. Hidden when the day has no jobs at all. */}
+          {viewMode === "list" && jobItems.length > 0 ? (
+            <div className="rounded-xl flex items-center overflow-hidden"
+                 style={{ border: `1px solid ${colors.border}` }}
+                 data-testid="schedule-sub-mode-toggle">
+              {[
+                { key: "list", label: "List", Icon: ListIcon },
+                { key: "map", label: "Map", Icon: MapIconLucide },
+              ].map(({ key, label, Icon }) => (
+                <button key={key} onClick={() => setSubMode(key)}
+                        className="px-3 py-2 text-xs font-bold uppercase tracking-wide flex items-center gap-1"
+                        style={{
+                          backgroundColor: gridSubMode === key ? colors.brand : "transparent",
+                          color: gridSubMode === key ? "#fff" : colors.onSurfaceSecondary,
+                        }}
+                        data-testid={`schedule-sub-mode-${key}`}>
+                  <Icon size={12} />
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <button onClick={load}
                   className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
                   style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface,
@@ -584,7 +650,7 @@ export default function TodaySchedule() {
       )}
 
       {/* List view — default */}
-      {data && data.items.length > 0 && viewMode === "list" && (
+      {data && data.items.length > 0 && viewMode === "list" && gridSubMode === "list" && (
         <ScheduleCardList jobs={orderedJobItems} tz={data.tz}
                           isTech={isTech}
                           onOpen={(id) => navigate(`/jobs/${id}`)}
@@ -610,6 +676,43 @@ export default function TodaySchedule() {
                             }
                             navigate(`/jobs/${job.id}/service-report`);
                           }}/>
+      )}
+
+      {/* Feb-2026 · Map sub-mode. Mirrors the mobile calendar UX:
+          only shown inside the "list" viewMode; the "timeline" view
+          keeps its own grid rendering below. Shows a friendly
+          empty-state when the tech has zero geocoded stops today
+          (legacy customers without lat/lng self-heal on next edit /
+          CSV re-import). */}
+      {data && data.items.length > 0 && viewMode === "list"
+        && gridSubMode === "map" && mappableCount > 0 && (
+        <div data-testid="tech-schedule-map-wrap">
+          <ScheduleMap
+            jobs={orderedJobItems}
+            techs={user ? [user] : []}
+            techColorMap={selfColorMap}
+          />
+        </div>
+      )}
+      {data && data.items.length > 0 && viewMode === "list"
+        && gridSubMode === "map" && mappableCount === 0 && (
+        <div
+          className="rounded-2xl p-8 text-center"
+          style={{ backgroundColor: colors.surface,
+                    border: `1px dashed ${colors.border}` }}
+          data-testid="tech-schedule-map-empty"
+        >
+          <MapPin size={24} className="mx-auto mb-2"
+                  style={{ color: colors.muted }} />
+          <div className="text-sm font-semibold"
+               style={{ color: colors.onSurface }}>
+            No mappable stops today
+          </div>
+          <div className="text-xs mt-1" style={{ color: colors.muted }}>
+            Add a service address to the customer record — pins appear
+            automatically once the address is geocoded.
+          </div>
+        </div>
       )}
 
       {data && data.items.length > 0 && viewMode === "timeline" && (

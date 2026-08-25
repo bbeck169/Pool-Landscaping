@@ -31,7 +31,9 @@ from utils import get_current_user, new_id, now_iso
 from utils import not_deleted_filter as _nd
 from services.route_optimizer import (
     PINNED_STATUSES,
+    GOOGLE_DIRECTIONS_MAX_WAYPOINTS,
     compute_optimization,
+    compute_optimization_v2,
 )
 from services import notifications as _notif
 from services import route_events as _rte
@@ -249,7 +251,32 @@ async def preview(body: PreviewBody,
         start_lng = first_pending["lng"]
         used_fallback_origin = True
 
-    result = compute_optimization(
+    # Feb-2026 · Google Routes API v2 cap — enforce BEFORE compute so
+    # we don't waste a Haversine fallback pass on requests we'll reject.
+    # Pinned stops don't count toward the cap (they don't go through
+    # Directions).
+    reshufflable_count = sum(
+        1 for j in hydrated
+        if isinstance(j.get("lat"), (int, float))
+        and (j.get("status") or "").lower() not in PINNED_STATUSES
+    )
+    if reshufflable_count > GOOGLE_DIRECTIONS_MAX_WAYPOINTS:
+        raise HTTPException(
+            400,
+            {
+                "code": "too_many_stops",
+                "max_waypoints": GOOGLE_DIRECTIONS_MAX_WAYPOINTS,
+                "actual": reshufflable_count,
+                "message": (
+                    f"Route optimization supports up to "
+                    f"{GOOGLE_DIRECTIONS_MAX_WAYPOINTS} reshufflable "
+                    f"stops per day — this day has {reshufflable_count}. "
+                    f"Split the day or reduce the stop count to try again."
+                ),
+            },
+        )
+
+    result = await compute_optimization_v2(
         current_order_jobs=hydrated,
         start_lat=float(start_lat),
         start_lng=float(start_lng),
