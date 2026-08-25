@@ -18,6 +18,7 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import { AlertTriangle, CheckCircle2, FlaskConical, RefreshCw } from 'lucide-react';
 import { api } from "@/api";
+import { compressImageIfNeeded } from "@/lib/imageCompress";
 import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
 
 // Phase 48 — per-key validation rules for the manual-entry reading rows.
