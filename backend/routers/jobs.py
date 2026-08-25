@@ -326,6 +326,7 @@ async def list_jobs(
     tenant: dict = Depends(get_current_tenant),
     status: Optional[str] = None,
     technician_id: Optional[str] = Query(None),
+    crew_id: Optional[str] = Query(None, description="Feb-2026 · Crew Phase A · filter by crew_id (admin-equivalent only; techs remain scoped to their own jobs by scope_jobs_query)"),
     start: Optional[str] = Query(None, description="Phase 30: inclusive lower bound on scheduled_date (YYYY-MM-DD)"),
     end: Optional[str] = Query(None, description="Phase 30: inclusive upper bound on scheduled_date (YYYY-MM-DD)"),
     scheduled_date: Optional[str] = Query(None, description="Phase 51.0/52: exact date (YYYY-MM-DD) — matches bare date or ISO datetime prefix"),
@@ -358,6 +359,19 @@ async def list_jobs(
     # Phase 51.I fix — recurring-template origin filter.
     if recurring_template_id:
         q["recurring_template_id"] = recurring_template_id
+    # Feb-2026 · Crew Phase A · admin-equivalent crew filter. Techs are
+    # already scoped to their own jobs by ``scope_jobs_query`` above,
+    # so a tech passing ``?crew_id=`` would still only see THEIR jobs
+    # — the explicit role gate here is defense-in-depth so an admin
+    # UI accidentally leaking a tech session cookie can't enumerate
+    # a foreign crew's roster via this filter.
+    if crew_id:
+        crew_role = (user.get("role") or "").lower()
+        if crew_role not in {"admin", "super_admin", "owner", "manager"}:
+            raise HTTPException(
+                403, "Only admin-equivalent roles may filter by crew_id",
+            )
+        q["crew_id"] = crew_id
     # Feb-2026 · D2-hotfix — schedule reorder read-path.  The previous
     # ``.sort([("scheduled_date", 1), ("route_index", 1), ("created_at",
     # 1)])`` sorted by the FULL ``scheduled_date`` string as primary,
@@ -1053,6 +1067,31 @@ async def update_job(jid: str, body: JobUpdate,
         )
         update["technician_name"] = tech["name"] if tech else None
         update["technician_avatar"] = tech.get("avatar", "") if tech else ""
+    # Feb-2026 · Crew Phase A · crew assignment enrichment + RBAC gate.
+    # Only admin-equivalent roles may CHANGE a crew — a technician can
+    # still update their own job's status / notes / etc., but not the
+    # crew binding. Cross-tenant crew ids are rejected 400 (same-tenant
+    # gate mirrors the ``bulk-reassign`` path).
+    if "crew_id" in update:
+        if role not in ADMIN_ROLES:
+            raise HTTPException(
+                403, "Only admin-equivalent roles can assign crews",
+            )
+        crew = await db.crews.find_one(
+            {"id": update["crew_id"], "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "name": 1, "color": 1},
+        )
+        if not crew:
+            raise HTTPException(
+                400,
+                "crew_id does not resolve to a crew in this tenant",
+            )
+        # Stamp denormalized name + color so schedule cards render
+        # without a per-job crew fetch (mirrors the ``technician_name``
+        # / ``technician_avatar`` pattern above). ``technician_id``
+        # is NOT cleared — locked product decision (overlay).
+        update["crew_name"] = crew.get("name")
+        update["crew_color"] = crew.get("color")
     # Feb-2026 · Chemistry required-readings gate.  Applied ONLY on
     # the ``→ completed`` transition — Could-Not-Service and other
     # status changes are NOT gated.  Landscape jobs skip the gate.
@@ -1617,7 +1656,12 @@ async def bulk_soft_delete_jobs(body: BulkSoftDeleteIn,
 # ═════════════════════════════════════════════════════════════════════════
 class BulkReassignIn(BaseModel):
     job_ids: List[str]
-    new_tech_id: str
+    # Feb-2026 · Crew Phase A · both optional. At least one must be
+    # provided (validated in the handler). Callers can send tech-only,
+    # crew-only, or both (overlay — tech stays as lead, crew members
+    # get read-side visibility via ``schedule_today``'s crew clause).
+    new_tech_id: Optional[str] = None
+    new_crew_id: Optional[str] = None
 
 
 _TECH_ROLES = {"pool_tech", "landscape_tech", "technician", "tech"}
@@ -1668,17 +1712,34 @@ async def bulk_reassign_jobs(body: BulkReassignIn,
         raise HTTPException(
             400, f"bulk reassign capped at {_BULK_REASSIGN_CAP} rows per call")
 
-    if not body.new_tech_id:
-        raise HTTPException(400, "new_tech_id is required")
-
-    new_user = await _lookup_tech_user(tenant["id"], body.new_tech_id)
-    if not new_user:
-        raise HTTPException(400, "new_tech_id does not resolve to a user")
-    role = (new_user.get("role") or "").lower()
-    if role not in _TECH_ROLES:
+    if not body.new_tech_id and not body.new_crew_id:
         raise HTTPException(
-            400, f"new_tech_id role {role!r} is not a technician role")
-    canonical_tech_id = new_user.get("technician_id") or new_user.get("id")
+            400, "new_tech_id or new_crew_id is required")
+
+    # Feb-2026 · Crew Phase A · resolve tech (only if provided).
+    new_user = None
+    canonical_tech_id = None
+    if body.new_tech_id:
+        new_user = await _lookup_tech_user(tenant["id"], body.new_tech_id)
+        if not new_user:
+            raise HTTPException(400, "new_tech_id does not resolve to a user")
+        role = (new_user.get("role") or "").lower()
+        if role not in _TECH_ROLES:
+            raise HTTPException(
+                400, f"new_tech_id role {role!r} is not a technician role")
+        canonical_tech_id = new_user.get("technician_id") or new_user.get("id")
+
+    # Feb-2026 · Crew Phase A · resolve crew (only if provided).
+    # Same-tenant validation prevents cross-tenant crew bindings.
+    new_crew = None
+    if body.new_crew_id:
+        new_crew = await db.crews.find_one(
+            {"id": body.new_crew_id, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "name": 1, "color": 1},
+        )
+        if not new_crew:
+            raise HTTPException(
+                400, "new_crew_id does not resolve to a crew in this tenant")
 
     reassigned: List[str] = []
     failed: List[Dict[str, Any]] = []
@@ -1691,7 +1752,10 @@ async def bulk_reassign_jobs(body: BulkReassignIn,
         job = await db.jobs.find_one(
             {"id": jid, "tenant_id": tenant["id"]},
             {"_id": 0, "id": 1, "technician_id": 1, "assigned_tech_id": 1,
-              "title": 1, "service_type": 1, "deleted_at": 1},
+              "title": 1, "service_type": 1, "deleted_at": 1,
+              # Feb-2026 · Crew Phase A · project crew_id so we can
+              # detect the crew-side no-op case + skip the write.
+              "crew_id": 1},
         )
         if not job:
             failed.append({"job_id": jid, "reason": "not found",
@@ -1704,20 +1768,36 @@ async def bulk_reassign_jobs(body: BulkReassignIn,
 
         old_tech_id = (job.get("technician_id")
                          or job.get("assigned_tech_id") or None)
-        if old_tech_id == canonical_tech_id:
-            # No-op — already assigned. Not an error, just record it
-            # into the success bucket so counts add up.
+        # Feb-2026 · Crew Phase A · net-no-op detection now considers
+        # both tech AND crew dimensions. A caller can send tech
+        # unchanged + crew changed (or vice versa) and we must still
+        # write the changed dimension. Only skip when NEITHER dimension
+        # moves.
+        tech_changes = (canonical_tech_id is not None
+                          and old_tech_id != canonical_tech_id)
+        crew_changes = (new_crew is not None
+                          and job.get("crew_id") != new_crew["id"])
+        if not tech_changes and not crew_changes:
             reassigned.append(jid)
             continue
+
+        set_fields: Dict[str, Any] = {
+            "reassigned_at": now,
+            "reassigned_by_user_id": user.get("id"),
+            "updated_at": now,
+        }
+        if canonical_tech_id:
+            set_fields["technician_id"] = canonical_tech_id
+            set_fields["assigned_tech_id"] = canonical_tech_id
+        if new_crew:
+            set_fields["crew_id"] = new_crew["id"]
+            set_fields["crew_name"] = new_crew.get("name")
+            set_fields["crew_color"] = new_crew.get("color")
 
         try:
             await db.jobs.update_one(
                 {"id": jid, "tenant_id": tenant["id"]},
-                {"$set": {"technician_id": canonical_tech_id,
-                            "assigned_tech_id": canonical_tech_id,
-                            "reassigned_at": now,
-                            "reassigned_by_user_id": user.get("id"),
-                            "updated_at": now}},
+                {"$set": set_fields},
             )
         except Exception as e:                                    # noqa: BLE001
             failed.append({"job_id": jid, "reason": str(e)[:200],
@@ -1736,9 +1816,20 @@ async def bulk_reassign_jobs(body: BulkReassignIn,
             "target_job_id": jid,
             "old_tech_id": old_tech_id,
             "new_tech_id": canonical_tech_id,
+            # Feb-2026 · Crew Phase A · record crew reassignment
+            # alongside tech reassignment so audit can be filtered
+            # by crew changes downstream.
+            "old_crew_id": job.get("crew_id"),
+            "new_crew_id": new_crew["id"] if new_crew else None,
             "at": now,
         })
-        if old_tech_id and old_tech_id != canonical_tech_id:
+        # Feb-2026 · Crew Phase A · only notify the *outgoing* tech
+        # when this call actually reassigns them off the job. Crew-only
+        # reassignments (``canonical_tech_id is None``) never touch
+        # ``technician_id``, so the outgoing tech is still assigned
+        # and should NOT get a "you lost this job" notification.
+        if (canonical_tech_id and old_tech_id
+                and old_tech_id != canonical_tech_id):
             # Resolve outgoing tech user_id for notification.
             old_user = await _lookup_tech_user(tenant["id"], old_tech_id)
             if old_user and old_user.get("id"):
@@ -1755,9 +1846,11 @@ async def bulk_reassign_jobs(body: BulkReassignIn,
     if reassigned:
         try:
             from services.notifications import emit as _emit_notif
-            # New tech — one aggregate notification.
-            new_user_id = new_user.get("id")
-            if new_user_id:
+            # New tech — one aggregate notification. Feb-2026 · Crew
+            # Phase A · guarded on ``new_user`` so a crew-only
+            # reassignment (no new tech) skips this branch entirely.
+            new_user_id = (new_user or {}).get("id")
+            if new_user_id and incoming_titles:
                 preview = ", ".join(incoming_titles[:3])
                 more = len(incoming_titles) - 3
                 if more > 0:
@@ -1790,8 +1883,13 @@ async def bulk_reassign_jobs(body: BulkReassignIn,
     return {"ok": True, "count": len(reassigned),
               "reassigned": reassigned, "failed": failed,
               "new_tech_id": canonical_tech_id,
-              "new_tech_name": (new_user.get("name")
-                                  or new_user.get("first_name") or "")}
+              "new_tech_name": ((new_user or {}).get("name")
+                                  or (new_user or {}).get("first_name") or ""),
+              # Feb-2026 · Crew Phase A · surface the crew binding
+              # so the caller (web dispatch board / mobile) can
+              # render the confirmation toast without a re-fetch.
+              "new_crew_id": new_crew["id"] if new_crew else None,
+              "new_crew_name": (new_crew or {}).get("name") or ""}
 
 
 @router.post("/jobs/{jid}/undelete",

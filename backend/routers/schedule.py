@@ -72,14 +72,45 @@ async def schedule_today(date: Optional[str] = None,
         requested = datetime.now(timezone.utc).date().isoformat()
     today_yyyymmdd = requested
 
-    # Jobs — assigned to *this* user for today. Support several assignment field
-    # names the codebase has used historically.
+    # Feb-2026 · Crew Phase A · widen the tech-visibility filter so any
+    # tech who's a member of a crew ALSO sees that crew's jobs on
+    # their personal ``/schedule/today``. ``crew.tech_ids`` is
+    # populated with the caller's ``user_id`` (see
+    # ``routers/ops.py::create_crew``), so we query with
+    # ``user["id"]``. The identity-mismatch between this endpoint
+    # (``user.id``) and ``jobs.py::scope_jobs_query``
+    # (``user.technician_id``) is a pre-existing P2 — parked, not
+    # touched here.
+    tech_or_clauses: list = [
+        {"assigned_technician_id": user["id"]},
+        {"technician_id": user["id"]},
+        {"assigned_to": user["id"]},
+    ]
+    my_crew_ids = [
+        c["id"] async for c in db.crews.find(
+            {"tenant_id": tid, "tech_ids": user["id"]},
+            {"_id": 0, "id": 1},
+        )
+    ]
+    # Guardrail — only add the crew clause when the list is non-empty.
+    # ``$in: []`` would emit an always-false branch that Mongo still
+    # has to plan; skip entirely instead.
+    if my_crew_ids:
+        tech_or_clauses.append({"crew_id": {"$in": my_crew_ids}})
+    # Feb-2026 · Crew Phase A · $and-compose the tech-visibility $or
+    # with ``not_deleted_filter()``'s own $or (soft-delete predicate).
+    # Prior code did ``{**job_q, **_nd()}`` where Python dict-spread
+    # silently overwrote the tech-visibility $or with the soft-delete
+    # $or — collapsing the tech scoping and returning every non-
+    # deleted job in the tenant to every caller. Discovered while
+    # shipping Phase A; the fix is required for the crew clause to
+    # have any effect at all.
+    from utils import not_deleted_filter as _nd
     job_q = {
         "tenant_id": tid,
-        "$or": [
-            {"assigned_technician_id": user["id"]},
-            {"technician_id": user["id"]},
-            {"assigned_to": user["id"]},
+        "$and": [
+            {"$or": tech_or_clauses},
+            _nd(),
         ],
         "scheduled_date": {"$gte": start_iso, "$lte": end_iso},
     }
@@ -88,8 +119,11 @@ async def schedule_today(date: Optional[str] = None,
     # ``route_index`` (written by ``POST /api/jobs/reorder``).
     # Fallback to Mongo's natural insertion order for untouched days
     # via ``created_at`` as the tertiary key.
-    from utils import not_deleted_filter as _nd
-    jobs = await db.jobs.find({**job_q, **_nd()}, {"_id": 0}).sort(
+    # Feb-2026 · Crew Phase A · ``job_q`` already carries the
+    # soft-delete predicate composed under $and above — do NOT
+    # dict-spread ``_nd()`` in again (that's what caused the
+    # tech-visibility leak this ship fixed).
+    jobs = await db.jobs.find(job_q, {"_id": 0}).sort(
         [("scheduled_date", 1), ("route_index", 1), ("created_at", 1)]
     ).to_list(200)
 
