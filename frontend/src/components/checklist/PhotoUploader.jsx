@@ -12,6 +12,7 @@
 import React, { useRef, useState } from "react";
 import { Camera, X, Loader2 } from 'lucide-react';
 import { api } from "@/api";
+import { compressImageIfNeeded } from "@/lib/imageCompress";
 
 const colors = {
   brand: "#0EA5E9",
@@ -43,7 +44,11 @@ export default function PhotoUploader({
     setBusy(true); setErr("");
     let updated = { photos };
     try {
-      for (const f of Array.from(files).slice(0, remaining)) {
+      for (const f0 of Array.from(files).slice(0, remaining)) {
+        // Feb 2026 · iOS field-upload timeout fix — shrink before the
+        // base64 blowup so /api/jobs/{jid}/photos gets a manageable
+        // payload. Non-image + small images pass through unchanged.
+        const f = await compressImageIfNeeded(f0);
         const dataUrl = await fileToDataUrl(f);
         updated = await api.post(`/jobs/${jobId}/photos`, {
           data: dataUrl,

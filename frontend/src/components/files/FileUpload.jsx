@@ -26,6 +26,7 @@ import React, { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { UploadCloud, X, FileText, Video as VideoIcon, Image as ImageIcon } from "lucide-react";
 import { uploadFile, deleteFile } from "@/api/files";
+import { compressImageIfNeeded } from "@/lib/imageCompress";
 
 const MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
 
@@ -77,7 +78,11 @@ export function FileUpload({
     toast.error(message);
   }, [onError]);
 
-  const doUpload = useCallback(async (file) => {
+  const doUpload = useCallback(async (rawFile) => {
+    // Feb 2026 · iOS field-upload timeout fix — shrink modern iPhone
+    // photos before they hit the wire. Non-image files + small images
+    // pass through unchanged. See `lib/imageCompress.js`.
+    const file = await compressImageIfNeeded(rawFile);
     // 1. client-side gates
     if (file.size > MAX_UPLOAD_SIZE_BYTES) {
       reject("FILE_TOO_LARGE",

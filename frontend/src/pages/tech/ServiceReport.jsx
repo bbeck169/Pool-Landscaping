@@ -11,6 +11,7 @@ import { colors, brandGradientCss } from "@/theme";
 import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer, Share2 } from "lucide-react";
 // Feb-2026 · Chemistry required-readings gate — shared with backend.
 import { missingCoreReadings } from "@/utils/chemistryGate";
+import { compressImageIfNeeded } from "@/lib/imageCompress";
 
 const AUTOSAVE_MS = 5000;
 const PHOTO_CAP = 10;
@@ -188,8 +189,11 @@ export default function ServiceReport() {
   };
   const setNotes = (v) => { setReport({ ...report, notes: v }); markDirty(); };
 
-  const addPhoto = async (file) => {
+  const addPhoto = async (rawFile) => {
     if (remaining <= 0) { alert("10-photo cap reached"); return; }
+    // Feb 2026 · iOS field-upload timeout fix — shrink modern iPhone
+    // photos before the base64 blowup on /api/jobs/{jid}/photos.
+    const file = await compressImageIfNeeded(rawFile);
     const dataUrl = await new Promise((res) => {
       const r = new FileReader();
       r.onload = () => res(r.result); r.readAsDataURL(file);

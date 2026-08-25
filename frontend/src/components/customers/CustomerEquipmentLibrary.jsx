@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import { api } from "@/api";
+import { compressImageIfNeeded } from "@/lib/imageCompress";
 
 const c = {
   border: "#E2E8F0", muted: "#64748B", surface: "#F8FAFC",
@@ -95,7 +96,10 @@ function EquipmentSection({ customerId, type, photos, currentUser, onChange }) {
     if (!files || !files.length) return;
     setBusy(true); setErr("");
     try {
-      const f = files[0];
+      // Feb 2026 · iOS field-upload timeout fix — techs shoot equipment
+      // photos on-site; shrink before base64 blowup to /api/customers/
+      // {cid}/equipment-photos.
+      const f = await compressImageIfNeeded(files[0]);
       const data = await fileToDataUrl(f);
       await api.post(`/customers/${customerId}/equipment-photos`, {
         equipment_type: type,

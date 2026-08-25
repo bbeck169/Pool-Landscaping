@@ -28,6 +28,15 @@ vi.mock("@/api/files", () => ({
   revokeBlobUrl: (...a) => __stubs.revokeBlobUrl(...a),
   buildAuthedDownloadUrl: (...a) => __stubs.buildAuthedDownloadUrl(...a),
 }));
+// Feb 2026 · iOS field-upload compression is transparent to these
+// regression tests — mock the helper as a pass-through so JSDOM (no
+// real canvas / web-worker) doesn't hang the doUpload promise chain
+// before it can hit the 25 MB / MIME gates.
+vi.mock("@/lib/imageCompress", () => ({
+  __esModule: true,
+  compressImageIfNeeded: async (f) => f,
+  default: async (f) => f,
+}));
 vi.mock("sonner", () => ({ toast: { success: () => {}, error: () => {} } }));
 
 // Import components AFTER the mocks are declared.

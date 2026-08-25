@@ -623,10 +623,14 @@ export default function PoolChecklistForm({
     setEditingKey(null);
   };
 
-  const _analyzeWater = async (file) => {
-    if (!file || locked) return;
+  const _analyzeWater = async (rawFile) => {
+    if (!rawFile || locked) return;
     setAnalyzing(true); setAnalyzeErr(""); setAnalysis(null);
     try {
+      // Feb 2026 · iOS field-upload timeout fix — techs shoot water
+      // photos on the pool deck; shrink before base64 blowup on
+      // /api/jobs/{jid}/photos.
+      const file = await compressImageIfNeeded(rawFile);
       const dataUrl = await fileToDataUrl(file);
       const uploaded = await api.post(`/jobs/${jobId}/photos`, {
         data: dataUrl, label: `water-analysis-${new Date().toISOString()}`,
