@@ -194,6 +194,15 @@ class JobUpdate(BaseModel):
     # by the ownership guard at routers/jobs.py::update_job (403 when
     # `job.technician_id != user.technician_id`).
     service_type: Optional[str] = None
+    # Feb-2026 · Crew-assignment Phase A — the schedule/dispatch admin
+    # can now overlay a crew on a job so every crew member sees it on
+    # their personal schedule. `crew_id` is validated in
+    # routers/jobs.py::update_job against the caller's tenant and
+    # enriched with `crew_name` + `crew_color`. RBAC is admin/manager
+    # only for crew changes (enforced in the handler, not the model).
+    # ``technician_id`` is not cleared — the tech stays as lead per
+    # the locked product decision (overlay semantics).
+    crew_id: Optional[str] = None
 
 
 class JobArriveIn(BaseModel):

@@ -285,6 +285,13 @@ async def post_webhook(request: Request):
     sig = request.headers.get("stripe-signature") or ""
     try:
         event = stripe_svc.verify_and_parse_webhook(payload=payload, sig_header=sig)
+    except stripe_svc.ThinPayloadRetrieveError as exc:
+        # Feb-2026 · Transient failure hydrating a Thin-payload event via
+        # ``stripe.Event.retrieve``. 502 tells Stripe "server-side blip,
+        # please retry" — the webhook delivery pipeline honors 5xx with
+        # exponential backoff, so the event isn't lost. A 4xx here would
+        # silently drop the event.
+        raise HTTPException(502, f"stripe.event.retrieve failed: {exc}")
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     except Exception as exc:  # includes stripe.error.SignatureVerificationError

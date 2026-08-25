@@ -30,6 +30,7 @@ Design notes
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import uuid
@@ -960,18 +961,81 @@ async def _apply_refund_to_invoice(*, tenant_id: str, invoice_id: str,
     return bool(r.modified_count)
 
 
+class ThinPayloadRetrieveError(Exception):
+    """Feb-2026 · Raised when the thin-payload fallback path fails to
+    hydrate the full event via ``stripe.Event.retrieve``.
+
+    Distinct from ``ValueError`` / ``SignatureVerificationError`` so
+    the router can map it to a 5xx (transient — Stripe retries) rather
+    than a 4xx (permanent — Stripe stops delivery). Stripe's own webhook
+    retry policy honors 5xx with exponential backoff; a 4xx would silently
+    drop the event and the invoice reconcile would never happen.
+    """
+
+
 def verify_and_parse_webhook(*, payload: bytes, sig_header: str) -> Dict[str, Any]:
     """Verify the Stripe-Signature header and return the parsed event
     dict. Raises the SDK's ``SignatureVerificationError`` on bad sig or
     ``ValueError`` on malformed payload — the router converts to 400.
+
+    Feb-2026 · Thin-payload compat. Stripe's Workbench Event Destinations
+    UI now defaults new destinations to "Thin" payload style, which the
+    SDK's ``Webhook.construct_event`` explicitly rejects with a
+    ``ValueError`` containing "thin event notification". When we detect
+    that specific message we:
+
+      1. Verify the signature manually via
+         ``stripe.WebhookSignature.verify_header`` (same crypto path the
+         classic ``construct_event`` uses internally — bad sig still 400s).
+      2. Parse the payload as JSON to extract the event id.
+      3. Call ``stripe.Event.retrieve(event_id)`` to hydrate the full
+         Snapshot-shaped event. Downstream ``handle_webhook_event`` code
+         doesn't change — it sees the same ``data.object`` shape.
+
+    A transient ``Event.retrieve`` failure raises ``ThinPayloadRetrieveError``
+    (mapped to 502 in the router → Stripe retries). Signature failures
+    raise the SDK's own exception (mapped to 400 → Stripe stops).
     """
     secret = _select_webhook_secret()
     if not secret:
         raise ValueError("webhook secret not configured for current STRIPE_MODE")
-    event = _stripe.Webhook.construct_event(payload, sig_header, secret)
-    # Phase 42.3 · Feb 2026 — v15-safe scrape. Prior code did
-    # ``dict(event)`` which relied on StripeObject inheriting dict.
-    return _asdict(event)
+    try:
+        event = _stripe.Webhook.construct_event(payload, sig_header, secret)
+        # Phase 42.3 · Feb 2026 — v15-safe scrape. Prior code did
+        # ``dict(event)`` which relied on StripeObject inheriting dict.
+        return _asdict(event)
+    except Exception as exc:
+        # Only fall back for the specific Thin-payload rejection. Every
+        # other exception (SignatureVerificationError, malformed JSON,
+        # unknown scheme) re-raises unchanged so the router 400s.
+        if "thin event notification" not in str(exc).lower():
+            raise
+        logger.info(
+            "[stripe.webhook] Thin-payload event detected — falling back "
+            "to manual verify + Event.retrieve hydration",
+        )
+        # Manual signature check — bad sig raises SignatureVerificationError.
+        _stripe.WebhookSignature.verify_header(payload, sig_header, secret)
+        try:
+            envelope = json.loads(payload)
+        except Exception as parse_exc:
+            raise ValueError(
+                f"thin payload JSON parse failed: {parse_exc}"
+            ) from parse_exc
+        event_id = (envelope or {}).get("id")
+        if not event_id:
+            raise ValueError("thin payload missing 'id' field")
+        try:
+            hydrated = _stripe.Event.retrieve(event_id)
+        except Exception as retrieve_exc:
+            logger.warning(
+                "[stripe.webhook] Event.retrieve(%s) failed during "
+                "thin-payload fallback: %s", event_id, retrieve_exc,
+            )
+            raise ThinPayloadRetrieveError(
+                f"Event.retrieve({event_id}) failed: {retrieve_exc}"
+            ) from retrieve_exc
+        return _asdict(hydrated)
 
 
 async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
