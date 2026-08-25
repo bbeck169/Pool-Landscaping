@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from config import db, logger
 from utils import get_current_user, new_id, now_iso
 from routers.tenants import get_current_tenant
+from services.job_assignee import effective_tid
 
 router = APIRouter()
 
@@ -328,7 +329,13 @@ async def list_workstream_jobs(
 
     # Join customer + technician + property in a single roundtrip each.
     cids = list({d.get("customer_id") for d in docs if d.get("customer_id")})
-    tids = list({d.get("technician_id") for d in docs if d.get("technician_id")})
+    # Feb-2026 · P1 hotfix — read-path union across all four tech-id
+    # field shapes (see ``services/job_assignee.py``). Reading only
+    # ``technician_id`` silently dropped every completed job whose
+    # assignment lived in ``assigned_to`` / ``assigned_technician_id`` /
+    # ``tech_user_id`` — producing "Assigned to Unassigned" on the
+    # Workstream page.
+    tids = list({t for t in (effective_tid(d) for d in docs) if t})
     pids = list({d.get("property_id") for d in docs if d.get("property_id")})
 
     cmap: Dict[str, Dict[str, Any]] = {}
@@ -356,7 +363,7 @@ async def list_workstream_jobs(
     rows: List[Dict[str, Any]] = []
     for d in docs:
         cid = d.get("customer_id")
-        tid = d.get("technician_id")
+        tid = effective_tid(d)
         pid = d.get("property_id")
         cust = cmap.get(cid) if cid else None
         tech_name = tmap_names.get(tid) if tid else None

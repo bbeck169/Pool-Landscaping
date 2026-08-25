@@ -44,6 +44,7 @@ from services.service_report_view import (
     resolve_notes as _resolve_notes,
     resolve_photo_items as _resolve_photo_items,
 )
+from services.job_assignee import effective_tid
 from utils import get_current_user, new_id, now_iso
 from utils import not_deleted_filter as _nd
 
@@ -226,7 +227,9 @@ async def get_service_log(
         raise HTTPException(404, "Job not found")
 
     # Enrich with technician_department so _classify() can pick pool/land.
-    tid = job.get("technician_id")
+    # Feb-2026 · P1 hotfix — read-path union across all four tech-id
+    # field shapes (see ``services/job_assignee.py``).
+    tid = effective_tid(job)
     if tid:
         # Fetch a doc under all four id shapes for department + phone.
         tech = await db.technicians.find_one(

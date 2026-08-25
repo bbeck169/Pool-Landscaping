@@ -370,9 +370,13 @@ async def resolve_technician_names(db, tenant_id: str, ids):
         return out
 
     # 3-4. users.id  — direct user reference.
+    # Feb-2026 · P1 hotfix — allowlist extended with ``tech`` (legacy
+    # singular shorthand present in seeded users) and ``owner`` so a
+    # ``technician_id`` pointing at such a user is no longer silently
+    # dropped.
     async for u in db.users.find(
         {"tenant_id": tenant_id, "id": {"$in": remaining},
-         "role": {"$in": ["technician", "landscaper", "manager", "admin", "super_admin"]}},
+         "role": {"$in": ["technician", "tech", "landscaper", "manager", "admin", "super_admin", "owner"]}},
         {"_id": 0, "id": 1, "name": 1, "first_name": 1, "last_name": 1},
     ):
         if u.get("name"):
