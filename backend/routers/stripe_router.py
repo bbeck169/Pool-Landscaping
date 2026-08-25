@@ -279,6 +279,140 @@ async def post_charge(
         raise HTTPException(code, msg or "stripe error")
 
 
+@router.post("/session/{session_id}/reconcile",
+              operation_id="stripe.session.reconcile")
+async def reconcile_checkout_session(
+    session_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Feb-2026 · Synchronous reconcile fallback for Checkout Sessions.
+
+    Design gap this closes: the customer-portal invoice-pay flow ends
+    with a browser redirect to ``/portal/payment-complete`` while the
+    invoice status flip is driven ENTIRELY by
+    ``checkout.session.completed`` webhook delivery. If Stripe's
+    webhook mis-fires (Thin-payload rejection, transient network,
+    Dashboard misconfig — all seen in the last two weeks on
+    ``app.plofv.com``), the customer sees a "still processing"
+    limbo while their card was actually charged.
+
+    This endpoint lets the browser drive a synchronous reconcile as
+    soon as it lands on ``/portal/payment-complete?session_id=…``.
+    It fetches the Session from Stripe, verifies paid state + tenant
+    ownership, then calls the SAME atomic ``_mark_invoice_paid_from
+    _session`` the webhook uses. Idempotent by design — the helper
+    short-circuits when ``invoice.payment_status == "paid"``, so a
+    reconcile followed by a webhook (or vice versa) is a safe no-op
+    on the second call.
+
+    Auth:
+      * customers may reconcile a session whose invoice they own
+        (via ``user.customer_id == invoice.customer_id``).
+      * admin-equivalent roles may reconcile any session in their
+        tenant.
+
+    Return shape:
+      * ``{"reconciled": true,  "already_paid": <bool>,
+             "invoice_id": ..., "amount_paid": <float>,
+             "payment_status": "paid"|"partial"}``
+      * ``{"reconciled": false, "reason": "unpaid",
+             "payment_status": <stripe payment_status>}``
+        — 200, not an error. The frontend falls back to polling.
+    """
+    # 1) Fetch the Session from Stripe (expand PI so we can stamp
+    # ``stripe_payment_intent_id`` on the invoice for downstream audit
+    # queries). Transient network / API failure → 502 so the browser
+    # retries via its polling fallback.
+    try:
+        session = await stripe_svc._to_thread(
+            stripe_svc._stripe.checkout.Session.retrieve,
+            session_id, expand=["payment_intent"],
+        )
+    except Exception as exc:                                        # noqa: BLE001
+        logger.warning(
+            "[stripe.reconcile] session.retrieve failed sid=%s err=%s",
+            session_id, exc,
+        )
+        raise HTTPException(
+            502, f"stripe.session.retrieve failed: {exc}",
+        )
+    session_dict = stripe_svc._asdict(session)
+
+    # 2) Session must be paid before we flip the invoice. Not an
+    # error state — the caller polls if the customer landed here
+    # while Stripe is still finalizing (bank-hold windows).
+    if session_dict.get("payment_status") != "paid":
+        return {
+            "reconciled": False,
+            "reason": "unpaid",
+            "payment_status": session_dict.get("payment_status"),
+        }
+
+    # 3) Resolve the invoice id from the session and verify tenant scope.
+    metadata = stripe_svc._asdict(session_dict.get("metadata") or {})
+    invoice_id = (metadata.get("crm_invoice_id")
+                   or session_dict.get("client_reference_id"))
+    session_tenant = metadata.get("crm_tenant_id")
+    if not invoice_id:
+        raise HTTPException(
+            400, "session has no crm_invoice_id or client_reference_id",
+        )
+    invoice = await db.quotes.find_one(
+        {"id": invoice_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "customer_id": 1, "tenant_id": 1,
+          "payment_status": 1, "amount_paid": 1, "total": 1},
+    )
+    if not invoice:
+        # Either the invoice doesn't exist, or it lives in a
+        # different tenant. Either way — this caller can't touch it.
+        raise HTTPException(
+            403, "invoice not found in caller's tenant",
+        )
+    # Extra guardrail — if the session metadata itself names a
+    # different tenant, that's a strong tampering signal even
+    # though ``find_one`` already scoped by tenant.
+    if session_tenant and session_tenant != tenant["id"]:
+        raise HTTPException(
+            403, "session tenant does not match caller tenant",
+        )
+    # Customer-role callers must own the invoice too.
+    role = (user.get("role") or "").lower()
+    if role == "customer":
+        if invoice.get("customer_id") != user.get("customer_id"):
+            raise HTTPException(
+                403, "invoice does not belong to caller",
+            )
+
+    # 4) Flip the invoice via the SAME helper the webhook uses.
+    # Idempotent — returns False if the invoice was already paid.
+    amount_total_cents = int(session_dict.get("amount_total") or 0)
+    pi_field = session_dict.get("payment_intent")
+    if isinstance(pi_field, dict):
+        payment_intent_id = pi_field.get("id")
+    else:
+        payment_intent_id = pi_field  # str or None
+    updated = await stripe_svc._mark_invoice_paid_from_session(
+        invoice_id=invoice_id,
+        amount_total_cents=amount_total_cents,
+        session_id=session_id,
+        payment_intent_id=payment_intent_id,
+    )
+
+    # Refetch to return the terminal amount_paid + payment_status.
+    final = await db.quotes.find_one(
+        {"id": invoice_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "amount_paid": 1, "payment_status": 1},
+    ) or {}
+    return {
+        "reconciled": True,
+        "already_paid": not updated,
+        "invoice_id": invoice_id,
+        "amount_paid": final.get("amount_paid") or 0.0,
+        "payment_status": final.get("payment_status") or "paid",
+    }
+
+
 @router.post("/webhook")
 async def post_webhook(request: Request):
     payload = await request.body()

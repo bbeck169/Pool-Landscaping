@@ -106,9 +106,15 @@ async def revenue_by_category(
     # Query: invoices in this tenant, dated inside the range. Match both
     # legacy ``created_at`` (which most seed data uses) and modern
     # ``issue_date`` / ``invoice_date``.  Docs are strings ISO-sortable.
+    # Feb-2026 · Dashboard consistency ship — restrict to PAID invoices
+    # so this tile is comparable to the ``/api/dashboard`` top-card
+    # (lifetime paid) number. Prior behavior counted unpaid + overdue
+    # + draft invoices, making the two tiles arithmetically
+    # incomparable.  See the phantom-revenue investigation writeup.
     q = {
         "tenant_id": tenant_id,
         "doc_type": "invoice",
+        "payment_status": "paid",
         "$or": [
             {"created_at": {"$gte": s_iso, "$lte": e_iso}},
             {"issue_date": {"$gte": s_iso, "$lte": e_iso}},
@@ -196,8 +202,12 @@ async def income_by_service_category(
 
     totals: Dict[str, Dict[str, Any]] = {}
     currency = "USD"
+    # Feb-2026 · Dashboard consistency ship — same ``payment_status``
+    # filter as ``revenue_by_category`` above so both tiles agree
+    # with the top-card lifetime paid number.
     cur = db.quotes.find(
         {"tenant_id": tenant_id, "doc_type": "invoice",
+          "payment_status": "paid",
           "$or": [
               {"created_at": {"$gte": s_iso, "$lte": e_iso}},
               {"issue_date": {"$gte": s_iso, "$lte": e_iso}},

@@ -122,7 +122,7 @@ export default function Dashboard() {
               testID="admin-tile-revenue-by-category"
               icon="pie-chart-outline"
               label="Revenue by Category"
-              hint="Income breakdown by service type"
+              hint="Paid invoices, this month"
               onPress={() => router.push("/income-by-category")}
             />
             <RevenueTile
@@ -158,7 +158,7 @@ export default function Dashboard() {
           <Image source={{ uri: IMAGES.dashboardHero }} style={StyleSheet.absoluteFill} contentFit="cover" />
           <LinearGradient colors={["rgba(0,60,95,0.55)", "rgba(26,43,60,0.92)"]} style={StyleSheet.absoluteFill} />
           <View style={styles.heroInner}>
-            <Text style={styles.heroLabel}>Total Revenue</Text>
+            <Text style={styles.heroLabel}>Total Paid Revenue (lifetime)</Text>
             <Text style={styles.heroValue} testID="dashboard-revenue">
               {money(data.revenue ?? 0)}
             </Text>

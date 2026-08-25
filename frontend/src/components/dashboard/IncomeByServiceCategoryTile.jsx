@@ -67,7 +67,7 @@ export default function IncomeByServiceCategoryTile({ range }) {
           data-testid="income-by-service-category-tile">
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs uppercase font-bold tracking-wide"
-              style={{ color: colors.muted }}>Income by Service Category</div>
+              style={{ color: colors.muted }}>Income by Service Category (paid, this month)</div>
         {data ? (
           <div className="text-xs" style={{ color: colors.muted }}
                 data-testid="income-svc-item-count">

@@ -423,7 +423,7 @@ export default function AdminDashboard() {
           }}
         />
         <div className="relative">
-          <p className="text-white/85 text-sm font-medium">Total Revenue</p>
+          <p className="text-white/85 text-sm font-medium">Total Paid Revenue (lifetime)</p>
           {data ? (
             <p className="text-white text-4xl md:text-5xl font-bold mt-1" data-testid="dashboard-revenue">
               {money(data.revenue)}

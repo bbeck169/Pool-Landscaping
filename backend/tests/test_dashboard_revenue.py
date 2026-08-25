@@ -45,7 +45,12 @@ def _login(email: str) -> str:
 def _admin_ctx():
     if _CACHE.get("admin_ctx"):
         return _CACHE["admin_ctx"]
-    tok = _login("manager@aquaterra.com")
+    # Feb-2026 · Dashboard consistency ship — was
+    # ``manager@aquaterra.com`` but ``dashboard_revenue.py::_require_admin``
+    # only accepts ("admin", "super_admin"), so the 3 revenue-by-
+    # category tests were already 403'ing on main pre-this-PR. Swap to
+    # admin@aquaterra.com to match the endpoint's contract.
+    tok = _login("admin@aquaterra.com")
     me = requests.get(f"{API}/auth/me",
                        headers={"Authorization": f"Bearer {tok}"},
                        timeout=15).json()
@@ -97,6 +102,14 @@ def _seed_invoice(tenant_id: str, *, created_at: str,
         "invoice_number": iid,
         "created_at": created_at,
         "status": status,
+        # Feb-2026 · Dashboard consistency ship — the revenue-by-category
+        # and income-by-service-category endpoints now filter on
+        # ``payment_status == "paid"`` to agree with the top-card
+        # lifetime paid number. Existing tests all use status="paid" as
+        # the default, so stamp ``payment_status`` to match — an
+        # explicit unpaid fixture (status="unpaid") gets payment_status
+        # "unpaid" and is correctly excluded from the tile.
+        "payment_status": "paid" if status == "paid" else "unpaid",
         "currency": "USD",
         "total": total,
         "subtotal": total,

@@ -69,7 +69,7 @@ export default function RevenueByCategoryTile({ range }) {
     >
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs uppercase font-bold tracking-wide"
-              style={{ color: colors.muted }}>Revenue by Category</div>
+              style={{ color: colors.muted }}>Revenue by Category (paid, this month)</div>
         {data ? (
           <div className="text-xs" style={{ color: colors.muted }}
                 data-testid="revenue-cat-item-count">

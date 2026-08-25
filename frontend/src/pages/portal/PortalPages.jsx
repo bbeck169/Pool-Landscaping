@@ -997,56 +997,141 @@ export function PortalPaymentComplete() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const sid = params.get("session_id");
+  // Feb-2026 · Stripe reconcile-endpoint hardening. Previously this
+  // screen ONLY polled ``GET /payments/status/{sid}`` and relied on
+  // ``checkout.session.completed`` webhook delivery to flip the
+  // invoice. If the webhook mis-fired (Thin-payload rejection,
+  // Dashboard misconfig, transient blip), the customer sat in the
+  // "still processing" state forever. We now fire a synchronous
+  // ``POST /payments/stripe/session/{sid}/reconcile`` first — it
+  // retrieves the Session from Stripe, verifies paid, and calls the
+  // same ``_mark_invoice_paid_from_session`` the webhook uses.
+  // Idempotent, so a subsequent webhook is a no-op.
   const [status, setStatus] = useState("checking");
   const [invoice, setInvoice] = useState(null);
+  const [errMsg, setErrMsg] = useState(null);
+  const [retryKey, setRetryKey] = useState(0);   // bump to re-fire
 
   useEffect(() => {
     if (!sid) { setStatus("no_session"); return; }
     let cancelled = false;
-    let tries = 0;
-    const poll = async () => {
-      while (!cancelled && tries < 5) {
+    setStatus("checking");
+    setErrMsg(null);
+
+    const loadInvoice = async (invoice_id) => {
+      if (!invoice_id) return;
+      try {
+        const inv = await api.get(`/quotes/${invoice_id}`);
+        if (!cancelled) setInvoice(inv);
+      } catch { /* non-fatal */ }
+    };
+
+    (async () => {
+      // Phase 1 — synchronous reconcile. Guaranteed one round-trip;
+      // no wait on webhook infrastructure.
+      try {
+        const r = await api.post(
+          `/payments/stripe/session/${encodeURIComponent(sid)}/reconcile`,
+          {},
+        );
+        if (cancelled) return;
+        if (r?.reconciled) {
+          setStatus("paid");
+          if (r.invoice_id) loadInvoice(r.invoice_id);
+          return;
+        }
+        // ``reconciled: false`` — Stripe still shows unpaid (bank
+        // hold, ACH pending, 3DS still in flight, etc). Fall through
+        // to the polling path so we surface the flip when it lands.
+      } catch (exc) {
+        if (cancelled) return;
+        // Reconcile itself failed (502, network, auth). Show a
+        // friendly retry — user's card may still have been charged
+        // and the webhook will flip the invoice in the background.
+        setErrMsg(exc?.detail || exc?.message || "Reconcile failed");
+        setStatus("error");
+        return;
+      }
+
+      // Phase 2 — polling fallback. Up to 60s @ 5s cadence per the
+      // Stripe reconcile ship spec.
+      let tries = 0;
+      const MAX_TRIES = 12;
+      while (!cancelled && tries < MAX_TRIES) {
         try {
-          const r = await api.get(`/payments/status/${sid}`);
-          if (r.status === "paid") {
-            setStatus("paid");
-            if (r.invoice_id) api.get(`/quotes/${r.invoice_id}`).then(setInvoice).catch(() => {});
+          const r = await api.get(
+            `/payments/status/${encodeURIComponent(sid)}`,
+          );
+          if (r?.status === "paid") {
+            if (!cancelled) {
+              setStatus("paid");
+              if (r.invoice_id) loadInvoice(r.invoice_id);
+            }
             return;
           }
-        } catch {}
-        await new Promise((res) => setTimeout(res, 1500));
+        } catch { /* transient — keep polling */ }
+        await new Promise((res) => setTimeout(res, 5000));
         tries++;
       }
       if (!cancelled) setStatus("pending");
-    };
-    poll();
+    })();
+
     return () => { cancelled = true; };
-  }, [sid]);
+  }, [sid, retryKey]);
 
   return (
     <div className="max-w-md mx-auto px-4 sm:px-6 lg:px-8 py-10 text-center" data-testid="portal-pay-complete">
-      {status === "checking" ? <Skeleton style={{ height: 120 }} /> :
-       status === "paid" ? (
-         <>
-           <div className="w-16 h-16 mx-auto rounded-full flex items-center justify-center"
-             style={{ backgroundColor: colors.success + "20", color: colors.success }}>
-             <Check size={28} />
-           </div>
-           <h1 className="text-2xl font-bold mt-4" style={{ color: colors.onSurface }}>Payment successful</h1>
-           {invoice ? <p className="text-sm mt-2" style={{ color: colors.muted }}>{invoice.title} · {money(invoice.total)}</p> : null}
-           <Button className="mt-6" onClick={() => navigate("/portal/invoices")} testid="pc-back">Back to invoices</Button>
-         </>
-       ) : (
-         <>
-           <div className="w-16 h-16 mx-auto rounded-full flex items-center justify-center"
-             style={{ backgroundColor: "#FEF9C3", color: "#A16207" }}>
-             <XIcon size={28} />
-           </div>
-           <h1 className="text-2xl font-bold mt-4" style={{ color: colors.onSurface }}>Still processing</h1>
-           <p className="text-sm mt-2" style={{ color: colors.muted }}>Your payment may still be finishing. Check invoices in a minute.</p>
-           <Button className="mt-6" onClick={() => navigate("/portal/invoices")}>Back to invoices</Button>
-         </>
-       )}
+      {status === "checking" ? (
+        <div data-testid="pc-checking">
+          <Skeleton style={{ height: 120 }} />
+        </div>
+      ) : status === "paid" ? (
+        <div data-testid="pc-paid">
+          <div className="w-16 h-16 mx-auto rounded-full flex items-center justify-center"
+            style={{ backgroundColor: colors.success + "20", color: colors.success }}>
+            <Check size={28} />
+          </div>
+          <h1 className="text-2xl font-bold mt-4" style={{ color: colors.onSurface }}>Payment confirmed</h1>
+          {invoice ? (
+            <p className="text-sm mt-2" style={{ color: colors.muted }}>
+              {invoice.title} · {money(invoice.total)}
+            </p>
+          ) : null}
+          <Button className="mt-6" onClick={() => navigate("/portal/invoices")} testid="pc-back">
+            Back to invoices
+          </Button>
+        </div>
+      ) : status === "error" ? (
+        <div data-testid="pc-error">
+          <div className="w-16 h-16 mx-auto rounded-full flex items-center justify-center"
+            style={{ backgroundColor: "#FEE2E2", color: "#B91C1C" }}>
+            <XIcon size={28} />
+          </div>
+          <h1 className="text-2xl font-bold mt-4" style={{ color: colors.onSurface }}>Something went wrong</h1>
+          <p className="text-sm mt-2" style={{ color: colors.muted }}>
+            Your card may still have been charged — we'll retry in the background.
+          </p>
+          <p className="text-xs mt-2" style={{ color: colors.muted }} data-testid="pc-error-id">
+            Ref: {sid?.slice(-12) || "unknown"}
+          </p>
+          <Button className="mt-6" onClick={() => setRetryKey((k) => k + 1)}
+                    testid="pc-retry">
+            Try again
+          </Button>
+        </div>
+      ) : (
+        <div data-testid="pc-pending">
+          <div className="w-16 h-16 mx-auto rounded-full flex items-center justify-center"
+            style={{ backgroundColor: "#FEF9C3", color: "#A16207" }}>
+            <XIcon size={28} />
+          </div>
+          <h1 className="text-2xl font-bold mt-4" style={{ color: colors.onSurface }}>Still processing</h1>
+          <p className="text-sm mt-2" style={{ color: colors.muted }}>
+            Your payment may still be finishing. Check invoices in a minute.
+          </p>
+          <Button className="mt-6" onClick={() => navigate("/portal/invoices")}>Back to invoices</Button>
+        </div>
+      )}
     </div>
   );
 }
