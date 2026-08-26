@@ -428,6 +428,32 @@ _DH_BAND_CHIPS = {
 }
 
 
+# Feb-2026 · Door-hanger water-test layout — customer-facing labels
+# in fixed display order. Combined Chlorine is intentionally NOT in
+# the list (product spec). Any key not present here is dropped by
+# the renderer, so unknown / experimental readings never leak.
+_DH_DISPLAY_ORDER = [
+    ("free_chlorine",    "Free Chlorine"),
+    ("total_chlorine",   "Total Chlorine"),
+    ("ph",               "pH"),
+    ("alkalinity",       "Alkalinity"),
+    ("cyanuric_acid",    "Cyanuric Acid"),
+    ("calcium_hardness", "Calcium Hardness"),
+    ("salt",             "Salt"),
+    ("tds",              "TDS"),
+    ("phosphates",       "Phosphates"),
+    ("water_temp",       "Water Temp"),
+]
+
+# Core (chemistry-gate-required) readings — see
+# ``services/chemistry_gate.py::CORE_READINGS``. Duplicated as a
+# ``frozenset`` here because the renderer needs O(1) membership and
+# a stable local reference (avoids a circular import at module load).
+_DH_CORE_KEYS = frozenset({
+    "free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid",
+})
+
+
 def _dh_band_chip(band: str) -> str:
     """Return a pill-shaped band chip with inline styles.
 
@@ -509,58 +535,75 @@ def _dh_render_hero(*, logo_url: str, company: str, first_name: str,
 
 
 def _dh_render_water_test(water_test: List[Dict[str, Any]]) -> str:
-    """Water Test card — core readings render as band chips, optional
-    readings as raw value + unit. Empty rows are omitted.
+    """Water Test card — customer-facing labels + range chips for
+    every configured reading.
+
+    Feb-2026 spec (product-approved):
+      * Combined Chlorine is intentionally NOT rendered — customers
+        find the row confusing and it's noise on the email.
+      * Long-form labels ("Free Chlorine", "Cyanuric Acid") replace
+        the tech-facing shorthand ("Free Cl", "CYA"). Tech UIs keep
+        their compact chips via ``chemistry_gate.DISPLAY_LABELS``.
+      * Every banded key (5 core + 4 extended: calcium hardness,
+        salt, TDS, phosphates) renders a chip; Water Temp is
+        informational-only and renders as raw value + unit.
+      * Zero-valued OPTIONAL readings are treated as an
+        "unmeasured" sentinel and omitted (many techs skip these on
+        routine visits and the checklist defaults to 0.0). CORE
+        readings render even at 0 — the chemistry gate already
+        requires them at submit, so 0 there is a legitimate value.
     """
     if not water_test:
         return ""
-    from services.chemistry_bands import (
-        band_for_reading, CANONICAL_BAND_THRESHOLDS,
-    )
-    from services.chemistry_gate import DISPLAY_LABELS, CORE_READINGS
-    by_key = {r["key"]: r for r in water_test}
-    core_rows = ""
-    for key in CORE_READINGS:
+    from services.chemistry_bands import band_for_reading
+
+    by_key = {r.get("key"): r for r in water_test if r.get("key")}
+
+    def _row_html(label: str, right_html: str) -> str:
+        return (
+            f'<tr>'
+            f'<td style="padding:6px 12px 6px 0;color:#64748B;font-size:14px;'
+            f'white-space:nowrap;vertical-align:middle;">{label}</td>'
+            f'<td style="padding:6px 0;text-align:right;vertical-align:middle;">'
+            f'{right_html}</td>'
+            f'</tr>'
+        )
+
+    rows = ""
+    for key, label in _DH_DISPLAY_ORDER:
         r = by_key.get(key)
         if not r:
             continue
-        band = band_for_reading(key, r.get("value"))
-        if not band:
-            continue
-        core_rows += (
-            f'<tr>'
-            f'<td style="padding:6px 12px 6px 0;color:#64748B;font-size:14px;'
-            f'white-space:nowrap;vertical-align:middle;">'
-            f'{DISPLAY_LABELS[key]}</td>'
-            f'<td style="padding:6px 0;text-align:right;'
-            f'vertical-align:middle;">{_dh_band_chip(band)}</td>'
-            f'</tr>'
-        )
-    optional_rows = ""
-    for r in water_test:
-        if r["key"] in CANONICAL_BAND_THRESHOLDS:
-            continue
         v = r.get("value")
-        if v in (None, ""):
+        if v is None or v == "":
             continue
-        val_str = f"{v} {r.get('unit') or ''}".strip()
-        optional_rows += (
-            f'<tr>'
-            f'<td style="padding:6px 12px 6px 0;color:#64748B;font-size:14px;'
-            f'white-space:nowrap;vertical-align:middle;">{r["label"]}</td>'
-            f'<td style="padding:6px 0;text-align:right;color:#0F172A;'
-            f'font-size:14px;font-weight:600;vertical-align:middle;">'
-            f'<b>{val_str}</b></td>'
-            f'</tr>'
-        )
-    if not (core_rows or optional_rows):
+        # Zero-sentinel skip for optional readings — see docstring.
+        if key not in _DH_CORE_KEYS:
+            try:
+                _fv = float(v)
+            except (TypeError, ValueError):
+                _fv = None
+            if _fv == 0:
+                continue
+        band = band_for_reading(key, v)
+        if band:
+            rows += _row_html(label, _dh_band_chip(band))
+        else:
+            # Informational (e.g. water_temp) — raw value + unit.
+            val_str = f"{v} {r.get('unit') or ''}".strip()
+            rows += _row_html(
+                label,
+                f'<span style="color:#0F172A;font-size:14px;'
+                f'font-weight:600;"><b>{val_str}</b></span>',
+            )
+
+    if not rows:
         return ""
     body = (
         _dh_section_heading("Water Test") +
         f'<table role="presentation" cellpadding="0" cellspacing="0" '
         f'border="0" width="100%" '
-        f'style="border-collapse:collapse;font-size:14px;">'
-        f'{core_rows}{optional_rows}</table>'
+        f'style="border-collapse:collapse;font-size:14px;">{rows}</table>'
     )
     return _dh_card(body)
 

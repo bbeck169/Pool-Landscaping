@@ -253,7 +253,8 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
             _wt_start = body.index("Water Test</h3>")
             _wt_end   = body.index("</table>", _wt_start)
             _wt = body[_wt_start:_wt_end]
-            for _label in ("Free Cl", "Total Cl", "pH", "Alkalinity", "CYA"):
+            for _label in ("Free Chlorine", "Total Chlorine", "pH",
+                           "Alkalinity", "Cyanuric Acid"):
                 assert f">{_label}</td>" in _wt, (
                     f"missing display label {_label!r} in Water Test section"
                 )
@@ -328,7 +329,7 @@ def test_door_hanger_legacy_readings_on_job_doc_still_render(monkeypatch):
             r = await _call_email_door_hanger(jid, tid)
             assert r["ok"] is True
             body = captured.get("html") or ""
-            assert "CYA" in body
+            assert "Cyanuric Acid" in body
             # Feb-2026 hotfix — raw CYA value MUST NOT leak into the
             # customer-facing email; only the band renders.
             _wt = body[body.index("Water Test</h3>"):body.index("</table>", body.index("Water Test</h3>"))]
@@ -647,8 +648,9 @@ def test_door_hanger_water_test_renders_all_five_cores_in_fixed_order(monkeypatc
         jid = await _mk_pool_job(tid, cid)
         from utils import now_iso, new_id
         # Seed readings in a SHUFFLED order to prove the email always
-        # renders them in the canonical order (Free Cl → Total Cl →
-        # Alkalinity → pH → CYA, matching ``chemistry_gate.CORE_READINGS``).
+        # renders them in the product-spec display order (Free
+        # Chlorine → Total Chlorine → pH → Alkalinity → Cyanuric Acid,
+        # matching ``_DH_DISPLAY_ORDER`` in workstream_service_log.py).
         await _db().service_reports.insert_one({
             "id": new_id(), "tenant_id": tid, "job_id": jid,
             "tech_id": "mike-tech",
@@ -668,14 +670,16 @@ def test_door_hanger_water_test_renders_all_five_cores_in_fixed_order(monkeypatc
             body = captured.get("html") or ""
             _wt = body[body.index("Water Test</h3>"):body.index("</table>",
                        body.index("Water Test</h3>"))]
-            # Every core rendered, in canonical order.
+            # Every core rendered, in display order.
             positions = {
                 lbl: _wt.index(f">{lbl}</td>") for lbl in
-                ("Free Cl", "Total Cl", "Alkalinity", "pH", "CYA")
+                ("Free Chlorine", "Total Chlorine", "pH",
+                 "Alkalinity", "Cyanuric Acid")
             }
             ordered = sorted(positions.items(), key=lambda kv: kv[1])
             assert [k for k, _ in ordered] == [
-                "Free Cl", "Total Cl", "Alkalinity", "pH", "CYA",
+                "Free Chlorine", "Total Chlorine", "pH",
+                "Alkalinity", "Cyanuric Acid",
             ]
         finally:
             await _drain(tid, jid, cid)
@@ -753,6 +757,255 @@ def test_door_hanger_optional_reading_rendered_when_filled(monkeypatch):
             assert "82" in _wt
             # Blank optional stays omitted.
             assert "Calcium Hardness" not in _wt
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · Extended range-badge coverage (product spec).
+# ═════════════════════════════════════════════════════════════════════
+#
+# Customer-facing email now renders every configured reading with a
+# qualitative band (Calcium Hardness, Salt, TDS, Phosphates joined
+# the badged set). Water Temp stays informational (raw value only).
+# Combined Chlorine is REMOVED entirely.  Zero-valued OPTIONAL
+# readings are treated as "not measured" and omitted.
+# ═════════════════════════════════════════════════════════════════════
+def test_door_hanger_extended_readings_render_with_bands(monkeypatch):
+    """Calcium Hardness, Salt, TDS, and Phosphates each get a band
+    chip instead of a raw ppm number when a real reading is
+    submitted."""
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                {"key": "free_chlorine",   "value": 2.5},
+                {"key": "total_chlorine",  "value": 3.0},
+                {"key": "ph",              "value": 7.4},
+                {"key": "alkalinity",      "value": 90},
+                {"key": "cyanuric_acid",   "value": 45},
+                # Extended banded readings — mix of bands.
+                {"key": "calcium_hardness", "value": 300, "unit": "ppm"},  # Average [200,400)
+                {"key": "salt",             "value": 3600, "unit": "ppm"}, # Above Avg [3400,4000)
+                {"key": "tds",              "value": 2500, "unit": "ppm"}, # Elevated (>=2000)
+                {"key": "phosphates",       "value": 50, "unit": "ppb"},   # Below Avg (<100)
+                {"key": "water_temp",       "value": 82, "unit": "°F"},
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            _wt = body[body.index("Water Test</h3>"):
+                       body.index("</table>", body.index("Water Test</h3>"))]
+
+            # Every extended banded reading is present with its label.
+            for label in ("Calcium Hardness", "Salt", "TDS", "Phosphates"):
+                assert f">{label}</td>" in _wt, f"missing {label!r}"
+
+            # Raw ppm values must NOT leak into the banded rows.
+            for raw in ("300 ppm", "3600 ppm", "2500 ppm", "50 ppb"):
+                assert raw not in _wt, f"raw {raw!r} leaked into a banded row"
+
+            # Each extended reading gets its correct band.
+            _ch = _wt.index(">Calcium Hardness</td>")
+            _sa = _wt.index(">Salt</td>")
+            _td = _wt.index(">TDS</td>")
+            _ph = _wt.index(">Phosphates</td>")
+            _end = len(_wt)
+            # Slice each row from label to next label — chip lives inside.
+            def _row_after(pos, next_pos):
+                return _wt[pos:next_pos]
+            assert "<b>Average</b>" in _row_after(_ch, _sa)
+            assert "<b>Above Average</b>" in _row_after(_sa, _td)
+            assert "<b>Elevated</b>" in _row_after(_td, _ph)
+            assert "<b>Below Average</b>" in _row_after(_ph, _end)
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_combined_chlorine_never_rendered(monkeypatch):
+    """Combined Chlorine is dropped from the customer email even when
+    the tech recorded a real value (product spec, Feb-2026)."""
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                {"key": "free_chlorine",     "value": 2.5},
+                {"key": "combined_chlorine", "value": 0.5, "unit": "ppm"},
+                {"key": "total_chlorine",    "value": 3.0},
+                {"key": "ph",                "value": 7.4},
+                {"key": "alkalinity",        "value": 90},
+                {"key": "cyanuric_acid",     "value": 45},
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            _wt = body[body.index("Water Test</h3>"):
+                       body.index("</table>", body.index("Water Test</h3>"))]
+            assert "Combined Chlorine" not in _wt
+            assert "combined" not in _wt.lower()
+            # Free Chlorine (the sibling) still renders — sanity check
+            # that we didn't accidentally drop the wrong row.
+            assert ">Free Chlorine</td>" in _wt
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_new_customer_labels(monkeypatch):
+    """Customer-facing email uses long-form labels; tech-facing
+    ``DISPLAY_LABELS`` shorthand ('Free Cl', 'CYA') must NOT leak."""
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                {"key": "free_chlorine",  "value": 2.5},
+                {"key": "total_chlorine", "value": 3.0},
+                {"key": "ph",             "value": 7.4},
+                {"key": "alkalinity",     "value": 90},
+                {"key": "cyanuric_acid",  "value": 45},
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            _wt = body[body.index("Water Test</h3>"):
+                       body.index("</table>", body.index("Water Test</h3>"))]
+            # New customer-facing labels present.
+            assert ">Free Chlorine</td>" in _wt
+            assert ">Total Chlorine</td>" in _wt
+            assert ">Cyanuric Acid</td>" in _wt
+            # Tech-facing shorthand must NOT leak into the customer email.
+            assert ">Free Cl</td>" not in _wt
+            assert ">Total Cl</td>" not in _wt
+            assert ">CYA</td>" not in _wt
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_zero_value_optionals_are_unmeasured_sentinel(monkeypatch):
+    """A tech skipping optional readings leaves them at 0.0 in the
+    default checklist state. Treat 0-valued OPTIONAL readings as
+    'not measured' and omit them for a cleaner customer email.
+    CORE readings still render at 0 (chemistry gate requires them)."""
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                # Core readings real.
+                {"key": "free_chlorine",  "value": 2.5},
+                {"key": "total_chlorine", "value": 3.0},
+                {"key": "ph",             "value": 7.4},
+                {"key": "alkalinity",     "value": 90},
+                {"key": "cyanuric_acid",  "value": 45},
+                # Optionals all zero — reproduces the screenshot symptom.
+                {"key": "calcium_hardness", "value": 0.0},
+                {"key": "salt",             "value": 0.0},
+                {"key": "tds",              "value": 0.0},
+                {"key": "phosphates",       "value": 0.0},
+                {"key": "water_temp",       "value": 0.0, "unit": "°F"},
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            _wt = body[body.index("Water Test</h3>"):
+                       body.index("</table>", body.index("Water Test</h3>"))]
+            for label in ("Calcium Hardness", "Salt", "TDS",
+                          "Phosphates", "Water Temp"):
+                assert label not in _wt, (
+                    f"unmeasured optional {label!r} leaked into email"
+                )
+        finally:
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_door_hanger_water_temp_renders_raw_not_banded(monkeypatch):
+    """Water Temp is informational — must render its raw value + unit,
+    never a band chip. Confirms the renderer's raw-fallback branch."""
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                {"key": "free_chlorine",  "value": 2.5},
+                {"key": "total_chlorine", "value": 3.0},
+                {"key": "ph",             "value": 7.4},
+                {"key": "alkalinity",     "value": 90},
+                {"key": "cyanuric_acid",  "value": 45},
+                {"key": "water_temp",     "value": 84, "unit": "°F"},
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            _wt = body[body.index("Water Test</h3>"):
+                       body.index("</table>", body.index("Water Test</h3>"))]
+            assert ">Water Temp</td>" in _wt
+            # Slice just the Water Temp row.
+            _wt_pos = _wt.index(">Water Temp</td>")
+            _wt_row = _wt[_wt_pos:_wt.index("</tr>", _wt_pos)]
+            assert "84" in _wt_row
+            # Note: ``resolve_water_test`` currently drops the ``unit``
+            # field for non-canonical readings before this renderer
+            # sees them (see ``service_report_view._coerce_readings``).
+            # Water Temp therefore renders as a bare "84" without
+            # "°F". Flagged as a follow-up; not fixed in this PR.
+            # No band chip on this row.
+            for band in ("Below Average", "Average",
+                         "Above Average", "Elevated"):
+                assert f"<b>{band}</b>" not in _wt_row, (
+                    f"Water Temp incorrectly rendered a band: {band}"
+                )
         finally:
             await _drain(tid, jid, cid)
 
