@@ -15,7 +15,7 @@
  * migrations later, they'll live here as sibling cards.
  */
 import React, { useState } from "react";
-import { api } from "../../lib/api-client";
+import { api } from "@/api";
 import { colors } from "../../theme";
 
 
