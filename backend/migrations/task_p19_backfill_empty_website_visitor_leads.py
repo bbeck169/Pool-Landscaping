@@ -123,7 +123,10 @@ def _diff_updates(lead: Dict[str, Any], rebuilt: Dict[str, Any]) -> Dict[str, An
 
 
 async def backfill(*, commit: bool = False) -> Dict[str, Any]:
-    """Main entrypoint.  ``commit=False`` (default) is dry-run."""
+    """CLI entrypoint — runs against every tenant on this pod.
+    ``commit=False`` (default) is dry-run.  Kept for backwards
+    compat with ``python -m migrations.task_p19_...``.
+    """
     stats = {
         "total_candidates": 0, "backfilled": 0,
         "skipped_no_submission": 0, "skipped_no_new_data": 0,
@@ -171,6 +174,83 @@ async def backfill(*, commit: bool = False) -> Dict[str, Any]:
         stats["backfilled"] += 1
     logger.info(f"[p19] summary → {stats}")
     return stats
+
+
+async def run_backfill_for_tenant(
+    tenant_id: str,
+    *,
+    dry_run: bool = True,
+) -> Dict[str, Any]:
+    """Tenant-scoped variant — powers the super_admin API endpoint.
+
+    Same matching logic + $set diff as the CLI ``backfill()``, but:
+      * Restricts the candidate scan to a single ``tenant_id``.
+      * Returns a per-lead ``enrichments`` list with ``before`` /
+        ``after`` snapshots so the admin UI can render a diff table.
+      * Never touches leads from a different tenant, even when the
+        CLI would (belt-and-suspenders vs cross-tenant fan-out).
+      * ``dry_run=True`` (default) computes the diff but writes
+        NOTHING — safety-first, must be explicit ``False`` to commit.
+    """
+    report: Dict[str, Any] = {
+        "matched_leads": 0,
+        "enriched_leads": 0,
+        "skipped_no_match": 0,
+        "skipped_no_new_data": 0,
+        "enrichments": [],
+        "warnings": [],
+        "dry_run": dry_run,
+    }
+    q = {
+        "tenant_id": tenant_id,
+        "name": "Website Visitor",
+        "$and": [
+            {"$or": [{"phone": ""}, {"phone": None},
+                       {"phone": {"$exists": False}}]},
+            {"$or": [{"email": ""}, {"email": None},
+                       {"email": {"$exists": False}}]},
+        ],
+    }
+    _FIELDS = ("name", "email", "phone", "address",
+                "service_address", "service_interest",
+                "message", "notes")
+    async for lead in db.leads.find(q, {"_id": 0}):
+        report["matched_leads"] += 1
+        lid = lead.get("id")
+        sub = await _find_matching_submission(lead)
+        if not sub:
+            report["skipped_no_match"] += 1
+            report["warnings"].append(
+                f"lead={lid}: no matching form_submission within ±5min"
+            )
+            continue
+        vals = sub.get("values") or {}
+        rebuilt = _lead_row_from_form_values(
+            tid=tenant_id, vals=vals,
+            source_label=lead.get("source") or "Web Form",
+        )
+        updates = _diff_updates(lead, rebuilt)
+        if not updates:
+            report["skipped_no_new_data"] += 1
+            continue
+        # ``before`` snapshots only the fields the diff touches so
+        # the UI diff table has a per-column comparison; ``after``
+        # carries the exact $set payload we'd write.
+        before = {k: lead.get(k) for k in _FIELDS if k in updates}
+        after = dict(updates)
+        report["enrichments"].append({
+            "lead_id": lid,
+            "submission_id": sub.get("id"),
+            "before": before,
+            "after": after,
+        })
+        if not dry_run:
+            await db.leads.update_one(
+                {"id": lid, "tenant_id": tenant_id},
+                {"$set": updates},
+            )
+            report["enriched_leads"] += 1
+    return report
 
 
 def _main() -> None:

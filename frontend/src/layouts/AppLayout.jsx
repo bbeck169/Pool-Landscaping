@@ -50,6 +50,7 @@ import {
   LayoutGrid,
   GraduationCap,
   Film,
+  UserPlus,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -200,6 +201,12 @@ const QUICK_NAV_RAIL = [
   { key: "invoices",   to: "/invoices",   label: "Invoices",   Icon: Receipt,        roles: ["super_admin", "admin", "manager"] },
   { key: "payments",   to: "/payments",   label: "Payments",   Icon: CreditCard,     roles: ["super_admin", "admin", "manager"] },
   { key: "customers",  to: "/customers",  label: "Customers",  Icon: Users,          roles: ["super_admin", "admin", "manager"] },
+  // Feb-2026 · Sidebar quick-link for Leads.  Placed adjacent to
+  // Customers to keep the sales-pipeline group together (matches
+  // ``nav/adminNav.js`` where /leads lives in the "Directory"
+  // subsection alongside /customers).  Same role gate as Customers /
+  // Estimates — techs and customer_portal never see this item.
+  { key: "leads",      to: "/leads",      label: "Leads",      Icon: UserPlus,       roles: ["super_admin", "admin", "manager"] },
   { key: "estimates",  to: "/estimates",  label: "Estimates",  Icon: FileText,       roles: ["super_admin", "admin", "manager"] },
   // Feb-2026 · P20 — three managerial quick-links.  Same role gate
   // as the Invoices / Payments / Customers / Estimates cohort:

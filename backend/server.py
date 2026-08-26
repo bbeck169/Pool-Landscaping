@@ -304,6 +304,11 @@ api_router.include_router(_hw_byo_router.router)
 # to persist entries on every soft-delete.
 from routers import deletion_audit as _deletion_audit_router  # noqa: E402
 api_router.include_router(_deletion_audit_router.router)
+
+# Feb-2026 · Admin migrations wrapper — super_admin-only POST
+# endpoints that run one-off backfills from the deployed app.
+from routers import admin_migrations as _admin_migrations_router  # noqa: E402
+api_router.include_router(_admin_migrations_router.router)
 from routers import comms_admin as _comms_admin  # noqa: E402
 api_router.include_router(_comms_admin.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402

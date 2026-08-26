@@ -81,6 +81,9 @@ const _EXPECTED_ORDER_SUPER = [
   "rail-nav-invoices",
   "rail-nav-payments",
   "rail-nav-customers",
+  // Feb-2026 · Leads sidebar quick-link added between Customers
+  // and Estimates to keep the sales-pipeline group together.
+  "rail-nav-leads",
   "rail-nav-estimates",
   // Feb-2026 · P20 — three managerial quick-links appended after
   // Estimates. Same role gate ([super_admin, admin, manager]) so

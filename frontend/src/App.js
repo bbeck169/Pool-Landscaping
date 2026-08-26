@@ -219,6 +219,9 @@ import HomeworksIntegrationPage from "@/pages/admin/integrations/HomeworksIntegr
 import HomeworksOAuthCallback from "@/pages/admin/integrations/HomeworksOAuthCallback";
 // Feb-2026 · Item 3 — Deletions audit page (super_admin only).
 import DeletionsAuditPage from "@/pages/admin/audit/DeletionsAuditPage";
+// Feb-2026 · Admin migrations dashboard (super_admin only) — driver
+// for one-off backfills (P19 empty-lead enrichment initially).
+import AdminMigrationsPage from "@/pages/admin/AdminMigrationsPage";
 import PortalTerms from "@/pages/portal/PortalTerms";
 import {
   MarketingHub, BrandMemory,
@@ -726,6 +729,7 @@ export default function App() {
             <Route path="admin/integrations/homeworks/oauth/callback" element={<SuperAdminOnly><HomeworksOAuthCallback /></SuperAdminOnly>} />
             {/* Feb-2026 · Item 3 — Deletions audit page (super_admin only). */}
             <Route path="admin/audit/deletions" element={<SuperAdminOnly><DeletionsAuditPage /></SuperAdminOnly>} />
+            <Route path="admin/migrations" element={<SuperAdminOnly><AdminMigrationsPage /></SuperAdminOnly>} />
             {/* Phase 21 · Feb 2026 — Vanity slug editor (super_admin only). */}
             <Route path="settings/vanity-slugs" element={<SuperAdminOnly><VanitySlugsPage /></SuperAdminOnly>} />
             {/* Feb-2026 — Orphan customer auth users admin (super_admin only). */}
