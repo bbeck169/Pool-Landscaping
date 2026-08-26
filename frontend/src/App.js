@@ -217,6 +217,8 @@ import SupercoolIntegrationPage from "@/pages/settings/integrations/SupercoolInt
 // /settings/integrations Homeworks card.
 import HomeworksIntegrationPage from "@/pages/admin/integrations/HomeworksIntegrationPage";
 import HomeworksOAuthCallback from "@/pages/admin/integrations/HomeworksOAuthCallback";
+// Feb-2026 · Item 3 — Deletions audit page (super_admin only).
+import DeletionsAuditPage from "@/pages/admin/audit/DeletionsAuditPage";
 import PortalTerms from "@/pages/portal/PortalTerms";
 import {
   MarketingHub, BrandMemory,
@@ -722,6 +724,8 @@ export default function App() {
             {/* Phase 0 POC · Feb-2026 — Homeworks BYO-creds surface (super_admin only). */}
             <Route path="admin/integrations/homeworks" element={<SuperAdminOnly><HomeworksIntegrationPage /></SuperAdminOnly>} />
             <Route path="admin/integrations/homeworks/oauth/callback" element={<SuperAdminOnly><HomeworksOAuthCallback /></SuperAdminOnly>} />
+            {/* Feb-2026 · Item 3 — Deletions audit page (super_admin only). */}
+            <Route path="admin/audit/deletions" element={<SuperAdminOnly><DeletionsAuditPage /></SuperAdminOnly>} />
             {/* Phase 21 · Feb 2026 — Vanity slug editor (super_admin only). */}
             <Route path="settings/vanity-slugs" element={<SuperAdminOnly><VanitySlugsPage /></SuperAdminOnly>} />
             {/* Feb-2026 — Orphan customer auth users admin (super_admin only). */}

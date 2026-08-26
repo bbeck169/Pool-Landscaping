@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { toast as sonnerToast } from "sonner";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Download, Search, Play, Plus, Trash2, Upload, FileDown, ExternalLink, Check, X as XIcon } from "lucide-react";
 import { api } from "@/api";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
+import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 import { colors, money } from '@/theme';
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 
@@ -81,6 +82,17 @@ export function PaymentsLedger() {
   const [selected, setSelected] = useState(() => new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Feb-2026 · Item 2 — customer-scoped filter (URL-persisted).
+  const [params, setParams] = useSearchParams();
+  const customerFilter = params.get("customer_id") || null;
+  const setCustomerFilter = (id) => {
+    const s = new URLSearchParams(params);
+    if (id) s.set("customer_id", id);
+    else s.delete("customer_id");
+    setParams(s, { replace: true });
+    setPage(1);
+    setSelected(new Set());
+  };
 
   const load = () => {
     setLoading(true);
@@ -89,6 +101,7 @@ export function PaymentsLedger() {
     if (end) p.set("end", end);
     if (method && method !== "all") p.set("method", method);
     if (status) p.set("status", status);
+    if (customerFilter) p.set("customer_id", customerFilter);
     p.set("page", page); p.set("page_size", pageSize);
     api.get(`/payments/list?${p.toString()}`)
       .then((r) => {
@@ -98,7 +111,7 @@ export function PaymentsLedger() {
       .catch(() => setLoading(false));
   };
 
-  useEffect(load, [start, end, method, status, page]);
+  useEffect(load, [start, end, method, status, page, customerFilter]);
 
   const filtered = useMemo(
     () => rows.filter((r) => !q || (r.customer_name + r.invoice_title).toLowerCase().includes(q.toLowerCase())),
@@ -162,6 +175,15 @@ export function PaymentsLedger() {
     <div className="p-4 md:p-8 max-w-7xl mx-auto" data-testid="payments-ledger-page">
       <Header title="Payments Ledger" subtitle="All received payments with filters + CSV export"
               right={<DateRangePicker />} />
+
+      {/* Feb-2026 · Item 2 — customer-scoped filter (admin+super+manager only). */}
+      <div className="mb-3">
+        <CustomerFilterBar
+          value={customerFilter}
+          onChange={setCustomerFilter}
+          testId="payments-filter-customer"
+        />
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         <Card testId="payments-total-count" className="p-4">

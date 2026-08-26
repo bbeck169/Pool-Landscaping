@@ -3,13 +3,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, Search, FileText } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
-import {
-  PageHeader,
-  Button,
-  Skeleton,
-  StatusPill,
-  EmptyState,
-} from "@/components/ui-kit";
+import { PageHeader, Button, Skeleton, StatusPill, EmptyState } from "@/components/ui-kit";
+import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 
 const STATUSES = ["draft", "sent", "approved", "declined", "expired"];
 
@@ -19,6 +14,14 @@ export default function QuotesList() {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState(params.get("q") || "");
   const status = params.get("status") || "";
+  // Feb-2026 · Item 2 — customer-scoped filter (URL-persisted).
+  const customerFilter = params.get("customer_id") || null;
+  const setCustomerFilter = (id) => {
+    const s = new URLSearchParams(params);
+    if (id) s.set("customer_id", id);
+    else s.delete("customer_id");
+    setParams(s, { replace: true });
+  };
 
   const setStatus = (v) => {
     const s = new URLSearchParams(params);
@@ -28,11 +31,13 @@ export default function QuotesList() {
   };
 
   useEffect(() => {
+    const qs = new URLSearchParams({ doc_type: "quote" });
+    if (customerFilter) qs.set("customer_id", customerFilter);
     api
-      .get("/quotes?doc_type=quote")
+      .get(`/quotes?${qs.toString()}`)
       .then((r) => setRows(r || []))
       .catch(() => setRows([]));
-  }, []);
+  }, [customerFilter]);
 
   const filtered = (rows || [])
     .filter((r) => (status ? r.status === status || r.decision === status : true))
@@ -53,6 +58,14 @@ export default function QuotesList() {
           </Button>
         }
       />
+
+      <div className="mb-3">
+        <CustomerFilterBar
+          value={customerFilter}
+          onChange={setCustomerFilter}
+          testId="quotes-filter-customer"
+        />
+      </div>
 
       <div
         className="rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center"

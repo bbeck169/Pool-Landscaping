@@ -135,7 +135,11 @@ async def list_quotes(user: dict = Depends(get_current_user),
                       doc_type: Optional[str] = None,
                       include_deleted: bool = False,
                       category: Optional[List[str]] = Query(None),
-                      card_on_file: Optional[str] = Query(None)):
+                      card_on_file: Optional[str] = Query(None),
+                      # Feb-2026 · Item 2 — customer-scoped filter for
+                      # the Invoices + Quotes list pages. Additive to
+                      # every existing filter; tenant scope preserved.
+                      customer_id: Optional[str] = Query(None)):
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
     q: dict = {"tenant_id": tenant["id"]}
@@ -143,6 +147,13 @@ async def list_quotes(user: dict = Depends(get_current_user),
         q["customer_id"] = user.get("customer_id")
     if doc_type:
         q["doc_type"] = doc_type
+    # Feb-2026 · Item 2 — admin/super_admin/manager may narrow the list
+    # to a single customer. If a customer-role user drove the request,
+    # their own scope filter already set customer_id above; the admin
+    # filter simply overrides it (harmless in the customer-role case
+    # because the caller can't send a foreign id from a portal shell).
+    if customer_id:
+        q["customer_id"] = customer_id
     # Phase 14b · Feb-2026 — line-item category filter. Case-insensitive
     # union across every selected value; matches invoices where ANY
     # ``line_items[].category`` equals one of the caller's values.
@@ -900,19 +911,24 @@ async def _resolve_invoice_ids(selector: Dict[str, Any],
     return ids
 
 
-async def _perform_soft_delete_quote(qid: str, user: dict, tenant: dict) -> dict:
+async def _perform_soft_delete_quote(qid: str, user: dict, tenant: dict,
+                                       deletion_reason: Optional[str] = None) -> dict:
     """Shared soft-delete helper for quotes/invoices. Enforces:
     * tenant scoping (row must belong to caller's tenant).
     * no re-delete (already soft-deleted rows return ``already_deleted=True``
       instead of raising).
-    * audit row written best-effort.
+    * audit row written best-effort to BOTH ``db.audit_log`` (legacy
+      consumers) AND ``db.deletion_audit`` (Feb-2026 · Item 3 richer
+      audit surface with snapshot + restore support).
     Called by both the single-invoice soft-delete + the bulk endpoint so
     behavior is identical.
     """
     doc = await db.quotes.find_one(
         {"id": qid, "tenant_id": tenant["id"]},
-        {"_id": 0, "id": 1, "deleted_at": 1, "doc_type": 1,
-         "payment_status": 1, "amount_paid": 1},
+        # Feb-2026 · Item 3 — full doc for the deletion_audit snapshot;
+        # legacy code only projected a couple of fields, but we need the
+        # whole row to support restore.
+        {"_id": 0},
     )
     if not doc:
         raise HTTPException(404, "Invoice not found")
@@ -922,7 +938,8 @@ async def _perform_soft_delete_quote(qid: str, user: dict, tenant: dict) -> dict
     await db.quotes.update_one(
         {"id": qid, "tenant_id": tenant["id"]},
         {"$set": {"deleted_at": deleted_at,
-                    "deleted_by_user_id": user.get("id")}},
+                    "deleted_by_user_id": user.get("id"),
+                    "deletion_reason": deletion_reason}},
     )
     try:
         await db.audit_log.insert_one({
@@ -937,6 +954,21 @@ async def _perform_soft_delete_quote(qid: str, user: dict, tenant: dict) -> dict
         })
     except Exception as e:
         logger.warning(f"invoice.soft_delete audit failed: {e}")
+    # Feb-2026 · Item 3 — richer audit surface. Cascade is empty here
+    # because the payment IS the invoice in this codebase's data model.
+    try:
+        from routers.deletion_audit import write_deletion_audit_entry
+        await write_deletion_audit_entry(
+            tenant_id=tenant["id"],
+            resource_type="invoice",
+            resource_id=qid,
+            user=user,
+            snapshot=doc,
+            cascade_deleted_ids=[],
+            deletion_reason=deletion_reason,
+        )
+    except Exception as e:
+        logger.warning(f"deletion_audit invoice insert failed: {e}")
     return {"ok": True, "id": qid, "deleted_at": deleted_at}
 
 
@@ -1065,58 +1097,96 @@ async def bulk_delete_invoices(body: _InvoiceBulkDeleteIn,
 _STRIPE_LOCKED_METHODS = {"stripe", "card"}
 
 
-async def _perform_delete_payment(pid: str, user: dict, tenant: dict) -> dict:
+async def _perform_delete_payment(pid: str, user: dict, tenant: dict,
+                                    deletion_reason: Optional[str] = None,
+                                    allow_stripe_override: bool = False) -> dict:
     """Revert a paid invoice back to ``unpaid`` — the "delete a payment"
-    semantics on this platform. Refuses if:
-    * the row is not found in this tenant.
-    * the row has a Stripe payment_intent_id (cleared to bank; reversal
-      belongs in the Stripe dashboard, not here).
-    * the row's payment method is a card/Stripe charge that has already
-      succeeded (defense in depth for rows missing the PI id).
+    semantics on this platform.
+
+    Feb-2026 · Item 3 behavior change: Stripe-linked / card-linked rows
+    are NO LONGER blocked when invoked via the new
+    ``DELETE /api/payments/{id}`` REST endpoint (super-admin/admin
+    override — user explicitly decided to allow this per Item-3 spec).
+    The audit entry stamps a ``stripe_reconciliation_note`` when the
+    original row carried a Stripe / Lumino identifier so the ledger
+    remains reconcilable.
+
+    The legacy bulk-delete path leaves ``allow_stripe_override=False``
+    so the existing Stripe safety-guard behavior is untouched for
+    that surface.
     """
     doc = await db.quotes.find_one(
         {"id": pid, "tenant_id": tenant["id"]},
-        {"_id": 0, "id": 1, "payment_status": 1, "amount_paid": 1,
-         "payment_intent_id": 1, "payment_method": 1,
-         "payment_deleted_at": 1,
-         # Task QQ · Feb 2026 — Lumino counterparts (dual-run window).
-         "lumino_transaction_id": 1, "lumino_payment_session_id": 1,
-         "lumino_subscription_id": 1},
+        {"_id": 0},
     )
     if not doc:
         raise HTTPException(404, "Payment not found")
     if doc.get("payment_deleted_at"):
         return {"ok": True, "id": pid, "already_deleted": True}
-    if doc.get("payment_intent_id"):
-        raise HTTPException(
-            409, "Payment is linked to a cleared Stripe charge — reverse via Stripe dashboard",
-        )
-    # Task QQ locked-state — Lumino equivalents on the same row.
-    if (doc.get("lumino_transaction_id")
-            or doc.get("lumino_payment_session_id")
-            or doc.get("lumino_subscription_id")):
-        raise HTTPException(
-            409, "Payment is linked to a Lumino transaction — reverse via the Lumino dashboard",
-        )
-    method = (doc.get("payment_method") or "").lower()
-    if method in _STRIPE_LOCKED_METHODS and (doc.get("payment_status") or "").lower() == "paid":
-        raise HTTPException(
-            409, "Card/Stripe payments cannot be bulk-deleted — refund via the invoice detail page",
-        )
+
+    stripe_note: Optional[str] = None
+
+    if not allow_stripe_override:
+        # Legacy bulk path — hard-block Stripe / Lumino rows so batch
+        # operations can't accidentally erase records still tracked
+        # externally.
+        if doc.get("payment_intent_id"):
+            raise HTTPException(
+                409, "Payment is linked to a cleared Stripe charge — reverse via Stripe dashboard",
+            )
+        if (doc.get("lumino_transaction_id")
+                or doc.get("lumino_payment_session_id")
+                or doc.get("lumino_subscription_id")):
+            raise HTTPException(
+                409, "Payment is linked to a Lumino transaction — reverse via the Lumino dashboard",
+            )
+        method = (doc.get("payment_method") or "").lower()
+        if method in _STRIPE_LOCKED_METHODS and (doc.get("payment_status") or "").lower() == "paid":
+            raise HTTPException(
+                409, "Card/Stripe payments cannot be bulk-deleted — refund via the invoice detail page",
+            )
+    else:
+        # Feb-2026 · Item 3 override — user decision: ALLOW delete for
+        # Stripe-settled payments (no refund issued via API). Stamp a
+        # reconciliation note so auditors see the disconnect.
+        pi_id = doc.get("payment_intent_id")
+        if pi_id:
+            stripe_note = (
+                f"Stripe payment {pi_id} deleted locally on "
+                f"{now_iso()} — no refund issued via Stripe. "
+                "Refund separately in Stripe dashboard if required."
+            )
+        elif (doc.get("lumino_transaction_id")
+              or doc.get("lumino_payment_session_id")
+              or doc.get("lumino_subscription_id")):
+            lz_id = (doc.get("lumino_transaction_id")
+                     or doc.get("lumino_payment_session_id")
+                     or doc.get("lumino_subscription_id"))
+            stripe_note = (
+                f"Lumino payment {lz_id} deleted locally on "
+                f"{now_iso()} — reverse separately in the Lumino "
+                "dashboard if required."
+            )
+
     if (doc.get("payment_status") or "").lower() == "unpaid":
         raise HTTPException(400, "Nothing to delete — this invoice has no recorded payment")
+
     deleted_at = now_iso()
+    updates: Dict[str, Any] = {
+        "payment_status": "unpaid",
+        "amount_paid": 0.0,
+        "paid_at": None,
+        "payment_deleted_at": deleted_at,
+        "payment_deleted_by_user_id": user.get("id"),
+        "payment_deleted_prior_status": doc.get("payment_status"),
+        "payment_deleted_prior_amount_paid": doc.get("amount_paid") or 0.0,
+        "payment_deletion_reason": deletion_reason,
+    }
+    if stripe_note:
+        updates["stripe_reconciliation_note"] = stripe_note
     await db.quotes.update_one(
         {"id": pid, "tenant_id": tenant["id"]},
-        {"$set": {
-            "payment_status": "unpaid",
-            "amount_paid": 0.0,
-            "paid_at": None,
-            "payment_deleted_at": deleted_at,
-            "payment_deleted_by_user_id": user.get("id"),
-            "payment_deleted_prior_status": doc.get("payment_status"),
-            "payment_deleted_prior_amount_paid": doc.get("amount_paid") or 0.0,
-        }},
+        {"$set": updates},
     )
     try:
         await db.audit_log.insert_one({
@@ -1132,7 +1202,23 @@ async def _perform_delete_payment(pid: str, user: dict, tenant: dict) -> dict:
         })
     except Exception as e:
         logger.warning(f"payment.soft_delete audit failed: {e}")
-    return {"ok": True, "id": pid, "deleted_at": deleted_at}
+    # Feb-2026 · Item 3 — richer audit surface. Snapshot the pre-delete
+    # doc so restore can put ``payment_status`` + ``amount_paid`` back.
+    try:
+        from routers.deletion_audit import write_deletion_audit_entry
+        await write_deletion_audit_entry(
+            tenant_id=tenant["id"],
+            resource_type="payment",
+            resource_id=pid,
+            user=user,
+            snapshot=doc,
+            deletion_reason=deletion_reason,
+            stripe_reconciliation_note=stripe_note,
+        )
+    except Exception as e:
+        logger.warning(f"deletion_audit payment insert failed: {e}")
+    return {"ok": True, "id": pid, "deleted_at": deleted_at,
+              "stripe_reconciliation_note": stripe_note}
 
 
 @router.post("/payments/bulk-delete",
@@ -1170,3 +1256,55 @@ async def bulk_delete_payments(body: _InvoiceBulkDeleteIn,
             failed.append({"id": pid, "reason": str(e), "status_code": 500})
     return {"ok": True, "deleted_count": len(deleted),
               "deleted": deleted, "failed": failed}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Feb-2026 · Item 3 — REST-canonical DELETE endpoints for invoices +
+# payments. Thin wrappers over the existing soft-delete helpers, plus:
+#   * ``deletion_reason`` query param carried into the audit entry
+#   * ``DELETE /api/payments/{id}`` uses the Stripe-override path per
+#     the user's explicit decision — allow the local delete + stamp
+#     a reconciliation note.
+# Gate: admin + super_admin only (no manager, no owner). Matches the
+# user's Item-3 spec verbatim.
+# ═════════════════════════════════════════════════════════════════════════
+def _require_admin_or_super(user: dict) -> None:
+    role = ((user or {}).get("role") or "").lower()
+    if role not in ("admin", "super_admin"):
+        raise HTTPException(403, "admin_or_super_admin_only")
+
+
+@router.delete("/invoices/{qid}", operation_id="invoices.delete")
+async def delete_invoice(qid: str,
+                          deletion_reason: Optional[str] = Query(None),
+                          user: dict = Depends(get_current_user),
+                          tenant: dict = Depends(get_current_tenant)):
+    """REST-canonical soft-delete for an invoice. Cascade side-effect
+    is inherent in this codebase — the payment IS the invoice row —
+    so the audit entry lists cascade_deleted_ids=[]. Reads that need
+    to un-apply the payment separately should call
+    ``DELETE /api/payments/{id}`` first.
+    """
+    _require_admin_or_super(user)
+    return await _perform_soft_delete_quote(
+        qid, user, tenant, deletion_reason=deletion_reason,
+    )
+
+
+@router.delete("/payments/{qid}", operation_id="payments.delete")
+async def delete_payment(qid: str,
+                          deletion_reason: Optional[str] = Query(None),
+                          user: dict = Depends(get_current_user),
+                          tenant: dict = Depends(get_current_tenant)):
+    """REST-canonical soft-delete for a payment. Reverts
+    ``payment_status`` → ``unpaid`` and clears ``amount_paid``.
+    Feb-2026 · Item 3 — Stripe-settled payments ARE deleted here (per
+    user's explicit override); a reconciliation note is stamped on
+    the row so the ledger stays auditable.
+    """
+    _require_admin_or_super(user)
+    return await _perform_delete_payment(
+        qid, user, tenant,
+        deletion_reason=deletion_reason,
+        allow_stripe_override=True,
+    )

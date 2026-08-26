@@ -851,10 +851,6 @@ function TeamRoster() {
       ) : (
         <ul className="space-y-2">
           {filtered
-            .filter((r) => {
-              if (filter === "all_both") return _roleKey(r) === "all";
-              return true;
-            })
             .map((r) => {
               const key = _roleKey(r);
               const opt = ROLE_OPTIONS.find((o) => o.value === key);

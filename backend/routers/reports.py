@@ -428,6 +428,8 @@ async def payments_list(
     end: Optional[str] = None,
     method: Optional[str] = None,
     status: Optional[str] = None,
+    # Feb-2026 · Item 2 — customer-scoped filter.
+    customer_id: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
 ):
@@ -436,6 +438,8 @@ async def payments_list(
         q["payment_status"] = status
     else:
         q["$or"] = [{"amount_paid": {"$gt": 0}}, {"payment_status": {"$in": ["paid", "processing", "partial"]}}]
+    if customer_id:
+        q["customer_id"] = customer_id
     docs = await db.quotes.find(q, {"_id": 0}).sort("paid_at", -1).to_list(20000)
     rows = []
     for d in docs:

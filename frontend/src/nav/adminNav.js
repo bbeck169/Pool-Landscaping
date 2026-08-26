@@ -213,6 +213,8 @@ export const ADMIN_NAV_V2 = [
     // Super_admin only; hard_rule enforces on the nav filter, and the
     // route wrapper (`SuperAdminOnly`) enforces on the router.
     { to: "/admin/integrations/homeworks", label: "Homeworks (POC)", icon: PlugZap, feature: "settings", hard_rule: "super_admin_only", subsection: "Settings" },
+    // Feb-2026 · Item 3 — Deletions audit (super_admin only).
+    { to: "/admin/audit/deletions", label: "Deletion audit", icon: ShieldCheck, feature: "settings", hard_rule: "super_admin_only", subsection: "Settings" },
     // Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer.
     // Admin + super_admin only — one-shot destructive-ish operation.
     { to: "/settings/import/homeworks", label: "Import from Homeworks", icon: ImportIcon, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },

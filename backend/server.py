@@ -261,6 +261,13 @@ api_router.include_router(_hw_dispatcher_router.router)
 # read-only smoke-test (Phase 0).  See /app/memory/homeworks_integration.md.
 from routers import homeworks_integration as _hw_byo_router  # noqa: E402
 api_router.include_router(_hw_byo_router.router)
+# Feb-2026 · Item 3 — deletion audit + restore (super_admin only).
+# Provides ``GET /admin/audit/deletions`` and
+# ``POST /admin/audit/deletions/{id}/restore``. The writer helper
+# ``write_deletion_audit_entry`` is imported by routers/quotes.py
+# to persist entries on every soft-delete.
+from routers import deletion_audit as _deletion_audit_router  # noqa: E402
+api_router.include_router(_deletion_audit_router.router)
 from routers import comms_admin as _comms_admin  # noqa: E402
 api_router.include_router(_comms_admin.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402

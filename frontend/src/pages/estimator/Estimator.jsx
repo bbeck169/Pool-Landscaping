@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Plus, FileText, Settings, Copy, Trash2, X as XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui-kit";
 import MediaUploader from "@/components/media/MediaUploader";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
+import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 
 // ────── Estimates list ──────
 export function EstimatesList() {
@@ -25,10 +26,23 @@ export function EstimatesList() {
   const [selected, setSelected] = useState(() => new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Feb-2026 · Item 2 — customer-scoped filter (URL-persisted).
+  const [params, setParams] = useSearchParams();
+  const customerFilter = params.get("customer_id") || null;
+  const setCustomerFilter = (id) => {
+    const s = new URLSearchParams(params);
+    if (id) s.set("customer_id", id);
+    else s.delete("customer_id");
+    setParams(s, { replace: true });
+    setSelected(new Set());
+  };
   useEffect(() => {
-    api.get("/estimates").then(setRows).catch(() => setRows([]));
+    const qs = new URLSearchParams();
+    if (customerFilter) qs.set("customer_id", customerFilter);
+    const url = qs.toString() ? `/estimates?${qs.toString()}` : "/estimates";
+    api.get(url).then(setRows).catch(() => setRows([]));
     api.get("/estimates/settings").then(setSettings).catch(() => setSettings({}));
-  }, []);
+  }, [customerFilter]);
 
   const filtered = rows || [];
   const visibleIds = filtered.map((r) => r.id);
@@ -83,6 +97,14 @@ export function EstimatesList() {
           </>
         }
       />
+      {/* Feb-2026 · Item 2 — customer-scoped filter (admin+super+manager only). */}
+      <div className="mb-3">
+        <CustomerFilterBar
+          value={customerFilter}
+          onChange={setCustomerFilter}
+          testId="estimates-filter-customer"
+        />
+      </div>
       {rows === null ? (
         <Skeleton style={{ height: 220 }} />
       ) : rows.length === 0 ? (

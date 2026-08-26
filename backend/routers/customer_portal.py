@@ -85,6 +85,14 @@ async def get_portal_summary(
             "tenant_id": tenant["id"],
             "customer_id": cid,
             "doc_type": "invoice",
+            # Feb-2026 · Item 3 — soft-deleted invoices MUST NEVER
+            # surface in the customer portal (service history,
+            # invoices tab, balance / past-due / credit rollups).
+            # Match both "field absent" (legacy rows) and "null".
+            "$or": [
+                {"deleted_at": None},
+                {"deleted_at": {"$exists": False}},
+            ],
         },
         {"_id": 0},
     ).to_list(2000)

@@ -14,9 +14,60 @@
  * fix's filter predicate — avoids needing to render the full
  * OpsHub tree (heavy imports, useAuth context, etc.).
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import React from "react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+
+// ─── Render-path mocks (bottom describe block) ────────────────────
+// These mocks are hoisted by vitest before any imports resolve, so
+// keeping them at the top of the module is safe even though only the
+// bottom describe block uses them. The pure-function tests above
+// don't touch @/api / @/auth so the mocks are inert for them.
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
+
+vi.mock("@/components/ui/confirm-dialog", () => ({
+  mustConfirm: vi.fn(async () => true),
+}));
+
+const { apiGetMock2, apiPatchMock2 } = vi.hoisted(() => ({
+  apiGetMock2: vi.fn(),
+  apiPatchMock2: vi.fn(),
+}));
+
+vi.mock("@/api", () => ({
+  api: {
+    get: apiGetMock2,
+    post: vi.fn(),
+    patch: apiPatchMock2,
+    del: vi.fn(),
+    put: vi.fn(),
+  },
+  api_base: () => "http://test.example/api",
+  TOKEN_KEY: "token",
+}));
+
+const { useAuthMock2 } = vi.hoisted(() => ({ useAuthMock2: vi.fn() }));
+vi.mock("@/auth", () => ({
+  useAuth: () => useAuthMock2(),
+  AuthProvider: ({ children }) => children,
+}));
+
+vi.mock("@/hooks/usePermissions", () => ({
+  usePermissions: () => ({ can: () => true, isAdmin: true }),
+}));
+
+vi.mock("@/pages/ops/WorkstreamJobDrawer", () => ({
+  __esModule: true, default: () => null,
+}));
+
+vi.mock("@/hooks/useAttendance", () => ({
+  useAttendance: () => ({ punched_in: false, shifts: [], loading: false }),
+}));
 
 const SRC = readFileSync(
   resolve(__dirname, "../pages/ops/OpsHub.jsx"),
@@ -254,5 +305,99 @@ describe("OpsHub TeamRoster — source-level guard", () => {
       expect(s).not.toMatch(/\bnorth\b/);
       expect(s).not.toMatch(/\bsouth\b/);
     }
+  });
+
+  // ═════════════════════════════════════════════════════════════════
+  // Feb-2026 · TEST 4 regression guard — inner second-pass filter.
+  // Before the regression fix a stray ``.filter((r) => filter ===
+  // "all_both" ? _roleKey(r) === "all" : true)`` block at the
+  // .map() level narrowed the roster back to admin+both AFTER the
+  // useMemo above already unioned the tech specialties, so the
+  // resulting list was empty for every real prod tenant.
+  //
+  // Lock the fix in place by asserting the source no longer
+  // contains that specific ``_roleKey(r) === "all"`` guard next to
+  // ``all_both``.
+  // ═════════════════════════════════════════════════════════════════
+  it("no second-pass `_roleKey(r) === \"all\"` filter next to `all_both` remains", () => {
+    // Search for any occurrence of the buggy inner filter shape
+    // (``if (filter === "all_both") return _roleKey(r) === "all"``).
+    expect(SRC).not.toMatch(
+      /if\s*\(\s*filter\s*===\s*"all_both"\s*\)\s*return\s+_roleKey\(r\)\s*===\s*"all"/,
+    );
+  });
+});
+
+
+// ═════════════════════════════════════════════════════════════════════
+// Feb-2026 · TEST 4 render-path guard.
+//
+// The prior tests exercised a private mirror of ``_filterUser`` — they
+// never mounted the actual ``<OpsHub />`` tree. That's why the earlier
+// inner-filter regression slipped past: the mirror didn't have the
+// second-pass block, only the outer useMemo. This block renders the
+// real component with a mocked ``/team`` and asserts the union chip
+// yields the union of pool_tech + landscape_tech + tech_both rows.
+// (Vitest mocks live at the top of the file, not here — hoisting.)
+// ═════════════════════════════════════════════════════════════════════
+describe("OpsHub TeamRoster — render-path All (Both) chip (TEST 4 guard)", () => {
+  // Prod-shaped roster — every real tech carries the modern enum
+  // (``pool_tech`` / ``landscape_tech`` / ``tech_both``), not the
+  // legacy dept strings. This is EXACTLY the shape the tester hit.
+  const ROSTER = [
+    { id: "u-pool-1",  name: "Pool One",   email: "p1@a.com",
+      role: "technician", department: "pool_tech" },
+    { id: "u-land-1",  name: "Land One",   email: "l1@a.com",
+      role: "technician", department: "landscape_tech" },
+    { id: "u-both-1",  name: "Both One",   email: "b1@a.com",
+      role: "technician", department: "tech_both" },
+    { id: "u-admin-1", name: "Admin One",  email: "a1@a.com",
+      role: "admin",      department: null },
+    { id: "u-super",   name: "Super Sam",  email: "s@a.com",
+      role: "super_admin", department: null },
+    { id: "u-un",      name: "Unset Tech", email: "u@a.com",
+      role: "technician", department: null },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiGetMock2.mockResolvedValue(ROSTER);
+    useAuthMock2.mockReturnValue({
+      user: { id: "u-admin-1", role: "admin", email: "a1@a.com",
+              name: "Admin One" },
+    });
+  });
+
+  async function renderTeamRoster() {
+    const { default: OpsHub } = await import("@/pages/ops/OpsHub");
+    return render(
+      <MemoryRouter initialEntries={["/ops?t=team"]}>
+        <OpsHub />
+      </MemoryRouter>,
+    );
+  }
+
+  it("clicking the All (Both) chip renders the union of pool + landscape + tech_both — not an empty list (TEST 4 regression)", async () => {
+    await renderTeamRoster();
+    // Baseline — the chip exists.
+    await waitFor(() =>
+      expect(screen.getByTestId("team-filter-all_both")).toBeTruthy(),
+    );
+    // Click "All (Both)".
+    fireEvent.click(screen.getByTestId("team-filter-all_both"));
+    // The three tech-specialty rows must all be visible after the
+    // filter fires. This is the assertion that fails when the
+    // second-pass inner ``_roleKey(r) === "all"`` filter is still
+    // in place.
+    await waitFor(() =>
+      expect(screen.getByTestId("team-row-u-pool-1")).toBeTruthy(),
+    );
+    expect(screen.getByTestId("team-row-u-land-1")).toBeTruthy();
+    expect(screen.getByTestId("team-row-u-both-1")).toBeTruthy();
+    // And admin / super_admin / unset rows must be hidden — that's
+    // the "narrow to techs only" half of the chip's intent.
+    expect(screen.queryByTestId("team-row-u-admin-1")).toBeNull();
+    expect(screen.queryByTestId("team-row-u-super")).toBeNull();
+    expect(screen.queryByTestId("team-row-u-un")).toBeNull();
   });
 });

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import BulkChargeModal from "@/components/invoices/BulkChargeModal";
+import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 import {
   PageHeader,
   Button,
@@ -85,6 +86,16 @@ export default function InvoicesList() {
   const hasLateFee = params.get("late_fee") === "1";
   // Feb-2026 · Bulk-pay iteration 1 — card-on-file filter + sort state.
   const cardFilter = params.get("card") || "any"; // any | yes | no
+  // Feb-2026 · Item 2 — customer-scoped filter. URL-persisted so
+  // filtered views are shareable / bookmarkable.
+  const customerFilter = params.get("customer_id") || null;
+  const setCustomerFilter = (id) => {
+    const s = new URLSearchParams(params);
+    if (id) s.set("customer_id", id);
+    else s.delete("customer_id");
+    setParams(s, { replace: true });
+    setSelected(new Set());
+  };
   const [sort, _setSort] = useState({ col: null, dir: null }); // dir: asc|desc|null
   // Phase 34 · Task BB — bulk-select state.
   const [selected, setSelected] = useState(() => new Set());
@@ -126,6 +137,9 @@ export default function InvoicesList() {
     const qs = new URLSearchParams();
     qs.set("doc_type", "invoice");
     for (const c of selectedCategories) qs.append("category", c);
+    // Feb-2026 · Item 2 — customer-scoped filter, additive to every
+    // other filter. Backend enforces tenant scope.
+    if (customerFilter) qs.set("customer_id", customerFilter);
     api.get(`/quotes?${qs.toString()}`).then((r) => setRows(r || [])).catch(() => setRows([]));
     api.get("/payments/summary").then(setSummary).catch(() => {});
     // Bulk-pay iteration 1 · pull PM enrichment from /invoices/overview.
@@ -148,7 +162,7 @@ export default function InvoicesList() {
   useEffect(() => {
     loadRows();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCategories.join("|")]);
+  }, [selectedCategories.join("|"), customerFilter]);
 
   // Phase 14b — load category dropdown options once (admin surfaces only).
   useEffect(() => {
@@ -384,6 +398,17 @@ export default function InvoicesList() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Feb-2026 · Item 2 — customer-scoped filter (admin+super+manager
+          only). Rendered above the existing filter bar so it's the
+          first-touch control for narrowing to one customer. */}
+      <div className="mb-3">
+        <CustomerFilterBar
+          value={customerFilter}
+          onChange={setCustomerFilter}
+          testId="invoices-filter-customer"
+        />
       </div>
 
       {/* Filters */}

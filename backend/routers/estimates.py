@@ -140,11 +140,15 @@ async def delete_template(tid: str,
 @router.get("/estimates")
 async def list_estimates(user: dict = Depends(require_admin),
                          tenant: dict = Depends(get_current_tenant),
-                         include_deleted: bool = False):
+                         include_deleted: bool = False,
+                         # Feb-2026 · Item 2 — customer-scoped filter.
+                         customer_id: Optional[str] = None):
     q: dict = {"tenant_id": tenant["id"]}
     # Phase 34 · Task BB — hide soft-deleted rows unless super_admin opts in.
     if not (include_deleted and (user.get("role") or "").lower() == "super_admin"):
         q["$or"] = [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]
+    if customer_id:
+        q["customer_id"] = customer_id
     return await db.estimates.find(
         q, {"_id": 0}
     ).sort("created_at", -1).to_list(1000)
