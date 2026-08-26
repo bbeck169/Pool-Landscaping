@@ -64,23 +64,37 @@ FIXTURE_CUSTOMER_ID = "seed-optimize-route-customer"
 
 
 # ── Fixture rows. Times are local Phoenix (UTC−7 no DST). We
-#    convert to UTC before writing. ───────────────────────────────────
+#    convert to UTC before writing. Each stop gets its own dedicated
+#    property row (``property_id``) so the ``resolve_stop_geo``
+#    resolver returns correct per-stop coords — without a dedicated
+#    property the customer→property auto-backfill attaches ALL jobs
+#    to a single shared property (customer's address), which collapses
+#    every optimize-route call to a zero-distance response.
+# ─────────────────────────────────────────────────────────────────
 FIXTURE_STOPS: List[Dict[str, Any]] = [
-    {"job_id": "seed-opt-1", "start_local_hhmm": "08:00",
+    {"job_id": "seed-opt-1", "property_id": "seed-opt-prop-1",
+     "start_local_hhmm": "08:00",
      "title": "Weekly Pool Service",
      "address": "1234 W Vistancia Blvd, Peoria, AZ 85383",
+     "postal_code": "85383",
      "lat": 33.7734, "lng": -112.2378},
-    {"job_id": "seed-opt-2", "start_local_hhmm": "09:30",
+    {"job_id": "seed-opt-2", "property_id": "seed-opt-prop-2",
+     "start_local_hhmm": "09:30",
      "title": "Salt Cell Replacement",
      "address": "6825 W Bell Rd, Glendale, AZ 85308",
+     "postal_code": "85308",
      "lat": 33.6389, "lng": -112.2016},
-    {"job_id": "seed-opt-3", "start_local_hhmm": "11:00",
+    {"job_id": "seed-opt-3", "property_id": "seed-opt-prop-3",
+     "start_local_hhmm": "11:00",
      "title": "Filter Cartridge Service",
      "address": "2800 N 15th Ave, Phoenix, AZ 85021",
+     "postal_code": "85021",
      "lat": 33.4823, "lng": -112.0916},
-    {"job_id": "seed-opt-4", "start_local_hhmm": "13:00",
+    {"job_id": "seed-opt-4", "property_id": "seed-opt-prop-4",
+     "start_local_hhmm": "13:00",
      "title": "Chemical Rebalance",
      "address": "4155 N 44th St, Phoenix, AZ 85018",
+     "postal_code": "85018",
      "lat": 33.4948, "lng": -111.9840},
 ]
 
@@ -129,6 +143,54 @@ async def _find_tech(db, tenant_id: str) -> Optional[Dict[str, Any]]:
     return fallback
 
 
+async def _upsert_property(db, tenant_id: str,
+                             stop: Dict[str, Any], dry_run: bool) -> None:
+    """Dedicated property row per stop so ``resolve_stop_geo`` returns
+    the correct per-job coords. Without this the customer→property
+    auto-backfill attaches ALL jobs to a single shared property
+    (using the customer's address) and every optimize-route call
+    collapses to a zero-distance response.
+
+    Uses stable ids (``seed-opt-prop-N``) so subsequent runs update
+    in place.
+    """
+    now = _now_iso()
+    pid = stop["property_id"]
+    if dry_run:
+        log.info("[dry-run] would upsert property %s @ (%s, %s)",
+                  pid, stop["lat"], stop["lng"])
+        return
+    # Store the address as the structured shape the resolver reads.
+    addr_struct = {
+        "line1": stop["address"], "line2": None,
+        "city": None, "state": None,
+        "postal_code": stop.get("postal_code"), "country": "US",
+    }
+    await db.properties.update_one(
+        {"id": pid, "tenant_id": tenant_id},
+        {
+            "$setOnInsert": {
+                "id": pid,
+                "tenant_id": tenant_id,
+                "customer_id": FIXTURE_CUSTOMER_ID,
+                "created_at": now,
+            },
+            "$set": {
+                "label": stop["title"],
+                "address": addr_struct,
+                "lat": stop["lat"],
+                "lng": stop["lng"],
+                "active": True,
+                # Skip lazy-geocode — coords are canonical.
+                "geocoded_at": now,
+                "geocoded_address": stop["address"],
+                "updated_at": now,
+            },
+        },
+        upsert=True,
+    )
+
+
 async def _upsert_customer(db, tenant_id: str, dry_run: bool) -> None:
     """Single fixture customer that all 4 jobs link to (satisfies the
     ``customers.find_one`` requirement in ``create_job`` when the
@@ -173,12 +235,17 @@ async def _upsert_job(db, tenant_id: str, tech: Dict[str, Any],
         "tenant_id": tenant_id,
         "customer_id": FIXTURE_CUSTOMER_ID,
         "customer_name": "Optimize Route Fixture · Multi-stop Day",
+        # P1 · Per-stop property so ``resolve_stop_geo`` returns
+        # the correct per-job coords (no shared-property collapse).
+        "property_id": stop["property_id"],
+        "property_label": stop["title"],
         "title": stop["title"],
         "service_type": stop["title"],
         "status": "scheduled",
         "scheduled_date": date_iso,
         "scheduled_start": scheduled_start,
         "address": stop["address"],
+        "postal_code": stop.get("postal_code"),
         # Both shapes on the job doc — the optimizer reads either.
         "latitude": stop["lat"],
         "longitude": stop["lng"],
@@ -274,6 +341,10 @@ async def seed(dry_run: bool = False) -> Dict[str, Any]:
 
         job_ids: List[str] = []
         for stop in FIXTURE_STOPS:
+            # Per-stop property MUST land before the job insert so
+            # the ``resolve_stop_geo`` resolver never falls back to
+            # the auto-backfill's shared customer-address property.
+            await _upsert_property(db, tenant_id, stop, dry_run)
             await _upsert_job(db, tenant_id, tech, stop, date_iso, dry_run)
             job_ids.append(stop["job_id"])
 

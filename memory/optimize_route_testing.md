@@ -11,6 +11,7 @@
 | Tenant | Pool & Landscaping of Vistancia (`affdfbfa-88b9-4baa-ae45-2ef78531b6e4`, slug `aquaterra`) |
 | Technician user id | `0b8784ff-6204-47bb-8049-23338d19b631` (`mike@aquaterra.com` — Mike Rivera) |
 | Job ids | `seed-opt-1`, `seed-opt-2`, `seed-opt-3`, `seed-opt-4` |
+| Property ids | `seed-opt-prop-1..4` — one per stop with per-stop coords (avoids the customer→property auto-backfill collapsing all 4 jobs onto a single shared coord). |
 | Customer id | `seed-optimize-route-customer` (auto-upserted) |
 
 ### Stops
@@ -92,7 +93,6 @@ Locked by:
 
 | `algorithm` | When |
 |-------------|------|
-| `"google_directions"` | Google returned a route AND ORION added no warnings (rare — the ZIP pass usually emits at least an informational warning). |
-| `"directions_v2+orion_bias"` | Google returned a route AND ORION appended ≥1 warning (applied a swap or skipped for missing ZIP data). **Default on this fixture.** |
-| `"haversine_fallback"` | Google unavailable / errored — `warnings` contains "Directions unavailable — using Haversine fallback. Review order manually." Reproduce locally by unsetting `GOOGLE_MAPS_API_KEY` in `backend/.env` and restarting supervisor. |
+| `"directions_v2+orion_bias"` | Google returned a route with positive leg distances AND the ORION zip-cluster pass ran. **Canonical Google-success badge** for this endpoint — the legacy `"google_directions"` value was retired since every Google-success response on the schedule endpoint runs the ORION pass. **Default on this fixture.** |
+| `"haversine_fallback"` | Google unavailable / errored → `warnings` contains "Directions unavailable — using Haversine fallback. Review order manually." OR Google returned a **degenerate all-zero-legs route** → `warnings` contains "Google Directions returned zero-distance legs — falling back to Haversine (drive-time estimate unavailable)." + a WARN-level backend log with the raw payload for post-mortem. Reproduce the first branch locally by unsetting `GOOGLE_MAPS_API_KEY` in `backend/.env` and restarting supervisor; the second by pointing multiple jobs at a shared property. |
 | `"trivial"` | <2 geocoded stops (not reachable with this fixture). |

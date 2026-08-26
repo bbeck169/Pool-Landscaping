@@ -299,3 +299,98 @@ def test_algorithm_is_haversine_fallback_and_warning_present_on_google_failure()
     joined = " ".join(body["warnings"]).lower()
     assert "directions unavailable" in joined
     assert "haversine" in joined
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 4 · P1 · Zero-distance leg guard — Google succeeded but every leg
+#         is 0m/0s (degenerate route, e.g. all stops collapsed onto
+#         a shared property coord). Guard MUST fall back to Haversine
+#         so the endpoint never silently ships zero-distance data.
+# ═══════════════════════════════════════════════════════════════════
+def test_zero_distance_legs_triggers_haversine_fallback():
+    """Google returns a 200 with valid shape but every leg has
+    ``distanceMeters == 0``. The router MUST:
+      * Log a WARN with the raw payload (verified via caplog).
+      * Set ``algorithm == "haversine_fallback"``.
+      * Populate ``warnings`` with the specific zero-legs reason
+        (substring "zero-distance legs") so the client can render
+        the yellow banner.
+      * Produce a positive ``total_distance_m`` from the Haversine
+        pass so the UI has SOMETHING meaningful to display.
+      * Still return every input job in ``ordered_job_ids``.
+    """
+    from routers import route_optimization as _mod
+
+    user = {"id": "u_tech", "role": "technician",
+            "tenant_id": "tenant-c5", "technician_id": "t_tech"}
+    tenant = {"id": "tenant-c5"}
+    # 4 stops well-separated so Haversine produces a meaningful
+    # non-zero total once the guard triggers.
+    jobs = [
+        {"id": "j1", "site_lat": 33.7734, "site_lng": -112.2378,
+         "tenant_id": "tenant-c5", "technician_id": "u_tech"},
+        {"id": "j2", "site_lat": 33.6389, "site_lng": -112.2016,
+         "tenant_id": "tenant-c5", "technician_id": "u_tech"},
+        {"id": "j3", "site_lat": 33.4823, "site_lng": -112.0916,
+         "tenant_id": "tenant-c5", "technician_id": "u_tech"},
+        {"id": "j4", "site_lat": 33.4948, "site_lng": -111.9840,
+         "tenant_id": "tenant-c5", "technician_id": "u_tech"},
+    ]
+    app, db_stub = _build_app(user, tenant, jobs)
+
+    # Google shape mirrors the real degenerate response — 200 OK, a
+    # route with all-zero legs (same coord repeated → nothing to
+    # drive). ``ordered_indices`` covers every input so the wrapper
+    # DOES return a non-None result — that's the case the guard
+    # is meant to catch.
+    fake_google = AsyncMock(return_value={
+        "ordered_indices": [0, 1, 2, 3],
+        "polyline": "",
+        "total_distance_m": 0,
+        "total_duration_s": 0,
+        "legs": [
+            {"distance_m": 0, "duration_s": 0,
+             "start_address": "", "end_address": ""},
+            {"distance_m": 0, "duration_s": 0,
+             "start_address": "", "end_address": ""},
+            {"distance_m": 0, "duration_s": 0,
+             "start_address": "", "end_address": ""},
+            {"distance_m": 0, "duration_s": 0,
+             "start_address": "", "end_address": ""},
+            {"distance_m": 0, "duration_s": 0,
+             "start_address": "", "end_address": ""},
+        ],
+    })
+
+    async def _body():
+        with patch.object(_mod, "db", db_stub):
+            with patch("routers.realtime.bus.broadcast", new=AsyncMock()):
+                with patch.object(_mod, "resolve_stop_geo",
+                                    new=AsyncMock(side_effect=_resolve_stub)):
+                    with patch("services.google_maps.directions.optimize_route",
+                                fake_google):
+                        transport = ASGITransport(app=app)
+                        async with AsyncClient(transport=transport,
+                                                base_url="http://t") as ac:
+                            return await ac.post(
+                                "/api/schedule/optimize-route",
+                                json={"date": "2026-06-05"},
+                            )
+    r = _run(_body())
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    # Guard triggered — badge falls back.
+    assert body["algorithm"] == "haversine_fallback", body
+    # Warning substring matches the docstring contract.
+    assert isinstance(body.get("warnings"), list) and body["warnings"]
+    joined = " ".join(body["warnings"]).lower()
+    assert "zero-distance legs" in joined, joined
+    # Haversine produced meaningful data — total_distance_m > 0 for
+    # 4 well-separated stops.
+    assert body["total_distance_m"] > 0, body
+    assert body["total_duration_s"] >= 0
+    # Every input job represented.
+    assert set(body["ordered_job_ids"]) == {"j1", "j2", "j3", "j4"}
+    # Response contract preserved.
+    assert _REQUIRED_KEYS.issubset(set(body.keys()))

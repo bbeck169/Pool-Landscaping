@@ -72,27 +72,37 @@ async def optimize_route(
                                        ``duration_s``, ``polyline``).
       * ``cached: bool``            — true on cache hit.
       * ``algorithm: str``          — one of ``"trivial"``,
-                                       ``"google_directions"``,
                                        ``"directions_v2+orion_bias"``,
                                        ``"haversine_fallback"``.
       * ``warnings: list[str]``     — ORION heuristic notes on the
                                        Google path; a Haversine
-                                       fallback message on failure.
+                                       fallback message on failure
+                                       (transport-layer OR zero-legs
+                                       degenerate-route guard).
 
     ``algorithm`` mapping:
       * ``"trivial"`` — <2 geocoded stops.
-      * ``"google_directions"`` — Google returned a route and ORION
-                                     added no warnings (rare on real
-                                     data — the ZIP pass almost always
-                                     emits at least an informational
-                                     warning).
-      * ``"directions_v2+orion_bias"`` — Google returned a route AND
-                                     ORION appended at least one
-                                     warning (applied a swap OR
-                                     skipped for missing ZIP data).
-      * ``"haversine_fallback"`` — Google unavailable / errored;
-                                     ``warnings`` contains the
-                                     "Directions unavailable" message.
+      * ``"directions_v2+orion_bias"`` — Google returned a route with
+                                     positive leg distances AND the
+                                     ORION zip-cluster pass ran to
+                                     completion (with or without
+                                     appended warnings). This is the
+                                     canonical Google-success badge
+                                     for this endpoint. The legacy
+                                     ``"google_directions"`` value
+                                     is retired — every Google-
+                                     success response on the schedule
+                                     endpoint runs the ORION pass, so
+                                     the badge is always composite.
+      * ``"haversine_fallback"`` — Google unavailable / errored OR
+                                     Google returned a degenerate
+                                     all-zero-legs route (guarded
+                                     via a diagnostic WARN log +
+                                     Haversine fallback so the
+                                     endpoint never silently ships
+                                     zero-distance data). The
+                                     ``warnings`` list carries the
+                                     specific reason.
     """
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
@@ -251,34 +261,81 @@ async def optimize_route(
                 "duration_s": int(leg_google.get("duration_s") or 0),
                 "polyline": None,
             })
-        out = {
-            "ordered_job_ids": [j["id"] for j in ordered],
-            "total_distance_m": int(google["total_distance_m"]),
-            "total_duration_s": int(google["total_duration_s"]),
-            "legs": legs,
-            "cached": False,
-            "algorithm": "directions_v2+orion_bias" if orion_warnings else "google_directions",
-            # Feb-2026 · P0-frontend contract — surface every ORION
-            # heuristic warning + any transport-layer note so the
-            # client can render a yellow banner in the Reorder modal.
-            "warnings": orion_warnings,
-            "date": date_str,
-            "waypoints_hash": whash,
-            "tenant_id": tenant["id"],
-            "user_id": target_uid,
-            "computed_at": now_iso(),
-        }
-        await db.route_optimizations.insert_one(dict(out))
-        try:
-            from routers.realtime import bus
-            await bus.broadcast(target_uid, {
-                "type": "route_optimized",
-                "payload": {"ordered_job_ids": out["ordered_job_ids"],
-                            "total_distance_m": out["total_distance_m"]},
-            })
-        except Exception as e:
-            logger.warning(f"WS notify (route_optimized) failed: {e}")
-        return out
+
+        # Feb-2026 · P1 · Zero-distance leg guard. Google Routes API
+        # v2 sometimes returns a "successful" 200 that describes a
+        # degenerate route — every leg is 0m/0s (e.g. all waypoints
+        # collapsed onto the same coord because ``resolve_stop_geo``
+        # attached them all to a shared property, or a silent quota
+        # / API-enable failure surfaces as an empty-leg response).
+        # If we cache that we'd silently ship zero-distance routes to
+        # techs. Detect and fall through to the Haversine block
+        # below so ``total_distance_m`` is at least a crow-fly
+        # estimate; append a client-facing warning so the Reorder
+        # modal renders the yellow banner.
+        google_total_m = int(google.get("total_distance_m") or 0)
+        legs_total_m  = sum((l.get("distance_m") or 0) for l in legs)
+        if legs and (legs_total_m == 0 and google_total_m == 0):
+            # Redacted diagnostic — the ``google`` dict never carries
+            # the API key (the wrapper strips it before returning),
+            # but we still redact defensively in case the shape
+            # changes upstream.
+            _safe_google = {k: v for k, v in google.items()
+                             if k not in ("api_key", "authorization")}
+            try:
+                logger.warning(
+                    "[optimize-route] Google Directions returned zero-distance "
+                    "legs — tenant=%s user=%s date=%s stops=%d ordered=%s "
+                    "google_payload=%s. Falling back to Haversine.",
+                    tenant["id"], target_uid, date_str, len(ordered),
+                    [j["id"] for j in ordered],
+                    _safe_google,
+                )
+            except Exception:
+                pass
+            # Signal the fallback branch below to badge + warn.
+            _zero_legs_reason = (
+                "Google Directions returned zero-distance legs — falling "
+                "back to Haversine (drive-time estimate unavailable)."
+            )
+        else:
+            out = {
+                "ordered_job_ids": [j["id"] for j in ordered],
+                "total_distance_m": int(google["total_distance_m"]),
+                "total_duration_s": int(google["total_duration_s"]),
+                "legs": legs,
+                "cached": False,
+                # Feb-2026 · P1 · Canonical Google-path badge. The
+                # legacy ``"google_directions"`` value was retired —
+                # the schedule endpoint always runs the ORION zip-
+                # cluster pass, so every Google-success response
+                # carries the composite badge (whether or not ORION
+                # emitted a warning). See docstring above + the
+                # response-contract test suite.
+                "algorithm": "directions_v2+orion_bias",
+                # Feb-2026 · P0-frontend contract — surface every ORION
+                # heuristic warning + any transport-layer note so the
+                # client can render a yellow banner in the Reorder modal.
+                "warnings": orion_warnings,
+                "date": date_str,
+                "waypoints_hash": whash,
+                "tenant_id": tenant["id"],
+                "user_id": target_uid,
+                "computed_at": now_iso(),
+            }
+            await db.route_optimizations.insert_one(dict(out))
+            try:
+                from routers.realtime import bus
+                await bus.broadcast(target_uid, {
+                    "type": "route_optimized",
+                    "payload": {"ordered_job_ids": out["ordered_job_ids"],
+                                "total_distance_m": out["total_distance_m"]},
+                })
+            except Exception as e:
+                logger.warning(f"WS notify (route_optimized) failed: {e}")
+            return out
+    else:
+        _zero_legs_reason = None  # Google unavailable / errored.
 
     # Nearest-neighbor from the start (or first job).
     start = (body.start_lat, body.start_lng) if body.start_lat and body.start_lng else None
@@ -324,7 +381,16 @@ async def optimize_route(
         # Feb-2026 · Optimize Route contract — signal to the client
         # that Google was unavailable so the modal can render the
         # "Directions unavailable — review manually" warning banner.
-        "warnings": ["Directions unavailable — using Haversine fallback. Review order manually."],
+        # P1 · The zero-legs guard emits a more specific message so
+        # operators can distinguish "Google unreachable" from "Google
+        # returned a degenerate route" (usually a shared-property /
+        # geocode collapse). Both trigger the same yellow banner.
+        "warnings": [
+            _zero_legs_reason
+            if _zero_legs_reason
+            else "Directions unavailable — using Haversine fallback. "
+                 "Review order manually."
+        ],
         "date": date_str,
         "waypoints_hash": whash,
         "tenant_id": tenant["id"],
