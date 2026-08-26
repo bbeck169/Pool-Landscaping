@@ -758,8 +758,48 @@ export default function CalendarSchedule() {
           <h1 className="text-2xl font-bold" style={{ color: colors.onSurface }} data-testid="calendar-title">
             Schedule
           </h1>
-          <div className="text-xs" style={{ color: colors.muted }}>
-            {loading ? "Loading…" : `${filteredJobs.length} of ${rawJobs.length} jobs`}
+          <div className="text-xs" style={{ color: colors.muted }} data-testid="calendar-header-counts">
+            {loading ? "Loading…" : (
+              (() => {
+                // Feb 2026 · Work-class split on the filtered view.
+                // Renders in BOTH Grid and Calendar modes so the
+                // service/repair breakdown is discoverable regardless
+                // of which sub-view the operator is on. Legacy jobs
+                // without ``work_class`` bucket into ``service``
+                // (matches the read-time invariant in
+                // ``backend/services/work_class.py``).
+                const repair = filteredJobs.filter(
+                  (j) => j && j.work_class === "repair",
+                ).length;
+                const service = filteredJobs.length - repair;
+                return (
+                  <>
+                    <span data-testid="calendar-header-count-total">
+                      {filteredJobs.length}
+                    </span>
+                    {" of "}{rawJobs.length}{" jobs"}
+                    {filteredJobs.length > 0 ? (
+                      <>
+                        {" · "}
+                        <span data-testid="calendar-header-count-service">
+                          {service} svc
+                        </span>
+                        {" · "}
+                        <span
+                          data-testid="calendar-header-count-repair"
+                          style={{
+                            color: repair > 0 ? "#DC2626" : undefined,
+                            fontWeight: repair > 0 ? 600 : undefined,
+                          }}
+                        >
+                          {repair} repair
+                        </span>
+                      </>
+                    ) : null}
+                  </>
+                );
+              })()
+            )}
           </div>
         </div>
         {/* Feb-2026 · Phase 1 — prominent top-level "On my way — next
@@ -1839,6 +1879,14 @@ function TechColorLegend({ techs, techColorMap }) {
           name: t.name,
           color: techColorMap.get(id) || hashedTechColor(id),
           isExplicit: !!t.display_color_hex,
+          // Feb 2026 · Work-class counter — carried through so the
+          // legend shows the tech's active-job load + repair
+          // breakdown next to their name. All three fields default
+          // to 0 for legacy payloads (backend guarantees them on
+          // /api/technicians post-Feb-2026).
+          activeJobs: Number(t.active_jobs) || 0,
+          activeJobsRepair: Number(t.active_jobs_repair) || 0,
+          activeJobsService: Number(t.active_jobs_service) || 0,
         };
       });
   }, [techs, techColorMap]);
@@ -1872,6 +1920,40 @@ function TechColorLegend({ techs, techColorMap }) {
             }}
           />
           <span className="text-xs" style={{ color: colors.onSurface }}>{t.name}</span>
+          {/* Feb 2026 · Per-tech work-class counter. Renders when
+              the tech has ≥1 active job. Shows total on left,
+              repair breakdown after a middot when repairs > 0.
+              testids always exist so the tester can assert the
+              presence + parse the numeric spans. */}
+          {t.activeJobs > 0 ? (
+            <span
+              className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md ml-0.5"
+              style={{
+                background: colors.surfaceSecondary,
+                color: colors.onSurface,
+              }}
+              data-testid={`calendar-tech-legend-count-${t.id}`}
+              data-total={t.activeJobs}
+              data-service={t.activeJobsService}
+              data-repair={t.activeJobsRepair}
+            >
+              <span data-testid={`calendar-tech-legend-count-total-${t.id}`}>
+                {t.activeJobs}
+              </span>
+              {t.activeJobsRepair > 0 ? (
+                <>
+                  <span aria-hidden="true" className="opacity-60"> · </span>
+                  <span
+                    data-testid={`calendar-tech-legend-count-repair-${t.id}`}
+                    style={{ color: "#DC2626" }}
+                    title={`${t.activeJobsRepair} repair${t.activeJobsRepair === 1 ? "" : "s"}`}
+                  >
+                    {t.activeJobsRepair}R
+                  </span>
+                </>
+              ) : null}
+            </span>
+          ) : null}
         </span>
       ))}
     </div>

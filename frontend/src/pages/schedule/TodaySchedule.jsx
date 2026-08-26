@@ -613,7 +613,15 @@ export default function TodaySchedule() {
             fields fall back to the ``job_count`` total → no sub-line. */}
         <div data-testid="stat-jobs-wrap" className="flex flex-col">
           <Stat label="Jobs" value={s.job_count ?? 0} testId="stat-jobs" />
-          {typeof s.job_count_repair === "number" && s.job_count_repair > 0 ? (
+          {/* Feb 2026 · Work-class split — always renders the sub-line
+              when the day has ≥1 job so the testids ``stat-jobs-service``
+              and ``stat-jobs-repair`` always exist for E2E assertions
+              and the feature is discoverable to techs who haven't yet
+              had a repair land in their day. Legacy payloads without
+              the split fields still hide the sub-line (guard on
+              ``typeof job_count_service === "number"``). */}
+          {typeof s.job_count_service === "number"
+            && (s.job_count ?? 0) > 0 ? (
             <div
               className="text-xs opacity-90 mt-0.5 whitespace-nowrap"
               data-testid="stat-jobs-split"
@@ -623,7 +631,7 @@ export default function TodaySchedule() {
               </span>
               <span aria-hidden="true"> · </span>
               <span data-testid="stat-jobs-repair">
-                {s.job_count_repair} repair
+                {s.job_count_repair ?? 0} repair
               </span>
             </div>
           ) : null}

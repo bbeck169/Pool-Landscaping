@@ -77,24 +77,31 @@ FIXTURE_STOPS: List[Dict[str, Any]] = [
      "title": "Weekly Pool Service",
      "address": "1234 W Vistancia Blvd, Peoria, AZ 85383",
      "postal_code": "85383",
+     "work_class": "service",
      "lat": 33.7734, "lng": -112.2378},
     {"job_id": "seed-opt-2", "property_id": "seed-opt-prop-2",
      "start_local_hhmm": "09:30",
      "title": "Salt Cell Replacement",
      "address": "6825 W Bell Rd, Glendale, AZ 85308",
      "postal_code": "85308",
+     # Feb 2026 · Flipped to ``repair`` so the preview data exercises
+     # the tech-counter split path on ``/schedule`` +
+     # ``/schedule/legacy-timeline`` + ``/admin/migrations``.
+     "work_class": "repair",
      "lat": 33.6389, "lng": -112.2016},
     {"job_id": "seed-opt-3", "property_id": "seed-opt-prop-3",
      "start_local_hhmm": "11:00",
      "title": "Filter Cartridge Service",
      "address": "2800 N 15th Ave, Phoenix, AZ 85021",
      "postal_code": "85021",
+     "work_class": "service",
      "lat": 33.4823, "lng": -112.0916},
     {"job_id": "seed-opt-4", "property_id": "seed-opt-prop-4",
      "start_local_hhmm": "13:00",
      "title": "Chemical Rebalance",
      "address": "4155 N 44th St, Phoenix, AZ 85018",
      "postal_code": "85018",
+     "work_class": "service",
      "lat": 33.4948, "lng": -111.9840},
 ]
 
@@ -241,6 +248,11 @@ async def _upsert_job(db, tenant_id: str, tech: Dict[str, Any],
         "property_label": stop["title"],
         "title": stop["title"],
         "service_type": stop["title"],
+        # Feb 2026 · Carry the work-class dimension so the tech
+        # counter split (svc vs repair) has real data to reflect
+        # in preview. Defaults to ``service`` for legacy stops
+        # missing the field.
+        "work_class": stop.get("work_class") or "service",
         "status": "scheduled",
         "scheduled_date": date_iso,
         "scheduled_start": scheduled_start,

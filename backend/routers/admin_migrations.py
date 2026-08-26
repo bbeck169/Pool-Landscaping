@@ -203,7 +203,7 @@ async def list_roster_for_cleanup(
             "is_deactivated": active_flag is False,
             # Active jobs count — used by the UI to disable the row's
             # checkbox when non-zero (deactivate would strand work).
-            "active_jobs": await db.jobs.count_documents({
+            "active_jobs": await db.jobs.count_documents(_active_q := {
                 "tenant_id": tid,
                 "$or": [
                     {"technician_id": u.get("id")},
@@ -214,7 +214,19 @@ async def list_roster_for_cleanup(
                 "status": {"$in": ["scheduled", "pending", "active",
                                      "in_progress"]},
             }),
+            # Feb 2026 · Work-class split. Extra count on the repair
+            # bucket only; ``service = total − repair`` so legacy jobs
+            # without ``work_class`` land in service automatically.
+            "active_jobs_repair": await db.jobs.count_documents(
+                {**_active_q, "work_class": "repair"},
+            ),
         })
+        # ``service`` is derived — matches the read-time invariant in
+        # ``backend/services/work_class.py``. Placed AFTER the append
+        # so both keys reference the SAME row dict via -1 index.
+        rows[-1]["active_jobs_service"] = max(
+            0, rows[-1]["active_jobs"] - rows[-1]["active_jobs_repair"],
+        )
     return rows
 
 
