@@ -172,7 +172,43 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
 )
+
+
+# Feb-2026 · P1 · Kubernetes readiness probe endpoint.
+# Emergent's ingress proxies GET /health to the pod's FastAPI on
+# :8001 (see /var/log/nginx / rollout logs — ``upstream:
+# "http://127.0.0.1:8001/health"``).  Without this route the probe
+# gets a 404 once FastAPI is up, and connection-refused (111) while
+# FastAPI is still importing (cold-start ≈ 5s + Motor lifespan
+# startup adds seconds more; the K8s readiness window fired before
+# ``Started server process`` printed → deploy timed out on 2026-08-26).
+#
+# Contract:
+#   * NO ``/api`` prefix — the ingress hits ``/health`` literally.
+#   * NO DB call — probe must return < 5ms so the readiness window
+#     never depends on Mongo latency.
+#   * NO auth — probes are pod-internal / cluster-internal only;
+#     leaking a static ``{"status": "ok"}`` is intentional.
+#   * NO logging middleware overhead — declared BEFORE the
+#     ``api_router`` include so it bypasses the tenant / user
+#     dependency stack entirely.
+#
+# ``/api/health`` mirror below is for frontend proxy paths that
+# always inject ``/api`` — cheap defensive copy of the same handler.
+@app.get("/health", include_in_schema=False)
+async def _k8s_health_probe():
+    return {"status": "ok"}
+
+
 api_router = APIRouter(prefix="/api")
+
+
+@api_router.get("/health", include_in_schema=False)
+async def _api_health_probe():
+    # ``/api/health`` mirror — some Emergent ingress rules and the
+    # frontend fetch wrappers always prefix ``/api`` regardless of
+    # target. Same guarantees as ``/health``: no DB, no auth, < 5ms.
+    return {"status": "ok"}
 
 # Marketing M2 registered BEFORE the generic loop so its
 # ``/marketing/campaigns/*`` routes win over the legacy
