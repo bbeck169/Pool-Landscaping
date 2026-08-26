@@ -39,6 +39,27 @@ async def list_technicians(user: dict = Depends(get_current_user),
     assign-tech flows continue to hit ``users``.
     """
     tid = tenant["id"]
+    # Feb-2026 · P1 rework — three targeted fixes over the previous
+    # implementation:
+    #   * BUG A · Cross-shape dedupe. When a person has BOTH a
+    #     ``db.technicians`` row (possibly without ``email`` /
+    #     ``user_id``) AND a ``db.users`` row, the union used to emit
+    #     BOTH. Post-hoc dedupe below now unions the identity signals
+    #     (id / user_id / email / name) so the person surfaces exactly
+    #     once.
+    #   * BUG B · Role filter too permissive. Admin / super_admin /
+    #     manager users were showing up in the tech filter dropdown —
+    #     they aren't field-assignable. Removed from
+    #     ``ASSIGNABLE_ROLES``; if a super_admin genuinely does field
+    #     work, promote their user doc to ``role='technician'`` or
+    #     ``role='tech_both'``.
+    #   * BUG C · ``active=false`` users MUST be excluded from every
+    #     assign-tech surface (backing the Feb-2026 admin Roster
+    #     Cleanup UI's soft-deactivate flow).  Both the synth branch
+    #     AND the tech-row branch filter on active — the tech-row
+    #     branch cross-references ``db.users.active`` via the linked
+    #     ``user_id`` since ``db.technicians`` rows don't carry an
+    #     ``active`` field of their own.
     # (a) Real technician rows for THIS tenant.
     tech_docs = await db.technicians.find(
         {"tenant_id": tid}, {"_id": 0},
@@ -46,26 +67,22 @@ async def list_technicians(user: dict = Depends(get_current_user),
     linked_user_ids: set = {t.get("user_id") for t in tech_docs
                               if t.get("user_id")}
 
-    # (b) Users in the tenant with an assignable role who lack a
-    #     technicians row. Use the same role set the Team page uses
-    #     so Schedule / Crews assignee dropdowns match the Team
-    #     roster count.
-    # Feb-2026 · P1 — also honour ``role='tech'`` (singular): 5
-    # preview users were written with this legacy variant and were
-    # invisible in every picker. See also the one-shot normaliser
-    # ``scripts/normalize_role_tech_to_technician.py`` which rewrites
-    # the field so future queries don't need the alias.
-    ASSIGNABLE_ROLES = ["technician", "tech", "landscaper", "admin",
-                          "super_admin", "manager"]
+    # (b) Users in the tenant with a FIELD-ASSIGNABLE role — the
+    #     previous permissive list (admin / super_admin / manager)
+    #     was surfacing "Super Admin" / "Alex Admin" / "Morgan
+    #     Manager" in the tech filter dropdown. Mirror the
+    #     multi-department tech assignment code — pool_tech /
+    #     landscape_tech / tech_both are legacy department-typed
+    #     variants that also need to appear.
+    ASSIGNABLE_ROLES = ["technician", "tech", "landscaper",
+                          "landscape_tech", "pool_tech", "tech_both"]
     synth_docs: list = []
     async for u in db.users.find(
         {"tenant_id": tid,
          "role": {"$in": ASSIGNABLE_ROLES},
          # Skip migration-artifact rows (``lastowner-*@t.local``) —
          # they aren't real team members, just tenant-ownership
-         # placeholders left behind by seed churn. Not caught by the
-         # earlier data-hygiene sweep because their domain is
-         # ``@t.local``, not ``@aquaterra.com`` / ``@plofv.com``.
+         # placeholders left behind by seed churn.
          "email": {"$not": {"$regex": "@t\\.local$", "$options": "i"}},
          "$and": [
              {"$or": [{"deleted_at": None},
@@ -97,25 +114,62 @@ async def list_technicians(user: dict = Depends(get_current_user),
             "synthesized_from_users": True,
         })
 
+    # ── BUG C · exclude ``active=false`` techs whose linked users
+    #    were soft-deactivated via Roster Cleanup. ``db.technicians``
+    #    rows don't carry an ``active`` field; we pull the active
+    #    flag from their linked user in one batched query.
+    inactive_user_ids: set = set()
+    if linked_user_ids:
+        async for u in db.users.find(
+            {"id": {"$in": list(linked_user_ids)}, "active": False},
+            {"_id": 0, "id": 1},
+        ):
+            inactive_user_ids.add(u["id"])
+    tech_docs = [t for t in tech_docs
+                  if t.get("user_id") not in inactive_user_ids]
+
     docs = tech_docs + synth_docs
-    # Feb-2026 · Dedupe by email — the ``db.technicians`` collection
-    # has legacy duplicate rows (e.g. 4× "Carlos Rivera" seed rows)
-    # that visually crowd out real team members in every picker.
+
+    # ── BUG A · Robust cross-shape dedupe. Unions the identity
+    #    signals a real person can be spread across:
+    #      * ``user_id`` (canonical when the tech row is linked).
+    #      * ``id`` (tech row id — may equal the user id for synth).
+    #      * lowercased email (survives the empty-email tech-row case).
+    #      * lowercased name (last-resort for tech rows whose only
+    #        contact field is a name).
+    #    First row through wins. Real tech rows come first in ``docs``
+    #    so they take precedence over synth rows (preserves
+    #    display_color_hex + phone stamped on the tech row).
+    seen_uids: set = set()
     seen_emails: set = set()
+    seen_names: set = set()
     deduped: list = []
     for d in docs:
-        e = (d.get("email") or "").strip().lower()
-        if e and e in seen_emails:
+        uid = d.get("user_id")
+        did = d.get("id")
+        email = (d.get("email") or "").strip().lower()
+        name = (d.get("name") or "").strip().lower()
+        if uid and (uid in seen_uids or uid in seen_emails):
             continue
-        if e:
-            seen_emails.add(e)
+        if did and did in seen_uids:
+            continue
+        if email and email in seen_emails:
+            continue
+        if name and name in seen_names:
+            continue
+        if uid: seen_uids.add(uid)
+        if did: seen_uids.add(did)
+        if email: seen_emails.add(email)
+        if name: seen_names.add(name)
         deduped.append(d)
-    # Sort: field-worker roles first (technician / landscaper),
-    # then admin / manager / super_admin, then alphabetical inside
-    # each bucket. Prioritizes the "assign this job" audience.
+
+    # Sort: field-worker roles first (technician / landscaper), then
+    # alphabetical. Everything left in ``deduped`` is now field-
+    # assignable so this is mostly a stable-alpha sort.
     def _sort_key(d: dict) -> tuple:
         r = (d.get("role") or "").lower()
-        rank = 0 if r in {"technician", "landscaper"} else 1
+        rank = 0 if r in {"technician", "tech", "landscaper",
+                            "landscape_tech", "pool_tech", "tech_both"} else 1
         return (rank, (d.get("name") or "").lower())
     docs = sorted(deduped, key=_sort_key)
 

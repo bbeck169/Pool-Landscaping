@@ -23,7 +23,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from config import db
 from utils import get_current_user
@@ -123,3 +124,214 @@ async def backfill_website_visitor_leads(
         "enrichments": report["enrichments"],
         "warnings": report["warnings"],
     }
+
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Roster Cleanup — list tech-adjacent users + soft-deactivate flow.
+# ─────────────────────────────────────────────────────────────────────
+# Roles the roster surface exposes for management. Matches the
+# ``ASSIGNABLE_ROLES`` set in ``routers/technicians.py`` — that's the
+# universe of users the tech-filter dropdowns pull from, so this is
+# where duplicate / seed / stale accounts need to be surfaced first.
+_TECH_ADJACENT_ROLES = [
+    "technician", "tech", "landscaper",
+    "landscape_tech", "pool_tech", "tech_both",
+]
+
+
+@router.get(
+    "/admin/migrations/roster",
+    operation_id="admin.migrations.roster_list",
+)
+async def list_roster_for_cleanup(
+    include_inactive: bool = Query(
+        True,
+        description=(
+            "Include ``active=false`` users so super_admins can "
+            "re-activate a wrongly-deactivated user or view the "
+            "full history."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Tenant-scoped roster of tech-adjacent users, each row
+    annotated with a live ``active_jobs`` count so super_admins can
+    see who's safe to deactivate.
+
+    Returns ``[{ id, email, name, role, active, created_at,
+    active_jobs, is_deactivated }]``.
+    """
+    _require_super_admin(user)
+    tid = tenant["id"]
+    q: Dict[str, Any] = {
+        "tenant_id": tid,
+        "role": {"$in": _TECH_ADJACENT_ROLES},
+        "$and": [
+            {"$or": [{"deleted_at": None},
+                       {"deleted_at": {"$exists": False}}]},
+        ],
+    }
+    if not include_inactive:
+        q["$and"].append(
+            {"$or": [{"active": {"$ne": False}},
+                       {"active": {"$exists": False}}]},
+        )
+
+    users = await db.users.find(
+        q,
+        {"_id": 0, "id": 1, "email": 1, "first_name": 1,
+         "last_name": 1, "name": 1, "role": 1, "active": 1,
+         "created_at": 1, "department": 1},
+    ).sort("created_at", -1).to_list(1000)
+
+    rows: list = []
+    for u in users:
+        active_flag = u.get("active")
+        rows.append({
+            "id": u.get("id"),
+            "email": u.get("email"),
+            "name": (u.get("name")
+                      or " ".join([u.get("first_name") or "",
+                                    u.get("last_name") or ""]).strip()
+                      or u.get("email") or "Unnamed"),
+            "role": u.get("role"),
+            "department": u.get("department"),
+            "created_at": u.get("created_at"),
+            "active": True if active_flag is None else bool(active_flag),
+            "is_deactivated": active_flag is False,
+            # Active jobs count — used by the UI to disable the row's
+            # checkbox when non-zero (deactivate would strand work).
+            "active_jobs": await db.jobs.count_documents({
+                "tenant_id": tid,
+                "$or": [
+                    {"technician_id": u.get("id")},
+                    {"assigned_to": u.get("id")},
+                    {"assigned_technician_id": u.get("id")},
+                    {"tech_user_id": u.get("id")},
+                ],
+                "status": {"$in": ["scheduled", "pending", "active",
+                                     "in_progress"]},
+            }),
+        })
+    return rows
+
+
+class _DeactivateBody(BaseModel):
+    user_ids: list[str] = Field(default_factory=list)
+    dry_run: bool = True
+
+
+@router.post(
+    "/admin/migrations/deactivate-users",
+    operation_id="admin.migrations.deactivate_users",
+)
+async def deactivate_users(
+    body: _DeactivateBody = Body(default=_DeactivateBody()),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Soft-deactivate a batch of tech-adjacent users.
+
+    Contract:
+      * super_admin only.
+      * Tenant-scoped — the endpoint refuses to touch any user whose
+        ``tenant_id`` doesn't match the caller's.
+      * SOFT deactivation — writes ``active=false``. Does NOT
+        hard-delete. History (jobs, invoices, service reports) is
+        preserved and continues to render the (now-inactive) tech's
+        name via the read-time cascade in
+        ``services/tech_assignment.py``.
+      * Refuses to deactivate users with ANY active job on the
+        4-shape ``effective_tid`` union — returns them in
+        ``skipped[]`` with reason ``"has_active_jobs"``. Caller
+        must reassign first.
+      * ``dry_run=true`` (default) reports what WOULD happen without
+        writing.
+      * Idempotent: deactivating an already-inactive user is a
+        no-op (returned in ``skipped[]`` with reason ``"already_inactive"``).
+
+    Response:
+      ``{ dry_run, tenant_id, deactivated_count, skipped_count,
+          deactivated: [user_id], skipped: [{user_id, reason}],
+          errors: [] }``
+    """
+    _require_super_admin(user)
+    tid = tenant["id"]
+    dry = body.dry_run
+    deactivated: list = []
+    skipped: list = []
+    errors: list = []
+
+    logger.info(
+        f"[roster-cleanup-api] user={user.get('id')} "
+        f"email={user.get('email')} tenant={tid} "
+        f"dry_run={dry} target_count={len(body.user_ids)}"
+    )
+
+    for uid in (body.user_ids or []):
+        target = await db.users.find_one(
+            {"id": uid, "tenant_id": tid},
+            {"_id": 0, "id": 1, "role": 1, "active": 1},
+        )
+        if not target:
+            # Wrong tenant OR user doesn't exist — collapse both into
+            # ``not_found`` so we never leak whether a user exists in
+            # a different tenant.
+            skipped.append({"user_id": uid, "reason": "not_found"})
+            continue
+        if target.get("role") not in _TECH_ADJACENT_ROLES:
+            skipped.append({"user_id": uid, "reason": "not_tech_adjacent"})
+            continue
+        if target.get("active") is False:
+            skipped.append({"user_id": uid, "reason": "already_inactive"})
+            continue
+        # Active-jobs guard — same 4-shape union the tech filter uses.
+        active_jobs = await db.jobs.count_documents({
+            "tenant_id": tid,
+            "$or": [
+                {"technician_id": uid},
+                {"assigned_to": uid},
+                {"assigned_technician_id": uid},
+                {"tech_user_id": uid},
+            ],
+            "status": {"$in": ["scheduled", "pending", "active",
+                                 "in_progress"]},
+        })
+        if active_jobs > 0:
+            skipped.append({
+                "user_id": uid,
+                "reason": "has_active_jobs",
+                "active_jobs": active_jobs,
+            })
+            continue
+        if not dry:
+            try:
+                await db.users.update_one(
+                    {"id": uid, "tenant_id": tid},
+                    {"$set": {
+                        "active": False,
+                        "deactivated_at": _now_iso(),
+                        "deactivated_by": user.get("id"),
+                    }},
+                )
+            except Exception as exc:                              # noqa: BLE001
+                errors.append({"user_id": uid, "error": str(exc)})
+                continue
+        deactivated.append(uid)
+
+    return {
+        "dry_run": dry,
+        "tenant_id": tid,
+        "deactivated_count": len(deactivated),
+        "skipped_count": len(skipped),
+        "deactivated": deactivated,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
