@@ -26,7 +26,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowRight, CalendarClock, ChevronLeft, ChevronRight,
   Check, Circle, Play, Loader2, Mail, Droplet, TestTube2,
-  AlertTriangle,
+  AlertTriangle, X as XIcon, Download,
 } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import { colors } from "@/theme";
@@ -112,6 +112,11 @@ function Row({ children, style }) {
 // ── Media carousel ──────────────────────────────────────────────────
 function MediaCarousel({ items = [] }) {
   const [idx, setIdx] = useState(0);
+  // Feb-2026 · Clickable service log images — inline lightbox state.
+  // A single ``lightboxOpen`` toggle is enough because the carousel
+  // already owns ``idx``; the lightbox reads from the same index so
+  // Next/Prev stays in sync with the underlying carousel dot state.
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const containerRef = useRef(null);
   const token = localStorage.getItem(TOKEN_KEY) || "";
 
@@ -182,12 +187,28 @@ function MediaCarousel({ items = [] }) {
             data-testid="service-log-media-video"
           />
         ) : (
-          <img
-            src={url + (token ? `?token=${encodeURIComponent(token)}` : "")}
-            alt=""
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            data-testid="service-log-media-image"
-          />
+          // Feb-2026 · Clickable service log images — the main
+          // carousel image opens a full-screen lightbox on tap/click.
+          // Videos are intentionally NOT wrapped (native controls
+          // already exist above).
+          <button
+            type="button"
+            onClick={() => setLightboxOpen(true)}
+            aria-label="Open image full size"
+            data-testid={`id-service-image-thumb-${idx}`}
+            style={{
+              width: "100%", height: "100%",
+              background: "transparent", border: "none", padding: 0,
+              cursor: "zoom-in",
+            }}
+          >
+            <img
+              src={url + (token ? `?token=${encodeURIComponent(token)}` : "")}
+              alt=""
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              data-testid="service-log-media-image"
+            />
+          </button>
         )}
         {total > 1 ? (
           <>
@@ -263,7 +284,197 @@ function MediaCarousel({ items = [] }) {
           })}
         </div>
       ) : null}
+
+      {/* Feb-2026 · Clickable service log images — inline lightbox.
+          Opens on image tap/click. Videos never trigger this; the
+          existing native <video controls> renders in-line.
+          Behaviour: ESC / backdrop click / X button closes.
+          Swipe or Prev/Next cycles when >1 image. Counter and
+          Download are shown top overlay. */}
+      {lightboxOpen ? (
+        <ImageLightbox
+          items={items}
+          index={idx}
+          token={token}
+          onIndexChange={setIdx}
+          onClose={() => setLightboxOpen(false)}
+        />
+      ) : null}
     </Card>
+  );
+}
+
+
+// ── Inline lightbox ────────────────────────────────────────────────
+// Kept private to this file — see SHIPPED note re: portal (already
+// has its own) and WorkstreamJobDrawer (already has its own minimal
+// inline pattern). If a third caller appears we should extract this
+// into ``components/media/ImageLightbox.jsx``.
+function ImageLightbox({ items, index, token, onIndexChange, onClose }) {
+  const total = items.length;
+  // Skip through videos on nav — the lightbox is images-only.
+  const _imageIndices = items
+    .map((it, i) => (it.kind === "video" ? -1 : i))
+    .filter((i) => i >= 0);
+  const _imgTotal = _imageIndices.length;
+  const _curImgSlot = Math.max(0, _imageIndices.indexOf(index));
+
+  const gotoDelta = useCallback((delta) => {
+    if (_imgTotal <= 1) return;
+    const nextSlot = (_curImgSlot + delta + _imgTotal) % _imgTotal;
+    onIndexChange(_imageIndices[nextSlot]);
+  }, [_imgTotal, _curImgSlot, _imageIndices, onIndexChange]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); gotoDelta(1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); gotoDelta(-1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, gotoDelta]);
+
+  // Swipe support — thumb-friendly on mobile. Threshold: 40px.
+  const touchStart = useRef(null);
+  const onTouchStart = (e) => {
+    touchStart.current = e.touches?.[0]?.clientX ?? null;
+  };
+  const onTouchEnd = (e) => {
+    const start = touchStart.current;
+    touchStart.current = null;
+    if (start == null) return;
+    const end = e.changedTouches?.[0]?.clientX ?? start;
+    const delta = end - start;
+    if (Math.abs(delta) < 40) return;
+    if (delta > 0) gotoDelta(-1); else gotoDelta(1);
+  };
+
+  const cur = items[index];
+  if (!cur || cur.kind === "video") return null;
+  const url = cur.url
+    ? (cur.url.startsWith("http") ? cur.url : `${BACKEND}${cur.url}`)
+    : "";
+  const src = url + (token ? `?token=${encodeURIComponent(token)}` : "");
+
+  return (
+    <div
+      onClick={(e) => { if (e.currentTarget === e.target) onClose(); }}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Service image viewer"
+      data-testid="id-service-image-lightbox"
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(0,0,0,0.9)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <img
+        src={src}
+        alt=""
+        style={{
+          maxHeight: "90vh", maxWidth: "90vw",
+          objectFit: "contain", borderRadius: 8,
+          boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
+        }}
+        data-testid="id-service-image-lightbox-img"
+      />
+
+      {/* Top-right controls: download + close */}
+      <div style={{
+        position: "absolute", top: 16, right: 16,
+        display: "flex", gap: 8,
+      }}>
+        <a
+          href={src}
+          download
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Download image"
+          data-testid="id-service-image-download"
+          style={{
+            background: "rgba(255,255,255,0.12)", color: "white",
+            borderRadius: 999, width: 40, height: 40,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            textDecoration: "none",
+          }}
+        >
+          <Download size={18} />
+        </a>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close image"
+          data-testid="id-service-image-close"
+          style={{
+            background: "rgba(255,255,255,0.12)", color: "white",
+            border: "none", borderRadius: 999, width: 40, height: 40,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer",
+          }}
+        >
+          <XIcon size={18} />
+        </button>
+      </div>
+
+      {/* Prev/next arrows (only when >1 image) */}
+      {_imgTotal > 1 ? (
+        <>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); gotoDelta(-1); }}
+            aria-label="Previous image"
+            data-testid="id-service-image-prev"
+            style={{
+              position: "absolute", left: 16, top: "50%",
+              transform: "translateY(-50%)",
+              background: "rgba(255,255,255,0.12)", color: "white",
+              border: "none", borderRadius: 999, width: 48, height: 48,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer",
+            }}
+          >
+            <ChevronLeft size={22} />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); gotoDelta(1); }}
+            aria-label="Next image"
+            data-testid="id-service-image-next"
+            style={{
+              position: "absolute", right: 16, top: "50%",
+              transform: "translateY(-50%)",
+              background: "rgba(255,255,255,0.12)", color: "white",
+              border: "none", borderRadius: 999, width: 48, height: 48,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer",
+            }}
+          >
+            <ChevronRight size={22} />
+          </button>
+        </>
+      ) : null}
+
+      {/* Bottom counter */}
+      {_imgTotal > 1 ? (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: "absolute", bottom: 24, left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(255,255,255,0.12)", color: "white",
+            padding: "6px 12px", borderRadius: 999,
+            fontSize: 12, fontWeight: 600,
+          }}
+          data-testid="id-service-image-counter"
+        >
+          {_curImgSlot + 1} / {_imgTotal}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
