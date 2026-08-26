@@ -787,7 +787,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
         </p>
         <TextInput
           value={deleteConfirmText}
-          onChange={setDeleteConfirmText}
+          onChange={(e) => setDeleteConfirmText(e.target.value)}
           placeholder={_invoiceConfirmToken}
           testid="id-delete-invoice-input"
         />
@@ -823,7 +823,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
         </p>
         <TextInput
           value={deleteConfirmText}
-          onChange={setDeleteConfirmText}
+          onChange={(e) => setDeleteConfirmText(e.target.value)}
           placeholder={_paymentConfirmToken}
           testid="id-delete-payment-input"
         />
