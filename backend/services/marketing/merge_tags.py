@@ -22,10 +22,13 @@ UPPERCASE tags on top without removing the legacy path.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 from datetime import date, datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+logger = logging.getLogger("pool_crm.merge_tags")
 
 _TAG_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}")
 
@@ -776,6 +779,120 @@ def _customer_credit_balance(ctx: Dict[str, Any]) -> str:
         return ""
 
 
+# ─── Feb 2026 · Portal magic-link merge tags ──────────────────────────
+# Two customer-facing tags that render an auto-login URL. On first
+# reference inside a render, the resolver mints a portal magic-link
+# JWT (14-day TTL) using ``services.portal_magic_links`` and caches
+# the resulting URL on the ctx so subsequent occurrences reuse the
+# same URL — a template that references the tag 3 times still mints
+# ONE JWT.
+#
+# Contract highlights (see /app/memory/portal_magic_links.md):
+#   * Scope: CUSTOMER_PORTAL_LOGIN_LINK → ``portal_home``
+#            SERVICE_RECORD_LINK       → ``job_view``
+#   * TTL: 14 days on both (override of the scope defaults in
+#     ``portal_magic_links``, which use shorter TTLs for door-hanger
+#     / invoice paths that don't route through the merge-tag catalog).
+#   * Send-path override: callers may pre-populate
+#     ``ctx['customer_portal_login_link']`` / ``ctx['service_record_link']``
+#     and the resolver returns those verbatim — this matches the
+#     existing pattern used by ``INVOICE_PAY_MAGIC_URL`` /
+#     ``ADD_CARD_LINK`` and lets send paths mint outside the render
+#     pipeline when they need a different TTL.
+#   * Empty-string fail-safe: any missing dep (no ``APP_PUBLIC_URL``,
+#     no ``customer.id`` / ``tenant.id``, mint failure) → empty
+#     string. Token never appears as a literal ``{{...}}`` in the
+#     rendered body.
+#   * Fallback cascade: ``SERVICE_RECORD_LINK`` with no ``job.id``
+#     in scope cascades to ``CUSTOMER_PORTAL_LOGIN_LINK`` (auto-
+#     login to portal home) rather than empty — matches the
+#     ``INVOICE_PAY_MAGIC_URL → INVOICE_PAY_URL`` precedent.
+_PORTAL_MAGIC_TTL_HOURS = 14 * 24
+
+
+def _customer_portal_login_link(ctx: Dict[str, Any]) -> str:
+    """Auto-login magic URL that lands the recipient on
+    ``/portal/home``. See module docstring for the full contract.
+    """
+    # 1. Send-path override wins.
+    override = _safe_str(ctx.get("customer_portal_login_link") or "")
+    if override:
+        return override
+    # 2. Mint from ctx.
+    customer = ctx.get("customer") or {}
+    tenant = ctx.get("tenant") or {}
+    customer_id = _safe_str(customer.get("id"))
+    tenant_id = _safe_str(tenant.get("id"))
+    if not (customer_id and tenant_id):
+        return ""
+    base = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+    if not base:
+        return ""
+    try:
+        # Deferred import — keeps ``merge_tags`` importable in
+        # environments where ``config.JWT_SECRET`` isn't set (e.g.
+        # docs generation, catalog introspection).
+        from services.portal_magic_links import build_portal_home_url
+        url = build_portal_home_url(
+            base, customer_id, tenant_id,
+            ttl_hours=_PORTAL_MAGIC_TTL_HOURS,
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            "[merge_tags] CUSTOMER_PORTAL_LOGIN_LINK mint failed for "
+            "customer=%s tenant=%s: %s",
+            customer_id, tenant_id, exc,
+        )
+        return ""
+    # Cache on ctx so re-references in the same render reuse the URL.
+    ctx["customer_portal_login_link"] = url
+    return url
+
+
+def _service_record_link(ctx: Dict[str, Any]) -> str:
+    """Auto-login magic URL that lands the recipient on the specific
+    service-record page (``/portal/service-reports/{sr_id}`` — the
+    sr_id is looked up server-side by the interstitial from
+    ``tenant_id`` + ``job_id`` in the JWT payload). Cascades to
+    :func:`_customer_portal_login_link` when no ``job.id`` is in
+    scope so senders still get *some* CTA in the rendered body.
+    """
+    # 1. Send-path override wins.
+    override = _safe_str(ctx.get("service_record_link") or "")
+    if override:
+        return override
+    # 2. Mint from ctx (needs customer.id + tenant.id + job.id).
+    customer = ctx.get("customer") or {}
+    tenant = ctx.get("tenant") or {}
+    job = ctx.get("job") or {}
+    customer_id = _safe_str(customer.get("id"))
+    tenant_id = _safe_str(tenant.get("id"))
+    job_id = _safe_str(job.get("id"))
+    if customer_id and tenant_id and job_id:
+        base = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+        if base:
+            try:
+                from services.portal_magic_links import build_job_view_url
+                url = build_job_view_url(
+                    base, customer_id, job_id, tenant_id,
+                    ttl_hours=_PORTAL_MAGIC_TTL_HOURS,
+                )
+                ctx["service_record_link"] = url
+                return url
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.warning(
+                    "[merge_tags] SERVICE_RECORD_LINK mint failed for "
+                    "customer=%s job=%s tenant=%s: %s",
+                    customer_id, job_id, tenant_id, exc,
+                )
+    # 3. Cascade fallback → auto-login to portal home.
+    logger.debug(
+        "[merge_tags] SERVICE_RECORD_LINK cascaded to "
+        "CUSTOMER_PORTAL_LOGIN_LINK (no job.id in ctx or mint failed)"
+    )
+    return _customer_portal_login_link(ctx)
+
+
 # ═══════════════════════════ Catalogue ═══════════════════════════════
 MERGE_TAGS: List[Dict[str, Any]] = [
     # ─── Job / Service
@@ -968,6 +1085,29 @@ MERGE_TAGS: List[Dict[str, Any]] = [
     {"token": "CUSTOMER_PORTAL_LINK", "label": "Portal Link",
      "category": "Portal", "description": "Customer portal login URL.",
      "resolver": _portal_link},
+    # ─── Feb 2026 · Portal magic-link auto-login tags. Additive —
+    # ``CUSTOMER_PORTAL_LINK`` still points at the plain login page
+    # so legacy templates keep their old behavior.
+    {"token": "CUSTOMER_PORTAL_LOGIN_LINK", "label": "Portal Auto-Login Link",
+     "category": "Portal",
+     "description": ("Public auto-login magic link that lands the "
+                       "recipient on their portal home without entering "
+                       "credentials. Scope ``portal_home``; TTL 14 days. "
+                       "Empty when no ``customer.id``/``tenant.id`` is in "
+                       "scope. Callers may pre-populate "
+                       "``ctx['customer_portal_login_link']`` to override "
+                       "the on-demand mint."),
+     "resolver": _customer_portal_login_link},
+    {"token": "SERVICE_RECORD_LINK", "label": "Service Record Auto-Login Link",
+     "category": "Portal",
+     "description": ("Public auto-login magic link that lands the "
+                       "recipient on the specific service-record page "
+                       "(``/portal/service-reports/{sr_id}`` — the sr_id "
+                       "is resolved server-side from the JWT). Scope "
+                       "``job_view``; TTL 14 days. Cascades to "
+                       "``CUSTOMER_PORTAL_LOGIN_LINK`` when no ``job.id`` "
+                       "is in scope so senders still get a valid CTA."),
+     "resolver": _service_record_link},
     {"token": "CUSTOMER_PORTAL_ADD_CREDIT_CARD_LINK", "label": "Add Card Link",
      "category": "Portal", "description": "Deep-link to add a credit card.",
      "resolver": lambda c: (_portal_link(c) or "") + "#add-card"},

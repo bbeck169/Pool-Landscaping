@@ -41,7 +41,9 @@ The raw ``t`` value is NEVER logged.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
+from typing import Deque, Dict, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -59,6 +61,31 @@ logger = logging.getLogger("portal.auto_login")
 router = APIRouter()
 
 _LOGIN_EXPIRED_URL = "/portal/login?reason=link_expired"
+
+# ─── Feb 2026 · IP rate limit for magic-link redemption ─────────────
+# In-process rolling-window limiter: 20 redemption attempts per minute
+# per IP. Prevents an attacker who scrapes a leaked token list from
+# brute-forcing scope replays / stale tokens without adding an external
+# dependency (Redis is not in the stack). Applied BEFORE JWT verify so
+# tampered tokens still count against the budget.
+_MAGIC_RATE_MAX_PER_MIN = 20
+_MAGIC_IP_HITS: Dict[str, Deque[datetime]] = defaultdict(deque)
+
+
+def _check_magic_rate_limit(ip: str) -> bool:
+    """Return True if the request is within budget, False if the
+    caller has exceeded 20 attempts in the last 60 seconds."""
+    if not ip:
+        return True  # never lock out on a request without an IP hint.
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=60)
+    q = _MAGIC_IP_HITS[ip]
+    while q and q[0] < cutoff:
+        q.popleft()
+    if len(q) >= _MAGIC_RATE_MAX_PER_MIN:
+        return False
+    q.append(now)
+    return True
 
 
 def _classify_and_verify(token: str):
@@ -174,6 +201,12 @@ async def portal_auto_login(
         request.headers.get("x-forwarded-for")
         or (request.client.host if request.client else None)
     )
+
+    # 0) Rate limit — 20 attempts/min/IP. Applied BEFORE JWT verify
+    #    so tampered tokens still count against the budget.
+    if not _check_magic_rate_limit(from_ip or ""):
+        _log("rate_limited", from_ip=from_ip)
+        return _expired_response()
 
     # 1) Classify + verify token.
     resource_type, payload = _classify_and_verify(t)

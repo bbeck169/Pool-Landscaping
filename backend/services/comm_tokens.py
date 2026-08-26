@@ -79,6 +79,12 @@ AVAILABLE_TOKENS: Dict[str, Dict[str, str]] = {
     "chemical_readings":    {"label": "Chemistry readings recorded",        "sample": "pH 7.5 · Free Chlorine 2.1 ppm · Alkalinity 100 ppm"},
     "checklist":            {"label": "Service checklist (completed items)","sample": "✓ Skim surface · ✓ Vacuum floor · ✓ Empty pump basket"},
     "service_record_images":{"label": "Service-record photo + video gallery","sample": "<200x200 thumbnails linked to the public portal>"},
+    # ─── Feb 2026 · Portal magic-link auto-login aliases. Resolvers
+    # live in ``services.marketing.merge_tags`` — registered here so
+    # the comms composer's token picker + validator surface them
+    # alongside the dotted tokens.
+    "customer_portal_login_link": {"label": "Portal auto-login link (14-day magic URL)", "sample": "https://portal.example.com/api/portal/auto-login?t=<jwt>"},
+    "service_record_link":        {"label": "Service-record auto-login link (14-day magic URL)", "sample": "https://portal.example.com/api/portal/auto-login?t=<jwt>"},
 }
 
 _TOKEN_RE = re.compile(r"\{\{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)\s*\}\}", re.IGNORECASE)

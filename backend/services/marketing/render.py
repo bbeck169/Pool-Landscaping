@@ -83,6 +83,10 @@ def strip_html(text: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 DEFAULT_SAMPLE_CONTEXT: Dict[str, Any] = {
     "customer": {
+        # Feb 2026 · id + tenant.id seeded so the CUSTOMER_PORTAL_LOGIN_LINK
+        # and SERVICE_RECORD_LINK resolvers can mint a preview magic URL
+        # instead of falling back to empty in the composer preview.
+        "id": "cust-sample-preview",
         "first_name": "Sam",
         "last_name": "Preview",
         "full_name": "Sam Preview",
@@ -161,6 +165,7 @@ DEFAULT_SAMPLE_CONTEXT: Dict[str, Any] = {
         "videos": [],
     },
     "tenant": {
+        "id": "tenant-sample-preview",
         "name": "Pool & Landscaping of Vistancia",
         "phone": "+1 (623) 555-0100",
         "google_review_url": "https://g.page/r/example/review",
