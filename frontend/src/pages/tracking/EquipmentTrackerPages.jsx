@@ -27,6 +27,7 @@ import {
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 
 // ─── Type theming (semantic per tracker type, NOT status) ───────────
 const TYPE_THEME = {
@@ -345,7 +346,7 @@ export function EquipmentTrackerManagePage({ trackerType }) {
   async function openAdd() {
     if (customers.length === 0) {
       try {
-        const list = await api.get("/customers");
+        const list = await api.get("/customers?is_active=true");
         const arr = Array.isArray(list) ? list : (list.customers || list.items || []);
         setCustomers(arr);
       } catch (e) {
@@ -563,17 +564,15 @@ function AddTrackerDialog({ trackerType, customers, onClose, onCreated }) {
         <div className="space-y-3">
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">Customer</span>
-            <select
-              value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              data-testid={`tracker-add-customer-${trackerType}`}
-              className="mt-1 block w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-zinc-300"
-            >
-              <option value="">— select —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+            <div className="mt-1">
+              <CustomerCombobox
+                value={customerId}
+                onChange={setCustomerId}
+                customers={customers}
+                testid={`tracker-add-customer-${trackerType}`}
+                placeholder="— select —"
+              />
+            </div>
           </label>
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">Interval (months)</span>

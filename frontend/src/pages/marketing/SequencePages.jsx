@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Plus, Play, Pause, X } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 
 function Card({ children, className = "", testId }) {
   return <div className={`rounded-2xl ${className}`}
@@ -146,7 +147,7 @@ export function SequenceDetail() {
     const e = await api.get(`/sequences/${id}/enrollments`);
     setEnr(e || []);
   };
-  useEffect(() => { load(); api.get("/customers").then((r) => setCustomers(Array.isArray(r) ? r : [])); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
+  useEffect(() => { load(); api.get("/customers?is_active=true").then((r) => setCustomers(Array.isArray(r) ? r : [])); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
   const enroll = async () => {
     if (!custId) return;
     await api.post(`/sequences/${id}/enroll?customer_id=${custId}`, {});
@@ -189,13 +190,15 @@ export function SequenceDetail() {
       <Card className="p-4 mb-4">
         <div className="text-sm font-semibold mb-2" style={{ color: colors.onSurface }}>Enroll a customer</div>
         <div className="flex gap-2">
-          <select value={custId} onChange={(e) => setCustId(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-lg text-sm"
-                  style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
-                  data-testid="seq-enroll-select">
-            <option value="">Choose customer…</option>
-            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <div className="flex-1">
+            <CustomerCombobox
+              value={custId}
+              onChange={setCustId}
+              customers={customers}
+              testid="seq-enroll-select"
+              placeholder="Choose customer…"
+            />
+          </div>
           <button onClick={enroll} disabled={!custId}
                   className="px-3 py-2 rounded-lg text-sm font-semibold disabled:opacity-60"
                   style={{ backgroundColor: colors.brand, color: "#fff" }} data-testid="seq-enroll-btn">

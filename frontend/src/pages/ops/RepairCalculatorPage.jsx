@@ -8,6 +8,7 @@ import {
 import { api, api_base } from "@/api";
 import { TOKEN_KEY } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 
 /**
@@ -56,7 +57,7 @@ export default function RepairCalculatorPage() {
 
   React.useEffect(() => {
     api.get("/ops/repair-calculator/config").then(setConfig).catch(() => {});
-    api.get("/customers").then((r) => {
+    api.get("/customers?is_active=true").then((r) => {
       const list = Array.isArray(r) ? r : (r?.customers || r?.items || []);
       setCustomers(list.slice(0, 500));
     }).catch(() => {});
@@ -923,20 +924,13 @@ function EmailConfirmModal({ quote, customers, customerId, setCustomerId,
             <label htmlFor="rc-email-cust"
               className="text-[10px] font-semibold uppercase tracking-wider block mb-1"
               style={{ color: colors.muted }}>Customer</label>
-            <select
-              id="rc-email-cust" value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border text-sm"
-              style={{ borderColor: colors.border, backgroundColor: colors.surface, color: colors.onSurface }}
-              data-testid="rc-email-customer"
-            >
-              <option value="">— Pick or enter an ad-hoc email below —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} {c.email ? `<${c.email}>` : ""}
-                </option>
-              ))}
-            </select>
+            <CustomerCombobox
+              value={customerId}
+              onChange={setCustomerId}
+              customers={customers}
+              testid="rc-email-customer"
+              placeholder="— Pick or enter an ad-hoc email below —"
+            />
           </div>
           <div>
             <label htmlFor="rc-email-adhoc"

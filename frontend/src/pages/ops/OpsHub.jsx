@@ -659,6 +659,17 @@ function TeamRoster() {
       const k = _roleKey(r);
       if (filter === "all") return true;
       if (filter === "unassigned") return k === "unassigned";
+      // Feb-2026 · P1 fix — the "All (Both)" chip's filter key was
+      // ``all_both`` but ``_roleKey`` never returns that string
+      // (roles are ``pool_tech`` / ``landscape_tech`` / ``tech_both``
+      // for techs, and ``all`` for the admin+both edge case). The
+      // old ``k === filter`` fallback silently returned ``[]``.
+      // Per product intent — "All (Both)" surfaces every tech
+      // regardless of specialty, matching the modern department
+      // enum semantics.
+      if (filter === "all_both") {
+        return k === "pool_tech" || k === "landscape_tech" || k === "tech_both";
+      }
       return k === filter;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

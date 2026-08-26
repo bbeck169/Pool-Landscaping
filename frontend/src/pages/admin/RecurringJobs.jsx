@@ -14,6 +14,7 @@ import { colors } from "@/theme";
 import {
   MonthlyNthWeekdaySelector,
 } from "@/components/recurring/MonthlyNthWeekdaySelector";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 
 const FREQ_OPTIONS = [
   { value: "weekly", label: "Weekly" },
@@ -48,7 +49,7 @@ export default function RecurringJobs() {
     try {
       const [tpls, custs, techs] = await Promise.all([
         api.get("/recurring-jobs"),
-        api.get("/customers?limit=500").catch(() => ({ items: [] })),
+        api.get("/customers?is_active=true&limit=500").catch(() => ({ items: [] })),
         api.get("/technicians").catch(() => []),
       ]);
       setItems(tpls?.items || []);
@@ -271,13 +272,15 @@ export default function RecurringJobs() {
             </div>
             <div className="p-5 space-y-3">
               <label className="text-xs font-semibold" style={{ color: colors.muted }}>Customer
-                <select value={editing.customer_id || ""} onChange={(e) => setEditing((x) => ({ ...x, customer_id: e.target.value }))}
-                        className="w-full mt-1 px-2 py-1.5 rounded text-sm"
-                        style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-                        data-testid="recurring-jobs-customer">
-                  <option value="">Select customer…</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <div className="mt-1">
+                  <CustomerCombobox
+                    value={editing.customer_id || ""}
+                    onChange={(cid) => setEditing((x) => ({ ...x, customer_id: cid }))}
+                    customers={customers}
+                    testid="recurring-jobs-customer"
+                    placeholder="Select customer…"
+                  />
+                </div>
               </label>
               <label className="text-xs font-semibold" style={{ color: colors.muted }}>Service type
                 <input type="text" value={editing.service_type || ""} onChange={(e) => setEditing((x) => ({ ...x, service_type: e.target.value }))}

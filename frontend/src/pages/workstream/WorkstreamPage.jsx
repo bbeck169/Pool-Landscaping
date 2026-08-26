@@ -20,6 +20,7 @@ import { Workflow, RefreshCw, Loader2, ChevronDown, X as XIcon, Image as ImageIc
 import { api, TOKEN_KEY } from "@/api";
 import { useAuth } from "@/auth";
 import { Forbidden } from "@/hooks/usePermissions";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import { colors } from "@/theme";
 import { StatusPill } from "@/components/ui-kit";
 // Phase 19 · Feb-2026 · Sub-item A — job assignee avatar.
@@ -400,7 +401,7 @@ export default function WorkstreamPage() {
     if (!isAdmin) return;
     Promise.all([
       api.get("/technicians").catch(() => []),
-      api.get("/customers?limit=500").catch(() => []),
+      api.get("/customers?is_active=true&limit=500").catch(() => []),
     ]).then(([t, c]) => {
       setTechs(Array.isArray(t) ? t : t?.items || []);
       setCustomers(Array.isArray(c) ? c : c?.items || []);
@@ -635,18 +636,15 @@ export default function WorkstreamPage() {
           >
             Customer
           </label>
-          <select
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            className="px-2 py-1 rounded-md text-sm"
-            style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface, minWidth: 180 }}
-            data-testid="ws-filter-customer"
-          >
-            <option value="">All customers</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
+          <div style={{ minWidth: 180 }}>
+            <CustomerCombobox
+              value={customerId}
+              onChange={setCustomerId}
+              customers={customers}
+              testid="ws-filter-customer"
+              placeholder="All customers"
+            />
+          </div>
         </div>
         <div className="flex flex-col">
           {/* Phase 5A.2 · Feb 2026 — status filter removed. Workstream
@@ -685,7 +683,11 @@ export default function WorkstreamPage() {
           since, until,
           tech_id: techId, tech_name: techName,
           customer_id: customerId, customer_name: customerName,
-          status,
+          // Feb-2026 · P1 cleanup — Workstream is scoped to
+          // ``status = completed`` server-side; there is no local
+          // ``status`` state. The old shorthand ``status,`` here
+          // resolved to ``window.status`` (empty string) and produced
+          // a silent-but-real ReferenceError under SSR / strict lint.
         }}
         sort={sort}
         onClear={clearOne}

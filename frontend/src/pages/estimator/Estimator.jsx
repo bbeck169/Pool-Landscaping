@@ -14,6 +14,7 @@ import {
   EmptyState,
 } from "@/components/ui-kit";
 import MediaUploader from "@/components/media/MediaUploader";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 
 // ────── Estimates list ──────
 export function EstimatesList() {
@@ -330,7 +331,7 @@ export function EstimatorEditor() {
   const [toast, setToast] = useState(null);
 
   useEffect(() => {
-    api.get("/customers").then(setCustomers).catch(() => {});
+    api.get("/customers?is_active=true").then(setCustomers).catch(() => {});
     api.get("/settings/terms").then((r) => {
       setTermsDefault(r.default_quote_terms || "");
       setForm((f) => (f.terms ? f : { ...f, terms: r.default_quote_terms || "" }));
@@ -389,12 +390,12 @@ export function EstimatorEditor() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>CUSTOMER</label>
-            <select value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: e.target.value })}
-              className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
-              style={{ backgroundColor: colors.surface, color: colors.onSurface, border: `1px solid ${colors.border}` }}>
-              <option value="">Choose a customer…</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <CustomerCombobox
+              value={form.customer_id}
+              onChange={(cid) => setForm({ ...form, customer_id: cid })}
+              customers={customers}
+              testid="est-customer"
+            />
           </div>
           <TextInput label="TITLE" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           <TextInput label="TAX RATE (%)" type="number" step="0.01" value={form.tax_rate} onChange={(e) => setForm({ ...form, tax_rate: e.target.value })} />

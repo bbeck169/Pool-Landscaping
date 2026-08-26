@@ -4,6 +4,7 @@ import { toast as sonnerToast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Download, Search, Play, Plus, Trash2, Upload, FileDown, ExternalLink, Check, X as XIcon } from "lucide-react";
 import { api } from "@/api";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import { colors, money } from '@/theme';
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 
@@ -423,7 +424,7 @@ export function AutoBilling() {
 
   useEffect(() => {
     if (!showNew) return;
-    api.get("/customers").then((r) => setCustomers(Array.isArray(r) ? r : [])).catch(() => {});
+    api.get("/customers?is_active=true").then((r) => setCustomers(Array.isArray(r) ? r : [])).catch(() => {});
   }, [showNew]);
 
   const nextRun = useMemo(() => {
@@ -733,14 +734,13 @@ export function AutoBilling() {
                onClick={(e) => e.stopPropagation()}
                data-testid="new-plan-modal">
             <h3 className="text-lg font-bold" style={{ color: colors.onSurface }}>New billing plan</h3>
-            <select value={newPlan.customer_id}
-                    onChange={(e) => setNewPlan({ ...newPlan, customer_id: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg text-sm"
-                    style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
-                    data-testid="new-plan-customer">
-              <option value="">Select customer…</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <CustomerCombobox
+              value={newPlan.customer_id}
+              onChange={(cid) => setNewPlan({ ...newPlan, customer_id: cid })}
+              customers={customers}
+              testid="new-plan-customer"
+              placeholder="Select customer…"
+            />
             <input value={newPlan.service}
                    onChange={(e) => setNewPlan({ ...newPlan, service: e.target.value })}
                    className="w-full px-3 py-2 rounded-lg text-sm"

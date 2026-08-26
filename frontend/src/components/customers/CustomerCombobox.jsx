@@ -1,0 +1,142 @@
+/**
+ * Feb-2026 · CustomerCombobox
+ * ─────────────────────────────────────────────────────────────────
+ * Searchable customer picker for forms across the app. Replaces
+ * every raw ``<select>`` + ``customers.map`` pattern that used to
+ * live inline in New Job / New Estimate / New Invoice / Recurring
+ * Jobs / etc.
+ *
+ * Extraction context: the New Job form on prod had ~hundreds of
+ * customers in a native ``<select>`` — unscrollable in practice.
+ * This component swaps that for a shadcn ``Popover`` + ``Command``
+ * (cmdk) combobox: search input at top, filtered list, keyboard
+ * nav, empty-state, active-check indicator.
+ *
+ * Deliberately caller-fetches the customer list (rather than an
+ * internal ``autoFetch`` prop) — every caller already owns customer
+ * state for other reasons (property autoload, warranty scope, etc.)
+ * and forking an internal fetch would double-load the roster.
+ *
+ * Props:
+ *   value        (string)   — currently-selected ``customer.id``
+ *   onChange     (fn)       — called with the newly-selected id
+ *   customers    (array)    — [{id, name, ...}], caller-owned.
+ *                              Callers SHOULD pass ``is_active=true``
+ *                              on the fetch so inactive rows never
+ *                              surface (backend supports the filter).
+ *   testid       (str)      — default ``"customer-combobox"``;
+ *                              trigger uses this exact string,
+ *                              search input becomes ``{testid}-search``,
+ *                              rows become ``{testid}-item-{id}``.
+ *   placeholder  (str)      — default ``"Choose a customer…"``.
+ *   disabled     (bool)     — greys the trigger and blocks open.
+ *   filter       (fn|null)  — optional predicate ``(customer) => bool``
+ *                              for callers that need extra client-side
+ *                              scoping (e.g. limit to warranty-owning
+ *                              customers).
+ *   children     (React)    — rendered inside the popover BEFORE the
+ *                              command list. Use for a "+ New customer"
+ *                              quick-create button that some forms
+ *                              render alongside the picker.
+ */
+
+import React from "react";
+import { ChevronsUpDown, Check } from "lucide-react";
+import { colors } from "@/theme";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+
+export function CustomerCombobox({
+  value,
+  onChange,
+  customers,
+  testid = "customer-combobox",
+  placeholder = "Choose a customer…",
+  disabled = false,
+  filter = null,
+  children = null,
+}) {
+  const [open, setOpen] = React.useState(false);
+  const list = React.useMemo(() => {
+    const base = Array.isArray(customers) ? customers : [];
+    return typeof filter === "function" ? base.filter(filter) : base;
+  }, [customers, filter]);
+  const selected = React.useMemo(
+    () => list.find((c) => c.id === value) || null,
+    [list, value],
+  );
+
+  return (
+    <Popover open={open} onOpenChange={disabled ? () => {} : setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          className="w-full px-3.5 py-2.5 rounded-lg text-sm text-left flex items-center justify-between gap-2 focus:outline-none focus:ring-2"
+          style={{
+            backgroundColor: colors.surface,
+            color: selected ? colors.onSurface : colors.onSurfaceSecondary,
+            border: `1px solid ${colors.border}`,
+            opacity: disabled ? 0.6 : 1,
+            cursor: disabled ? "not-allowed" : "pointer",
+          }}
+          data-testid={testid}
+        >
+          <span className="truncate">
+            {selected ? selected.name : placeholder}
+          </span>
+          <ChevronsUpDown size={14} className="shrink-0 opacity-60" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="p-0 w-[--radix-popover-trigger-width] min-w-[280px]"
+        data-testid={`${testid}-popover`}
+      >
+        {children}
+        <Command>
+          <CommandInput
+            placeholder="Search customers…"
+            data-testid={`${testid}-search`}
+          />
+          <CommandList>
+            <CommandEmpty>No customers found.</CommandEmpty>
+            {list.map((c) => (
+              <CommandItem
+                key={c.id}
+                value={c.name}
+                onSelect={() => {
+                  onChange(c.id);
+                  setOpen(false);
+                }}
+                data-testid={`${testid}-item-${c.id}`}
+              >
+                <Check
+                  size={14}
+                  className={
+                    "mr-2 " + (c.id === value ? "opacity-100" : "opacity-0")
+                  }
+                />
+                {c.name}
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+export default CustomerCombobox;

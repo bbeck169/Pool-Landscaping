@@ -4,6 +4,7 @@ import { ArrowLeft, Plus, X } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { PageHeader, Button, TextInput, Toast } from "@/components/ui-kit";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 
 /** Combined New form for both quotes and invoices — same data model, different `doc_type`. */
 export default function QuoteInvoiceNew({ docType = "quote" }) {
@@ -28,7 +29,7 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
   const [termsDefault, setTermsDefault] = useState("");
 
   useEffect(() => {
-    api.get("/customers").then(setCustomers).catch(() => {});
+    api.get("/customers?is_active=true").then(setCustomers).catch(() => {});
     api.get("/items").then(setItems).catch(() => {});
     api.get("/settings/terms").then((r) => {
       const def = docType === "invoice" ? r.default_invoice_terms : r.default_quote_terms;
@@ -132,18 +133,12 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
               <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
                 CUSTOMER *
               </label>
-              <select
+              <CustomerCombobox
                 value={form.customer_id}
-                onChange={setField("customer_id")}
-                className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
-                style={{ backgroundColor: colors.surface, color: colors.onSurface, border: `1px solid ${colors.border}` }}
-                data-testid="qf-customer"
-              >
-                <option value="">Choose a customer…</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+                onChange={(cid) => setForm((f) => ({ ...f, customer_id: cid }))}
+                customers={customers}
+                testid="qf-customer"
+              />
             </div>
             <TextInput label="TITLE" value={form.title} onChange={setField("title")} testid="qf-title" />
             <TextInput

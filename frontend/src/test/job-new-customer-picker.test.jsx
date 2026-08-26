@@ -37,17 +37,21 @@ describe("JobNew — active-only + searchable customer picker", () => {
     expect(SRC).not.toMatch(/api\.get\("\/customers"\)\.then\(setCustomers/);
   });
 
-  it("customer picker uses shadcn Command + Popover primitives", () => {
+  it("customer picker uses the extracted CustomerCombobox component", () => {
+    // Feb-2026 · Follow-up PR extracted the inline picker into
+    // ``@/components/customers/CustomerCombobox``. This assertion
+    // used to check that JobNew.jsx imported Popover + Command
+    // primitives directly — those imports now live in the
+    // extracted component, tested at
+    // ``customer-combobox.test.jsx``.
     expect(SRC).toMatch(
-      /from\s*"@\/components\/ui\/popover"/,
+      /import\s+CustomerCombobox\s+from\s+"@\/components\/customers\/CustomerCombobox"/,
     );
-    expect(SRC).toMatch(
-      /from\s*"@\/components\/ui\/command"/,
-    );
-    expect(SRC).toMatch(/<Popover\b/);
-    expect(SRC).toMatch(/<CommandInput\b/);
-    expect(SRC).toMatch(/<CommandItem\b/);
-    expect(SRC).toMatch(/<CommandEmpty\b/);
+    expect(SRC).toMatch(/<CustomerCombobox\b/);
+    // Primitives are NOT directly imported by JobNew anymore — the
+    // extraction abstracts them.
+    expect(SRC).not.toMatch(/from\s*"@\/components\/ui\/popover"/);
+    expect(SRC).not.toMatch(/from\s*"@\/components\/ui\/command"/);
   });
 
   it("no native <select> renders for the CUSTOMER field", () => {
@@ -68,16 +72,24 @@ describe("JobNew — active-only + searchable customer picker", () => {
     expect(custBlock).not.toMatch(/<select\b/);
   });
 
-  it("trigger + row testids are preserved", () => {
-    expect(SRC).toMatch(/data-testid="jf-customer"/);
-    expect(SRC).toMatch(
-      /data-testid=\{`jf-customer-item-\$\{c\.id\}`\}/,
-    );
-    expect(SRC).toMatch(/data-testid="jf-customer-search"/);
+  it("trigger + row testids are preserved via the extracted component", () => {
+    // Feb-2026 · after extraction, the raw ``data-testid="..."``
+    // literals live inside ``CustomerCombobox.jsx``. JobNew.jsx
+    // passes the ``testid`` prop, and the component derives every
+    // downstream testid from it (``{testid}``, ``{testid}-search``,
+    // ``{testid}-item-{id}``). Assert the prop is preserved.
+    expect(SRC).toMatch(/<CustomerCombobox\b[\s\S]*?testid="jf-customer"/);
   });
 
-  it("search placeholder present", () => {
-    expect(SRC).toMatch(/placeholder="Search customers…"/);
+  it("search placeholder is preserved by the extracted component", () => {
+    // Placeholder now lives inside CustomerCombobox — assert the
+    // extracted module renders "Search customers…" by default so
+    // JobNew inherits the same UX without spelling it out here.
+    const combo = readFileSync(
+      resolve(__dirname, "../components/customers/CustomerCombobox.jsx"),
+      "utf8",
+    );
+    expect(combo).toMatch(/placeholder="Search customers…"/);
   });
 
   it("technician + service selects remain native <select> (scope guard)", () => {

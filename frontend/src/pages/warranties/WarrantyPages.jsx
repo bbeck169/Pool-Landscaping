@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Shield, FileText, AlertCircle, Plus } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 
 const STATUS_C = {
   active: "#059669", claim_pending: "#F59E0B", expired: "#6B7280",
@@ -92,7 +93,7 @@ export function WarrantyContracts() {
     const r = await api.get("/warranties/contracts");
     setContracts(r.items || []);
     const p = await api.get("/warranties/plans"); setPlans(p.items || []);
-    const c = await api.get("/customers?limit=500");
+    const c = await api.get("/customers?is_active=true&limit=500");
     setCustomers(Array.isArray(c) ? c : (c.items || []));
   };
   useEffect(() => { load(); }, []);
@@ -176,15 +177,15 @@ export function WarrantyContracts() {
                 <option value="">Plan…</option>
                 {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
-              <select value={f.customer_id}
-                      onChange={(e) => setF({ ...f, customer_id: e.target.value })}
-                      className="p-2 rounded-lg text-sm"
-                      style={{ backgroundColor: colors.background,
-                               border: `1px solid ${colors.border}` }}>
-                <option value="">Customer…</option>
-                {customers.map((c) =>
-                  <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <div className="min-w-[200px]">
+                <CustomerCombobox
+                  value={f.customer_id}
+                  onChange={(cid) => setF({ ...f, customer_id: cid })}
+                  customers={customers}
+                  testid="warranty-customer"
+                  placeholder="Customer…"
+                />
+              </div>
               <input type="date" value={f.start_date}
                      onChange={(e) => setF({ ...f, start_date: e.target.value })}
                      className="p-2 rounded-lg text-sm"

@@ -4,6 +4,7 @@ import { ArrowLeft, Check, X as XIcon, Send } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { useAuth } from "@/auth";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import { PageHeader, Button, Modal, TextInput, Skeleton, EmptyState, Toast, Chip } from "@/components/ui-kit";
 
 /**
@@ -89,18 +90,13 @@ export function RequestJobPage() {
             <label className="text-xs font-semibold block mb-1" style={{ color: colors.onSurfaceSecondary }}>
               EXISTING CUSTOMER
             </label>
-            <select
+            <CustomerCombobox
               value={form.customer_id}
-              onChange={set("customer_id")}
-              className="w-full px-3 py-2.5 rounded-lg text-sm"
-              style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
-              data-testid="rj-customer"
-            >
-              <option value="">— New / unknown (fill in the hints below) —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>{c.name} · {c.phone || c.email || c.address || ""}</option>
-              ))}
-            </select>
+              onChange={(cid) => set("customer_id")({ target: { value: cid } })}
+              customers={customers}
+              testid="rj-customer"
+              placeholder="— New / unknown (fill in the hints below) —"
+            />
           </div>
           <TextInput label="CUSTOMER NAME (hint)" value={form.customer_name_hint} onChange={set("customer_name_hint")} testid="rj-name-hint" />
           <div className="grid grid-cols-2 gap-3">

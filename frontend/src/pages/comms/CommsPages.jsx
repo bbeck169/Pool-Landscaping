@@ -23,6 +23,7 @@ import { Mail, MessageSquare, Zap, Send, Plus, Trash2, Copy, Eye, Save, Type as 
 import { toast as sonnerToast } from "sonner";
 import { colors } from "@/theme";
 import { api } from "@/api";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import {
   listEmailTemplates, getEmailTemplate, createEmailTemplate,
   updateEmailTemplate, deleteEmailTemplate, duplicateEmailTemplate,
@@ -1101,7 +1102,7 @@ function TestFireModal({ rule, onClose, onFired }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   useEffect(() => {
-    api.get("/customers").then((rows) => setCustomers(rows || [])).catch(() => setCustomers([]));
+    api.get("/customers?is_active=true").then((rows) => setCustomers(rows || [])).catch(() => setCustomers([]));
   }, []);
   const fire = async () => {
     setBusy(true); setErr("");
@@ -1120,13 +1121,15 @@ function TestFireModal({ rule, onClose, onFired }) {
         <div className="font-bold mb-2" style={{ color: colors.onSurface }}>Test fire · {rule.code}</div>
         {err ? <div className="text-xs px-3 py-2 rounded mb-2" style={{ background: "#FEE2E2", color: "#991B1B" }}>{err}</div> : null}
         <div className="text-xs mb-1" style={{ color: colors.muted }}>Recipient customer</div>
-        <select value={recipient} onChange={(e) => setRecipient(e.target.value)}
-                className="w-full text-sm px-2 py-1.5 rounded mb-3"
-                style={{ background: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
-                data-testid="comms-auto-testfire-customer">
-          <option value="">— select customer —</option>
-          {customers.map((c) => <option key={c.id} value={c.id}>{c.name} {c.email ? `· ${c.email}` : ""}</option>)}
-        </select>
+        <div className="mb-3">
+          <CustomerCombobox
+            value={recipient}
+            onChange={setRecipient}
+            customers={customers}
+            testid="comms-auto-testfire-customer"
+            placeholder="— select customer —"
+          />
+        </div>
         <div className="flex justify-end gap-2">
           <BtnGhost onClick={onClose}>Cancel</BtnGhost>
           <BtnPrimary onClick={fire} disabled={!recipient || busy} testid="comms-auto-testfire-go">Fire</BtnPrimary>

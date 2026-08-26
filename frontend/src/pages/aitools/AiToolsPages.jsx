@@ -4,6 +4,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { ZillowUsageChip } from "@/components/ZillowUsageChip";
+import CustomerCombobox from "@/components/customers/CustomerCombobox";
 
 /* ═══ Phase 11 — Web AI & Tools (all admin-only, one dense module) ═══ */
 
@@ -392,7 +393,7 @@ export function SatelliteMeasure() {
 
   useEffect(() => {
     api.get("/measurements").then((r) => setSaved(Array.isArray(r) ? r : []));
-    api.get("/customers").then((r) => setCustomers(Array.isArray(r) ? r : (r?.rows || [])));
+    api.get("/customers?is_active=true").then((r) => setCustomers(Array.isArray(r) ? r : (r?.rows || [])));
   }, []);
 
   // Shoelace formula (approx, degrees to feet via cos(lat) factor).
@@ -453,12 +454,13 @@ export function SatelliteMeasure() {
 
           <div className="mb-3">
             <label className="text-xs font-semibold block mb-1">Customer (optional)</label>
-            <select value={customerId} onChange={(e) => setCustomerId(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg text-sm" style={{ border: `1px solid ${colors.border}` }}
-                    data-testid="measure-customer">
-              <option value="">Unassigned</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <CustomerCombobox
+              value={customerId}
+              onChange={setCustomerId}
+              customers={customers}
+              testid="measure-customer"
+              placeholder="Unassigned"
+            />
           </div>
 
           <div className="flex gap-2">
