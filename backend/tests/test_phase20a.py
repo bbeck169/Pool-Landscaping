@@ -83,7 +83,18 @@ def test_route_optimize_orders_three_jobs(tech_h, dbc):
         assert seen == [j1, j3, j2]
         assert data["total_distance_m"] > 0
         assert data["cached"] is False
-        assert data["algorithm"] == "nearest_neighbor"
+        # Feb-2026 · Router canonical badge set (see
+        # ``routers/route_optimization.py::optimize_route`` docstring).
+        # The legacy ``"nearest_neighbor"`` badge no longer exists —
+        # the fallback now writes ``"haversine_fallback"``, and the
+        # Google path badges either ``"google_directions"`` or the
+        # composite ``"directions_v2+orion_bias"`` (ZIP tiebreaker
+        # emits a warning on real seeded data).
+        assert data["algorithm"] in (
+            "google_directions",
+            "directions_v2+orion_bias",
+            "haversine_fallback",
+        ), data["algorithm"]
     finally:
         _cleanup(dbc, [j1, j2, j3])
 

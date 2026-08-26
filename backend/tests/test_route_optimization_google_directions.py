@@ -292,7 +292,13 @@ def test_router_optimize_route_badges_algorithm_field():
 
     assert r1.status_code == 200, r1.text
     body1 = r1.json()
-    assert body1["algorithm"] == "google_directions"
+    # Feb-2026 · Router now always runs the ORION zip-cluster pass —
+    # when jobs have no ZIP data the pass emits an informational
+    # warning, which flips the badge from "google_directions" to
+    # "directions_v2+orion_bias". These seeded jobs have no addresses
+    # so the missing-ZIP warning fires and the composite badge is
+    # canonical. See routers/route_optimization.py response contract.
+    assert body1["algorithm"] == "directions_v2+orion_bias"
     assert body1["ordered_job_ids"] == ["j1", "j3", "j2"]
     assert body1["total_distance_m"] == 4321
     assert body1["total_duration_s"] == 550
@@ -302,7 +308,7 @@ def test_router_optimize_route_badges_algorithm_field():
     assert r2.status_code == 200
     body2 = r2.json()
     assert body2["cached"] is True
-    assert body2["algorithm"] == "google_directions"
+    assert body2["algorithm"] == "directions_v2+orion_bias"
     assert first_pass_calls == 1
 
 

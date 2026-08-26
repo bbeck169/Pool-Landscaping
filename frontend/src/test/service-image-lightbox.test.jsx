@@ -95,6 +95,37 @@ describe("ServiceLogPage source · lightbox wire-up (Feb-2026)", () => {
     // Guard: the returned lightbox short-circuits on video items.
     expect(src).toMatch(/if\s*\(\s*!cur\s*\|\|\s*cur\.kind\s*===\s*["']video["']/);
   });
+
+  // Feb-2026 · A11y polish — every interactive element in the
+  // thumbnail + lightbox layer must show a visible focus ring for
+  // keyboard nav. The classes here match the Tailwind utility set
+  // used elsewhere in the app for the same purpose.
+  it("thumbnail button carries focus-visible ring classes", () => {
+    // The button that wraps the carousel image must have the
+    // focus-visible ring on it.
+    expect(src).toMatch(
+      /data-testid=\{`id-service-image-thumb-\$\{idx\}`\}[\s\S]{0,400}focus-visible:ring-2\s+focus-visible:ring-blue-500\s+focus-visible:ring-offset-2/,
+    );
+  });
+
+  it("all lightbox controls carry focus-visible ring classes", () => {
+    // Anchor with download → focus ring.
+    expect(src).toMatch(
+      /data-testid="id-service-image-download"[\s\S]{0,300}focus-visible:ring-2\s+focus-visible:ring-blue-500\s+focus-visible:ring-offset-2/,
+    );
+    // Close button → focus ring.
+    expect(src).toMatch(
+      /data-testid="id-service-image-close"[\s\S]{0,300}focus-visible:ring-2\s+focus-visible:ring-blue-500\s+focus-visible:ring-offset-2/,
+    );
+    // Prev button → focus ring.
+    expect(src).toMatch(
+      /data-testid="id-service-image-prev"[\s\S]{0,300}focus-visible:ring-2\s+focus-visible:ring-blue-500\s+focus-visible:ring-offset-2/,
+    );
+    // Next button → focus ring.
+    expect(src).toMatch(
+      /data-testid="id-service-image-next"[\s\S]{0,300}focus-visible:ring-2\s+focus-visible:ring-blue-500\s+focus-visible:ring-offset-2/,
+    );
+  });
 });
 
 

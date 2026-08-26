@@ -58,7 +58,42 @@ async def optimize_route(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Optimize the driving order for a tech's today (or `date`) job list."""
+    """Optimize the driving order for a tech's today (or `date`) job list.
+
+    Response contract (canonical — every branch returns the same shape;
+    tests in ``test_route_optimization_google_directions.py`` and
+    ``test_route_optimizer_response_contract.py`` lock this down):
+
+      * ``ordered_job_ids: list[str]`` — planned traversal order.
+      * ``total_distance_m: float`` — meters. 0 when <2 stops.
+      * ``total_duration_s: int``   — seconds. 0 when <2 stops.
+      * ``legs: list[dict]``        — pairwise legs (``from_job_id``,
+                                       ``to_job_id``, ``distance_m``,
+                                       ``duration_s``, ``polyline``).
+      * ``cached: bool``            — true on cache hit.
+      * ``algorithm: str``          — one of ``"trivial"``,
+                                       ``"google_directions"``,
+                                       ``"directions_v2+orion_bias"``,
+                                       ``"haversine_fallback"``.
+      * ``warnings: list[str]``     — ORION heuristic notes on the
+                                       Google path; a Haversine
+                                       fallback message on failure.
+
+    ``algorithm`` mapping:
+      * ``"trivial"`` — <2 geocoded stops.
+      * ``"google_directions"`` — Google returned a route and ORION
+                                     added no warnings (rare on real
+                                     data — the ZIP pass almost always
+                                     emits at least an informational
+                                     warning).
+      * ``"directions_v2+orion_bias"`` — Google returned a route AND
+                                     ORION appended at least one
+                                     warning (applied a swap OR
+                                     skipped for missing ZIP data).
+      * ``"haversine_fallback"`` — Google unavailable / errored;
+                                     ``warnings`` contains the
+                                     "Directions unavailable" message.
+    """
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
     # Only admins can override which user to optimize for.

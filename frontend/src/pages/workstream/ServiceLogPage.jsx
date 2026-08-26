@@ -196,6 +196,7 @@ function MediaCarousel({ items = [] }) {
             onClick={() => setLightboxOpen(true)}
             aria-label="Open image full size"
             data-testid={`id-service-image-thumb-${idx}`}
+            className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
             style={{
               width: "100%", height: "100%",
               background: "transparent", border: "none", padding: 0,
@@ -395,6 +396,7 @@ function ImageLightbox({ items, index, token, onIndexChange, onClose }) {
           onClick={(e) => e.stopPropagation()}
           aria-label="Download image"
           data-testid="id-service-image-download"
+          className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
           style={{
             background: "rgba(255,255,255,0.12)", color: "white",
             borderRadius: 999, width: 40, height: 40,
@@ -409,6 +411,7 @@ function ImageLightbox({ items, index, token, onIndexChange, onClose }) {
           onClick={onClose}
           aria-label="Close image"
           data-testid="id-service-image-close"
+          className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
           style={{
             background: "rgba(255,255,255,0.12)", color: "white",
             border: "none", borderRadius: 999, width: 40, height: 40,
@@ -428,6 +431,7 @@ function ImageLightbox({ items, index, token, onIndexChange, onClose }) {
             onClick={(e) => { e.stopPropagation(); gotoDelta(-1); }}
             aria-label="Previous image"
             data-testid="id-service-image-prev"
+            className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
             style={{
               position: "absolute", left: 16, top: "50%",
               transform: "translateY(-50%)",
@@ -444,6 +448,7 @@ function ImageLightbox({ items, index, token, onIndexChange, onClose }) {
             onClick={(e) => { e.stopPropagation(); gotoDelta(1); }}
             aria-label="Next image"
             data-testid="id-service-image-next"
+            className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
             style={{
               position: "absolute", right: 16, top: "50%",
               transform: "translateY(-50%)",
