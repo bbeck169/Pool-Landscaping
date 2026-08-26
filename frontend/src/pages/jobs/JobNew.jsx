@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Repeat } from 'lucide-react';
+import { ArrowLeft, Repeat, ChevronsUpDown, Check } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 import {
@@ -14,6 +14,18 @@ import {
   MonthlyNthWeekdaySelector,
   RecurrenceEndsRadio,
 } from "@/components/recurring/MonthlyNthWeekdaySelector";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 
 const CADENCES = [
   { k: "one_time", label: "One-time" },
@@ -101,7 +113,10 @@ export default function JobNew({
   });
 
   useEffect(() => {
-    api.get("/customers").then(setCustomers).catch(() => {});
+    // Feb-2026 · Customer picker UX — filter to active customers only.
+    // Backend supports ``is_active=true`` at ``routers/customers.py``.
+    // Also excludes muted rows per that endpoint's semantics.
+    api.get("/customers?is_active=true").then(setCustomers).catch(() => {});
     api.get("/technicians").then(setTechs).catch(() => {});
     api.get("/items").then(setItems).catch(() => {});
   }, []);
@@ -269,24 +284,19 @@ export default function JobNew({
             <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
               CUSTOMER *
             </label>
-            <select
+            {/* Feb-2026 · UX — replaces the raw <select> with a
+                searchable combobox (shadcn Popover + Command). Only
+                active customers surface (filtered server-side via
+                ``is_active=true``). Keeps ``customer_id`` state
+                wiring identical to the old <select> so downstream
+                validation + property auto-load behaviour is
+                unchanged. testid ``jf-customer`` is preserved on
+                the trigger for existing E2E assertions. */}
+            <CustomerCombobox
+              customers={customers}
               value={form.customer_id}
-              onChange={set("customer_id")}
-              className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
-              style={{
-                backgroundColor: colors.surface,
-                color: colors.onSurface,
-                border: `1px solid ${colors.border}`,
-              }}
-              data-testid="jf-customer"
-            >
-              <option value="">Choose a customer…</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              onSelect={(cid) => setForm((f) => ({ ...f, customer_id: cid }))}
+            />
           </div>
           {/* Feb-2026 MP2 UI — property picker. Required when the
               customer has ≥2 active properties; hidden entirely when
@@ -516,5 +526,87 @@ export default function JobNew({
 
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
+  );
+}
+
+
+
+/**
+ * Feb-2026 · Searchable customer combobox for the New Job form.
+ *
+ * Rationale: on a tenant with hundreds of customers, the native
+ * ``<select>`` is unusable — no search, no filter, tons of scroll.
+ * This picker uses the same shadcn ``Command`` + ``Popover``
+ * primitives the rest of the codebase reaches for on typeahead
+ * surfaces, keyed by ``customer.id`` so the parent form's state
+ * shape is unchanged.
+ *
+ * Inline (not extracted to ``@/components/customers/CustomerCombobox``)
+ * per the PR scope decision — extraction can happen in a follow-up
+ * that also migrates ``QuoteInvoiceNew`` / ``RecurringJobs`` /
+ * ``Estimator`` / etc. away from their own raw ``<select>`` pickers.
+ */
+function CustomerCombobox({ customers, value, onSelect }) {
+  const [open, setOpen] = React.useState(false);
+  const selected = React.useMemo(
+    () => (customers || []).find((c) => c.id === value) || null,
+    [customers, value],
+  );
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full px-3.5 py-2.5 rounded-lg text-sm text-left flex items-center justify-between gap-2 focus:outline-none focus:ring-2"
+          style={{
+            backgroundColor: colors.surface,
+            color: selected ? colors.onSurface : colors.onSurfaceSecondary,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="jf-customer"
+        >
+          <span className="truncate">
+            {selected ? selected.name : "Choose a customer…"}
+          </span>
+          <ChevronsUpDown size={14} className="shrink-0 opacity-60" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="p-0 w-[--radix-popover-trigger-width] min-w-[280px]"
+        data-testid="jf-customer-popover"
+      >
+        <Command>
+          <CommandInput
+            placeholder="Search customers…"
+            data-testid="jf-customer-search"
+          />
+          <CommandList>
+            <CommandEmpty>No customers found.</CommandEmpty>
+            {(customers || []).map((c) => (
+              <CommandItem
+                key={c.id}
+                value={c.name}
+                onSelect={() => {
+                  onSelect(c.id);
+                  setOpen(false);
+                }}
+                data-testid={`jf-customer-item-${c.id}`}
+              >
+                <Check
+                  size={14}
+                  className={
+                    "mr-2 " + (c.id === value ? "opacity-100" : "opacity-0")
+                  }
+                />
+                {c.name}
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }

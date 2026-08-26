@@ -606,14 +606,22 @@ async def create_job(body: JobIn,
             ))
         if len(active_props) == 1:
             doc["property_id"] = active_props[0]["id"]
-    tech_name = None
+    # Feb-2026 · P0 hotfix — tech-assignment write-side denorm.
+    # Historic behaviour did a single ``db.technicians`` lookup and
+    # stamped ``technician_name = None`` when the id was a synth-from-
+    # users shape (every real team member added via the roster UI has
+    # this shape). The shared helper uses the 4-rung cascade so both
+    # real-tech-doc and synth-from-users ids resolve. See
+    # ``services/tech_assignment.py`` for the full rationale.
     if body.technician_id:
-        tech = await db.technicians.find_one(
-            {"id": body.technician_id, "tenant_id": tenant["id"]}, {"_id": 0}
+        from services.tech_assignment import resolve_tech_write_denorms
+        denorms = await resolve_tech_write_denorms(
+            db, tenant["id"], body.technician_id,
         )
-        tech_name = tech["name"] if tech else None
-        doc["technician_avatar"] = tech.get("avatar", "") if tech else ""
-    doc["technician_name"] = tech_name
+        doc["technician_avatar"] = denorms["avatar"]
+        doc["technician_name"] = denorms["name"]
+    else:
+        doc["technician_name"] = None
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "photos": [], "created_at": now_iso()})
     try:
         await db.jobs.insert_one(doc)
@@ -947,6 +955,21 @@ async def get_job(jid: str,
     # Phase 57.d · read-time enrichment — tech department + derived
     # checklist_kind. Never mutates the stored job doc.
     await _enrich_job_dept_and_kind(doc, tenant["id"])
+    # Feb-2026 · P0 hotfix — historical jobs stamped with
+    # ``technician_name = null`` (write path missed the synth-from-
+    # users cascade before the ``resolve_tech_write_denorms``
+    # helper landed) render "Unassigned" in the JobDetail UI even
+    # though ``technician_id`` is correctly set. Enrich on read so
+    # those rows recover without a backfill migration. Response-
+    # only mutation — the stored doc is unchanged.
+    if not doc.get("technician_name"):
+        from services.job_assignee import effective_tid
+        from services.service_report_view import resolve_technician_names
+        _tid = effective_tid(doc)
+        if _tid:
+            _names = await resolve_technician_names(db, tenant["id"], [_tid])
+            if _names.get(_tid):
+                doc["technician_name"] = _names[_tid]
     if user.get("role") == "customer":
         doc.pop("internal_notes", None)
     # Phase 16C add-on: strip revenue/pricing fields from technician responses.
@@ -1062,11 +1085,14 @@ async def update_job(jid: str, body: JobUpdate,
         raise HTTPException(403, "Not permitted to edit jobs")
     update = {k: v for k, v in body.dict().items() if v is not None}
     if "technician_id" in update:
-        tech = await db.technicians.find_one(
-            {"id": update["technician_id"], "tenant_id": tenant["id"]}, {"_id": 0}
+        # Feb-2026 · P0 hotfix — same shared write-side cascade as
+        # ``create_job``. See ``services/tech_assignment.py``.
+        from services.tech_assignment import resolve_tech_write_denorms
+        denorms = await resolve_tech_write_denorms(
+            db, tenant["id"], update["technician_id"],
         )
-        update["technician_name"] = tech["name"] if tech else None
-        update["technician_avatar"] = tech.get("avatar", "") if tech else ""
+        update["technician_name"] = denorms["name"]
+        update["technician_avatar"] = denorms["avatar"]
     # Feb-2026 · Crew Phase A · crew assignment enrichment + RBAC gate.
     # Only admin-equivalent roles may CHANGE a crew — a technician can
     # still update their own job's status / notes / etc., but not the
