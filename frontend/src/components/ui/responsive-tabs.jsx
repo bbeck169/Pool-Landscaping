@@ -1,0 +1,163 @@
+/**
+ * Feb-2026 · ResponsiveTabs
+ * ─────────────────────────────────────────────────────────────────────
+ * Detail-page tab strip that switches trigger surfaces based on
+ * viewport width:
+ *   • ≥ md (768px)  — familiar horizontal strip, one button per tab,
+ *                     underline on active. Matches the pre-existing
+ *                     inline pattern in ``CustomerDetail.jsx`` and
+ *                     ``PropertyDrawer.jsx`` byte-for-byte, so the
+ *                     desktop UX is unchanged.
+ *   • <  md         — full-width DropdownMenu trigger showing the
+ *                     active tab's icon + label + caret; items keep
+ *                     their icons so the visual language is
+ *                     consistent with the desktop strip.
+ *
+ * Both surfaces render simultaneously in the DOM; CSS (`md:hidden` /
+ * `hidden md:flex`) toggles visibility.  No JS media query, no
+ * hydration flicker, no dependency on window size at mount time.
+ *
+ * API — accepts BOTH shapes to accommodate the two Group-A callers:
+ *
+ *   1. Rich (CustomerDetail):
+ *        [{ k: "overview", label: "Overview", icon: MapPin }, ...]
+ *   2. Plain string list (PropertyDrawer):
+ *        ["Info", "Contact", "Service Notes", ...]
+ *      — normalized internally to ``{ k: str, label: str }``.
+ *
+ * Parent still owns the ``active`` state + ``onChange`` closure, so
+ * URL query-param sync, deep-linking, and existing wiring survive
+ * with zero migration churn.
+ *
+ * Accessibility notes:
+ *   • Horizontal strip renders as `<nav>` with `<button>`s — matches
+ *     the pre-existing shape (which also does NOT use ARIA tab
+ *     roles). Kept intentionally to avoid changing keyboard-nav
+ *     semantics under a UX-only refactor.
+ *   • Dropdown branch inherits Radix DropdownMenu ARIA
+ *     (aria-haspopup, aria-expanded, roving focus among items,
+ *     Enter/Space to activate).
+ */
+
+import React from "react";
+import { ChevronDown } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { colors } from "@/theme";
+
+function _normalize(tabs) {
+  return (tabs || []).map((t) =>
+    typeof t === "string"
+      ? { k: t, label: t, icon: null }
+      : { k: t.k ?? t.key ?? t.value ?? t.label, label: t.label ?? t.k, icon: t.icon || null },
+  );
+}
+
+function _safeTestid(prefix, k) {
+  const slug = String(k || "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase();
+  return `${prefix}-${slug}`;
+}
+
+export function ResponsiveTabs({
+  tabs,
+  active,
+  onChange,
+  testidPrefix = "rt-tab",
+  ariaLabel = "Sections",
+}) {
+  const items = _normalize(tabs);
+  const activeItem = items.find((t) => t.k === active) || items[0] || null;
+  const ActiveIcon = activeItem?.icon || null;
+
+  return (
+    <>
+      {/* ── Dropdown (< md) ─────────────────────────────────────── */}
+      <div
+        className="md:hidden"
+        style={{ borderBottom: `1px solid ${colors.border}` }}
+        data-testid={`${testidPrefix}-dropdown-shell`}
+      >
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-2 px-4 py-3 text-sm font-semibold"
+              style={{ color: colors.brand, backgroundColor: colors.surface }}
+              data-testid={`${testidPrefix}-dropdown-trigger`}
+              aria-label={ariaLabel}
+            >
+              <span className="flex items-center gap-2 min-w-0 truncate">
+                {ActiveIcon ? <ActiveIcon size={14} /> : null}
+                <span className="truncate">{activeItem?.label ?? "Select…"}</span>
+              </span>
+              <ChevronDown size={16} aria-hidden="true" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            sideOffset={4}
+            className="w-[calc(100vw-2rem)] max-w-sm"
+            data-testid={`${testidPrefix}-dropdown-content`}
+          >
+            {items.map((t) => {
+              const Icon = t.icon;
+              const isActive = t.k === active;
+              return (
+                <DropdownMenuItem
+                  key={t.k}
+                  onSelect={() => onChange(t.k)}
+                  data-testid={_safeTestid(testidPrefix, t.k)}
+                  data-active={isActive ? "true" : undefined}
+                  style={{
+                    color: isActive ? colors.brand : colors.onSurface,
+                    fontWeight: isActive ? 600 : 500,
+                  }}
+                >
+                  {Icon ? <Icon size={14} className="mr-2" /> : null}
+                  {t.label}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* ── Horizontal strip (≥ md) ─────────────────────────────── */}
+      <nav
+        className="hidden md:flex overflow-x-auto"
+        style={{ borderBottom: `1px solid ${colors.border}` }}
+        aria-label={ariaLabel}
+      >
+        {items.map((t) => {
+          const Icon = t.icon;
+          const isActive = t.k === active;
+          return (
+            <button
+              key={t.k}
+              type="button"
+              onClick={() => onChange(t.k)}
+              className="flex items-center gap-2 px-4 py-3 text-sm font-semibold whitespace-nowrap transition"
+              style={{
+                color: isActive ? colors.brand : colors.muted,
+                borderBottom: `2px solid ${isActive ? colors.brand : "transparent"}`,
+              }}
+              data-testid={_safeTestid(testidPrefix, t.k)}
+            >
+              {Icon ? <Icon size={14} /> : null}
+              {t.label}
+            </button>
+          );
+        })}
+      </nav>
+    </>
+  );
+}
+
+export default ResponsiveTabs;

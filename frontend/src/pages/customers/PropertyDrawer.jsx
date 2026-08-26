@@ -14,6 +14,7 @@ import { X } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button, TextInput } from "@/components/ui-kit";
+import ResponsiveTabs from "@/components/ui/responsive-tabs";
 
 const TABS = ["Info", "Contact", "Service Notes", "Photos", "Schedule"];
 
@@ -106,22 +107,23 @@ export default function PropertyDrawer({ propertyId, onClose, onChanged, onToast
           </button>
         </header>
 
-        <nav className="flex overflow-x-auto sticky top-[57px] z-10" style={{ backgroundColor: colors.surface, borderBottom: `1px solid ${colors.border}` }}>
-          {TABS.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className="px-4 py-2 text-sm font-semibold whitespace-nowrap transition"
-              style={{
-                color: tab === t ? colors.brand : colors.muted,
-                borderBottom: `2px solid ${tab === t ? colors.brand : "transparent"}`,
-              }}
-              data-testid={`pd-tab-${t.replace(/\s+/g, "-").toLowerCase()}`}
-            >
-              {t}
-            </button>
-          ))}
-        </nav>
+        {/* Feb-2026 · migrated to <ResponsiveTabs>. Sticky wrapper
+            preserves the drawer's scroll-anchor behavior; the
+            component itself renders a horizontal strip on ≥md and a
+            full-width dropdown below that so the 5 tabs stop
+            requiring a horizontal scroll on narrow viewports. */}
+        <div
+          className="sticky top-[57px] z-10"
+          style={{ backgroundColor: colors.surface }}
+        >
+          <ResponsiveTabs
+            tabs={TABS}
+            active={tab}
+            onChange={setTab}
+            testidPrefix="pd-tab"
+            ariaLabel="Property sections"
+          />
+        </div>
 
         <div className="p-5">
           {loading || !property ? (

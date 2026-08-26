@@ -117,6 +117,7 @@ import CardOnFileWarningBanner from "@/components/customers/CardOnFileWarningBan
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
 import CustomerReviewsTab from "@/components/customers/CustomerReviewsTab";
 import AdminCardCapturePanel from "@/components/customers/AdminCardCapturePanel";
+import ResponsiveTabs from "@/components/ui/responsive-tabs";
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
@@ -579,28 +580,23 @@ export default function CustomerDetail() {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — Feb-2026 · migrated to <ResponsiveTabs>. Desktop
+          keeps the identical horizontal strip; <md renders a
+          full-width dropdown so the 12-tab list stops requiring a
+          horizontal scroll. Parent still owns ``tab`` state, so
+          deep-linking (see the initial ``tab`` from URL query in
+          the ``useCustomerTabParam`` block above) is preserved. */}
       <div
         className="rounded-2xl overflow-hidden mb-4"
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
       >
-        <nav className="flex overflow-x-auto" style={{ borderBottom: `1px solid ${colors.border}` }}>
-          {TABS.map((t) => (
-            <button
-              key={t.k}
-              onClick={() => setTab(t.k)}
-              className="flex items-center gap-2 px-4 py-3 text-sm font-semibold whitespace-nowrap transition"
-              style={{
-                color: tab === t.k ? colors.brand : colors.muted,
-                borderBottom: `2px solid ${tab === t.k ? colors.brand : "transparent"}`,
-              }}
-              data-testid={`cd-tab-${t.k}`}
-            >
-              <t.icon size={14} />
-              {t.label}
-            </button>
-          ))}
-        </nav>
+        <ResponsiveTabs
+          tabs={TABS}
+          active={tab}
+          onChange={setTab}
+          testidPrefix="cd-tab"
+          ariaLabel="Customer sections"
+        />
         <div className="p-5">
           {tab === "overview" ? (
             <div className="space-y-4">
@@ -960,6 +956,18 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
 
   return (
     <div className="space-y-5" data-testid="portal-access-panel">
+      {/* Feb-2026 · Bug 1 fix — Send Portal Invite CTA mirrored from
+          the Overview tab so both surfaces render identically for
+          the same customer state. Reuses the same
+          ``PortalInviteQuickAction`` component (no fork) → identical
+          gating (email-required disable), identical endpoint
+          (``POST /customers/{id}/portal-invite``), identical toast
+          copy. Renders for both hasLogin=true (rotates password) and
+          hasLogin=false (issues new credentials) — matching Overview.
+          The advanced Reset / Impersonate / Revoke / Manual-create
+          actions below are unaffected. */}
+      <PortalInviteQuickAction customer={customer} onToast={onToast} />
+
       {/* Status row */}
       <div
         className="rounded-lg p-3 text-sm"

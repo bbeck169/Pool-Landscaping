@@ -597,6 +597,47 @@ async def submit_service_report(
     except Exception as e:
         logger.warning(f"inventory decrement failed: {e}")
 
+    # Feb-2026 · Bug 2 fix — Chemistry Profitability was reading $0
+    # for every customer on production because the legacy PUT
+    # /jobs/{jid} field-report path was the ONLY caller of
+    # ``snapshot_chemical_usage``.  The modern tech-facing flow
+    # writes ``chemicals_added`` onto the service_report doc via
+    # PATCH and locks with this submit — but never emitted the
+    # per-line ``chemical_usage_events`` rows that the
+    # ``GET /pools/{pool_id}/chemical-profitability`` rollup (and
+    # the Chemistry History page) aggregate over.
+    #
+    # ``snapshot_chemical_usage`` is idempotent per
+    # ``service_report_id`` (it does a ``delete_many`` before the
+    # insert), so this remains safe under:
+    #   * Re-submits (blocked upstream by the ``submitted_at``
+    #     idempotency check, but the snapshot itself would be a
+    #     no-op replace regardless).
+    #   * Legacy PUT /jobs/{jid} co-writes — the newer submit will
+    #     just supersede the older snapshot.
+    #
+    # Best-effort: a snapshot failure NEVER blocks the submit
+    # response (mirrors the pattern used by the auto-invoice
+    # accrue call in ``routers/jobs.py``).
+    try:
+        from routers.chemical_products import snapshot_chemical_usage
+        _sr_for_snapshot = (
+            fresh_rep if 'fresh_rep' in locals() and fresh_rep else rep
+        )
+        await snapshot_chemical_usage(
+            tenant_id=tenant["id"],
+            job_id=jid,
+            service_report_id=_sr_for_snapshot.get("id") or rep.get("id"),
+            customer_id=job.get("customer_id"),
+            chemicals_added=_sr_for_snapshot.get("chemicals_added") or [],
+            occurred_at=job.get("scheduled_date")
+                         or job.get("scheduled_start")
+                         or now,
+            actor_user_id=user.get("id"),
+        )
+    except Exception as _snap_e:
+        logger.warning(f"chemistry snapshot failed: {_snap_e}")
+
     # Phase 39 · Step 3b — Flip reservations for this job → consumed.
     # `decrement_from_service_report()` above already reduced the shared
     # `inventory_items.current_qty`, so we pass `skip_item_writes=True`
