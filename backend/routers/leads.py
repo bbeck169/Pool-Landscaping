@@ -222,6 +222,61 @@ async def get_lead(lid: str,
     return row
 
 
+# Feb-2026 · Lead detail drawer · Raw form submission lazy-load.
+# The detail drawer fetches this on-demand when ``lead.meta.submission_id``
+# exists so admins can inspect every question the visitor answered
+# without ballooning the list-endpoint payload (submissions can be
+# ~100+ KB when the form has file uploads referenced by URL).
+#
+# Contract:
+#   * 200 → ``{"submission_id": str, "form_id": str|None,
+#              "created_at": str, "values": dict}``.
+#   * 404 → lead not found OR lead has no linked submission.
+#   * 403 → caller lacks the leads role (already enforced by
+#           ``_require_leads_role`` — matches ``/leads/{lid}``).
+#   * Tenant scope: BOTH the lead AND the submission are re-queried
+#     with ``tenant_id`` — a lead can never surface a submission from
+#     a different tenant even if the id happens to collide.
+@router.get("/leads/{lid}/raw-submission")
+async def get_lead_raw_submission(
+    lid: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _require_leads_role(user)
+    lead = await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant["id"]},
+        {"_id": 0, "meta": 1},
+    )
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    submission_id = ((lead.get("meta") or {}).get("submission_id")) or None
+    if not submission_id:
+        # Legacy pre-P17 leads have no submission reference. Return
+        # 404 so the frontend hides the panel cleanly — same treatment
+        # as a truly missing submission.
+        raise HTTPException(404, "No linked submission")
+    sub = await db.form_submissions.find_one(
+        {"id": submission_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "form_id": 1, "created_at": 1,
+         "values": 1, "answers": 1, "data": 1, "page_url": 1},
+    )
+    if not sub:
+        raise HTTPException(404, "Submission not found")
+    # ``form_submissions`` writes ``answers`` (new widget path) OR
+    # ``values`` (legacy marketing.py path) — normalise so the client
+    # always reads a single ``values`` key. ``data`` is the pre-GH
+    # mirror kept for backwards-compat.
+    values = sub.get("answers") or sub.get("values") or sub.get("data") or {}
+    return {
+        "submission_id": sub.get("id"),
+        "form_id": sub.get("form_id"),
+        "created_at": sub.get("created_at"),
+        "page_url": sub.get("page_url"),
+        "values": values,
+    }
+
+
 # ═══════════════════════════ CREATE ═════════════════════════════════
 @router.post("/leads")
 async def create_lead(body: LeadIn,

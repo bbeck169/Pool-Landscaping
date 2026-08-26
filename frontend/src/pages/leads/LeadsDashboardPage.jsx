@@ -244,9 +244,10 @@ export default function LeadsDashboardPage() {
             />
           </div>
           <div className="col-span-2">Date</div>
-          <div className="col-span-3">Name</div>
+          <div className="col-span-2">Name</div>
           <div className="col-span-2">Contact</div>
-          <div className="col-span-2">Source</div>
+          <div className="col-span-2">Address</div>
+          <div className="col-span-1">Source</div>
           <div className="col-span-2">Status</div>
         </div>
         {loading && <div className="p-6 text-sm" style={{ color: colors.muted }}>Loading…</div>}
@@ -278,14 +279,28 @@ export default function LeadsDashboardPage() {
             <div className="col-span-2 text-xs" style={{ color: colors.muted }}>
               {(l.created_at || "").slice(0, 10)}
             </div>
-            <div className="col-span-3 font-semibold" style={{ color: colors.onSurface }}>
+            <div className="col-span-2 font-semibold" style={{ color: colors.onSurface }}>
               {l.name || "—"}
             </div>
             <div className="col-span-2 text-xs" style={{ color: colors.muted }}>
               {l.email && <div>{l.email}</div>}
               {l.phone && <div>{l.phone}</div>}
             </div>
-            <div className="col-span-2">
+            {/* Feb-2026 · Address column — added between Contact and
+                Source per user request.  Truncates to a single line
+                with the full string on ``title=`` hover for cases
+                where the address exceeds the column width. */}
+            <div
+              className="col-span-2 text-xs truncate"
+              style={{ color: colors.muted }}
+              title={l.address || l.service_address || ""}
+              data-testid={`lead-address-${l.id}`}
+            >
+              {l.address || l.service_address || (
+                <span style={{ opacity: 0.5 }}>—</span>
+              )}
+            </div>
+            <div className="col-span-1">
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
                     style={{ background: "#F1F5F9", color: "#475569" }}>
                 {SOURCE_LABEL(l.source)}
@@ -492,6 +507,35 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // Feb-2026 · Raw form submission lazy-load. Only fetches when the
+  // lead has a linked submission (``meta.submission_id``); otherwise
+  // the panel stays hidden. Endpoint enforces the tenant scope + role
+  // gate again server-side — this hook trusts the 404 to hide the
+  // panel gracefully on cross-tenant / missing rows.
+  const submissionId = lead?.meta?.submission_id || null;
+  const [rawSub, setRawSub] = useState(null);
+  const [rawState, setRawState] = useState(submissionId ? "idle" : "none");
+  const [rawErr, setRawErr] = useState("");
+  useEffect(() => {
+    if (!submissionId) { setRawState("none"); return; }
+    let cancelled = false;
+    setRawState("loading"); setRawErr("");
+    api.get(`/leads/${lead.id}/raw-submission`)
+      .then((d) => { if (!cancelled) { setRawSub(d); setRawState("ready"); } })
+      .catch((e) => {
+        if (cancelled) return;
+        // 404 → no linked submission (legacy leads) → hide panel.
+        // Any other error → surface message but still keep panel closed.
+        if (String(e?.status || e?.message || "").includes("404")) {
+          setRawState("none");
+        } else {
+          setRawErr(e?.message || "Failed to load submission");
+          setRawState("error");
+        }
+      });
+    return () => { cancelled = true; };
+  }, [lead.id, submissionId]);
+
   const save = async () => {
     setBusy(true); setError("");
     try {
@@ -616,6 +660,64 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
               </pre>
             </details>
           )}
+
+          {/* Feb-2026 · Raw form submission panel. Only renders when
+              the lead has a linked submission the caller can actually
+              see (server enforces tenant + role gate).  ``rawState``
+              is ``"none"`` for legacy leads and pre-P17 rows — we hide
+              the panel entirely rather than showing an empty box. */}
+          {rawState !== "none" ? (
+            <details
+              className="mb-4 text-sm"
+              data-testid="lead-raw-submission-panel"
+              open
+            >
+              <summary
+                className="cursor-pointer font-semibold"
+                style={{ color: colors.muted }}
+              >
+                Raw form submission
+              </summary>
+              {rawState === "loading" && (
+                <div
+                  className="text-xs p-2"
+                  style={{ color: colors.muted }}
+                  data-testid="lead-raw-submission-loading"
+                >
+                  Loading submission…
+                </div>
+              )}
+              {rawState === "error" && (
+                <div
+                  className="text-xs p-2 rounded"
+                  style={{ color: "#991B1B", background: "#FEE2E2" }}
+                  data-testid="lead-raw-submission-error"
+                >
+                  {rawErr}
+                </div>
+              )}
+              {rawState === "ready" && rawSub ? (
+                <div className="mt-2">
+                  {rawSub.page_url ? (
+                    <div
+                      className="text-[10px] font-mono mb-1"
+                      style={{ color: colors.muted }}
+                      data-testid="lead-raw-submission-page-url"
+                    >
+                      {rawSub.page_url}
+                    </div>
+                  ) : null}
+                  <pre
+                    className="text-xs font-mono p-2 rounded overflow-x-auto"
+                    style={{ background: colors.surfaceSecondary }}
+                    data-testid="lead-raw-submission-json"
+                  >
+{JSON.stringify(rawSub.values || {}, null, 2)}
+                  </pre>
+                </div>
+              ) : null}
+            </details>
+          ) : null}
 
           <label className="block text-[10px] font-bold uppercase mb-1"
                  style={{ color: colors.muted }}>Status</label>

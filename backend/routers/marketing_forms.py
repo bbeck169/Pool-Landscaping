@@ -472,7 +472,14 @@ async def submit_widget_form(fid: str, body: FormSubmit,
     email = _first_str(payload, ["email", "email_address"])
     phone = _first_str(payload, ["phone", "phone_number", "tel", "mobile"])
     notes = _first_str(payload, ["message", "notes", "details", "comments"])
-    address = _first_str(payload, ["address", "street_address"])
+    address = _first_str(payload, ["address", "street_address", "service_address"])
+    # Feb-2026 · Widget lead persistence — capture service interest too
+    # so the widget path lands the same field set the legacy public
+    # form path (routers/marketing.py) already persists.
+    service_interest = _first_str(
+        payload,
+        ["service_interest", "requested_service", "service", "interest"],
+    )
 
     # ── Post-submit orchestration ────────────────────────────────────
     submit_cfg = form.get("submit_config") or {}
@@ -484,6 +491,7 @@ async def submit_widget_form(fid: str, body: FormSubmit,
         lead_id = await _upsert_lead_from_submission(
             tenant_id=tenant["id"], form=form, submission_id=sub_id,
             name=name, email=email, phone=phone, notes=notes,
+            address=address, service_interest=service_interest,
             page_url=body.page_url,
         )
         # Feb-2026 · P18 — dispatch tenant-configured lead alerts to
@@ -614,6 +622,8 @@ async def _upsert_lead_from_submission(
     *, tenant_id: str, form: Dict[str, Any], submission_id: str,
     name: Optional[str], email: Optional[str], phone: Optional[str],
     notes: Optional[str], page_url: Optional[str],
+    address: Optional[str] = None,
+    service_interest: Optional[str] = None,
 ) -> Optional[str]:
     if not (email or phone):
         return None
@@ -637,6 +647,12 @@ async def _upsert_lead_from_submission(
         "name": name or "Form visitor",
         "email": email or "",
         "phone": phone or "",
+        # Feb-2026 · Widget lead persistence parity — mirror the legacy
+        # ``_lead_row_from_form_values`` shape so both list + detail
+        # surfaces render the address without a special-case fallback.
+        "address": address or "",
+        "service_address": address or "",
+        "service_interest": service_interest,
         "source": f"form:{form.get('slug') or form.get('id')}",
         "status": "new",
         "notes": (notes or "")[:500],
