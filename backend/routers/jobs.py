@@ -401,6 +401,16 @@ async def list_jobs(
         {"$project": {"_id": 0, "_day": 0, "_ri": 0}},
     ]
     docs = await db.jobs.aggregate(pipeline).to_list(limit)
+    # Feb-2026 · P0 — bulk read-time cascade for the ``technician_name``
+    # denorm. The list surface historically returned the stored value
+    # verbatim; jobs stamped before the Feb-2026 write-side denorm fix
+    # carry ``None`` on that field (or a stale name if the tech was
+    # renamed), and the frontend renders empty strings as "Unassigned".
+    # ``bulk_enrich_technician_names`` runs the same 4-rung cascade the
+    # write helper uses, over the 4-shape ``effective_tid`` union. No
+    # DB mutation — response-only.
+    from services.tech_assignment import bulk_enrich_technician_names
+    await bulk_enrich_technician_names(db, tenant["id"], docs)
     # Phase 57.d — enrich every returned job with the assigned tech's
     # department + derived checklist_kind so schedule/dispatch cards +
     # mobile clients see the right form without a per-job GET.

@@ -76,3 +76,52 @@ async def resolve_tech_write_denorms(db, tenant_id: str,
     if tdoc:
         avatar = tdoc.get("avatar") or ""
     return {"name": name, "avatar": avatar}
+
+
+async def bulk_enrich_technician_names(
+    db,
+    tenant_id: str,
+    docs: list,
+    *,
+    out_field: str = "technician_name",
+) -> None:
+    """Read-side, response-only bulk enrichment for a list of job docs.
+
+    Mirrors the pattern already used in ``routers/workstream.py``:
+      1. Union the 4-shape tech-id fields via ``effective_tid``.
+      2. One batched call to ``resolve_technician_names`` (the same
+         4-rung cascade the write helper uses).
+      3. Precedence per doc: **cascade → stored → ""**. The cascade
+         wins because the write helper started stamping the correct
+         name only after Feb-2026; older jobs carry ``None`` /
+         ``"Unassigned"`` on the stored field and the frontend renders
+         empty strings as "Unassigned".
+
+    Mutates ``docs`` in place — pass raw Mongo dicts or projected rows.
+    Never mutates the DB (this is a response-shape helper, not a
+    backfill). Never raises. Empty inputs no-op.
+
+    Callers still need ``effective_tid`` themselves if they want to
+    surface a canonical ``technician_id`` alongside the name (see the
+    workstream aggregator for the reference wiring).
+    """
+    if not docs:
+        return
+    from services.job_assignee import effective_tid
+    from services.service_report_view import resolve_technician_names
+
+    tids = list({t for t in (effective_tid(d) for d in docs) if t})
+    if not tids:
+        # No candidates → still normalise the field type to "" (never
+        # ``None``) so the frontend renders "Unassigned" via the empty
+        # string, not a null-vs-empty spread across rows.
+        for d in docs:
+            if not d.get(out_field):
+                d[out_field] = ""
+        return
+    name_map = await resolve_technician_names(db, tenant_id, tids)
+    for d in docs:
+        tid = effective_tid(d)
+        cascaded = name_map.get(tid) if tid else None
+        # Cascade first, then stored (may be stale), then "".
+        d[out_field] = cascaded or d.get(out_field) or ""
