@@ -148,8 +148,17 @@ async def _compute_credit(customer_id: str, tenant_id: str) -> float:
 
 
 async def _load_invoice(iid: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+    # Feb-2026 · P2 Item 3 — portal read-path guard. This helper feeds
+    # both ``GET /invoices/{iid}/full`` (portal viewer aggregator) and
+    # ``GET /invoices/{iid}/pdf`` (portal PDF generator), each of
+    # which is customer-accessible. Soft-deleted invoices MUST NOT
+    # render — return None so the router 404s the caller.
     return await db.quotes.find_one(
-        {"id": iid, "tenant_id": tenant_id, "doc_type": "invoice"},
+        {"id": iid, "tenant_id": tenant_id, "doc_type": "invoice",
+          "$or": [
+              {"deleted_at": None},
+              {"deleted_at": {"$exists": False}},
+          ]},
         {"_id": 0},
     )
 

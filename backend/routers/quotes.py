@@ -454,10 +454,26 @@ async def ready_to_schedule(admin: dict = Depends(require_admin),
 @router.get("/quotes/{qid}")
 async def get_quote(qid: str,
                     user: dict = Depends(get_current_user),
-                    tenant: dict = Depends(get_current_tenant)):
+                    tenant: dict = Depends(get_current_tenant),
+                    # Feb-2026 · P2 Item 1 — super_admin escape hatch so
+                    # the deletion audit / restore UX can preview a
+                    # snapshot without having to reach into the audit
+                    # collection twice.  Non-super callers can't set
+                    # this — the guard below silently drops it.
+                    include_deleted: bool = False):
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
-    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
+    role = (user.get("role") or "").lower()
+    # Feb-2026 · P2 Item 1 — direct-link portal-leak guard. Soft-
+    # deleted quotes / invoices MUST 404 for every caller except a
+    # super_admin who explicitly opts in via ``?include_deleted=true``.
+    q: Dict[str, Any] = {"id": qid, "tenant_id": tenant["id"]}
+    if not (include_deleted and role == "super_admin"):
+        q["$or"] = [
+            {"deleted_at": None},
+            {"deleted_at": {"$exists": False}},
+        ]
+    doc = await db.quotes.find_one(q, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Quote not found")
     if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):

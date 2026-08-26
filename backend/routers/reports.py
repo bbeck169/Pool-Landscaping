@@ -54,15 +54,28 @@ def _extract_city(addr: str) -> str:
 
 
 async def _fetch_paid(dfrom: Optional[str], dto: Optional[str]) -> list:
+    # Feb-2026 · P2 Item 2 — revenue-slice fetch MUST exclude soft-
+    # deleted invoices. Merge existing amount_paid/status $or with the
+    # soft-delete guard via $and.
     docs = await db.quotes.find(
-        {"doc_type": "invoice", "$or": [{"amount_paid": {"$gt": 0}}, {"payment_status": "paid"}]},
+        {"doc_type": "invoice",
+          "$and": [
+              {"$or": [{"amount_paid": {"$gt": 0}}, {"payment_status": "paid"}]},
+              {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
+          ]},
         {"_id": 0},
     ).to_list(10000)
     return [q for q in docs if _in_range(q.get("paid_at") or q.get("created_at"), dfrom, dto)]
 
 
 async def _fetch_all_invoices(dfrom: Optional[str], dto: Optional[str]) -> list:
-    docs = await db.quotes.find({"doc_type": "invoice"}, {"_id": 0}).to_list(10000)
+    # Feb-2026 · P2 Item 2 — gross-sales / invoiced-items MUST exclude
+    # soft-deleted invoices from the totals.
+    docs = await db.quotes.find(
+        {"doc_type": "invoice",
+          "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
+        {"_id": 0},
+    ).to_list(10000)
     return [q for q in docs if _in_range(q.get("created_at"), dfrom, dto)]
 
 
@@ -400,7 +413,13 @@ async def forecast_cards(user: dict = Depends(require_admin)):
     monthly_recurring = round(monthly_recurring, 2)
 
     now = datetime.now(timezone.utc)
-    unpaid = await db.quotes.find({"doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}).to_list(3000)
+    # Feb-2026 · P2 Item 2 — at-risk unpaid list MUST exclude
+    # soft-deleted invoices.
+    unpaid = await db.quotes.find(
+        {"doc_type": "invoice", "payment_status": "unpaid",
+          "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
+        {"_id": 0},
+    ).to_list(3000)
     at_risk = 0.0
     for q in unpaid:
         try:
@@ -440,6 +459,14 @@ async def payments_list(
         q["$or"] = [{"amount_paid": {"$gt": 0}}, {"payment_status": {"$in": ["paid", "processing", "partial"]}}]
     if customer_id:
         q["customer_id"] = customer_id
+    # Feb-2026 · P2 Item 2 — payments ledger MUST exclude soft-deleted
+    # invoices. Compose via $and to preserve any $or already present.
+    _deleted_guard = {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]}
+    if "$or" in q:
+        existing_or = q.pop("$or")
+        q["$and"] = [{"$or": existing_or}, _deleted_guard]
+    else:
+        q.update(_deleted_guard)
     docs = await db.quotes.find(q, {"_id": 0}).sort("paid_at", -1).to_list(20000)
     rows = []
     for d in docs:
@@ -579,7 +606,13 @@ async def export_jobs(user: dict = Depends(require_admin),
 @router.get("/export/invoices")
 async def export_invoices(user: dict = Depends(require_admin),
                           start: Optional[str] = None, end: Optional[str] = None):
-    rows = await db.quotes.find({"doc_type": "invoice"}, {"_id": 0}).sort("created_at", -1).to_list(10000)
+    # Feb-2026 · P2 Item 2 — invoice CSV export MUST exclude
+    # soft-deleted rows (a common revenue-reconciliation surface).
+    rows = await db.quotes.find(
+        {"doc_type": "invoice",
+          "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(10000)
     if start or end:
         rows = [r for r in rows if _in_range(r.get("created_at"), start, end)]
     return {"filename": "invoices.csv", "content": _to_csv(rows, INVOICE_COLS), "count": len(rows)}

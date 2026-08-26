@@ -115,10 +115,18 @@ async def revenue_by_category(
         "tenant_id": tenant_id,
         "doc_type": "invoice",
         "payment_status": "paid",
-        "$or": [
-            {"created_at": {"$gte": s_iso, "$lte": e_iso}},
-            {"issue_date": {"$gte": s_iso, "$lte": e_iso}},
-            {"invoice_date": {"$gte": s_iso, "$lte": e_iso}},
+        # Feb-2026 · P2 Item 2 — merge date-range $or + soft-delete
+        # $or into an explicit $and so neither clobbers the other.
+        "$and": [
+            {"$or": [
+                {"created_at": {"$gte": s_iso, "$lte": e_iso}},
+                {"issue_date": {"$gte": s_iso, "$lte": e_iso}},
+                {"invoice_date": {"$gte": s_iso, "$lte": e_iso}},
+            ]},
+            {"$or": [
+                {"deleted_at": None},
+                {"deleted_at": {"$exists": False}},
+            ]},
         ],
     }
     cur = db.quotes.find(q, {
@@ -208,10 +216,17 @@ async def income_by_service_category(
     cur = db.quotes.find(
         {"tenant_id": tenant_id, "doc_type": "invoice",
           "payment_status": "paid",
-          "$or": [
-              {"created_at": {"$gte": s_iso, "$lte": e_iso}},
-              {"issue_date": {"$gte": s_iso, "$lte": e_iso}},
-              {"invoice_date": {"$gte": s_iso, "$lte": e_iso}},
+          # Feb-2026 · P2 Item 2 — as above, keep both $or clauses via $and.
+          "$and": [
+              {"$or": [
+                  {"created_at": {"$gte": s_iso, "$lte": e_iso}},
+                  {"issue_date": {"$gte": s_iso, "$lte": e_iso}},
+                  {"invoice_date": {"$gte": s_iso, "$lte": e_iso}},
+              ]},
+              {"$or": [
+                  {"deleted_at": None},
+                  {"deleted_at": {"$exists": False}},
+              ]},
           ]},
         {"_id": 0, "id": 1, "line_items": 1, "currency": 1},
     )

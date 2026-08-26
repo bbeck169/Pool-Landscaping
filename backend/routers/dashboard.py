@@ -40,11 +40,11 @@ async def dashboard(user: dict = Depends(get_current_user),
         active = await db.jobs.count_documents({**base, "status": {"$in": ["pending", "active"]}})
         completed = await db.jobs.count_documents({**base, "status": "completed"})
         unpaid_docs = await db.quotes.find(
-            {**base, "doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}
+            {**base, "doc_type": "invoice", "payment_status": "unpaid", **_nd()}, {"_id": 0}
         ).to_list(1000)
         outstanding = round(sum(q["total"] for q in unpaid_docs), 2)
         pending_estimates = await db.quotes.count_documents(
-            {**base, "doc_type": "quote", "status": {"$nin": ["accepted", "declined"]}}
+            {**base, "doc_type": "quote", "status": {"$nin": ["accepted", "declined"]}, **_nd()}
         )
         upcoming = await db.jobs.find(
             {**base, "status": {"$in": ["pending", "active", "requested"]}, **_nd()}, {"_id": 0}
@@ -72,10 +72,12 @@ async def dashboard(user: dict = Depends(get_current_user),
 
     # Admin / super_admin
     tenant_q = {"tenant_id": tid}
-    paid = await db.quotes.find({**tenant_q, "payment_status": "paid"}, {"_id": 0}).to_list(1000)
+    # Feb-2026 · P2 Item 2 — revenue calc MUST exclude soft-deleted
+    # invoices. Same guard applied to outstanding below.
+    paid = await db.quotes.find({**tenant_q, "payment_status": "paid", **_nd()}, {"_id": 0}).to_list(1000)
     revenue = round(sum(q["total"] for q in paid), 2)
     outstanding_docs = await db.quotes.find(
-        {**tenant_q, "doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}
+        {**tenant_q, "doc_type": "invoice", "payment_status": "unpaid", **_nd()}, {"_id": 0}
     ).to_list(1000)
     outstanding = round(sum(q["total"] for q in outstanding_docs), 2)
     active = await db.jobs.count_documents({**tenant_q, "status": "active"})
