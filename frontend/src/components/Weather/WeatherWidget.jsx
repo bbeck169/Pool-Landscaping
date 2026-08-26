@@ -30,14 +30,29 @@ const DEFAULT_LAT = 33.7897;
 const DEFAULT_LON = -112.3226;
 const REFRESH_MS = 5 * 60 * 1000;
 
-function fmtHour(iso) {
+// Exported for regression tests (see
+// ``test/schedule-weather-hour-format.test.jsx``); the component
+// still consumes it directly.
+export function fmtHour(iso) {
   if (!iso) return "";
-  // WeatherAPI returns "YYYY-MM-DD HH:MM" in the location's local tz.
-  const parts = iso.split(" ");
-  if (parts.length < 2) return iso;
-  const [h] = parts[1].split(":").map(Number);
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}${h >= 12 ? "p" : "a"}`;
+  // Feb-2026 · UX fix — accept BOTH upstream shapes:
+  //   1. WeatherAPI legacy:  "YYYY-MM-DD HH:MM" (space-separated).
+  //   2. NWS / newer proxy:  "YYYY-MM-DDTHH:MM:SS±HH:MM" (ISO 8601).
+  // Older code split on " " and returned the raw ISO string on the
+  // ISO shape — hence "2026-08-26T09:00:00-07:00" leaked into the
+  // hourly strip. Use ``Intl.DateTimeFormat`` (native, no deps) so
+  // the result honours the user's browser locale (12-hour US default)
+  // and correctly renders "12 AM"/"12 PM" at hour boundaries.
+  try {
+    const d = new Date(iso.includes("T") ? iso : iso.replace(" ", "T"));
+    if (Number.isNaN(d.getTime())) return iso;
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      hour12: true,
+    }).format(d);
+  } catch {
+    return iso;
+  }
 }
 
 export default function WeatherWidget({ user }) {
