@@ -27,16 +27,24 @@ const SRC = readFileSync(
  * Mirror of ``_roleKey`` from OpsHub.jsx. Kept private-to-test —
  * if the OpsHub definition ever drifts, the source-string
  * assertion below will fail before this replica silently diverges.
+ *
+ * Feb-2026 · updated with the department-alias sets so pool_tech /
+ * landscape_tech / tech_both (real prod data shapes) resolve to
+ * the canonical filter keys.
  */
+const _POOL = new Set(["pool", "pool_tech"]);
+const _LAND = new Set(["landscaping", "landscape_tech"]);
+const _BOTH = new Set(["both", "tech_both"]);
+
 function _roleKey(user) {
   const role = (user?.role || "").toLowerCase();
-  const dept = (user?.department || "").toLowerCase();
+  const dept = (user?.department || "").trim().toLowerCase();
   if (role === "super_admin") return "super_admin";
-  if (role === "admin" && dept === "both") return "all";
+  if (role === "admin" && _BOTH.has(dept)) return "all";
   if (role === "admin") return "admin";
-  if (role === "technician" && dept === "both") return "tech_both";
-  if (role === "technician" && dept === "pool") return "pool_tech";
-  if (role === "technician" && dept === "landscaping") return "landscape_tech";
+  if (role === "technician" && _BOTH.has(dept)) return "tech_both";
+  if (role === "technician" && _POOL.has(dept)) return "pool_tech";
+  if (role === "technician" && _LAND.has(dept)) return "landscape_tech";
   return "unassigned";
 }
 
@@ -110,6 +118,86 @@ describe("OpsHub TeamRoster — filter predicate", () => {
     const out = ROSTER.filter((u) => _filterUser(u, "unassigned"));
     expect(out.map((r) => r.id)).toEqual(["u-un"]);
   });
+
+  // ═════════════════════════════════════════════════════════════════════
+  // Feb-2026 · Department-alias coverage — real prod data ships
+  // ``pool_tech`` / ``landscape_tech`` / ``tech_both`` (the
+  // tech-form enum), not the legacy ``pool`` / ``landscaping`` /
+  // ``both`` shape. Regression test that both alias sets resolve
+  // correctly + regional labels stay ``unassigned``.
+  // ═════════════════════════════════════════════════════════════════════
+  it("department=`pool_tech` maps to pool_tech and appears in All (Both)", () => {
+    const u = { id: "u-mt", role: "technician", department: "pool_tech",
+                 name: "Modern Pool Tech" };
+    expect(_roleKey(u)).toBe("pool_tech");
+    expect(_filterUser(u, "pool_tech")).toBe(true);
+    expect(_filterUser(u, "all_both")).toBe(true);
+    // Sanity: NOT in unrelated chips.
+    expect(_filterUser(u, "landscape_tech")).toBe(false);
+    expect(_filterUser(u, "tech_both")).toBe(false);
+    expect(_filterUser(u, "unassigned")).toBe(false);
+  });
+
+  it("department=`landscape_tech` maps to landscape_tech and appears in All (Both)", () => {
+    const u = { id: "u-ml", role: "technician", department: "landscape_tech",
+                 name: "Modern Landscape Tech" };
+    expect(_roleKey(u)).toBe("landscape_tech");
+    expect(_filterUser(u, "landscape_tech")).toBe(true);
+    expect(_filterUser(u, "all_both")).toBe(true);
+    expect(_filterUser(u, "pool_tech")).toBe(false);
+  });
+
+  it("department=`tech_both` maps to tech_both and appears in All (Both)", () => {
+    const u = { id: "u-mb", role: "technician", department: "tech_both",
+                 name: "Modern Cross-Trained" };
+    expect(_roleKey(u)).toBe("tech_both");
+    expect(_filterUser(u, "tech_both")).toBe(true);
+    expect(_filterUser(u, "all_both")).toBe(true);
+  });
+
+  it("department=` Pool_Tech ` — whitespace + case-insensitive — still maps", () => {
+    const u = { id: "u-wc", role: "technician", department: " Pool_Tech ",
+                 name: "Whitespace Case Tech" };
+    expect(_roleKey(u)).toBe("pool_tech");
+    expect(_filterUser(u, "pool_tech")).toBe(true);
+    expect(_filterUser(u, "all_both")).toBe(true);
+  });
+
+  it("regional department=`north` stays unassigned (drift NOT reclassified)", () => {
+    const u = { id: "u-nr", role: "technician", department: "north",
+                 name: "Regional North Tech" };
+    // Regional labels are NOT chemistry specialties — the fix
+    // intentionally does NOT reclassify them so ops can spot the
+    // data drift.
+    expect(_roleKey(u)).toBe("unassigned");
+    expect(_filterUser(u, "unassigned")).toBe(true);
+    expect(_filterUser(u, "pool_tech")).toBe(false);
+    expect(_filterUser(u, "landscape_tech")).toBe(false);
+    expect(_filterUser(u, "tech_both")).toBe(false);
+    expect(_filterUser(u, "all_both")).toBe(false);
+  });
+
+  it("department=null stays unassigned", () => {
+    const u = { id: "u-nl", role: "technician", department: null,
+                 name: "Null Dept Tech" };
+    expect(_roleKey(u)).toBe("unassigned");
+    expect(_filterUser(u, "unassigned")).toBe(true);
+    expect(_filterUser(u, "all_both")).toBe(false);
+  });
+
+  it("All (Both) union includes modern-alias techs (integration case)", () => {
+    // The exact regression the tester hit — a roster where every
+    // real tech carries the modern enum. Before the alias fix all
+    // three rows resolved to ``unassigned`` and "All (Both)"
+    // returned []. Now they all surface.
+    const modern = [
+      { id: "u-mp", role: "technician", department: "pool_tech" },
+      { id: "u-ml", role: "technician", department: "landscape_tech" },
+      { id: "u-mb", role: "technician", department: "tech_both" },
+    ];
+    const out = modern.filter((u) => _filterUser(u, "all_both"));
+    expect(out.map((r) => r.id).sort()).toEqual(["u-mb", "u-ml", "u-mp"]);
+  });
 });
 
 describe("OpsHub TeamRoster — source-level guard", () => {
@@ -125,9 +213,46 @@ describe("OpsHub TeamRoster — source-level guard", () => {
     // Guards against silent drift between the source and this
     // test file's mirror. Substring anchors on the branches that
     // matter for the fix.
-    expect(SRC).toMatch(/if\s*\(role\s*===\s*"admin"\s*&&\s*dept\s*===\s*"both"\)\s*return\s*"all";/);
-    expect(SRC).toMatch(/if\s*\(role\s*===\s*"technician"\s*&&\s*dept\s*===\s*"both"\)\s*return\s*"tech_both";/);
-    expect(SRC).toMatch(/if\s*\(role\s*===\s*"technician"\s*&&\s*dept\s*===\s*"pool"\)\s*return\s*"pool_tech";/);
-    expect(SRC).toMatch(/if\s*\(role\s*===\s*"technician"\s*&&\s*dept\s*===\s*"landscaping"\)\s*return\s*"landscape_tech";/);
+    expect(SRC).toMatch(/if\s*\(role\s*===\s*"admin"\s*&&\s*_DEPT_ALIASES_BOTH\.has\(dept\)\)\s*return\s*"all";/);
+    expect(SRC).toMatch(/if\s*\(role\s*===\s*"technician"\s*&&\s*_DEPT_ALIASES_BOTH\.has\(dept\)\)\s*return\s*"tech_both";/);
+    expect(SRC).toMatch(/if\s*\(role\s*===\s*"technician"\s*&&\s*_DEPT_ALIASES_POOL\.has\(dept\)\)\s*return\s*"pool_tech";/);
+    expect(SRC).toMatch(/if\s*\(role\s*===\s*"technician"\s*&&\s*_DEPT_ALIASES_LAND\.has\(dept\)\)\s*return\s*"landscape_tech";/);
+  });
+
+  it("department alias sets include both legacy + modern shapes", () => {
+    // Feb-2026 · alias sets must contain BOTH the legacy strings
+    // (``pool`` / ``landscaping`` / ``both``) AND the modern
+    // tech-form enum (``pool_tech`` / ``landscape_tech`` /
+    // ``tech_both``) so filter chips work regardless of write path.
+    expect(SRC).toMatch(
+      /_DEPT_ALIASES_POOL\s*=\s*new Set\(\["pool",\s*"pool_tech"\]\)/,
+    );
+    expect(SRC).toMatch(
+      /_DEPT_ALIASES_LAND\s*=\s*new Set\(\["landscaping",\s*"landscape_tech"\]\)/,
+    );
+    expect(SRC).toMatch(
+      /_DEPT_ALIASES_BOTH\s*=\s*new Set\(\["both",\s*"tech_both"\]\)/,
+    );
+  });
+
+  it("technician-department drift emits a dev-only console.warn (once per dept)", () => {
+    // Locks the behavior that regional / unknown departments log a
+    // warning in non-production builds but never silently
+    // reclassify. The ``_DEPT_DRIFT_WARNED`` Set dedupes so a
+    // tenant with 40 ``north`` techs doesn't spam the console.
+    expect(SRC).toMatch(/_DEPT_DRIFT_WARNED\s*=\s*new Set\(\)/);
+    expect(SRC).toMatch(/process\.env\?\.NODE_ENV\s*!==\s*"production"/);
+    expect(SRC).toMatch(/\[OpsHub\] Technician with unrecognized department/);
+    // Regional departments must NOT be reclassified — assert
+    // ``north`` / ``south`` don't appear INSIDE any alias Set literal.
+    // Extract each ``new Set([...])`` literal and check the content.
+    const setLits = SRC.match(
+      /_DEPT_ALIASES_(?:POOL|LAND|BOTH)\s*=\s*new Set\(\[[^\]]*\]\)/g,
+    ) || [];
+    expect(setLits.length).toBe(3);
+    for (const s of setLits) {
+      expect(s).not.toMatch(/\bnorth\b/);
+      expect(s).not.toMatch(/\bsouth\b/);
+    }
   });
 });

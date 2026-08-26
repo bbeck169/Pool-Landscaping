@@ -255,6 +255,12 @@ api_router.include_router(_hw_income_items.router)
 # 5-second cooldown). Complements the 30-second scheduled tick.
 from routers import integrations_homeworks_dispatcher as _hw_dispatcher_router  # noqa: E402
 api_router.include_router(_hw_dispatcher_router.router)
+# Phase 0 POC · Feb-2026 — Homeworks BYO-creds admin surface.
+# Distinct from the env-var-driven ``integrations_homeworks_oauth``
+# above; this one is per-tenant, super_admin gated, and scoped to a
+# read-only smoke-test (Phase 0).  See /app/memory/homeworks_integration.md.
+from routers import homeworks_integration as _hw_byo_router  # noqa: E402
+api_router.include_router(_hw_byo_router.router)
 from routers import comms_admin as _comms_admin  # noqa: E402
 api_router.include_router(_comms_admin.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402

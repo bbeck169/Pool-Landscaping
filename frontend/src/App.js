@@ -212,6 +212,11 @@ import TosAdminEditor from "@/pages/settings/TosAdminEditor";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
 // Phase 26 · Feb 2026 · Supercool MCP OAuth integration (super_admin only).
 import SupercoolIntegrationPage from "@/pages/settings/integrations/SupercoolIntegrationPage";
+// Phase 0 POC · Feb-2026 — Homeworks (home.works MCP) BYO-creds admin.
+// Super_admin only. Separate surface from the env-var-driven
+// /settings/integrations Homeworks card.
+import HomeworksIntegrationPage from "@/pages/admin/integrations/HomeworksIntegrationPage";
+import HomeworksOAuthCallback from "@/pages/admin/integrations/HomeworksOAuthCallback";
 import PortalTerms from "@/pages/portal/PortalTerms";
 import {
   MarketingHub, BrandMemory,
@@ -714,6 +719,9 @@ export default function App() {
             <Route path="reports/supplier-syncs" element={<AdminOrManagerForSuppliers><SupplierSyncAnalytics /></AdminOrManagerForSuppliers>} />
             {/* Phase 26 · Feb 2026 — Supercool MCP OAuth 2.1 (super_admin only). */}
             <Route path="settings/integrations/supercool" element={<SuperAdminOnly><SupercoolIntegrationPage /></SuperAdminOnly>} />
+            {/* Phase 0 POC · Feb-2026 — Homeworks BYO-creds surface (super_admin only). */}
+            <Route path="admin/integrations/homeworks" element={<SuperAdminOnly><HomeworksIntegrationPage /></SuperAdminOnly>} />
+            <Route path="admin/integrations/homeworks/oauth/callback" element={<SuperAdminOnly><HomeworksOAuthCallback /></SuperAdminOnly>} />
             {/* Phase 21 · Feb 2026 — Vanity slug editor (super_admin only). */}
             <Route path="settings/vanity-slugs" element={<SuperAdminOnly><VanitySlugsPage /></SuperAdminOnly>} />
             {/* Feb-2026 — Orphan customer auth users admin (super_admin only). */}

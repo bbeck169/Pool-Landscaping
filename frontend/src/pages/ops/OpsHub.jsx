@@ -615,18 +615,52 @@ const ROLE_OPTIONS = [
     badgeBg: "#FEF3C7", badgeFg: "#92400E", filterColor: "#92400E" },
 ];
 
+// Feb-2026 · Department alias sets — real prod data (and seeds) carry
+// mixed values: the tech-form option enum stamps ``pool_tech`` /
+// ``landscape_tech`` / ``tech_both`` while older/legacy rows use
+// ``pool`` / ``landscaping`` / ``both``. We accept both shapes so
+// the filter chips work regardless of which flow created the tech.
+// Regional departments (``north`` / ``south`` / …) are intentionally
+// NOT reclassified — they stay ``unassigned`` and a dev-mode
+// ``console.warn`` fires so ops can spot drift.
+const _DEPT_ALIASES_POOL = new Set(["pool", "pool_tech"]);
+const _DEPT_ALIASES_LAND = new Set(["landscaping", "landscape_tech"]);
+const _DEPT_ALIASES_BOTH = new Set(["both", "tech_both"]);
+
+// Cache warned combos so the same drifted department only warns once
+// per session — avoids noise for tenants with dozens of regional techs.
+const _DEPT_DRIFT_WARNED = new Set();
+
 function _roleKey(user) {
   const role = (user?.role || "").toLowerCase();
-  const dept = (user?.department || "").toLowerCase();
+  const dept = (user?.department || "").trim().toLowerCase();
   if (role === "super_admin") return "super_admin";
-  if (role === "admin" && dept === "both") return "all";
+  if (role === "admin" && _DEPT_ALIASES_BOTH.has(dept)) return "all";
   if (role === "admin") return "admin";
-  // Feb-2026 · cross-trained tech comes BEFORE the single-dept checks
-  // so a stored `technician + both` row resolves to the new
-  // "Tech (Both)" combo instead of falling through to "unassigned".
-  if (role === "technician" && dept === "both") return "tech_both";
-  if (role === "technician" && dept === "pool") return "pool_tech";
-  if (role === "technician" && dept === "landscaping") return "landscape_tech";
+  // Cross-trained tech comes BEFORE the single-dept checks so a
+  // stored ``technician + both`` (or its ``tech_both`` alias) row
+  // resolves to the "Tech (Both)" combo instead of falling through.
+  if (role === "technician" && _DEPT_ALIASES_BOTH.has(dept)) return "tech_both";
+  if (role === "technician" && _DEPT_ALIASES_POOL.has(dept)) return "pool_tech";
+  if (role === "technician" && _DEPT_ALIASES_LAND.has(dept)) return "landscape_tech";
+  // Drift detection — technicians whose department doesn't match any
+  // known alias stay ``unassigned`` (regional labels like ``north`` /
+  // ``south`` fall here). Log ONCE per unique dept string in dev so
+  // ops can decide whether to normalize the data.
+  if (
+    role === "technician" &&
+    dept &&
+    !_DEPT_DRIFT_WARNED.has(dept) &&
+    typeof process !== "undefined" &&
+    process.env?.NODE_ENV !== "production"
+  ) {
+    _DEPT_DRIFT_WARNED.add(dept);
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[OpsHub] Technician with unrecognized department=${JSON.stringify(dept)} — ` +
+        `staying "unassigned". Add an alias in _DEPT_ALIASES_* if this is a real specialty.`,
+    );
+  }
   return "unassigned";
 }
 
