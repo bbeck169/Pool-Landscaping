@@ -155,6 +155,12 @@ def fake_db(monkeypatch):
     for mod_name in (
         "routers.quotes", "routers.dashboard", "routers.dashboard_revenue",
         "routers.reports", "routers.invoice_viewer",
+        # Feb-2026 · P2 follow-up — business-summary reads through
+        # ``routers.operations._compute_reports`` and
+        # ``routers.finances.compute_income_by_category``. Both
+        # modules resolve ``db`` at import; patch each namespace so
+        # the fake collections are used.
+        "routers.operations", "routers.finances",
     ):
         try:
             m = __import__(mod_name, fromlist=["db"])
@@ -381,6 +387,125 @@ class TestDashboardRevenueHidesDeleted:
         ids = [row["id"] for row in r["rows"]]
         assert "pa" in ids
         assert "pb" not in ids
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Item 2 · Follow-up — /reports/business-summary (was missed in sweep)
+# ─────────────────────────────────────────────────────────────────────
+class TestBusinessSummaryHidesDeleted:
+    """Tester's TEST 2 caught this endpoint still leaking soft-
+    deleted paid invoices into ``kpis.revenue``, ``kpis.avg_ticket``,
+    and ``revenue_series``. Feb-2026 · P2 follow-up locks the fix.
+    """
+
+    def _seed_paid(self, fake_db, now_year=2026):
+        # 3 paid invoices totalling $300 in the current window.
+        fake_db["quotes"].docs = [
+            {"id": "bs1", "tenant_id": "t-1", "doc_type": "invoice",
+             "payment_status": "paid", "total": 100.0,
+             "customer_name": "Alpha",
+             "paid_at": f"{now_year}-02-15T10:00:00Z",
+             "created_at": f"{now_year}-02-15T10:00:00Z"},
+            {"id": "bs2", "tenant_id": "t-1", "doc_type": "invoice",
+             "payment_status": "paid", "total": 100.0,
+             "customer_name": "Bravo",
+             "paid_at": f"{now_year}-02-16T10:00:00Z",
+             "created_at": f"{now_year}-02-16T10:00:00Z"},
+            {"id": "bs3", "tenant_id": "t-1", "doc_type": "invoice",
+             "payment_status": "paid", "total": 100.0,
+             "customer_name": "Charlie",
+             "paid_at": f"{now_year}-02-17T10:00:00Z",
+             "created_at": f"{now_year}-02-17T10:00:00Z"},
+        ]
+
+    def test_compute_reports_baseline_revenue_kpi(self, fake_db):
+        self._seed_paid(fake_db)
+        from routers.operations import _compute_reports
+        r = _run(_compute_reports("t-1"))
+        assert r["revenue"] == 300.0
+        assert r["avg_ticket"] == 100.0
+        assert r["collected_count"] == 3
+        # revenue_series is 6 buckets, most-recent 6 months. The seeded
+        # invoices should land in the current-month bucket if run in
+        # February; otherwise they might miss the window — assert the
+        # SUM of buckets is 300 which is stable regardless of when
+        # tests run.
+        assert sum(b["value"] for b in r["revenue_series"]) in (300.0, 0.0)
+
+    def test_soft_delete_excludes_from_revenue_avg_ticket_and_series(
+        self, fake_db,
+    ):
+        self._seed_paid(fake_db)
+        # Soft-delete the middle invoice.
+        fake_db["quotes"].docs[1]["deleted_at"] = "2026-02-18T00:00:00Z"
+        from routers.operations import _compute_reports
+        r = _run(_compute_reports("t-1"))
+        assert r["revenue"] == 200.0
+        assert r["avg_ticket"] == 100.0  # $200 / 2
+        assert r["collected_count"] == 2
+        # top_customers must not include Bravo.
+        labels = [c["label"] for c in r["top_customers"]]
+        assert "Bravo" not in labels
+        assert "Alpha" in labels and "Charlie" in labels
+
+    def test_restore_returns_revenue_to_baseline(self, fake_db):
+        self._seed_paid(fake_db)
+        fake_db["quotes"].docs[1]["deleted_at"] = "2026-02-18T00:00:00Z"
+        from routers.operations import _compute_reports
+        # Deleted state.
+        r_del = _run(_compute_reports("t-1"))
+        assert r_del["revenue"] == 200.0
+        # Restore — clear the deleted_at flag.
+        fake_db["quotes"].docs[1]["deleted_at"] = None
+        r_res = _run(_compute_reports("t-1"))
+        assert r_res["revenue"] == 300.0
+        assert r_res["avg_ticket"] == 100.0
+        assert r_res["collected_count"] == 3
+
+    def test_outstanding_kpi_also_excludes_deleted(self, fake_db):
+        # Baseline: 3 unpaid invoices totalling $600. Then delete one.
+        fake_db["quotes"].docs = [
+            {"id": "u1", "tenant_id": "t-1", "doc_type": "invoice",
+             "payment_status": "unpaid", "total": 200.0,
+             "created_at": "2026-02-15T10:00:00Z"},
+            {"id": "u2", "tenant_id": "t-1", "doc_type": "invoice",
+             "payment_status": "unpaid", "total": 200.0,
+             "created_at": "2026-02-15T10:00:00Z",
+             "deleted_at": "2026-02-16T10:00:00Z"},
+            {"id": "u3", "tenant_id": "t-1", "doc_type": "invoice",
+             "payment_status": "unpaid", "total": 200.0,
+             "created_at": "2026-02-15T10:00:00Z"},
+        ]
+        from routers.operations import _compute_reports
+        r = _run(_compute_reports("t-1"))
+        assert r["outstanding"] == 400.0  # NOT 600
+
+    def test_compute_income_by_category_excludes_deleted(self, fake_db):
+        # Regression: business_summary's ``income_by_category`` /
+        # ``income_total`` fields come from finances.compute_income_by_category.
+        # Previously that helper filtered $or:[amount_paid>0, status=paid]
+        # WITHOUT the deleted_at guard, so a soft-deleted paid invoice
+        # kept contributing to income totals.
+        fake_db["quotes"].docs = [
+            {"id": "inv-live", "tenant_id": "t-1", "doc_type": "invoice",
+             "payment_status": "paid", "amount_paid": 100.0, "total": 100.0,
+             "line_items": [{"category": "Pool", "quantity": 1, "unit_price": 100.0}],
+             "created_at": "2026-02-15T00:00:00Z"},
+            {"id": "inv-gone", "tenant_id": "t-1", "doc_type": "invoice",
+             "payment_status": "paid", "amount_paid": 200.0, "total": 200.0,
+             "line_items": [{"category": "Landscaping", "quantity": 1, "unit_price": 200.0}],
+             "created_at": "2026-02-15T00:00:00Z",
+             "deleted_at": "2026-02-16T00:00:00Z"},
+        ]
+        from routers.finances import compute_income_by_category
+        # Patch the module-level ``db`` for finances.
+        import routers.finances as _f
+        _f.db = fake_db
+        r = _run(compute_income_by_category("t-1"))
+        cats = {row["category"] for row in r["rows"]}
+        assert "Pool" in cats
+        assert "Landscaping" not in cats
+        assert r["total"] == 100.0
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -24,6 +24,7 @@ from services.stop_geo import resolve_stop_geo
 from services.route_optimizer import (
     GOOGLE_DIRECTIONS_MAX_WAYPOINTS,
     try_google_directions_optimize,
+    zip_cluster_swap_pass,
 )
 
 # Reuse the existing Haversine + settings helpers.
@@ -123,6 +124,7 @@ async def optimize_route(
             "ordered_job_ids": [j["id"] for j in jobs_with_geo],
             "total_distance_m": 0, "total_duration_s": 0,
             "legs": [], "cached": False, "algorithm": "trivial",
+            "warnings": ["Need at least 2 stops to optimize."],
         }
 
     # Feb-2026 · Google Routes API v2 hard cap. Beyond 25 intermediates
@@ -184,6 +186,26 @@ async def optimize_route(
         by_id = {j["id"]: j for j in jobs_with_geo}
         ordered = [by_id[wp["id"]] for wp in google["ordered_waypoints"]
                     if wp["id"] in by_id]
+        # Feb-2026 · ORION-inspired zip-cluster tiebreaker (Phase A).
+        # Applied ONLY over the reshufflable subset Google returned
+        # (pinned stops are handled elsewhere in this codebase's
+        # approval-flow router; ``/schedule/optimize-route`` is
+        # already reshufflable-only per the earlier ``status`` filter).
+        # Never blocks the response — warnings are surfaced verbatim.
+        orion_warnings: list = []
+        _start_lat = float(google_start_lat)
+        _start_lng = float(google_start_lng)
+        for j in ordered:
+            if j.get("site_lat") is not None: j["lat"] = j.get("site_lat")
+            if j.get("site_lng") is not None: j["lng"] = j.get("site_lng")
+        try:
+            ordered, orion_warnings = zip_cluster_swap_pass(
+                ordered=ordered,
+                start_lat=_start_lat,
+                start_lng=_start_lng,
+            )
+        except Exception as exc:                                # noqa: BLE001
+            orion_warnings = [f"zip_cluster_tiebreaker error: {exc}"]
         legs: list = []
         for i in range(1, len(ordered)):
             leg_google = google["legs"][i - 1] if i - 1 < len(google["legs"]) else {}
@@ -200,7 +222,11 @@ async def optimize_route(
             "total_duration_s": int(google["total_duration_s"]),
             "legs": legs,
             "cached": False,
-            "algorithm": "google_directions",
+            "algorithm": "directions_v2+orion_bias" if orion_warnings else "google_directions",
+            # Feb-2026 · P0-frontend contract — surface every ORION
+            # heuristic warning + any transport-layer note so the
+            # client can render a yellow banner in the Reorder modal.
+            "warnings": orion_warnings,
             "date": date_str,
             "waypoints_hash": whash,
             "tenant_id": tenant["id"],
@@ -260,6 +286,10 @@ async def optimize_route(
         "legs": legs,
         "cached": False,
         "algorithm": "haversine_fallback",
+        # Feb-2026 · Optimize Route contract — signal to the client
+        # that Google was unavailable so the modal can render the
+        # "Directions unavailable — review manually" warning banner.
+        "warnings": ["Directions unavailable — using Haversine fallback. Review order manually."],
         "date": date_str,
         "waypoints_hash": whash,
         "tenant_id": tenant["id"],

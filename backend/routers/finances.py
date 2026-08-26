@@ -243,8 +243,16 @@ async def compute_income_by_category(tenant_id: str,
                                      date_from: Optional[str] = None,
                                      date_to: Optional[str] = None):
     """Collected revenue attributed to line-item categories (tenant-scoped)."""
+    # Feb-2026 · P2 Item 2 follow-up — soft-deleted invoices MUST NOT
+    # feed ``income_by_category`` / ``income_total`` (both surfaced by
+    # ``/reports/business-summary``). Compose the existing status $or
+    # with the soft-delete guard $or via an explicit $and so neither
+    # clobbers the other.
     q = {"tenant_id": tenant_id, "doc_type": "invoice",
-         "$or": [{"amount_paid": {"$gt": 0}}, {"payment_status": "paid"}]}
+         "$and": [
+             {"$or": [{"amount_paid": {"$gt": 0}}, {"payment_status": "paid"}]},
+             {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
+         ]}
     if date_from or date_to:
         rng = {}
         if date_from:

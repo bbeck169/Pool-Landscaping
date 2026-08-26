@@ -77,7 +77,7 @@ async def activity(user: dict = Depends(require_admin),
                            "detail": f"{j.get('title', '')} · {j.get('customer_name', '')}",
                            "at": j.get("created_at"), "related_ref": ref})
     paid = await db.quotes.find(
-        {"tenant_id": tid, "payment_status": "paid"}, {"_id": 0}
+        {"tenant_id": tid, "payment_status": "paid", **_nd()}, {"_id": 0}
     ).sort("paid_at", -1).to_list(30)
     for q in paid:
         ref_type = "invoice" if q.get("doc_type") == "invoice" else "quote"
@@ -118,11 +118,15 @@ def _in_range(iso: str | None, date_from: str | None, date_to: str | None) -> bo
 
 async def _compute_reports(tenant_id: str, date_from: str | None = None, date_to: str | None = None):
     tq = {"tenant_id": tenant_id}
-    paid_all = await db.quotes.find({**tq, "payment_status": "paid"}, {"_id": 0}).to_list(2000)
+    # Feb-2026 · P2 Item 2 follow-up — soft-deleted invoices MUST NOT
+    # feed ``revenue`` / ``avg_ticket`` / ``revenue_series`` / ``top_customers``
+    # (all derived from ``paid_all``) nor the ``outstanding`` KPI. Same
+    # guard shape the rest of the P2 sweep uses.
+    paid_all = await db.quotes.find({**tq, "payment_status": "paid", **_nd()}, {"_id": 0}).to_list(2000)
     paid = [q for q in paid_all if _in_range(q.get("paid_at") or q.get("created_at"), date_from, date_to)]
     revenue = round(sum(q["total"] for q in paid), 2)
     outstanding_docs = await db.quotes.find(
-        {**tq, "doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}
+        {**tq, "doc_type": "invoice", "payment_status": "unpaid", **_nd()}, {"_id": 0}
     ).to_list(2000)
     outstanding_docs = [q for q in outstanding_docs if _in_range(q.get("created_at"), date_from, date_to)]
     outstanding = round(sum(q["total"] for q in outstanding_docs), 2)

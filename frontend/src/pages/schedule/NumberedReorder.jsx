@@ -49,12 +49,30 @@ import { colors } from "@/theme";
 export const MAX_ORDER_VALUE = 50;
 
 
-/** Return the initial draft number map keyed by job id.  Each entry
- *  is a string (inputs are text boxes) — the current ``route_index``
- *  is offset by +1 for 1-based UX.  Jobs with no assigned index get
- *  an empty string so the input renders as a placeholder ``—``. */
-function _initialDrafts(jobs) {
+/** Return the initial draft number map keyed by job id.
+ *
+ *  * ``initialOrder`` (Feb-2026 · Optimize Route) — when a list of
+ *    job IDs is passed, the drafts are seeded 1..N in THAT order,
+ *    ignoring the row's ``route_index``. Used by the Optimize Route
+ *    button to pre-fill the modal with the recommended order.
+ *  * Otherwise the drafts fall back to ``route_index + 1`` (1-based
+ *    UX). Jobs missing an index get a positional guess by list
+ *    position so every input renders a non-empty placeholder.
+ */
+function _initialDrafts(jobs, initialOrder = null) {
   const m = {};
+  if (Array.isArray(initialOrder) && initialOrder.length) {
+    // Rank each job by its position in the optimized list. Jobs
+    // NOT in the list get an index after the tail so they still
+    // render (should be rare — caller passes the full day's list).
+    const rank = new Map();
+    initialOrder.forEach((id, idx) => rank.set(id, idx + 1));
+    const tail = initialOrder.length + 1;
+    jobs.forEach((j) => {
+      m[j.id] = String(rank.get(j.id) ?? tail);
+    });
+    return m;
+  }
   const sorted = [...jobs].sort(
     (a, b) => (a.route_index ?? 9999) - (b.route_index ?? 9999),
   );
@@ -127,9 +145,10 @@ function _validate(drafts, jobs) {
 
 
 export function useNumberedOrder(jobs, opts = {}) {
-  const { onSaved, onError, techUserId, date, autoSave = true } = opts;
+  const { onSaved, onError, techUserId, date, autoSave = true,
+             initialOrder = null } = opts;
 
-  const [drafts, setDrafts] = useState(() => _initialDrafts(jobs));
+  const [drafts, setDrafts] = useState(() => _initialDrafts(jobs, initialOrder));
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null); // {kind, text}
 
@@ -138,14 +157,18 @@ export function useNumberedOrder(jobs, opts = {}) {
   // for existing job ids.
   useEffect(() => {
     setDrafts((prev) => {
-      const fresh = _initialDrafts(jobs);
+      const fresh = _initialDrafts(jobs, initialOrder);
       const merged = { ...fresh };
       for (const id of Object.keys(prev)) {
         if (id in fresh) merged[id] = prev[id];
       }
       return merged;
     });
-  }, [jobs]);
+    // Note: intentionally depend on jobs + initialOrder identity —
+    // when the optimizer produces a new order, the caller passes a
+    // fresh array so the map resets to the new 1..N sequence.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs, initialOrder]);
 
   const validation = useMemo(() => _validate(drafts, jobs), [drafts, jobs]);
 
@@ -271,12 +294,22 @@ export function ReorderBanner({ controller }) {
 }
 
 
-export function BulkReorderModal({ jobs, techUserId, date, onClose, onSaved }) {
+export function BulkReorderModal({
+  jobs, techUserId, date, onClose, onSaved,
+  // Feb-2026 · Optimize Route — parent passes:
+  //   * ``initialOrder`` (list of job IDs in the new order)
+  //   * ``optimizeSummary`` (human-readable "~1h 20m · 12mi · algorithm")
+  //   * ``optimizeWarnings`` (list of strings — the fallback banner
+  //     renders when any string mentions "Directions unavailable")
+  initialOrder = null, optimizeSummary = null, optimizeWarnings = null,
+}) {
   const controller = useNumberedOrder(jobs, {
-    autoSave: false, techUserId, date,
+    autoSave: false, techUserId, date, initialOrder,
     onSaved: (r) => { onSaved?.(r); onClose?.(); },
   });
   const overlayRef = useRef(null);
+  const _isFallback = Array.isArray(optimizeWarnings)
+    && optimizeWarnings.some((w) => /directions unavailable/i.test(String(w)));
 
   return (
     <div
@@ -307,6 +340,33 @@ export function BulkReorderModal({ jobs, techUserId, date, onClose, onSaved }) {
             <X size={18} />
           </button>
         </header>
+
+        {/* Feb-2026 · Optimize Route summary / warning banners. */}
+        {optimizeSummary ? (
+          <div
+            className="px-5 py-2 text-xs font-semibold"
+            style={{
+              background: "#ECFDF5", color: "#065F46",
+              borderBottom: `1px solid ${colors.border}`,
+            }}
+            data-testid="id-optimize-route-summary"
+          >
+            {optimizeSummary}
+          </div>
+        ) : null}
+        {_isFallback ? (
+          <div
+            className="px-5 py-2 text-xs font-semibold"
+            style={{
+              background: "#FEF3C7", color: "#92400E",
+              borderBottom: `1px solid ${colors.border}`,
+            }}
+            data-testid="id-optimize-route-warning"
+          >
+            Directions unavailable — using Haversine fallback. Review
+            order manually before saving.
+          </div>
+        ) : null}
 
         <div className="px-5 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
           <ReorderBanner controller={controller} />

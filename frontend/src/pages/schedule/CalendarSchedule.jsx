@@ -238,6 +238,13 @@ export default function CalendarSchedule() {
   const [toast, setToast] = useState(null);              // {text, kind:"info"|"err"}
   // Feb-2026 · numbered-order reorder — bulk modal open flag.
   const [bulkReorderOpen, setBulkReorderOpen] = useState(false);
+  // Feb-2026 · Optimize Route — payload returned by
+  // ``POST /api/schedule/optimize-route``. When present it seeds the
+  // BulkReorderModal via ``initialOrder`` + ``optimizeSummary`` +
+  // ``optimizeWarnings`` props (see NumberedReorder.jsx). Nulled on
+  // modal close so the next open reverts to route_index seed.
+  const [optimizePayload, setOptimizePayload] = useState(null);
+  const [optimizing, setOptimizing] = useState(false);
   // Phase 31 · Step 2b — tap-job opens the checklist modal in place of
   // navigating away to /jobs/:id. Preserves the /schedule URL so the
   // grid/calendar toggle, filters, and range presets survive the close.
@@ -670,6 +677,40 @@ export default function CalendarSchedule() {
     toast_(`${ok} moved · ${fail} failed`, fail > ok ? "err" : "info");
     await load();
   };
+
+  // Feb-2026 · Optimize Route — non-destructive pre-fill of the
+  // Reorder modal. Calls the backend Google Directions v2 +
+  // ORION-inspired zip-cluster tiebreaker pipeline, then opens the
+  // Reorder modal seeded with the recommended order + a summary
+  // banner. User still clicks Save Order to persist. Cancel /
+  // close discards the optimization.
+  const optimizeRoute = async () => {
+    if ((reorderableJobs || []).length < 2) return;
+    setOptimizing(true);
+    try {
+      const r = await api.post("/schedule/optimize-route", {
+        date: focusISO,
+        technician_id: _dayTechHint || null,
+      });
+      const totalSecs = Number(r?.total_duration_s || 0);
+      const totalMeters = Number(r?.total_distance_m || 0);
+      const h = Math.floor(totalSecs / 3600);
+      const m = Math.round((totalSecs % 3600) / 60);
+      const miles = (totalMeters / 1609.344).toFixed(1);
+      const algo = String(r?.algorithm || "unknown");
+      const summary = `Estimated ~${h}h ${m}m · ${miles}mi · ${algo}`;
+      setOptimizePayload({
+        orderedIds: Array.isArray(r?.ordered_job_ids) ? r.ordered_job_ids : [],
+        summary,
+        warnings: Array.isArray(r?.warnings) ? r.warnings : [],
+      });
+      setBulkReorderOpen(true);
+    } catch (e) {
+      toast_(String(e?.message || "Route optimization failed"), "err");
+    } finally {
+      setOptimizing(false);
+    }
+  };
   // Feb-2026 · numbered-order reorder — replaces the old rearrange
   // mode (drag-handles + up/down chevrons + explicit "Save order"
   // button).  ``orderController`` (declared above) auto-saves on
@@ -1047,7 +1088,9 @@ export default function CalendarSchedule() {
           onOpenEdit={isAdminRole ? ((jobRow) => setEditingJob(jobRow)) : undefined}
           isAdminForCard={isAdminRole}
           orderController={orderController}
-          onOpenBulkReorder={() => setBulkReorderOpen(true)}
+          onOpenBulkReorder={() => { setOptimizePayload(null); setBulkReorderOpen(true); }}
+          onOptimizeRoute={optimizeRoute}
+          optimizing={optimizing}
           reorderableJobIds={reorderableJobs.map((j) => j.id)}
         />
       )}
@@ -1060,8 +1103,11 @@ export default function CalendarSchedule() {
           jobs={reorderableJobs}
           techUserId={_dayTechHint}
           date={focusISO}
-          onClose={() => setBulkReorderOpen(false)}
-          onSaved={() => load()}
+          initialOrder={optimizePayload?.orderedIds || null}
+          optimizeSummary={optimizePayload?.summary || null}
+          optimizeWarnings={optimizePayload?.warnings || null}
+          onClose={() => { setBulkReorderOpen(false); setOptimizePayload(null); }}
+          onSaved={() => { setOptimizePayload(null); load(); }}
         />
       ) : null}
 
@@ -1255,6 +1301,7 @@ function GridPanel({
   // controller (drives inline inputs) + bulk-modal opener + the id
   // set that is actually reorderable (non-terminal only).
   orderController, onOpenBulkReorder, reorderableJobIds,
+  onOptimizeRoute, optimizing,
 }) {
   const focusISO = format(date, "yyyy-MM-dd");
   const isToday = focusISO === format(new Date(), "yyyy-MM-dd");
@@ -1348,6 +1395,35 @@ function GridPanel({
             }
           >
             <ArrowUp size={12} /> Reorder…
+          </button>
+          {/* Feb-2026 · Optimize Route — non-destructive pre-fill of the
+              Reorder modal via Google Directions v2 + ORION-inspired
+              zip-cluster tiebreaker. Admin/manager only (same gate as
+              the Reorder button). Disabled when <2 stops or already
+              optimizing. */}
+          <button
+            onClick={onOptimizeRoute}
+            disabled={busy || optimizing || !isAdminForCard
+                       || (reorderableJobIds || []).length < 2}
+            className="flex items-center gap-1 px-3 h-8 rounded-full text-xs font-bold"
+            style={{
+              background: "#0F766E", color: "#fff",
+              opacity: (!isAdminForCard || optimizing
+                          || (reorderableJobIds || []).length < 2)
+                ? 0.55 : 1,
+            }}
+            data-testid="id-optimize-route-btn"
+            title={
+              !isAdminForCard
+                ? "Optimize Route is admin/manager only."
+                : (reorderableJobIds || []).length < 2
+                  ? "Need at least 2 stops to optimize"
+                  : optimizing
+                    ? "Optimizing…"
+                    : "Compute a UPS-ORION-inspired optimal order (Google Directions v2)"
+            }
+          >
+            {optimizing ? "Optimizing…" : "\u2732 Optimize Route"}
           </button>
         </div>
       ) : null}

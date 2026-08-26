@@ -391,3 +391,117 @@ async def compute_optimization_v2(
         "no_change": no_change,
         "algorithm": "google_directions",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Feb-2026 · ORION-inspired post-processing biases.
+#
+# Applied AFTER Google Routes API v2 returns an optimal order. Each
+# heuristic is a swap-based local search that runs at most one pass
+# over the ordered waypoints — it never re-solves the TSP.
+#
+# Heuristics shipped in Phase A:
+#   * ``zip_cluster_swap_pass`` — nudge same-zip stops adjacent when a
+#     swap doesn't blow the total-distance budget.
+#
+# Deferred to Phase B (see SHIPPED note):
+#   * Right-turn preference — requires ``routes.legs.steps.navigation
+#     Instruction`` in the field mask (billed extra by Google). Not
+#     worth the incremental cost until Phase A ships and we validate
+#     the base is stable.
+#   * Contiguous-street bonus — low-signal in dense urban routes.
+# ═══════════════════════════════════════════════════════════════════════
+
+# Feb-2026 · ZIP tiebreaker budget. The swap is applied only when
+# the Haversine delta (proposed vs base ordering) stays within this
+# fraction of the base total. 2% mirrors UPS's published ORION
+# tolerance for zip-cluster continuity vs pure-duration.
+ZIP_CLUSTER_TIEBREAKER_BUDGET = 0.02
+
+
+def _extract_zip(job: dict[str, Any]) -> Optional[str]:
+    """Pull a ZIP / postal-code from a job dict.
+
+    Tries (in order):
+      1. Explicit ``zip`` key.
+      2. ``postal_code`` key.
+      3. ``address`` string — parse trailing digits (US ZIP shape).
+    """
+    for k in ("zip", "postal_code", "zipcode"):
+        v = job.get(k)
+        if v:
+            return str(v).strip()[:5] or None
+    addr = job.get("address") or job.get("stop_address") or ""
+    if not addr:
+        return None
+    import re as _re
+    m = _re.search(r"(\d{5})(?:-\d{4})?\s*$", str(addr))
+    if m:
+        return m.group(1)
+    return None
+
+
+def zip_cluster_swap_pass(
+    *,
+    ordered: list[dict[str, Any]],
+    start_lat: float,
+    start_lng: float,
+    budget: float = ZIP_CLUSTER_TIEBREAKER_BUDGET,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """One-pass swap search that keeps same-zip stops adjacent when
+    doing so doesn't inflate the total Haversine leg-distance by
+    more than ``budget`` (default 2%).
+
+    Contract:
+      * Input ``ordered`` — already-optimized list from Google
+        (or Haversine fallback). Each item must carry ``lat`` +
+        ``lng``; ``zip`` / ``postal_code`` / ``address`` optional.
+      * Returns ``(new_ordered, warnings)`` — ``new_ordered`` is a
+        NEW list; input is not mutated. ``warnings`` accumulates
+        any diagnostics (e.g. "zip data missing on N stops — skipped").
+
+    No-op when: <3 stops, no ZIP data on any stop, or every swap
+    would blow the budget.
+    """
+    warnings: list[str] = []
+    if len(ordered) < 3:
+        return list(ordered), warnings
+
+    zips = [_extract_zip(j) for j in ordered]
+    has_zip = sum(1 for z in zips if z)
+    if has_zip < 2:
+        warnings.append(
+            "zip_cluster_tiebreaker skipped — no ZIP data available",
+        )
+        return list(ordered), warnings
+
+    base_total = _tour_distance_miles((start_lat, start_lng), ordered)
+    budget_miles = base_total * budget
+
+    working = list(ordered)
+    working_zips = list(zips)
+
+    swaps_applied = 0
+    # Scan for adjacent pairs A,B,C where A and C share a zip but B
+    # doesn't — a swap of B and C would put A and C adjacent.
+    i = 0
+    while i < len(working) - 2:
+        za, zb, zc = working_zips[i], working_zips[i + 1], working_zips[i + 2]
+        if za and zc and za == zc and zb != za:
+            # Candidate swap: swap positions (i+1) and (i+2).
+            candidate = list(working)
+            candidate[i + 1], candidate[i + 2] = candidate[i + 2], candidate[i + 1]
+            new_total = _tour_distance_miles((start_lat, start_lng), candidate)
+            if new_total <= base_total + budget_miles:
+                working = candidate
+                working_zips[i + 1], working_zips[i + 2] = (
+                    working_zips[i + 2], working_zips[i + 1]
+                )
+                swaps_applied += 1
+        i += 1
+
+    if swaps_applied:
+        warnings.append(
+            f"zip_cluster_tiebreaker applied {swaps_applied} swap(s)",
+        )
+    return working, warnings
