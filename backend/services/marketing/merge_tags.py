@@ -836,6 +836,7 @@ def _customer_portal_login_link(ctx: Dict[str, Any]) -> str:
         url = build_portal_home_url(
             base, customer_id, tenant_id,
             ttl_hours=_PORTAL_MAGIC_TTL_HOURS,
+            preview=bool(ctx.get("_is_preview")),
         )
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning(
@@ -876,6 +877,7 @@ def _service_record_link(ctx: Dict[str, Any]) -> str:
                 url = build_job_view_url(
                     base, customer_id, job_id, tenant_id,
                     ttl_hours=_PORTAL_MAGIC_TTL_HOURS,
+                    preview=bool(ctx.get("_is_preview")),
                 )
                 ctx["service_record_link"] = url
                 return url

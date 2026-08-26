@@ -44,12 +44,20 @@ _DEFAULT_TTL_HOURS = 24
 def mint_job_view_token(
     customer_id: str, job_id: str, tenant_id: str,
     *, ttl_hours: int = _DEFAULT_TTL_HOURS,
+    preview: bool = False,
 ) -> str:
     """Mint a short-lived JWT that unlocks read-only access to a
     single job's service report in the customer portal.
 
     The token is REUSABLE within its TTL — matches the add-card
     magic-link contract. Ops can revoke by rotating ``JWT_SECRET``.
+
+    ``preview=True`` embeds a ``preview: True`` claim that causes
+    :func:`verify_job_view_token` to reject the token with
+    HTTPException(400, "preview_token_cannot_be_redeemed"). Used by
+    the marketing composer preview so a URL that LOOKS real
+    surfaces in the preview pane without any accidentally-copied
+    preview link ever being redeemable as a real session.
     """
     if not (customer_id and job_id and tenant_id):
         raise ValueError("customer_id, job_id, and tenant_id are required")
@@ -63,6 +71,8 @@ def mint_job_view_token(
         "iat": now,
         "exp": now + timedelta(seconds=ttl),
     }
+    if preview:
+        payload["preview"] = True
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
 
 
@@ -91,12 +101,18 @@ def verify_job_view_token(token: str) -> dict:
         raise HTTPException(401, "token_wrong_scope")
     if not all(payload.get(k) for k in ("customer_id", "job_id", "tenant_id")):
         raise HTTPException(401, "token_malformed")
+    if payload.get("preview"):
+        # Preview tokens are minted by the marketing composer preview
+        # so the surfaced URL LOOKS real but never resolves to a real
+        # customer session. Any redemption attempt is rejected here.
+        raise HTTPException(400, "preview_token_cannot_be_redeemed")
     return payload
 
 
 def build_job_view_url(
     base_url: str, customer_id: str, job_id: str, tenant_id: str,
     *, ttl_hours: int = _DEFAULT_TTL_HOURS,
+    preview: bool = False,
 ) -> str:
     """Build the full portal deep-link URL.
 
@@ -116,6 +132,7 @@ def build_job_view_url(
     """
     token = mint_job_view_token(
         customer_id, job_id, tenant_id, ttl_hours=ttl_hours,
+        preview=preview,
     )
     return f"{base_url.rstrip('/')}/api/portal/auto-login?t={token}"
 
@@ -272,6 +289,7 @@ _PORTAL_HOME_TTL_HOURS = 48
 def mint_portal_home_token(
     customer_id: str, tenant_id: str,
     *, ttl_hours: int = _PORTAL_HOME_TTL_HOURS,
+    preview: bool = False,
 ) -> str:
     if not (customer_id and tenant_id):
         raise ValueError("customer_id and tenant_id are required")
@@ -284,6 +302,8 @@ def mint_portal_home_token(
         "iat": now,
         "exp": now + timedelta(seconds=ttl),
     }
+    if preview:
+        payload["preview"] = True
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
 
 
@@ -300,14 +320,21 @@ def verify_portal_home_token(token: str) -> dict:
         raise HTTPException(401, "token_wrong_scope")
     if not all(payload.get(k) for k in ("customer_id", "tenant_id")):
         raise HTTPException(401, "token_malformed")
+    if payload.get("preview"):
+        # Preview tokens are minted by the marketing composer preview
+        # so the surfaced URL LOOKS real but never resolves to a real
+        # customer session. Any redemption attempt is rejected here.
+        raise HTTPException(400, "preview_token_cannot_be_redeemed")
     return payload
 
 
 def build_portal_home_url(
     base_url: str, customer_id: str, tenant_id: str,
     *, ttl_hours: int = _PORTAL_HOME_TTL_HOURS,
+    preview: bool = False,
 ) -> str:
     token = mint_portal_home_token(
         customer_id, tenant_id, ttl_hours=ttl_hours,
+        preview=preview,
     )
     return f"{base_url.rstrip('/')}/api/portal/auto-login?t={token}"

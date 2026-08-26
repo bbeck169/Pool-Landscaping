@@ -325,6 +325,13 @@ async def preview_template(
     # unresolved. Backward-compatible: unset keys forward as empty.
     demo_ctx = build_merge_ctx(
         customer={
+            # Feb 2026 · Preview-fidelity fix — forward ``id`` so the
+            # CUSTOMER_PORTAL_LOGIN_LINK / SERVICE_RECORD_LINK
+            # resolvers can mint their preview magic URLs instead of
+            # rendering empty. The whitelist previously dropped ``id``
+            # entirely, so both tags fell through to "unresolved" in
+            # the composer preview even though real sends work fine.
+            "id": (ctx.get("customer") or {}).get("id"),
             "name": ((ctx.get("customer") or {}).get("first_name", "") + " "
                      + (ctx.get("customer") or {}).get("last_name", "")).strip(),
             "first_name": (ctx.get("customer") or {}).get("first_name"),
@@ -372,6 +379,14 @@ async def preview_template(
         next_service_type=ctx.get("next_service_type"),
         # ADD_CARD_LINK resolver reads flat ``ctx["add_card_link"]``.
         add_card_link=ctx.get("add_card_link"),
+        # Feb 2026 · Preview-fidelity fix — flag the render as a
+        # preview so the CUSTOMER_PORTAL_LOGIN_LINK / SERVICE_RECORD_LINK
+        # resolvers mint tokens with ``preview: True``. Those tokens
+        # look like real URLs in the composer preview pane but are
+        # rejected at redemption (400 preview_token_cannot_be_redeemed)
+        # so an accidentally-copied preview link can never grant a real
+        # session.
+        _is_preview=True,
     )
     pre_subject, sub_missing = render_uppercase_tags(row.get("subject") or "", demo_ctx)
     pre_body, body_missing = render_uppercase_tags(row.get("body") or "", demo_ctx)

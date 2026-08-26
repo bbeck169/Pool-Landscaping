@@ -273,3 +273,97 @@ def test_service_record_link_falls_back_to_home_which_is_also_empty_when_env_uns
     ctx = _ctx(job_id="job-77")
     out, _ = render_template("{{SERVICE_RECORD_LINK}}", ctx)
     assert out == ""
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb 2026 · Composer preview fidelity — the marketing composer's
+# ``POST /api/marketing/templates/{tid}/preview`` builds a demo_ctx
+# that previously dropped ``customer.id`` (whitelist rebuild), which
+# made both tags render empty in the composer preview pane. The fix
+# forwards ``customer.id`` + flags the render as a preview so tokens
+# get a ``preview: True`` claim and can't be redeemed accidentally.
+# ═════════════════════════════════════════════════════════════════════
+def test_preview_endpoint_ctx_shape_renders_both_tags_non_empty():
+    """Regression against the composer preview forwarding fix in
+    ``routers/marketing_templates.py::preview_template``. Mimics the
+    demo_ctx shape the endpoint now emits and asserts both tags
+    render to non-empty auto-login URLs."""
+    from services.marketing.merge_tags import (
+        render_context, render_template,
+    )
+    demo_ctx = render_context(
+        customer={
+            "id": "cust-sample-preview",
+            "name": "Sam Preview",
+            "first_name": "Sam",
+        },
+        tenant={"id": "tenant-sample-preview", "name": "PLOFV"},
+        job={"id": "job-sample-preview", "title": "Weekly Pool"},
+        _is_preview=True,
+    )
+    body = ("Login: {{CUSTOMER_PORTAL_LOGIN_LINK}}\n"
+             "Report: {{SERVICE_RECORD_LINK}}")
+    out, missing = render_template(body, demo_ctx)
+    assert missing == []
+    assert out.count("/api/portal/auto-login?t=") == 2
+    # Both URLs are distinct (different scopes → different JWTs).
+    urls = [line.split(": ", 1)[1] for line in out.splitlines()]
+    assert urls[0] != urls[1]
+
+
+def test_preview_flagged_portal_home_token_cannot_be_redeemed():
+    """A preview-flagged ``portal_home`` token must be rejected at
+    verify time so accidentally-copied preview links never grant a
+    real customer session."""
+    from fastapi import HTTPException
+    from services.portal_magic_links import (
+        mint_portal_home_token, verify_portal_home_token,
+    )
+    tok = mint_portal_home_token("cust-42", "tenant-99", preview=True)
+    with pytest.raises(HTTPException) as excinfo:
+        verify_portal_home_token(tok)
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "preview_token_cannot_be_redeemed"
+
+
+def test_preview_flagged_job_view_token_cannot_be_redeemed():
+    from fastapi import HTTPException
+    from services.portal_magic_links import (
+        mint_job_view_token, verify_job_view_token,
+    )
+    tok = mint_job_view_token("cust-42", "job-77", "tenant-99", preview=True)
+    with pytest.raises(HTTPException) as excinfo:
+        verify_job_view_token(tok)
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "preview_token_cannot_be_redeemed"
+
+
+def test_non_preview_tokens_still_redeem_cleanly():
+    """Send-path (non-preview) tokens must NOT be rejected — the
+    preview flag is opt-in only. Belt-and-suspenders regression
+    against a bug where the verifier reads ``payload.get("preview")``
+    as truthy on a claim that isn't there."""
+    from services.portal_magic_links import (
+        mint_portal_home_token, verify_portal_home_token,
+        mint_job_view_token, verify_job_view_token,
+    )
+    tok_home = mint_portal_home_token("cust-42", "tenant-99")  # preview=False
+    payload_home = verify_portal_home_token(tok_home)
+    assert payload_home["sub"] == "portal_home"
+    assert "preview" not in payload_home
+    tok_job = mint_job_view_token("cust-42", "job-77", "tenant-99")
+    payload_job = verify_job_view_token(tok_job)
+    assert payload_job["sub"] == "job_view"
+    assert "preview" not in payload_job
+
+
+def test_preview_resolver_flag_produces_preview_claim_in_jwt():
+    """The resolver forwards ``_is_preview=True`` from ctx to the
+    mint helper — this test decodes the JWT and asserts the
+    ``preview: True`` claim is present."""
+    ctx = _ctx()
+    ctx["_is_preview"] = True
+    out, _ = render_template("{{CUSTOMER_PORTAL_LOGIN_LINK}}", ctx)
+    token = _extract_jwt(out)
+    payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    assert payload.get("preview") is True
