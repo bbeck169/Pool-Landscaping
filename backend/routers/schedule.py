@@ -178,6 +178,13 @@ async def schedule_today(date: Optional[str] = None,
             "title": j.get("title") or j.get("service_type") or "Job",
             "service_type": j.get("service_type") or j.get("job_type") or j.get("title") or "Service",
             "job_type": j.get("job_type") or j.get("service_type"),
+            # Feb 2026 · work-class dimension surfaced on each item so
+            # the frontend can render Repair badges + drive the summary
+            # split. Legacy jobs without the field read as "service"
+            # via ``infer_work_class`` — never null.
+            "work_class": (
+                "repair" if (j.get("work_class") == "repair") else "service"
+            ),
             "customer_name": j.get("customer_name"),
             "customer_id": j.get("customer_id"),
             "address": j.get("address") or j.get("site_address"),
@@ -284,6 +291,20 @@ async def schedule_today(date: Optional[str] = None,
             "job_count": len(coord_jobs) + sum(1 for it in items
                                                 if it["type"] == "job"
                                                 and (it.get("lat") is None)),
+            # Feb 2026 · Work-class counter split. ``job_count`` above
+            # stays as the historical total for backward compat.
+            # ``job_count_repair`` counts items with an explicit
+            # ``"repair"`` work_class; ``job_count_service`` is the
+            # complement (any missing/legacy work_class reads as
+            # service, so total − repair = service).
+            "job_count_repair": sum(
+                1 for it in items
+                if it["type"] == "job" and it.get("work_class") == "repair"
+            ),
+            "job_count_service": sum(
+                1 for it in items
+                if it["type"] == "job" and it.get("work_class") != "repair"
+            ),
             "scheduled_hours": round(scheduled_hours, 2),
             "hours_logged_today": round(total_hours, 2),
             "miles_logged_today": round(total_miles, 2),

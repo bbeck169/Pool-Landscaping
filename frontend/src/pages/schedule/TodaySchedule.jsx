@@ -606,7 +606,28 @@ export default function TodaySchedule() {
       <div className="rounded-2xl p-4 mb-6 flex items-center gap-6 flex-wrap"
            style={{ background: brandGradientCss, color: "#fff" }}
            data-testid="schedule-summary">
-        <Stat label="Jobs" value={s.job_count ?? 0} testId="stat-jobs"/>
+        {/* Feb 2026 · Work-class counter split. Shows the total as
+            the main value so the summary bar stays glanceable, with a
+            sub-line breaking the total into Service vs Repair when
+            any repair job exists. Legacy payloads without the split
+            fields fall back to the ``job_count`` total → no sub-line. */}
+        <div data-testid="stat-jobs-wrap" className="flex flex-col">
+          <Stat label="Jobs" value={s.job_count ?? 0} testId="stat-jobs" />
+          {typeof s.job_count_repair === "number" && s.job_count_repair > 0 ? (
+            <div
+              className="text-xs opacity-90 mt-0.5 whitespace-nowrap"
+              data-testid="stat-jobs-split"
+            >
+              <span data-testid="stat-jobs-service">
+                {s.job_count_service ?? 0} svc
+              </span>
+              <span aria-hidden="true"> · </span>
+              <span data-testid="stat-jobs-repair">
+                {s.job_count_repair} repair
+              </span>
+            </div>
+          ) : null}
+        </div>
         <Stat label="Scheduled" value={`${s.scheduled_hours ?? 0}h`} testId="stat-scheduled"/>
         <Stat label="Clocked in" value={s.clocked_in ? "Yes" : "No"} testId="stat-clocked"/>
         <Stat label="Miles today" value={`${s.miles_logged_today ?? 0}`} testId="stat-miles"/>

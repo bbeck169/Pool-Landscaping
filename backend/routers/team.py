@@ -403,10 +403,20 @@ async def list_team(user: dict = Depends(require_admin),
     users = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(1000)
     for u in users:
         if u.get("technician_id"):
-            u["active_jobs"] = await db.jobs.count_documents({
+            _base_q = {
                 "technician_id": u["technician_id"],
                 "status": {"$in": ["pending", "active"]},
-            })
+            }
+            u["active_jobs"] = await db.jobs.count_documents(_base_q)
+            # Feb 2026 · Work-class counter split. Same subtraction
+            # trick as ``routers/technicians.py`` — legacy jobs land in
+            # the service bucket automatically.
+            u["active_jobs_repair"] = await db.jobs.count_documents(
+                {**_base_q, "work_class": "repair"},
+            )
+            u["active_jobs_service"] = max(
+                0, u["active_jobs"] - u["active_jobs_repair"],
+            )
     return users
 
 

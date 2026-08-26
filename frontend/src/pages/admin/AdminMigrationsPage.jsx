@@ -405,7 +405,23 @@ function RosterCleanupCard() {
                     <td className="p-2" style={{
                       color: (r.active_jobs || 0) > 0
                         ? "#DC2626" : colors.muted,
-                    }}>{r.active_jobs || 0}</td>
+                    }}
+                        data-testid={`id-roster-active-jobs-${r.id}`}>
+                      {r.active_jobs || 0}
+                      {/* Feb 2026 · Work-class split. Only rendered
+                          when the payload carries the new fields AND
+                          there's at least one repair — keeps the
+                          column compact for the common case. */}
+                      {typeof r.active_jobs_repair === "number"
+                        && r.active_jobs_repair > 0 ? (
+                        <span
+                          className="ml-1 text-xs opacity-75"
+                          data-testid={`id-roster-active-jobs-split-${r.id}`}
+                        >
+                          ({r.active_jobs_service ?? 0}S / {r.active_jobs_repair}R)
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="p-2">
                       {r.is_deactivated ? (
                         <span

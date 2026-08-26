@@ -178,6 +178,14 @@ class JobIn(BaseModel):
     # Phase 55-a · Aug-2026 — Homeworks importer FK. Nullable; enables
     # per-batch rollback via ``delete_many({import_batch_id: X})``.
     import_batch_id: Optional[str] = None
+    # Feb 2026 · Work-class dimension. Orthogonal to ``job_type``
+    # (which is pool/landscape department discipline). Values:
+    # ``"service"`` (routine visit) | ``"repair"`` (fix-something
+    # visit). Default ``"service"`` — legacy jobs implicitly count
+    # as service via the read-time helper. Enables per-tech counter
+    # split on ``/api/schedule/today``, ``/api/technicians``, and
+    # ``/api/team``. See ``services/work_class.py``.
+    work_class: Optional[str] = "service"
 
 
 class JobUpdate(BaseModel):
@@ -203,6 +211,10 @@ class JobUpdate(BaseModel):
     # ``technician_id`` is not cleared — the tech stays as lead per
     # the locked product decision (overlay semantics).
     crew_id: Optional[str] = None
+    # Feb 2026 · Work-class retag. Admin/manager (or tech via own-job
+    # ownership) may retag service ↔ repair after create. Validation
+    # in the handler (rejects anything but "service"/"repair").
+    work_class: Optional[str] = None
 
 
 class JobArriveIn(BaseModel):

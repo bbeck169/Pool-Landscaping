@@ -186,9 +186,18 @@ async def list_technicians(user: dict = Depends(get_current_user),
     for t in docs:
         # active_jobs runs per-row — cheap on Mongo (indexed) and
         # matches the prior contract the FE relies on.
-        t["active_jobs"] = await db.jobs.count_documents(
-            {"tenant_id": tid, "technician_id": t.get("id"),
-             "status": {"$in": ["pending", "active"]}},
+        _base_q = {"tenant_id": tid, "technician_id": t.get("id"),
+                    "status": {"$in": ["pending", "active"]}}
+        t["active_jobs"] = await db.jobs.count_documents(_base_q)
+        # Feb 2026 · Work-class counter split. One extra count on the
+        # repair sub-bucket; ``service`` is derived by subtraction so
+        # legacy jobs without ``work_class`` count as service (matches
+        # the read-time invariant in ``services/work_class.py``).
+        t["active_jobs_repair"] = await db.jobs.count_documents(
+            {**_base_q, "work_class": "repair"},
+        )
+        t["active_jobs_service"] = max(
+            0, t["active_jobs"] - t["active_jobs_repair"],
         )
         if not t.get("display_color_hex") and t.get("user_id"):
             t["display_color_hex"] = color_by_uid.get(t["user_id"])

@@ -65,6 +65,11 @@ class RecurringJobIn(BaseModel):
     monthly_pattern: Optional[str] = "day_of_month"
     monthly_nth_week: Optional[str] = None  # first|second|third|fourth|last
     monthly_weekday: Optional[int] = Field(None, ge=0, le=6)  # 0=Mon…6=Sun
+    # Feb 2026 · Work-class dimension carried through the recurring
+    # template so materialized occurrences inherit the service/repair
+    # tag. Optional at the schema level; validation in the create/
+    # update handlers via ``services.work_class.normalize_work_class``.
+    work_class: Optional[str] = "service"
 
 
 class RecurringJobPatch(BaseModel):
@@ -84,6 +89,8 @@ class RecurringJobPatch(BaseModel):
     monthly_pattern: Optional[str] = None
     monthly_nth_week: Optional[str] = None
     monthly_weekday: Optional[int] = None
+    # Feb 2026 · Retag pass-through for recurring templates.
+    work_class: Optional[str] = None
 
 
 def _parse_date(s: Optional[str]) -> Optional[date]:

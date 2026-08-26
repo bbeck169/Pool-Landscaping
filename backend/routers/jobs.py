@@ -589,6 +589,14 @@ async def create_job(body: JobIn,
                      user: dict = Depends(require_admin),
                      tenant: dict = Depends(get_current_tenant)):
     doc = body.dict()
+    # Feb 2026 · Work-class validation. Normalizes case-insensitively
+    # and rejects unknown values with HTTP 400 (see
+    # ``services/work_class.py`` for the invariant).
+    try:
+        from services.work_class import normalize_work_class
+        doc["work_class"] = normalize_work_class(doc.get("work_class"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     customer = await db.customers.find_one(
         {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
     )
@@ -1094,6 +1102,15 @@ async def update_job(jid: str, body: JobUpdate,
     else:
         raise HTTPException(403, "Not permitted to edit jobs")
     update = {k: v for k, v in body.dict().items() if v is not None}
+    # Feb 2026 · Work-class retag validation. When present, must be
+    # ``"service"`` or ``"repair"`` (case-insensitive). Everything
+    # else → 400.
+    if "work_class" in update:
+        try:
+            from services.work_class import normalize_work_class
+            update["work_class"] = normalize_work_class(update["work_class"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
     if "technician_id" in update:
         # Feb-2026 · P0 hotfix — same shared write-side cascade as
         # ``create_job``. See ``services/tech_assignment.py``.

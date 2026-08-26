@@ -88,6 +88,14 @@ export default function JobNew({
     cadence: "one_time",
     price: 0,
     property_id: preselectedProperty,
+    // Feb 2026 · Work-class dimension. Orthogonal to ``service_type``
+    // (which is a free-text service description like "Pool Cleaning"
+    // or "Repair"). ``work_class`` splits every job into
+    // ``"service"`` (routine visit) vs ``"repair"`` (fix-something)
+    // so tech counters split cleanly. Backend defaults to service
+    // when the field is missing, but we send it explicitly for
+    // clarity. See ``backend/services/work_class.py``.
+    work_class: "service",
     // Feb-2026 · Monthly Nth-weekday recurrence controls. Only sent
     // to the ``/api/recurring-jobs`` endpoint when ``cadence ===
     // "monthly"`` AND ``monthly_pattern === "nth_weekday"``. Kept in
@@ -202,6 +210,9 @@ export default function JobNew({
           recurrence_never_ends: !!form.recurrence_never_ends,
           end_date: form.recurrence_never_ends ? null : (form.end_date || null),
           active: true,
+          // Feb 2026 · Carry work_class into recurring templates so
+          // materialized occurrences inherit the service/repair tag.
+          work_class: form.work_class || "service",
         };
         if (form.property_id) tplPayload.property_id = form.property_id;
         if (form.technician_id) tplPayload.technician_id = form.technician_id;
@@ -223,6 +234,10 @@ export default function JobNew({
         notes: form.notes,
         price: Number(form.price) || 0,
         status: "scheduled",
+        // Feb 2026 · Persist the service/repair tag on one-off jobs.
+        // Backend defaults to "service" when omitted; sending
+        // explicitly keeps the wire payload self-documenting.
+        work_class: form.work_class || "service",
       };
       if (form.property_id) payload.property_id = form.property_id;
       const first = await api.post("/jobs", payload);
@@ -327,6 +342,56 @@ export default function JobNew({
             <div className="text-xs" style={{ color: colors.onSurfaceSecondary }}>Loading properties…</div>
           ) : null}
           <TextInput label="TITLE *" value={form.title} onChange={set("title")} testid="jf-title" />
+          {/* Feb 2026 · Work-class picker (Repair vs Service).
+              Orthogonal to SERVICE TYPE — a "Pool Cleaning" service_type
+              can still be flagged as a Repair visit (e.g. equipment
+              fix while onsite). Drives the tech's job-counter split on
+              the Today Schedule summary chip + the /api/technicians +
+              /api/team roster endpoints. Default Service — the far
+              majority of jobs. */}
+          <div>
+            <label
+              className="text-xs font-semibold tracking-wide mb-1 block"
+              style={{ color: colors.onSurfaceSecondary }}
+            >
+              TYPE
+            </label>
+            <div
+              className="inline-flex rounded-lg overflow-hidden"
+              role="radiogroup"
+              aria-label="Job type"
+              data-testid="jf-work-class"
+              style={{ border: `1px solid ${colors.border}` }}
+            >
+              {[
+                { value: "service", label: "Service" },
+                { value: "repair", label: "Repair" },
+              ].map((opt) => {
+                const selected = form.work_class === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() =>
+                      setForm((f) => ({ ...f, work_class: opt.value }))
+                    }
+                    className="px-4 py-2 text-sm font-semibold focus:outline-none focus-visible:ring-2"
+                    style={{
+                      backgroundColor: selected
+                        ? colors.primary
+                        : colors.surface,
+                      color: selected ? "#fff" : colors.onSurface,
+                    }}
+                    data-testid={`jf-work-class-${opt.value}`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>

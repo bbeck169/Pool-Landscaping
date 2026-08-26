@@ -142,6 +142,15 @@ async def _generate_next(tpl: dict, *, count: int, from_date: date,
                 "recurring_template_id": template_id,
                 "title": tpl.get("service_type") or "Recurring Service",
                 "service_type": tpl.get("service_type"),
+                # Feb 2026 · Inherit the template's work_class so
+                # materialized recurring occurrences carry the same
+                # service/repair tag. Legacy templates without the
+                # field materialize as "service" (matches the read-
+                # time invariant in ``services/work_class.py``).
+                "work_class": (
+                    "repair" if (tpl.get("work_class") == "repair")
+                    else "service"
+                ),
                 "customer_id": tpl.get("customer_id"),
                 "customer_name": cust.get("name") or tpl.get("customer_name"),
                 "address": cust.get("address") or "",
