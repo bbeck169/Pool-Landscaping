@@ -139,6 +139,67 @@ def test_sort_name_asc_preserves_legacy(admin_h, aquaterra_tid):
     assert len(names) == 5
 
 
+# Feb 2026 · new Z → A option. Same tag prefix + same seeded batch so
+# the assertion is fully hermetic against other tenant data.
+def test_sort_name_desc_reverse_alphabetical(admin_h, aquaterra_tid):
+    """``sort=name_desc`` returns strictly non-increasing names."""
+    _seed_staggered(aquaterra_tid, 5)
+    body = requests.get(
+        f"{API}/customers?search={_TAG}&page=1&page_size=50&sort=name_desc",
+        headers=admin_h, timeout=20,
+    )
+    assert body.status_code == 200, body.text
+    items = body.json()["items"] if isinstance(body.json(), dict) else body.json()
+    names = [it["name"] for it in items if it["id"].startswith(_TAG)]
+    assert names == sorted(names, reverse=True)
+    assert len(names) == 5
+
+
+def test_sort_name_desc_tie_breaker_uses_id_when_names_match(
+    admin_h, aquaterra_tid,
+):
+    """Two customers with the SAME name must still return in a
+    deterministic order — the compound sort uses ``_id`` as the
+    tiebreaker so repeated calls give the same page order.
+    """
+    # Seed 3 customers all named exactly the same. The compound sort
+    # [(name, -1), (_id, -1)] must return them in reverse-``_id``
+    # order every time.
+    dup_name = f"Sort Test DUP {uuid.uuid4().hex[:4]}"
+    dup_ids = []
+    for i in range(3):
+        cid = f"{_TAG}dup_{i}_{uuid.uuid4().hex[:6]}"
+        dup_ids.append(cid)
+        _sync.customers.insert_one({
+            "id": cid, "tenant_id": aquaterra_tid,
+            "name": dup_name, "is_active": True,
+            # Backend search filter matches name/email/phone (not id).
+            # Give them an email that carries the tag so ``search=``
+            # picks them up.
+            "email": f"{cid}@example.com",
+        })
+    try:
+        r1 = requests.get(
+            f"{API}/customers?search={_TAG}dup&page=1&page_size=50"
+            "&sort=name_desc",
+            headers=admin_h, timeout=20,
+        )
+        r2 = requests.get(
+            f"{API}/customers?search={_TAG}dup&page=1&page_size=50"
+            "&sort=name_desc",
+            headers=admin_h, timeout=20,
+        )
+        assert r1.status_code == 200 and r2.status_code == 200
+        seq1 = [it["id"] for it in (r1.json()["items"] if isinstance(r1.json(), dict) else r1.json())]
+        seq2 = [it["id"] for it in (r2.json()["items"] if isinstance(r2.json(), dict) else r2.json())]
+        assert seq1 == seq2, (seq1, seq2)
+        # All 3 present.
+        for did in dup_ids:
+            assert did in seq1
+    finally:
+        _sync.customers.delete_many({"id": {"$in": dup_ids}})
+
+
 def test_sort_garbage_falls_back_to_default(admin_h, aquaterra_tid):
     """Unknown ``sort`` values must not 400 — they land on the default."""
     seeded = _seed_staggered(aquaterra_tid, 5)

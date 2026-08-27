@@ -280,8 +280,9 @@ async def list_customers(
         description=(
             "Feb-2026 · Customers list sort order. Supported values: "
             "``created_desc`` (default — newest → oldest), "
-            "``created_asc`` (oldest → newest), ``name_asc`` (legacy "
-            "alphabetical). Unknown values fall back to "
+            "``created_asc`` (oldest → newest), ``name_asc`` "
+            "(alphabetical A → Z), ``name_desc`` (alphabetical Z → A). "
+            "Unknown values fall back to "
             "``created_desc``. When the sort is by creation time and "
             "a legacy doc lacks ``created_at``, the compound sort "
             "falls back to the Mongo-generated ``_id`` (which encodes "
@@ -450,7 +451,8 @@ async def list_customers(
     _SORT_MAP = {
         "created_desc": [("created_at", -1), ("_id", -1)],
         "created_asc": [("created_at", 1), ("_id", 1)],
-        "name_asc": [("name", 1)],
+        "name_asc": [("name", 1), ("_id", 1)],
+        "name_desc": [("name", -1), ("_id", -1)],
     }
     _sort_spec = _SORT_MAP.get(sort or "", _SORT_MAP["created_desc"])
 

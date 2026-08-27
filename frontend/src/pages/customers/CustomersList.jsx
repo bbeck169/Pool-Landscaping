@@ -123,6 +123,12 @@ export default function CustomersList() {
   const _SORT_OPTIONS = [
     { value: "created_desc", label: "Newest → Oldest" },
     { value: "created_asc", label: "Oldest → Newest" },
+    // Feb 2026 · alphabetical options. Backend supports name_asc /
+    // name_desc with a stable ``_id`` tiebreaker. Existing
+    // ``customers.sortBy`` localStorage key auto-picks up the new
+    // values once _SORT_VALUES sees them.
+    { value: "name_asc",   label: "Name A → Z" },
+    { value: "name_desc",  label: "Name Z → A" },
   ];
   const _SORT_VALUES = new Set(_SORT_OPTIONS.map((o) => o.value));
   const [sortBy, setSortBy] = useState(() => {

@@ -102,14 +102,18 @@ describe("CustomersList · Sort dropdown (Newest → Oldest default)", () => {
       screen.getByTestId("customers-filter-sort"));
     // Default value.
     expect(sel.value).toBe("created_desc");
-    // Both options present with the product-spec labels.
+    // All FOUR options present with the product-spec labels (Feb 2026
+    // extended with Name A → Z / Name Z → A).
     const options = Array.from(sel.querySelectorAll("option"));
     const values = options.map((o) => o.value);
     const labels = options.map((o) => o.textContent);
-    expect(values).toContain("created_desc");
-    expect(values).toContain("created_asc");
-    expect(labels).toContain("Newest → Oldest");
-    expect(labels).toContain("Oldest → Newest");
+    expect(values).toEqual(expect.arrayContaining([
+      "created_desc", "created_asc", "name_asc", "name_desc",
+    ]));
+    expect(labels).toEqual(expect.arrayContaining([
+      "Newest → Oldest", "Oldest → Newest",
+      "Name A → Z", "Name Z → A",
+    ]));
   });
 
   it("initial /customers fetch includes sort=created_desc", async () => {
@@ -226,4 +230,62 @@ describe("CustomersList · Sort dropdown (Newest → Oldest default)", () => {
       ).toBe(true);
     });
   });
+
+  // Feb 2026 · new alphabetical options — separate tests so a
+  // regression on either sort key gives a clear failure signal.
+  it.each([
+    ["name_asc",  "Name A → Z"],
+    ["name_desc", "Name Z → A"],
+  ])("changing the dropdown to %s fires a fetch with sort=%s", async (value, _label) => {
+    _installRouter();
+    _mount("admin");
+    await waitFor(() =>
+      expect(screen.getByTestId("customers-filter-sort")).toBeTruthy());
+    mockGet.mockClear();
+    fireEvent.change(screen.getByTestId("customers-filter-sort"),
+      { target: { value } });
+    await waitFor(() => {
+      const paths = mockGet.mock.calls.map((c) => c[0]);
+      expect(
+        paths.some((p) => typeof p === "string"
+          && p.startsWith("/customers?")
+          && p.includes(`sort=${value}`)
+          && !p.includes("count_only=true")),
+      ).toBe(true);
+    });
+  });
+
+  it.each(["name_asc", "name_desc"])(
+    "persists %s to localStorage",
+    async (value) => {
+      _installRouter();
+      _mount("admin");
+      await waitFor(() =>
+        expect(screen.getByTestId("customers-filter-sort")).toBeTruthy());
+      fireEvent.change(screen.getByTestId("customers-filter-sort"),
+        { target: { value } });
+      await waitFor(() =>
+        expect(localStorage.getItem("customers.sortBy")).toBe(value));
+    },
+  );
+
+  it.each(["name_asc", "name_desc"])(
+    "hydrates %s from localStorage on mount + initial fetch uses it",
+    async (value) => {
+      localStorage.setItem("customers.sortBy", value);
+      _installRouter();
+      _mount("admin");
+      const sel = await waitFor(() =>
+        screen.getByTestId("customers-filter-sort"));
+      expect(sel.value).toBe(value);
+      await waitFor(() => {
+        const paths = mockGet.mock.calls.map((c) => c[0]);
+        expect(
+          paths.some((p) => typeof p === "string"
+            && p.startsWith("/customers?")
+            && p.includes(`sort=${value}`)),
+        ).toBe(true);
+      });
+    },
+  );
 });
