@@ -561,6 +561,431 @@ export default function AdminMigrationsPage() {
       </p>
       <BackfillCard />
       <RosterCleanupCard />
+      <StripeSyncCard />
+      <StripeBillingHistoryCard />
+    </div>
+  );
+}
+
+
+// ═════════════════════════════════════════════════════════════════════
+// Feb 2026 · Stripe → CRM migration cards
+// ═════════════════════════════════════════════════════════════════════
+
+function StripeSyncCard() {
+  const [busy, setBusy] = useState(false);
+  const [hasPreviewed, setHasPreviewed] = useState(false);
+  const [report, setReport] = useState(null);
+  const [confirmText, setConfirmText] = useState("");
+  const [importUnmatched, setImportUnmatched] = useState(false);
+  const [error, setError] = useState("");
+
+  const run = async (dry_run) => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api.post(
+        "/admin/migrations/sync-stripe-customers",
+        { dry_run, import_unmatched: !dry_run && importUnmatched },
+      );
+      setReport(r);
+      if (dry_run) setHasPreviewed(true);
+      else setConfirmText("");
+    } catch (e) {
+      setError(e?.response?.data?.detail || e?.message || "Sync failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runReady = hasPreviewed && confirmText === "SYNC" && !busy;
+
+  return (
+    <div
+      className="rounded-2xl p-5 mb-4"
+      style={{
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid="id-migration-stripe-sync-card"
+    >
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-lg font-semibold" style={{ color: colors.onSurface }}>
+          Sync Stripe Customers
+        </h2>
+        <span
+          className="text-[10px] px-2 py-0.5 rounded-md font-semibold"
+          style={{ background: "#635BFF", color: "#fff" }}
+        >
+          BYO-STRIPE
+        </span>
+      </div>
+      <p className="text-xs mb-4" style={{ color: colors.muted }}>
+        Pulls the tenant's Stripe.Customer roster, matches by email
+        (then phone) against CRM customers, and attaches
+        <code className="mx-1 px-1 rounded" style={{ background: colors.surfaceSecondary }}>
+          stripe_customer_id
+        </code>
+        + default card details. Idempotent — re-run to catch new
+        Stripe customers. Never charges cards.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          className="text-sm px-3 py-2 rounded-lg font-semibold"
+          style={{
+            background: colors.primary,
+            color: "#fff",
+            opacity: busy ? 0.5 : 1,
+          }}
+          disabled={busy}
+          onClick={() => run(true)}
+          data-testid="id-migration-stripe-preview-btn"
+        >
+          {busy && !hasPreviewed ? "Previewing…" : "Preview (Dry Run)"}
+        </button>
+        <label
+          className="text-xs inline-flex items-center gap-1.5"
+          style={{ color: colors.onSurface }}
+        >
+          <input
+            type="checkbox"
+            checked={importUnmatched}
+            onChange={(e) => setImportUnmatched(e.target.checked)}
+            disabled={busy}
+            data-testid="id-migration-stripe-import-unmatched-checkbox"
+          />
+          Also import unmatched Stripe customers as new CRM rows
+        </label>
+      </div>
+      {hasPreviewed ? (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <span className="text-xs" style={{ color: colors.muted }}>
+            Type "SYNC" to enable commit:
+          </span>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            disabled={busy}
+            className="text-xs px-2 py-1 rounded-md font-mono"
+            style={{
+              background: colors.surface,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+              width: 100,
+            }}
+            data-testid="id-migration-stripe-confirm-input"
+          />
+          <button
+            type="button"
+            className="text-sm px-3 py-2 rounded-lg font-semibold"
+            style={{
+              background: runReady ? "#DC2626" : colors.surfaceSecondary,
+              color: runReady ? "#fff" : colors.muted,
+              opacity: runReady ? 1 : 0.6,
+            }}
+            disabled={!runReady}
+            onClick={() => run(false)}
+            data-testid="id-migration-stripe-run-btn"
+          >
+            {busy && hasPreviewed ? "Syncing…" : "Run Sync"}
+          </button>
+        </div>
+      ) : null}
+      {error ? (
+        <div
+          className="text-sm mt-3 p-2 rounded-md"
+          style={{ background: "#FEE2E2", color: "#991B1B" }}
+          data-testid="id-migration-stripe-error"
+        >
+          {error}
+        </div>
+      ) : null}
+      {report ? (
+        <div className="mt-4" data-testid="id-migration-stripe-report">
+          <div
+            className="text-xs mb-2"
+            style={{ color: colors.muted }}
+          >
+            {report.dry_run ? "Dry-run report" : "Committed report"} · scanned {report.scanned}
+          </div>
+          <table
+            className="min-w-full text-xs"
+            data-testid="id-migration-stripe-diff-table"
+          >
+            <tbody>
+              <tr>
+                <td className="p-1 pr-4" style={{ color: colors.muted }}>Attachable</td>
+                <td className="p-1 font-semibold" style={{ color: colors.onSurface }}
+                    data-testid="id-migration-stripe-attachable">
+                  {report.attachable_count}
+                </td>
+              </tr>
+              <tr>
+                <td className="p-1 pr-4" style={{ color: colors.muted }}>Already attached</td>
+                <td className="p-1 font-semibold" style={{ color: colors.onSurface }}>
+                  {report.already_attached_count}
+                </td>
+              </tr>
+              <tr>
+                <td className="p-1 pr-4" style={{ color: colors.muted }}>Duplicate email (skipped)</td>
+                <td className="p-1 font-semibold" style={{ color: colors.onSurface }}>
+                  {report.duplicate_email_count}
+                </td>
+              </tr>
+              <tr>
+                <td className="p-1 pr-4" style={{ color: colors.muted }}>Unmatched Stripe customers</td>
+                <td className="p-1 font-semibold" style={{ color: colors.onSurface }}>
+                  {report.unmatched_count}
+                </td>
+              </tr>
+              <tr>
+                <td className="p-1 pr-4" style={{ color: colors.muted }}>No email (Stripe side)</td>
+                <td className="p-1 font-semibold" style={{ color: colors.onSurface }}>
+                  {report.no_email_count}
+                </td>
+              </tr>
+              {report.imported_new_count > 0 ? (
+                <tr>
+                  <td className="p-1 pr-4" style={{ color: colors.muted }}>Imported new CRM rows</td>
+                  <td className="p-1 font-semibold" style={{ color: colors.onSurface }}>
+                    {report.imported_new_count}
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+function StripeBillingHistoryCard() {
+  const [busy, setBusy] = useState(false);
+  const [hasPreviewed, setHasPreviewed] = useState(false);
+  const [report, setReport] = useState(null);
+  const [confirmText, setConfirmText] = useState("");
+  const [monthsBack, setMonthsBack] = useState(24);
+  const [includeSubs, setIncludeSubs] = useState(true);
+  const [error, setError] = useState("");
+
+  const run = async (dry_run) => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api.post(
+        "/admin/migrations/sync-stripe-billing-history",
+        {
+          dry_run,
+          months_back: Number(monthsBack) || 24,
+          include_subscriptions: !!includeSubs,
+        },
+      );
+      setReport(r);
+      if (dry_run) setHasPreviewed(true);
+      else setConfirmText("");
+    } catch (e) {
+      setError(e?.response?.data?.detail || e?.message || "Import failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runReady = hasPreviewed && confirmText === "IMPORT" && !busy;
+
+  return (
+    <div
+      className="rounded-2xl p-5 mb-4"
+      style={{
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid="id-migration-stripe-billing-card"
+    >
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-lg font-semibold" style={{ color: colors.onSurface }}>
+          Sync Stripe Billing History
+        </h2>
+        <span
+          className="text-[10px] px-2 py-0.5 rounded-md font-semibold"
+          style={{ background: "#635BFF", color: "#fff" }}
+        >
+          BYO-STRIPE
+        </span>
+      </div>
+      <p className="text-xs mb-3" style={{ color: colors.muted }}>
+        Imports historical Stripe charges → CRM payments, Stripe
+        invoices → CRM invoices (ancillary — canonical
+        <code className="mx-1 px-1 rounded" style={{ background: colors.surfaceSecondary }}>
+          db.quotes
+        </code>
+        untouched), and optionally subscriptions. Idempotent on
+        every entity. <strong>Prereq: run "Sync Stripe Customers"
+        first</strong> — this needs the customer mapping.
+      </p>
+      <div className="flex flex-wrap items-center gap-3 mb-2">
+        <label className="text-xs" style={{ color: colors.onSurface }}>
+          Time range:{" "}
+          <select
+            value={monthsBack}
+            onChange={(e) => setMonthsBack(Number(e.target.value))}
+            disabled={busy}
+            className="ml-1 px-2 py-1 rounded-md text-xs"
+            style={{
+              background: colors.surface,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+            data-testid="id-migration-stripe-billing-months-select"
+          >
+            <option value={12}>12 months</option>
+            <option value={24}>24 months</option>
+            <option value={36}>36 months</option>
+            <option value={60}>60 months</option>
+            <option value={240}>All time (20yr)</option>
+          </select>
+        </label>
+        <label
+          className="text-xs inline-flex items-center gap-1.5"
+          style={{ color: colors.onSurface }}
+        >
+          <input
+            type="checkbox"
+            checked={includeSubs}
+            onChange={(e) => setIncludeSubs(e.target.checked)}
+            disabled={busy}
+            data-testid="id-migration-stripe-billing-include-subs-checkbox"
+          />
+          Include subscriptions
+        </label>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          className="text-sm px-3 py-2 rounded-lg font-semibold"
+          style={{
+            background: colors.primary,
+            color: "#fff",
+            opacity: busy ? 0.5 : 1,
+          }}
+          disabled={busy}
+          onClick={() => run(true)}
+          data-testid="id-migration-stripe-billing-preview-btn"
+        >
+          {busy && !hasPreviewed ? "Previewing…" : "Preview (Dry Run)"}
+        </button>
+      </div>
+      {hasPreviewed ? (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <span className="text-xs" style={{ color: colors.muted }}>
+            Type "IMPORT" to enable commit:
+          </span>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            disabled={busy}
+            className="text-xs px-2 py-1 rounded-md font-mono"
+            style={{
+              background: colors.surface,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+              width: 100,
+            }}
+            data-testid="id-migration-stripe-billing-confirm-input"
+          />
+          <button
+            type="button"
+            className="text-sm px-3 py-2 rounded-lg font-semibold"
+            style={{
+              background: runReady ? "#DC2626" : colors.surfaceSecondary,
+              color: runReady ? "#fff" : colors.muted,
+              opacity: runReady ? 1 : 0.6,
+            }}
+            disabled={!runReady}
+            onClick={() => run(false)}
+            data-testid="id-migration-stripe-billing-run-btn"
+          >
+            {busy && hasPreviewed ? "Importing…" : "Run Import"}
+          </button>
+        </div>
+      ) : null}
+      {error ? (
+        <div
+          className="text-sm mt-3 p-2 rounded-md"
+          style={{ background: "#FEE2E2", color: "#991B1B" }}
+          data-testid="id-migration-stripe-billing-error"
+        >
+          {error}
+        </div>
+      ) : null}
+      {report ? (
+        <div className="mt-4" data-testid="id-migration-stripe-billing-report">
+          <div
+            className="text-xs mb-2"
+            style={{ color: colors.muted }}
+          >
+            {report.dry_run ? "Dry-run report" : "Committed report"} · cutoff {report.cutoff_date?.slice(0, 10)}
+          </div>
+          <table
+            className="min-w-full text-xs"
+            data-testid="id-migration-stripe-billing-diff-table"
+          >
+            <tbody>
+              <tr>
+                <td className="p-1 pr-4" style={{ color: colors.muted }}>Matched charges</td>
+                <td className="p-1 font-semibold" style={{ color: colors.onSurface }}
+                    data-testid="id-migration-stripe-billing-matched">
+                  {report.matched_charges}
+                </td>
+              </tr>
+              <tr>
+                <td className="p-1 pr-4" style={{ color: colors.muted }}>Unmatched charges (parked to customer)</td>
+                <td className="p-1 font-semibold" style={{ color: colors.onSurface }}>
+                  {report.unmatched_charges}
+                </td>
+              </tr>
+              <tr>
+                <td className="p-1 pr-4" style={{ color: colors.muted }}>Skipped duplicate charges</td>
+                <td className="p-1 font-semibold" style={{ color: colors.onSurface }}>
+                  {report.skipped_dup_charges}
+                </td>
+              </tr>
+              <tr>
+                <td className="p-1 pr-4" style={{ color: colors.muted }}>Payment records created</td>
+                <td className="p-1 font-semibold" style={{ color: colors.onSurface }}>
+                  {report.created_payment_records}
+                </td>
+              </tr>
+              <tr>
+                <td className="p-1 pr-4" style={{ color: colors.muted }}>Invoice records created</td>
+                <td className="p-1 font-semibold" style={{ color: colors.onSurface }}>
+                  {report.created_invoice_records}
+                </td>
+              </tr>
+              {report.include_subscriptions ? (
+                <tr>
+                  <td className="p-1 pr-4" style={{ color: colors.muted }}>Subscriptions imported</td>
+                  <td className="p-1 font-semibold" style={{ color: colors.onSurface }}>
+                    {report.created_subscription_records}
+                  </td>
+                </tr>
+              ) : null}
+              {(report.errors || []).length > 0 ? (
+                <tr>
+                  <td className="p-1 pr-4" style={{ color: "#DC2626" }}>Errors</td>
+                  <td className="p-1 font-semibold" style={{ color: "#DC2626" }}>
+                    {report.errors.length}
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </div>
   );
 }

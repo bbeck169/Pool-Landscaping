@@ -100,6 +100,18 @@ class CustomerIn(BaseModel):
     # ignored by the router paths (immutable once set). Kept Optional
     # so legacy docs read back as ``None``.
     customer_since: Optional[str] = None
+    # Feb 2026 · Stripe → CRM sync fields (populated by the BYO-Stripe
+    # migration flow — see ``services/stripe_customer_sync.py``).
+    # Redacted from public GET /customers responses (see the sanitizer
+    # at routers/customers.py:532/855) — surfaces only via the admin
+    # migration diff endpoint. Formalized here so the migration test
+    # suite has a schema-validated shape to write against.
+    stripe_customer_id: Optional[str] = None
+    stripe_default_payment_method_id: Optional[str] = None
+    stripe_card_brand: Optional[str] = None
+    stripe_card_last4: Optional[str] = None
+    stripe_synced_at: Optional[str] = None
+    stripe_sync_status: Optional[str] = None  # attached | no_card | imported
 
     @field_validator("pool_gallons")
     @classmethod

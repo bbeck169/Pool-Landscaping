@@ -347,3 +347,92 @@ async def deactivate_users(
 def _now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb 2026 · Stripe → CRM migration endpoints
+# ═════════════════════════════════════════════════════════════════════
+@router.post(
+    "/admin/migrations/sync-stripe-customers",
+    operation_id="admin_migrations_sync_stripe_customers",
+    summary="BYO-Stripe: import Stripe customers + attach cards to CRM",
+)
+async def sync_stripe_customers_endpoint(
+    body: Dict[str, Any] = Body(default_factory=dict),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Walk the tenant's Stripe customer roster, match to CRM
+    customers by email/phone, and (when ``dry_run=False``) attach
+    the Stripe customer id + default payment method to each match.
+
+    Super-admin only. Tenant-scoped. Idempotent — re-running only
+    attaches customers that weren't already attached.
+    """
+    _require_super_admin(user)
+    tid = tenant.get("id")
+    if not tid:
+        raise HTTPException(500, "tenant not resolved")
+    from services.stripe_customer_sync import sync_stripe_customers
+    from services.payments.stripe_charge import _UnconfiguredStripeError
+    try:
+        report = await sync_stripe_customers(
+            tenant_id=tid,
+            actor_user_id=user.get("id") or "",
+            dry_run=bool(body.get("dry_run", True)),
+            import_unmatched=bool(body.get("import_unmatched", False)),
+            limit=body.get("limit"),
+        )
+    except _UnconfiguredStripeError as exc:
+        raise HTTPException(
+            400,
+            "Stripe not configured — set STRIPE_SECRET_KEY_LIVE (or "
+            "STRIPE_SECRET_KEY_TEST) in the process env before calling "
+            "this endpoint.",
+        )
+    return report
+
+
+@router.post(
+    "/admin/migrations/sync-stripe-billing-history",
+    operation_id="admin_migrations_sync_stripe_billing_history",
+    summary="BYO-Stripe: import historical charges + invoices + subscriptions",
+)
+async def sync_stripe_billing_history_endpoint(
+    body: Dict[str, Any] = Body(default_factory=dict),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Import Stripe billing history (charges, invoices,
+    subscriptions) for the tenant. Historical-only — no receipts
+    fire, no dashboard-revenue recalc, no CRM invoice status
+    mutations. Prereq: at least one CRM customer must have
+    ``stripe_customer_id`` set (run the customer sync first).
+    """
+    _require_super_admin(user)
+    tid = tenant.get("id")
+    if not tid:
+        raise HTTPException(500, "tenant not resolved")
+    from services.stripe_billing_history_sync import (
+        PrereqNotMetError, sync_stripe_billing_history,
+    )
+    from services.payments.stripe_charge import _UnconfiguredStripeError
+    try:
+        report = await sync_stripe_billing_history(
+            tenant_id=tid,
+            actor_user_id=user.get("id") or "",
+            dry_run=bool(body.get("dry_run", True)),
+            months_back=int(body.get("months_back", 24)),
+            include_subscriptions=bool(body.get("include_subscriptions", True)),
+            limit_total=body.get("limit_total"),
+        )
+    except PrereqNotMetError as exc:
+        raise HTTPException(400, str(exc))
+    except _UnconfiguredStripeError:
+        raise HTTPException(
+            400,
+            "Stripe not configured — set STRIPE_SECRET_KEY_LIVE (or "
+            "STRIPE_SECRET_KEY_TEST) in the process env before calling "
+            "this endpoint.",
+        )
+    return report
