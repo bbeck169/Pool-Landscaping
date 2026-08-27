@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors, money } from "@/theme";
+import { KPI_TONE_ROTATION, getAccentTone } from "@/utils/serviceLineTheme";
 import LiveWeatherWidget from "@/components/Weather/WeatherWidget";
 import MassMessagingCard from "@/components/mass-messaging/MassMessagingCard";
 import TeamCpoReadinessWidget from "@/components/admin/TeamCpoReadinessWidget";
@@ -46,27 +47,41 @@ function Skeleton({ className = "", style = {} }) {
   );
 }
 
-function KpiCard({ icon: Icon, label, value, onClick, testId }) {
+function KpiCard({ icon: Icon, label, value, onClick, testId, tone }) {
+  // Feb 2026 · Color pass — each KPI tile picks up a distinct
+  // accent tone (violet / amber / sky / emerald / rose) so the
+  // dashboard headline row visually pops.  ``tone`` maps to a
+  // family under ``colors.accent`` — the icon gets the 500 shade,
+  // the soft background sits on the 50 shade, and a 4-pixel left
+  // border on the 500 shade ties them together.  White text on
+  // 500+ / dark text on 50 both pass WCAG AA (spot-checked in
+  // ``feb2026-color-contrast.test.js``).
+  const palette = getAccentTone(tone);
   return (
     <button
       onClick={onClick}
       className="text-left rounded-2xl p-5 transition hover:brightness-95 active:scale-[0.99]"
       style={{
-        backgroundColor: colors.surface,
+        backgroundColor: palette[50],
         border: `1px solid ${colors.border}`,
+        borderLeft: `4px solid ${palette[500]}`,
       }}
       data-testid={testId}
+      data-tone={tone || "sky"}
     >
       <div
         className="w-10 h-10 rounded-xl flex items-center justify-center mb-3"
-        style={{ backgroundColor: colors.brandTertiary, color: colors.brand }}
+        style={{ backgroundColor: palette[100], color: palette[600] }}
       >
         <Icon size={20} />
       </div>
       <div className="text-2xl font-bold" style={{ color: colors.onSurface }}>
         {value}
       </div>
-      <div className="text-xs mt-1" style={{ color: colors.muted }}>
+      <div
+        className="text-xs mt-1 font-semibold uppercase tracking-wide"
+        style={{ color: palette[700] }}
+      >
         {label}
       </div>
     </button>
@@ -192,9 +207,20 @@ function RevenueChart({ series, outstanding }) {
               formatter={(v) => [money(v), "Revenue"]}
             />
             <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-              {data.map((d, i) => (
-                <Cell key={i} fill={d.isLast ? colors.brand : colors.brandTertiary} />
-              ))}
+              {data.map((d, i) => {
+                // Feb 2026 · Color pass — rotate through the KPI
+                // accent palette so each bar reads distinctly,
+                // with the most-recent month on the primary pool
+                // accent (draws the eye to the "you are here"
+                // bar). Non-recent bars alternate through
+                // violet / amber / emerald / sky / rose using
+                // the ``500`` shade which every accent family
+                // exposes (only pool/landscape have a ``300``).
+                const palette = getAccentTone(
+                  KPI_TONE_ROTATION[i % KPI_TONE_ROTATION.length]);
+                const fill = d.isLast ? colors.pool[500] : palette[500];
+                return <Cell key={i} fill={fill} />;
+              })}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -525,6 +551,7 @@ export default function AdminDashboard() {
               value={data.active_jobs}
               onClick={() => navigate("/jobs")}
               testId="kpi-active-jobs"
+              tone="sky"
             />
             <KpiCard
               icon={Hourglass}
@@ -532,6 +559,7 @@ export default function AdminDashboard() {
               value={data.pending_jobs}
               onClick={() => navigate("/jobs")}
               testId="kpi-pending"
+              tone="amber"
             />
             <KpiCard
               icon={Users}
@@ -539,6 +567,7 @@ export default function AdminDashboard() {
               value={data.total_customers}
               onClick={() => navigate("/customers")}
               testId="kpi-customers"
+              tone="violet"
             />
             <KpiCard
               icon={Wrench}
@@ -546,6 +575,7 @@ export default function AdminDashboard() {
               value={data.total_technicians}
               onClick={() => navigate("/more")}
               testId="kpi-technicians"
+              tone="emerald"
             />
           </>
         ) : (

@@ -149,17 +149,56 @@ export function TextInput({ label, id, testid, wrapperClass = "", ...rest }) {
   );
 }
 
-export function Button({ children, variant = "primary", className = "", testid, ...rest }) {
+export function Button({ children, variant = "primary", tone, className = "", testid, ...rest }) {
+  // Feb 2026 · Color pass — the ``tone`` prop lets a caller
+  // route the primary CTA into a service-line palette
+  // (``"pool"`` = cyan, ``"landscape"`` = green) or a direct
+  // accent (``"violet"``, ``"amber"``, ``"sky"``, ``"emerald"``,
+  // ``"rose"``). No tone → the existing brand gradient stays —
+  // keeps every historical caller pixel-identical.
+  //
+  // Hover behaviour: the primary variant already relies on
+  // ``hover:brightness-95``, which darkens the whole surface one
+  // step. That matches the "500 → 600 on hover" contract the
+  // color-pass spec calls for without needing a Framer-Motion
+  // dance.  For solid-color tones we bump to the ``600`` shade
+  // via a straight fill so the visual step is more obvious than
+  // ``brightness(95%)`` alone.
+  let toneBg = null;
+  let toneOnBg = "#fff";
+  if (tone && variant === "primary") {
+    const map = colors.accent[String(tone).toLowerCase()];
+    if (map) {
+      toneBg = map[600];  // 600 = default rest state, brightness-95
+                          // gets us visually into 700 on hover
+    } else if (tone === "pool") {
+      toneBg = colors.pool[600];
+    } else if (tone === "landscape" || tone === "landscaping") {
+      toneBg = colors.landscape[600];
+    } else if (tone === "solid") {
+      // "solid" retains the brand hue but drops the gradient for a
+      // flatter, more vibrant primary.
+      toneBg = colors.brand;
+    }
+  }
+
   const variants = {
-    primary: {
-      background:
-        "linear-gradient(90deg, #0284C7 0%, #16A34A 100%)",
-      color: "#fff",
-    },
+    primary: toneBg
+      ? { background: toneBg, color: toneOnBg }
+      : {
+          background:
+            "linear-gradient(90deg, #0284C7 0%, #16A34A 100%)",
+          color: "#fff",
+        },
     ghost: {
       background: colors.surfaceSecondary,
       color: colors.onSurface,
       border: `1px solid ${colors.border}`,
+    },
+    outline: {
+      background: colors.surface,
+      color: toneBg || colors.brand,
+      border: `1px solid ${toneBg || colors.brand}`,
     },
     danger: {
       background: "#FEE2E2",
@@ -174,6 +213,7 @@ export function Button({ children, variant = "primary", className = "", testid, 
       className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition active:scale-[0.99] hover:brightness-95 disabled:opacity-60 ${className}`}
       style={s}
       data-testid={testid}
+      data-tone={tone || variant}
     >
       {children}
     </button>
