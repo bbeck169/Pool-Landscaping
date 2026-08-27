@@ -75,7 +75,7 @@ export function LiveMatchPreview({ sequenceId, trigger, enabled = true, testIdPr
           style={{ color: colors.muted }}
           data-testid={`${testIdPrefix}-idle`}
         >
-          Add a condition with an event to see who this trigger would match today.
+          Add a condition to see match count.
         </div>
       ) : state.loading && !state.data ? (
         <div

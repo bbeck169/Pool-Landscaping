@@ -689,3 +689,154 @@ describe("Phase 2 payload shape (integration)", () => {
     expect(validity.ok).toBe(false);
   });
 });
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 9. Phase 3 polish — drag reorder, unsaved-toast, zero-cond text
+// ═══════════════════════════════════════════════════════════════════
+describe("Phase 3 polish", () => {
+  it("LiveMatchPreview idle state uses the concise polish copy", () => {
+    render(
+      <LiveMatchPreview
+        sequenceId="seq-x"
+        trigger={{ logic: "AND", conditions: [] }}
+        enabled
+      />,
+    );
+    const idle = screen.getByTestId("trigger-preview-idle");
+    expect(idle).toBeInTheDocument();
+    // Polish spec: "Add a condition to see match count".
+    expect(idle.textContent || "").toMatch(/add a condition/i);
+    expect(idle.textContent || "").toMatch(/match count/i);
+  });
+
+  it("ConditionRow exposes a drag handle and dropping reorders", () => {
+    const onReorder = vi.fn();
+    render(
+      <ConditionRow
+        index={1}
+        condition={{ event: "job_completed", delay: { mode: "immediate" }, filters: {} }}
+        catalog={MOCK_CATALOG}
+        technicians={[]}
+        crews={[]}
+        onChange={() => {}}
+        onRemove={() => {}}
+        onReorder={onReorder}
+        testIdPrefix="trigger"
+      />,
+    );
+    // Drag handle renders when onReorder is passed.
+    const handle = screen.getByTestId("trigger-row-1-drag-handle");
+    expect(handle).toBeInTheDocument();
+
+    // Simulate HTML5 drop with "0" (source index) landing on row 1.
+    const row = screen.getByTestId("trigger-row-1");
+    const setData = vi.fn();
+    const getData = vi.fn().mockReturnValue("0");
+    fireEvent.dragStart(handle, {
+      dataTransfer: { setData, effectAllowed: "" },
+    });
+    fireEvent.dragOver(row, {
+      dataTransfer: { dropEffect: "" },
+    });
+    fireEvent.drop(row, {
+      dataTransfer: { getData },
+    });
+    expect(onReorder).toHaveBeenCalledWith(0, 1);
+  });
+
+  it("ConditionRow hides the drag handle when onReorder is not provided", () => {
+    render(
+      <ConditionRow
+        index={0}
+        condition={{ event: "job_completed", delay: { mode: "immediate" }, filters: {} }}
+        catalog={MOCK_CATALOG}
+        technicians={[]}
+        crews={[]}
+        onChange={() => {}}
+        onRemove={() => {}}
+        testIdPrefix="trigger"
+      />,
+    );
+    expect(screen.queryByTestId("trigger-row-0-drag-handle")).not.toBeInTheDocument();
+  });
+
+  it("TriggerBuilder reorders conditions when a row is dragged onto another", async () => {
+    _defaultApiMocks();
+    const onChange = vi.fn();
+    render(
+      <TriggerBuilder
+        sequenceId="seq-reorder"
+        initialTrigger={{
+          logic: "AND",
+          conditions: [
+            { event: "job_completed", delay: { mode: "immediate" }, filters: {} },
+            { event: "invoice_paid",  delay: { mode: "immediate" }, filters: {} },
+          ],
+        }}
+        onChange={onChange}
+      />,
+    );
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalled());
+
+    // Drag row 1 (invoice_paid) up onto row 0.
+    const handle = screen.getByTestId("trigger-row-1-drag-handle");
+    const row0 = screen.getByTestId("trigger-row-0");
+    fireEvent.dragStart(handle, {
+      dataTransfer: { setData: vi.fn(), effectAllowed: "" },
+    });
+    fireEvent.dragOver(row0, {
+      dataTransfer: { dropEffect: "" },
+    });
+    fireEvent.drop(row0, {
+      dataTransfer: { getData: vi.fn().mockReturnValue("1") },
+    });
+
+    await waitFor(() => {
+      const last = onChange.mock.calls.at(-1)[0];
+      expect(last.conditions.map((c) => c.event)).toEqual([
+        "invoice_paid", "job_completed",
+      ]);
+    });
+  });
+
+  it("TriggerBuilder emits onDirtyChange(true) when a condition is added", async () => {
+    _defaultApiMocks();
+    const onDirtyChange = vi.fn();
+    render(
+      <TriggerBuilder
+        sequenceId="seq-dirty"
+        initialTrigger={{ logic: "AND", conditions: [] }}
+        onDirtyChange={onDirtyChange}
+      />,
+    );
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalled());
+    // Not dirty at boot.
+    expect(onDirtyChange.mock.calls.at(-1)?.[0]).toBe(false);
+    fireEvent.click(screen.getByTestId("trigger-add-condition"));
+    await waitFor(() => {
+      expect(onDirtyChange.mock.calls.at(-1)?.[0]).toBe(true);
+    });
+  });
+
+  it("TriggerBuilder registers a beforeunload handler while dirty", async () => {
+    _defaultApiMocks();
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const removeSpy = vi.spyOn(window, "removeEventListener");
+    const { unmount } = render(
+      <TriggerBuilder sequenceId="seq-bu" initialTrigger={{ logic: "AND", conditions: [] }} />,
+    );
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("trigger-add-condition"));
+    await waitFor(() => {
+      const kinds = addSpy.mock.calls.map((c) => c[0]);
+      expect(kinds).toContain("beforeunload");
+    });
+    // Unmount → the beforeunload handler must detach.
+    unmount();
+    const removedKinds = removeSpy.mock.calls.map((c) => c[0]);
+    expect(removedKinds).toContain("beforeunload");
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+  });
+});

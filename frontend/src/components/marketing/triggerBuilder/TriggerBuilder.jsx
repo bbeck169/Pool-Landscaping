@@ -12,9 +12,17 @@
  * Persists an unsaved draft under
  * ``localStorage['sequence.<id>.draftTrigger']`` so an accidental
  * refresh doesn't lose work.
+ *
+ * Phase 3 polish · Feb 2026:
+ *   * Drag-reorder ConditionRow via ``moveCondition(from, to)``.
+ *   * Sonner "Unsaved changes — draft auto-saved" toast on the
+ *     first dirty transition.
+ *   * ``beforeunload`` browser prompt while dirty so a tab close
+ *     doesn't lose work.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Zap } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
 
@@ -32,11 +40,27 @@ const EMPTY_CONDITION = () => ({
 });
 
 
+// Stable JSON serialiser for dirty-state comparison — orders keys so
+// two structurally equal triggers always stringify identically.
+function _canonical(trigger) {
+  const norm = {
+    logic: (trigger?.logic || "AND").toUpperCase(),
+    conditions: (trigger?.conditions || []).map((c) => ({
+      event: c?.event || "",
+      delay: c?.delay || { mode: "immediate" },
+      filters: c?.filters || {},
+    })),
+  };
+  return JSON.stringify(norm);
+}
+
+
 export function TriggerBuilder({
   sequenceId,
   initialTrigger,
   onChange,
   onValidityChange,
+  onDirtyChange,
 }) {
   // Boot state: prefer any localStorage draft over the persisted
   // trigger so an accidental refresh keeps unsaved work.
@@ -60,6 +84,14 @@ export function TriggerBuilder({
   const [technicians, setTechnicians] = useState([]);
   const [crews, setCrews] = useState([]);
   const [autoSwitchMap, setAutoSwitchMap] = useState({}); // per-row toast info
+
+  // ─── Baseline snapshot for dirty comparison (frozen at mount) ─
+  const baselineRef = useRef(
+    _canonical(initialTrigger && Array.isArray(initialTrigger.conditions)
+      ? initialTrigger
+      : { logic: "AND", conditions: [] }),
+  );
+  const dirtyToastedRef = useRef(false);
 
   // ─── Catalog + sidebar fetches ────────────────────────────────
   useEffect(() => {
@@ -95,6 +127,37 @@ export function TriggerBuilder({
     onValidityChange?.(validity);
   }, [validity, onValidityChange]);
 
+  // ─── Dirty tracking + unsaved-changes UX ──────────────────────
+  const isDirty = useMemo(
+    () => _canonical(trigger) !== baselineRef.current,
+    [trigger],
+  );
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+    if (isDirty && !dirtyToastedRef.current) {
+      dirtyToastedRef.current = true;
+      try {
+        toast("Unsaved changes — draft auto-saved locally.", {
+          description: "Save the sequence to publish these changes.",
+          duration: 4000,
+        });
+      } catch { /* toast host missing in tests — silent */ }
+    }
+    if (!isDirty) dirtyToastedRef.current = false;
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!isDirty) return undefined;
+    const handler = (e) => {
+      e.preventDefault();
+      // The string is ignored by modern browsers but must be set.
+      e.returnValue = "You have unsaved trigger changes.";
+      return e.returnValue;
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
   // ─── Mutators ──────────────────────────────────────────────────
   const setLogic = (logic) => setTrigger((t) => ({ ...t, logic }));
 
@@ -117,6 +180,20 @@ export function TriggerBuilder({
       const next = { ...m };
       delete next[i];
       return next;
+    });
+  };
+
+  // Phase 3 polish — drag-reorder handler. ConditionRow's HTML5
+  // handle calls this with the source + target indices.
+  const moveCondition = (from, to) => {
+    if (from === to) return;
+    setTrigger((t) => {
+      const list = [...(t.conditions || [])];
+      if (from < 0 || from >= list.length) return t;
+      const clampedTo = Math.max(0, Math.min(to, list.length - 1));
+      const [moved] = list.splice(from, 1);
+      list.splice(clampedTo, 0, moved);
+      return { ...t, conditions: list };
     });
   };
 
@@ -188,6 +265,7 @@ export function TriggerBuilder({
                 crews={crews}
                 onChange={(next) => handleConditionChange(i, next)}
                 onRemove={() => removeCondition(i)}
+                onReorder={moveCondition}
                 autoSwitchedInfo={autoSwitchMap[i] || null}
                 testIdPrefix="trigger"
               />

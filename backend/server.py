@@ -165,8 +165,10 @@ from routers import inventory_reports as _p18_inventory_reports  # noqa: E402
 # leak the hooks into a prod build.
 if os.environ.get("ALLOW_TEST_HOOKS") == "1":
     from routers import stripe_test_hooks as _p47c_stripe_hooks  # noqa: E402
+    from routers import marketing_test_hooks as _feb2026_marketing_hooks  # noqa: E402
 else:
     _p47c_stripe_hooks = None  # type: ignore[assignment]
+    _feb2026_marketing_hooks = None  # type: ignore[assignment]
 
 app = FastAPI(
     title="Pool CRM API",
@@ -391,6 +393,10 @@ api_router.include_router(_p53a_ebit.router)
 # hooks module actually imported (ALLOW_TEST_HOOKS=1 gate above).
 if _p47c_stripe_hooks is not None:
     api_router.include_router(_p47c_stripe_hooks.router)
+# Feb-2026 · Phase 3 — Marketing pipeline test hooks (emit-event +
+# run-sweep). Same ALLOW_TEST_HOOKS gate as the stripe hooks above.
+if _feb2026_marketing_hooks is not None:
+    api_router.include_router(_feb2026_marketing_hooks.router)
 # Phase 54a · Feb-2026 — Wholesale supplier pricebook import (skeleton).
 from routers import suppliers as _p54a_suppliers  # noqa: E402
 api_router.include_router(_p54a_suppliers.router)
