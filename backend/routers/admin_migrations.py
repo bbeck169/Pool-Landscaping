@@ -491,3 +491,43 @@ async def sync_stripe_billing_history_endpoint(
             "this endpoint.",
         )
     return report
+
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/backfill-persona-avatars
+# Feb 2026 — super_admin trigger for the persona ``avatar_url``
+# backfill. Boot-migration also runs this on every server start
+# (see ``server.py``); this endpoint lets ops force a re-run without
+# a redeploy, which is what production needs after the initial sentinel
+# has already fired for a schema tweak or a canonical-key addition.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/backfill-persona-avatars",
+    operation_id="admin.migrations.backfill_persona_avatars",
+)
+async def backfill_persona_avatars(
+    force: bool = Query(
+        False,
+        description=(
+            "When true, bypasses the ``db.migrations`` sentinel and "
+            "re-runs the backfill against every ``ai_employees`` doc. "
+            "Idempotent — docs already at the canonical URL are "
+            "skipped in-cursor. Use this when the sentinel already "
+            "fired but you've shipped new canonical persona keys or "
+            "renamed portrait files."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_super_admin(user)
+    from services.migrations.persona_avatar_backfill import (
+        backfill_persona_avatar_urls,
+    )
+    report = await backfill_persona_avatar_urls(force=force)
+    logger.info(
+        "[persona-avatar-api] user=%s caller_tenant=%s force=%s report=%s",
+        user.get("id"), tenant.get("id"), force, report,
+    )
+    return report
+

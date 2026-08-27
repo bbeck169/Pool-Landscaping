@@ -81,6 +81,7 @@ from routers import (
     pipelines,
     ai_estimator,
     before_after,
+    objects as objects_router,
     instaquote,
     instaschedule,
     chat,
@@ -636,6 +637,7 @@ for module in [notifications_router,
                pipelines,
                ai_estimator,
                before_after,
+               objects_router,
                instaquote,
                instaschedule,
                chat,
@@ -2118,6 +2120,38 @@ async def startup():
         logger.info(f"[marketing.v2] {_v2_report}")
     except Exception as e:
         logger.warning(f"marketing_sequences v2 migration crashed: {e}")
+
+    # Feb 2026 · Object-Storage URL migration — idempotent, sentinel-
+    # guarded rewrite of any DB record still pointing at pod-local
+    # ``/uploads/*`` or bare ``/objects/*`` URLs. Uploads surviving
+    # pod-local files to Emergent Object Storage and rewrites the DB
+    # URL to the canonical ``/api/objects/{path}`` shape served by
+    # ``routers/objects.py``. See
+    # ``services/migrations/object_storage_url_migration.py``.
+    try:
+        from services.migrations.object_storage_url_migration import (
+            migrate_object_storage_urls,
+        )
+        _obj_report = await migrate_object_storage_urls()
+        logger.info(f"[url_migration] {_obj_report}")
+    except Exception as e:
+        logger.warning(f"object_storage url migration crashed: {e}")
+
+    # Feb 2026 · Persona avatar_url backfill — idempotent, sentinel-
+    # guarded stamp of ``/avatars/personas/{key}.jpg`` on every
+    # ai_employees doc whose ``key`` is one of the 10 canonical
+    # admin personas (the "Pixar portraits" shipped as static
+    # frontend assets). Ensures a fresh prod redeploy renders every
+    # persona's portrait without an admin touching the database.
+    # See ``services/migrations/persona_avatar_backfill.py``.
+    try:
+        from services.migrations.persona_avatar_backfill import (
+            backfill_persona_avatar_urls,
+        )
+        _pa_report = await backfill_persona_avatar_urls()
+        logger.info(f"[persona-avatar] {_pa_report}")
+    except Exception as e:
+        logger.warning(f"persona avatar backfill crashed: {e}")
 
     # Feb-2026 Customer Detail Additions — idempotent one-shot back-fill
     # of the ``mobiles`` / ``emails`` arrays from the legacy scalar

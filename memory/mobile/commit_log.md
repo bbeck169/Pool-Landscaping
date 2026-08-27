@@ -726,3 +726,17 @@
   - No changes to `backend/` or `frontend/`. No new deps installed.
 - **Files created**: `cache.web.ts`, `cache.ts` (selector), `__tests__/offline-cache-web.test.tsx`
 - **Files renamed**: `cache.ts` → `cache.native.ts`
+
+
+## Iteration 34 — Phase P16: Mapbox config hardening + Expo OTA updates + MapErrorBoundary
+- **Commit**: f4bf293d (uncommitted changes on top)
+- **Date**: 2026-08-27
+- **Changes**:
+  - **Task 1a**: Restored `RNMapboxMapsDownloadToken: "$RNMAPBOX_MAPS_DOWNLOAD_TOKEN"` in `@rnmapbox/maps` plugin config in `app.json`. EAS resolves this at build time from the project's secret env var.
+  - **Task 1b**: Created `src/components/MapErrorBoundary.tsx` — class component with `getDerivedStateFromError` + `componentDidCatch`. Fallback: amber card with "Route map unavailable — {error.message}" and Retry button. Wraps `<DailyRouteMap>` in `calendar.tsx`.
+  - **Task 2**: Enabled Expo OTA updates: `enabled: true`, `checkAutomatically: "ON_LOAD"`, `fallbackToCacheTimeout: 0`, URL `https://u.expo.dev/bdd4bc95-5d7c-46d8-8243-0b6ed1e9aa19` (project ID from `expo.extra.eas.projectId`). `runtimeVersion` with `policy: "appVersion"` was already present.
+  - JSON validity: ✅. Lint: MapErrorBoundary clean ✅, calendar.tsx pre-existing hook warnings only.
+  - iOS bundle: Bundled successfully (1953 modules). Mobile service RUNNING, 200 OK.
+  - No changes to `backend/` or `frontend/`. No new deps. No external repos cloned.
+- **Files created**: `src/components/MapErrorBoundary.tsx`
+- **Files modified**: `app.json` (Mapbox plugin + updates config), `calendar.tsx` (+import, +ErrorBoundary wrap)

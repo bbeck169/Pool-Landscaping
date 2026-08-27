@@ -156,27 +156,44 @@ def _compose_card(before: bytes, after: bytes, *,
 
 
 async def _upload_card(tenant_id: str, pair_id: str, png_bytes: bytes) -> str:
-    """Persist card PNG. Prefers Emergent Object Storage; falls back to
-    the media-serving path for local dev."""
+    """Persist card PNG to Emergent Object Storage and return the
+    resolvable ``/api/objects/{storage_path}`` URL.
+
+    Feb 2026 · Object-Storage migration — the previous local-disk
+    fallback (write to ``/app/backend/uploads/before_after/`` and
+    return ``/api/media/before-after/{pair_id}.png``) was flagged as a
+    pod-ephemeral write path: files vanish on redeploy, so the share
+    card in every stored ``before_after_pairs`` row would 404 after
+    the next roll. Object storage is now the ONLY write path. If the
+    storage session isn't initialised, we raise so the caller returns
+    a clean ``upload_failed`` error instead of silently writing to a
+    disappearing pod path.
+    """
     from services import object_storage as os_
-    if os_.is_ready():
-        path = os_.build_path(tenant_id, "before_after", pair_id,
-                                f"{pair_id}.png")
-        r = os_.put_object(path, png_bytes, "image/png")
-        return r.get("url") or r.get("public_url") or path
-    # Local fallback — write into /app/backend/uploads/before_after/.
-    local_dir = "/app/backend/uploads/before_after"
-    os.makedirs(local_dir, exist_ok=True)
-    fp = f"{local_dir}/{pair_id}.png"
-    with open(fp, "wb") as f:
-        f.write(png_bytes)
-    return f"/api/media/before-after/{pair_id}.png"
+    if not os_.is_ready():
+        try:
+            os_.init_storage()
+        except Exception:  # noqa: BLE001
+            pass
+    if not os_.is_ready():
+        raise RuntimeError("object_storage_not_initialised")
+    path = os_.build_path(tenant_id, "before_after", pair_id,
+                            f"{pair_id}.png")
+    os_.put_object(path, png_bytes, "image/png")
+    # Return the ``/api/objects/{path}`` retrieval URL — routed through
+    # the ingress → routers/objects.py → object_storage.get_object.
+    return f"/api/objects/{path}"
 
 
 @router.get("/media/before-after/{filename}")
 async def serve_local_card(filename: str):
-    """Local dev serving. Returns 404 in production where Object
-    Storage handles it."""
+    """Feb 2026 · Backwards-compat only — serves any pre-migration
+    share card still living on pod-local disk. New writes go straight
+    to Emergent Object Storage (see ``_upload_card`` above) and
+    return ``/api/objects/{path}`` URLs served by
+    ``routers/objects.py``. This handler stays alive until the boot
+    migration confirms every legacy row has been converted; once
+    prod telemetry shows zero hits it can be removed."""
     from fastapi.responses import FileResponse
     if "/" in filename or ".." in filename:
         raise HTTPException(400, "bad filename")

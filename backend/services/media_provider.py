@@ -147,8 +147,12 @@ async def _persist_image(url_or_datauri: str) -> Tuple[str, str]:
         _obj.put_object(storage_path, data, content_type)
     except Exception as _put_exc:  # noqa: BLE001
         raise ProviderError(f"object_storage_put_failed: {_put_exc}")
-    return image_id, f"/objects/{storage_path}"
-    return image_id, f"/uploads/generated/{image_id}.{ext}"
+    # Feb 2026 · Object-Storage streaming — retrieval goes through
+    # ``/api/objects/{path}`` (routers/objects.py) which resolves the
+    # bytes via ``object_storage.get_object``. The prior ``/objects/*``
+    # prefix without ``/api`` would be dropped by Kubernetes ingress
+    # (only ``/api/*`` forwards to the backend).
+    return image_id, f"/api/objects/{storage_path}"
 
 
 # ─────────────────────────────────────────────────────────────────────

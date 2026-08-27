@@ -17,10 +17,10 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/bdd4bc95-5d7c-46d8-8243-0b6ed1e9aa19",
-      "enabled": false,
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0,
-      "checkAutomatically": "NEVER"
+      "url": "https://u.expo.dev/bdd4bc95-5d7c-46d8-8243-0b6ed1e9aa19"
     },
     "ios": {
       "supportsTablet": true,
@@ -147,7 +147,9 @@
       ],
       [
         "@rnmapbox/maps",
-        {}
+        {
+          "RNMapboxMapsDownloadToken": "$RNMAPBOX_MAPS_DOWNLOAD_TOKEN"
+        }
       ],
       [
         "expo-audio",

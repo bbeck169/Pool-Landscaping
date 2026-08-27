@@ -61,6 +61,7 @@ import ScheduleMap from "@/src/components/schedule/ScheduleMap";
 // header, numbered pins by route_index, status-colored, tap for
 // callout with Open→job checklist. Hides itself when 0 jobs.
 import DailyRouteMap from "@/src/components/schedule/DailyRouteMap";
+import { MapErrorBoundary } from "@/src/components/MapErrorBoundary";
 // Feb-2026 · Schedule polish — amber-accented job-notes chip.
 import JobNotesCallout from "@/src/components/schedule/JobNotesCallout";
 import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
@@ -749,7 +750,9 @@ function GridView(props: any) {
           for the currently-selected day. Hides itself when 0 jobs.
           Per-tech expand/collapse state persists in AsyncStorage
           keyed by user_id. */}
-      <DailyRouteMap jobs={dayJobs || jobs} userId={userId} />
+      <MapErrorBoundary testID="daily-route-map-error-boundary">
+        <DailyRouteMap jobs={dayJobs || jobs} userId={userId} />
+      </MapErrorBoundary>
 
       {/* List | Map toggle */}
       <View style={gStyles.subModeRow} testID="grid-sub-mode-toggle">
