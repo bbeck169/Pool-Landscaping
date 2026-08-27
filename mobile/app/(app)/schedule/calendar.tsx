@@ -21,10 +21,10 @@
  *   PUT  /api/jobs/{id}   {status,scheduled_date}   (mark complete / move)
  *   POST /api/jobs/reorder  {job_ids:[…]}           (admin rearrange)
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform,
-  ActivityIndicator, Alert, Modal,
+  ActivityIndicator, Alert, Modal, FlatList,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, Redirect } from "expo-router";
@@ -177,6 +177,12 @@ export default function ScheduleCalendar() {
   const [reassignTechId, setReassignTechId] = useState("");
   const [hourlyData, setHourlyData] = useState<HourlyEntry[]>([]);
 
+  // Phase P17 — OOM fix: cache the last-fetched date range so day-tap
+  // navigation inside the already-loaded window skips the network.
+  // Margin = 3 days → only re-fetch when the user navigates close to
+  // the edge of the cached range.
+  const fetchedRangeRef = useRef<{ start: string; end: string } | null>(null);
+
   // Load persisted mode.
   useEffect(() => {
     (async () => {
@@ -191,11 +197,25 @@ export default function ScheduleCalendar() {
     storage.setItem(MODE_KEY, m).catch(() => {/* incognito — in-memory only */});
   };
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
+    // Phase P17 — OOM fix: narrower window (±14d instead of -14/+60d)
+    // + skip fetch if the focus date is still inside the cached range.
+    const BACK_DAYS = 7;
+    const FWD_DAYS  = 14;
+    const MARGIN    = 3;
+    const focusStr = iso(focus);
+    if (
+      !force &&
+      fetchedRangeRef.current &&
+      focusStr >= iso(addDays(new Date(fetchedRangeRef.current.start + "T00:00:00"), MARGIN)) &&
+      focusStr <= iso(addDays(new Date(fetchedRangeRef.current.end   + "T00:00:00"), -MARGIN))
+    ) {
+      return; // inside the cached interior — no network needed
+    }
     setLoading(true); setErr("");
     try {
-      const start = iso(addDays(focus, -14));
-      const end   = iso(addDays(focus,  60));
+      const start = iso(addDays(focus, -BACK_DAYS));
+      const end   = iso(addDays(focus,  FWD_DAYS));
       // Feb-2026 · Phase 1 offline — write-through on success, read
       // from the SQLite cache when the network throws.  Only cache
       // for the current tech (bulk-replace is scoped by user).
@@ -205,10 +225,12 @@ export default function ScheduleCalendar() {
         readCache:    async ()  => { return techUserId ? await readCachedWeekJobs(techUserId) : []; },
       });
       const arr = Array.isArray(data) ? data : (data.items || data.data || []);
+      fetchedRangeRef.current = { start, end };
       setJobs(arr);
     } catch (e: any) {
       setErr(e.message || "Failed to load schedule");
     } finally { setLoading(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, user?.id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -262,7 +284,7 @@ export default function ScheduleCalendar() {
     setBusy(false);
     setChecked(new Set());
     Alert.alert("Marked complete", `${ok} closed · ${fail} failed`);
-    await load();
+    await load(true);
   };
 
   const bulkMove = async () => {
@@ -280,7 +302,7 @@ export default function ScheduleCalendar() {
     setChecked(new Set());
     setMoveOpen(false); setMoveDate("");
     Alert.alert("Move complete", `${ok} moved · ${fail} failed`);
-    await load();
+    await load(true);
   };
 
   const bulkDelete = async () => {
@@ -296,7 +318,7 @@ export default function ScheduleCalendar() {
           await api.post("/jobs/bulk-soft-delete", { job_ids: [...checked] });
           Alert.alert("Deleted", `${checked.size} job${checked.size === 1 ? "" : "s"} removed.`);
           setChecked(new Set());
-          await load();
+          await load(true);
         } catch (e: any) {
           Alert.alert("Delete failed", e.message || "Unknown error");
         } finally { setBusy(false); }
@@ -327,7 +349,7 @@ export default function ScheduleCalendar() {
       Alert.alert("Reassigned", `${checked.size} job${checked.size === 1 ? "" : "s"} assigned to ${techName}.`);
       setChecked(new Set());
       setReassignOpen(false);
-      await load();
+      await load(true);
     } catch (e: any) {
       Alert.alert("Reassign failed", e.message || "Unknown error");
     } finally { setBusy(false); }
@@ -343,7 +365,7 @@ export default function ScheduleCalendar() {
     try {
       await api.post("/jobs/reorder", { job_ids: reorderList.map((j) => j.id) });
       Alert.alert("Route saved", `New order saved for ${reorderList.length} jobs.`);
-      await load();
+      await load(true);
     } catch (e: any) {
       Alert.alert("Reorder failed", e.message || "Try again.");
     } finally {
@@ -872,24 +894,34 @@ function GridView(props: any) {
           }}
           testID="grid-dnd-list"
         />
-      ) : jobs.map((j: Job, idx: number) => (
-        <JobRow
-          key={j.id}
-          job={j}
-          idx={idx}
-          checked={checked.has(j.id)}
-          onCheck={() => onToggle(j.id)}
-          onOpen={() => onOpenJob(j.id)}
-          rearrangeMode={rearrangeMode}
-          onShift={onShift}
-          first={idx === 0}
-          last={idx === jobs.length - 1}
-          hourlyData={hourlyData}
-          isAdminForCard={isAdmin}
-          onEdit={isAdmin ? onOpenEdit : undefined}
-          role={role}
+      ) : (
+        <FlatList
+          data={jobs}
+          keyExtractor={(item: Job) => item.id}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={7}
+          removeClippedSubviews={Platform.OS === "android"}
+          testID="grid-job-list"
+          renderItem={({ item, index }: { item: Job; index: number }) => (
+            <JobRow
+              job={item}
+              idx={index}
+              checked={checked.has(item.id)}
+              onCheck={() => onToggle(item.id)}
+              onOpen={() => onOpenJob(item.id)}
+              rearrangeMode={rearrangeMode}
+              onShift={onShift}
+              first={index === 0}
+              last={index === jobs.length - 1}
+              hourlyData={hourlyData}
+              isAdminForCard={isAdmin}
+              onEdit={isAdmin ? onOpenEdit : undefined}
+              role={role}
+            />
+          )}
         />
-      ))}
+      )}
         </>
       )}
       {weatherWidget ? (

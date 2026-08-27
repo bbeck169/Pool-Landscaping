@@ -228,15 +228,31 @@ async def detect_duplicates_for_tenant(
     ``filters`` (optional): forward-compat surface. Currently supports:
       * ``min_score`` (float, default 0.92) — fuzzy name threshold.
       * ``exclude_match_types`` (list[str]) — skip specific strategies.
+      * ``customer_ids`` (list[str]) — restrict output to groups whose
+        member set is a **subset** of the given ids. Used by the
+        Phase-2 merge modal so its detection banner only surfaces
+        matches involving the currently-checked customers.
     """
     filters = filters or {}
     min_score = float(filters.get("min_score") or 0.92)
     exclude = set(filters.get("exclude_match_types") or [])
+    scope_ids = filters.get("customer_ids") or []
+    if scope_ids and not isinstance(scope_ids, (list, tuple, set)):
+        scope_ids = [scope_ids]
+    scope_set = set(scope_ids) if scope_ids else None
     if not tenant_id:
         return []
     rows = await _load_active_customers(tenant_id)
     if not rows:
         return []
+    # Scope filter — only when the caller passed a customer_ids
+    # subset. Any group whose member set escapes this subset is
+    # dropped so the Phase-2 merge modal's detection banner reflects
+    # ONLY matches involving currently-checked rows.
+    if scope_set is not None:
+        rows = [r for r in rows if r.get("id") in scope_set]
+        if not rows:
+            return []
 
     groups: List[Dict[str, Any]] = []
 

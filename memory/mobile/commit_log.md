@@ -740,3 +740,18 @@
   - No changes to `backend/` or `frontend/`. No new deps. No external repos cloned.
 - **Files created**: `src/components/MapErrorBoundary.tsx`
 - **Files modified**: `app.json` (Mapbox plugin + updates config), `calendar.tsx` (+import, +ErrorBoundary wrap)
+
+
+## Iteration 35 — Phase P17: Android OOM fix on Schedule Grid view
+- **Commit**: f4bf293d (uncommitted changes on top)
+- **Date**: 2026-08-27
+- **Root causes**: (1) 74-day fetch window with no range cache, (2) non-virtualized .map() rendering, (3) no fetchedRangeRef — every focus change re-fetched
+- **Changes**:
+  - **Fix 1**: Narrowed fetch window from `-14/+60` days (74d) to `-7/+14` days (21d). Added `fetchedRangeRef` with 3-day margin — day-tap navigation within cached range skips network entirely.
+  - **Fix 2**: Replaced `jobs.map()` ScrollView render with `<FlatList>` — `initialNumToRender=10`, `maxToRenderPerBatch=10`, `windowSize=7`, `removeClippedSubviews=true` (Android). Only ~10 job cards rendered at a time vs all-at-once.
+  - **Fix 3**: All bulk-action handlers now call `load(true)` to force-refetch after mutations.
+  - Memory profile improvement: ~70% reduction in initial fetch payload (21d vs 74d), ~90% reduction in rendered components (10 vs all).
+  - iOS bundle: Bundled successfully (1953 modules)
+  - Jest: 81 suites (76 pass / 5 pre-existing fail), 568 tests (557 pass / 11 pre-existing fail)
+  - No changes to `backend/` or `frontend/`. No new deps. No external repos.
+- **Files modified**: `calendar.tsx` (fetchedRangeRef cache, FlatList virtualization, force-reload on mutations)

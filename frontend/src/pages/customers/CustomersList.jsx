@@ -11,6 +11,7 @@ import RestoreCustomerButton from "@/components/customers/RestoreCustomerButton"
 import MuteControl from "@/components/customers/MuteControl";
 import CustomersPager from "@/components/customers/CustomersPager";
 import ImportCsvModalP41 from "@/pages/customers/ImportCsvModalP41";
+import MergeCustomersModal from "@/components/customers/MergeCustomersModal";
 
 
 // Feb-2026 · P28 — tiny relative-time formatter for the Muted saved
@@ -145,6 +146,12 @@ export default function CustomersList() {
   }, [sortBy]);
   const [selected, setSelected] = useState(new Set());
   const [bulkTag, setBulkTag] = useState("");
+  // Feb 2026 · Customer Merge Phase 2 — modal state + "Show merged"
+  // filter chip. ``includeMerged`` propagates to the ``/customers``
+  // request as ``?include_merged=true``; the backend hides merged
+  // rows by default.
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [includeMerged, setIncludeMerged] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   // Feb-2026 · P41 — new CSV import (merge semantics). Sibling to the
   // legacy ``importOpen`` modal above.
@@ -219,6 +226,10 @@ export default function CustomersList() {
     for (const t of selectedTags) params.append("tags", t);
     // Feb-2026 · P26 — super_admin escape hatch to see soft-deleted rows.
     if (includeDeleted && isSuperAdmin) params.set("include_deleted", "true");
+    // Feb 2026 · Customer Merge Phase 2 — surface merged rows when
+    // "Show merged" is on. Backend default is false, so a merged
+    // customer normally disappears from the list post-merge.
+    if (includeMerged) params.set("include_merged", "true");
     // Feb-2026 · P35 — always request the paginated envelope.
     params.set("page", String(page));
     params.set("page_size", String(_PAGE_SIZE));
@@ -292,7 +303,7 @@ export default function CustomersList() {
     loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
-       missingPhone, includeDeleted, page, city, selectedTags, sortBy]);
+       missingPhone, includeDeleted, includeMerged, page, city, selectedTags, sortBy]);
 
   // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
   // first invocation so hydrating chips from the URL on mount does
@@ -325,7 +336,7 @@ export default function CustomersList() {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, includeDeleted,
-       city, selectedTags, sortBy]);
+       includeMerged, city, selectedTags, sortBy]);
 
   // Feb-2026 · P35 — URL sync for ``page``. ``page=1`` is the default
   // so it's dropped from the URL to keep the query string tidy.
@@ -914,6 +925,39 @@ export default function CustomersList() {
             Show deleted
           </button>
         )}
+        {/* Feb 2026 · Customer Merge Phase 2 — "Show merged" toggle.
+            Admin-visible so operators can audit historic merges +
+            navigate to the surviving primary via the badge on the
+            row. */}
+        {isAdmin && (
+          <button
+            onClick={() => setIncludeMerged((v) => !v)}
+            data-testid="customers-filter-include-merged"
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+            style={{
+              backgroundColor: includeMerged
+                ? colors.accent.violet[50]
+                : colors.surfaceSecondary,
+              color: includeMerged
+                ? colors.accent.violet[700]
+                : colors.onSurfaceSecondary,
+              border: `1px solid ${includeMerged
+                ? colors.accent.violet[500]
+                : colors.border}`,
+            }}
+            title="Include records that were merged into another customer"
+          >
+            <span
+              className="inline-block w-2 h-2 rounded-full"
+              style={{
+                backgroundColor: includeMerged
+                  ? colors.accent.violet[500]
+                  : "#94A3B8",
+              }}
+            />
+            Show merged
+          </button>
+        )}
       </div>
 
       {/* Bulk-actions toolbar (visible when selection exists) */}
@@ -1001,7 +1045,8 @@ export default function CustomersList() {
           <table className="w-full text-sm" data-testid="customers-table">
             <thead>
               <tr style={{ backgroundColor: colors.surfaceSecondary }}>
-                <th className="text-left px-3 py-2 w-8">
+                <th className="text-left px-3 py-2 w-8"
+                     data-testid="customer-select-all">
                   <input
                     type="checkbox"
                     checked={filtered.length > 0 && filtered.every((r) => selected.has(r.id))}
@@ -1048,7 +1093,9 @@ export default function CustomersList() {
                   onClick={() => navigate(`/customers/${c.id}`)}
                   data-testid={`customer-row-${c.id}`}
                 >
-                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                  <td className="px-3 py-3"
+                        onClick={(e) => e.stopPropagation()}
+                        data-testid={`customer-select-${c.id}`}>
                     <input
                       type="checkbox"
                       checked={selected.has(c.id)}
@@ -1113,6 +1160,29 @@ export default function CustomersList() {
                         >
                           MUTED
                         </span>
+                      ) : null}
+                      {/* Feb 2026 · Customer Merge Phase 2 — MERGED
+                          badge. Only visible when the operator has
+                          "Show merged" on (otherwise the row is
+                          hidden by the backend). Clicking navigates
+                          to the primary customer's detail page. */}
+                      {c.merged_into ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/customers/${c.merged_into}`);
+                          }}
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1 hover:brightness-110"
+                          style={{
+                            backgroundColor: colors.accent.violet[500],
+                            color: "#fff",
+                          }}
+                          data-testid={`merged-badge-${c.id}`}
+                          title={`Merged into ${c.merged_into} on ${c.merged_at || "unknown date"} — click to open the primary`}
+                        >
+                          MERGED
+                        </button>
                       ) : null}
                       {/* Feb-2026 · P28 — relative-time muted-at label on the Muted saved view. */}
                       {c.is_muted && tab === "muted" && c.muted_at ? (
@@ -1370,6 +1440,31 @@ export default function CustomersList() {
 
       <Toast toast={toast} onClose={() => setToast(null)} />
 
+      {/* Feb 2026 · Customer Merge Phase 2 — merge modal. Hydrated
+          with the full customer rows for the currently-selected
+          ids so the side-by-side cards can render without extra
+          fetches. */}
+      <MergeCustomersModal
+        open={mergeOpen}
+        onClose={() => setMergeOpen(false)}
+        customers={(rows || []).filter((r) => selected.has(r.id))}
+        onDone={(res) => {
+          setMergeOpen(false);
+          setSelected(new Set());
+          const N = res?.merged_count || 0;
+          const totalRewired = Object.values(
+            res?.related_records_rewired || {},
+          ).reduce((a, b) => a + (Number(b) || 0), 0);
+          sonnerToast.success(
+            `Merged ${N} customer${N === 1 ? "" : "s"} into ${res?.primary_name || "primary"}.`,
+            { description: `${totalRewired.toLocaleString()} related record${totalRewired === 1 ? "" : "s"} reassigned.` },
+          );
+          load();
+          loadCounts();
+        }}
+        onError={(msg) => sonnerToast.error(msg)}
+      />
+
       {/* Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — shared
           bulk-action bar (delete + reassign owner). The legacy
           add/remove tag + waitlist toolbar above is retained until
@@ -1382,6 +1477,16 @@ export default function CustomersList() {
             key: "owner", label: "Reassign owner",
             dropdown: [{ value: "", label: "Unassigned" }],
             onClick: (v) => doBulkOwner(v || null),
+          }] : []),
+          // Feb 2026 · Customer Merge Phase 2 — surface the merge
+          // flow from the same bulk-action bar. Gated to admin only
+          // (matches the backend RBAC). Requires ≥2 selected and no
+          // "select all matching" — the merge modal needs every
+          // candidate's full doc, so unbounded selects can't be
+          // hydrated in the browser.
+          ...(isAdmin && !selectAllMatching && selected.size >= 2 ? [{
+            key: "merge", label: "Merge selected",
+            onClick: () => setMergeOpen(true),
           }] : []),
           // Feb-2026 · Mark inactive — only shown to admin/manager and
           // only when the current tab isn't already "inactive" (no-op
