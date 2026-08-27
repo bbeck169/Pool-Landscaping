@@ -47,6 +47,57 @@ function Skeleton({ className = "", style = {} }) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// Feb 2026 · Color pass fix 1 — RevenueChart current-month
+// detection. Pure logic, exported so
+// ``feb2026-revenue-chart-current-month.test.jsx`` can drive it
+// with a mocked ``Date`` without needing to mount the full
+// dashboard (recharts SVGs don't lay out in jsdom).
+// ═══════════════════════════════════════════════════════════════
+export const REVENUE_MONTH_ABBR = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+export function computeRevenueBarFills(series, now = new Date()) {
+  const currentMonthLabel = REVENUE_MONTH_ABBR[now.getMonth()];
+  const data = (series || []).map((s) => ({
+    ...s,
+    isCurrent: String(s.label || "").trim() === currentMonthLabel,
+  }));
+  // The current-month bar might be present in the series but with
+  // ``value === 0`` (tenant hasn't invoiced yet this month) — in
+  // which case recharts renders no visible path for it. Detect
+  // that case and re-anchor the highlight on the most recent
+  // NON-ZERO bar so the chart never looks flat / uncoloured.
+  const currentIdx = data.findIndex((d) => d.isCurrent);
+  const currentIsEmpty = currentIdx >= 0
+    && !(Number(data[currentIdx].value) > 0);
+  if (currentIsEmpty || currentIdx < 0) {
+    for (let i = data.length - 1; i >= 0; i -= 1) {
+      if (Number(data[i].value) > 0) {
+        data.forEach((d) => { d.isCurrent = false; });
+        data[i].isCurrent = true;
+        break;
+      }
+    }
+    // Series is all-zero → fallback to the last row so at least
+    // one bar carries the label (no visible path either way).
+    if (!data.some((d) => d.isCurrent) && data.length > 0) {
+      data[data.length - 1].isCurrent = true;
+    }
+  }
+  return data.map((d, i) => {
+    const palette = getAccentTone(
+      KPI_TONE_ROTATION[i % KPI_TONE_ROTATION.length]);
+    return {
+      ...d,
+      fill: d.isCurrent ? colors.pool[500] : palette[500],
+    };
+  });
+}
+
 function KpiCard({ icon: Icon, label, value, onClick, testId, tone }) {
   // Feb 2026 · Color pass — each KPI tile picks up a distinct
   // accent tone (violet / amber / sky / emerald / rose) so the
@@ -150,8 +201,11 @@ function StatusChip({ status }) {
 }
 
 function RevenueChart({ series, outstanding }) {
-  const last = series.length - 1;
-  const data = series.map((s, i) => ({ ...s, isLast: i === last }));
+  // Feb 2026 · Color pass — the current-month detection lives in
+  // the pure exported ``computeRevenueBarFills`` helper above so
+  // it can be date-mocked in unit tests without needing to mount
+  // the recharts SVG (which doesn't lay out under jsdom).
+  const data = computeRevenueBarFills(series);
   return (
     <div
       className="rounded-2xl p-6"
@@ -207,20 +261,9 @@ function RevenueChart({ series, outstanding }) {
               formatter={(v) => [money(v), "Revenue"]}
             />
             <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-              {data.map((d, i) => {
-                // Feb 2026 · Color pass — rotate through the KPI
-                // accent palette so each bar reads distinctly,
-                // with the most-recent month on the primary pool
-                // accent (draws the eye to the "you are here"
-                // bar). Non-recent bars alternate through
-                // violet / amber / emerald / sky / rose using
-                // the ``500`` shade which every accent family
-                // exposes (only pool/landscape have a ``300``).
-                const palette = getAccentTone(
-                  KPI_TONE_ROTATION[i % KPI_TONE_ROTATION.length]);
-                const fill = d.isLast ? colors.pool[500] : palette[500];
-                return <Cell key={i} fill={fill} />;
-              })}
+              {data.map((d, i) => (
+                <Cell key={i} fill={d.fill} />
+              ))}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -430,14 +473,25 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Hero KPI card */}
+      {/* Hero KPI card — Total Paid Revenue.
+          Feb 2026 · Color pass — emerald-forward gradient
+          (landscape[600] → emerald[600]) makes the "money" tile
+          semantically green. Cross-fade ends the gradient on the
+          accent emerald so it reads visibly distinct from the
+          general brand gradient reused elsewhere. White text on
+          both stops passes WCAG AA large text (≥ 3:1) — locked
+          in by ``feb2026-color-pass-fixes.test.jsx``. Note we
+          use emerald[600] (not [500]) — [500] at 2.53:1 vs
+          white fails AA large text, so [600] at 3.80:1 is the
+          minimum darker step that stays legible. */}
       <div
         className="rounded-2xl p-6 md:p-8 mb-6 relative overflow-hidden"
         style={{
-          background: brandGradientCss,
+          background: `linear-gradient(90deg, ${colors.landscape[600]} 0%, ${colors.accent.emerald[600]} 100%)`,
           minHeight: 180,
         }}
         data-testid="dashboard-hero"
+        data-tone="emerald"
       >
         <div
           className="absolute inset-0 opacity-25"

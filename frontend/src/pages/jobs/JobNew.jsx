@@ -634,7 +634,7 @@ export default function JobNew({
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={busy} testid="jf-submit">
+          <Button type="submit" variant="primary" disabled={busy} testid="jf-submit">
             {busy ? "Creating…" : "Create job"}
           </Button>
         </div>

@@ -543,7 +543,7 @@ export default function CustomerForm() {
           <Button variant="ghost" onClick={(e) => { e.preventDefault(); navigate(-1); }}>
             Cancel
           </Button>
-          <Button type="submit" disabled={busy} testid="cf-submit">
+          <Button type="submit" variant="primary" disabled={busy} testid="cf-submit">
             {busy ? "Saving…" : isEdit ? "Save changes" : "Create customer"}
           </Button>
         </div>
