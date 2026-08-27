@@ -34,6 +34,13 @@ TRIGGER_REGISTRY: List[Dict[str, Any]] = [
     # so a re-run on the same day doesn't double-enrol; reschedule
     # after enrol does NOT retroactively "unfire".
     {"type": "job_scheduled_reminder_1d", "config_schema": {}},
+    # Feb-2026 · New-lead trigger — fires on ANY lead insert path
+    # (widget, public forms, admin POST, RingCentral sync, portal
+    # referral, D2D, property intake). Config-less. Fan-out in
+    # ``services/marketing/lead_triggers.py::fire_new_lead_sequence_trigger``
+    # is real-time via ``BackgroundTasks`` so the parent lead-create
+    # response never waits on enrolment latency.
+    {"type": "new_lead",                  "config_schema": {}},
     {"type": "manual",                    "config_schema": {}},
     {"type": "segment_join",              "config_schema": {"segment_id": "str"}},
 ]

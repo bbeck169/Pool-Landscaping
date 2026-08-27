@@ -206,6 +206,18 @@ async def save_property(body: SaveIn,
             "created_by": user.get("id"),
         }
         await db.leads.insert_one(lead)
+        # Feb-2026 · Fire ``new_lead`` sequence trigger for property-
+        # intake / virtual-bid capture. Inline — no BackgroundTasks
+        # in this handler.
+        try:
+            from services.marketing.lead_triggers import (
+                fire_new_lead_sequence_trigger,
+            )
+            await fire_new_lead_sequence_trigger(
+                lead=lead, tenant_id=lead.get("tenant_id") or tenant["id"],
+            )
+        except Exception:
+            pass
         lead_id = lead["id"]
         lead_created = True
 

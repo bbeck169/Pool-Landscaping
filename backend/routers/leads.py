@@ -24,7 +24,7 @@ New in Phase 8:
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from config import db, logger
 from routers.tenants import get_current_tenant
@@ -280,6 +280,7 @@ async def get_lead_raw_submission(
 # ═══════════════════════════ CREATE ═════════════════════════════════
 @router.post("/leads")
 async def create_lead(body: LeadIn,
+                        background_tasks: BackgroundTasks,
                         user: dict = Depends(get_current_user),
                         tenant: dict = Depends(get_current_tenant)):
     _require_leads_role(user)
@@ -313,6 +314,19 @@ async def create_lead(body: LeadIn,
         ],
     })
     await db.leads.insert_one(doc)
+    # Feb-2026 · Fire the ``new_lead`` marketing-sequence trigger.
+    # Real-time via ``BackgroundTasks`` so this manual admin POST
+    # never waits on enrolment latency.
+    try:
+        from services.marketing.lead_triggers import (
+            fire_new_lead_sequence_trigger,
+        )
+        await fire_new_lead_sequence_trigger(
+            lead=doc, tenant_id=tenant["id"],
+            background_tasks=background_tasks,
+        )
+    except Exception:
+        pass
     # Phase 16 · Additions E + F · Feb-2026 — internal notification
     # to Brian + auto-reject out-of-state. Best-effort; a failure
     # never blocks lead creation.
@@ -1011,7 +1025,9 @@ async def bulk_update_lead_status(body: _LeadBulkStatusIn,
 
 # ═══════════════════════════ PUBLIC INTAKE ══════════════════════════
 @router.post("/public/leads")
-async def public_lead_intake(body: PublicLeadIn, request: "Request"):
+async def public_lead_intake(body: PublicLeadIn,
+                                request: "Request",
+                                background_tasks: BackgroundTasks):
     """Phase 8 · Feb 2026 — public leads intake.
 
     * NO auth required.
@@ -1208,6 +1224,18 @@ async def public_lead_intake(body: PublicLeadIn, request: "Request"):
         ],
     }
     await db.leads.insert_one(lead_doc)
+    # Feb-2026 · Fire the ``new_lead`` marketing-sequence trigger for
+    # public form / referral inbound. Real-time via ``BackgroundTasks``.
+    try:
+        from services.marketing.lead_triggers import (
+            fire_new_lead_sequence_trigger,
+        )
+        await fire_new_lead_sequence_trigger(
+            lead=lead_doc, tenant_id=lead_doc.get("tenant_id") or "",
+            background_tasks=background_tasks,
+        )
+    except Exception:
+        pass
     # Phase 16 · Additions E + F · Feb-2026 — same side-effect
     # pipeline the admin create path uses. Runs BEFORE the referral
     # bookkeeping so a rejected out-of-state referral still notifies

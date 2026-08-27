@@ -44,9 +44,22 @@ async def _sync_lead(knock: dict, tenant_id: str):
         await db.leads.update_one({"id": lead_id, "tenant_id": tenant_id}, {"$set": fields})
         return lead_id
     lead_id = new_id()
-    await db.leads.insert_one({**fields, "id": lead_id, "tenant_id": tenant_id,
-                               "status": "new", "est_value": 0.0,
-                               "created_at": now_iso(), "created_by": knock.get("tech_id")})
+    lead_doc = {**fields, "id": lead_id, "tenant_id": tenant_id,
+                 "status": "new", "est_value": 0.0,
+                 "created_at": now_iso(), "created_by": knock.get("tech_id")}
+    await db.leads.insert_one(lead_doc)
+    # Feb-2026 · Fire ``new_lead`` sequence trigger for D2D-captured
+    # leads (no BackgroundTasks in this helper — enrolment is fast
+    # enough inline).
+    try:
+        from services.marketing.lead_triggers import (
+            fire_new_lead_sequence_trigger,
+        )
+        await fire_new_lead_sequence_trigger(
+            lead=lead_doc, tenant_id=tenant_id,
+        )
+    except Exception:
+        pass
     await db.d2d_knocks.update_one(
         {"id": knock["id"], "tenant_id": tenant_id},
         {"$set": {"lead_id": lead_id}},

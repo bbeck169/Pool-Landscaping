@@ -216,6 +216,24 @@ async def send_lead_alert_notifications(
 
     sms_recips = list(tenant.get("lead_alert_sms_recipients") or [])
     email_recips = list(tenant.get("lead_alert_email_recipients") or [])
+    # Feb-2026 · Fire the ``new_lead`` sequence trigger unconditionally
+    # (BEFORE the early-return for tenants without alert config).
+    # Sequence enrolment is a separate concern from lead alerts and
+    # must not be gated by whether the tenant has SMS/email
+    # recipients configured. Deferred via ``BackgroundTasks``.
+    try:
+        from services.marketing.lead_triggers import (
+            fire_new_lead_sequence_trigger,
+        )
+        await fire_new_lead_sequence_trigger(
+            lead=lead, tenant_id=tenant.get("id") or "",
+            background_tasks=background_tasks,
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning(
+            f"[p18] new-lead sequence trigger fan-out failed tenant="
+            f"{tenant.get('id')} lead={lead.get('id')}: {exc}"
+        )
     if not sms_recips and not email_recips:
         return {"sms_queued": 0, "email_queued": 0}
 

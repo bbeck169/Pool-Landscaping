@@ -23,6 +23,10 @@ const TRIGGER_LABELS = {
   // Feb-2026 · Day-before scheduled-job reminder — fires 24h before
   // the visit for both service AND repair jobs. Config-less.
   job_scheduled_reminder_1d: "Job scheduled reminder (1 day before)",
+  // Feb-2026 · Real-time new-lead trigger — fires from every lead
+  // insert path (widget, public API, admin POST, RingCentral, D2D,
+  // portal referral). Config-less.
+  new_lead: "New lead created",
   manual: "Manual only",
   segment_join: "Segment join",
 };

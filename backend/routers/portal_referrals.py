@@ -223,6 +223,19 @@ async def create_customer_referral(
         "created_by": customer_id,
     }
     await db.leads.insert_one(lead_doc)
+    # Feb-2026 · Fire ``new_lead`` sequence trigger for portal
+    # referral inbound (customer-referred-a-friend flow). No
+    # ``BackgroundTasks`` in this handler — enrolment is fast enough
+    # inline.
+    try:
+        from services.marketing.lead_triggers import (
+            fire_new_lead_sequence_trigger,
+        )
+        await fire_new_lead_sequence_trigger(
+            lead=lead_doc, tenant_id=tenant_id,
+        )
+    except Exception:
+        pass
 
     referral_doc = {
         "id": referral_id,

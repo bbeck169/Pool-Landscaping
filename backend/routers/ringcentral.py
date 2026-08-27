@@ -466,12 +466,31 @@ async def _handle_telephony_event(body: Dict[str, Any]) -> None:
             "session_id": session_id, "created_at": now_iso(),
             "resolved": False,
         })
-        await db.leads.insert_one({
-            "id": new_id(), "source": "ringcentral-inbound",
+        # Feb-2026 · Tag with a tenant so the ``new_lead`` sequence
+        # trigger can scope. ``_default_tenant_id`` matches the
+        # sibling ``_notify_admins`` call above — same webhook
+        # ambient-tenant assumption.
+        rc_tenant_id = await _default_tenant_id()
+        rc_lead = {
+            "id": new_id(), "tenant_id": rc_tenant_id,
+            "source": "ringcentral-inbound",
             "phone": from_number,
             "name": f"Unknown caller {from_number[-4:]}",
             "created_at": now_iso(), "status": "new",
-        })
+        }
+        await db.leads.insert_one(rc_lead)
+        # Fire the ``new_lead`` marketing-sequence trigger inline —
+        # webhook path has no ``BackgroundTasks`` handle; a slow
+        # sweep is acceptable at RC latency.
+        try:
+            from services.marketing.lead_triggers import (
+                fire_new_lead_sequence_trigger,
+            )
+            await fire_new_lead_sequence_trigger(
+                lead=rc_lead, tenant_id=rc_tenant_id,
+            )
+        except Exception:
+            pass
 
 
 async def _fetch_telephony_session_detail(session_id: Optional[str]) -> Optional[Dict[str, Any]]:
