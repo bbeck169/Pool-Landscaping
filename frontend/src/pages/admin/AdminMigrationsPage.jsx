@@ -647,7 +647,7 @@ function StripeSyncCard() {
           type="button"
           className="text-sm px-3 py-2 rounded-lg font-semibold"
           style={{
-            background: colors.primary,
+            background: colors.brand,
             color: "#fff",
             opacity: busy ? 0.5 : 1,
           }}
@@ -897,7 +897,7 @@ function StripeBillingHistoryCard() {
           type="button"
           className="text-sm px-3 py-2 rounded-lg font-semibold"
           style={{
-            background: colors.primary,
+            background: colors.brand,
             color: "#fff",
             opacity: busy ? 0.5 : 1,
           }}
