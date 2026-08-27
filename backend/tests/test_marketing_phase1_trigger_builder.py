@@ -954,3 +954,155 @@ def test_preview_matches_accepts_trigger_override(admin_headers):
         finally:
             await db.marketing_sequences.delete_one({"id": sid})
     _run(_go())
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 9. GET /marketing/sequences/event-catalog — Phase-2 UI feed
+# ═══════════════════════════════════════════════════════════════════════
+def test_event_catalog_endpoint_returns_all_canonical_events(admin_headers):
+    r = requests.get(f"{API}/marketing/sequences/event-catalog",
+                      headers=admin_headers, timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "events" in body and "count" in body
+    events = body["events"]
+    assert body["count"] == len(events)
+    # Every canonical event catalog entry must be present.
+    from services.marketing.event_registry import EVENT_CATALOG
+    returned_ids = {e["id"] for e in events}
+    assert returned_ids == set(EVENT_CATALOG.keys()), (
+        f"missing={set(EVENT_CATALOG.keys()) - returned_ids} "
+        f"extra={returned_ids - set(EVENT_CATALOG.keys())}"
+    )
+
+
+def test_event_catalog_each_entry_has_four_metadata_fields(admin_headers):
+    r = requests.get(f"{API}/marketing/sequences/event-catalog",
+                      headers=admin_headers, timeout=15)
+    body = r.json()
+    for e in body["events"]:
+        assert set(e.keys()) == {"id", "label", "entity", "scheduled",
+                                  "allow_negative_offset"}, e
+        assert isinstance(e["id"], str) and e["id"]
+        assert isinstance(e["label"], str) and e["label"]
+        assert isinstance(e["entity"], str) and e["entity"]
+        assert isinstance(e["scheduled"], bool)
+        assert isinstance(e["allow_negative_offset"], bool)
+
+
+def test_event_catalog_ordering_is_deterministic(admin_headers):
+    """Same request → same order; entities grouped
+    lead → estimate → job → invoice → payment → customer."""
+    r1 = requests.get(f"{API}/marketing/sequences/event-catalog",
+                       headers=admin_headers, timeout=15).json()
+    r2 = requests.get(f"{API}/marketing/sequences/event-catalog",
+                       headers=admin_headers, timeout=15).json()
+    ids1 = [e["id"] for e in r1["events"]]
+    ids2 = [e["id"] for e in r2["events"]]
+    assert ids1 == ids2, "order not deterministic"
+    # Verify entity grouping order.
+    seen_entities = []
+    for e in r1["events"]:
+        if e["entity"] not in seen_entities:
+            seen_entities.append(e["entity"])
+    order_index = {"lead": 0, "estimate": 1, "job": 2,
+                   "invoice": 3, "payment": 4, "customer": 5}
+    idxs = [order_index.get(x, 99) for x in seen_entities]
+    assert idxs == sorted(idxs), f"entity grouping wrong: {seen_entities}"
+
+
+def test_event_catalog_negative_offset_flag_matches_registry(admin_headers):
+    r = requests.get(f"{API}/marketing/sequences/event-catalog",
+                      headers=admin_headers, timeout=15).json()
+    by_id = {e["id"]: e for e in r["events"]}
+    # Spot-check: job_scheduled + customer_birthday allow "before"
+    # delays; new_lead + invoice_paid do NOT.
+    assert by_id["job_scheduled"]["allow_negative_offset"] is True
+    assert by_id["customer_birthday"]["allow_negative_offset"] is True
+    assert by_id["new_lead"]["allow_negative_offset"] is False
+    assert by_id["invoice_paid"]["allow_negative_offset"] is False
+
+
+def test_event_catalog_endpoint_requires_admin_auth():
+    """Unauthenticated request rejects with 401/403 (Depends(require_admin))."""
+    r = requests.get(f"{API}/marketing/sequences/event-catalog", timeout=15)
+    assert r.status_code in (401, 403), r.status_code
+
+
+def test_legacy_triggers_registry_untouched(admin_headers):
+    """The M5c-era ``/triggers/registry`` MUST keep its exact shape
+    (legacy consumers depend on ``type`` + ``config_schema``)."""
+    r = requests.get(f"{API}/marketing/sequences/triggers/registry",
+                      headers=admin_headers, timeout=15)
+    assert r.status_code == 200
+    triggers = r.json()["triggers"]
+    # Every entry must expose the legacy shape (type + config_schema).
+    for t in triggers:
+        assert "type" in t
+        assert "config_schema" in t
+    # A couple of legacy ids are still present (backwards compat).
+    types = {t["type"] for t in triggers}
+    for legacy in ("service_completed", "customer_created",
+                    "invoice_past_due_N_days", "birthday"):
+        assert legacy in types, (
+            f"legacy trigger {legacy!r} must remain in the legacy registry"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 10. Post-migration state — every schema_v2 sequence uses canonical events
+# ═══════════════════════════════════════════════════════════════════════
+def test_all_schema_v2_sequences_use_canonical_event_ids(admin_headers):
+    async def _go():
+        db = _db()
+        # Force a re-run so the assertion sees the LATEST rules.
+        from services.migrations.migrate_sequences_to_v2 import (
+            migrate_marketing_sequences_to_v2,
+        )
+        await migrate_marketing_sequences_to_v2()
+
+        from services.marketing.event_registry import is_valid_event
+        offenders: list = []
+        rows = await db.marketing_sequences.find(
+            {"schema_version": {"$gte": 2}},
+            {"_id": 0, "id": 1, "tenant_id": 1, "trigger_type": 1,
+              "trigger": 1},
+        ).to_list(1000)
+        assert rows, "no v2 sequences found — migration did not run"
+        for r in rows:
+            conds = ((r.get("trigger") or {}).get("conditions") or [])
+            for c in conds:
+                ev = str(c.get("event") or "")
+                if not is_valid_event(ev):
+                    offenders.append({
+                        "id": r["id"], "trigger_type": r.get("trigger_type"),
+                        "bad_event": ev,
+                    })
+        assert not offenders, (
+            f"non-canonical events leaked into v2 sequences: {offenders}"
+        )
+    _run(_go())
+
+
+def test_non_event_legacy_triggers_have_empty_v2_conditions(admin_headers):
+    """``manual`` and ``segment_join`` sequences must migrate to
+    ``conditions:[]`` — the evaluator returns False on empty
+    conditions, so they never accidentally fire from emit_event."""
+    async def _go():
+        db = _db()
+        from services.migrations.migrate_sequences_to_v2 import (
+            migrate_marketing_sequences_to_v2,
+        )
+        await migrate_marketing_sequences_to_v2()
+        rows = await db.marketing_sequences.find(
+            {"schema_version": {"$gte": 2},
+              "trigger_type": {"$in": ["manual", "segment_join"]}},
+            {"_id": 0, "id": 1, "trigger_type": 1, "trigger": 1},
+        ).to_list(200)
+        for r in rows:
+            conds = ((r.get("trigger") or {}).get("conditions") or [])
+            assert conds == [], (
+                f"sequence {r['id']} (trigger_type={r['trigger_type']}) "
+                f"should have empty v2 conditions, got {conds}"
+            )
+    _run(_go())

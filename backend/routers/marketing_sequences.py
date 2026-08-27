@@ -111,6 +111,81 @@ async def triggers_registry(user: dict = Depends(require_admin)):
     return {"triggers": TRIGGER_REGISTRY}
 
 
+# Feb 2026 · Phase 1 Custom Trigger Builder — canonical event catalog.
+#
+# Phase 2 UI reads this endpoint to render the "which event fires
+# this?" dropdown. The legacy ``/triggers/registry`` above is kept
+# UNTOUCHED for backwards compatibility (its consumers still rely on
+# the M5c legacy shape). This new endpoint is the source of truth
+# going forward and returns every canonical event with the four
+# metadata fields the Phase 2 UI needs to render properly.
+class EventCatalogItem(BaseModel):
+    """Wire shape for one entry in the Phase-1 event catalog.
+
+    Kept explicit (not TypedDict) so FastAPI's ``response_model``
+    handler auto-documents these fields in openapi.json — the Phase 2
+    UI's client generator picks them up unmodified.
+    """
+    id: str
+    label: str
+    entity: str
+    scheduled: bool
+    allow_negative_offset: bool
+
+
+class EventCatalogOut(BaseModel):
+    events: List[EventCatalogItem]
+    count: int
+
+
+@router.get("/marketing/sequences/event-catalog",
+             response_model=EventCatalogOut,
+             tags=["marketing_sequences"])
+async def event_catalog(user: dict = Depends(require_admin)):
+    """Return the full canonical event catalog for the Phase-1
+    Custom Trigger Builder.
+
+    Every entry carries the four metadata fields the Phase 2 UI
+    needs:
+
+    * ``id``    — canonical wire-format event key (matches
+      ``trigger.conditions[i].event``).
+    * ``label`` — human-friendly display string for the picker.
+    * ``entity`` — which document the event is about (``lead`` /
+      ``job`` / ``estimate`` / ``invoice`` / ``customer`` /
+      ``payment``). Phase 2 UI groups the picker by this field.
+    * ``scheduled`` — whether the event has a native ``scheduled_at``
+      (drives whether ``delay: {mode: "before"}`` is a valid choice
+      in the UI).
+    * ``allow_negative_offset`` — explicit gate for the "before"
+      delay mode.
+
+    Sort order is deterministic: primary key ``entity`` (grouping
+    lead / job / estimate / invoice / customer / payment), secondary
+    key ``id`` alphabetical. Phase 2 UI can render sections cleanly
+    without any client-side re-sorting.
+    """
+    from services.marketing.event_registry import EVENT_CATALOG
+    _ENTITY_ORDER = {
+        "lead": 0, "estimate": 1, "job": 2,
+        "invoice": 3, "payment": 4, "customer": 5,
+    }
+    rows: List[Dict[str, Any]] = []
+    for key, meta in EVENT_CATALOG.items():
+        rows.append({
+            "id": key,
+            "label": meta.get("label") or key,
+            "entity": meta.get("entity") or "",
+            "scheduled": bool(meta.get("scheduled")),
+            "allow_negative_offset": bool(meta.get("allow_negative_offset")),
+        })
+    rows.sort(key=lambda r: (
+        _ENTITY_ORDER.get(r["entity"], 99),
+        r["id"],
+    ))
+    return {"events": rows, "count": len(rows)}
+
+
 @router.get("/marketing/sequences")
 async def list_sequences(
     active: Optional[bool] = Query(None),

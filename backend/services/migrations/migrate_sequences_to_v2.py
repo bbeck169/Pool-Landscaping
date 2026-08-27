@@ -35,6 +35,7 @@ from config import db
 from services.marketing.event_registry import (
     canonicalize_event_key,
     is_valid_event,
+    NON_EVENT_LEGACY_TRIGGERS,
 )
 
 
@@ -60,10 +61,22 @@ def _build_v2_trigger(trigger_type: str,
     a ``delay = {"mode":"after", "value":days, "unit":"day"}`` on
     the canonicalised ``invoice_overdue`` event so the day-N
     semantics survive.
+
+    Non-event enrolment surfaces (``manual``, ``segment_join``) are
+    migrated to a v2 doc with an EMPTY ``conditions`` array — the
+    evaluator returns False on empty conditions, so those sequences
+    never accidentally fire from :func:`emit_event`. Manual sequences
+    still enrol via ``POST /marketing/sequences/{sid}/enrol`` and
+    segment_join sequences still enrol via the daily M5c sweep
+    (both paths bypass the trigger evaluator entirely).
     """
-    canonical = canonicalize_event_key(trigger_type or "")
+    legacy = (trigger_type or "").strip()
+    # Non-event surfaces → empty v2 trigger.
+    if legacy in NON_EVENT_LEGACY_TRIGGERS:
+        return {"logic": "AND", "conditions": []}
+    canonical = canonicalize_event_key(legacy)
     if not canonical or not is_valid_event(canonical):
-        canonical = trigger_type or ""  # keep the legacy key visible
+        canonical = legacy  # keep the legacy key visible for ops review
     condition: Dict[str, Any] = {
         "event": canonical,
         "delay": {"mode": "immediate"},
@@ -80,6 +93,30 @@ def _build_v2_trigger(trigger_type: str,
     if canonical == "invoice_overdue" and days_pd > 0:
         condition["delay"] = {"mode": "after", "value": days_pd, "unit": "day"}
     return {"logic": "AND", "conditions": [condition]}
+
+
+def _all_conditions_reference_canonical_events(
+    trigger: Dict[str, Any] | None,
+) -> bool:
+    """Return True iff every ``trigger.conditions[].event`` is either
+    a canonical event key OR the conditions list is empty (non-event
+    surface).
+
+    Used as the strict-idempotency guard: a v2 doc whose conditions
+    reference a legacy key (e.g. leftover ``event: "manual"`` from an
+    earlier migration pass) needs to be re-migrated. Empty conditions
+    are always canonical.
+    """
+    if not isinstance(trigger, dict):
+        return False
+    conds = trigger.get("conditions") or []
+    if not isinstance(conds, list):
+        return False
+    for c in conds:
+        ev = str((c or {}).get("event") or "")
+        if not is_valid_event(ev):
+            return False
+    return True
 
 
 async def migrate_marketing_sequences_to_v2() -> Dict[str, Any]:
@@ -117,10 +154,28 @@ async def migrate_marketing_sequences_to_v2() -> Dict[str, Any]:
             and isinstance((seq.get("trigger") or {}).get("conditions"),
                              list)
         )
-        # Idempotency guard — a sequence already at v2 (either via
-        # ``schema_version`` or via a valid nested ``trigger``) is
-        # SKIPPED with no write.
-        if version >= 2 and has_v2_trigger:
+        legacy_type = (seq.get("trigger_type") or "").strip()
+        conds_now = ((seq.get("trigger") or {}).get("conditions") or []) \
+            if has_v2_trigger else []
+        # Non-event trigger surfaces (manual / segment_join) must land
+        # with EMPTY conditions. If they got mis-migrated with a
+        # non-empty ``conditions`` array in an earlier pass (e.g. the
+        # bogus ``segment_join → new_lead`` alias that was later
+        # removed), force a re-migration to a clean empty-conditions
+        # v2 doc.
+        non_event_needs_repair = (
+            legacy_type in NON_EVENT_LEGACY_TRIGGERS
+            and has_v2_trigger and len(conds_now) > 0
+        )
+        # Strict idempotency guard — a sequence is "already v2" ONLY
+        # when it satisfies ALL: schema_version>=2, well-shaped
+        # trigger doc, every condition.event references a CANONICAL
+        # event id (or the conditions list is empty), AND non-event
+        # trigger surfaces have empty conditions.
+        if (version >= 2 and has_v2_trigger
+                and _all_conditions_reference_canonical_events(
+                    seq.get("trigger"))
+                and not non_event_needs_repair):
             already_v2 += 1
             continue
         legacy_type = seq.get("trigger_type") or ""

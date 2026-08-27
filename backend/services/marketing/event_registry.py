@@ -128,6 +128,14 @@ EVENT_CATALOG: Dict[str, Dict[str, Any]] = {
 # Backwards-compat map — legacy sequence docs stored ``trigger_type``
 # values that need to translate to the Phase-1 canonical keys. Add
 # aliases here only; never rename an already-shipped canonical key.
+#
+# NB: legacy trigger_types ``manual`` and ``segment_join`` are NOT
+# aliased — they represent enrolment surfaces (manual admin action /
+# daily-sweep diff) rather than domain events, so the v2 migration
+# leaves them with EMPTY conditions and they never fire from
+# :func:`emit_event`. Adding a bogus alias here (e.g.
+# ``segment_join → new_lead``) would auto-enrol every new lead into
+# every segment_join sequence — which is a data-corruption bug.
 LEGACY_TRIGGER_ALIASES: Dict[str, str] = {
     # legacy → canonical
     "service_completed":       "job_completed",
@@ -139,8 +147,14 @@ LEGACY_TRIGGER_ALIASES: Dict[str, str] = {
     "invoice_past_due_14_days":"invoice_overdue",
     "invoice_past_due_N_days": "invoice_overdue",  # canonical parameterised form
     "birthday":                "customer_birthday",
-    "segment_join":            "new_lead",         # closest — segment_join → treat as lead
 }
+
+
+# Non-event enrolment surfaces — these legacy trigger_types don't
+# correspond to a domain event and MUST be migrated to a v2 doc with
+# empty conditions (evaluator returns False → they never
+# accidentally fire from :func:`emit_event`).
+NON_EVENT_LEGACY_TRIGGERS: set[str] = {"manual", "segment_join"}
 
 
 def canonicalize_event_key(key: str) -> str:
