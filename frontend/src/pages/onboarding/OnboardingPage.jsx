@@ -371,6 +371,14 @@ export function OnboardingLoginModal() {
   useEffect(() => {
     // Don't fire on the onboarding page itself.
     if (location.pathname.startsWith("/onboarding") || location.pathname.startsWith("/settings/onboarding")) return;
+    // Feb-2026 · P0 fix — the semi-transparent full-screen backdrop
+    // was dimming the Stripe Sync + Billing History cards on
+    // ``/admin/migrations`` so operators reported the Preview
+    // buttons as "missing". Super-admins doing migrations don't
+    // need the tenant-onboarding walkthrough; skip the modal on
+    // ANY ``/admin/*`` path. The modal still fires on the tenant
+    // dashboard + everywhere else it was designed for.
+    if (location.pathname.startsWith("/admin")) return;
     // Only show once per browser session.
     if (sessionStorage.getItem("onboarding_modal_seen") === "1") return;
     api.get("/onboarding").then((s) => {

@@ -260,10 +260,17 @@ export function MarketingTemplateDetailPage() {
     try {
       // Send both body and body_html — backend accepts body_html as
       // alias; explicit body still wins when both are supplied.
+      // Feb-2026 P0 fix — include ``channel`` in the payload. The
+      // Item-2 ship added the Email/SMS toggle but the save handler
+      // never forwarded the toggled value, so switching to SMS
+      // appeared to work in the UI but the persisted row stayed on
+      // ``email`` and the backend's ``_validate_shape`` still
+      // required a subject → silent failure OR 422 on save.
       const payload = {
         name: row.name,
         category: row.category,
-        subject: row.subject,
+        channel: row.channel,
+        subject: row.channel === "sms" ? null : row.subject,
         body: row.body,
         body_html: row.body,
         active: row.active,
