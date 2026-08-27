@@ -11,6 +11,8 @@ import { Plus, X as XIcon, Save, Trash2, Users, Play, Pause, ArrowUp, ArrowDown,
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors, brandGradientCss } from "@/theme";
+import { TriggerBuilder } from "@/components/marketing/triggerBuilder/TriggerBuilder";
+import { buildTriggerPayload, clearDraft } from "@/components/marketing/triggerBuilder/helpers";
 
 const TRIGGER_LABELS = {
   service_completed: "Service completed",
@@ -189,6 +191,9 @@ function SequenceEditor({ initial, onClose, onSaved }) {
   const [description, setDescription] = useState(initial?.description || "");
   const [triggerType, setTriggerType] = useState(initial?.trigger_type || "manual");
   const [triggerConfig, setTriggerConfig] = useState(initial?.trigger_config || {});
+  // Feb 2026 · Phase 2 Custom Trigger Builder — nested v2 trigger.
+  const [triggerV2, setTriggerV2] = useState(initial?.trigger || null);
+  const [triggerV2Validity, setTriggerV2Validity] = useState({ ok: true, errors: [] });
   const [steps, setSteps] = useState(
     (initial?.steps || []).map((s, i) => ({ ...s, order: s.order ?? i })),
   );
@@ -264,22 +269,33 @@ function SequenceEditor({ initial, onClose, onSaved }) {
   });
   const canSave = !!name.trim() && !stepErrors.some(Boolean);
 
-  const buildPayload = () => ({
-    name: name.trim(),
-    description: description.trim(),
-    trigger_type: triggerType,
-    trigger_config: triggerConfig,
-    steps: steps.map((s, i) => ({
-      order: i,
-      channel: s.channel,
-      template_id: s.template_id,
-      delay_from: s.delay_from || "previous_step",
-      delay_hours: Number(s.delay_hours) || 0,
-      condition: s.condition || null,
-    })),
-    stop_on_reply: stopOnReply,
-    stop_on_unsubscribe: stopOnUnsubscribe,
-  });
+  const buildPayload = () => {
+    const payload = {
+      name: name.trim(),
+      description: description.trim(),
+      trigger_type: triggerType,
+      trigger_config: triggerConfig,
+      steps: steps.map((s, i) => ({
+        order: i,
+        channel: s.channel,
+        template_id: s.template_id,
+        delay_from: s.delay_from || "previous_step",
+        delay_hours: Number(s.delay_hours) || 0,
+        condition: s.condition || null,
+      })),
+      stop_on_reply: stopOnReply,
+      stop_on_unsubscribe: stopOnUnsubscribe,
+    };
+    // Feb 2026 · Phase 2 · include v2 trigger only when the user
+    // actually engaged the new builder (existing sequence + non-null
+    // trigger state) AND client-side validation passed. Otherwise
+    // we skip the field entirely so we don't accidentally overwrite
+    // the persisted trigger with a half-built draft.
+    if (triggerV2 && triggerV2Validity.ok) {
+      payload.trigger = buildTriggerPayload(triggerV2);
+    }
+    return payload;
+  };
 
   const save = async ({ activate = false } = {}) => {
     setBusy(true); setError("");
@@ -290,6 +306,8 @@ function SequenceEditor({ initial, onClose, onSaved }) {
       } else {
         await api.patch(`/marketing/sequences/${initial.id}`, payload);
       }
+      // Feb 2026 · Phase 2 — drop the localStorage draft after save.
+      if (initial?.id) clearDraft(initial.id);
       onSaved?.();
     } catch (e) { setError(e?.message || "Save failed"); }
     finally { setBusy(false); }
@@ -386,6 +404,25 @@ function SequenceEditor({ initial, onClose, onSaved }) {
                 <TriggerConfigPanel type={triggerType} config={triggerConfig}
                                     onChange={setTriggerConfig} segments={segments} />
               </div>
+
+              {/* Feb 2026 · Phase 2 Custom Trigger Builder — new UI. */}
+              {!isNew && initial?.id ? (
+                <div
+                  className="rounded-xl p-3"
+                  style={{
+                    backgroundColor: colors.surfaceSecondary,
+                    border: `1px solid ${colors.divider}`,
+                  }}
+                  data-testid="sequence-trigger-builder-panel"
+                >
+                  <TriggerBuilder
+                    sequenceId={initial.id}
+                    initialTrigger={initial.trigger}
+                    onChange={setTriggerV2}
+                    onValidityChange={setTriggerV2Validity}
+                  />
+                </div>
+              ) : null}
 
               <div>
                 <div className="flex items-center justify-between mb-2">

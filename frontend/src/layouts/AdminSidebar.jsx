@@ -126,6 +126,21 @@ export default function AdminSidebar() {
     entries: g.entries.filter((e) => {
       if (e.hard_rule === "admin_only" && effectiveRole !== "admin") return false;
       if (e.hard_rule === "super_admin_only" && effectiveRole !== "super_admin") return false;
+      // Feb 2026 · Task A hotfix — ``manager_only`` is authoritative.
+      // Backend permission matrix (see ``routers/rbac.py::_DEFAULT_MATRIX``)
+      // seeds ONLY super_admin, admin, technician, customer, marketer,
+      // sales — ``manager`` is deliberately absent. That means
+      // ``can("scheduling","read")`` returns false for a real manager
+      // account, which was silently hiding every ``manager_only`` nav
+      // entry (Recurring Jobs, Driver Activity, SEO Auditor, etc.).
+      // Treat the hard_rule as the authorization source of truth:
+      // if the role is in the allowed three-role set, grant access
+      // without falling through to the feature matrix. Roles OUTSIDE
+      // the allowed set stay blocked (unchanged behaviour for
+      // marketer / sales / technician / customer).
+      if (e.hard_rule === "manager_only") {
+        return ["super_admin", "admin", "manager"].includes(effectiveRole);
+      }
       return can(e.feature || "dashboard", "read") || effectiveRole === "admin";
     }),
   })).filter((g) => g.entries.length > 0), [can, effectiveRole]);

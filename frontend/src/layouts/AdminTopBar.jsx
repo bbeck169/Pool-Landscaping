@@ -59,6 +59,16 @@ function useVisibleGroups() {
         entries: g.entries.filter((e) => {
           if (e.hard_rule === "admin_only" && effectiveRole !== "admin") return false;
           if (e.hard_rule === "super_admin_only" && effectiveRole !== "super_admin") return false;
+          // Feb 2026 · Task A hotfix — ``manager_only`` is authoritative.
+          // See ``AdminSidebar.jsx`` for the full rationale; short
+          // version is the backend permission matrix doesn't seed
+          // ``manager`` so ``can("scheduling","read")`` would silently
+          // hide the entry from real manager accounts. When the hard
+          // rule matches, grant access directly without falling to
+          // the feature gate.
+          if (e.hard_rule === "manager_only") {
+            return ["super_admin", "admin", "manager"].includes(effectiveRole);
+          }
           return can(e.feature || "dashboard", "read") || effectiveRole === "admin";
         }),
       }))

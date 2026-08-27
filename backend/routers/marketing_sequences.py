@@ -72,6 +72,10 @@ class SequencePatch(BaseModel):
     description: Optional[str] = None
     trigger_type: Optional[str] = None
     trigger_config: Optional[Dict[str, Any]] = None
+    # Feb 2026 · Phase 2 Custom Trigger Builder — schema-v2 nested
+    # trigger doc. Additive: legacy ``trigger_type`` + ``trigger_config``
+    # remain accepted so the M5c editor UI keeps working.
+    trigger: Optional[Dict[str, Any]] = None
     steps: Optional[List[Step]] = None
     active: Optional[bool] = None
     stop_on_reply: Optional[bool] = None
@@ -258,6 +262,41 @@ async def patch_sequence(sid: str, body: SequencePatch,
         val = getattr(body, field)
         if val is not None:
             patch[field] = val
+    # Feb 2026 · Phase 2 Custom Trigger Builder — accept + validate
+    # the nested ``trigger`` doc. Sanity-checked here (logic + shape,
+    # canonical event ids on every condition, delay validated by the
+    # evaluator). Empty conditions are LEGAL (manual / segment_join
+    # sequences) — the evaluator returns False and they never fire.
+    if body.trigger is not None:
+        from services.marketing.event_registry import is_valid_event
+        from services.marketing.trigger_evaluator import _validate_delay
+        t = body.trigger
+        if not isinstance(t, dict):
+            raise HTTPException(422, "trigger must be an object")
+        logic = str(t.get("logic") or "AND").upper()
+        if logic not in ("AND", "OR"):
+            raise HTTPException(422, "trigger.logic must be AND or OR")
+        conds = t.get("conditions") or []
+        if not isinstance(conds, list):
+            raise HTTPException(422, "trigger.conditions must be an array")
+        clean_conds: List[Dict[str, Any]] = []
+        for i, c in enumerate(conds):
+            if not isinstance(c, dict):
+                raise HTTPException(422, f"trigger.conditions[{i}] must be an object")
+            ev = str(c.get("event") or "").strip()
+            if not ev or not is_valid_event(ev):
+                raise HTTPException(422, f"trigger.conditions[{i}].event {ev!r} is not a canonical event")
+            delay = c.get("delay") or {"mode": "immediate"}
+            try:
+                _validate_delay(delay)
+            except ValueError as ve:
+                raise HTTPException(422, f"trigger.conditions[{i}].delay: {ve}")
+            filters = c.get("filters") or {}
+            if not isinstance(filters, dict):
+                raise HTTPException(422, f"trigger.conditions[{i}].filters must be an object")
+            clean_conds.append({"event": ev, "delay": delay, "filters": filters})
+        patch["trigger"] = {"logic": logic, "conditions": clean_conds}
+        patch["schema_version"] = 2
     if body.steps is not None:
         patch["steps"] = [s.model_dump() for s in body.steps]
     trig = patch.get("trigger_type", row["trigger_type"])

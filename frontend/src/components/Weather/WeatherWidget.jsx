@@ -17,11 +17,30 @@
  * collapses the widget to ``null`` silently — no red banners.
  */
 import React from "react";
-import { CloudSun, Radar as RadarIcon, Droplets, Wind, X } from "lucide-react";
+import { CloudSun, Radar as RadarIcon, Droplets, Wind, X, Clock as ClockIcon, CalendarDays } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import useWeatherHourly from "@/hooks/useWeatherHourly";
 import useTenantLocation from "@/hooks/useTenantLocation";
+
+// Feb 2026 · Task B — dashboard-compact mode. When ``collapsible`` is
+// true (Dashboard.jsx passes this), the widget renders only the
+// current-conditions row plus three toggle buttons (Hourly / 7-Day /
+// Radar). Last-chosen view persists under
+// ``localStorage['dashboard.weatherView']`` so refresh keeps user
+// preference. Non-dashboard callers (tech ``/schedule``) leave the
+// prop off and continue to see every panel by default.
+const LS_VIEW_KEY = "dashboard.weatherView";
+const VALID_VIEWS = new Set(["collapsed", "hourly", "seven_day", "radar"]);
+function _loadViewPref() {
+  try {
+    const v = window.localStorage.getItem(LS_VIEW_KEY);
+    return VALID_VIEWS.has(v) ? v : "collapsed";
+  } catch { return "collapsed"; }
+}
+function _saveViewPref(v) {
+  try { window.localStorage.setItem(LS_VIEW_KEY, v); } catch { /* noop */ }
+}
 
 // Same Peoria, AZ fallback the rest of the codebase already uses
 // (see routers/ops.py + WeatherWidget5Day). Tenant-configured
@@ -55,7 +74,7 @@ export function fmtHour(iso) {
   }
 }
 
-export default function WeatherWidget({ user }) {
+export default function WeatherWidget({ user, collapsible = false }) {
   const [current, setCurrent] = React.useState(null);
   const [daily, setDaily] = React.useState(null);
   const [radar, setRadar] = React.useState(null);
@@ -64,6 +83,14 @@ export default function WeatherWidget({ user }) {
   // Feb-2026 · P39b — NWS active alerts banner.
   const [alerts, setAlerts] = React.useState([]);
   const [alertsExpanded, setAlertsExpanded] = React.useState(false);
+  // Feb 2026 · Task B — collapsible-mode view state. Only consulted
+  // when ``collapsible`` is truthy; ignored on tech /schedule where
+  // every row still renders.
+  const [view, setView] = React.useState(() => (collapsible ? _loadViewPref() : "expanded_all"));
+  const setViewPersist = React.useCallback((v) => {
+    setView(v);
+    if (collapsible) _saveViewPref(v);
+  }, [collapsible]);
 
   const role = (user?.role || "").toLowerCase();
   const allowed = role === "technician" || role === "admin" || role === "super_admin";
@@ -312,7 +339,7 @@ export default function WeatherWidget({ user }) {
             </span>
           </div>
         </div>
-        {radar?.loop_url ? (
+        {radar?.loop_url && !collapsible ? (
           <button
             type="button"
             onClick={openRadar}
@@ -328,12 +355,66 @@ export default function WeatherWidget({ user }) {
         ) : null}
       </div>
 
-      {/* Row 2 — 24h horizontal strip */}
-      <div
-        className="flex items-center gap-3 overflow-x-auto px-4 py-2 border-t"
-        style={{ borderColor: colors.border, background: colors.surface }}
-        data-testid="weather-hourly-strip"
-      >
+      {/* Feb 2026 · Task B — compact-mode expand toolbar. Renders
+          only when the widget was mounted with ``collapsible=true``
+          (Dashboard). Three mutually-exclusive buttons drive the
+          view state; the same button clicked twice collapses back
+          to the today-only row above. Active-state chip uses the
+          sky-500 accent per the recent color pass so weather has a
+          coherent water/sky vibe. */}
+      {collapsible ? (
+        <div
+          className="flex items-center gap-2 px-4 py-2 border-t"
+          style={{ borderColor: colors.border, background: colors.surface }}
+          data-testid="weather-expand-toolbar"
+        >
+          <ExpandChip
+            active={view === "hourly"}
+            onClick={() => setViewPersist(view === "hourly" ? "collapsed" : "hourly")}
+            icon={<ClockIcon size={12} />}
+            label="Hourly"
+            testId="weather-toggle-hourly"
+          />
+          <ExpandChip
+            active={view === "seven_day"}
+            onClick={() => setViewPersist(view === "seven_day" ? "collapsed" : "seven_day")}
+            icon={<CalendarDays size={12} />}
+            label="7-Day"
+            testId="weather-toggle-seven-day"
+          />
+          <ExpandChip
+            active={view === "radar"}
+            onClick={() => setViewPersist(view === "radar" ? "collapsed" : "radar")}
+            icon={<RadarIcon size={12} />}
+            label="Radar"
+            disabled={!radar?.loop_url}
+            testId="weather-toggle-radar"
+          />
+          {view !== "collapsed" ? (
+            <button
+              type="button"
+              onClick={() => setViewPersist("collapsed")}
+              className="ml-auto p-1 rounded-md hover:bg-slate-100"
+              style={{ color: colors.onSurfaceSecondary }}
+              data-testid="weather-collapse-btn"
+              aria-label="Collapse to today only"
+            >
+              <X size={14} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Row 2 — 24h horizontal strip. Feb 2026 · Task B — in
+          collapsible mode this only renders when the user picked
+          "Hourly" via the expand toolbar; on other pages every row
+          renders as before. */}
+      {(!collapsible || view === "hourly") ? (
+        <div
+          className="flex items-center gap-3 overflow-x-auto px-4 py-2 border-t"
+          style={{ borderColor: colors.border, background: colors.surface }}
+          data-testid="weather-hourly-strip"
+        >
         {(hourly.hourly || []).map((h, i) => (
           <div
             key={h.time || i}
@@ -367,11 +448,13 @@ export default function WeatherWidget({ user }) {
             </span>
           </div>
         ))}
-      </div>
+        </div>
+      ) : null}
 
-      {/* Row 3 — 5-day forecast strip (renders only what the
-          provider actually returned; free tier may cap at 3). */}
-      {dailyRows.length > 0 ? (
+      {/* Row 3 — 7-day forecast strip. In collapsible mode gated on
+          the "seven_day" view; otherwise renders whenever the provider
+          returned rows (free tier may cap at 3). */}
+      {dailyRows.length > 0 && (!collapsible || view === "seven_day") ? (
         <div
           className="flex items-stretch gap-2 overflow-x-auto px-4 py-3 border-t"
           style={{ borderColor: colors.border, background: colors.surfaceSecondary }}
@@ -414,6 +497,42 @@ export default function WeatherWidget({ user }) {
               </span>
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {/* Feb 2026 · Task B — inline radar (collapsible mode).
+          Uses the same NWS radar loop as the modal; renders in-line
+          instead of overlaying so users can flip between Hourly /
+          7-Day / Radar without dismissing the widget. Non-dashboard
+          consumers keep using the modal via the radar button in
+          row 1. */}
+      {collapsible && view === "radar" && radar?.loop_url ? (
+        <div
+          className="border-t"
+          style={{ borderColor: colors.border, background: colors.surface }}
+          data-testid="weather-radar-inline"
+        >
+          <img
+            src={_radarSrc}
+            alt={`NEXRAD radar loop for ${radar.radar_station}`}
+            loading="lazy"
+            className="w-full max-h-[320px] object-contain bg-black"
+            data-testid="weather-radar-inline-img"
+          />
+          <div
+            className="px-4 py-1.5 text-[11px] flex items-center justify-between"
+            style={{ color: colors.onSurfaceSecondary }}
+          >
+            <span>NEXRAD station: {radar.radar_station}</span>
+            <button
+              type="button"
+              onClick={() => setRadarBust(Date.now())}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-slate-100"
+              data-testid="weather-radar-inline-refresh"
+            >
+              <RadarIcon size={12} /> Refresh
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -481,5 +600,35 @@ export default function WeatherWidget({ user }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+
+// Feb 2026 · Task B — Reusable expand-toolbar chip. Kept co-located
+// with WeatherWidget because it's only ever used inside the compact
+// toolbar; extracting to its own file adds import overhead for zero
+// reuse elsewhere.
+function ExpandChip({ active, onClick, icon, label, disabled = false, testId }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold transition"
+      style={{
+        // Active-state uses accent.sky[500] per the color pass so the
+        // weather widget has a coherent water/sky vibe.
+        background: active ? colors.accent.sky[500] : colors.surfaceSecondary,
+        color: active ? "#fff" : (disabled ? colors.muted : colors.onSurface),
+        border: `1px solid ${active ? colors.accent.sky[500] : colors.border}`,
+        opacity: disabled ? 0.5 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
+      }}
+      data-testid={testId}
+      aria-pressed={active}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }

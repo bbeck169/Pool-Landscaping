@@ -469,7 +469,11 @@ export default function AdminDashboard() {
           reachable from AI Tools when needed. */}
       {(user?.role === "admin" || user?.role === "super_admin") && (
         <div className="mb-6">
-          <LiveWeatherWidget user={user} />
+          {/* Feb 2026 · Task B — dashboard is report-focused, so pass
+              ``collapsible`` so the widget renders today-only by
+              default with Hourly / 7-Day / Radar expand chips. Tech
+              /schedule keeps the always-expanded rendering (no prop). */}
+          <LiveWeatherWidget user={user} collapsible />
         </div>
       )}
 
