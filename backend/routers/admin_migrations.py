@@ -531,3 +531,150 @@ async def backfill_persona_avatars(
     )
     return report
 
+
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/unlink-tech-from-customer
+# Feb 2026 · Miguel Munoz P0 — one-off cleanup for the "same email
+# lives on both a workforce ``users`` record AND a customer ``users``
+# record" data-quality issue that the ``routers/auth.login`` fix
+# guards against. This endpoint soft-deletes the ORPHAN customer
+# ``users`` record so the login flow no longer has ambiguity — the
+# ``customers`` collection doc itself is untouched (invoices,
+# properties, service history keep working). Super-admin only.
+# ─────────────────────────────────────────────────────────────────────
+class _UnlinkTechFromCustomerBody(BaseModel):
+    email: str = Field(
+        ...,
+        description="The affected user's email address (case-insensitive)."
+                    " Runs across all tenants.",
+    )
+    dry_run: bool = Field(
+        False,
+        description="When True, report what would happen without "
+                    "writing anything.",
+    )
+
+
+@router.post(
+    "/admin/migrations/unlink-tech-from-customer",
+    operation_id="admin.migrations.unlink_tech_from_customer",
+)
+async def unlink_tech_from_customer(
+    body: _UnlinkTechFromCustomerBody,
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_super_admin(user)
+    email = (body.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+
+    from utils import now_iso as _now_iso
+    WORKFORCE_ROLES = (
+        "super_admin", "admin", "manager", "technician", "tech",
+    )
+
+    all_users = await db.users.find(
+        {"email": email},
+        {"_id": 0, "id": 1, "email": 1, "role": 1, "tenant_id": 1,
+         "customer_id": 1, "technician_id": 1, "department": 1,
+         "deleted_at": 1, "active": 1, "name": 1},
+    ).to_list(50)
+
+    report: Dict[str, Any] = {
+        "email": email,
+        "dry_run": bool(body.dry_run),
+        "found_users_records": len(all_users),
+        "records": [
+            {k: r.get(k) for k in ("id", "role", "tenant_id",
+                                     "customer_id", "technician_id",
+                                     "department", "deleted_at",
+                                     "active", "name")}
+            for r in all_users
+        ],
+        "workforce_records": [],
+        "customer_records_to_soft_delete": [],
+        "customer_records_soft_deleted": [],
+        "actions": [],
+    }
+
+    if len(all_users) < 2:
+        report["actions"].append(
+            "no_action_needed_single_or_zero_users_record"
+        )
+        logger.info(
+            "[unlink-tech-customer] user=%s email=%s → %s (records=%d)",
+            (user or {}).get("id"), email,
+            report["actions"][-1], len(all_users),
+        )
+        return report
+
+    workforce = [
+        r for r in all_users
+        if (r.get("role") or "").lower() in WORKFORCE_ROLES
+        and not r.get("deleted_at")
+    ]
+    customers = [
+        r for r in all_users
+        if (r.get("role") or "").lower() == "customer"
+        and not r.get("deleted_at")
+    ]
+    report["workforce_records"] = [r["id"] for r in workforce]
+    report["customer_records_to_soft_delete"] = [r["id"] for r in customers]
+
+    if not workforce:
+        report["actions"].append(
+            "no_workforce_record_found_leaving_customer_intact"
+        )
+        return report
+
+    if not customers:
+        report["actions"].append(
+            "no_customer_record_found_workforce_is_already_canonical"
+        )
+        return report
+
+    if body.dry_run:
+        report["actions"].append("dry_run_no_writes_performed")
+        return report
+
+    for c in customers:
+        try:
+            await db.users.update_one(
+                {"id": c["id"]},
+                {"$set": {
+                    "deleted_at": _now_iso(),
+                    "active": False,
+                    "unlinked_by_migration": {
+                        "actor_user_id": (user or {}).get("id"),
+                        "workforce_record_ids": [r["id"] for r in workforce],
+                        "ran_at": _now_iso(),
+                        "endpoint": (
+                            "POST /admin/migrations/"
+                            "unlink-tech-from-customer"
+                        ),
+                    },
+                }},
+            )
+            report["customer_records_soft_deleted"].append(c["id"])
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "[unlink-tech-customer] soft-delete failed for "
+                "users.id=%s email=%s: %s",
+                c["id"], email, e,
+            )
+
+    report["actions"].append(
+        f"soft_deleted_{len(report['customer_records_soft_deleted'])}"
+        "_customer_users_records"
+    )
+    logger.info(
+        "[unlink-tech-customer] actor=%s email=%s "
+        "workforce=%s soft_deleted=%s",
+        (user or {}).get("id"), email,
+        report["workforce_records"],
+        report["customer_records_soft_deleted"],
+    )
+    return report
+

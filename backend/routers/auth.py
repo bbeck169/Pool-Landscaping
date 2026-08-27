@@ -42,7 +42,55 @@ async def _audit_auth(event: str, email: str, ip: str, status: str, details: str
 async def login(request: Request, body: LoginRequest):
     email = body.email.lower()
     ip = _client_ip(request)
-    user = await db.users.find_one({"email": email})
+    # Feb 2026 · Multi-record email hardening (Miguel Munoz P0).
+    # A single email can end up on TWO ``users`` records — e.g. a
+    # portal customer (role=customer, linked to a ``customers`` doc)
+    # who is later added to the team as a technician (role=technician,
+    # department=landscape_tech). The old ``find_one({"email":email})``
+    # returned whichever record Mongo served first, which meant the
+    # customer record could shadow the workforce record and drop the
+    # user into the customer portal on both web and mobile even
+    # though the admin ``/team`` page listed him as a technician.
+    #
+    # Fix: prefer workforce roles over customer when both exist.
+    # Only if NO active workforce record is found do we fall back
+    # to the original find (which will resolve any legitimate
+    # customer-only user). Emit a WARN log when duplicates are
+    # detected so admins can clean up the data via the admin
+    # ``/admin/migrations/unlink-tech-from-customer`` endpoint.
+    WORKFORCE_ROLES = (
+        "super_admin", "admin", "manager", "technician", "tech",
+    )
+    user = await db.users.find_one({
+        "email": email,
+        "role": {"$in": list(WORKFORCE_ROLES)},
+        "$or": [{"deleted_at": None},
+                  {"deleted_at": {"$exists": False}}],
+    })
+    if not user:
+        # Fallback: any non-soft-deleted user with this email. Skips
+        # soft-deleted rows so a terminated tech doesn't shadow an
+        # active customer record for the same email.
+        user = await db.users.find_one({
+            "email": email,
+            "$or": [{"deleted_at": None},
+                      {"deleted_at": {"$exists": False}}],
+        })
+        if not user:
+            # Last-resort fallback preserves prior 401 semantics for
+            # legitimate "user not found" AND for the "everything is
+            # soft-deleted" case (audit row + generic error).
+            user = await db.users.find_one({"email": email})
+    else:
+        dup_count = await db.users.count_documents({"email": email})
+        if dup_count > 1:
+            logger.warning(
+                "[auth] duplicate-email login — email=%s picked "
+                "workforce role=%s (found %d parallel users records; "
+                "run POST /api/admin/migrations/unlink-tech-from-customer "
+                "to clean up)",
+                email, user.get("role"), dup_count,
+            )
     now = datetime.now(timezone.utc)
 
     # Generic message to avoid user enumeration.
