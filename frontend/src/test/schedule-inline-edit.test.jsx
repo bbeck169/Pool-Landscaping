@@ -70,7 +70,20 @@ describe("ScheduleJobEditModal · PUT /jobs/{id} + DELETE contract", () => {
     expect(modalSrc).toMatch(/api\.put\(`\/jobs\/\$\{job\.id\}`,\s*patch\)/);
     // Change detection compares against the incoming ``job`` prop.
     expect(modalSrc).toMatch(/for \(const k of \[/);
-    expect(modalSrc).toMatch(/if \(\(form\[k\] \|\| ""\) !== \(job\[k\] \|\| ""\)\) patch\[k\] = form\[k\]/);
+    // Feb 2026 · Loop compares ``form[k]`` against a normalized
+    // ``before`` value derived from the incoming ``job`` prop so the
+    // ``work_class`` field can normalize a missing value → "service"
+    // without emitting a spurious patch on every save. Assert the
+    // comparison shape without over-constraining the exact variable
+    // names.
+    expect(modalSrc).toMatch(/if\s*\(\s*after\s*!==\s*before\s*\)\s*patch\[k\]\s*=\s*form\[k\]/);
+  });
+
+  it("includes work_class in the tracked-fields loop (Feb 2026)", () => {
+    // The loop's key list must carry ``work_class`` so a Repair
+    // ↔ Service retag is emitted on save. Regression guard against
+    // dropping the key while renaming siblings.
+    expect(modalSrc).toMatch(/for \(const k of \[[\s\S]{0,300}"work_class"[\s\S]{0,50}\]\)/);
   });
 
   it("DELETEs via api.del (matches the shared client method name)", () => {
@@ -84,5 +97,29 @@ describe("ScheduleJobEditModal · PUT /jobs/{id} + DELETE contract", () => {
     expect(modalSrc).toMatch(/testid=["']schedule-job-edit-save["']/);
     expect(modalSrc).toMatch(/testid=["']schedule-job-edit-delete["']/);
     expect(modalSrc).toMatch(/testid=["']schedule-job-edit-confirm-delete-btn["']/);
+  });
+
+  it("exposes a work_class segmented picker with per-value testids (Feb 2026)", () => {
+    // Group container.
+    expect(modalSrc).toMatch(/data-testid=["']schedule-job-edit-work-class["']/);
+    // Two radio buttons keyed on the literal values.
+    expect(modalSrc).toMatch(/data-testid=\{`schedule-job-edit-work-class-\$\{opt\.value\}`\}/);
+    // Both literal values referenced in the options array.
+    expect(modalSrc).toMatch(/\{\s*value:\s*["']service["']\s*,\s*label:\s*["']Service["']\s*\}/);
+    expect(modalSrc).toMatch(/\{\s*value:\s*["']repair["']\s*,\s*label:\s*["']Repair["']\s*\}/);
+    // Initial state seeds work_class from the incoming job doc,
+    // normalizing missing/legacy → "service".
+    expect(modalSrc).toMatch(/\(job\?\.work_class === ["']repair["']\)\s*\?\s*["']repair["']\s*:\s*["']service["']/);
+  });
+});
+
+describe("CalendarSchedule · Calendar-view double-click → edit modal (Feb 2026)", () => {
+  it("wires onDoubleClickEvent to open the edit modal only for admin roles", () => {
+    // Handler is defined + admin-gated.
+    expect(scheduleSrc).toMatch(
+      /onDoubleClickEvent\s*=\s*React\.useCallback\(\(ev\)\s*=>\s*\{[\s\S]{0,200}if\s*\(!isAdminRole\)\s*return;[\s\S]{0,200}setEditingJob\(rawJob\)/,
+    );
+    // Handler wired into the DnDCalendar prop.
+    expect(scheduleSrc).toMatch(/onDoubleClickEvent=\{onDoubleClickEvent\}/);
   });
 });

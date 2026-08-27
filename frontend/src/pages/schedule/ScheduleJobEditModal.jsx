@@ -47,6 +47,12 @@ export default function ScheduleJobEditModal({
     technician_id:  job?.technician_id || "",
     notes:          job?.notes || "",
     status:         job?.status || "scheduled",
+    // Feb 2026 · Work-class dimension (service | repair). Backend
+    // ``JobUpdate.work_class`` validates + persists on PUT; missing
+    // legacy jobs read as "service" via ``services.work_class.
+    // infer_work_class`` so the initial value here is safe to
+    // default. Send-time normalization in the save handler.
+    work_class:     (job?.work_class === "repair") ? "repair" : "service",
   }));
   const [techs, setTechs] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -64,6 +70,7 @@ export default function ScheduleJobEditModal({
       technician_id:  job.technician_id || "",
       notes:          job.notes || "",
       status:         job.status || "scheduled",
+      work_class:     (job.work_class === "repair") ? "repair" : "service",
     });
     setErr("");
     setConfirmDelete(false);
@@ -87,8 +94,16 @@ export default function ScheduleJobEditModal({
       // partial-update semantics and stays deterministic.
       const patch = {};
       for (const k of ["title", "service_type", "scheduled_date",
-                       "technician_id", "notes", "status"]) {
-        if ((form[k] || "") !== (job[k] || "")) patch[k] = form[k];
+                       "technician_id", "notes", "status", "work_class"]) {
+        // Feb 2026 · Compare against the same normalized ``work_class``
+        // shape the initial state uses ("service" for missing/legacy),
+        // so a modal open + immediate save does NOT emit a spurious
+        // patch that stamps ``work_class`` onto every legacy job.
+        const before = k === "work_class"
+          ? ((job[k] === "repair") ? "repair" : "service")
+          : (job[k] || "");
+        const after = form[k] || "";
+        if (after !== before) patch[k] = form[k];
       }
       if (Object.keys(patch).length === 0) {
         onClose();
@@ -152,6 +167,56 @@ export default function ScheduleJobEditModal({
           onChange={set("title")}
           testid="schedule-job-edit-title"
         />
+        {/* Feb 2026 · Work-class picker. Mirrors the segmented
+            control on ``JobNew.jsx`` so the create + edit surfaces
+            stay symmetric. testids match the ``jf-work-class-*``
+            naming on the create form for consistency, prefixed with
+            ``schedule-job-edit-`` so E2E can target the edit-modal
+            instance specifically. */}
+        <div>
+          <label
+            className="text-xs font-semibold uppercase tracking-wide"
+            style={{ color: colors.muted }}
+          >
+            Type
+          </label>
+          <div
+            className="inline-flex rounded-lg overflow-hidden mt-1"
+            role="radiogroup"
+            aria-label="Job type"
+            data-testid="schedule-job-edit-work-class"
+            style={{ border: `1px solid ${colors.border}` }}
+          >
+            {[
+              { value: "service", label: "Service" },
+              { value: "repair", label: "Repair" },
+            ].map((opt) => {
+              const selected = form.work_class === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() =>
+                    setForm((f) => ({ ...f, work_class: opt.value }))
+                  }
+                  disabled={busy}
+                  className="px-4 py-2 text-sm font-semibold focus:outline-none focus-visible:ring-2"
+                  style={{
+                    backgroundColor: selected
+                      ? colors.primary
+                      : colors.surface,
+                    color: selected ? "#fff" : colors.onSurface,
+                  }}
+                  data-testid={`schedule-job-edit-work-class-${opt.value}`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div>
           <label className="text-xs font-semibold uppercase tracking-wide"
                  style={{ color: colors.muted }}>Service Type</label>

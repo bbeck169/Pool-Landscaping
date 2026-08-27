@@ -493,6 +493,18 @@ export default function CalendarSchedule() {
   // Feb-2026 · Enhancement 1 — drag-drop reschedule state + handlers.
   const isAdminRole = (user?.role === "admin" || user?.role === "super_admin"
                       || user?.role === "manager");
+  // Feb 2026 · Calendar-view inline edit — double-click on an event
+  // opens the ``ScheduleJobEditModal`` (same modal wired to the
+  // Grid-view pencil affordance) so admins can retag work_class /
+  // status / tech assignment without leaving /schedule. Techs and
+  // customers never reach this path — single-click still routes to
+  // the checklist modal for all roles (unchanged behaviour).
+  // ``ev.resource.job`` carries the full doc set on ``jobToEvent()``.
+  const onDoubleClickEvent = React.useCallback((ev) => {
+    if (!isAdminRole) return;
+    const rawJob = ev?.resource?.job || null;
+    if (rawJob) setEditingJob(rawJob);
+  }, [isAdminRole]);
   const [rescheduleDraft, setRescheduleDraft] = React.useState(null);
   const [reschedulePreview, setReschedulePreview] = React.useState(null);
   const [rescheduleBusy, setRescheduleBusy] = React.useState(false);
@@ -1081,6 +1093,7 @@ export default function CalendarSchedule() {
           selectable
           onSelectSlot={onSelectSlot}
           onSelectEvent={onSelectEvent}
+          onDoubleClickEvent={onDoubleClickEvent}
           onEventDrop={onEventDrop}
           draggableAccessor={isDraggable}
           resizable={false}
