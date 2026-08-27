@@ -198,15 +198,24 @@ async def lint_template(body: Dict[str, Any] = Body(...),
     """
     import re as _re
     from services.marketing_campaigns import (
-        render_body, _KNOWN_TOKEN_NAMES,
+        render_body, _KNOWN_TOKEN_NAMES, build_preview_ctx,
     )
     tenant_doc = await db.tenants.find_one(
         {"id": tenant["id"]}, {"_id": 0}) or {}
     sample_sub = {"id": "linter", "email": "linter@example.com",
                     "first_name": "Sam", "last_name": "Preview",
                     "phone": "+15005550006", "status": "subscribed"}
-    ctx = svc.build_ctx(sample_sub, tenant_doc, {"id": "linter"},
-                          send_id="linter")
+    # Feb-2026 · Composer-linter false-positive fix. Real send-time
+    # contexts hydrate the per-recipient ``customer`` / ``referral`` /
+    # ``invoice`` scopes on the fly, but the linter previously only
+    # had the subscriber scope — so every registered tag that read
+    # from those scopes (e.g. ``CUSTOMER_CREDIT_BALANCE``,
+    # ``REFERRAL_FRIEND_NAME``) resolved empty and got flagged as
+    # unresolved in the composer. ``build_preview_ctx`` layers mock
+    # scopes on top so previews render realistic values and the
+    # composer only complains about *actually* unknown tags.
+    ctx = build_preview_ctx(sample_sub, tenant_doc, {"id": "linter"},
+                              send_id="linter")
     unresolved: List[Dict[str, str]] = []
     deprecated: List[Dict[str, str]] = []
     # ``(?<!\{)\{token\}(?!\})`` — a single-brace usage that isn't part
@@ -253,7 +262,10 @@ async def preview_campaign(cid: str, body: PreviewBody,
                 "phone": "+15005550006", "status": "subscribed"}
     tenant_doc = await db.tenants.find_one(
         {"id": tenant["id"]}, {"_id": 0}) or {}
-    ctx = svc.build_ctx(sub, tenant_doc, camp, send_id="preview")
+    # Feb-2026 · Composer-preview mock scopes. See ``/marketing/
+    # templates/lint`` note above — same false-positive fix. Real
+    # sends (``dispatch_campaign``) still use ``build_ctx`` verbatim.
+    ctx = svc.build_preview_ctx(sub, tenant_doc, camp, send_id="preview")
     warnings: List[str] = []
     email_html, missing_h = svc.render_body(
         (camp.get("content") or {}).get("email_html") or "", ctx)

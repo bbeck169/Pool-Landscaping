@@ -102,7 +102,10 @@ def test_upload_png_happy_path_then_list_patch():
     j = r.json()
     mid = j["id"]
     assert j["mime_type"] == "image/png"
-    assert j["url"].endswith(f"/api/marketing/media/{mid}/download")
+    assert j["url"].startswith(f"/api/marketing/media/{mid}/download")
+    # Feb-2026 P1 fix — URL is signed (?tid=...&sig=...) so <img> tags
+    # can render it without an Authorization header.
+    assert "tid=" in j["url"] and "sig=" in j["url"]
     # GET list
     lst = requests.get(f"{API}/marketing/media?page=1&page_size=50",
                         headers=_hdr(tok), timeout=15).json()
@@ -218,11 +221,32 @@ def test_download_proxy_returns_bytes():
     tok = _login("admin@aquaterra.com")
     payload = _png_bytes(512)
     up = _upload(tok, filename="dl.png", data=payload).json()
-    r = requests.get(f"{API}/marketing/media/{up['id']}/download",
-                      headers=_hdr(tok), timeout=15)
+    # Feb-2026 P1 fix — download proxy accepts signed URLs only, no
+    # Bearer needed. The upload response returns the fully-signed URL.
+    url = up["url"]
+    if url.startswith("/"):
+        url = f"http://localhost:8001{url}"
+    r = requests.get(url, timeout=15)
     assert r.status_code == 200
     assert r.headers.get("content-type", "").startswith("image/png")
-    # Response bytes are what the storage stub returned (EXIF-stripped
-    # payload). It's an image, not the assertion target; just prove
-    # non-empty content.
     assert len(r.content) > 0
+
+
+def test_download_proxy_rejects_missing_signature():
+    """A URL without ?tid= / ?sig= returns 401, not the file bytes."""
+    tok = _login("admin@aquaterra.com")
+    up = _upload(tok, filename="dl2.png", data=_png_bytes(512)).json()
+    r = requests.get(f"{API}/marketing/media/{up['id']}/download",
+                      headers=_hdr(tok), timeout=15)
+    assert r.status_code == 401
+
+
+def test_download_proxy_rejects_tampered_signature():
+    """A URL with a bogus sig returns 401."""
+    tok = _login("admin@aquaterra.com")
+    up = _upload(tok, filename="dl3.png", data=_png_bytes(512)).json()
+    r = requests.get(
+        f"{API}/marketing/media/{up['id']}/download?tid=any&sig=deadbeef",
+        timeout=15,
+    )
+    assert r.status_code == 401

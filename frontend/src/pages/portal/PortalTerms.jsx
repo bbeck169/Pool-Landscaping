@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useSearchParams } from "react-router-dom";
-import { Check, Printer, FileText } from "lucide-react";
+import { Check, CheckCircle2, Printer, FileText } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 
@@ -45,6 +45,20 @@ export default function PortalTerms() {
   const activeTab = TOS_TABS.find((t) => t.key === activeKey) || TOS_TABS[0];
   const doc = docs[activeKey];
   const ack = acks[activeKey] || { acknowledged: false, current_version: null };
+  // Feb 2026 · Item 2 — both-agreements-complete indicator. True when
+  // BOTH docs have been fetched, BOTH acks say acknowledged, AND both
+  // acks are at the DOC's current_version (so a version bump on
+  // either doc turns the indicator back off until the customer re-
+  // acks). Guards against stale acks flashing green after a legal
+  // update.
+  const bothAcked = TOS_TABS.every((t) => {
+    const a = acks[t.key];
+    const d = docs[t.key];
+    return a && d
+      && a.acknowledged === true
+      && a.current_version != null
+      && a.current_version === d.version;
+  });
 
   useEffect(() => {
     // Fetch both docs + acks in parallel so the toggle switches
@@ -96,7 +110,7 @@ export default function PortalTerms() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6 tos-print-root"
+    <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 tos-print-root"
          data-testid="portal-terms-page">
       <style>{`
         @media print {
@@ -105,37 +119,62 @@ export default function PortalTerms() {
           .tos-body { border: none !important; box-shadow: none !important; padding: 0 !important; }
           body { background: #fff !important; }
         }
+        /* Feb 2026 · Belt-and-suspenders wrap safety — some ToS
+           lines carry long slugs (URL fragments, code spans) that
+           would overflow a narrow modal or sidebar-constrained
+           layout without ``overflow-wrap: anywhere``. Applied only
+           to the ToS body so we don't fight the wider layout. */
+        .tos-body-copy { overflow-wrap: anywhere; word-break: break-word; }
       `}</style>
 
       {/* Feb 2026 · Service segmented toggle. URL-persisted so a
-          printed / bookmarked link opens the same tab. */}
-      <div
-        className="inline-flex rounded-lg overflow-hidden mb-4 tos-print-hide"
-        role="tablist"
-        aria-label="Terms of Service — select service line"
-        data-testid="id-tos-service-toggle"
-        style={{ border: `1px solid ${colors.border}` }}
-      >
-        {TOS_TABS.map((t) => {
-          const selected = t.key === activeKey;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              onClick={() => switchTab(t.key)}
-              className="px-4 py-2 text-sm font-semibold focus:outline-none focus-visible:ring-2"
-              style={{
-                backgroundColor: selected ? colors.brand : colors.surface,
-                color: selected ? "#fff" : colors.onSurface,
-              }}
-              data-testid={t.testid}
-            >
-              {t.label}
-            </button>
-          );
-        })}
+          printed / bookmarked link opens the same tab. Both-agreements
+          complete indicator (Item 2) renders to the right when both
+          docs are acked at their current version. */}
+      <div className="flex flex-wrap items-center gap-3 mb-4 tos-print-hide">
+        <div
+          className="inline-flex rounded-lg overflow-hidden"
+          role="tablist"
+          aria-label="Terms of Service — select service line"
+          data-testid="id-tos-service-toggle"
+          style={{ border: `1px solid ${colors.border}` }}
+        >
+          {TOS_TABS.map((t) => {
+            const selected = t.key === activeKey;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => switchTab(t.key)}
+                className="px-4 py-2 text-sm font-semibold focus:outline-none focus-visible:ring-2"
+                style={{
+                  backgroundColor: selected ? colors.brand : colors.surface,
+                  color: selected ? "#fff" : colors.onSurface,
+                }}
+                data-testid={t.testid}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+        {bothAcked ? (
+          <span
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+            style={{
+              background: "#DCFCE7",
+              color: "#166534",
+              border: "1px solid #86EFAC",
+            }}
+            data-testid="id-tos-both-complete"
+            title="You have acknowledged both the Pool and Landscaping Terms of Service at their current version"
+          >
+            <CheckCircle2 size={14} strokeWidth={2.5} />
+            Both agreements complete
+          </span>
+        ) : null}
       </div>
 
       <div className="rounded-2xl p-6 mb-4 tos-body"
@@ -175,7 +214,7 @@ export default function PortalTerms() {
         </div>
 
         <article
-          className="prose prose-sm max-w-none"
+          className="prose prose-sm max-w-none w-full tos-body-copy"
           data-testid={activeTab.bodyTestid}
           style={{ color: colors.onSurface, lineHeight: 1.65 }}
         >

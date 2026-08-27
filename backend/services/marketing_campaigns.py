@@ -449,6 +449,182 @@ def build_ctx(subscriber: Optional[Dict[str, Any]],
     }
 
 
+# ─── Feb-2026 · Composer linter mock scopes ────────────────────────────
+# ``build_preview_ctx`` extends the subscriber-only ``build_ctx`` output
+# with mock ``customer``/``tenant``/``job``/``invoice``/``estimate``/
+# ``payment``/``referral``/``service_report``/``equipment_tracker``
+# scopes so the composer's template linter (``POST
+# /api/marketing/templates/lint``) can resolve every registered merge
+# tag without flagging tags like ``CUSTOMER_CREDIT_BALANCE`` /
+# ``REFERRAL_FRIEND_NAME`` as "unresolved". Real send-time contexts are
+# NOT touched — this helper is only wired into the lint endpoint.
+#
+# Every value carries an obviously-fake "Sample" / "Preview" marker so
+# template authors see at a glance that it's a stub, not real data.
+_PREVIEW_TENANT: Dict[str, Any] = {
+    "id": "tenant-preview-linter",
+    "name": "Aquaterra Pools",
+    "timezone": "America/Phoenix",
+    "support_email": "support@sample.co",
+    "support_phone_number": "(555) 010-2020",
+    "phone": "(555) 010-2020",
+    "email": "support@sample.co",
+    "website": "www.sample.example.com",
+    "settings": {
+        # Feb-2026 · Business Card admin editor writes here. Merge-tag
+        # resolvers (``_company_email`` / ``_company_phone`` /
+        # ``_company_website``) prefer this location, mirroring
+        # ``_company_name``'s existing precedence.
+        "business_card": {
+            "company_name": "Aquaterra Pools",
+            "email": "support@sample.co",
+            "phone": "(555) 010-2020",
+            "website_url": "www.sample.example.com",
+        },
+    },
+}
+
+_PREVIEW_CUSTOMER: Dict[str, Any] = {
+    "id": "cust-preview-linter",
+    "name": "Alex Sample",
+    "first_name": "Alex",
+    "last_name": "Sample",
+    "email": "alex.sample@example.com",
+    "phone": "(555) 010-1010",
+    "address_line_1": "123 Sample Ln",
+    "address": "123 Sample Ln",
+    "city": "Preview",
+    "state": "AZ",
+    "zip": "85000",
+    "open_balance": 0,
+    "balance_due": 0,
+    # Feb-2026 referral credits scope.
+    "credits_balance_cents": 0,
+}
+
+_PREVIEW_JOB: Dict[str, Any] = {
+    "id": "job-preview-linter",
+    "scheduled_date": "2026-06-15",
+    "scheduled_start": "2026-06-15T14:00:00Z",
+    "scheduled_end": "2026-06-15T16:00:00Z",
+    "technician_name": "Sample Tech",
+    "title": "Weekly Pool Service (Sample)",
+    "notes": "Preview notes for the template linter.",
+}
+
+_PREVIEW_INVOICE: Dict[str, Any] = {
+    "id": "inv-preview-linter",
+    "invoice_number": "INV-SAMPLE",
+    "total_cents": 12500,      # $125.00
+    "total": 125.00,
+    "tax": 8.25,
+    "due_date": "2026-06-30",
+}
+
+_PREVIEW_ESTIMATE: Dict[str, Any] = {
+    "id": "est-preview-linter",
+    "estimate_number": "EST-SAMPLE",
+    "total": 850.00,
+    "view_url": "https://sample.example.com/estimates/preview",
+    "public_url": "https://sample.example.com/estimates/preview",
+}
+
+_PREVIEW_PAYMENT: Dict[str, Any] = {
+    "amount": 125.00,
+    "method": "Visa ending in 4242 (Sample)",
+    "date": "2026-06-16",
+}
+
+_PREVIEW_REFERRAL: Dict[str, Any] = {
+    "friend_first_name": "Sam Referral",
+    "friend_name": "Sam Referral",
+    "credit_amount_cents": 2500,   # $25.00
+    "eligible_at": "2026-07-15",
+    "eligible_at_pretty": "Jul 15, 2026",
+}
+
+_PREVIEW_TECH: Dict[str, Any] = {
+    "name": "Sample Tech",
+    "display_name": "Sample Tech",
+}
+
+_PREVIEW_EQUIPMENT_TRACKER: Dict[str, Any] = {
+    "equipment_type": "Filter (Sample)",
+    "last_cleaned_date": "2026-04-01",
+    "due_date": "2026-07-01",
+    "interval_months": 3,
+}
+
+_PREVIEW_EVENT: Dict[str, Any] = {
+    "title": "Sample Event",
+    "date": "2026-06-15",
+    "property_address": "123 Sample Ln",
+    "scheduled_time": "2:00 PM",
+    "notes": "Preview event notes.",
+}
+
+_PREVIEW_SERVICE_REPORT: Dict[str, Any] = {
+    "id": "sr-preview-linter",
+    "checklist": [
+        {"item": "Skimmed Pool", "checked": True},
+        {"item": "Brushed Walls", "checked": True},
+    ],
+    "chemical_readings": {
+        "ph": "7.5", "chlorine": "3.0", "alkalinity": "100",
+    },
+    "chemicals_added": [
+        {"name": "Chlorine (Sample)", "amount": "1 lb"},
+    ],
+}
+
+
+def build_preview_ctx(subscriber: Optional[Dict[str, Any]],
+                        tenant: Optional[Dict[str, Any]],
+                        campaign: Dict[str, Any],
+                        send_id: Optional[str] = None) -> Dict[str, Any]:
+    """Preview-only variant of ``build_ctx`` — LINTER USE ONLY.
+
+    Layers realistic-looking mock scopes on top of the subscriber
+    context so every registered merge-tag resolver can produce a
+    non-empty value in the composer preview. Send-time paths must
+    continue to use ``build_ctx`` verbatim (they hydrate the real
+    per-recipient scopes themselves).
+    """
+    ctx = build_ctx(subscriber, tenant, campaign, send_id=send_id)
+    # Seed the tenant scope with real values where we have them; the
+    # mock is only there for keys the actual tenant doc doesn't carry.
+    tenant_scope = dict(_PREVIEW_TENANT)
+    for k, v in (tenant or {}).items():
+        if v not in (None, ""):
+            tenant_scope[k] = v
+    ctx.setdefault("customer", dict(_PREVIEW_CUSTOMER))
+    ctx.setdefault("tenant", tenant_scope)
+    ctx.setdefault("job", dict(_PREVIEW_JOB))
+    ctx.setdefault("invoice", dict(_PREVIEW_INVOICE))
+    ctx.setdefault("estimate", dict(_PREVIEW_ESTIMATE))
+    ctx.setdefault("payment", dict(_PREVIEW_PAYMENT))
+    ctx.setdefault("referral", dict(_PREVIEW_REFERRAL))
+    ctx.setdefault("tech", dict(_PREVIEW_TECH))
+    ctx.setdefault("technician", dict(_PREVIEW_TECH))
+    ctx.setdefault("equipment_tracker", dict(_PREVIEW_EQUIPMENT_TRACKER))
+    ctx.setdefault("event", dict(_PREVIEW_EVENT))
+    ctx.setdefault("service_report", dict(_PREVIEW_SERVICE_REPORT))
+    # Top-level magic-link overrides — the resolvers prefer these when
+    # populated, and we don't want the linter to attempt a real JWT
+    # mint against a fake customer id.
+    ctx.setdefault("customer_portal_login_link",
+                    "https://sample.example.com/portal/auto-login?tk=preview")
+    ctx.setdefault("service_record_link",
+                    "https://sample.example.com/portal/service-record?tk=preview")
+    ctx.setdefault("invoice_pay_link",
+                    "https://sample.example.com/pay/preview")
+    ctx.setdefault("estimate_accept_link",
+                    "https://sample.example.com/estimates/preview")
+    ctx.setdefault("add_card_link",
+                    "https://sample.example.com/portal/add-card?tk=preview")
+    return ctx
+
+
 # ─── Send pipeline ─────────────────────────────────────────────────────
 _ALLOWED_STATUS = {"draft", "scheduled", "sending", "sent",
                      "paused", "failed", "cancelled", "archived"}

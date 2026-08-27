@@ -647,13 +647,50 @@ def _tech_name(ctx: Dict[str, Any]) -> str:
 
 
 def _company_email(ctx: Dict[str, Any]) -> str:
+    """Company support email.
+
+    Feb-2026 · Aligned with the admin editor at Settings → Business
+    Card, which writes to ``tenant.settings.business_card.email``.
+    Falls back to legacy ``tenant.support_email`` / ``tenant.email``
+    so pre-editor tenants keep working.
+    """
     t = ctx.get("tenant") or {}
-    return _safe_str(t.get("support_email") or t.get("email") or "")
+    settings = t.get("settings") or {}
+    card = settings.get("business_card") or {}
+    return _safe_str(card.get("email")
+                     or t.get("support_email")
+                     or t.get("email") or "")
 
 
 def _company_phone(ctx: Dict[str, Any]) -> str:
+    """Company support phone.
+
+    Feb-2026 · Same alignment as ``_company_email`` — prefers the
+    Business Card editor's storage location.
+    """
     t = ctx.get("tenant") or {}
-    return _safe_str(t.get("support_phone_number") or t.get("phone") or "")
+    settings = t.get("settings") or {}
+    card = settings.get("business_card") or {}
+    return _safe_str(card.get("phone")
+                     or t.get("support_phone_number")
+                     or t.get("phone") or "")
+
+
+def _company_website(ctx: Dict[str, Any]) -> str:
+    """Company website URL.
+
+    Feb-2026 · Aligned with the admin editor at Settings → Business
+    Card, which writes to ``tenant.settings.business_card.website_url``.
+    Falls back to legacy ``tenant.website`` so pre-editor tenants keep
+    working. Value returned verbatim — no auto ``https://`` prefix
+    (template authors control href construction).
+    """
+    t = ctx.get("tenant") or {}
+    settings = t.get("settings") or {}
+    card = settings.get("business_card") or {}
+    return _safe_str(card.get("website_url")
+                     or card.get("website")
+                     or t.get("website") or "")
 
 
 def _current_month(ctx: Dict[str, Any]) -> str:
@@ -991,7 +1028,7 @@ MERGE_TAGS: List[Dict[str, Any]] = [
      "resolver": _company_email},
     {"token": "COMPANY_WEBSITE", "label": "Company Website",
      "category": "Company", "description": "Company website URL.",
-     "resolver": _res("tenant", "website")},
+     "resolver": _company_website},
     # Batch 12D · Feb 2026 — expose tenant timezone + next business day
     # to send-time templates (used by scheduling + reminder bodies).
     {"token": "TENANT_TIMEZONE", "label": "Tenant Timezone",

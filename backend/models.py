@@ -227,6 +227,15 @@ class JobUpdate(BaseModel):
     # ownership) may retag service ↔ repair after create. Validation
     # in the handler (rejects anything but "service"/"repair").
     work_class: Optional[str] = None
+    # Feb 2026 · Address picker on Job Edit — multi-property customers
+    # can retag which of their properties a job services. Validated in
+    # ``routers/jobs.py::update_job`` (must exist in tenant AND belong
+    # to the job's customer). Handler re-snapshots address + coords
+    # from the target property onto the job.
+    property_id: Optional[str] = None
+    # Free-text title/subject for the job card. Editable from the
+    # Schedule inline edit modal.
+    title: Optional[str] = None
 
 
 class JobArriveIn(BaseModel):

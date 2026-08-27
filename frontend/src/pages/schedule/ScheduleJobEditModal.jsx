@@ -53,8 +53,16 @@ export default function ScheduleJobEditModal({
     // infer_work_class`` so the initial value here is safe to
     // default. Send-time normalization in the save handler.
     work_class:     (job?.work_class === "repair") ? "repair" : "service",
+    // Feb 2026 · Address picker — a multi-property customer's job
+    // can be re-pointed at another of their properties. The picker
+    // is only rendered when the customer has ≥2 active properties
+    // (see ``properties`` state below). Backend PUT
+    // ``/api/jobs/{id}`` snapshots the target property's address +
+    // coords onto the job on save.
+    property_id:    job?.property_id || "",
   }));
   const [techs, setTechs] = useState([]);
+  const [properties, setProperties] = useState([]);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [err, setErr] = useState("");
@@ -71,13 +79,24 @@ export default function ScheduleJobEditModal({
       notes:          job.notes || "",
       status:         job.status || "scheduled",
       work_class:     (job.work_class === "repair") ? "repair" : "service",
+      property_id:    job.property_id || "",
     });
     setErr("");
     setConfirmDelete(false);
     api.get("/technicians")
       .then((rows) => setTechs(Array.isArray(rows) ? rows : []))
       .catch(() => setTechs([]));
-  }, [open, job?.id]);
+    // Feb 2026 · Fetch the customer's properties so we can render
+    // the picker for multi-property customers. Failure is silent —
+    // the picker just doesn't render, preserving the previous UX.
+    if (job.customer_id) {
+      api.get(`/customers/${job.customer_id}/properties`)
+        .then((rows) => setProperties(Array.isArray(rows) ? rows : []))
+        .catch(() => setProperties([]));
+    } else {
+      setProperties([]);
+    }
+  }, [open, job?.id, job?.customer_id]);
 
   if (!open || !job) return null;
 
@@ -94,7 +113,8 @@ export default function ScheduleJobEditModal({
       // partial-update semantics and stays deterministic.
       const patch = {};
       for (const k of ["title", "service_type", "scheduled_date",
-                       "technician_id", "notes", "status", "work_class"]) {
+                       "technician_id", "notes", "status",
+                       "work_class", "property_id"]) {
         // Feb 2026 · Compare against the same normalized ``work_class``
         // shape the initial state uses ("service" for missing/legacy),
         // so a modal open + immediate save does NOT emit a spurious
@@ -241,6 +261,41 @@ export default function ScheduleJobEditModal({
           onChange={set("scheduled_date")}
           testid="schedule-job-edit-date"
         />
+        {/* Feb 2026 · Property (address) picker. Only rendered when
+            the customer has ≥2 active properties — single-property
+            customers see no clutter. Backend re-snapshots the
+            selected property's address + coords onto the job on
+            save; historical jobs stay accurate even if the property
+            record is later edited. */}
+        {properties.length >= 2 ? (
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide"
+                   style={{ color: colors.muted }}>Address</label>
+            <select
+              value={form.property_id || ""}
+              onChange={set("property_id")}
+              className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm mt-1"
+              style={{
+                backgroundColor: colors.surface, color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid="schedule-job-edit-property"
+            >
+              {properties.map((p) => {
+                const label = p.label ? `${p.label} — ${p.address || ""}` : (p.address || p.id);
+                return (
+                  <option
+                    key={p.id}
+                    value={p.id}
+                    data-testid={`schedule-job-edit-property-${p.id}`}
+                  >
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        ) : null}
         <div>
           <label className="text-xs font-semibold uppercase tracking-wide"
                  style={{ color: colors.muted }}>Technician</label>

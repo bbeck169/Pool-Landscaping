@@ -111,6 +111,20 @@ describe("ScheduleJobEditModal · PUT /jobs/{id} + DELETE contract", () => {
     // normalizing missing/legacy → "service".
     expect(modalSrc).toMatch(/\(job\?\.work_class === ["']repair["']\)\s*\?\s*["']repair["']\s*:\s*["']service["']/);
   });
+
+  it("renders the address picker only when the customer has ≥2 properties (Feb 2026)", () => {
+    // Fetches customer's properties on open (guarded on customer_id).
+    expect(modalSrc).toMatch(/\/customers\/\$\{job\.customer_id\}\/properties/);
+    // Picker rendered behind ``properties.length >= 2`` guard so
+    // single-property customers see no clutter.
+    expect(modalSrc).toMatch(/properties\.length\s*>=\s*2\s*\?/);
+    // Picker testids present.
+    expect(modalSrc).toMatch(/data-testid=["']schedule-job-edit-property["']/);
+    expect(modalSrc).toMatch(/data-testid=\{`schedule-job-edit-property-\$\{p\.id\}`\}/);
+    // property_id is in the change-detection loop so save emits it
+    // to the backend when changed.
+    expect(modalSrc).toMatch(/for \(const k of \[[\s\S]{0,300}"property_id"[\s\S]{0,50}\]\)/);
+  });
 });
 
 describe("CalendarSchedule · Calendar-view double-click → edit modal (Feb 2026)", () => {

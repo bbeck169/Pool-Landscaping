@@ -17,6 +17,8 @@ session.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import io
 import os
 import re
@@ -28,7 +30,7 @@ from fastapi import (
     UploadFile,
 )
 
-from config import db, logger
+from config import db, logger, JWT_SECRET
 from routers.tenants import get_current_tenant
 from services.marketing_media.storage_client import (
     StorageUnavailable, build_path, get_object, put_object,
@@ -117,6 +119,53 @@ def _download_url(mid: str) -> str:
     return f"/api/marketing/media/{mid}/download"
 
 
+def _sign_media(tenant_id: str, mid: str) -> str:
+    """HMAC signature over ``tenant_id|mid`` using ``JWT_SECRET``.
+
+    Feb-2026 Media-Library P1 fix. ``<img>`` tags can't send
+    ``Authorization: Bearer`` headers so the composer/preview + sent
+    emails were rendering broken thumbnails against the auth-gated
+    ``/download`` endpoint. Signed URLs act as a cryptographic capability
+    — anyone with the URL can view that ONE asset, same trust model as
+    an S3 presigned URL. Tenant is baked into the signature so
+    cross-tenant guessing is impossible.
+    """
+    msg = f"{tenant_id}|{mid}".encode("utf-8")
+    return hmac.new(JWT_SECRET.encode("utf-8"), msg,
+                     hashlib.sha256).hexdigest()
+
+
+def _verify_media_sig(tenant_id: str, mid: str, sig: str) -> bool:
+    if not (tenant_id and mid and sig):
+        return False
+    try:
+        return hmac.compare_digest(sig, _sign_media(tenant_id, mid))
+    except Exception:
+        return False
+
+
+def _signed_download_url(tenant_id: str, mid: str) -> str:
+    """Signed variant of ``_download_url`` — works from ``<img>`` tags
+    and delivered emails (no Authorization header available)."""
+    return (f"/api/marketing/media/{mid}/download"
+             f"?tid={tenant_id}&sig={_sign_media(tenant_id, mid)}")
+
+
+def _enrich_media_row(row: dict) -> dict:
+    """Overwrite stored ``cdn_url`` / ``storage_url`` with a fresh
+    signed URL so consumers never see the auth-only path."""
+    if not row:
+        return row
+    tid = row.get("tenant_id") or ""
+    mid = row.get("id") or ""
+    if tid and mid:
+        signed = _signed_download_url(tid, mid)
+        row["cdn_url"] = signed
+        row["url"] = signed
+        row["storage_url"] = signed
+    return row
+
+
 # ═══════════════════════════ Upload ══════════════════════════════════
 @router.post("/marketing/media/upload")
 async def upload_media(
@@ -159,6 +208,7 @@ async def upload_media(
     mid = new_id()
     now = now_iso()
     tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+    signed_url = _signed_download_url(tenant["id"], mid)
     row = {
         "id": mid, "tenant_id": tenant["id"],
         "uploaded_by": user.get("id"),
@@ -166,8 +216,8 @@ async def upload_media(
         "mime_type": mime,
         "size_bytes": len(stripped),
         "storage_key": storage_path,
-        "storage_url": storage_path,   # served via /download proxy
-        "cdn_url": _download_url(mid),
+        "storage_url": signed_url,   # signed URL, works from <img>
+        "cdn_url": signed_url,
         "alt_text": alt_text or None,
         "tags": tag_list,
         "deleted_at": None,
@@ -178,8 +228,9 @@ async def upload_media(
     row.pop("_id", None)
     return {
         "id": mid,
-        "url": _download_url(mid),
-        "cdn_url": _download_url(mid),
+        "url": signed_url,
+        "cdn_url": signed_url,
+        "storage_url": signed_url,
         "mime_type": mime,
         "size_bytes": len(stripped),
         "file_name": row["file_name"],
@@ -190,11 +241,25 @@ async def upload_media(
 @router.get("/marketing/media/{mid}/download")
 async def download_media(
     mid: str,
-    user: dict = Depends(get_current_user),
-    tenant: dict = Depends(get_current_tenant),
+    tid: Optional[str] = Query(None),
+    sig: Optional[str] = Query(None),
 ):
+    """Serve the raw bytes via signed URL.
+
+    Feb-2026 P1 fix — the previous version was gated by
+    ``Depends(get_current_user)`` which requires an ``Authorization:
+    Bearer`` header. ``<img>`` tags can't send that, so composer
+    thumbnails + delivered emails all 401'd → broken images.
+
+    The signed URL (``?tid=<tenant_id>&sig=<hmac>``) is a cryptographic
+    capability derived from ``JWT_SECRET``; anyone with the URL can
+    view that ONE asset (same trust model as an S3 presigned URL).
+    Tenant baked into the HMAC → no cross-tenant enumeration.
+    """
+    if not (tid and sig) or not _verify_media_sig(tid, mid, sig):
+        raise HTTPException(401, "Missing or invalid media signature")
     row = await db.marketing_media.find_one(
-        {"id": mid, "tenant_id": tenant["id"], "deleted_at": None},
+        {"id": mid, "tenant_id": tid, "deleted_at": None},
         {"_id": 0},
     )
     if not row:
@@ -203,7 +268,11 @@ async def download_media(
         data, ctype = get_object(row["storage_key"])
     except StorageUnavailable as exc:
         raise HTTPException(503, f"Storage unavailable: {exc}")
-    return Response(content=data, media_type=row.get("mime_type") or ctype)
+    return Response(
+        content=data,
+        media_type=row.get("mime_type") or ctype,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 # ═══════════════════════════ List / Detail / Patch ═══════════════════
@@ -232,8 +301,19 @@ async def list_media(
         .sort("created_at", -1) \
         .skip((page - 1) * page_size).limit(page_size) \
         .to_list(page_size)
-    return {"rows": rows, "total": total, "page": page,
-             "page_size": page_size}
+    rows = [_enrich_media_row(r) for r in rows]
+    # Feb-2026 Media-Library P1 — front-end needs both ``rows`` (legacy
+    # shape) and pagination hints for the "Load more" button.
+    has_more = (page * page_size) < total
+    return {
+        "rows": rows,
+        "items": rows,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_more": has_more,
+        "next_page": page + 1 if has_more else None,
+    }
 
 
 @router.get("/marketing/media/{mid}")
@@ -246,7 +326,7 @@ async def get_media(mid: str,
     )
     if not row:
         raise HTTPException(404, "Media not found")
-    return row
+    return _enrich_media_row(row)
 
 
 @router.patch("/marketing/media/{mid}")
@@ -270,9 +350,10 @@ async def patch_media(mid: str, payload: Dict,
     )
     if res.matched_count == 0:
         raise HTTPException(404, "Media not found")
-    return await db.marketing_media.find_one(
+    row = await db.marketing_media.find_one(
         {"id": mid, "tenant_id": tenant["id"]}, {"_id": 0},
     )
+    return _enrich_media_row(row)
 
 
 # ═══════════════════════════ Soft-delete with ref-count ══════════════

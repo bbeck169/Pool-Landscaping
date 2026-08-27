@@ -10,7 +10,7 @@
  * "Use this image" button is clicked.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Search, Upload, X as XIcon, Link as LinkIcon, Check } from "lucide-react";
+import { Search, Upload, X as XIcon, Link as LinkIcon, Check, ImageOff } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import {
@@ -18,6 +18,52 @@ import {
 } from "@/components/ui/dialog";
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
+
+/**
+ * Feb-2026 · Media library P1 fix helper.
+ *
+ * The backend serves media at ``/api/marketing/media/{id}/download``.
+ * When the URL is relative, prepend REACT_APP_BACKEND_URL so the
+ * ``<img>`` request lands on the API host (in prod the CRM frontend is
+ * on a different origin). Fully-qualified URLs are returned as-is.
+ */
+function absMediaUrl(u) {
+  if (!u) return u;
+  if (/^https?:/i.test(u)) return u;
+  if (BASE && u.startsWith("/")) return `${BASE}${u}`;
+  return u;
+}
+
+/**
+ * Small ``<img>`` wrapper that swaps in a broken-image placeholder
+ * when the underlying network request fails (401, 404, 5xx, network
+ * error, etc.). Preserves the exact tile geometry so the grid doesn't
+ * jump when a single asset fails to load.
+ */
+function MediaThumb({ src, alt, className }) {
+  const [errored, setErrored] = useState(false);
+  useEffect(() => { setErrored(false); }, [src]);
+  if (errored || !src) {
+    return (
+      <div
+        className={`${className || ""} bg-zinc-100 flex flex-col items-center justify-center text-zinc-400 text-[10px] gap-1`}
+        data-testid="media-thumb-broken"
+      >
+        <ImageOff className="w-5 h-5" />
+        <span>Image unavailable</span>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt || "media"}
+      className={className}
+      loading="lazy"
+      onError={() => setErrored(true)}
+    />
+  );
+}
 
 function TokenAuthHeaders(extra = {}) {
   const token = localStorage.getItem("token") || "";
@@ -79,15 +125,19 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
   const load = useCallback(async (reset = true) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: "48" });
-      if (q) params.set("q", q);
+      const nextPageToRequest = reset ? 1 : nextPage;
+      const params = new URLSearchParams({ page_size: "48" });
+      if (q) params.set("search", q);
       if (tagFilter) params.set("tag", tagFilter);
-      if (!reset && nextPage) params.set("page", String(nextPage));
+      params.set("page", String(nextPageToRequest));
       const res = await api.get(`/marketing/media?${params}`);
-      const items = res.items || res.media || res.rows || [];
+      const items = res.rows || res.items || res.media || [];
       setRows(reset ? items : [...rows, ...items]);
-      setHasMore(!!res.has_more);
-      setNextPage((res.next_page ?? nextPage) || nextPage);
+      const total = Number(res.total ?? 0);
+      const pageSize = Number(res.page_size ?? 48);
+      const has = res.has_more ?? (nextPageToRequest * pageSize < total);
+      setHasMore(!!has);
+      setNextPage(nextPageToRequest + 1);
       // Build tag universe.
       const tags = new Set();
       items.forEach((m) => (m.tags || []).forEach((t) => tags.add(t)));
@@ -140,10 +190,16 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
 
   function pickImage(m) {
     if (typeof onSelect === "function") {
+      const rawUrl = m.storage_url || m.url || m.cdn_url;
+      const absUrl = absMediaUrl(m.cdn_url || m.storage_url || m.url);
       onSelect({
         id: m.id,
-        url: m.storage_url || m.url,
-        cdn_url: m.cdn_url || m.storage_url || m.url,
+        // Preserve the API-relative signed URL so backend can find /
+        // strip references later, but ALSO expose the fully-qualified
+        // absolute URL for direct <img src> use in the editor / email.
+        url: absUrl,
+        cdn_url: absUrl,
+        storage_url: rawUrl,
         alt_text: m.alt_text || "",
       });
     }
@@ -262,11 +318,10 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
                     }`}
                     title={m.file_name || ""}
                   >
-                    <img
-                      src={m.cdn_url || m.storage_url || m.url}
+                    <MediaThumb
+                      src={absMediaUrl(m.cdn_url || m.storage_url || m.url)}
                       alt={m.alt_text || m.file_name || "media"}
                       className="w-full h-full object-cover"
-                      loading="lazy"
                     />
                     {selected?.id === m.id && (
                       <span className="absolute top-1.5 right-1.5 bg-zinc-900 text-white rounded-full p-1">
@@ -299,8 +354,8 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
             ) : (
               <>
                 <div className="p-4 border-b border-zinc-100">
-                  <img
-                    src={selected.cdn_url || selected.storage_url || selected.url}
+                  <MediaThumb
+                    src={absMediaUrl(selected.cdn_url || selected.storage_url || selected.url)}
                     alt={selected.alt_text || ""}
                     className="w-full max-h-40 object-contain rounded"
                   />
@@ -332,7 +387,7 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
                     <span>URL:</span>
                     <button
                       onClick={() => {
-                        navigator.clipboard.writeText(selected.cdn_url || selected.storage_url || selected.url);
+                        navigator.clipboard.writeText(absMediaUrl(selected.cdn_url || selected.storage_url || selected.url));
                         toast.success("URL copied");
                       }}
                       data-testid="media-picker-copy-url"

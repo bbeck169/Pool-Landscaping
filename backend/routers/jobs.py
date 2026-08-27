@@ -1111,6 +1111,48 @@ async def update_job(jid: str, body: JobUpdate,
             update["work_class"] = normalize_work_class(update["work_class"])
         except ValueError as exc:
             raise HTTPException(400, str(exc))
+    # Feb 2026 · Property retag — Address picker on Job Edit. When the
+    # caller sends a ``property_id`` that differs from the job's
+    # current one, we (1) verify the property exists in the SAME
+    # tenant AND belongs to the SAME customer as the job (cross-
+    # customer references → 400), and (2) snapshot the property's
+    # ``address`` + ``site_lat`` / ``site_lng`` onto the job so
+    # historical accuracy is preserved even if the property record
+    # is later edited or deleted.
+    if "property_id" in update and update["property_id"] != job.get("property_id"):
+        new_pid = update["property_id"]
+        if new_pid:
+            prop = await db.properties.find_one(
+                {"id": new_pid, "tenant_id": tenant["id"]},
+                {"_id": 0, "id": 1, "customer_id": 1, "address": 1,
+                  "site_lat": 1, "site_lng": 1,
+                  "latitude": 1, "longitude": 1, "label": 1},
+            )
+            if not prop:
+                raise HTTPException(
+                    400,
+                    "property_id does not resolve to a property in this tenant",
+                )
+            if prop.get("customer_id") != job.get("customer_id"):
+                raise HTTPException(
+                    400,
+                    "property_id belongs to a different customer",
+                )
+            # Re-snapshot address + coordinates. Only overwrite when
+            # the property carries a non-empty value so we never
+            # accidentally blank out a job's coords.
+            if prop.get("address"):
+                update["address"] = prop["address"]
+            site_lat = prop.get("site_lat")
+            if site_lat is None:
+                site_lat = prop.get("latitude")
+            site_lng = prop.get("site_lng")
+            if site_lng is None:
+                site_lng = prop.get("longitude")
+            if site_lat is not None:
+                update["site_lat"] = site_lat
+            if site_lng is not None:
+                update["site_lng"] = site_lng
     if "technician_id" in update:
         # Feb-2026 · P0 hotfix — same shared write-side cascade as
         # ``create_job``. See ``services/tech_assignment.py``.
