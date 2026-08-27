@@ -318,12 +318,17 @@ async def get_service_log(
             "customer_name": (cust or {}).get("name") or job.get("customer_name") or "",
             "customer_id": (cust or {}).get("id"),
             "customer_email": (cust or {}).get("email"),
+            "customer_phone": (cust or {}).get("phone") or job.get("customer_phone"),
             "property_address": prop_addr,
             "property_id": (prop or {}).get("id"),
             "service_at": completed or job.get("scheduled_date"),
             "time_spent_minutes": time_spent_min,
             "employee_name": employee["name"],
             "employee_id": employee["id"],
+            # Feb-2026 · Repair-mode marker for the workstream badge.
+            # ``work_class`` on the job is the source of truth; the
+            # service_report copy inherits it at bootstrap.
+            "work_class": (job.get("work_class") or "service").lower(),
         },
         "employee": employee,
         "customer": cust,

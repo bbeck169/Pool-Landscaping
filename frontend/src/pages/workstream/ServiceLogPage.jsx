@@ -582,7 +582,31 @@ export default function ServiceLogPage() {
         {/* LEFT — Log Details */}
         <div style={{ minWidth: 0 }}>
           <Card testid="service-log-details">
-            <CardTitle>Log Details</CardTitle>
+            <CardTitle>
+              Log Details
+              {/*
+                Feb-2026 · Repair-mode chip on the workstream service
+                log header. Orange pill so admin can spot repair
+                visits at a glance. Purely visual — doesn't filter
+                the feed.
+              */}
+              {(d.log_details?.work_class || "").toLowerCase() === "repair" ? (
+                <span
+                  style={{
+                    marginLeft: 8, display: "inline-flex",
+                    alignItems: "center",
+                    padding: "2px 8px", borderRadius: 999,
+                    fontSize: 11, fontWeight: 700,
+                    backgroundColor: "#FED7AA", color: "#9A3412",
+                    border: "1px solid #FDBA74",
+                    verticalAlign: 2,
+                  }}
+                  data-testid="service-log-repair-chip"
+                >
+                  Repair
+                </span>
+              ) : null}
+            </CardTitle>
             <Row style={{ marginBottom: 14 }}>
               <Avatar name={d.log_details?.customer_name} />
               <div style={{

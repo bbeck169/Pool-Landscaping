@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer, Share2 } from "lucide-react";
+import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer, Share2, Video, Upload } from "lucide-react";
 // Feb-2026 · Chemistry required-readings gate — shared with backend.
 import { missingCoreReadings } from "@/utils/chemistryGate";
 import { compressImageIfNeeded } from "@/lib/imageCompress";
@@ -120,6 +120,12 @@ export default function ServiceReport() {
         chemicals_added: report.chemicals_added,
         checklist_items: report.checklist_items,
         notes: report.notes,
+        // Feb-2026 · Repair-mode notes. Persisted on every autosave
+        // regardless of ``work_class`` (they're safe empty strings
+        // for a standard service report), so a mid-visit retag from
+        // service → repair doesn't lose in-progress text.
+        internal_notes: report.internal_notes,
+        customer_notes: report.customer_notes,
       };
       await api.patch(`/jobs/${id}/service-report`, patch);
       dirtyRef.current = false;
@@ -149,8 +155,18 @@ export default function ServiceReport() {
 
   const job = report.job || {};
   const isPool = report.template === "pool";
+  // Feb-2026 · Repair-mode form branch. A report inherits
+  // ``work_class`` from its parent job at bootstrap. Repair reports
+  // omit chemistry / chemicals / checklist and expose Internal +
+  // External notes + a video uploader; photos remain shared. The
+  // submit gate for repair is UNGATED (backend also skips the
+  // chemistry-missing 422 when ``work_class == "repair"``).
+  const isRepair = (report.work_class || "").toLowerCase() === "repair";
   const photoCount = (report.photos || []).length;
   const remaining = PHOTO_CAP - photoCount;
+  // Feb-2026 · Video counts for the repair uploader UI.
+  const videoCount = (report.videos || []).length;
+  const VIDEO_CAP = 3;   // matches Phase 27 backend policy
 
   const _updChemistryReading = (idx, patch) => {
     const next = [...report.chemical_readings];
@@ -205,6 +221,61 @@ export default function ServiceReport() {
       setReport({ ...report, photos: updated.photos || [] });
     } catch (e) {
       alert(e.message);
+    }
+  };
+
+  /**
+   * Feb-2026 · Repair-mode video upload.
+   *
+   * Uses the modern ``/api/service-reports/{id}/media`` endpoint which
+   * accepts multipart form-data for both photos and videos (Phase 27
+   * infra: 3 videos × 60s × 100 MB). Kept scoped to repair mode so
+   * the standard pool-service flow (legacy ``/api/jobs/{id}/photos``)
+   * stays untouched.
+   *
+   * Errors surface via ``alert()`` — matches the sibling ``addPhoto``
+   * UX pattern in this component.
+   */
+  const addRepairVideo = async (file) => {
+    if (!file) return;
+    if (videoCount >= VIDEO_CAP) {
+      alert(`Max ${VIDEO_CAP} videos per report.`);
+      return;
+    }
+    // 100 MB hard cap — matches Phase 27 backend policy. Surface a
+    // clear message BEFORE the network call so users don't wait for
+    // a slow upload to fail server-side.
+    const MAX_BYTES = 100 * 1024 * 1024;
+    if (file.size > MAX_BYTES) {
+      alert("Video exceeds the 100 MB per-file cap. Please trim and retry.");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("kind", "video");
+    try {
+      // Direct ``fetch`` because ``api`` wrapper JSON-encodes bodies
+      // and this endpoint needs multipart.
+      const base = process.env.REACT_APP_BACKEND_URL || "";
+      const token = localStorage.getItem("token") || "";
+      const rsp = await fetch(
+        `${base}/api/service-reports/${report.id}/media`,
+        { method: "POST", body: fd,
+           headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!rsp.ok) {
+        const t = await rsp.text().catch(() => "");
+        throw new Error(t || `Upload failed (${rsp.status})`);
+      }
+      const j = await rsp.json();
+      // Endpoint returns the updated media list — merge into report.
+      setReport({
+        ...report,
+        videos: j.videos || report.videos || [],
+        photos: j.photos || report.photos || [],
+      });
+    } catch (e) {
+      alert(e.message || "Video upload failed");
     }
   };
 
@@ -404,7 +475,7 @@ export default function ServiceReport() {
         </div>
       </Section>
 
-      {isPool && (
+      {isPool && !isRepair && (
         <Section title="Chemical Readings" icon={<FlaskConical size={16}/>}
                  testId="svc-report-readings">
           <button
@@ -474,7 +545,7 @@ export default function ServiceReport() {
         </Section>
       )}
 
-      {isPool && (
+      {isPool && !isRepair && (
         <Section title="Chemicals Added" icon={<Beaker size={16}/>}
                  testId="svc-report-chems"
                  right={!locked && (
@@ -553,39 +624,134 @@ export default function ServiceReport() {
         </Section>
       )}
 
-      {/* Checklist */}
-      <Section title="Checklist" icon={<ClipboardCheck size={16}/>}
-               subtitle={`${uncheckedCount} unchecked`} testId="svc-report-checklist">
-        <div className="space-y-2">
-          {(report.checklist_items || []).map((c, i) => (
-            <div key={c.id} className="p-3 rounded-lg"
-                 style={{ backgroundColor: colors.surface,
-                          border: `1px solid ${c.checked ? colors.success : colors.border}` }}
-                 data-testid={`svc-check-${c.id}`}>
-              <button onClick={() => !locked && toggleCheck(i)}
-                      className="w-full flex items-start gap-2 text-left"
-                      disabled={locked}
-                      data-testid={`svc-check-toggle-${c.id}`}>
-                {c.checked ? <CheckSquare size={20} style={{ color: colors.success }}/>
-                           : <Square size={20} style={{ color: colors.muted }}/>}
-                <span className="text-sm flex-1" style={{ color: colors.onSurface }}>
-                  {c.label}
-                </span>
-              </button>
-              {c.checked && !locked && (
-                <input value={c.notes || ""} placeholder="Optional note"
-                       onChange={(e) => setCheckNote(i, e.target.value)}
-                       className="w-full mt-2 px-2 py-1 rounded text-xs"
-                       style={{ border: `1px solid ${colors.border}` }}
-                       data-testid={`svc-check-note-${c.id}`}/>
-              )}
-            </div>
-          ))}
-        </div>
-      </Section>
+      {/* Checklist — hidden on repair mode per Feb-2026 spec */}
+      {!isRepair && (
+        <Section title="Checklist" icon={<ClipboardCheck size={16}/>}
+                 subtitle={`${uncheckedCount} unchecked`} testId="svc-report-checklist">
+          <div className="space-y-2">
+            {(report.checklist_items || []).map((c, i) => (
+              <div key={c.id} className="p-3 rounded-lg"
+                   style={{ backgroundColor: colors.surface,
+                            border: `1px solid ${c.checked ? colors.success : colors.border}` }}
+                   data-testid={`svc-check-${c.id}`}>
+                <button onClick={() => !locked && toggleCheck(i)}
+                        className="w-full flex items-start gap-2 text-left"
+                        disabled={locked}
+                        data-testid={`svc-check-toggle-${c.id}`}>
+                  {c.checked ? <CheckSquare size={20} style={{ color: colors.success }}/>
+                             : <Square size={20} style={{ color: colors.muted }}/>}
+                  <span className="text-sm flex-1" style={{ color: colors.onSurface }}>
+                    {c.label}
+                  </span>
+                </button>
+                {c.checked && !locked && (
+                  <input value={c.notes || ""} placeholder="Optional note"
+                         onChange={(e) => setCheckNote(i, e.target.value)}
+                         className="w-full mt-2 px-2 py-1 rounded text-xs"
+                         style={{ border: `1px solid ${colors.border}` }}
+                         data-testid={`svc-check-note-${c.id}`}/>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
-      {/* Notes */}
-      <Section title="Notes" testId="svc-report-notes-section">
+      {/* Feb-2026 · Repair-mode video uploader + notes. Rendered
+          ONLY for ``work_class == "repair"`` reports. Uses the modern
+          ``/api/service-reports/{id}/media`` endpoint (accepts both
+          photos and videos natively; matches the Phase 27 policy of
+          3 videos × 60s × 100 MB). Standard service reports keep the
+          legacy ``/api/jobs/{id}/photos`` flow unchanged. */}
+      {isRepair && (
+        <Section title="Videos"
+                 icon={<Video size={16}/>}
+                 subtitle={`${videoCount} / ${VIDEO_CAP} · up to 60s · 100 MB each`}
+                 testId="id-repair-log-videos">
+          {(report.videos || []).length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+              {report.videos.map((v, i) => (
+                <div key={v.id || i}
+                     className="rounded-xl overflow-hidden bg-black"
+                     data-testid={`id-repair-log-video-${i}`}>
+                  <video controls preload="metadata"
+                         src={v.stream_url || v.url}
+                         className="w-full h-40 object-contain bg-black" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm mb-3" style={{ color: colors.muted }}>
+              No videos yet.
+            </div>
+          )}
+          {!locked && videoCount < VIDEO_CAP && (
+            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold cursor-pointer"
+                   style={{ backgroundColor: colors.surface,
+                            border: `1px dashed ${colors.border}`,
+                            color: colors.onSurface }}
+                   data-testid="id-repair-log-video-upload-label">
+              <Upload size={14}/> Upload video
+              <input type="file"
+                     accept="video/mp4,video/quicktime,video/webm,video/x-m4v,video/avi"
+                     className="hidden"
+                     onChange={(e) => e.target.files?.[0] && addRepairVideo(e.target.files[0])}
+                     data-testid="id-repair-log-videos"/>
+            </label>
+          )}
+          <div className="text-[11px] mt-2" style={{ color: colors.muted }}>
+            Tip · keep clips under 60&nbsp;seconds. Larger files
+            (max 100 MB) upload but take longer on cell signal.
+          </div>
+        </Section>
+      )}
+
+      {isRepair && (
+        <Section title="Internal Notes"
+                 testId="id-repair-log-notes-internal-section">
+          <div className="text-[11px] mb-2" style={{ color: colors.muted }}>
+            Internal only. Visible to admin + tech in workstream.
+            <b> NOT surfaced in customer portal.</b>
+          </div>
+          <textarea rows={4}
+                    value={report.internal_notes || ""}
+                    disabled={locked}
+                    onChange={(e) => {
+                      setReport({ ...report, internal_notes: e.target.value });
+                      markDirty();
+                    }}
+                    placeholder="Root cause · parts used · warranty status · anything the office needs to know…"
+                    className="w-full px-3 py-2 rounded-lg text-sm"
+                    style={{ border: `1px solid ${colors.border}`,
+                             background: colors.surface }}
+                    data-testid="id-repair-log-notes-internal" />
+        </Section>
+      )}
+
+      {isRepair && (
+        <Section title="External Notes"
+                 testId="id-repair-log-notes-external-section">
+          <div className="text-[11px] mb-2" style={{ color: colors.muted }}>
+            <b>Visible to the customer</b> in their portal service history.
+          </div>
+          <textarea rows={4}
+                    value={report.customer_notes || ""}
+                    disabled={locked}
+                    onChange={(e) => {
+                      setReport({ ...report, customer_notes: e.target.value });
+                      markDirty();
+                    }}
+                    placeholder="What the customer should know — what was fixed, next steps, follow-up dates…"
+                    className="w-full px-3 py-2 rounded-lg text-sm"
+                    style={{ border: `1px solid ${colors.border}`,
+                             background: colors.surface }}
+                    data-testid="id-repair-log-notes-external" />
+        </Section>
+      )}
+
+      {/* Notes — legacy free-text block on standard service reports */}
+      {!isRepair && (
+        <Section title="Notes" testId="svc-report-notes-section">
         <textarea rows={4} value={report.notes || ""} disabled={locked}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Anything the customer or dispatcher should know…"
@@ -593,6 +759,7 @@ export default function ServiceReport() {
                   style={{ border: `1px solid ${colors.border}` }}
                   data-testid="svc-report-notes"/>
       </Section>
+      )}
 
       {!locked && (
         <div className="sticky bottom-0 left-0 right-0 mt-6 py-3 flex justify-end gap-2"
@@ -606,15 +773,15 @@ export default function ServiceReport() {
             <Save size={13} className="inline mr-1"/> Save now
           </button>
           <button onClick={submitAndClockOut}
-                  disabled={submitting || coreMissingLive.length > 0}
+                  disabled={submitting || (!isRepair && coreMissingLive.length > 0)}
                   title={
-                    coreMissingLive.length > 0
+                    !isRepair && coreMissingLive.length > 0
                       ? `Missing: ${coreMissingLive.join(", ")}`
                       : undefined
                   }
                   className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
-                  style={{ background: coreMissingLive.length > 0 ? colors.muted : brandGradientCss }}
-                  data-testid="svc-report-submit">
+                  style={{ background: (!isRepair && coreMissingLive.length > 0) ? colors.muted : brandGradientCss }}
+                  data-testid={isRepair ? "id-repair-log-submit" : "svc-report-submit"}>
             <ShieldCheck size={14} className="inline mr-1"/>
             {submitting ? "Submitting…" : "Submit Report & Clock Out"}
           </button>

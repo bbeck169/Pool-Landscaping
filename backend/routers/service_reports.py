@@ -242,11 +242,18 @@ async def _bootstrap_report(tenant_id: str, job: dict, tech_id: str) -> dict:
     kind = _detect_template(job)
     tpl = await _get_template(tenant_id, kind)
     now = now_iso()
+    # Feb-2026 · Repair-mode service log — inherit ``work_class`` from
+    # the parent job so downstream consumers (frontend form branch,
+    # workstream badge, portal renderer, chemistry gate skip) can
+    # key off the report doc without re-querying the job.
+    from services.work_class import infer_work_class as _iwc
+    work_class = _iwc(job)
     return {
         "id": new_id(),
         "tenant_id": tenant_id,
         "job_id": job["id"],
         "tech_id": tech_id,
+        "work_class": work_class,
         # Phase 22 · Feb 2026 — opaque public UUID keys the public
         # /portal/service/{uuid} page used by the SERVICE_RECORD_IMAGES
         # merge tag. Generated at bootstrap so every submitted report
@@ -391,6 +398,11 @@ class ServiceReportPatch(BaseModel):
     # dict fields). Persisted verbatim; the AI dosing recommender reads
     # `observations.visible_algae` to emit algae_remediation entries.
     observations: Optional[Dict[str, Any]] = None
+    # Feb-2026 · Repair-mode service log — allow the tech (or a bug-
+    # fix admin script) to retag the report between service/repair
+    # after bootstrap. Normalized on write; unknown values → 400 in
+    # the handler.
+    work_class: Optional[str] = None
 
 
 @router.patch("/jobs/{jid}/service-report")
@@ -419,6 +431,13 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
     upd = {k: v for k, v in body.dict(exclude_unset=True).items()}
     if not upd:
         raise HTTPException(400, "No fields to update")
+    # Feb-2026 · Repair retag — normalize + validate before write.
+    if "work_class" in upd:
+        try:
+            from services.work_class import normalize_work_class
+            upd["work_class"] = normalize_work_class(upd["work_class"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
     upd["updated_at"] = now_iso()
     await db.service_reports.update_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
@@ -475,11 +494,17 @@ async def submit_service_report(
     # Feb-2026 · Chemistry required-readings gate.  Pool jobs MUST
     # have all 5 core readings (Free Cl, Total Cl, Alkalinity, pH,
     # CYA) before we accept the submit.  Landscape jobs skip the
-    # gate — no chemistry surface on that checklist.
+    # gate — no chemistry surface on that checklist. Feb-2026 ·
+    # Repair-mode addition — a job tagged ``work_class == "repair"``
+    # ALSO skips (repair visits are photo/video/notes only per the
+    # locked product spec).
     from services.chemistry_gate import (
         assert_core_readings_present, gather_readings_for_job, is_pool_job,
     )
-    if is_pool_job(job):
+    _report_wc = (rep.get("work_class") or "").lower()
+    _job_wc = (job.get("work_class") or "").lower()
+    _is_repair = "repair" in (_report_wc, _job_wc)
+    if is_pool_job(job) and not _is_repair:
         assert_core_readings_present(gather_readings_for_job(job, rep))
     now = now_iso()
     # Phase 22 · Feb 2026 — backfill ``public_uuid`` on submit for

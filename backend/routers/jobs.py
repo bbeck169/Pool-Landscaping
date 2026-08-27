@@ -1206,12 +1206,17 @@ async def update_job(jid: str, body: JobUpdate,
     # Feb-2026 · Chemistry required-readings gate.  Applied ONLY on
     # the ``→ completed`` transition — Could-Not-Service and other
     # status changes are NOT gated.  Landscape jobs skip the gate.
+    # Feb-2026 · Repair-mode addition — repair jobs (``work_class ==
+    # "repair"``) also skip: repair visits document evidence via
+    # photos + videos + notes only, chemistry not required.
     if (update.get("status") == "completed"
             and job.get("status") != "completed"):
         from services.chemistry_gate import (
             assert_core_readings_present, gather_readings_for_job, is_pool_job,
         )
-        if is_pool_job(job):
+        _effective_wc = (update.get("work_class")
+                          or job.get("work_class") or "").lower()
+        if is_pool_job(job) and _effective_wc != "repair":
             rep = await db.service_reports.find_one(
                 {"tenant_id": tenant["id"], "job_id": jid}, {"_id": 0},
             )

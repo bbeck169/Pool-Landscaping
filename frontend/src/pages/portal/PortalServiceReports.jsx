@@ -358,6 +358,26 @@ export function PortalServiceReportDetail() {
             <div className="flex items-center gap-2 flex-wrap">
               <KindChip kind={kind} />
               <StatusPill status="completed" />
+              {/*
+                Feb-2026 · Repair-mode marker on the portal card.
+                Small orange chip so customers can quickly see the
+                visit was a repair vs a routine service. Backend
+                stamps ``work_class`` on the report at bootstrap; the
+                same value is redacted-safe to expose (no PII).
+              */}
+              {(sr.work_class || "").toLowerCase() === "repair" ? (
+                <span
+                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                  style={{
+                    backgroundColor: "#FED7AA",
+                    color: "#9A3412",
+                    border: "1px solid #FDBA74",
+                  }}
+                  data-testid="portal-service-report-repair-chip"
+                >
+                  Repair
+                </span>
+              ) : null}
             </div>
             <h1
               className="text-2xl font-bold mt-2"
@@ -423,8 +443,12 @@ export function PortalServiceReportDetail() {
           chips only. Customers see Below / Average / Above Avg /
           Elevated per reading; raw numeric values are never shown on
           the portal.  Backend already strips numeric readings and
-          attaches the classification band. */}
-      {kind === "pool" && readings.length > 0 ? (
+          attaches the classification band.
+          Feb-2026 · Repair-mode addition — repair visits omit the
+          chemistry surface entirely (matches the tech-facing form). */}
+      {kind === "pool"
+       && readings.length > 0
+       && (sr.work_class || "").toLowerCase() !== "repair" ? (
         <Section
           icon={Droplet}
           title="Water chemistry"
@@ -602,6 +626,43 @@ export function PortalServiceReportDetail() {
                   style={{ border: `1px solid ${colors.border}` }}
                   data-testid={`portal-service-report-photo-${i}`}
                 />
+              );
+            })}
+          </div>
+        </Section>
+      ) : null}
+
+      {/*
+        Feb-2026 · Portal visit videos. Rendered whenever the redacted
+        response carries a non-empty ``videos`` array. Native HTML5
+        ``<video controls>`` — no library dependency, mobile-friendly,
+        works on iOS Safari. Backend serves via signed public URL
+        (``services/portal_media.py``) so ``<video src>`` doesn't need
+        an auth header.
+      */}
+      {Array.isArray(sr.videos) && sr.videos.length > 0 ? (
+        <Section
+          icon={Waves}
+          title="Visit videos"
+          testid="portal-service-report-videos"
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {sr.videos.map((v, i) => {
+              const src = v.stream_url || v.url || "";
+              if (!src) return null;
+              return (
+                <div
+                  key={v.id || i}
+                  className="rounded-lg overflow-hidden bg-black"
+                  data-testid={`portal-service-report-video-${i}`}
+                >
+                  <video
+                    controls
+                    preload="metadata"
+                    src={src}
+                    className="w-full h-56 object-contain bg-black"
+                  />
+                </div>
               );
             })}
           </div>
