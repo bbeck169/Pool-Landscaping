@@ -260,64 +260,99 @@ function BackfillCard() {
 
 
 function RosterCleanupCard() {
-  const [rows, setRows] = useState(null);
-  const [selected, setSelected] = useState(new Set());
+  // Feb 2026 · Preview/Run refactor — this card now follows the same
+  // first-class Preview/Run + typed-confirm pattern as the Stripe
+  // migration cards.  Details:
+  //
+  //   * Preview (Dry Run) and Run Cleanup buttons are ALWAYS visible
+  //     up front.  They call ``POST /deactivate-users`` with an
+  //     empty ``user_ids`` — the backend auto-resolves the candidate
+  //     set to every tech-adjacent user on the caller's tenant.
+  //     Existing skipped-reason logic (already_inactive /
+  //     has_active_jobs / not_tech_adjacent) still runs per row.
+  //   * The old audit table is preserved as a secondary read-only
+  //     view behind the "List roster" toggle at the top-right,
+  //     retaining every legacy row testid so E2E audits keep
+  //     working.  The manual checkbox-selection flow is retired —
+  //     the roster view is now read-only; if operators need
+  //     surgical control they can hit the endpoint directly with
+  //     an explicit ``user_ids`` array (the backend still honours
+  //     that legacy shape).
+  //   * ``api.post(path, body, 60_000)`` — numeric timeout, no
+  //     ``AbortController`` wrapper.  Same P0 lesson we shipped for
+  //     the Stripe cards.
   const [busy, setBusy] = useState(false);
+  const [hasPreviewed, setHasPreviewed] = useState(false);
+  const [report, setReport] = useState(null);
   const [confirmText, setConfirmText] = useState("");
   const [error, setError] = useState("");
-  const [report, setReport] = useState(null);
 
-  const load = async () => {
-    setBusy(true); setError("");
-    try {
-      const r = await api.get("/admin/migrations/roster");
-      setRows(r);
-      setSelected(new Set());
-      setReport(null);
-    } catch (e) {
-      setError(e?.message || "Failed to load roster");
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Secondary read-only audit view — preserves the "List roster"
+  // capability as requested.
+  const [rows, setRows] = useState(null);
+  const [rosterBusy, setRosterBusy] = useState(false);
 
-  const toggle = (uid, disabled) => {
-    if (disabled) return;
-    setSelected((prev) => {
-      const s = new Set(prev);
-      if (s.has(uid)) s.delete(uid); else s.add(uid);
-      return s;
-    });
-  };
-
-  const commit = async (dry_run) => {
-    if (selected.size === 0) return;
-    setBusy(true); setError("");
+  const run = async (dry_run) => {
+    setBusy(true);
+    setError("");
     try {
       const r = await api.post(
         "/admin/migrations/deactivate-users",
-        { user_ids: Array.from(selected), dry_run },
+        // Empty ``user_ids`` → backend auto-resolves to the tenant's
+        // full tech-adjacent roster.  Explicit-selection callers can
+        // still POST a non-empty array; that path is unchanged.
+        { user_ids: [], dry_run },
+        60_000,  // 1 min — enough for large rosters, well under
+                 //         Kubernetes ingress timeout.
       );
       setReport(r);
-      if (!dry_run) {
-        // Refresh so deactivated rows show the inactive chip
-        // + selection cleared.
-        await load();
+      if (dry_run) setHasPreviewed(true);
+      else {
         setConfirmText("");
+        // Refresh the audit table if it's currently open so the
+        // newly-deactivated rows flip to the "Inactive" chip.
+        if (rows !== null) await loadRoster();
       }
     } catch (e) {
-      setError(e?.message || "Deactivate failed");
+      const aborted = e?.name === "AbortError" || e?.code === "ERR_CANCELED";
+      setError(
+        aborted
+          ? "Timed out after 1 minute. Please retry."
+          : (e?.message || "Deactivate failed"),
+      );
     } finally {
       setBusy(false);
     }
   };
 
-  const runReady =
-    selected.size > 0 && confirmText === "DEACTIVATE" && !busy;
+  const loadRoster = async () => {
+    setRosterBusy(true);
+    setError("");
+    try {
+      const r = await api.get("/admin/migrations/roster");
+      setRows(r);
+    } catch (e) {
+      setError(e?.message || "Failed to load roster");
+    } finally {
+      setRosterBusy(false);
+    }
+  };
+
+  const toggleRoster = () => {
+    if (rows === null) {
+      void loadRoster();
+    } else {
+      // Collapse the audit view — cheaper than re-fetching to
+      // toggle open next time.
+      setRows(null);
+    }
+  };
+
+  const runReady = hasPreviewed && confirmText === "DEACTIVATE" && !busy;
 
   return (
     <div
-      className="rounded-2xl p-5 shadow-sm mt-6"
+      className="rounded-2xl p-5 shadow-sm mb-4"
       style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
       data-testid="id-roster-cleanup-card"
     >
@@ -330,23 +365,79 @@ function RosterCleanupCard() {
             Soft-deactivate tech-adjacent users to remove them from
             assign-tech dropdowns.  History (past jobs, invoices,
             service reports) is preserved.  Users with active
-            scheduled / in-progress jobs must be reassigned first.
+            scheduled / in-progress jobs are automatically skipped —
+            reassign them first.
           </p>
         </div>
+        {/* "List roster" — preserved as a secondary read-only audit
+            toggle so super_admins can still eyeball the current
+            tech-adjacent roster + per-user active-jobs count. */}
         <button
           type="button"
           className="rounded-lg px-3 py-2 text-sm font-semibold"
           style={{
             background: colors.brandTertiary, color: colors.brand,
             border: `1px solid ${colors.brand}`,
-            opacity: busy ? 0.5 : 1,
-            cursor: busy ? "not-allowed" : "pointer",
+            opacity: rosterBusy ? 0.5 : 1,
+            cursor: rosterBusy ? "not-allowed" : "pointer",
           }}
-          disabled={busy}
-          onClick={load}
+          disabled={rosterBusy}
+          onClick={toggleRoster}
           data-testid="id-roster-list-btn"
         >
-          {rows === null ? "List roster" : "Reload"}
+          {rows === null ? "List roster" : "Hide roster"}
+        </button>
+      </div>
+
+      {/* First-class Preview + Run row — always visible, mirrors
+          the Stripe cards' contract. */}
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          className="text-sm px-3 py-2 rounded-lg font-semibold"
+          style={{
+            background: colors.brand,
+            color: "#fff",
+            opacity: busy ? 0.5 : 1,
+          }}
+          disabled={busy}
+          onClick={() => run(true)}
+          data-testid="id-roster-preview-btn"
+        >
+          {busy && !hasPreviewed ? "Previewing…" : "Preview (Dry Run)"}
+        </button>
+        <span className="text-xs" style={{ color: colors.muted }}>
+          {hasPreviewed
+            ? 'Type "DEACTIVATE" to enable commit:'
+            : "Run a preview first to enable the cleanup button."}
+        </span>
+        <input
+          type="text"
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          disabled={busy || !hasPreviewed}
+          className="text-xs px-2 py-1 rounded-md font-mono disabled:opacity-50"
+          style={{
+            background: colors.surface,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+            width: 140,
+          }}
+          data-testid="id-roster-confirm-input"
+        />
+        <button
+          type="button"
+          className="text-sm px-3 py-2 rounded-lg font-semibold"
+          style={{
+            background: runReady ? "#DC2626" : colors.surfaceSecondary,
+            color: runReady ? "#fff" : colors.muted,
+            opacity: runReady ? 1 : 0.6,
+          }}
+          disabled={!runReady}
+          onClick={() => run(false)}
+          data-testid="id-roster-deactivate-btn"
+        >
+          {busy && hasPreviewed ? "Deactivating…" : "Run Cleanup"}
         </button>
       </div>
 
@@ -358,12 +449,108 @@ function RosterCleanupCard() {
         >{error}</div>
       ) : null}
 
+      {/* Preview / run report — count summary + per-user detail
+          table (email + role + active_jobs) + skipped reasons. */}
+      {report ? (
+        <div
+          className="mt-4 p-3 rounded-lg text-sm"
+          style={{ background: colors.surfaceSecondary,
+                    color: colors.onSurface }}
+          data-testid="id-roster-report"
+        >
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div
+              className="rounded-lg p-2"
+              style={{ background: colors.surface }}
+              data-testid="id-roster-report-count"
+            >
+              <div className="text-[11px] uppercase"
+                    style={{ color: colors.muted }}>
+                {report.dry_run ? "Would deactivate" : "Deactivated"}
+              </div>
+              <div className="text-xl font-bold"
+                    style={{ color: colors.brand }}>
+                {report.deactivated_count}
+              </div>
+            </div>
+            <div
+              className="rounded-lg p-2"
+              style={{ background: colors.surface }}
+            >
+              <div className="text-[11px] uppercase"
+                    style={{ color: colors.muted }}>
+                Skipped
+              </div>
+              <div className="text-xl font-bold"
+                    style={{ color: colors.onSurface }}>
+                {report.skipped_count}
+              </div>
+            </div>
+          </div>
+
+          {report.deactivated_details?.length ? (
+            <div className="overflow-x-auto"
+                  data-testid="id-roster-report-details">
+              <table className="min-w-full text-xs">
+                <thead>
+                  <tr style={{ color: colors.muted }}>
+                    <th className="text-left p-1">Email</th>
+                    <th className="text-left p-1">Name</th>
+                    <th className="text-left p-1">Role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.deactivated_details.map((d) => (
+                    <tr key={d.id}
+                        data-testid={`id-roster-report-row-${d.id}`}>
+                      <td className="p-1 font-mono"
+                          style={{ color: colors.onSurface }}>
+                        {d.email}
+                      </td>
+                      <td className="p-1" style={{ color: colors.onSurface }}>
+                        {d.name}
+                      </td>
+                      <td className="p-1" style={{ color: colors.muted }}>
+                        {d.role}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          {report.skipped?.length ? (
+            <details className="mt-2 text-xs">
+              <summary style={{ color: colors.muted, cursor: "pointer" }}>
+                {report.skipped.length} skipped —{" "}
+                {report.skipped.map((s) => s.reason).join(", ").slice(0, 60)}
+              </summary>
+              <ul className="mt-1 pl-4 list-disc font-mono"
+                  style={{ color: colors.muted }}>
+                {report.skipped.map((s, i) => (
+                  <li key={i}>
+                    {(s.user_id || "").slice(0, 8)} — {s.reason}
+                    {s.active_jobs != null
+                      ? ` (${s.active_jobs} active jobs)`
+                      : ""}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* ─── Secondary read-only audit table — preserved capability.
+          Renders only when "List roster" was clicked. Keeps all
+          legacy row testids so any downstream E2E that used them
+          keeps working. */}
       {rows !== null ? (
         <div className="mt-4 overflow-x-auto" data-testid="id-roster-table">
           <table className="min-w-full text-sm">
             <thead>
               <tr style={{ color: colors.muted }}>
-                <th className="text-left p-2 w-8"></th>
                 <th className="text-left p-2">Name</th>
                 <th className="text-left p-2">Email</th>
                 <th className="text-left p-2">Role</th>
@@ -374,167 +561,60 @@ function RosterCleanupCard() {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={7}
+                <tr><td colSpan={6}
                           className="p-3 text-center"
                           style={{ color: colors.muted }}
                           data-testid="id-roster-empty">
                   No tech-adjacent users on this tenant.
                 </td></tr>
-              ) : rows.map((r) => {
-                const rowDisabled =
-                  r.is_deactivated || (r.active_jobs || 0) > 0;
-                return (
-                  <tr
-                    key={r.id}
-                    style={{ borderTop: `1px solid ${colors.border}` }}
-                    data-testid={`id-roster-user-${r.id}`}
-                  >
-                    <td className="p-2">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(r.id)}
-                        onChange={() => toggle(r.id, rowDisabled)}
-                        disabled={rowDisabled}
-                        data-testid={`id-roster-check-${r.id}`}
-                      />
-                    </td>
-                    <td className="p-2 font-semibold"
-                        style={{ color: colors.onSurface }}>{r.name}</td>
-                    <td className="p-2" style={{ color: colors.muted }}>{r.email}</td>
-                    <td className="p-2" style={{ color: colors.muted }}>{r.role}</td>
-                    <td className="p-2" style={{
-                      color: (r.active_jobs || 0) > 0
-                        ? "#DC2626" : colors.muted,
-                    }}
-                        data-testid={`id-roster-active-jobs-${r.id}`}>
-                      {r.active_jobs || 0}
-                      {/* Feb 2026 · Work-class split. Always shown when
-                          the row has ≥1 active job so the testid
-                          ``id-roster-active-jobs-split-{id}`` always
-                          exists for E2E + the feature is discoverable
-                          on rows with zero repairs. Legacy payloads
-                          without the split fields still hide it
-                          (guard on ``typeof active_jobs_service``). */}
-                      {typeof r.active_jobs_service === "number"
-                        && (r.active_jobs || 0) > 0 ? (
-                        <span
-                          className="ml-1 text-xs opacity-75"
-                          data-testid={`id-roster-active-jobs-split-${r.id}`}
-                        >
-                          ({r.active_jobs_service ?? 0}S / {r.active_jobs_repair ?? 0}R)
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="p-2">
-                      {r.is_deactivated ? (
-                        <span
-                          className="px-2 py-0.5 rounded-full text-xs"
-                          style={{ background: colors.surfaceSecondary,
-                                    color: colors.muted }}
-                          data-testid={`id-roster-inactive-chip-${r.id}`}
-                        >Inactive</span>
-                      ) : (
-                        <span
-                          className="px-2 py-0.5 rounded-full text-xs"
-                          style={{ background: "#DCFCE7", color: "#166534" }}
-                        >Active</span>
-                      )}
-                    </td>
-                    <td className="p-2 text-xs" style={{ color: colors.muted }}>
-                      {String(r.created_at || "").slice(0, 10)}
-                    </td>
-                  </tr>
-                );
-              })}
+              ) : rows.map((r) => (
+                <tr
+                  key={r.id}
+                  style={{ borderTop: `1px solid ${colors.border}` }}
+                  data-testid={`id-roster-user-${r.id}`}
+                >
+                  <td className="p-2 font-semibold"
+                      style={{ color: colors.onSurface }}>{r.name}</td>
+                  <td className="p-2" style={{ color: colors.muted }}>{r.email}</td>
+                  <td className="p-2" style={{ color: colors.muted }}>{r.role}</td>
+                  <td className="p-2" style={{
+                    color: (r.active_jobs || 0) > 0
+                      ? "#DC2626" : colors.muted,
+                  }}
+                      data-testid={`id-roster-active-jobs-${r.id}`}>
+                    {r.active_jobs || 0}
+                    {typeof r.active_jobs_service === "number"
+                      && (r.active_jobs || 0) > 0 ? (
+                      <span
+                        className="ml-1 text-xs opacity-75"
+                        data-testid={`id-roster-active-jobs-split-${r.id}`}
+                      >
+                        ({r.active_jobs_service ?? 0}S / {r.active_jobs_repair ?? 0}R)
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="p-2">
+                    {r.is_deactivated ? (
+                      <span
+                        className="px-2 py-0.5 rounded-full text-xs"
+                        style={{ background: colors.surfaceSecondary,
+                                  color: colors.muted }}
+                        data-testid={`id-roster-inactive-chip-${r.id}`}
+                      >Inactive</span>
+                    ) : (
+                      <span
+                        className="px-2 py-0.5 rounded-full text-xs"
+                        style={{ background: "#DCFCE7", color: "#166534" }}
+                      >Active</span>
+                    )}
+                  </td>
+                  <td className="p-2 text-xs" style={{ color: colors.muted }}>
+                    {String(r.created_at || "").slice(0, 10)}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
-
-          {rows.length > 0 ? (
-            <div
-              className="mt-4 flex flex-wrap items-center gap-2"
-              data-testid="id-roster-action-row"
-            >
-              <span className="text-sm" style={{ color: colors.muted }}>
-                {selected.size} selected
-              </span>
-              <button
-                type="button"
-                className="rounded-lg px-3 py-2 text-sm"
-                style={{
-                  background: colors.brandTertiary,
-                  color: colors.brand,
-                  border: `1px solid ${colors.brand}`,
-                  opacity: selected.size === 0 || busy ? 0.5 : 1,
-                  cursor: selected.size === 0 || busy ? "not-allowed" : "pointer",
-                }}
-                disabled={selected.size === 0 || busy}
-                onClick={() => commit(true)}
-                data-testid="id-roster-preview-btn"
-              >
-                Preview (Dry Run)
-              </button>
-              <input
-                type="text"
-                placeholder='Type "DEACTIVATE" to enable →'
-                value={confirmText}
-                onChange={(e) => setConfirmText(e.target.value)}
-                className="rounded-lg px-3 py-2 text-sm font-mono"
-                style={{
-                  background: colors.surfaceSecondary,
-                  border: `1px solid ${colors.border}`,
-                  color: colors.onSurface, width: 240,
-                  opacity: selected.size > 0 ? 1 : 0.5,
-                }}
-                disabled={selected.size === 0 || busy}
-                data-testid="id-roster-confirm-input"
-              />
-              <button
-                type="button"
-                className="rounded-lg px-4 py-2 text-sm font-semibold"
-                style={{
-                  background: runReady ? "#DC2626" : colors.surfaceSecondary,
-                  color: runReady ? "#fff" : colors.muted,
-                  border: `1px solid ${runReady ? "#DC2626" : colors.border}`,
-                  cursor: runReady ? "pointer" : "not-allowed",
-                }}
-                disabled={!runReady}
-                onClick={() => commit(false)}
-                data-testid="id-roster-deactivate-btn"
-              >
-                Deactivate selected
-              </button>
-            </div>
-          ) : null}
-
-          {report ? (
-            <div
-              className="mt-4 p-3 rounded-lg text-sm"
-              style={{ background: colors.surfaceSecondary,
-                        color: colors.onSurface }}
-              data-testid="id-roster-report"
-            >
-              <div>
-                <strong>{report.dry_run ? "Would deactivate" : "Deactivated"}:</strong>{" "}
-                {report.deactivated_count}
-              </div>
-              <div>
-                <strong>Skipped:</strong> {report.skipped_count}
-              </div>
-              {report.skipped?.length ? (
-                <ul className="mt-2 pl-4 list-disc text-xs font-mono"
-                    style={{ color: colors.muted }}>
-                  {report.skipped.map((s, i) => (
-                    <li key={i}>
-                      {s.user_id.slice(0, 8)} — {s.reason}
-                      {s.active_jobs != null
-                        ? ` (${s.active_jobs} active jobs)`
-                        : ""}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          ) : null}
         </div>
       ) : null}
     </div>

@@ -367,3 +367,155 @@ def test_list_roster_returns_tech_adjacent_with_active_jobs():
     inactive = next(row for row in rows if row["id"] == "u_inactive")
     assert inactive["is_deactivated"] is True
     assert active["is_deactivated"] is False
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 9 · Feb 2026 · Auto-resolve branch — empty ``user_ids`` on dry_run
+#     expands to the tenant's full tech-adjacent roster, filters out
+#     already-inactive + busy techs via the standard skip reasons,
+#     writes NOTHING, and returns rich ``deactivated_details`` rows.
+# ═══════════════════════════════════════════════════════════════════
+def test_deactivate_users_auto_resolve_dry_run_returns_details():
+    from routers import admin_migrations as _mod
+    db_stub = _seed_db()
+    user = {"id": "u_sa", "role": "super_admin", "tenant_id": "tA"}
+    tenant = {"id": "tA", "slug": "aquaterra", "name": "AquaTerra"}
+    app = _build_app(user, tenant)
+
+    async def _body():
+        with patch.object(_mod, "db", db_stub):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport,
+                                    base_url="http://t") as ac:
+                # user_ids omitted entirely → auto-resolve branch.
+                return await ac.post(
+                    "/api/admin/migrations/deactivate-users",
+                    json={"dry_run": True},
+                )
+    r = _run(_body())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["dry_run"] is True
+    assert body["resolved_from"] == "auto"
+    # ``u_active`` is the only tenant-A tech that's active + free —
+    # ``u_inactive`` is already inactive, ``u_with_jobs`` has an
+    # active job, ``u_admin`` isn't tech-adjacent, ``u_tenant_b`` is
+    # a different tenant.
+    assert body["deactivated_count"] == 1
+    assert body["deactivated"] == ["u_active"]
+    detail = body["deactivated_details"][0]
+    assert detail["id"] == "u_active"
+    assert detail["email"] == "active@a.co"
+    assert detail["role"] == "technician"
+    # Busy tech + already-inactive tech surface as skipped rows.
+    skip_reasons = {s["reason"] for s in body["skipped"]}
+    assert "has_active_jobs" in skip_reasons
+    assert "already_inactive" in skip_reasons
+    # DB untouched — dry-run.
+    assert db_stub.users.updates == []
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 10 · Auto-resolve commit path — writes soft-delete on every
+#      cleanable row, leaves busy + already-inactive alone.
+# ═══════════════════════════════════════════════════════════════════
+def test_deactivate_users_auto_resolve_commit_writes_only_cleanable():
+    from routers import admin_migrations as _mod
+    db_stub = _seed_db()
+    user = {"id": "u_sa", "role": "super_admin", "tenant_id": "tA",
+            "email": "sa@a.co"}
+    tenant = {"id": "tA", "slug": "aquaterra", "name": "AquaTerra"}
+    app = _build_app(user, tenant)
+
+    async def _body(json_body):
+        with patch.object(_mod, "db", db_stub):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport,
+                                    base_url="http://t") as ac:
+                return await ac.post(
+                    "/api/admin/migrations/deactivate-users",
+                    json=json_body,
+                )
+    # Auto-resolve commit — no ``user_ids`` in payload.
+    r = _run(_body({"dry_run": False}))
+    body = r.json()
+    assert body["resolved_from"] == "auto"
+    assert body["deactivated"] == ["u_active"]
+    # Only u_active was written to.
+    updated_ids = [u["q"].get("id") for u in db_stub.users.updates]
+    assert updated_ids == ["u_active"]
+    # Row confirms soft-delete stamps.
+    row = next(u for u in db_stub.users.rows if u["id"] == "u_active")
+    assert row["active"] is False
+    assert row["deactivated_by"] == "u_sa"
+    # Busy tech untouched.
+    busy = next(u for u in db_stub.users.rows if u["id"] == "u_with_jobs")
+    assert busy["active"] is True
+    # 2nd auto-commit call is idempotent — nothing left to
+    # deactivate, everything either already-inactive or has jobs.
+    r2 = _run(_body({"dry_run": False}))
+    b2 = r2.json()
+    assert b2["deactivated_count"] == 0
+    reasons = {s["reason"] for s in b2["skipped"]}
+    assert "already_inactive" in reasons
+    assert "has_active_jobs" in reasons
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 11 · Auto-resolve never crosses tenant boundaries.
+# ═══════════════════════════════════════════════════════════════════
+def test_deactivate_users_auto_resolve_is_tenant_scoped():
+    from routers import admin_migrations as _mod
+    db_stub = _seed_db()
+    user = {"id": "u_sa_b", "role": "super_admin", "tenant_id": "tB"}
+    # Caller sits on tenant B — the auto-resolve MUST only sweep
+    # tenant-B users. Seed only had ``u_tenant_b`` on tenant B and
+    # it has no active jobs, so it should be the only candidate.
+    tenant = {"id": "tB", "slug": "bravo", "name": "Bravo"}
+    app = _build_app(user, tenant)
+
+    async def _body():
+        with patch.object(_mod, "db", db_stub):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport,
+                                    base_url="http://t") as ac:
+                return await ac.post(
+                    "/api/admin/migrations/deactivate-users",
+                    json={"dry_run": True},
+                )
+    r = _run(_body())
+    body = r.json()
+    assert body["resolved_from"] == "auto"
+    assert body["deactivated"] == ["u_tenant_b"]
+    # Tenant-A rows never surface even though they'd be cleanable.
+    detail_ids = {d["id"] for d in body["deactivated_details"]}
+    assert "u_active" not in detail_ids
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 12 · Explicit ``user_ids`` still routes through the legacy path
+#      (backwards compatibility — response labels ``resolved_from``
+#      as ``"explicit"``).
+# ═══════════════════════════════════════════════════════════════════
+def test_deactivate_users_explicit_path_still_works():
+    from routers import admin_migrations as _mod
+    db_stub = _seed_db()
+    user = {"id": "u_sa", "role": "super_admin", "tenant_id": "tA"}
+    tenant = {"id": "tA", "slug": "aquaterra", "name": "AquaTerra"}
+    app = _build_app(user, tenant)
+
+    async def _body():
+        with patch.object(_mod, "db", db_stub):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport,
+                                    base_url="http://t") as ac:
+                return await ac.post(
+                    "/api/admin/migrations/deactivate-users",
+                    json={"user_ids": ["u_active"], "dry_run": True},
+                )
+    r = _run(_body())
+    body = r.json()
+    assert body["resolved_from"] == "explicit"
+    assert body["deactivated"] == ["u_active"]
+    # Enriched details on the explicit path too.
+    assert body["deactivated_details"][0]["email"] == "active@a.co"

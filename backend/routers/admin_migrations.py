@@ -231,6 +231,13 @@ async def list_roster_for_cleanup(
 
 
 class _DeactivateBody(BaseModel):
+    # Feb 2026 · Preview/Run refactor — ``user_ids`` is now optional.
+    # When omitted / empty, the endpoint auto-resolves the candidate
+    # set to "all tech-adjacent users on the caller's tenant" (same
+    # universe as ``GET /roster``). This lets the Preview button on
+    # the AdminMigrationsPage operate without first asking the user
+    # to click through a checkbox list — the same UX contract the
+    # Stripe migration cards use.
     user_ids: list[str] = Field(default_factory=list)
     dry_run: bool = True
 
@@ -263,29 +270,62 @@ async def deactivate_users(
         writing.
       * Idempotent: deactivating an already-inactive user is a
         no-op (returned in ``skipped[]`` with reason ``"already_inactive"``).
+      * Feb 2026 · **Auto-resolve mode** — when the caller sends an
+        empty/omitted ``user_ids`` array, the endpoint expands the
+        target set to every tech-adjacent user on the tenant (same
+        role universe as ``GET /admin/migrations/roster``). This
+        powers the Preview/Run card UX. Passing a non-empty list
+        preserves the legacy explicit-selection path exactly.
 
     Response:
-      ``{ dry_run, tenant_id, deactivated_count, skipped_count,
-          deactivated: [user_id], skipped: [{user_id, reason}],
-          errors: [] }``
+      ``{ dry_run, tenant_id, resolved_from, deactivated_count,
+          skipped_count, deactivated: [user_id],
+          deactivated_details: [{id, email, name, role, active_jobs}],
+          skipped: [{user_id, reason}], errors: [] }``
     """
     _require_super_admin(user)
     tid = tenant["id"]
     dry = body.dry_run
     deactivated: list = []
+    deactivated_details: list = []
     skipped: list = []
     errors: list = []
+
+    # Feb 2026 · Auto-resolve when caller passes empty ``user_ids``.
+    # Filter mirrors the ``GET /roster`` query: same tenant + same
+    # ``_TECH_ADJACENT_ROLES`` set + soft-delete guard. The per-row
+    # ``already_inactive`` / ``has_active_jobs`` skips below still
+    # apply, so callers only ever see truly-cleanable rows land in
+    # ``deactivated``.
+    resolved_from = "explicit"
+    target_ids: list = list(body.user_ids or [])
+    if not target_ids:
+        resolved_from = "auto"
+        auto_rows = await db.users.find(
+            {
+                "tenant_id": tid,
+                "role": {"$in": _TECH_ADJACENT_ROLES},
+                "$and": [
+                    {"$or": [{"deleted_at": None},
+                              {"deleted_at": {"$exists": False}}]},
+                ],
+            },
+            {"_id": 0, "id": 1},
+        ).to_list(1000)
+        target_ids = [r.get("id") for r in auto_rows if r.get("id")]
 
     logger.info(
         f"[roster-cleanup-api] user={user.get('id')} "
         f"email={user.get('email')} tenant={tid} "
-        f"dry_run={dry} target_count={len(body.user_ids)}"
+        f"dry_run={dry} resolved_from={resolved_from} "
+        f"target_count={len(target_ids)}"
     )
 
-    for uid in (body.user_ids or []):
+    for uid in target_ids:
         target = await db.users.find_one(
             {"id": uid, "tenant_id": tid},
-            {"_id": 0, "id": 1, "role": 1, "active": 1},
+            {"_id": 0, "id": 1, "email": 1, "name": 1, "first_name": 1,
+             "last_name": 1, "role": 1, "active": 1},
         )
         if not target:
             # Wrong tenant OR user doesn't exist — collapse both into
@@ -332,13 +372,27 @@ async def deactivate_users(
                 errors.append({"user_id": uid, "error": str(exc)})
                 continue
         deactivated.append(uid)
+        # Enrich the preview payload so the frontend can render a
+        # human-readable ``email · role`` row without a second GET.
+        deactivated_details.append({
+            "id": uid,
+            "email": target.get("email"),
+            "name": (target.get("name")
+                      or " ".join([target.get("first_name") or "",
+                                    target.get("last_name") or ""]).strip()
+                      or target.get("email") or "Unnamed"),
+            "role": target.get("role"),
+            "active_jobs": active_jobs,
+        })
 
     return {
         "dry_run": dry,
         "tenant_id": tid,
+        "resolved_from": resolved_from,
         "deactivated_count": len(deactivated),
         "skipped_count": len(skipped),
         "deactivated": deactivated,
+        "deactivated_details": deactivated_details,
         "skipped": skipped,
         "errors": errors,
     }

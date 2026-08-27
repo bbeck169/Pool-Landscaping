@@ -66,50 +66,52 @@ describe("AdminMigrationsPage · P19 backfill card", () => {
 
 
 describe("AdminMigrationsPage · Roster Cleanup card", () => {
-  it("card + list + action-row testids all present", () => {
+  it("card + toggle + first-class Preview/Run testids all present", () => {
+    // Feb 2026 · Preview/Run refactor — Preview + confirm-input +
+    // Run buttons are now FIRST-CLASS (always rendered), and the
+    // legacy "List roster" toggle is preserved as a secondary
+    // read-only audit view.
     expect(SRC).toMatch(/data-testid="id-roster-cleanup-card"/);
     expect(SRC).toMatch(/data-testid="id-roster-list-btn"/);
     expect(SRC).toMatch(/data-testid="id-roster-table"/);
-    expect(SRC).toMatch(/data-testid="id-roster-action-row"/);
     expect(SRC).toMatch(/data-testid="id-roster-preview-btn"/);
     expect(SRC).toMatch(/data-testid="id-roster-deactivate-btn"/);
     expect(SRC).toMatch(/data-testid="id-roster-confirm-input"/);
   });
 
-  it("row testid follows the id-roster-user-{user_id} template", () => {
+  it("audit-view row testid follows the id-roster-user-{user_id} template", () => {
+    // Row testids preserved on the read-only audit table so any
+    // downstream E2E that relies on them keeps working.
     expect(SRC).toMatch(/`id-roster-user-\$\{r\.id\}`/);
-    expect(SRC).toMatch(/`id-roster-check-\$\{r\.id\}`/);
   });
 
-  it("List button GETs /admin/migrations/roster", () => {
+  it("List button GETs /admin/migrations/roster (toggle behaviour)", () => {
     expect(SRC).toMatch(
       /api\.get\(\s*["']\/admin\/migrations\/roster["']\s*\)/,
     );
   });
 
-  it("Deactivate button POSTs /admin/migrations/deactivate-users", () => {
-    expect(SRC).toMatch(
-      /api\.post\(\s*["']\/admin\/migrations\/deactivate-users["'][\s\S]{0,120}user_ids:\s*Array\.from\(selected\)[\s\S]{0,60}dry_run/,
-    );
+  it("Preview/Run POST /deactivate-users with empty user_ids + numeric timeout", () => {
+    // Preview + Run call the same endpoint with auto-resolve
+    // (``user_ids: []``) — the backend expands to the tenant's
+    // tech-adjacent roster. Third arg is a NUMERIC timeout (never
+    // an options object — that was the P0 abort bug).
+    const idx = SRC.indexOf("/admin/migrations/deactivate-users");
+    expect(idx).toBeGreaterThan(-1);
+    const block = SRC.slice(idx, idx + 400);
+    expect(block).toMatch(/user_ids:\s*\[\s*\]/);
+    expect(block).toMatch(/dry_run/);
+    // Numeric timeout as 3rd arg + no ``{signal:`` options object.
+    expect(block).toMatch(/,\s*\d[\d_]*,/);
+    expect(block).not.toMatch(/\{\s*signal:/);
   });
 
-  it("Deactivate gated behind selection + typed 'DEACTIVATE'", () => {
-    expect(SRC).toMatch(/selected\.size\s*>\s*0/);
+  it("Run button gated behind hasPreviewed + typed 'DEACTIVATE'", () => {
+    // Same shape as the Stripe cards' Preview/Run gate.
+    expect(SRC).toMatch(/hasPreviewed/);
     expect(SRC).toMatch(/confirmText\s*===\s*["']DEACTIVATE["']/);
-    // Deactivate button disabled attribute reads !runReady.
     expect(SRC).toMatch(
       /disabled=\{!runReady\}[\s\S]{0,400}data-testid="id-roster-deactivate-btn"/,
-    );
-  });
-
-  it("checkbox disabled when the row has active jobs or is already inactive", () => {
-    // Both guards land in the same rowDisabled expression.
-    expect(SRC).toMatch(
-      /rowDisabled\s*=\s*[\s\S]{0,200}r\.is_deactivated[\s\S]{0,60}r\.active_jobs/,
-    );
-    // And that expression drives the checkbox's disabled attribute.
-    expect(SRC).toMatch(
-      /disabled=\{rowDisabled\}[\s\S]{0,200}data-testid=\{`id-roster-check-\$\{r\.id\}`\}/,
     );
   });
 });
