@@ -327,6 +327,23 @@ async def create_lead(body: LeadIn,
         )
     except Exception:
         pass
+    # Feb 2026 · Phase 1 Custom Trigger Builder — additive schema-v2
+    # emission. The legacy fanout above still runs for v1 sequences;
+    # this hook enrols any schema_version>=2 sequence whose trigger
+    # names ``new_lead``. Ledger dedupe guarantees no double-fire.
+    try:
+        from services.marketing.event_dispatcher import emit_event
+        background_tasks.add_task(
+            emit_event,
+            event="new_lead",
+            tenant_id=tenant["id"],
+            entity_id=doc.get("id"),
+            customer_id=None,
+            payload_extras={"lead": doc,
+                              "correlation_id": doc.get("id")},
+        )
+    except Exception:
+        pass
     # Phase 16 · Additions E + F · Feb-2026 — internal notification
     # to Brian + auto-reject out-of-state. Best-effort; a failure
     # never blocks lead creation.
@@ -372,6 +389,27 @@ async def _apply_lead_update(lid: str, tenant_id: str, upd: Dict[str, Any],
         if new_events:
             ops["$push"] = {"timeline": {"$each": new_events}}
         await db.leads.update_one({"id": lid, "tenant_id": tenant_id}, ops)
+    # Feb 2026 · Phase 1 Custom Trigger Builder — emit lead_status_changed
+    # when the status actually flipped. Fire-and-forget. Correlation
+    # key is (lead_id, new_status) so re-runs on the same status
+    # transition dedupe cleanly.
+    if fields.get("status"):
+        try:
+            from services.marketing.event_dispatcher import emit_event
+            await emit_event(
+                event="lead_status_changed",
+                tenant_id=tenant_id,
+                entity_id=lid,
+                customer_id=None,
+                payload_extras={
+                    "from": current.get("status"),
+                    "to": fields["status"],
+                    "lead": {**current, **fields},
+                    "correlation_id": f"{lid}:status:{fields['status']}",
+                },
+            )
+        except Exception:
+            pass
     return await db.leads.find_one({"id": lid, "tenant_id": tenant_id},
                                       {"_id": 0})
 

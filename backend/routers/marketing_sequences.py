@@ -305,6 +305,237 @@ async def list_enrolments(
     return {"enrolments": rows, "total": total}
 
 
+# ── Phase-1 Custom Trigger Builder · preview-matches ────────────────
+class PreviewMatchesIn(BaseModel):
+    """Optional body for the preview endpoint.
+
+    Consumers may either:
+      * omit the body entirely (or pass ``{}``) — the endpoint uses
+        the sequence's own stored ``trigger`` doc; or
+      * pass a ``trigger_override`` shaped exactly like the schema-v2
+        ``trigger`` field (``{logic, conditions:[...]}``). This is
+        how the Phase-2 builder previews an unsaved rule.
+
+    ``limit`` caps the returned ``sample`` array (never the underlying
+    scan). Server-side hard-cap is 25; clients may pass a lower value
+    but not higher.
+    """
+    trigger_override: Optional[Dict[str, Any]] = None
+    limit: int = 25
+
+
+@router.post("/marketing/sequences/{sid}/preview-matches")
+async def preview_matches(
+    sid: str,
+    body: Optional[PreviewMatchesIn] = None,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Dry-run the trigger evaluator against the tenant's customer
+    base and return the count + sample of matches. No writes.
+
+    Response shape (locked with the Phase-2 UI)::
+
+        {
+          "sequence_id": <sid>,
+          "evaluated_at": <ISO now>,
+          "match_count":  <int>,
+          "sample": [{customer_id, name, reason}, ...],
+          "truncated":    <bool>
+        }
+
+    ``reason`` is a human-readable string like
+    ``"job_completed · segment=pool · zip=85387"`` — enough context
+    for the operator to sanity-check why a customer matched.
+    """
+    from services.marketing.trigger_evaluator import (
+        evaluate_conditions, find_matching_condition,
+    )
+    from services.marketing.event_registry import canonicalize_event_key
+
+    row = await db.marketing_sequences.find_one(
+        {"id": sid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "Sequence not found")
+    body = body or PreviewMatchesIn()
+    limit = max(1, min(int(body.limit or 25), 25))
+
+    # Prefer the override; fall back to the sequence's own trigger;
+    # fall back to a synthetic single-condition trigger derived from
+    # the legacy ``trigger_type`` so pre-migration sequences still
+    # preview cleanly.
+    trigger = body.trigger_override or row.get("trigger")
+    if not (isinstance(trigger, dict)
+            and isinstance((trigger or {}).get("conditions"), list)):
+        legacy_type = row.get("trigger_type") or ""
+        canonical = canonicalize_event_key(legacy_type)
+        trigger = {
+            "logic": "AND",
+            "conditions": [{"event": canonical,
+                              "delay": {"mode": "immediate"},
+                              "filters": {}}],
+        }
+
+    conds = trigger.get("conditions") or []
+    if not conds:
+        return {
+            "sequence_id": sid,
+            "evaluated_at": now_iso(),
+            "match_count": 0,
+            "sample": [],
+            "truncated": False,
+        }
+
+    # Deduce which entities to walk. If every condition names a
+    # job-scoped event, walk jobs; otherwise walk customers. The
+    # evaluator hydrates the rest from the customer + optional job.
+    JOB_EVENTS = {"job_scheduled", "job_scheduled_reminder_1d",
+                  "job_completed", "job_cancelled",
+                  "chemistry_out_of_range", "repair_flagged"}
+    event_keys = {canonicalize_event_key(c.get("event") or "")
+                  for c in conds if c.get("event")}
+    job_scoped = bool(event_keys) and event_keys.issubset(JOB_EVENTS)
+
+    match_count = 0
+    sample: List[Dict[str, Any]] = []
+
+    if job_scoped:
+        # Walk jobs (recent-completed first). We DO NOT modify jobs;
+        # the evaluator receives a synthetic event payload constructed
+        # from the job doc.
+        cursor = db.jobs.find(
+            {"tenant_id": tenant["id"],
+             # Prefer the class of event's typical shape — completed
+             # jobs give the richest ctx.
+             "status": {"$in": ["completed", "scheduled", "pending"]}},
+            {"_id": 0, "id": 1, "customer_id": 1, "work_class": 1,
+             "technician_id": 1, "crew_id": 1, "job_value": 1,
+             "total": 1, "customer_name": 1, "scheduled_date": 1,
+             "status": 1},
+        ).limit(2000)
+        async for job in cursor:
+            cid = job.get("customer_id")
+            if not cid:
+                continue
+            cust = await db.customers.find_one(
+                {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
+            ) or {}
+            for c in conds:
+                ev = canonicalize_event_key(c.get("event") or "")
+                payload = {"event": ev, "entity_id": job.get("id"),
+                           "customer_id": cid,
+                           "scheduled_at": job.get("scheduled_date")}
+                ctx = _build_preview_ctx(cust, job)
+                if evaluate_conditions(
+                    {"logic": trigger.get("logic") or "AND",
+                     "conditions": [c]}, payload, ctx,
+                ):
+                    match_count += 1
+                    if len(sample) < limit:
+                        sample.append({
+                            "customer_id": cid,
+                            "name": cust.get("name")
+                                or job.get("customer_name") or "",
+                            "reason": _build_reason(ev, c, ctx),
+                        })
+                    break
+    else:
+        cursor = db.customers.find(
+            {"tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "name": 1, "service_line": 1,
+             "segment": 1, "tags": 1, "service_zip": 1, "zip": 1,
+             "billing_zip": 1, "custom_fields": 1,
+             "last_service_at": 1, "last_visit_at": 1},
+        ).limit(5000)
+        async for cust in cursor:
+            cid = cust.get("id")
+            if not cid:
+                continue
+            for c in conds:
+                ev = canonicalize_event_key(c.get("event") or "")
+                payload = {"event": ev, "entity_id": cid, "customer_id": cid}
+                ctx = _build_preview_ctx(cust, None)
+                if evaluate_conditions(
+                    {"logic": trigger.get("logic") or "AND",
+                     "conditions": [c]}, payload, ctx,
+                ):
+                    match_count += 1
+                    if len(sample) < limit:
+                        sample.append({
+                            "customer_id": cid,
+                            "name": cust.get("name") or "",
+                            "reason": _build_reason(ev, c, ctx),
+                        })
+                    break
+
+    return {
+        "sequence_id": sid,
+        "evaluated_at": now_iso(),
+        "match_count": match_count,
+        "sample": sample,
+        "truncated": match_count > len(sample),
+    }
+
+
+def _build_preview_ctx(cust: Dict[str, Any],
+                        job: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Flatten the customer + optional job into the ``ctx`` shape the
+    evaluator expects. Mirrors ``event_dispatcher.hydrate_event_ctx``
+    but works synchronously since the preview endpoint already has
+    the docs in hand."""
+    ctx: Dict[str, Any] = {
+        "customer_id": cust.get("id"),
+        "customer_segment": cust.get("service_line") or cust.get("segment"),
+        "tags": cust.get("tags") or [],
+        "zip": (cust.get("service_zip") or cust.get("zip")
+                 or cust.get("billing_zip")),
+        "custom_fields": cust.get("custom_fields") or {},
+    }
+    lv = cust.get("last_service_at") or cust.get("last_visit_at")
+    if lv:
+        try:
+            lv_dt = datetime.fromisoformat(str(lv).replace("Z", "+00:00"))
+            if lv_dt.tzinfo is None:
+                lv_dt = lv_dt.replace(tzinfo=timezone.utc)
+            ctx["last_visit_days_ago"] = (
+                datetime.now(timezone.utc) - lv_dt
+            ).total_seconds() / 86400.0
+        except Exception:
+            pass
+    if job:
+        ctx["work_class"] = job.get("work_class")
+        ctx["technician_id"] = job.get("technician_id")
+        ctx["crew_id"] = job.get("crew_id")
+        ctx["job_value"] = (job.get("job_value")
+                             or (job.get("job_totals") or {}).get("total")
+                             or job.get("total") or 0)
+    return ctx
+
+
+def _build_reason(event: str, cond: Dict[str, Any],
+                   ctx: Dict[str, Any]) -> str:
+    """Compose a short human-readable reason string. Only surfaces
+    the filter dims that were EXPLICITLY specified on the condition —
+    keeps the string short + useful for ops."""
+    bits: List[str] = [event]
+    f = cond.get("filters") or {}
+    if f.get("customer_segment"):
+        bits.append(f"segment={ctx.get('customer_segment')}")
+    if f.get("work_class"):
+        bits.append(f"work_class={ctx.get('work_class')}")
+    if f.get("tags"):
+        bits.append(f"tags={','.join((ctx.get('tags') or [])[:2])}")
+    if f.get("zip"):
+        bits.append(f"zip={ctx.get('zip')}")
+    if f.get("job_value_gte") is not None:
+        bits.append(f"job_value={ctx.get('job_value')}")
+    if f.get("last_visit_gte_days") is not None:
+        lv = ctx.get("last_visit_days_ago")
+        bits.append(f"last_visit≈{int(lv)}d" if lv else "last_visit=n/a")
+    return " · ".join(bits)
+
+
 # ── Tick handler (M5c will wire the scheduler) ─────────────────────────────
 async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, int]:
     """Process every enrolment whose ``next_send_at <= now`` in the given

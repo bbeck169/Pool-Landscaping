@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request,
 from pydantic import BaseModel, ConfigDict
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
+import re
 
 from pymongo.errors import DuplicateKeyError
 
@@ -406,11 +407,12 @@ async def list_jobs(
     # verbatim; jobs stamped before the Feb-2026 write-side denorm fix
     # carry ``None`` on that field (or a stale name if the tech was
     # renamed), and the frontend renders empty strings as "Unassigned".
-    # ``bulk_enrich_technician_names`` runs the same 4-rung cascade the
-    # write helper uses, over the 4-shape ``effective_tid`` union. No
-    # DB mutation — response-only.
-    from services.tech_assignment import bulk_enrich_technician_names
-    await bulk_enrich_technician_names(db, tenant["id"], docs)
+    # ``bulk_enrich_technicians`` (rich variant) runs the same 5-rung
+    # cascade the write helper uses, over the 4-shape ``effective_tid``
+    # union, AND stamps ``technician_active`` so the schedule can
+    # badge deactivated techs. Response-only — no DB mutation.
+    from services.tech_assignment import bulk_enrich_technicians
+    await bulk_enrich_technicians(db, tenant["id"], docs)
     # Phase 57.d — enrich every returned job with the assigned tech's
     # department + derived checklist_kind so schedule/dispatch cards +
     # mobile clients see the right form without a per-job GET.
@@ -697,6 +699,36 @@ async def create_job(body: JobIn,
                 entity_kind="job", entity_id=doc["id"],
                 customer_id=doc.get("customer_id"),
             )
+    except Exception:
+        pass
+    # Feb 2026 · Phase 1 Custom Trigger Builder — emit ``job_scheduled``
+    # into schema-v2 sequences. Only fires when the job already has a
+    # scheduled_date on create. Correlation key = job id.
+    try:
+        if doc.get("scheduled_date"):
+            from services.marketing.event_dispatcher import emit_event
+            await emit_event(
+                event="job_scheduled",
+                tenant_id=tenant["id"],
+                entity_id=doc.get("id"),
+                customer_id=doc.get("customer_id"),
+                scheduled_at=(str(doc.get("scheduled_date"))
+                                + "T09:00:00+00:00"),
+                payload_extras={"job": doc,
+                                  "correlation_id":
+                                    f"{doc.get('id')}:scheduled:{doc.get('scheduled_date')}"},
+            )
+            # Repair jobs also fire ``repair_flagged`` on create.
+            if str(doc.get("work_class") or "").lower() == "repair":
+                await emit_event(
+                    event="repair_flagged",
+                    tenant_id=tenant["id"],
+                    entity_id=doc.get("id"),
+                    customer_id=doc.get("customer_id"),
+                    payload_extras={"job": doc,
+                                      "correlation_id":
+                                        f"{doc.get('id')}:repair_flagged"},
+                )
     except Exception:
         pass
     # Feb-2026 · P42 — "converted" threshold stamp. Safe no-op when
@@ -1405,6 +1437,70 @@ async def update_job(jid: str, body: JobUpdate,
                 )
     except Exception:
         pass
+
+    # Feb 2026 · Phase 1 Custom Trigger Builder — schema-v2 emissions
+    # on the update path. The four events fire ONLY on the transition
+    # into the new state; unchanged saves are no-ops. All emits are
+    # correlation-scoped to the (job, transition) pair so replays
+    # dedupe cleanly.
+    try:
+        from services.marketing.event_dispatcher import emit_event
+        cur_status = (update.get("status") or job.get("status") or "").lower()
+        prev_status = (job.get("status") or "").lower()
+        # job_scheduled — new/changed scheduled_date.
+        new_sched = update.get("scheduled_date")
+        if new_sched and new_sched != job.get("scheduled_date"):
+            await emit_event(
+                event="job_scheduled",
+                tenant_id=tenant["id"],
+                entity_id=jid,
+                customer_id=job.get("customer_id"),
+                scheduled_at=f"{new_sched}T09:00:00+00:00",
+                payload_extras={
+                    "job": {**job, **update},
+                    "correlation_id": f"{jid}:scheduled:{new_sched}",
+                },
+            )
+        # job_completed — status flip to completed.
+        if cur_status == "completed" and prev_status != "completed":
+            await emit_event(
+                event="job_completed",
+                tenant_id=tenant["id"],
+                entity_id=jid,
+                customer_id=job.get("customer_id"),
+                payload_extras={
+                    "job": {**job, **update},
+                    "correlation_id": f"{jid}:completed",
+                },
+            )
+        # job_cancelled — status flip to cancelled.
+        if cur_status == "cancelled" and prev_status != "cancelled":
+            await emit_event(
+                event="job_cancelled",
+                tenant_id=tenant["id"],
+                entity_id=jid,
+                customer_id=job.get("customer_id"),
+                payload_extras={
+                    "job": {**job, **update},
+                    "correlation_id": f"{jid}:cancelled",
+                },
+            )
+        # repair_flagged — work_class flip to repair.
+        new_wc = str(update.get("work_class") or "").lower()
+        old_wc = str(job.get("work_class") or "").lower()
+        if new_wc == "repair" and old_wc != "repair":
+            await emit_event(
+                event="repair_flagged",
+                tenant_id=tenant["id"],
+                entity_id=jid,
+                customer_id=job.get("customer_id"),
+                payload_extras={
+                    "job": {**job, **update},
+                    "correlation_id": f"{jid}:repair_flagged",
+                },
+            )
+    except Exception as _phase1_exc:  # pragma: no cover — never break parent
+        logger.warning(f"[phase1] job update emit failed: {_phase1_exc}")
 
     return await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
 
@@ -2663,11 +2759,63 @@ async def compute_pool_service(tenant_id: str,
     ).to_list(10000)
 
     tids = list({j.get("technician_id") for j in jobs if j.get("technician_id")})
-    from services.service_report_view import resolve_technician_names
-    techs = await resolve_technician_names(db, tenant_id, tids)
+    from services.service_report_view import resolve_technicians
+    tmap = await resolve_technicians(db, tenant_id, tids)
+
+    # Feb 2026 · Effective-ID bucketing. Jobs with a raw
+    # ``technician_id`` bucket on that id directly. Jobs with only a
+    # stored ``technician_name`` (no id) get a best-effort ID rescue
+    # via case-insensitive ``db.users.name`` lookup — unique match
+    # → bucket by resolved id; ambiguous/no match → bucket under
+    # "unassigned". Prevents the "Ethan Smith duplicate" scenario
+    # where two id shapes for the same tech end up in different
+    # buckets.
+    name_to_uid: Dict[str, Optional[str]] = {}
+    unique_name_candidates = list({
+        (j.get("technician_name") or "").strip()
+        for j in jobs
+        if not j.get("technician_id")
+            and (j.get("technician_name") or "").strip()
+    })
+    if unique_name_candidates:
+        # Case-insensitive lookup — one query per unique name is
+        # cheap for the small (< dozens) universe. We stash the
+        # tech's technician_id on the user doc when present (that's
+        # the canonical bucket key); fall back to users.id.
+        for nm in unique_name_candidates:
+            escaped = re.escape(nm)
+            matches = await db.users.find(
+                {"tenant_id": tenant_id,
+                  "name": {"$regex": f"^{escaped}$", "$options": "i"}},
+                {"_id": 0, "id": 1, "technician_id": 1},
+            ).to_list(3)
+            if len(matches) == 1:
+                m = matches[0]
+                # Prefer users.technician_id (canonical bucket) so
+                # jobs that later got an id-shape stamp bucket
+                # into the same row.
+                name_to_uid[nm] = m.get("technician_id") or m.get("id")
+                # Warm the rich tmap so the row renders with the
+                # correct active-flag too.
+                if name_to_uid[nm] and name_to_uid[nm] not in tmap:
+                    _one = await resolve_technicians(
+                        db, tenant_id, [name_to_uid[nm]])
+                    tmap.update(_one)
+            elif len(matches) > 1:
+                logger.warning(
+                    "[pool-service] ambiguous tech name %r — %d "
+                    "matches on tenant %s; bucketing under Unassigned",
+                    nm, len(matches), tenant_id,
+                )
+                name_to_uid[nm] = None   # explicit sentinel
+            else:
+                # No user match — leave in Unassigned bucket rather
+                # than invent an ID.
+                name_to_uid[nm] = None
+
     # Denormalized ``technician_name`` cache is a last-resort fallback
     # for old jobs whose ``technician_id`` no longer resolves in any
-    # of the 4 cascade rungs.
+    # of the resolver cascade rungs.
     cached_name_by_tid: dict = {}
     for j in jobs:
         tid_j = j.get("technician_id")
@@ -2676,9 +2824,20 @@ async def compute_pool_service(tenant_id: str,
             cached_name_by_tid[tid_j] = nm
 
     agg: dict = {}
+    unassigned = {"completed": 0, "skipped": 0}
     for j in jobs:
         tid = j.get("technician_id")
+        # Feb 2026 · Effective-ID rescue for name-only jobs.
         if not tid:
+            nm = (j.get("technician_name") or "").strip()
+            if nm:
+                tid = name_to_uid.get(nm)
+        if not tid:
+            status = (j.get("status") or "").lower()
+            if status == "completed":
+                unassigned["completed"] += 1
+            elif status in SKIPPED_STATUSES:
+                unassigned["skipped"] += 1
             continue
         a = agg.setdefault(tid, {"completed": 0, "skipped": 0})
         status = (j.get("status") or "").lower()
@@ -2688,15 +2847,27 @@ async def compute_pool_service(tenant_id: str,
             a["skipped"] += 1
     rows = []
     for tid, a in agg.items():
+        info = tmap.get(tid) or {}
         rows.append({
             "technician_id": tid,
-            "technician_name": techs.get(tid)
+            "technician_name": info.get("name")
                                  or cached_name_by_tid.get(tid)
-                                 or "Unknown",
+                                 or tid,
+            "technician_active": info.get("active", True),
             "completed": a["completed"],
             "skipped": a["skipped"],
         })
-    rows.sort(key=lambda r: r["completed"], reverse=True)
+    # Surface the "Unassigned" bucket at the tail so it doesn't
+    # crowd the top of the report but is still visible.
+    if unassigned["completed"] or unassigned["skipped"]:
+        rows.append({
+            "technician_id": None,
+            "technician_name": "Unassigned",
+            "technician_active": True,
+            "completed": unassigned["completed"],
+            "skipped": unassigned["skipped"],
+        })
+    rows.sort(key=lambda r: (r["technician_id"] is None, -r["completed"]))
     return {
         "week_start": week_start,
         "week_end": week_end,

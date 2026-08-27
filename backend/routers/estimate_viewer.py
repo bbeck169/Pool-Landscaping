@@ -232,6 +232,20 @@ async def _mark_accepted(est: dict, tenant_id: str, actor_id: str) -> None:
         )
     except Exception as exc:  # pragma: no cover
         logger.warning("[slice-r] estimate_accepted drip fanout failed: %s", exc)
+    # Feb 2026 · Phase 1 Custom Trigger Builder — emit ``estimate_signed``.
+    # Correlation key = estimate id so replays dedupe.
+    try:
+        from services.marketing.event_dispatcher import emit_event
+        await emit_event(
+            event="estimate_signed",
+            tenant_id=tenant_id,
+            entity_id=est.get("id"),
+            customer_id=est.get("customer_id"),
+            payload_extras={"estimate": est, "actor_id": actor_id,
+                              "correlation_id": est.get("id")},
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[phase1] estimate_signed emit failed: %s", exc)
 
 
 async def _mark_declined(est: dict, tenant_id: str,

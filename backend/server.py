@@ -1672,6 +1672,26 @@ async def _background_seed():
         except Exception as _m5e:
             logger.warning(f"m5c scheduler registration crashed: {_m5e}")
 
+        # Feb 2026 · Marketing Phase 1 · Custom Trigger Builder — daily
+        # schema-v2 sweep. Fires at 09:05 UTC (5 min after the legacy
+        # sweep so we don't overlap the customer/tenant scans). Handles
+        # invoice_overdue / customer_birthday / service_anniversary
+        # plus a schema-v2 re-arm of job_scheduled_reminder_1d. Per-
+        # tenant isolation lives inside daily_phase1_trigger_sweep so
+        # one slow tenant doesn't block others.
+        try:
+            from services.marketing.phase1_sweeps import (
+                daily_phase1_trigger_sweep,
+            )
+            scheduler.add_job(
+                daily_phase1_trigger_sweep,
+                "cron", hour=9, minute=5,
+                id="phase1_daily_trigger_sweep",
+                replace_existing=True)
+            logger.info("scheduler: phase1 daily trigger sweep (09:05 UTC) registered")
+        except Exception as _p1e:
+            logger.warning(f"phase1 scheduler registration crashed: {_p1e}")
+
         # Feb-2026 · Marketing Slice M6 — Review Requests.
         # Piggy-backs on the mocked marketing_deliveries pipeline.
         # Two jobs:
@@ -2066,6 +2086,38 @@ async def startup():
         logger.info(f"[job_titles] backfill: {_jt_report}")
     except Exception as e:
         logger.warning(f"job_titles backfill crashed: {e}")
+
+    # Feb 2026 · Technician-name backfill — stamps ``technician_name``
+    # on every job that has a ``technician_id`` but no
+    # ``technician_name`` (jobs stamped before the write-side denorm
+    # fix landed). Idempotent — guarded by a ``db.migrations``
+    # sentinel. See
+    # ``services/migrations/backfill_technician_names.py``.
+    try:
+        from services.migrations.backfill_technician_names import (
+            backfill_technician_names_on_jobs,
+        )
+        _tb_report = await backfill_technician_names_on_jobs()
+        logger.info(f"[tech-backfill] {_tb_report}")
+    except Exception as e:
+        logger.warning(f"technician_name backfill crashed: {e}")
+
+    # Feb 2026 · Marketing Phase 1 · Custom Trigger Builder — one-shot
+    # (idempotent) schema-v2 trigger migration. Rewrites every legacy
+    # ``trigger_type`` scalar into the v2 nested ``trigger`` doc
+    # with a single AND/immediate/no-filter condition and stamps
+    # ``schema_version=2``. Legacy fields are PRESERVED so the M5c
+    # fanout keeps functioning during the migration window. Second-
+    # and-later boots are ~O(N) reads with zero writes (per-doc
+    # ``schema_version`` gate).
+    try:
+        from services.migrations.migrate_sequences_to_v2 import (
+            migrate_marketing_sequences_to_v2,
+        )
+        _v2_report = await migrate_marketing_sequences_to_v2()
+        logger.info(f"[marketing.v2] {_v2_report}")
+    except Exception as e:
+        logger.warning(f"marketing_sequences v2 migration crashed: {e}")
 
     # Feb-2026 Customer Detail Additions — idempotent one-shot back-fill
     # of the ``mobiles`` / ``emails`` arrays from the legacy scalar

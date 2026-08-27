@@ -1161,6 +1161,42 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
                     tenant_id=pi_tenant, invoice_id=pi_invoice,
                     failure_reason=err or "failed",
                 )
+            # Feb 2026 · Phase 1 Custom Trigger Builder — schema-v2
+            # emissions. Correlation key = payment_intent id so a
+            # replayed webhook dedupes. Ledger ALSO dedupes across
+            # the manual invoice.paid path (same event_key format).
+            try:
+                from services.marketing.event_dispatcher import emit_event
+                if status_final == "succeeded":
+                    _fresh = await db.quotes.find_one(
+                        {"id": pi_invoice, "tenant_id": pi_tenant},
+                        {"_id": 0},
+                    ) or {}
+                    await emit_event(
+                        event="invoice_paid",
+                        tenant_id=pi_tenant,
+                        entity_id=pi_invoice,
+                        customer_id=_fresh.get("customer_id")
+                            or meta.get("crm_customer_id"),
+                        payload_extras={"invoice": _fresh,
+                                          "correlation_id": pi_invoice},
+                    )
+                else:
+                    await emit_event(
+                        event="payment_failed",
+                        tenant_id=pi_tenant,
+                        entity_id=pi_invoice,
+                        customer_id=meta.get("crm_customer_id"),
+                        payload_extras={
+                            "invoice_id": pi_invoice,
+                            "failure_reason": err or "failed",
+                            "correlation_id": f"{pi_invoice}:pf:{pi_id}",
+                        },
+                    )
+            except Exception as _phase1_exc:  # pragma: no cover
+                logger.warning(
+                    "[phase1] stripe webhook emit failed: %s", _phase1_exc,
+                )
         elif not pi_tenant or not pi_invoice:
             logger.warning(
                 "[stripe.webhook] payment_intent.%s pi=%s missing "

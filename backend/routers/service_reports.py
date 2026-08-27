@@ -809,6 +809,58 @@ async def submit_service_report(
             background_tasks.add_task(_drip_bg)
     except Exception:
         pass
+    # Feb 2026 · Phase 1 Custom Trigger Builder — chemistry_out_of_range
+    # emission. Fires only when at least one banded core reading falls
+    # OUTSIDE the "Average" band on this submitted report. Fire-and-
+    # forget via BackgroundTasks so we never bound the submit
+    # response.
+    try:
+        if job.get("customer_id"):
+            async def _phase1_chem_bg(_tenant_id=tenant["id"],
+                                        _cid=job["customer_id"],
+                                        _jid=jid,
+                                        _sr_id=(out or rep or {}).get("id"),
+                                        _rep=out or rep):
+                try:
+                    from services.chemistry_bands import (
+                        band_for_reading, BAND_AVERAGE,
+                    )
+                    from services.chemistry_gate import (
+                        gather_readings_for_job,
+                    )
+                    readings = gather_readings_for_job(
+                        {"id": _jid}, _rep or {},
+                    ) or {}
+                    out_of_range: List[str] = []
+                    for k, v in (readings.items() if isinstance(readings, dict) else []):
+                        band = band_for_reading(k, v)
+                        if band and band != BAND_AVERAGE:
+                            out_of_range.append(k)
+                    if out_of_range:
+                        from services.marketing.event_dispatcher import (
+                            emit_event,
+                        )
+                        await emit_event(
+                            event="chemistry_out_of_range",
+                            tenant_id=_tenant_id,
+                            entity_id=_jid,
+                            customer_id=_cid,
+                            payload_extras={
+                                "job_id": _jid,
+                                "service_report_id": _sr_id,
+                                "out_of_range": out_of_range,
+                                "correlation_id":
+                                    f"{_jid}:chem_oor:{_sr_id or ''}",
+                            },
+                        )
+                except Exception as _ce:  # noqa: BLE001
+                    logger.warning(
+                        "[phase1] chemistry_out_of_range emit failed: %s",
+                        _ce,
+                    )
+            background_tasks.add_task(_phase1_chem_bg)
+    except Exception:
+        pass
     # Feb-2026 · Marketing Slice M6 — enqueue automated review request
     # when the tenant has opted in.  Non-blocking + duplicate-guarded.
     # Feb-2026 · P12A — deferred.  Enqueue itself writes to a Mongo

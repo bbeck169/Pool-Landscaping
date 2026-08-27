@@ -237,17 +237,21 @@ async def get_service_log(
             {"_id": 0, "id": 1, "name": 1, "phone": 1, "department": 1},
         ) or {}
         job["_technician_department"] = tech.get("department")
-        # Name resolution goes through the shared cascade so a
-        # ``users.id``-shaped ``technician_id`` still renders.
-        from services.service_report_view import resolve_technician_names
-        _names = await resolve_technician_names(db, tenant["id"], [tid])
-        resolved_name = _names.get(tid) or tech.get("name") \
-            or job.get("technician_name") or "Unassigned"
+        # Feb 2026 · Resolver is source-of-truth — swap to the rich
+        # ``resolve_technicians`` so we can also expose ``active``
+        # for a deactivated-tech UI badge, and remove the stale
+        # ``job.technician_name`` fallback (resolver always wins).
+        from services.service_report_view import resolve_technicians
+        _tmap = await resolve_technicians(db, tenant["id"], [tid])
+        _tinfo = _tmap.get(tid) or {}
+        resolved_name = _tinfo.get("name") \
+            or tech.get("name") or tid or "Unassigned"
         employee = {
             "id": tech.get("id") or tid,
             "name": resolved_name,
             "phone": tech.get("phone"),
             "department": tech.get("department"),
+            "active": _tinfo.get("active", True),
         }
     else:
         employee = {"id": None, "name": "Unassigned", "phone": None, "department": None}

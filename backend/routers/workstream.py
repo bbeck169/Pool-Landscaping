@@ -346,10 +346,10 @@ async def list_workstream_jobs(
         ).to_list(len(cids) * 2)
         cmap = {c["id"]: c for c in cust_rows}
 
-    tmap_names: Dict[str, str] = {}
+    tmap: Dict[str, Dict[str, Any]] = {}
     if tids:
-        from services.service_report_view import resolve_technician_names
-        tmap_names = await resolve_technician_names(db, tenant["id"], tids)
+        from services.service_report_view import resolve_technicians
+        tmap = await resolve_technicians(db, tenant["id"], tids)
 
     pmap: Dict[str, Dict[str, Any]] = {}
     if pids:
@@ -366,7 +366,14 @@ async def list_workstream_jobs(
         tid = effective_tid(d)
         pid = d.get("property_id")
         cust = cmap.get(cid) if cid else None
-        tech_name = tmap_names.get(tid) if tid else None
+        # Feb 2026 · Resolver is source-of-truth. If the resolver
+        # returns a value it wins over stored ``technician_name``
+        # (self-healing before the boot backfill lands).  When the
+        # resolver has nothing, fall back to the ID string per
+        # the resolver-cascade contract — never crash.
+        tinfo = tmap.get(tid) if tid else None
+        tech_name = (tinfo or {}).get("name") if tinfo else None
+        tech_active = (tinfo or {}).get("active", True) if tinfo else True
         prop = pmap.get(pid) if pid else None
 
         addr = (prop or {}).get("address") or {}
@@ -388,7 +395,14 @@ async def list_workstream_jobs(
             "customer_name": (cust or {}).get("name") or d.get("customer_name") or "",
             "customer_is_vip": bool((cust or {}).get("is_vip")),
             "technician_id": tid,
-            "technician_name": tech_name or d.get("technician_name") or "",
+            "technician_name": tech_name
+                or (d.get("technician_name") if not tinfo else None)
+                or (tid or ""),
+            # Feb 2026 · Deactivated-tech badge signal. UI can render
+            # a "Inactive" pill next to the name when this is False.
+            # Missing tinfo (unresolved tid) defaults to True so
+            # legacy rows don't accidentally show as inactive.
+            "technician_active": tech_active,
             "property_id": pid,
             "property_label": (prop or {}).get("label"),
             "property_address": prop_addr,

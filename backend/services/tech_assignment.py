@@ -125,3 +125,50 @@ async def bulk_enrich_technician_names(
         cascaded = name_map.get(tid) if tid else None
         # Cascade first, then stored (may be stale), then "".
         d[out_field] = cascaded or d.get(out_field) or ""
+
+
+
+async def bulk_enrich_technicians(
+    db: Any,
+    tenant_id: str,
+    docs: list,
+) -> None:
+    """Feb 2026 · Rich variant — stamps BOTH ``technician_name`` +
+    ``technician_active`` on every doc.
+
+    Resolver-first (self-healing at read time before the boot
+    backfill lands), then falls back to the stored value, then to
+    the raw TID string per the resolver-cascade contract (never
+    crashes).
+
+    Mutates ``docs`` in place. Never touches the DB.
+    """
+    if not docs:
+        return
+    from services.job_assignee import effective_tid
+    from services.service_report_view import resolve_technicians
+
+    tids = list({t for t in (effective_tid(d) for d in docs) if t})
+    if not tids:
+        for d in docs:
+            if not d.get("technician_name"):
+                d["technician_name"] = ""
+            d.setdefault("technician_active", True)
+        return
+    tmap = await resolve_technicians(db, tenant_id, tids)
+    for d in docs:
+        tid = effective_tid(d)
+        info = tmap.get(tid) if tid else None
+        if info:
+            # Resolver wins over the stored value — self-heal at
+            # read time so stale ``technician_name`` never leaks.
+            d["technician_name"] = info["name"]
+            d["technician_active"] = info["active"]
+        else:
+            # Neither resolver nor stored have a value → fall back
+            # to the raw TID so downstream renderers still get
+            # something identifying, per the resolver-cascade
+            # spec ("Fall back to the string ID itself if nothing
+            # matches — never crash").
+            d["technician_name"] = d.get("technician_name") or tid or ""
+            d.setdefault("technician_active", True)

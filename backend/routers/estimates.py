@@ -200,6 +200,21 @@ async def create_estimate(body: EstimateIn,
     }
     await db.estimates.insert_one(doc)
     doc.pop("_id", None)
+    # Feb 2026 · Phase 1 Custom Trigger Builder — emit ``estimate_sent``.
+    # Fire-and-forget. Correlation key is the estimate id so replays
+    # dedupe cleanly.
+    try:
+        from services.marketing.event_dispatcher import emit_event
+        await emit_event(
+            event="estimate_sent",
+            tenant_id=tenant["id"],
+            entity_id=doc.get("id"),
+            customer_id=body.customer_id,
+            payload_extras={"estimate": doc, "customer": customer,
+                              "correlation_id": doc.get("id")},
+        )
+    except Exception:
+        pass
     return doc
 
 

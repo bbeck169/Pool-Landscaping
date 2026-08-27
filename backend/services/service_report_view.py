@@ -317,77 +317,119 @@ def resolve_photo_items(job: dict) -> List[Dict[str, Any]]:
 
 
 # ─── Tech-name resolver ──────────────────────────────────────────────
-async def resolve_technician_names(db, tenant_id: str, ids):
-    """4-rung cascade for a mixed bag of ``job.technician_id`` values.
+async def resolve_technicians(db, tenant_id: str, ids):
+    """Feb 2026 · Rich variant of ``resolve_technician_names`` — returns
+    ``{id → {id, name, active}}`` so consumers can badge deactivated
+    techs in the UI.
 
-    ``job.technician_id`` is stored inconsistently across ~7 write
-    paths (mobile create, admin dispatch, scheduler autocreate,
-    service-report submit, reassign, quote→job, etc.).  Some paths
-    write a ``technicians.id``, some write a ``users.id``.  The
-    "correct long-term fix" is normalising every writer (queued as
-    the P2 Tech-ID fragmentation task); the fast fix is teaching the
-    reader to accept both shapes.
+    Cascade order (users-wins-over-technicians per the Feb-2026 spec):
+      1. ``db.users`` where ``technician_id ∈ ids`` — the users
+         collection is the canonical source of tech identity. This
+         rung is NEW as of Feb 2026 and takes precedence over every
+         earlier rung.
+      2. ``db.technicians.id``
+      3. ``db.technicians.user_id`` (back-ref shape)
+      4. ``db.users.id`` (direct user reference)
+      5. ``db.users`` — synthesise from ``first_name + last_name``
 
-    Cascade order:
-      1. ``db.technicians.id``
-      2. ``db.technicians.user_id``  (technician doc back-ref)
-      3. ``db.users.id``  (role in ``technician / landscaper / manager / admin``)
-      4. ``db.users`` — synthesise from ``first_name + last_name``
+    Never raises. Missing ids simply don't appear in the map — the
+    caller applies its own "Unassigned" / "Unknown" copy OR falls
+    back to the raw ID string per the Feb-2026 spec.
 
-    Returns ``{id: display_name}``.  Never raises.  Missing ids
-    simply don't appear in the map — the caller applies its own
-    ``"Unassigned"`` / ``"Unknown"`` copy.
+    Deactivated techs still resolve (their name stays in payloads
+    for historical readability), but their entry carries
+    ``active: false`` so a UI can render a badge.
     """
     ids = [str(x) for x in (ids or []) if x]
     if not ids:
         return {}
-    ids = list(dict.fromkeys(ids))  # de-dupe, preserve order
-    out: dict = {}
+    ids = list(dict.fromkeys(ids))
+    out: Dict[str, Dict[str, Any]] = {}
 
-    # 1. technicians.id  — canonical shape.
-    async for t in db.technicians.find(
-        {"tenant_id": tenant_id, "id": {"$in": ids}},
-        {"_id": 0, "id": 1, "name": 1},
-    ):
-        if t.get("name"):
-            out[t["id"]] = t["name"]
+    def _record(target_id: str, name: str, active: Optional[bool]):
+        if not target_id or not name:
+            return
+        if target_id in out:
+            return
+        out[target_id] = {
+            "id": target_id,
+            "name": name.strip(),
+            # Missing ``active`` defaults to True — legacy tech rows
+            # without the field are still considered active.
+            "active": True if active is None else bool(active),
+        }
 
-    remaining = [i for i in ids if i not in out]
-    if not remaining:
-        return out
-
-    # 2. technicians.user_id  — back-ref shape.
-    async for t in db.technicians.find(
-        {"tenant_id": tenant_id, "user_id": {"$in": remaining}},
-        {"_id": 0, "user_id": 1, "name": 1},
-    ):
-        uid = t.get("user_id")
-        if uid and t.get("name") and uid not in out:
-            out[uid] = t["name"]
-
-    remaining = [i for i in ids if i not in out]
-    if not remaining:
-        return out
-
-    # 3-4. users.id  — direct user reference.
-    # Feb-2026 · P1 hotfix — allowlist extended with ``tech`` (legacy
-    # singular shorthand present in seeded users) and ``owner`` so a
-    # ``technician_id`` pointing at such a user is no longer silently
-    # dropped.
+    # 1 · db.users.technician_id — Feb-2026 canonical source of truth.
     async for u in db.users.find(
-        {"tenant_id": tenant_id, "id": {"$in": remaining},
-         "role": {"$in": ["technician", "tech", "landscaper", "manager", "admin", "super_admin", "owner"]}},
-        {"_id": 0, "id": 1, "name": 1, "first_name": 1, "last_name": 1},
+        {"tenant_id": tenant_id, "technician_id": {"$in": ids}},
+        {"_id": 0, "id": 1, "technician_id": 1, "name": 1,
+          "first_name": 1, "last_name": 1, "active": 1},
     ):
-        if u.get("name"):
-            out[u["id"]] = u["name"]
-        else:
+        tid = u.get("technician_id")
+        if not tid:
+            continue
+        nm = (u.get("name") or "").strip()
+        if not nm:
             fn = (u.get("first_name") or "").strip()
             ln = (u.get("last_name") or "").strip()
-            full = f"{fn} {ln}".strip()
-            if full:
-                out[u["id"]] = full
+            nm = f"{fn} {ln}".strip()
+        _record(tid, nm, u.get("active"))
+
+    remaining = [i for i in ids if i not in out]
+
+    # 2 · db.technicians.id — canonical shape on the tech collection.
+    if remaining:
+        async for t in db.technicians.find(
+            {"tenant_id": tenant_id, "id": {"$in": remaining}},
+            {"_id": 0, "id": 1, "name": 1, "active": 1},
+        ):
+            _record(t.get("id"), t.get("name") or "", t.get("active"))
+        remaining = [i for i in ids if i not in out]
+
+    # 3 · db.technicians.user_id — back-ref shape.
+    if remaining:
+        async for t in db.technicians.find(
+            {"tenant_id": tenant_id, "user_id": {"$in": remaining}},
+            {"_id": 0, "user_id": 1, "name": 1, "active": 1},
+        ):
+            _record(t.get("user_id"), t.get("name") or "", t.get("active"))
+        remaining = [i for i in ids if i not in out]
+
+    # 4-5 · db.users.id — direct user reference. Feb-2026 · P1 hotfix —
+    # allowlist extended with ``tech`` (legacy singular shorthand
+    # present in seeded users) and ``owner`` so a ``technician_id``
+    # pointing at such a user is no longer silently dropped.
+    if remaining:
+        async for u in db.users.find(
+            {"tenant_id": tenant_id, "id": {"$in": remaining},
+              "role": {"$in": ["technician", "tech", "landscaper",
+                                 "manager", "admin", "super_admin",
+                                 "owner"]}},
+            {"_id": 0, "id": 1, "name": 1, "first_name": 1,
+              "last_name": 1, "active": 1},
+        ):
+            nm = (u.get("name") or "").strip()
+            if not nm:
+                fn = (u.get("first_name") or "").strip()
+                ln = (u.get("last_name") or "").strip()
+                nm = f"{fn} {ln}".strip()
+            _record(u.get("id"), nm, u.get("active"))
+
     return out
+
+
+async def resolve_technician_names(db, tenant_id: str, ids):
+    """Legacy string-map wrapper — ``{id: display_name}``.
+
+    Retained for backwards-compat with the 4 pre-existing callers that
+    only need the display name.  Delegates to the Feb-2026
+    ``resolve_technicians`` rich resolver, then flattens.
+
+    Never raises.  Missing ids simply don't appear in the map — the
+    caller applies its own ``"Unassigned"`` / ``"Unknown"`` copy.
+    """
+    rich = await resolve_technicians(db, tenant_id, ids)
+    return {k: v["name"] for k, v in rich.items() if v.get("name")}
 
 
 async def resolve_tech_name(db, job: dict, tenant_id: str) -> str:

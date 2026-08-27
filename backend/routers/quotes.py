@@ -350,6 +350,21 @@ async def create_quote(body: QuoteIn,
             )
     except Exception:
         pass
+    # Feb 2026 · Phase 1 Custom Trigger Builder — schema-v2 emission.
+    # Correlation key = invoice id so replays dedupe.
+    try:
+        if body.doc_type == "invoice" and doc.get("customer_id"):
+            from services.marketing.event_dispatcher import emit_event
+            await emit_event(
+                event="invoice_sent",
+                tenant_id=tenant["id"],
+                entity_id=doc.get("id"),
+                customer_id=doc.get("customer_id"),
+                payload_extras={"invoice": doc,
+                                  "correlation_id": doc.get("id")},
+            )
+    except Exception:
+        pass
     return doc
 
 
@@ -701,6 +716,22 @@ async def record_payment(qid: str, body: RecordPaymentIn,
             )
         except Exception:
             pass
+        # Feb 2026 · Phase 1 Custom Trigger Builder — schema-v2 emission.
+        try:
+            from services.marketing.event_dispatcher import emit_event
+            fresh = await db.quotes.find_one(
+                {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0}) or {}
+            if fresh.get("customer_id"):
+                await emit_event(
+                    event="invoice_paid",
+                    tenant_id=tenant["id"],
+                    entity_id=qid,
+                    customer_id=fresh.get("customer_id"),
+                    payload_extras={"invoice": fresh,
+                                      "correlation_id": qid},
+                )
+        except Exception:
+            pass
     return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
@@ -734,6 +765,22 @@ async def pay_quote(qid: str,
             entity_kind="invoice", entity_id=qid,
             customer_id=(fresh or {}).get("customer_id"),
         )
+    except Exception:
+        pass
+    # Feb 2026 · Phase 1 Custom Trigger Builder — schema-v2 emission.
+    try:
+        from services.marketing.event_dispatcher import emit_event
+        fresh = await db.quotes.find_one(
+            {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0}) or {}
+        if fresh.get("customer_id"):
+            await emit_event(
+                event="invoice_paid",
+                tenant_id=tenant["id"],
+                entity_id=qid,
+                customer_id=fresh.get("customer_id"),
+                payload_extras={"invoice": fresh,
+                                  "correlation_id": qid},
+            )
     except Exception:
         pass
     return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
