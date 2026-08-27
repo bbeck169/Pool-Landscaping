@@ -123,6 +123,61 @@ async def dashboard(user: dict = Depends(get_current_user),
     recurring = round(sum(q["total"] for q in paid if any(w in (q.get("title", "").lower()) for w in ["monthly", "weekly", "recurring"])), 2)
     project = round(max(0.0, revenue - recurring), 2)
 
+    # ── Feb 2026 · Batch 2 — Pool vs Landscape revenue split ──
+    # Compute pool_revenue / landscape_revenue / mixed_revenue by
+    # keyword-scoring each paid invoice's title AND (when available)
+    # the paying customer's ``service_type``. This mirrors what the
+    # admin sees in the invoice grid — no schema change required.
+    #
+    # Heuristic (documented so ops can audit):
+    #   * ``pool`` keyword in title/service_type  → pool bucket
+    #   * ``landscape`` / ``lawn`` / ``garden`` / ``tree`` / ``yard``
+    #     in title/service_type                    → landscape bucket
+    #   * both signals present OR neither present  → mixed bucket
+    #     (mixed catches "Commercial Service", "Monthly Service",
+    #      multi-line packages, and totally unlabeled invoices)
+    #
+    # Customer service_type is looked up in one batch by ``$in`` on
+    # ``customer_id`` — no N+1. Unknown customers fall through to the
+    # title-only score, which itself falls into ``mixed`` when
+    # nothing matches. Total is invariant: pool + landscape + mixed
+    # == revenue (guaranteed by the mutually-exclusive bucket rule).
+    _POOL_KWS = ("pool",)
+    _LAND_KWS = ("landscape", "lawn", "garden", "tree", "yard")
+    _cust_ids = list({q.get("customer_id") for q in paid if q.get("customer_id")})
+    _cust_service_type: dict = {}
+    if _cust_ids:
+        async for c in db.customers.find(
+            {"tenant_id": tid, "id": {"$in": _cust_ids}},
+            {"_id": 0, "id": 1, "service_type": 1},
+        ):
+            _cust_service_type[c["id"]] = (c.get("service_type") or "").lower()
+
+    def _bucket(q):
+        text = " ".join(filter(None, [
+            (q.get("title") or "").lower(),
+            (q.get("service_type") or "").lower(),
+            _cust_service_type.get(q.get("customer_id"), ""),
+        ]))
+        has_pool = any(kw in text for kw in _POOL_KWS)
+        has_land = any(kw in text for kw in _LAND_KWS)
+        if has_pool and not has_land: return "pool"
+        if has_land and not has_pool: return "landscape"
+        return "mixed"
+
+    pool_revenue = 0.0
+    landscape_revenue = 0.0
+    mixed_revenue = 0.0
+    for q in paid:
+        amount = float(q.get("total") or 0)
+        b = _bucket(q)
+        if b == "pool":         pool_revenue += amount
+        elif b == "landscape":  landscape_revenue += amount
+        else:                   mixed_revenue += amount
+    pool_revenue = round(pool_revenue, 2)
+    landscape_revenue = round(landscape_revenue, 2)
+    mixed_revenue = round(mixed_revenue, 2)
+
     total_leads = await db.leads.count_documents(tenant_q)
     open_leads = await db.leads.count_documents({**tenant_q, "status": {"$in": ["new", "contacted", "quoted"]}})
 
@@ -142,4 +197,10 @@ async def dashboard(user: dict = Depends(get_current_user),
         "revenue_series": revenue_series,
         "revenue_by_service": revenue_by_service,
         "recurring_vs_project": {"recurring": recurring, "project": project},
+        # Feb 2026 · Batch 2 — Pool vs Landscape revenue split
+        # (additive; existing consumers keep working). Dollars,
+        # not cents — matches the ``revenue`` field's unit.
+        "pool_revenue": pool_revenue,
+        "landscape_revenue": landscape_revenue,
+        "mixed_revenue": mixed_revenue,
     }
