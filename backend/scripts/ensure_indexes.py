@@ -133,6 +133,7 @@ async def main() -> int:
         ("weekly_digest",          "services.weekly_digest",               "ensure_indexes"),
         ("equipment_trackers",     "routers.equipment_trackers",           "ensure_indexes"),
         ("promo_codes",            "routers.promo_codes",                  "ensure_indexes"),
+        ("job_titles",             "routers.job_titles",                   "ensure_indexes"),
         ("referral_watcher",      "services.referral_watcher",             "ensure_indexes"),
         ("widget_denied",          "routers.widget_config",                "_ensure_denied_indexes"),
         ("tos_multi",              "services.tos_service",                 "ensure_indexes"),

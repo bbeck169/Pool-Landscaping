@@ -133,6 +133,7 @@ from routers import (
     communications_log,
     customer_categories,
     dispatch_board,
+    job_titles,
 )
 # Phase 9C · Feb 2026 — QuickBooks retirement helper (idempotent
 # boot migration + ALLOW_TEST_HOOKS-gated purge endpoint).
@@ -686,7 +687,8 @@ for module in [notifications_router,
                customer_tags,
                communications_log,
                customer_categories,
-               dispatch_board]:
+               dispatch_board,
+               job_titles]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -2053,6 +2055,17 @@ async def startup():
         logger.info(f"[phase56.3.A] customer name-split migration: {migrated_n} row(s)")
     except Exception as e:
         logger.warning(f"customer name-split migration crashed: {e}")
+
+    # Feb 2026 · Job Titles auto-learn catalog — idempotent backfill
+    # from existing ``db.jobs.title`` distincts per tenant. Guarded
+    # by a ``db.migrations`` sentinel so second-and-later boots are
+    # ~10ms no-ops. See ``routers/job_titles.py`` for the shape.
+    try:
+        from routers.job_titles import backfill_from_existing_jobs
+        _jt_report = await backfill_from_existing_jobs()
+        logger.info(f"[job_titles] backfill: {_jt_report}")
+    except Exception as e:
+        logger.warning(f"job_titles backfill crashed: {e}")
 
     # Feb-2026 Customer Detail Additions — idempotent one-shot back-fill
     # of the ``mobiles`` / ``emails`` arrays from the legacy scalar

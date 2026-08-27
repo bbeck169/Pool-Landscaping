@@ -10,6 +10,7 @@ import {
   Toast,
 } from "@/components/ui-kit";
 import { X, Plus, ArrowLeft } from "lucide-react";
+import AddressAutocomplete from "@/components/AddressAutocomplete";
 
 const TAG_PRESETS = ["VIP", "Specialty"];
 
@@ -283,12 +284,52 @@ export default function CustomerForm() {
             <TextInput label="ALERT PHONE / SMS (after-hours)" id="alert_phone" value={form.alert_phone} onChange={set("alert_phone")} testid="cf-alert-phone" />
           </div>
           {/* Phase 48 · Feb-2026 — Service Address (4-input UX). Composes
-              into the single-string ``address`` field on save. */}
+              into the single-string ``address`` field on save.
+              Feb 2026 · Task B — the street/address line is now a
+              Google Places Autocomplete input. Selecting a
+              suggestion auto-fills city / state / zip; free typing
+              still works when Places is unavailable (offline /
+              quota / referrer restriction fail — the component
+              renders an "Autocomplete unavailable" hint below the
+              input in that case). */}
           <div className="space-y-2" data-testid="cf-service-address-group">
             <div className="font-bold text-sm" style={{ color: colors.onSurface }}>
               Service Address
             </div>
-            <TextInput label="ADDRESS" id="service_street" value={form.service_street} onChange={set("service_street")} testid="cf-service-street" />
+            <div>
+              <label
+                className="text-xs font-semibold tracking-wide mb-1 block"
+                style={{ color: colors.onSurfaceSecondary }}
+                htmlFor="service_street"
+              >
+                ADDRESS
+              </label>
+              <AddressAutocomplete
+                testid="cf-service-street"
+                value={form.service_street}
+                onChange={(v) =>
+                  setForm((prev) => ({ ...prev, service_street: v }))
+                }
+                onSelect={(parsed) => {
+                  // Feb 2026 · Task B — on Places selection, fill
+                  // the four structured fields.  Only overwrite a
+                  // sub-field when the parsed value is non-empty
+                  // so a partial-match place doesn't blank out
+                  // manual entries the user already made.
+                  setForm((prev) => ({
+                    ...prev,
+                    // Prefer the recomposed street (number + route);
+                    // fall back to the full formatted address so
+                    // the visible input reflects Google's picked
+                    // place, not just the sub-route.
+                    service_street: parsed.street || prev.service_street,
+                    service_city: parsed.city || prev.service_city,
+                    service_state: parsed.state || prev.service_state,
+                    service_zip: parsed.zip || prev.service_zip,
+                  }));
+                }}
+              />
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               <TextInput label="CITY" id="service_city" value={form.service_city} onChange={set("service_city")} testid="cf-service-city" />
               <TextInput label="STATE" id="service_state" value={form.service_state} onChange={set("service_state")} testid="cf-service-state" />

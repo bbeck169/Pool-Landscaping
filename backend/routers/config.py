@@ -32,6 +32,31 @@ async def frontend_env():
     }
 
 
+@router.get("/config/maps")
+async def config_maps():
+    """Feb 2026 · Public — returns the Google Maps client key for
+    the Places Autocomplete script on the New Customer / Edit
+    Customer form.
+
+    Dedicated (task-scoped) sibling to ``/config/frontend-env``:
+    the customer form fetches THIS endpoint (not the general
+    ``frontend-env``) so we can iterate on the Places contract
+    without perturbing the Stripe / Maps shape other callers
+    depend on. Returns an empty string when the key isn't
+    configured — the client-side ``AddressAutocomplete`` falls
+    back to plain manual entry when the value is empty, so the
+    New Customer form never crashes on a stale env.
+
+    The key is the SAME publishable client key already surfaced
+    via ``/config/frontend-env``. Google enforces access via
+    HTTP-referrer restrictions configured in Google Cloud Console
+    (see README) — no server-side secret is leaked here.
+    """
+    return {
+        "google_maps_client_key": os.getenv("GOOGLE_MAPS_API_KEY") or "",
+    }
+
+
 @router.get("/config/features")
 async def config_features():
     """Public runtime feature flags.

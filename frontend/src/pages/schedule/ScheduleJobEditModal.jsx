@@ -21,6 +21,7 @@ import { Trash2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Modal, Button, TextInput } from "@/components/ui-kit";
+import JobTitleCombobox from "@/components/JobTitleCombobox";
 
 const SERVICE_TYPES = [
   "Pool Cleaning", "Repair", "Landscaping", "Inspection",
@@ -194,10 +195,12 @@ export default function ScheduleJobEditModal({
       }
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <TextInput
+        <JobTitleCombobox
           label="Title"
           value={form.title}
-          onChange={set("title")}
+          onChange={(v) =>
+            setForm((prev) => ({ ...prev, title: v }))
+          }
           testid="schedule-job-edit-title"
         />
         {/* Feb 2026 · Work-class picker. Mirrors the segmented

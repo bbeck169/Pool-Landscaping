@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { colors } from "@/theme";
+import { api } from "@/api";
 
 /**
  * Address autocomplete input backed by Google Places.
@@ -14,19 +15,49 @@ import { colors } from "@/theme";
  * ``PlacesService`` pair. Same public API (`onChange`, `onSelect`)
  * so no caller changes.
  *
+ * Feb 2026 · Task B — the API key is now fetched at RUNTIME from
+ * ``GET /api/config/maps`` (public, referrer-restricted) instead
+ * of being baked into the webpack bundle via ``REACT_APP_*``. The
+ * env-var path is preserved as a fallback so consumers running
+ * against a backend without the ``/config/maps`` endpoint still
+ * work (dev + legacy build compatibility).
+ *
  * Emits an `{ address, street, city, state, zip, country, lat, lng,
  * place_id, formatted }` object on selection via `onSelect`.
  */
-const KEY =
+const BUILD_TIME_KEY =
   process.env.REACT_APP_GOOGLE_MAPS_API_KEY ||
   process.env.REACT_APP_GOOGLE_API_KEY ||
   "";
 let googleLoader = null;
+// Cached client key resolved by ``resolveMapsClientKey``. Never
+// contains a server-side secret — the endpoint only surfaces the
+// public referrer-restricted key.
+let _cachedRuntimeKey = null;
 
-function loadGoogleMaps() {
-  if (!KEY) return Promise.reject(new Error("no-key"));
+export async function resolveMapsClientKey() {
+  if (_cachedRuntimeKey !== null) return _cachedRuntimeKey;
+  // Runtime fetch first — matches the Feb-2026 Task B contract
+  // (frontend never bakes the key into source).
+  try {
+    const res = await api.get("/config/maps");
+    const runtimeKey = (res && res.google_maps_client_key) || "";
+    if (runtimeKey) {
+      _cachedRuntimeKey = runtimeKey;
+      return runtimeKey;
+    }
+  } catch {
+    /* backend endpoint absent / offline — fall through */
+  }
+  _cachedRuntimeKey = BUILD_TIME_KEY;
+  return BUILD_TIME_KEY;
+}
+
+async function loadGoogleMaps() {
+  const key = await resolveMapsClientKey();
+  if (!key) throw new Error("no-key");
   if (window.google?.maps?.places?.AutocompleteService) {
-    return Promise.resolve(window.google);
+    return window.google;
   }
   if (googleLoader) return googleLoader;
   // Feb 2026 fix — with `loading=async` the bootstrap script's onload
@@ -66,16 +97,19 @@ function loadGoogleMaps() {
       return;
     }
     const s = document.createElement("script");
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(KEY)}&libraries=places&loading=async&v=weekly`;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&loading=async&v=weekly`;
     s.async = true; s.defer = true; s.setAttribute("data-google-maps", "1");
     s.onload = finish;
     s.onerror = reject;
     document.head.appendChild(s);
   });
+  // If the promise rejects, allow later mounts to retry rather than
+  // permanently keeping the failed singleton.
+  googleLoader.catch(() => { googleLoader = null; });
   return googleLoader;
 }
 
-function extractComponents(place) {
+export function extractComponents(place) {
   const comps = place.address_components || [];
   const grab = (type, useShort = false) => {
     const c = comps.find((x) => x.types?.includes(type));
@@ -108,6 +142,14 @@ export default function AddressAutocomplete({
   const [ready, setReady] = useState(
     !!window.google?.maps?.places?.AutocompleteService
   );
+  const [keyAvailable, setKeyAvailable] = useState(
+    // Optimistic — assume the runtime endpoint will resolve a key
+    // (referrer-restricted client keys are safe to expose in the
+    // browser). The mount effect below flips this off when both
+    // the runtime endpoint AND the legacy build-time env come up
+    // empty, which is the "graceful degrade to manual entry" gate.
+    true,
+  );
   const [error, setError] = useState("");
   const [suggestions, setSuggestions] = useState([]);
   const [open, setOpen] = useState(false);
@@ -124,11 +166,17 @@ export default function AddressAutocomplete({
 
   // Kick off the loader on mount so services are ready by first focus.
   useEffect(() => {
-    if (ready || !KEY) return;
+    if (ready) return;
     let cancelled = false;
     loadGoogleMaps()
       .then(() => { if (!cancelled) setReady(true); })
-      .catch(() => { if (!cancelled) setError("Google Places load failed"); });
+      .catch((exc) => {
+        if (cancelled) return;
+        // ``no-key`` is a soft-degrade signal — the CustomerForm
+        // wrapper still renders the plain input.
+        if (exc?.message === "no-key") setKeyAvailable(false);
+        else setError("Google Places load failed");
+      });
     return () => { cancelled = true; };
   }, [ready]);
 
@@ -195,7 +243,11 @@ export default function AddressAutocomplete({
   const onFocus = async () => {
     if (!ready) {
       try { await loadGoogleMaps(); setReady(true); }
-      catch { setError(KEY ? "Google Places load failed" : ""); return; }
+      catch (exc) {
+        if (exc?.message === "no-key") setKeyAvailable(false);
+        else setError("Google Places load failed");
+        return;
+      }
     }
     if (text && text.length >= 3) fetchPredictions(text);
   };
@@ -300,9 +352,13 @@ export default function AddressAutocomplete({
         </ul>
       )}
       {error && <div className="text-xs mt-1" style={{ color: colors.warning }}>{error}</div>}
-      {!KEY && (
-        <div className="text-xs mt-1" style={{ color: colors.onSurfaceSecondary }}>
-          Autocomplete disabled — configure REACT_APP_GOOGLE_MAPS_API_KEY to enable.
+      {!keyAvailable && (
+        <div
+          className="text-xs mt-1"
+          style={{ color: colors.onSurfaceSecondary }}
+          data-testid={`${testid}-unavailable`}
+        >
+          Autocomplete unavailable — enter the address manually.
         </div>
       )}
     </div>

@@ -15,6 +15,7 @@ import {
   RecurrenceEndsRadio,
 } from "@/components/recurring/MonthlyNthWeekdaySelector";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
+import JobTitleCombobox from "@/components/JobTitleCombobox";
 
 const CADENCES = [
   { k: "one_time", label: "One-time" },
@@ -354,7 +355,12 @@ export default function JobNew({
           ) : (form.customer_id && propsLoading) ? (
             <div className="text-xs" style={{ color: colors.onSurfaceSecondary }}>Loading properties…</div>
           ) : null}
-          <TextInput label="TITLE *" value={form.title} onChange={set("title")} testid="jf-title" />
+          <JobTitleCombobox
+            label="TITLE *"
+            value={form.title}
+            onChange={(v) => setForm((prev) => ({ ...prev, title: v }))}
+            testid="jf-title"
+          />
           {/* Feb 2026 · Work-class picker (Repair vs Service).
               Orthogonal to SERVICE TYPE — a "Pool Cleaning" service_type
               can still be flagged as a Repair visit (e.g. equipment

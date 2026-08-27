@@ -707,6 +707,17 @@ async def create_job(body: JobIn,
             stamp_customer_since, body.customer_id, tenant["id"])
     except Exception:
         pass
+    # Feb 2026 · Auto-learn Job Title catalog — every create with a
+    # non-empty title bumps ``db.job_titles`` for the calling
+    # tenant so the next tech typing the same prefix in the New
+    # Job modal sees the completion. Safe no-op on empty titles.
+    try:
+        if doc.get("title"):
+            from routers.job_titles import record_title_usage
+            background_tasks.add_task(
+                record_title_usage, tenant["id"], doc["title"])
+    except Exception:
+        pass
     return doc
 
 
@@ -1225,6 +1236,22 @@ async def update_job(jid: str, body: JobUpdate,
             )
     if update:
         await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": update})
+
+    # Feb 2026 · Auto-learn Job Title catalog on update. Bump only
+    # when the title actually changed (and is non-empty) so a
+    # save-without-change doesn't double-count. Fire-and-forget —
+    # a catalog write must never break the job update path.
+    try:
+        _new_title = (update.get("title") or "").strip()
+        _old_title = (job.get("title") or "").strip()
+        if _new_title and _new_title != _old_title:
+            from routers.job_titles import record_title_usage
+            await record_title_usage(tenant["id"], _new_title)
+    except Exception as _title_exc:  # noqa: BLE001
+        logger.warning(
+            "[job_titles] update-path record_title_usage failed: %s",
+            _title_exc,
+        )
 
     # Phase 15C — realtime broadcast of status changes to assigned tech + admins.
     if update.get("status") and update["status"] != job.get("status"):
