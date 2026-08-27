@@ -111,6 +111,32 @@ export default function CustomersList() {
   const [q, setQ] = useState("");
   const [tag, setTag] = useState("");
   const [scope, setScope] = useState("all"); // all | waitlist | unscheduled
+  // Feb 2026 · Customers list sort dropdown. Persists across
+  // refreshes via localStorage under the ``customers.sortBy`` key so
+  // an operator who prefers "Oldest → Newest" doesn't have to
+  // re-select on every visit. Default is ``created_desc`` — matches
+  // the backend default and the product ask (newest first out of
+  // the box). Unknown / legacy persisted values fall back to the
+  // default so a stale storage entry never puts the UI in an
+  // undefined state.
+  const _SORT_STORAGE_KEY = "customers.sortBy";
+  const _SORT_OPTIONS = [
+    { value: "created_desc", label: "Newest → Oldest" },
+    { value: "created_asc", label: "Oldest → Newest" },
+  ];
+  const _SORT_VALUES = new Set(_SORT_OPTIONS.map((o) => o.value));
+  const [sortBy, setSortBy] = useState(() => {
+    try {
+      const raw = localStorage.getItem(_SORT_STORAGE_KEY);
+      return raw && _SORT_VALUES.has(raw) ? raw : "created_desc";
+    } catch {
+      return "created_desc";
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(_SORT_STORAGE_KEY, sortBy); }
+    catch { /* localStorage unavailable — best-effort */ }
+  }, [sortBy]);
   const [selected, setSelected] = useState(new Set());
   const [bulkTag, setBulkTag] = useState("");
   const [importOpen, setImportOpen] = useState(false);
@@ -190,6 +216,11 @@ export default function CustomersList() {
     // Feb-2026 · P35 — always request the paginated envelope.
     params.set("page", String(page));
     params.set("page_size", String(_PAGE_SIZE));
+    // Feb 2026 · Sort dropdown — passthrough. Backend defaults to
+    // ``created_desc`` when omitted (same default as the UI) so
+    // this line is defensive but strictly clarifies intent on the
+    // wire log.
+    if (sortBy) params.set("sort", sortBy);
     try {
       const data = await api.get(`/customers?${params.toString()}`);
       // Envelope-shaped when page/page_size present (Strategy B).
@@ -255,7 +286,7 @@ export default function CustomersList() {
     loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
-       missingPhone, includeDeleted, page, city, selectedTags]);
+       missingPhone, includeDeleted, page, city, selectedTags, sortBy]);
 
   // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
   // first invocation so hydrating chips from the URL on mount does
@@ -288,7 +319,7 @@ export default function CustomersList() {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, includeDeleted,
-       city, selectedTags]);
+       city, selectedTags, sortBy]);
 
   // Feb-2026 · P35 — URL sync for ``page``. ``page=1`` is the default
   // so it's dropped from the URL to keep the query string tidy.
@@ -760,6 +791,27 @@ export default function CustomersList() {
           <option value="">All tags</option>
           {TAG_PRESETS.map((t) => (
             <option key={t}>{t}</option>
+          ))}
+        </select>
+        {/* Feb 2026 · Sort dropdown — Newest→Oldest default, persisted
+            to localStorage. Change triggers a re-fetch via the load()
+            effect (sortBy in dep-array) and resets to page 1. */}
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+          className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurfaceSecondary,
+            border: `1px solid ${colors.border}`,
+          }}
+          aria-label="Sort customers by"
+          data-testid="customers-filter-sort"
+        >
+          {_SORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
           ))}
         </select>
         {cities.length ? (

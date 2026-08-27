@@ -275,6 +275,20 @@ async def list_customers(
     include_deleted: bool = Query(False, description="Feb-2026 · P25 super_admin only — include soft-deleted customers"),
     page: Optional[int] = Query(None, description="Feb-2026 · P35 — 1-indexed page number. Presence of this OR page_size flips the response into a paginated envelope."),
     page_size: Optional[int] = Query(None, description="Feb-2026 · P35 — page size (1..500). Presence of this OR page flips the response into a paginated envelope."),
+    sort: Optional[str] = Query(
+        "created_desc",
+        description=(
+            "Feb-2026 · Customers list sort order. Supported values: "
+            "``created_desc`` (default — newest → oldest), "
+            "``created_asc`` (oldest → newest), ``name_asc`` (legacy "
+            "alphabetical). Unknown values fall back to "
+            "``created_desc``. When the sort is by creation time and "
+            "a legacy doc lacks ``created_at``, the compound sort "
+            "falls back to the Mongo-generated ``_id`` (which encodes "
+            "creation time in its ObjectId prefix) so those rows still "
+            "land in the correct chronological bucket."
+        ),
+    ),
 ):
     # RBAC: only staff (admin/manager/technician/super_admin) may list
     # customer records. Customers use /me.
@@ -425,12 +439,27 @@ async def list_customers(
     # filtered set and slices in Python (correct).
     _needs_python_postfilter = bool(unscheduled) or bool(missing_card)
 
+    # Feb 2026 · Resolve the caller's sort preference into a Mongo
+    # sort spec. ``created_desc`` (default) is the "newest first" UX
+    # the Customers list surfaces via its Sort dropdown. Unknown /
+    # missing values fall back to the default rather than 400 so a
+    # stale bookmark / rolled-back client never breaks the list.
+    # Compound sort trails ``_id`` so legacy docs without
+    # ``created_at`` still order by ObjectId creation time — same
+    # tiebreaker the pagination path relies on for stable slices.
+    _SORT_MAP = {
+        "created_desc": [("created_at", -1), ("_id", -1)],
+        "created_asc": [("created_at", 1), ("_id", 1)],
+        "name_asc": [("name", 1)],
+    }
+    _sort_spec = _SORT_MAP.get(sort or "", _SORT_MAP["created_desc"])
+
     if _paginated and not _needs_python_postfilter:
         # Fast path — DB-side pagination.
         total = await db.customers.count_documents(q)
         skip = (page - 1) * page_size
         docs = await (db.customers.find(q, {"_id": 0})
-                          .sort("name", 1)
+                          .sort(_sort_spec)
                           .skip(skip).limit(page_size)
                           .to_list(page_size))
     elif _paginated and _needs_python_postfilter:
@@ -439,13 +468,13 @@ async def list_customers(
         # for tenants past the legacy 2000-row ceiling. The skip/limit
         # is applied AFTER unscheduled / missing_card below.
         docs = await (db.customers.find(q, {"_id": 0})
-                          .sort("name", 1)
+                          .sort(_sort_spec)
                           .to_list(length=None))
     else:
         # Legacy path — no pagination requested. Keep the 2000-row
         # ceiling to preserve exact backwards-compat with all bare-array
         # callers (they've been living with this cap since Phase 34f).
-        docs = await db.customers.find(q, {"_id": 0}).sort("name", 1).to_list(2000)
+        docs = await db.customers.find(q, {"_id": 0}).sort(_sort_spec).to_list(2000)
     # If unscheduled=true, filter out customers who have any non-completed/cancelled job.
     if unscheduled:
         from utils import not_deleted_filter as _nd
