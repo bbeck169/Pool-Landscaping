@@ -93,6 +93,39 @@ class TestCompanyBrandContactResolvers:
             "COMPANY_EMAIL", "COMPANY_PHONE", "COMPANY_WEBSITE",
         }
 
+    def test_defaults_fallback_when_business_card_empty(self):
+        """Feb-2026 P1 gap fix — a known tenant slug with an empty
+        ``settings.business_card`` should still resolve to real values
+        from ``_BUSINESS_CARD_DEFAULTS``. Guards against a preview DB
+        reset leaving merge tags rendering empty in the composer.
+        """
+        ctx = {"tenant": {
+            "id": "t-defaults", "slug": "aquaterra",
+            "name": "PLOFV", "settings": {"business_card": {}},
+        }}
+        rendered, missing = render_template(
+            "{{COMPANY_EMAIL}} | {{COMPANY_PHONE}} | {{COMPANY_WEBSITE}}",
+            ctx, missing="empty",
+        )
+        assert missing == []
+        # Values come from routers/tenants._BUSINESS_CARD_DEFAULTS.
+        assert "cs@plofv.com" in rendered
+        assert "602-887-4400" in rendered
+        assert "poolandlandscapingofvistancia" in rendered
+
+    def test_defaults_fallback_ignores_unknown_slug(self):
+        """Only known slugs get a defaults fallback — everyone else
+        continues to render empty (no cross-tenant leakage risk)."""
+        ctx = {"tenant": {
+            "id": "t-mystery", "slug": "some-unknown-tenant",
+            "settings": {"business_card": {}},
+        }}
+        rendered, missing = render_template(
+            "[{{COMPANY_EMAIL}}]", ctx, missing="empty",
+        )
+        assert rendered == "[]"
+        assert missing == ["COMPANY_EMAIL"]
+
 
 class TestSeedAquaterraBrandContacts:
     def test_seed_is_idempotent(self, tmp_path):

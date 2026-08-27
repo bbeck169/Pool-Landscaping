@@ -270,7 +270,11 @@ _BUSINESS_CARD_DEFAULTS = {
         "tagline": "Your trusted local pool & landscaping pros in Vistancia.",
         "service_area": "Peoria & Vistancia, Arizona",
         "phone": "602-887-4400",
-        "email": "brian@plofv.com",
+        # Feb-2026 · Source-of-truth flip. Was ``brian@plofv.com`` —
+        # user confirmed outbound emails should use the customer-
+        # service alias. Kept in code so fresh tenants + fallback
+        # paths always land on the correct address.
+        "email": "cs@plofv.com",
         "website_url": "https://www.poolandlandscapingofvistancia.com/",
         "google_review_url": None,
         "gradient_from": "#0EA5E9",

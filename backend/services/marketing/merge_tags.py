@@ -646,34 +646,61 @@ def _tech_name(ctx: Dict[str, Any]) -> str:
     return _safe_str(emp.get("name") or "")
 
 
+def _tenant_default_brand_field(tenant: Dict[str, Any], field: str) -> str:
+    """Feb-2026 · Business Card defaults fallback.
+
+    Consult ``routers.tenants._BUSINESS_CARD_DEFAULTS[<tenant.slug>]``
+    when the tenant DB row + ``settings.business_card`` are both empty
+    for ``field``. Keeps merge-tag renders realistic even when a
+    fresh preview / disaster-recovery restore hasn't yet re-run the
+    per-tenant seed. Falls back to empty string on any import
+    hiccup so the render pipeline never crashes.
+    """
+    slug = _safe_str(tenant.get("slug"))
+    if not slug:
+        return ""
+    try:
+        from routers.tenants import _BUSINESS_CARD_DEFAULTS
+    except Exception:
+        return ""
+    return _safe_str((_BUSINESS_CARD_DEFAULTS.get(slug) or {}).get(field) or "")
+
+
 def _company_email(ctx: Dict[str, Any]) -> str:
     """Company support email.
 
     Feb-2026 · Aligned with the admin editor at Settings → Business
     Card, which writes to ``tenant.settings.business_card.email``.
-    Falls back to legacy ``tenant.support_email`` / ``tenant.email``
-    so pre-editor tenants keep working.
+    Cascades:
+
+      1. ``settings.business_card.email`` — admin editor source-of-truth
+      2. Legacy root ``support_email`` / ``email`` fields
+      3. Per-tenant ``_BUSINESS_CARD_DEFAULTS[slug]["email"]`` fallback
+         (keeps sends working after preview DB resets)
     """
     t = ctx.get("tenant") or {}
     settings = t.get("settings") or {}
     card = settings.get("business_card") or {}
     return _safe_str(card.get("email")
                      or t.get("support_email")
-                     or t.get("email") or "")
+                     or t.get("email")
+                     or _tenant_default_brand_field(t, "email"))
 
 
 def _company_phone(ctx: Dict[str, Any]) -> str:
     """Company support phone.
 
     Feb-2026 · Same alignment as ``_company_email`` — prefers the
-    Business Card editor's storage location.
+    Business Card editor's storage location and falls back through
+    the legacy fields to ``_BUSINESS_CARD_DEFAULTS``.
     """
     t = ctx.get("tenant") or {}
     settings = t.get("settings") or {}
     card = settings.get("business_card") or {}
     return _safe_str(card.get("phone")
                      or t.get("support_phone_number")
-                     or t.get("phone") or "")
+                     or t.get("phone")
+                     or _tenant_default_brand_field(t, "phone"))
 
 
 def _company_website(ctx: Dict[str, Any]) -> str:
@@ -681,16 +708,22 @@ def _company_website(ctx: Dict[str, Any]) -> str:
 
     Feb-2026 · Aligned with the admin editor at Settings → Business
     Card, which writes to ``tenant.settings.business_card.website_url``.
-    Falls back to legacy ``tenant.website`` so pre-editor tenants keep
-    working. Value returned verbatim — no auto ``https://`` prefix
-    (template authors control href construction).
+    Cascades:
+
+      1. ``settings.business_card.website_url``
+      2. Legacy root ``website`` field
+      3. Per-tenant ``_BUSINESS_CARD_DEFAULTS[slug]["website_url"]``
+
+    Value returned verbatim — no auto ``https://`` prefix (template
+    authors control href construction).
     """
     t = ctx.get("tenant") or {}
     settings = t.get("settings") or {}
     card = settings.get("business_card") or {}
     return _safe_str(card.get("website_url")
                      or card.get("website")
-                     or t.get("website") or "")
+                     or t.get("website")
+                     or _tenant_default_brand_field(t, "website_url"))
 
 
 def _current_month(ctx: Dict[str, Any]) -> str:

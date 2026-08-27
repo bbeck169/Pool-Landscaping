@@ -48,7 +48,10 @@ BUSINESS_CARD = {
     "tagline": "Your trusted local pool & landscaping pros in Vistancia.",
     "service_area": "Peoria & Vistancia, Arizona",
     "phone": "602-887-4400",
-    "email": "brian@plofv.com",
+    # Feb-2026 · Customer-facing brand email. User confirmed the
+    # ``{{COMPANY_EMAIL}}`` merge tag should render the customer-
+    # service alias, not the owner's personal inbox.
+    "email": "cs@plofv.com",
     "website_url": "https://www.poolandlandscapingofvistancia.com/",
 }
 
@@ -94,6 +97,17 @@ def _apply_tenant_config_updates(
             added_card.append(k)
     if added_card:
         report["business_card_fields_added"] = added_card
+
+    # 3b. Business card — one-off upgrade of the known-legacy email
+    # value. Prior versions of this migration seeded
+    # ``brian@plofv.com`` into the customer-facing brand email; user
+    # has since confirmed the ``{{COMPANY_EMAIL}}`` merge tag should
+    # render the customer-service alias. Idempotent — once flipped
+    # the branch never fires again. Admin-authored values (anything
+    # other than the exact legacy string) are preserved.
+    if card.get("email") == "brian@plofv.com":
+        sets["settings.business_card.email"] = BUSINESS_CARD["email"]
+        report["business_card_email_upgraded_from_legacy"] = True
 
     # 4. Email sender identity — set if missing / partial.
     current_sender = settings.get("email_sender") or {}

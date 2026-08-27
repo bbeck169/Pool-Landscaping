@@ -1005,6 +1005,18 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"[phase21] rebrand migration crashed: {e}")
 
+    # Feb-2026 · Crew Phase A — seed 2 demo crews for AquaTerra so the
+    # Schedule "New Job" + Edit-modal crew pickers always have
+    # something to select. Idempotent by name; skips other tenants.
+    # Runs on boot so a preview DB reset can't leave testers with an
+    # empty crew list.
+    try:
+        from scripts.seed_aquaterra_crews import seed_aquaterra_crews
+        _crews_res = await seed_aquaterra_crews()
+        logger.info(f"[crew-seed] {_crews_res}")
+    except Exception as e:
+        logger.warning(f"crew seed crashed: {e}")
+
     # Feb-2026 · mobile-flagged gap — Auto Clock-In field backfill
     # (idempotent). Stamps role-appropriate defaults on existing users
     # without the field so mobile / web can key off a single flag.

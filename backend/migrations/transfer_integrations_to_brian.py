@@ -188,12 +188,15 @@ async def _reassign_ownership(tenant: Dict[str, Any], brian_id: str) -> Dict[str
         integrations[kind] = block
     updates["settings.integrations"] = integrations
 
-    # business_card.email → Brian's email.
-    card = dict(settings.get("business_card") or {})
-    if card.get("email") != BRIAN_EMAIL:
-        diff["business_card.email"] = {"old": card.get("email"), "new": BRIAN_EMAIL}
-        card["email"] = BRIAN_EMAIL
-    updates["settings.business_card"] = card
+    # business_card.email — DO NOT touch here. This migration exists
+    # to transfer INTEGRATION ownership + route internal lead alerts
+    # to Brian. The customer-facing ``business_card.email`` renders
+    # via the ``{{COMPANY_EMAIL}}`` merge tag on outbound emails and
+    # is owned by the Business Card admin editor + the rebrand
+    # migration (which now seeds ``cs@plofv.com``). Prior behavior
+    # of overwriting it here caused a boot-time revert loop that
+    # kept resetting the customer-service alias to Brian's inbox on
+    # every restart (Feb-2026 P1 fix).
 
     # internal_lead_notifications.email_to → Brian's email.
     ilnf = dict(settings.get("internal_lead_notifications") or {})
