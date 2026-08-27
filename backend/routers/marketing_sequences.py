@@ -27,6 +27,13 @@ TRIGGER_REGISTRY: List[Dict[str, Any]] = [
     {"type": "review_left",               "config_schema": {}},
     # Slice O.2 companion — fires from customer/admin/token accept paths.
     {"type": "estimate_accepted",         "config_schema": {}},
+    # Feb-2026 · Day-before service reminder. Fires 24h before a job's
+    # ``scheduled_date`` from the daily 09:00 UTC sweep. Applies to
+    # BOTH ``work_class == service`` and ``work_class == repair``.
+    # Deduped by (tenant, sequence, customer, job_id, scheduled_date)
+    # so a re-run on the same day doesn't double-enrol; reschedule
+    # after enrol does NOT retroactively "unfire".
+    {"type": "job_scheduled_reminder_1d", "config_schema": {}},
     {"type": "manual",                    "config_schema": {}},
     {"type": "segment_join",              "config_schema": {"segment_id": "str"}},
 ]

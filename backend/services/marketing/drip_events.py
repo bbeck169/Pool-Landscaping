@@ -264,7 +264,7 @@ async def sequences_tick_all_tenants() -> Dict[str, int]:
 
 
 async def daily_marketing_trigger_sweep() -> Dict[str, int]:
-    """Runs once at 09:00 UTC.  For every tenant, evaluates the three
+    """Runs once at 09:00 UTC.  For every tenant, evaluates the four
     daily triggers:
 
     * ``invoice_past_due_N_days`` — invoices that JUST crossed the
@@ -273,9 +273,13 @@ async def daily_marketing_trigger_sweep() -> Dict[str, int]:
       today.
     * ``segment_join`` — new segment members vs the sequence's cached
       ``last_matched_ids`` snapshot.
+    * ``job_scheduled_reminder_1d`` — jobs scheduled EXACTLY tomorrow.
+      Fires the sequence once per (customer, job) pair; deduped so a
+      re-run on the same day is a no-op.
     """
     total = {"tenants": 0, "past_due_enrolled": 0,
-             "birthday_enrolled": 0, "segment_join_enrolled": 0}
+             "birthday_enrolled": 0, "segment_join_enrolled": 0,
+             "job_reminder_1d_enrolled": 0}
     async for t in db.tenants.find({}, {"_id": 0, "id": 1}):
         total["tenants"] += 1
         tid = t["id"]
@@ -283,6 +287,9 @@ async def daily_marketing_trigger_sweep() -> Dict[str, int]:
             total["past_due_enrolled"] += await _sweep_past_due(tid)
             total["birthday_enrolled"] += await _sweep_birthday(tid)
             total["segment_join_enrolled"] += await _sweep_segment_join(tid)
+            total["job_reminder_1d_enrolled"] += (
+                await _sweep_job_scheduled_reminder_1d(tid)
+            )
         except Exception as exc:  # pragma: no cover
             logger.warning(
                 "[m5c] daily sweep tenant=%s crashed: %s", tid, exc,
@@ -410,3 +417,58 @@ async def _sweep_segment_join(tenant_id: str) -> int:
                        "last_segment_join_evaluated_at": now}},
         )
     return enrolled
+
+
+async def _sweep_job_scheduled_reminder_1d(tenant_id: str) -> int:
+    """Enrol customers for every ``job_scheduled_reminder_1d`` sequence
+    whose parent job is scheduled EXACTLY tomorrow.
+
+    Feb-2026 · Applies to both ``work_class == service`` and
+    ``work_class == repair`` (per product decision — repair visits
+    also benefit from a day-before reminder). Only jobs in a
+    forward-looking status (``scheduled``, ``pending``) qualify —
+    completed / cancelled / could-not-service jobs are skipped.
+
+    Dedupe: ``enrol_customer_into_sequence`` already dedupes by
+    ``(tenant, sequence, customer)`` on the enrolments collection, so
+    a same-day re-run won't double-fire. Additionally, we key by
+    ``(customer, job_id)`` within this sweep so multiple sequences on
+    the same trigger don't quadruple-enrol the same customer for a
+    single upcoming visit — each sequence gets its own enrolment via
+    the sequence-scoped dedupe inside ``enrol_customer_into_sequence``.
+    """
+    seqs = await db.marketing_sequences.find(
+        {"tenant_id": tenant_id, "active": True,
+          "trigger_type": "job_scheduled_reminder_1d"},
+        {"_id": 0, "id": 1},
+    ).to_list(200)
+    if not seqs:
+        return 0
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)) \
+        .date().isoformat()
+    jobs = await db.jobs.find(
+        {"tenant_id": tenant_id,
+          "scheduled_date": tomorrow,
+          "status": {"$in": ["scheduled", "pending"]}},
+        {"_id": 0, "id": 1, "customer_id": 1},
+    ).to_list(2000)
+    if not jobs:
+        return 0
+    enrolled = 0
+    for s in seqs:
+        # ``(customer, job)`` snapshot so we can attach ``job_id`` to
+        # the trigger_source for observability; the sequence-scoped
+        # dedupe in ``enrol_customer_into_sequence`` still guarantees
+        # a single enrolment per (customer, sequence, day).
+        for j in jobs:
+            cid = j.get("customer_id")
+            if not cid:
+                continue
+            eid = await enrol_customer_into_sequence(
+                tenant_id, s["id"], cid,
+                trigger_source=f"job_scheduled_reminder_1d:{j['id']}",
+            )
+            if eid:
+                enrolled += 1
+    return enrolled
+

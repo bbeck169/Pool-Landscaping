@@ -444,11 +444,50 @@ export function MarketingTemplateDetailPage() {
             </select>
           </MetaField>
           <MetaField label="Channel">
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-sm text-zinc-500">
-              {row.channel === "email"
-                ? <Mail className="w-4 h-4" />
-                : <MessageSquare className="w-4 h-4" />}
-              {row.channel} <span className="text-xs">(locked)</span>
+            {/*
+              Feb-2026 · Channel picker (was locked to Email). Backend
+              already supports Email + SMS on ``ALLOWED_CHANNELS`` —
+              ``PATCH /api/marketing/templates/{id}`` accepts a
+              ``channel`` change and re-runs ``_validate_shape`` so
+              SMS mode drops the Subject validation. Segmented pill
+              matches the site's other Email/SMS toggles.
+            */}
+            <div className="inline-flex rounded-lg border border-zinc-200 overflow-hidden text-sm">
+              {[
+                { v: "email", l: "Email", Icon: Mail,
+                   testid: "id-template-channel-email" },
+                { v: "sms", l: "SMS", Icon: MessageSquare,
+                   testid: "id-template-channel-sms" },
+              ].map(({ v, l, Icon, testid }) => {
+                const active = row.channel === v;
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => {
+                      if (row.channel === v) return;
+                      // Switching to SMS drops the Subject; switching
+                      // to Email seeds one if the row lost it during
+                      // a prior SMS session.
+                      const patch = { channel: v };
+                      if (v === "sms") patch.subject = null;
+                      if (v === "email" && !row.subject) {
+                        patch.subject = row.name || "Subject";
+                      }
+                      patchLocal(patch);
+                    }}
+                    data-testid={testid}
+                    className={
+                      "flex items-center gap-1.5 px-3 py-2 " +
+                      (active
+                        ? "bg-zinc-900 text-white"
+                        : "bg-white text-zinc-600 hover:bg-zinc-50")
+                    }
+                  >
+                    <Icon className="w-4 h-4" /> {l}
+                  </button>
+                );
+              })}
             </div>
           </MetaField>
           <MetaField label="Active">

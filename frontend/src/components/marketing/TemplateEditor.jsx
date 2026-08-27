@@ -347,6 +347,7 @@ function SmsEditor({ value = "", onChange }) {
         value={value}
         onChange={(e) => onChange?.(e.target.value)}
         data-testid="sms-textarea"
+        data-e2e-testid="id-template-body-sms"
         placeholder="Hi {{CUSTOMER_FIRST_NAME}}, your service is scheduled…"
         className="w-full min-h-[200px] px-4 py-3 text-sm focus:outline-none"
       />

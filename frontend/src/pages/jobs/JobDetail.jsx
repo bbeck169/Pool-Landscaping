@@ -294,7 +294,25 @@ export default function JobDetail() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">
           {[
             { icon: Clock, label: "Scheduled", value: job.scheduled_date || "Not scheduled" },
-            { icon: User, label: "Technician", value: job.technician_name || "Unassigned" },
+            /*
+              Feb-2026 · Crew-fallback in the Technician meta cell.
+              Reads:
+                1. ``technician_name`` (backend read-time cascade
+                    fills this via ``resolve_technician_names`` when
+                    ``technician_id`` is set but the denorm is stale).
+                2. ``crew_name`` (denormalized on the job at
+                    create/update — Crew Phase A) — surfaced as
+                    "Crew: <name>" so an unassigned-tech-but-
+                    assigned-crew job doesn't render as "Unassigned".
+                3. Fallback "Unassigned" literal.
+            */
+            {
+              icon: User,
+              label: "Technician",
+              value:
+                job.technician_name ||
+                (job.crew_name ? `Crew: ${job.crew_name}` : "Unassigned"),
+            },
             ...(isTech ? [] : [{ icon: MapPin, label: "Price", value: money(job.price || 0) }]),
           ].map((c) => (
             <div

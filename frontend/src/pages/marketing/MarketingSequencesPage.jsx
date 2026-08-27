@@ -19,6 +19,10 @@ const TRIGGER_LABELS = {
   customer_created: "New customer",
   birthday: "Birthday",
   review_left: "Review left",
+  estimate_accepted: "Estimate accepted",
+  // Feb-2026 · Day-before scheduled-job reminder — fires 24h before
+  // the visit for both service AND repair jobs. Config-less.
+  job_scheduled_reminder_1d: "Job scheduled reminder (1 day before)",
   manual: "Manual only",
   segment_join: "Segment join",
 };
@@ -359,7 +363,8 @@ function SequenceEditor({ initial, onClose, onSaved }) {
                         className="w-full px-3 py-2 rounded-lg text-sm outline-none"
                         style={{ backgroundColor: colors.surface, color: colors.onSurface,
                                  border: `1px solid ${colors.border}` }}
-                        data-testid="sequence-trigger-select">
+                        data-testid="sequence-trigger-select"
+                        data-e2e-testid="id-sequence-trigger-select">
                   {triggersRegistry.map((t) => (
                     <option key={t.type} value={t.type}>
                       {TRIGGER_LABELS[t.type] || t.type}
