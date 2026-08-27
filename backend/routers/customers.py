@@ -273,6 +273,7 @@ async def list_customers(
     is_muted: Optional[bool] = Query(None, description="Feb-2026 · P28 admin/super_admin only — filter to muted (true) or non-muted (false); absent = no filter"),
     count_only: bool = False,
     include_deleted: bool = Query(False, description="Feb-2026 · P25 super_admin only — include soft-deleted customers"),
+    include_merged: bool = Query(False, description="Feb-2026 · Customer Merge — include records whose ``merged_into`` is set. Default false — merged rows are hidden so admins don't see stale duplicates."),
     page: Optional[int] = Query(None, description="Feb-2026 · P35 — 1-indexed page number. Presence of this OR page_size flips the response into a paginated envelope."),
     page_size: Optional[int] = Query(None, description="Feb-2026 · P35 — page size (1..500). Presence of this OR page flips the response into a paginated envelope."),
     sort: Optional[str] = Query(
@@ -322,6 +323,15 @@ async def list_customers(
     if not include_deleted:
         from utils import not_deleted_filter as _nd_cust
         q.update(_nd_cust())
+    # Feb-2026 · Customer Merge — hide records that have been merged
+    # into a primary. Default off so the customers list never shows
+    # stale duplicates. ``include_merged=true`` surfaces them (used
+    # by the Merge Audit view + reversal tooling once shipped).
+    if not include_merged:
+        q["$and"] = q.get("$and", []) + [{
+            "$or": [{"merged_into": None},
+                     {"merged_into": {"$exists": False}}],
+        }]
     if search:
         rx = {"$regex": search, "$options": "i"}
         q["$or"] = [{"name": rx}, {"email": rx}, {"phone": rx}, {"address": rx}]
