@@ -640,6 +640,22 @@ async def create_job(body: JobIn,
         doc["technician_name"] = denorms["name"]
     else:
         doc["technician_name"] = None
+    # Feb-2026 · Crew Phase A · create-path crew overlay. Validate in
+    # the same tenant and denormalize name/color so schedule cards
+    # render without a per-job crew fetch (mirrors the ``update_job``
+    # crew handling). ``technician_id`` stays as-is — the crew is an
+    # OVERLAY, never a replacement.
+    if doc.get("crew_id"):
+        crew = await db.crews.find_one(
+            {"id": doc["crew_id"], "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "name": 1, "color": 1},
+        )
+        if not crew:
+            raise HTTPException(
+                400, "crew_id does not resolve to a crew in this tenant",
+            )
+        doc["crew_name"] = crew.get("name")
+        doc["crew_color"] = crew.get("color")
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "photos": [], "created_at": now_iso()})
     try:
         await db.jobs.insert_one(doc)

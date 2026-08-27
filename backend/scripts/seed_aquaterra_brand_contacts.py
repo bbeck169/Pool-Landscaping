@@ -7,17 +7,21 @@ send time.
 
 Idempotent + guarded:
 * Only touches the AquaTerra tenant (slug=aquaterra, alias=plofv).
-* Skips fields that are already populated with a non-placeholder value.
+* Skips fields that are already populated with a non-placeholder value
+  UNLESS ``--override-<field>`` is passed.
 * Leaves EVERY other tenant untouched.
 
 Usage::
 
     python -m scripts.seed_aquaterra_brand_contacts
+    python -m scripts.seed_aquaterra_brand_contacts --override-email
+    python -m scripts.seed_aquaterra_brand_contacts --override-email --override-phone --override-website
 
 Safe to re-run.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
 from typing import Any, Dict, Optional
@@ -52,7 +56,16 @@ def _should_overwrite(existing: Optional[str], field: str) -> bool:
     return existing in _PLACEHOLDER_MARKERS.get(field, set())
 
 
-async def seed_aquaterra_brand_contacts() -> Dict[str, Any]:
+async def seed_aquaterra_brand_contacts(
+    overrides: Optional[Dict[str, bool]] = None,
+) -> Dict[str, Any]:
+    """Idempotent seed.
+
+    ``overrides`` maps field-name → bool. When ``overrides['email']``
+    is True we overwrite the existing email even when it's a non-
+    placeholder value. Same shape for ``'phone'`` / ``'website_url'``.
+    """
+    overrides = overrides or {}
     tenant = await db.tenants.find_one(
         {"$or": [{"slug": "aquaterra"}, {"slug_aliases": "plofv"}]},
         {"_id": 0},
@@ -67,9 +80,17 @@ async def seed_aquaterra_brand_contacts() -> Dict[str, Any]:
     updates: Dict[str, str] = {}
     skipped: Dict[str, str] = {}
     conflicts: Dict[str, Dict[str, str]] = {}
+    overridden: Dict[str, Dict[str, str]] = {}
     for field, target in AQUATERRA_TARGETS.items():
         existing = card.get(field)
-        if _should_overwrite(existing, field):
+        force = bool(overrides.get(field))
+        if _should_overwrite(existing, field) or force:
+            if force and existing not in (None, "") and existing != target:
+                overridden[field] = {"from": existing, "to": target}
+                logger.warning(
+                    f"[seed_aquaterra_brand] OVERRIDE — {field}: "
+                    f"{existing!r} → {target!r}"
+                )
             updates[f"settings.business_card.{field}"] = target
         else:
             if existing != target:
@@ -77,7 +98,7 @@ async def seed_aquaterra_brand_contacts() -> Dict[str, Any]:
                 logger.warning(
                     f"[seed_aquaterra_brand] {field} already set to "
                     f"{existing!r} — requested {target!r} preserved as-is "
-                    "(pass explicit override to change)"
+                    "(pass --override-{field} to force change)"
                 )
             skipped[field] = existing
 
@@ -88,7 +109,7 @@ async def seed_aquaterra_brand_contacts() -> Dict[str, Any]:
         )
         return {"ok": True, "tenant_id": tenant["id"],
                  "updated": {}, "skipped": skipped,
-                 "conflicts": conflicts}
+                 "conflicts": conflicts, "overridden": overridden}
 
     await db.tenants.update_one({"id": tenant["id"]}, {"$set": updates})
     logger.info(
@@ -97,12 +118,25 @@ async def seed_aquaterra_brand_contacts() -> Dict[str, Any]:
     )
     return {"ok": True, "tenant_id": tenant["id"],
              "updated": updates, "skipped": skipped,
-             "conflicts": conflicts}
+             "conflicts": conflicts, "overridden": overridden}
 
 
 def _main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--override-email", action="store_true",
+                          help="Overwrite existing email even if non-placeholder")
+    parser.add_argument("--override-phone", action="store_true",
+                          help="Overwrite existing phone even if non-placeholder")
+    parser.add_argument("--override-website", action="store_true",
+                          help="Overwrite existing website_url even if non-placeholder")
+    args = parser.parse_args()
+    overrides = {
+        "email": args.override_email,
+        "phone": args.override_phone,
+        "website_url": args.override_website,
+    }
     result = asyncio.get_event_loop().run_until_complete(
-        seed_aquaterra_brand_contacts()
+        seed_aquaterra_brand_contacts(overrides=overrides)
     )
     print(result)
     return 0 if result.get("ok") else 1

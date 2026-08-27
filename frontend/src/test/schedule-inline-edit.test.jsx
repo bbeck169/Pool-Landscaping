@@ -125,6 +125,21 @@ describe("ScheduleJobEditModal · PUT /jobs/{id} + DELETE contract", () => {
     // to the backend when changed.
     expect(modalSrc).toMatch(/for \(const k of \[[\s\S]{0,300}"property_id"[\s\S]{0,50}\]\)/);
   });
+
+  it("renders the crew overlay picker with role-hidden fallback (Feb 2026 · Crew Phase A)", () => {
+    // Hydrate: GET /crews on modal open. Silent failure → empty rows,
+    // which the render guard collapses to null (tech-role safe).
+    expect(modalSrc).toMatch(/api\.get\(["']\/crews["']\)/);
+    // Render guard hides the picker when the endpoint returned [].
+    expect(modalSrc).toMatch(/crews\.length\s*>\s*0\s*\?/);
+    // Testids present — group + per-crew option.
+    expect(modalSrc).toMatch(/data-testid=["']schedule-job-edit-crew["']/);
+    expect(modalSrc).toMatch(/data-testid=\{`schedule-job-edit-crew-item-\$\{c\.id\}`\}/);
+    // crew_id is in the change-detection loop so save PATCHes it.
+    expect(modalSrc).toMatch(/for \(const k of \[[\s\S]{0,300}"crew_id"[\s\S]{0,50}\]\)/);
+    // Initial state seeds crew_id from the incoming job doc.
+    expect(modalSrc).toMatch(/crew_id:\s*job\?\.crew_id \|\| ""/);
+  });
 });
 
 describe("CalendarSchedule · Calendar-view double-click → edit modal (Feb 2026)", () => {

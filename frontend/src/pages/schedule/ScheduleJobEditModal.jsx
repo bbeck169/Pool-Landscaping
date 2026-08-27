@@ -60,8 +60,14 @@ export default function ScheduleJobEditModal({
     // ``/api/jobs/{id}`` snapshots the target property's address +
     // coords onto the job on save.
     property_id:    job?.property_id || "",
+    // Feb-2026 · Crew Phase A · Schedule Edit modal crew overlay.
+    // Optional. When set alongside ``technician_id`` the tech remains
+    // the lead (overlay-only decision). Validated in
+    // ``routers/jobs.py::update_job`` against the caller's tenant.
+    crew_id:        job?.crew_id || "",
   }));
   const [techs, setTechs] = useState([]);
+  const [crews, setCrews] = useState([]);
   const [properties, setProperties] = useState([]);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -80,12 +86,19 @@ export default function ScheduleJobEditModal({
       status:         job.status || "scheduled",
       work_class:     (job.work_class === "repair") ? "repair" : "service",
       property_id:    job.property_id || "",
+      crew_id:        job.crew_id || "",
     });
     setErr("");
     setConfirmDelete(false);
     api.get("/technicians")
       .then((rows) => setTechs(Array.isArray(rows) ? rows : []))
       .catch(() => setTechs([]));
+    // Feb-2026 · Crew Phase A — hydrate the crew overlay picker.
+    // Silent failure keeps the modal usable when the /crews endpoint
+    // is 403 for the current role.
+    api.get("/crews")
+      .then((rows) => setCrews(Array.isArray(rows) ? rows : []))
+      .catch(() => setCrews([]));
     // Feb 2026 · Fetch the customer's properties so we can render
     // the picker for multi-property customers. Failure is silent —
     // the picker just doesn't render, preserving the previous UX.
@@ -114,7 +127,7 @@ export default function ScheduleJobEditModal({
       const patch = {};
       for (const k of ["title", "service_type", "scheduled_date",
                        "technician_id", "notes", "status",
-                       "work_class", "property_id"]) {
+                       "work_class", "property_id", "crew_id"]) {
         // Feb 2026 · Compare against the same normalized ``work_class``
         // shape the initial state uses ("service" for missing/legacy),
         // so a modal open + immediate save does NOT emit a spurious
@@ -330,6 +343,46 @@ export default function ScheduleJobEditModal({
             })}
           </select>
         </div>
+        {/*
+          Feb-2026 · Crew Phase A · Schedule Edit crew overlay.
+          Hidden when the /crews endpoint returned no rows (tech
+          sessions get [] via the role gate — silently hides).
+        */}
+        {crews.length > 0 ? (
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide"
+                   style={{ color: colors.muted }}>
+              Crew <span style={{ textTransform: "none",
+                                     color: colors.onSurfaceSecondary }}>
+                (optional overlay)
+              </span>
+            </label>
+            <select
+              value={form.crew_id || ""}
+              onChange={set("crew_id")}
+              className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm mt-1"
+              style={{
+                backgroundColor: colors.surface, color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid="schedule-job-edit-crew"
+            >
+              <option value="">No crew</option>
+              {crews.map((c) => {
+                const memberCount = (c.members || c.tech_ids || []).length;
+                const label = memberCount
+                  ? `${c.name} · ${memberCount} member${memberCount === 1 ? "" : "s"}`
+                  : c.name;
+                return (
+                  <option key={c.id} value={c.id}
+                          data-testid={`schedule-job-edit-crew-item-${c.id}`}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        ) : null}
         <div>
           <label className="text-xs font-semibold uppercase tracking-wide"
                  style={{ color: colors.muted }}>Status</label>

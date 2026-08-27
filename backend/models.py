@@ -198,6 +198,11 @@ class JobIn(BaseModel):
     # split on ``/api/schedule/today``, ``/api/technicians``, and
     # ``/api/team``. See ``services/work_class.py``.
     work_class: Optional[str] = "service"
+    # Feb-2026 · Crew Phase A overlay — an optional crew binding
+    # co-exists with ``technician_id`` (the crew is an overlay, not
+    # a replacement — locked product decision). Validated in
+    # ``routers/jobs.py::create_job`` against the caller's tenant.
+    crew_id: Optional[str] = None
 
 
 class JobUpdate(BaseModel):

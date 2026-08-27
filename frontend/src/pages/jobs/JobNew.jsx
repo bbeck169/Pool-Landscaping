@@ -67,6 +67,7 @@ export default function JobNew({
 
   const [customers, setCustomers] = useState([]);
   const [techs, setTechs] = useState([]);
+  const [crews, setCrews] = useState([]);
   const [items, setItems] = useState([]);
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -88,6 +89,11 @@ export default function JobNew({
     cadence: "one_time",
     price: 0,
     property_id: preselectedProperty,
+    // Feb-2026 · Crew Phase A · New Job crew overlay. Optional. When
+    // set alongside ``technician_id`` the tech remains the lead and
+    // the crew is an overlay (locked product decision). Validated
+    // in ``routers/jobs.py::create_job`` against the caller's tenant.
+    crew_id: "",
     // Feb 2026 · Work-class dimension. Orthogonal to ``service_type``
     // (which is a free-text service description like "Pool Cleaning"
     // or "Repair"). ``work_class`` splits every job into
@@ -115,6 +121,11 @@ export default function JobNew({
     // Also excludes muted rows per that endpoint's semantics.
     api.get("/customers?is_active=true").then(setCustomers).catch(() => {});
     api.get("/technicians").then(setTechs).catch(() => {});
+    // Feb-2026 · Crew Phase A — populate the crew overlay picker.
+    // Silent failure keeps the form usable when the /crews endpoint
+    // is 403 for the current role (only admin/manager see crews).
+    api.get("/crews").then((rows) => setCrews(Array.isArray(rows) ? rows : []))
+       .catch(() => setCrews([]));
     api.get("/items").then(setItems).catch(() => {});
   }, []);
 
@@ -216,6 +227,7 @@ export default function JobNew({
         };
         if (form.property_id) tplPayload.property_id = form.property_id;
         if (form.technician_id) tplPayload.technician_id = form.technician_id;
+        if (form.crew_id) tplPayload.crew_id = form.crew_id;
         const tpl = await api.post("/recurring-jobs", tplPayload);
         setToast({ tone: "success", message: "Recurring series created" });
         if (renderMode === "modal" && typeof onCreated === "function") {
@@ -240,6 +252,7 @@ export default function JobNew({
         work_class: form.work_class || "service",
       };
       if (form.property_id) payload.property_id = form.property_id;
+      if (form.crew_id) payload.crew_id = form.crew_id;
       const first = await api.post("/jobs", payload);
       // If recurring, create the follow-up visits from the preview.
       if (preview && preview.dates?.length > 1) {
@@ -449,6 +462,48 @@ export default function JobNew({
               </select>
             </div>
           </div>
+          {/*
+            Feb-2026 · Crew Phase A · New Job crew overlay.
+            Rendered only when the /crews endpoint returned rows —
+            for tech-role sessions the endpoint returns [] via the
+            role gate in ``routers/ops.py``, so this row silently
+            hides without a role check here.
+          */}
+          {crews.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
+              <div>
+                <label className="text-xs font-semibold tracking-wide mb-1 block"
+                       style={{ color: colors.onSurfaceSecondary }}>
+                  CREW <span style={{ color: colors.muted }}>(optional overlay)</span>
+                </label>
+                <select
+                  value={form.crew_id}
+                  onChange={set("crew_id")}
+                  className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
+                  style={{
+                    backgroundColor: colors.surface,
+                    color: colors.onSurface,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                  data-testid="jf-crew"
+                >
+                  <option value="">No crew</option>
+                  {crews.map((c) => {
+                    const memberCount = (c.members || c.tech_ids || []).length;
+                    const label = memberCount
+                      ? `${c.name} · ${memberCount} member${memberCount === 1 ? "" : "s"}`
+                      : c.name;
+                    return (
+                      <option key={c.id} value={c.id}
+                              data-testid={`jf-crew-item-${c.id}`}>
+                        {label}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
+          ) : null}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <TextInput
               label="SCHEDULED DATE"
