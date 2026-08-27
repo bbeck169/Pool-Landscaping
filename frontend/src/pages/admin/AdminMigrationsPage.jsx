@@ -14,7 +14,7 @@
  * page is a thin driver over the API. If we add more one-off
  * migrations later, they'll live here as sibling cards.
  */
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { api } from "@/api";
 import { colors } from "../../theme";
 
@@ -643,6 +643,173 @@ export default function AdminMigrationsPage() {
       <RosterCleanupCard />
       <StripeSyncCard />
       <StripeBillingHistoryCard />
+      <AutoMergeCard />
+    </div>
+  );
+}
+
+
+// ═════════════════════════════════════════════════════════════════════
+// Feb 2026 · Customer Merge Phase 3 · Auto-merge stats card.
+// Live totals + a "Force sweep now" trigger against the caller's
+// tenant. Reads GET /admin/migrations/auto-merge-summary on mount +
+// re-fetches after every sweep.
+// ═════════════════════════════════════════════════════════════════════
+function AutoMergeCard() {
+  const [summary, setSummary] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [lastRun, setLastRun] = useState(null);
+
+  const loadSummary = useCallback(async () => {
+    try {
+      const r = await api.get("/admin/migrations/auto-merge-summary");
+      setSummary(r);
+      setError("");
+    } catch (e) {
+      setError(e?.response?.data?.detail || e?.message || "Load failed");
+    }
+  }, []);
+
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+
+  const forceSweep = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api.post("/admin/migrations/auto-merge-sweep",
+                                  {}, 60_000);
+      setLastRun(r);
+      await loadSummary();
+    } catch (e) {
+      setError(e?.response?.data?.detail || e?.message || "Sweep failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="rounded-2xl p-5 mb-4"
+      style={{
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid="admin-migrations-auto-merge-card"
+    >
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div>
+          <div className="text-lg font-semibold"
+                 style={{ color: colors.onSurface }}>
+            Customer Merge · Auto-Merge
+          </div>
+          <div className="text-xs" style={{ color: colors.muted }}>
+            Daily 09:15 UTC sweep merges HIGH-confidence duplicates
+            (exact email OR phone). Low-confidence groups stay in the
+            manual review queue.
+          </div>
+        </div>
+        <span
+          className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+          style={{
+            backgroundColor: summary?.auto_merge_enabled
+              ? "#DCFCE7" : "#FEE2E2",
+            color: summary?.auto_merge_enabled ? "#166534" : "#991B1B",
+          }}
+          data-testid="auto-merge-flag-pill"
+        >
+          {summary?.auto_merge_enabled ? "CRON ENABLED" : "CRON DISABLED"}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+        {[
+          ["Last auto run",
+              summary?.last_auto_run_at
+                ? new Date(summary.last_auto_run_at)
+                    .toLocaleString(undefined, {
+                       year: "numeric", month: "short",
+                       day: "numeric", hour: "2-digit",
+                       minute: "2-digit",
+                    })
+                : "—"],
+          ["Auto-merged today", `${summary?.auto_merged_today ?? "—"} groups`],
+          ["Records reassigned today",
+              `${summary?.records_reassigned_today ?? "—"}`],
+          ["Manual review queue",
+              `${summary?.manual_queue_low_confidence ?? "—"} groups`],
+        ].map(([label, value], i) => (
+          <div key={i}
+                 className="rounded-lg px-3 py-2"
+                 style={{
+                   backgroundColor: colors.surfaceSecondary,
+                   border: `1px solid ${colors.border}`,
+                 }}
+                 data-testid={`auto-merge-stat-${i}`}>
+            <div className="text-[10px] font-bold uppercase tracking-wider"
+                   style={{ color: colors.muted }}>
+              {label}
+            </div>
+            <div className="text-sm font-semibold mt-0.5"
+                   style={{ color: colors.onSurface }}>
+              {value}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={forceSweep}
+          disabled={busy}
+          className="text-sm font-semibold px-3 py-1.5 rounded-lg disabled:opacity-40"
+          style={{
+            backgroundColor: colors.brand, color: "#fff",
+          }}
+          data-testid="auto-merge-force-btn"
+        >
+          {busy ? "Sweeping…" : "Force auto-merge sweep now"}
+        </button>
+        <button
+          type="button"
+          onClick={loadSummary}
+          disabled={busy}
+          className="text-xs font-semibold px-2 py-1 rounded-lg disabled:opacity-40"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurfaceSecondary,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="auto-merge-refresh-btn"
+        >
+          Refresh
+        </button>
+      </div>
+      {lastRun ? (
+        <div className="mt-3 text-xs rounded-lg px-3 py-2"
+               style={{
+                 backgroundColor: "#F0F9FF",
+                 color: "#075985",
+                 border: "1px solid #BAE6FD",
+               }}
+               data-testid="auto-merge-last-run">
+          Last force sweep — merged <b>{lastRun.groups_auto_merged}</b>{" "}
+          group{lastRun.groups_auto_merged === 1 ? "" : "s"}, skipped{" "}
+          <b>{lastRun.groups_skipped_low_confidence}</b> low-confidence,
+          reassigned <b>{lastRun.records_affected}</b> record
+          {lastRun.records_affected === 1 ? "" : "s"}.
+        </div>
+      ) : null}
+      {error ? (
+        <div className="mt-3 text-xs rounded-lg px-3 py-2"
+               style={{
+                 backgroundColor: "#FEE2E2",
+                 color: "#991B1B",
+                 border: "1px solid #FCA5A5",
+               }}
+               data-testid="auto-merge-error">
+          {error}
+        </div>
+      ) : null}
     </div>
   );
 }

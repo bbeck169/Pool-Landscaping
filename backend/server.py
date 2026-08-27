@@ -1276,6 +1276,26 @@ async def _background_seed():
         scheduler.add_job(dunning.run_dunning_scan, "interval",
                             minutes=60, id="dunning_scan",
                             replace_existing=True)
+        # Feb 2026 · Customer Merge Phase 3 — daily auto-merge sweep
+        # of HIGH-confidence duplicate clusters (exact email OR exact
+        # phone). Runs at 09:15 UTC, 10 minutes after the marketing
+        # 09:05 sweep to avoid Motor pool contention. Feature-flagged
+        # via ``AUTO_MERGE_ENABLED`` (default true).
+        try:
+            from services.customer_merge.auto_merge import (
+                cron_daily_auto_merge as _cm_cron,
+            )
+            scheduler.add_job(
+                _cm_cron, "cron",
+                hour=9, minute=15,
+                id="customer_merge_auto_sweep",
+                replace_existing=True,
+            )
+            logger.info(
+                "scheduler: customer_merge_auto_sweep registered @ 09:15 UTC",
+            )
+        except Exception as _e_cm:  # noqa: BLE001
+            logger.warning("[customer-merge] scheduler wiring failed: %s", _e_cm)
         # Feb-2026 · P34 — Automation quiet-hours release worker.
         # Runs every 5 minutes; picks up any deferred SMS / email
         # rows whose ``scheduled_for`` has passed and dispatches them.
@@ -2195,6 +2215,31 @@ async def startup():
         logger.info(f"[multi-contact] migration: {n} row(s)")
     except Exception as e:
         logger.warning(f"multi-contact migration crashed: {e}")
+
+    # Feb 2026 · Customer Merge Phase 3 — one-time boot cleanup of any
+    # pre-existing high-confidence duplicate clusters (exact email OR
+    # exact phone). Idempotent via ``migrations`` sentinel
+    # ``feb2026_customer_merge_boot_cleanup_v1``. Second boot = no-op.
+    # See ``services/migrations/customer_merge_boot_cleanup.py``.
+    try:
+        from services.migrations.customer_merge_boot_cleanup import (
+            run_customer_merge_boot_cleanup,
+        )
+        _cm_boot = await run_customer_merge_boot_cleanup()
+        if _cm_boot.get("already_ran"):
+            logger.info(
+                f"[customer_merge_boot] sentinel present · ran_at="
+                f"{_cm_boot.get('ran_at')} · skipping",
+            )
+        else:
+            _s = _cm_boot.get("summary") or {}
+            logger.info(
+                f"[customer_merge_boot] scanned {_s.get('tenants_scanned', 0)} "
+                f"tenants, auto-merged {_s.get('groups_auto_merged', 0)} "
+                f"groups, affected {_s.get('records_affected', 0)} records",
+            )
+    except Exception as e:
+        logger.warning(f"customer_merge_boot cleanup crashed: {e}")
 
     # Feb-2026 M2 fix — idempotent single-brace → double-brace migration
     # on stored campaign templates. The render engine now accepts both

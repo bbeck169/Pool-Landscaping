@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { Plus, Search, Upload, Download, Filter, MoreVertical, Users, Tag, BellRing, UserCheck, UserX, Star } from "lucide-react";
 import { toast as sonnerToast } from "sonner";
@@ -152,6 +152,14 @@ export default function CustomersList() {
   // rows by default.
   const [mergeOpen, setMergeOpen] = useState(false);
   const [includeMerged, setIncludeMerged] = useState(false);
+  // Feb 2026 · Customer Merge Phase 3 — "Pending merge candidates"
+  // chip. Fetches the low-confidence duplicate cluster ids on mount
+  // (admin+ only). Clicking the chip filters the list to just
+  // those ids so the operator can open the Merge modal against a
+  // relevant pair.
+  const [candidateIds, setCandidateIds] = useState([]);
+  const [candidateGroupsCount, setCandidateGroupsCount] = useState(0);
+  const [candidateFilterActive, setCandidateFilterActive] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   // Feb-2026 · P41 — new CSV import (merge semantics). Sibling to the
   // legacy ``importOpen`` modal above.
@@ -192,6 +200,26 @@ export default function CustomersList() {
     if (!isAdmin && (tab === "inactive" || tab === "muted")) setTab("active");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
+
+  // Feb 2026 · Customer Merge Phase 3 — fetch pending low-confidence
+  // candidates once on mount for admin+ users. Cheap read (single
+  // detection scan). Refetched after every merge via ``load()``
+  // completing → ``loadCandidates()`` chained below.
+  const loadCandidates = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const r = await api.get(
+        "/customers/merge-candidates?confidence=low",
+      );
+      setCandidateIds(r?.customer_ids || []);
+      setCandidateGroupsCount(r?.count || 0);
+    } catch {
+      setCandidateIds([]);
+      setCandidateGroupsCount(0);
+    }
+  }, [isAdmin]);
+
+  useEffect(() => { loadCandidates(); }, [loadCandidates]);
 
   // Sync tab → URL so route + query stay honest across refresh / share.
   useEffect(() => {
@@ -425,8 +453,14 @@ export default function CustomersList() {
     let out = rows;
     if (missingCardOnly) out = out.filter((r) =>
       r.effective_require_card_on_file && !r.has_card_on_file);
+    // Feb 2026 · Customer Merge Phase 3 — client-side narrow to the
+    // pending merge candidates when the operator has the chip on.
+    if (candidateFilterActive && candidateIds.length) {
+      const set = new Set(candidateIds);
+      out = out.filter((r) => set.has(r.id));
+    }
     return out;
-  }, [rows, missingCardOnly]);
+  }, [rows, missingCardOnly, candidateFilterActive, candidateIds]);
 
   const toggle = (id) => {
     const next = new Set(selected);
@@ -923,6 +957,39 @@ export default function CustomersList() {
               style={{ backgroundColor: includeDeleted ? "#B91C1C" : "#94A3B8" }}
             />
             Show deleted
+          </button>
+        )}
+        {/* Feb 2026 · Customer Merge Phase 3 — pending candidates
+            chip. Hidden when N == 0. Toggles a client-side narrow
+            to the low-confidence candidate ids. */}
+        {isAdmin && candidateGroupsCount > 0 && (
+          <button
+            onClick={() => setCandidateFilterActive((v) => !v)}
+            data-testid="customers-filter-pending-merge-candidates"
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+            style={{
+              backgroundColor: candidateFilterActive
+                ? colors.accent.amber[100]
+                : colors.surfaceSecondary,
+              color: candidateFilterActive
+                ? colors.accent.amber[700]
+                : colors.onSurfaceSecondary,
+              border: `1px solid ${candidateFilterActive
+                ? colors.accent.amber[500]
+                : colors.border}`,
+            }}
+            title="Filter list to duplicate candidates awaiting manual merge review"
+          >
+            <span
+              className="inline-block w-2 h-2 rounded-full"
+              style={{
+                backgroundColor: candidateFilterActive
+                  ? colors.accent.amber[500]
+                  : "#94A3B8",
+              }}
+            />
+            View {candidateGroupsCount} pending merge candidate
+            {candidateGroupsCount === 1 ? "" : "s"}
           </button>
         )}
         {/* Feb 2026 · Customer Merge Phase 2 — "Show merged" toggle.
@@ -1461,6 +1528,7 @@ export default function CustomersList() {
           );
           load();
           loadCounts();
+          loadCandidates();
         }}
         onError={(msg) => sonnerToast.error(msg)}
       />

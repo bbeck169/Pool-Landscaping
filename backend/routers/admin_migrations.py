@@ -678,3 +678,130 @@ async def unlink_tech_from_customer(
     )
     return report
 
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Feb 2026 · Customer Merge Phase 3 — auto-merge sweep + summary card.
+# The daily 09:15 UTC cron already runs the sweep unconditionally
+# (respecting AUTO_MERGE_ENABLED). These endpoints let super_admins:
+#   * View the latest run stats (card on /admin/migrations).
+#   * Force a fresh sweep on demand against their own tenant.
+# ─────────────────────────────────────────────────────────────────────
+@router.get(
+    "/admin/migrations/auto-merge-summary",
+    operation_id="admin.migrations.auto_merge_summary",
+)
+async def auto_merge_summary(
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Live stats card for the /admin/migrations page. Everything is
+    computed on-demand from ``customer_merge_audit`` + a lightweight
+    detection scan — no cron-side state required. Response::
+
+        {
+          "last_auto_run_at":   ISO | null,
+          "auto_merged_total":  <int>,     # historical, all-time, this tenant
+          "auto_merged_today":  <int>,     # count of audit rows created today
+          "records_reassigned_today": <int>,
+          "manual_queue_low_confidence": <int>,   # detection scan
+          "auto_merge_enabled":  bool      # env flag view
+        }
+    """
+    _require_super_admin(user)
+    tid = tenant["id"]
+    from datetime import datetime, timezone, timedelta
+    from services.customer_merge.detection import (
+        detect_duplicates_for_tenant,
+    )
+    from services.customer_merge.auto_merge import _env_flag_enabled
+
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start_iso = day_start.isoformat()
+
+    # Last auto run — sorted by created_at desc. ``initiated_by`` is
+    # ``"auto"`` for the daily cron and ``"auto:<user_id>"`` for the
+    # super_admin force-sweep endpoint — regex-match on the prefix
+    # so both paths roll up into the same card.
+    _AUTO_MATCH = {"$regex": "^auto"}
+    last_auto = await db.customer_merge_audit.find_one(
+        {"tenant_id": tid, "initiated_by": _AUTO_MATCH},
+        sort=[("created_at", -1)],
+        projection={"_id": 0, "created_at": 1},
+    )
+
+    auto_merged_total = await db.customer_merge_audit.count_documents({
+        "tenant_id": tid, "initiated_by": _AUTO_MATCH,
+    })
+
+    today_rows = await db.customer_merge_audit.find(
+        {"tenant_id": tid, "initiated_by": _AUTO_MATCH,
+          "created_at": {"$gte": day_start_iso}},
+        {"_id": 0, "secondary_ids": 1, "related_records_rewired": 1},
+    ).to_list(1000)
+    auto_merged_today = len(today_rows)
+    records_reassigned_today = 0
+    for row in today_rows:
+        # secondary customers reassigned as merged.
+        records_reassigned_today += len(row.get("secondary_ids") or [])
+        # + related records rewired
+        for _k, v in (row.get("related_records_rewired") or {}).items():
+            try:
+                records_reassigned_today += int(v)
+            except Exception:  # noqa: BLE001
+                pass
+
+    # Manual queue = current low-confidence groups.
+    try:
+        groups = await detect_duplicates_for_tenant(tid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[auto-merge-summary] detection failed: %s", exc)
+        groups = []
+    manual_queue = sum(
+        1 for g in groups if (g.get("confidence") or "") == "low"
+    )
+
+    return {
+        "tenant_id": tid,
+        "last_auto_run_at": last_auto.get("created_at") if last_auto else None,
+        "auto_merged_total": auto_merged_total,
+        "auto_merged_today": auto_merged_today,
+        "records_reassigned_today": records_reassigned_today,
+        "manual_queue_low_confidence": manual_queue,
+        "auto_merge_enabled": _env_flag_enabled(),
+    }
+
+
+@router.post(
+    "/admin/migrations/auto-merge-sweep",
+    operation_id="admin.migrations.auto_merge_sweep",
+)
+async def force_auto_merge_sweep(
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Force one auto-merge sweep against the caller's tenant. Same
+    behaviour as the daily 09:15 UTC cron but scoped to a single
+    tenant + attributed to the invoking super_admin via the
+    ``initiated_by`` audit field (``auto:<user_id>``). Bypasses the
+    ``AUTO_MERGE_ENABLED`` env flag so ops can dry-fire even when the
+    scheduler is temporarily disabled."""
+    _require_super_admin(user)
+    from services.customer_merge.auto_merge import (
+        auto_merge_high_confidence_duplicates,
+    )
+    tid = tenant["id"]
+    initiated_by = f"auto:{user.get('id') or 'unknown'}"
+    report = await auto_merge_high_confidence_duplicates(
+        tid, initiated_by=initiated_by,
+    )
+    logger.info(
+        "[auto-merge-force] user=%s tenant=%s summary=%s",
+        user.get("id"), tid, {k: report[k] for k in (
+            "groups_found_high", "groups_auto_merged",
+            "groups_skipped_low_confidence", "records_affected",
+        )},
+    )
+    return report
+

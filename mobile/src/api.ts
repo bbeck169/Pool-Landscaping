@@ -70,8 +70,35 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
       _logoutOn401?.();
     }
     let msg: any = data?.detail;
+    // FastAPI ``HTTPException(detail=[{"msg": ..., "loc": ...}, ...])``
+    // shape — Pydantic validation errors + explicit list raises.
     if (Array.isArray(msg)) {
       msg = msg.map((e: any) => (e?.msg || "").replace(/^Value error,\s*/i, "")).filter(Boolean).join(" ");
+    }
+    // Feb 2026 · P0 iOS close-job fix — FastAPI
+    // ``HTTPException(detail={...})`` shape used by structured
+    // business-rule raises (chemistry gate, customer merge,
+    // marketing validators, etc). Prefer explicit ``message`` /
+    // ``msg`` keys and append missing-field labels when present so
+    // the tech sees "Cannot close job — required chemistry
+    // readings missing: Free Cl, Total Cl, Alkalinity, pH, CYA"
+    // instead of a generic "Request failed (422)".
+    else if (msg && typeof msg === "object") {
+      const _obj: any = msg;
+      const _base: string = String(
+        _obj.message || _obj.msg || _obj.error || _obj.detail || "",
+      );
+      const _labels: any = _obj.missing_labels || _obj.missing_fields;
+      if (_base && Array.isArray(_labels) && _labels.length) {
+        msg = `${_base}: ${_labels.join(", ")}`;
+      } else if (_base) {
+        msg = _base;
+      } else {
+        // Last-resort — stringify enough to be diagnosable rather
+        // than swallowing the response.
+        try { msg = JSON.stringify(_obj).slice(0, 300); }
+        catch { msg = ""; }
+      }
     }
     if (typeof msg !== "string" || !msg) msg = `Request failed (${res.status})`;
     throw new Error(msg);

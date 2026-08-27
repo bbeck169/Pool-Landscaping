@@ -109,3 +109,56 @@ async def merge_audit_endpoint(
 ):
     rows = await list_merge_audit(tenant["id"], limit=limit)
     return {"count": len(rows), "entries": rows}
+
+
+@router.get("/customers/merge-candidates",
+             operation_id="customers.merge_candidates")
+async def merge_candidates_endpoint(
+    confidence: str = Query(
+        "low",
+        pattern="^(low|high|all)$",
+        description=(
+            "Filter duplicate groups by confidence tier. "
+            "``low`` (default) surfaces the manual-review queue — "
+            "``exact_name_address`` + ``fuzzy_name`` groups the "
+            "auto-merge cron intentionally skips. ``high`` returns "
+            "the auto-merge-eligible set. ``all`` returns every "
+            "group."
+        ),
+    ),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Read-only queue view for the Phase-2 manual merge modal.
+    Returns::
+
+        {
+          "confidence": "low"|"high"|"all",
+          "count": <int>,             # number of groups after the filter
+          "customer_ids": [...],      # unique union of every group's ids
+          "duplicate_groups": [<group>, ...]
+        }
+
+    Frontend uses ``customer_ids`` to filter the Customers list
+    down to just the candidates.
+    """
+    from services.customer_merge.detection import (
+        detect_duplicates_for_tenant,
+    )
+    groups = await detect_duplicates_for_tenant(tenant["id"])
+    if confidence != "all":
+        groups = [g for g in groups
+                    if (g.get("confidence") or "").lower() == confidence]
+    ids: list = []
+    seen: set = set()
+    for g in groups:
+        for cid in g.get("customer_ids") or []:
+            if cid not in seen:
+                seen.add(cid)
+                ids.append(cid)
+    return {
+        "confidence": confidence,
+        "count": len(groups),
+        "customer_ids": ids,
+        "duplicate_groups": groups,
+    }
