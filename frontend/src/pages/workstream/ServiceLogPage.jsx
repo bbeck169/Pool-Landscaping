@@ -546,6 +546,12 @@ export default function ServiceLogPage() {
 
   const d = state.data;
   const isPool = d.service_line === "pool";
+  // Feb 2026 · Task A extension — repair reports only surface
+  // photo/video/notes. Water Test + Chemical Used panels are
+  // pool-service maintenance concerns and must not leak into a
+  // repair job's log even though the underlying job is still on
+  // the pool service line.
+  const isRepair = (d.log_details?.work_class || "").toLowerCase() === "repair";
 
   return (
     <div style={{
@@ -661,33 +667,43 @@ export default function ServiceLogPage() {
               </div>
             </Row>
 
-            <CardTitle testid="service-log-checklist-title">Checklist</CardTitle>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}
-                  data-testid="service-log-checklist">
-              {(d.checklist_state?.items || []).map((it) => (
-                <div
-                  key={it.key}
-                  style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}
-                  data-testid={`service-log-checklist-item-${it.key}`}
-                >
-                  {it.completed ? (
-                    <div style={{
-                      width: 20, height: 20, borderRadius: "50%",
-                      background: BLUE, color: "white",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      <Check size={13} strokeWidth={3} />
+            {/* Feb 2026 · Task A — hide the pool-service checklist on
+                repair reports. Repair jobs only surface photos, videos,
+                and notes (see the earlier "Repair-specific service log"
+                ship). The checklist rendering only makes sense for the
+                ``service`` work_class where technicians tick off pool
+                maintenance steps. */}
+            {(d.log_details?.work_class || "").toLowerCase() !== "repair" ? (
+              <>
+                <CardTitle testid="service-log-checklist-title">Checklist</CardTitle>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}
+                      data-testid="service-log-checklist">
+                  {(d.checklist_state?.items || []).map((it) => (
+                    <div
+                      key={it.key}
+                      style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}
+                      data-testid={`service-log-checklist-item-${it.key}`}
+                    >
+                      {it.completed ? (
+                        <div style={{
+                          width: 20, height: 20, borderRadius: "50%",
+                          background: BLUE, color: "white",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          <Check size={13} strokeWidth={3} />
+                        </div>
+                      ) : (
+                        <Circle size={20} color={colors.muted} />
+                      )}
+                      <span style={{
+                        color: it.completed ? colors.onSurface : colors.muted,
+                        textDecoration: it.completed ? "none" : "none",
+                      }}>{it.label}</span>
                     </div>
-                  ) : (
-                    <Circle size={20} color={colors.muted} />
-                  )}
-                  <span style={{
-                    color: it.completed ? colors.onSurface : colors.muted,
-                    textDecoration: it.completed ? "none" : "none",
-                  }}>{it.label}</span>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </>
+            ) : null}
 
             <CardTitle testid="service-log-previous-title">Previous Service</CardTitle>
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 }}
@@ -743,9 +759,10 @@ export default function ServiceLogPage() {
           </Card>
         </div>
 
-        {/* MIDDLE — Water Test / Chemicals (pool) OR Service Notes (landscape) */}
+        {/* MIDDLE — Water Test / Chemicals (pool service jobs only) OR Service Notes.
+             Repair reports fall through to the notes card (see Task A extension). */}
         <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 20 }}>
-          {isPool ? (
+          {isPool && !isRepair ? (
             <>
               <Card testid="service-log-water-test">
                 <CardTitle>Water Test Results</CardTitle>

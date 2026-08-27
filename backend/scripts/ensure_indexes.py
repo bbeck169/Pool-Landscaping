@@ -137,6 +137,8 @@ async def main() -> int:
         ("referral_watcher",      "services.referral_watcher",             "ensure_indexes"),
         ("widget_denied",          "routers.widget_config",                "_ensure_denied_indexes"),
         ("tos_multi",              "services.tos_service",                 "ensure_indexes"),
+        # Feb 2026 · Task B — schedule window compound index.
+        ("jobs_schedule",          "routers.jobs",                         "ensure_indexes"),
     ]
     for label, module_path, attr_name in ROUTER_ENSURE_INDEXES:
         try:

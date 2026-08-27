@@ -22,6 +22,24 @@ from emailer import send_completion_email
 router = APIRouter()
 
 
+# Feb 2026 · Task B — perf index for the schedule window query.
+# ``list_jobs`` filters primarily on ``(tenant_id, scheduled_date)``
+# when no per-tech scoping applies (admin views). Without this
+# compound index the winning plan is a collection scan across the
+# tenant's entire jobs history, which balloons quadratically as
+# tenants accumulate history. Idempotent — MongoDB dedupes the
+# ``create_index`` call at boot. Registered via
+# ``scripts/ensure_indexes.py`` so it runs once per pod start.
+async def ensure_indexes() -> None:
+    """Idempotent boot helper — registers the ``(tenant_id, scheduled_date)``
+    compound index used by every /jobs and /schedule read path."""
+    await db.jobs.create_index(
+        [("tenant_id", 1), ("scheduled_date", 1)],
+        name="tenant_id_1_scheduled_date_1",
+        background=True,
+    )
+
+
 # ─── Response models for OpenAPI docs (Feb-2026 AE1 T4 fix) ────────────
 # JobListItem documents the visible fields on GET /api/jobs so generated
 # clients discover the shape. ``extra="allow"`` keeps the endpoint
