@@ -315,11 +315,25 @@ async def delete_sequence(sid: str, user: dict = Depends(require_admin),
                            tenant: dict = Depends(get_current_tenant)):
     """Soft-delete cascades: halt all active enrolments, then flip
     ``active=false``.  Explicitly NOT blocking on active enrolments —
-    per spec, delete cascades cleanly."""
+    per spec, delete cascades cleanly.
+
+    Feb 2026 · Task B — soft-lock ``system_template: true`` sequences.
+    Ships pre-installed and cannot be deleted (admin can deactivate
+    instead — same button, different payload)."""
     row = await db.marketing_sequences.find_one(
-        {"id": sid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1},
+        {"id": sid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "system_template": 1, "system_template_id": 1},
     )
     if not row: raise HTTPException(404, "Sequence not found")
+    if row.get("system_template"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": "system_template_cannot_be_deleted",
+                "hint": "deactivate instead",
+                "system_template_id": row.get("system_template_id"),
+            },
+        )
     await db.marketing_drip_enrolments.update_many(
         {"tenant_id": tenant["id"], "sequence_id": sid, "status": "active"},
         {"$set": {"status": "halted", "halt_reason": "sequence_deleted",

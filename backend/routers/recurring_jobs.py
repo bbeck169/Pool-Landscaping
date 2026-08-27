@@ -399,7 +399,7 @@ async def create_recurring(body: RecurringJobIn,
 
 @router.get("/recurring-jobs")
 async def list_recurring(active: Optional[bool] = Query(None),
-                          user: dict = Depends(require_admin),
+                          user: dict = Depends(require_admin_or_manager),
                           tenant: dict = Depends(get_current_tenant)):
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
     if active is not None:
@@ -419,7 +419,7 @@ async def list_recurring(active: Optional[bool] = Query(None),
 
 @router.get("/recurring-jobs/{tpl_id}")
 async def get_recurring(tpl_id: str,
-                          user: dict = Depends(require_admin),
+                          user: dict = Depends(require_admin_or_manager),
                           tenant: dict = Depends(get_current_tenant)):
     doc = await db.recurring_job_templates.find_one(
         {"id": tpl_id, "tenant_id": tenant["id"]}, {"_id": 0}
@@ -459,7 +459,7 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
 
 @router.delete("/recurring-jobs/{tpl_id}")
 async def delete_recurring(tpl_id: str,
-                             user: dict = Depends(require_admin),
+                             user: dict = Depends(require_admin_or_manager),
                              tenant: dict = Depends(get_current_tenant)):
     res = await db.recurring_job_templates.update_one(
         {"id": tpl_id, "tenant_id": tenant["id"]},
@@ -514,7 +514,7 @@ async def _stop_template_and_prune_future(tpl_id: str, tenant_id: str) -> Dict[s
 
 @router.post("/recurring-jobs/{tpl_id}/stop")
 async def stop_recurring(tpl_id: str,
-                           user: dict = Depends(require_admin),
+                           user: dict = Depends(require_admin_or_manager),
                            tenant: dict = Depends(get_current_tenant)):
     """Feb-2026 · Never-end recurrence · Stop generating future occurrences.
 
@@ -527,7 +527,7 @@ async def stop_recurring(tpl_id: str,
 
 @router.post("/jobs/{jid}/recurrence/stop")
 async def stop_recurring_from_job(jid: str,
-                                     user: dict = Depends(require_admin),
+                                     user: dict = Depends(require_admin_or_manager),
                                      tenant: dict = Depends(get_current_tenant)):
     """Feb-2026 · Job-scoped convenience shim. Resolves the job's
     ``recurring_template_id`` and delegates to the template-stop
@@ -616,7 +616,7 @@ async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[st
 @router.post("/recurring-jobs/{tpl_id}/generate")
 async def generate_now(tpl_id: str,
                          through: Optional[str] = Query(None),
-                         user: dict = Depends(require_admin),
+                         user: dict = Depends(require_admin_or_manager),
                          tenant: dict = Depends(get_current_tenant)):
     await _ensure_indexes()
     tpl = await db.recurring_job_templates.find_one(

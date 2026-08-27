@@ -2153,6 +2153,22 @@ async def startup():
     except Exception as e:
         logger.warning(f"persona avatar backfill crashed: {e}")
 
+    # Feb 2026 · Task B — seed 3 canonical system-template sequences
+    # (invoice past-due, review request, birthday promo) on every
+    # active tenant. Idempotent per tenant via ``system_template_id``;
+    # sentinel-guarded at the boot level. New tenants created after
+    # this fires get their templates via the ``routers/tenants.py``
+    # provisioning hook. See
+    # ``services/migrations/seed_system_templates.py``.
+    try:
+        from services.migrations.seed_system_templates import (
+            seed_system_templates_all_tenants,
+        )
+        _stpl_report = await seed_system_templates_all_tenants()
+        logger.info(f"[seed_system_templates] {_stpl_report}")
+    except Exception as e:
+        logger.warning(f"seed_system_templates migration crashed: {e}")
+
     # Feb-2026 Customer Detail Additions — idempotent one-shot back-fill
     # of the ``mobiles`` / ``emails`` arrays from the legacy scalar
     # ``phone`` / ``email`` fields. Skipped for docs that already have

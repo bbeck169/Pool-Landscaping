@@ -122,6 +122,20 @@ export default function MarketingSequencesPage() {
                         SEED
                       </span>
                     ) : null}
+                    {r.system_template ? (
+                      /* Feb 2026 · Task B — distinct badge for the
+                         3 canonical system-template sequences seeded
+                         on every tenant (invoice past-due, review
+                         request, birthday promo). Violet keeps it
+                         visually separate from the older SEED badge
+                         so admins can differentiate at a glance. */
+                      <span
+                        data-testid={`sequence-system-template-badge-${r.id}`}
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded-full mr-2"
+                        style={{ backgroundColor: "#EDE9FE", color: "#5B21B6" }}>
+                        SYSTEM TEMPLATE
+                      </span>
+                    ) : null}
                     <span className="text-xs" style={{ color: colors.muted }}>
                       {r.description || ""}
                     </span>

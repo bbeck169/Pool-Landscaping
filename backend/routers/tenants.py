@@ -458,6 +458,24 @@ async def create_tenant(body: TenantCreate, admin: dict = Depends(require_super_
     }
     await db.tenants.insert_one(doc)
     doc.pop("_id", None)
+    # Feb 2026 · Task B — seed the 3 canonical system-template
+    # sequences on every new tenant. Idempotent — the helper checks
+    # per (tenant_id, system_template_id) before inserting so a
+    # re-run doesn't double-seed. Errors don't block tenant creation.
+    try:
+        from services.migrations.seed_system_templates import (
+            seed_system_templates_for_tenant,
+        )
+        _seed_report = await seed_system_templates_for_tenant(doc["id"])
+        logger.info(
+            "[tenant.provision] seeded system templates for %s: %s",
+            doc["id"], _seed_report,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[tenant.provision] system-template seed failed for %s: %s",
+            doc["id"], e,
+        )
     return doc
 
 
