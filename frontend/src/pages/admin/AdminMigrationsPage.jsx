@@ -583,17 +583,19 @@ function StripeSyncCard() {
   const run = async (dry_run) => {
     setBusy(true);
     setError("");
-    // Feb 2026 · 90s client timeout via AbortController so the UI
-    // never gets stuck on "Previewing…" when the endpoint / proxy
-    // hangs. Preview endpoint is capped server-side to a sample
-    // size but the abort protects against network wobble too.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 90_000);
+    // Feb-2026 P0 fix — ``api.post``'s 3rd argument is a NUMERIC
+    // ``timeoutMs`` (see ``frontend/src/api.js::request``), not an
+    // options object. Passing ``{signal: ...}`` was coerced to
+    // ``NaN`` → treated as 0 → the internal AbortController fired
+    // before ``fetch`` was even issued, surfacing as "Request
+    // timed out" on the very first click. Matches the pattern
+    // used by the Leads Backfill (P19) + User Roster Cleanup
+    // migration cards on this page.
     try {
       const r = await api.post(
         "/admin/migrations/sync-stripe-customers",
         { dry_run, import_unmatched: !dry_run && importUnmatched },
-        { signal: controller.signal },
+        120_000,  // 2 min — Stripe pulls can be slow on large tenants
       );
       setReport(r);
       if (dry_run) setHasPreviewed(true);
@@ -602,11 +604,10 @@ function StripeSyncCard() {
       const aborted = e?.name === "AbortError" || e?.code === "ERR_CANCELED";
       setError(
         aborted
-          ? "Timed out after 90 seconds. Try a smaller preview or retry."
+          ? "Timed out after 2 minutes. Try a smaller preview or retry."
           : (e?.response?.data?.detail || e?.message || "Sync failed"),
       );
     } finally {
-      clearTimeout(timer);
       setBusy(false);
     }
   };
@@ -792,12 +793,14 @@ function StripeBillingHistoryCard() {
   const run = async (dry_run) => {
     setBusy(true);
     setError("");
-    // Feb 2026 · 90s client timeout via AbortController so the UI
-    // never gets stuck on "Previewing…". Preview is capped
-    // server-side to a sample of 100 charges + 50 invoices + 25
-    // subs so it comfortably fits under 90s on any real tenant.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 90_000);
+    // Feb-2026 P0 fix — see ``StripeCustomerSyncCard.run`` for the
+    // full explanation. ``api.post``'s 3rd argument is a numeric
+    // ``timeoutMs``, not an options object. Passing
+    // ``{signal: ...}`` was coerced to NaN → treated as 0ms → the
+    // internal AbortController fired before fetch was issued.
+    // 3 min ceiling because the billing history sync pulls
+    // charges + invoices + subs and can genuinely run 30-90s on
+    // large tenants (backend measured at 5.2s for AquaTerra).
     try {
       const r = await api.post(
         "/admin/migrations/sync-stripe-billing-history",
@@ -806,7 +809,7 @@ function StripeBillingHistoryCard() {
           months_back: Number(monthsBack) || 24,
           include_subscriptions: !!includeSubs,
         },
-        { signal: controller.signal },
+        180_000,  // 3 min
       );
       setReport(r);
       if (dry_run) setHasPreviewed(true);
@@ -815,11 +818,10 @@ function StripeBillingHistoryCard() {
       const aborted = e?.name === "AbortError" || e?.code === "ERR_CANCELED";
       setError(
         aborted
-          ? "Timed out after 90 seconds. Try a smaller time range or retry."
+          ? "Timed out after 3 minutes. Try a smaller time range or retry."
           : (e?.response?.data?.detail || e?.message || "Import failed"),
       );
     } finally {
-      clearTimeout(timer);
       setBusy(false);
     }
   };

@@ -98,4 +98,29 @@ describe("AdminMigrationsPage — Stripe cards render + testids", () => {
       expect(before).not.toMatch(/\{\s*hasPreviewed\s*&&\s*\(?\s*$/);
     }
   });
+
+  it("api.post calls on both Stripe cards pass a numeric timeout (P0 abort-toast fix)", () => {
+    // ``api.post(p, body, timeoutMs)`` — 3rd arg MUST be a number.
+    // Passing ``{signal: ...}`` there was silently coerced to NaN
+    // → treated as 0ms → the internal AbortController in
+    // ``api.js::request`` fired before fetch was issued, surfacing
+    // as "Request timed out" on the very first click.
+    for (const path of [
+      "/admin/migrations/sync-stripe-customers",
+      "/admin/migrations/sync-stripe-billing-history",
+    ]) {
+      const idx = src.indexOf(path);
+      expect(idx).toBeGreaterThan(-1);
+      // Slice out to the closing of the ``api.post(...)`` call —
+      // ~600 chars is plenty for the multi-line call.
+      const block = src.slice(idx, idx + 600);
+      // Positive assertion: a numeric literal (with optional ``_``
+      // separators) appears as the 3rd argument. Trailing comma +
+      // inline comment allowed before ``);``.
+      expect(block).toMatch(/,\s*\d[\d_]*,/);
+      // Negative assertion: no ``{signal:`` options object in the
+      // same call block.
+      expect(block).not.toMatch(/\{\s*signal:/);
+    }
+  });
 });
