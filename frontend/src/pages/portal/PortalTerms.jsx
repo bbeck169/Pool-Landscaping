@@ -1,36 +1,85 @@
 import React, { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { useSearchParams } from "react-router-dom";
 import { Check, Printer, FileText } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 
-const SLUG = "terms-of-service-pool-maintenance";
+// Feb 2026 · Two service lines → two ToS docs. ``pool`` is the
+// backward-compat default (URL param absent → pool). ``service``
+// query param persists selection across reloads + shareable links.
+const TOS_TABS = [
+  {
+    key: "pool",
+    label: "Pool",
+    slug: "terms-of-service-pool-maintenance",
+    testid: "id-tos-toggle-pool",
+    bodyTestid: "id-tos-body-pool",
+  },
+  {
+    key: "landscaping",
+    label: "Landscaping",
+    slug: "terms-of-service-landscaping",
+    testid: "id-tos-toggle-landscaping",
+    bodyTestid: "id-tos-body-landscaping",
+  },
+];
 
 /**
  * /portal/terms — customer-facing Terms of Service view.
- * Fetches from /api/legal/{slug}, renders markdown, and lets the customer
- * acknowledge the current version.
+ *
+ * Two documents (Pool + Landscaping) live in parallel. The toggle
+ * at top switches which is displayed. Each doc has its own version
+ * + ack — customers with both service lines will need to ack both.
  */
 export default function PortalTerms() {
-  const [doc, setDoc] = useState(null);
-  const [ack, setAck] = useState({ acknowledged: false, current_version: null });
+  const [params, setParams] = useSearchParams();
+  const initial = TOS_TABS.find((t) => t.key === params.get("service"))?.key
+    || "pool";
+  const [activeKey, setActiveKey] = useState(initial);
+  const [docs, setDocs] = useState({});  // { pool: doc, landscaping: doc }
+  const [acks, setAcks] = useState({});   // { pool: ack, landscaping: ack }
   const [saving, setSaving] = useState(false);
-  // BUG E · Feb 2026 — surface the failure so the click no longer
-  // appears to "do nothing" when the server rejects the ack.
   const [error, setError] = useState("");
 
+  const activeTab = TOS_TABS.find((t) => t.key === activeKey) || TOS_TABS[0];
+  const doc = docs[activeKey];
+  const ack = acks[activeKey] || { acknowledged: false, current_version: null };
+
   useEffect(() => {
-    api.get(`/legal/${SLUG}`).then(setDoc).catch(() => setDoc(null));
-    api.get(`/portal/terms/status?slug=${SLUG}`).then(setAck).catch(() => {});
+    // Fetch both docs + acks in parallel so the toggle switches
+    // instantly without a fresh network round-trip.
+    for (const t of TOS_TABS) {
+      api.get(`/legal/${t.slug}`)
+        .then((d) => setDocs((prev) => ({ ...prev, [t.key]: d })))
+        .catch(() =>
+          setDocs((prev) => ({ ...prev, [t.key]: null })),
+        );
+      api.get(`/portal/terms/status?slug=${t.slug}`)
+        .then((s) => setAcks((prev) => ({ ...prev, [t.key]: s })))
+        .catch(() => {});
+    }
   }, []);
 
+  const switchTab = (key) => {
+    setActiveKey(key);
+    // Keep the URL in sync so page reload / shared link → same tab.
+    const next = new URLSearchParams(params);
+    next.set("service", key);
+    setParams(next, { replace: true });
+    setError("");
+  };
+
   const agree = async () => {
+    if (!doc) return;
     setSaving(true);
     setError("");
     try {
-      await api.post("/portal/terms/acknowledge", { slug: SLUG, version: doc.version });
-      const s = await api.get(`/portal/terms/status?slug=${SLUG}`);
-      setAck(s);
+      await api.post("/portal/terms/acknowledge", {
+        slug: activeTab.slug, version: doc.version,
+      });
+      const s = await api.get(`/portal/terms/status?slug=${activeTab.slug}`);
+      setAcks((prev) => ({ ...prev, [activeKey]: s }));
     } catch (e) {
       setError(e?.message || "Could not record your acknowledgement. Please try again.");
     } finally {
@@ -58,6 +107,37 @@ export default function PortalTerms() {
         }
       `}</style>
 
+      {/* Feb 2026 · Service segmented toggle. URL-persisted so a
+          printed / bookmarked link opens the same tab. */}
+      <div
+        className="inline-flex rounded-lg overflow-hidden mb-4 tos-print-hide"
+        role="tablist"
+        aria-label="Terms of Service — select service line"
+        data-testid="id-tos-service-toggle"
+        style={{ border: `1px solid ${colors.border}` }}
+      >
+        {TOS_TABS.map((t) => {
+          const selected = t.key === activeKey;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => switchTab(t.key)}
+              className="px-4 py-2 text-sm font-semibold focus:outline-none focus-visible:ring-2"
+              style={{
+                backgroundColor: selected ? colors.brand : colors.surface,
+                color: selected ? "#fff" : colors.onSurface,
+              }}
+              data-testid={t.testid}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
       <div className="rounded-2xl p-6 mb-4 tos-body"
            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
         <div className="flex items-start justify-between flex-wrap gap-3 mb-3 tos-print-hide">
@@ -68,7 +148,7 @@ export default function PortalTerms() {
             </div>
             <div>
               <div className="text-xs uppercase font-semibold tracking-wide" style={{ color: colors.muted }}>
-                Legal
+                Legal · {activeTab.label}
               </div>
               <h1 className="text-2xl md:text-3xl font-bold" style={{ color: colors.onSurface }}>
                 {doc.title}
@@ -94,8 +174,11 @@ export default function PortalTerms() {
           </span>
         </div>
 
-        <article className="prose prose-sm max-w-none" data-testid="tos-content"
-                 style={{ color: colors.onSurface, lineHeight: 1.65 }}>
+        <article
+          className="prose prose-sm max-w-none"
+          data-testid={activeTab.bodyTestid}
+          style={{ color: colors.onSurface, lineHeight: 1.65 }}
+        >
           <MarkdownBody source={doc.body_markdown || ""} />
         </article>
       </div>

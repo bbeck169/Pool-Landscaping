@@ -29,8 +29,12 @@ class TosAckIn(BaseModel):
 
 # ─── seed data ───────────────────────────────────────────────────────────────
 POOL_TOS_SLUG = "terms-of-service-pool-maintenance"
-POOL_TOS_TITLE = "Pool Maintenance Terms of Service"
-POOL_TOS_EFFECTIVE = "2026-07-13"
+POOL_TOS_TITLE = "Pool Terms of Service"
+POOL_TOS_EFFECTIVE = "2026-08-27"
+# Feb 2026 · Bump when POOL_TOS_MARKDOWN changes so ``ensure_seeded``
+# re-seeds existing rows AND customers get re-prompted to ack the
+# updated legal copy on their next portal visit.
+POOL_TOS_VERSION = 2
 
 # Verbatim text from https://poolandlandscapingofvistancia.com/pool-landscaping-of-vistancia/documents/terms-of-service/
 POOL_TOS_MARKDOWN = """## Pool Service Terms
@@ -60,6 +64,8 @@ When a new account is established, we require a filter inspection/clean at a rat
 **Filter Cleaning and Inspections:** performed quarterly at $125 per service.
 
 **Salt Cell Cleanings:** $55 and performed at the same time as filter cleaning.
+
+**Pool Drain.** We recommend scheduling a pool drain and refill every 2–3 years, depending on water testing results. This helps maintain proper water chemistry and ensures the pool continues to operate at peak performance.
 
 If you choose our all-inclusive Premier service plan, Blu-Ray and Filter Cleans are included at no additional charge.
 
@@ -92,23 +98,122 @@ Pool & Landscaping of Vistancia LLC will not be responsible for any damage to pr
 """
 
 
+# ─── Feb 2026 · Landscaping ToS (parallel to the Pool ToS) ───────────────────
+LANDSCAPING_TOS_SLUG = "terms-of-service-landscaping"
+LANDSCAPING_TOS_TITLE = "Landscaping Terms of Service"
+LANDSCAPING_TOS_EFFECTIVE = "2026-08-27"
+LANDSCAPING_TOS_VERSION = 1
+
+LANDSCAPING_TOS_MARKDOWN = """## Landscaping Service Terms
+
+### 1. Services Provided
+Our landscaping services may include lawn maintenance, trimming, pruning, weed control, irrigation services, cleanups, planting, installation, winter seeding, and other services agreed upon between the customer and the company. The specific services provided will be outlined in the customer's estimate, proposal, or service agreement.
+
+### 2. Seasonal Weed Control and Winter Seeding
+Seasonal weed-control treatments are available in the spring and fall as an additional service at an additional cost. Customers who elect to receive weed-control treatments will be billed according to the pricing outlined in their estimate or service agreement.
+
+Winter overseeding is available for customers with existing grass and is typically performed in late September or early October, weather and seasonal conditions permitting. Winter seeding is an additional service at an additional cost and will be billed in advance. Advance payment allows us to purchase the necessary seed and materials in bulk and ensure they are available when needed.
+
+### 3. Estimates and Pricing
+All estimates are based on the scope of work discussed at the time of the estimate. Additional work or services requested by the customer, including weed control and winter seeding, will result in additional charges. Any significant changes to the scope of work will be communicated to the customer when reasonably possible.
+
+### 4. Scheduling and Access
+Customers are responsible for providing reasonable access to the property on scheduled service dates. Service schedules may be affected by weather, equipment availability, holidays, or other circumstances beyond our control. We will make reasonable efforts to reschedule services when necessary.
+
+### 5. Weather and Site Conditions
+Landscaping work may be postponed due to rain, excessive heat, flooding, poor soil conditions, or other weather-related circumstances that could affect the safety or quality of the work. Rescheduled services will be completed as soon as reasonably possible.
+
+### 6. Irrigation Systems
+Customers are responsible for notifying us of any known irrigation issues, underground utilities, or irrigation components that may affect the work. Repairs or adjustments outside the agreed-upon scope of work may incur additional charges.
+
+### 7. Plants and Landscaping Materials
+Plant health and survival can be affected by weather, irrigation, soil conditions, pests, disease, and maintenance practices. Unless otherwise stated in writing, we do not guarantee the survival of plants, trees, shrubs, grass, or other landscaping materials after installation.
+
+### 8. Property Damage and Existing Conditions
+We will take reasonable care when performing services. However, we are not responsible for damage caused by pre-existing conditions, improperly installed or unmarked underground utilities, irrigation systems, drainage systems, or other concealed conditions that could not reasonably have been identified before work began.
+
+### 9. Customer Responsibilities
+Customers are responsible for providing accurate information regarding the property and notifying us of known hazards, underground utilities, irrigation lines, septic systems, or other conditions that may affect the work.
+
+### 10. Payment Terms
+Payment is due according to the terms stated on the estimate, invoice, or service agreement. Past-due balances may be subject to applicable late fees or collection costs as permitted by law.
+
+Seasonal services that require materials to be purchased in advance, including winter overseeding, may require advance payment before materials are ordered or services are scheduled.
+
+### 11. Cancellation
+Customers may cancel or reschedule services by providing reasonable advance notice. Cancellations made after the agreed-upon cancellation period may be subject to a cancellation or scheduling fee if applicable.
+
+### 12. Recurring Services
+For recurring landscaping services, service frequency and pricing will be established at the time of enrollment. Recurring services will continue until canceled by either party in accordance with the applicable cancellation terms.
+
+### 13. Changes to Terms
+We reserve the right to update these Terms of Service as needed. Customers will be notified of material changes when applicable.
+
+### 14. Limitation of Liability
+To the extent permitted by applicable law, our liability for any claim arising from services provided will be limited to the amount paid for the specific service giving rise to the claim. Nothing in these terms is intended to waive rights or protections that cannot legally be waived.
+
+### 15. Customer Approval
+By requesting, scheduling, or approving landscaping services, the customer acknowledges that they have reviewed and agree to these Terms of Service.
+"""
+
+
 async def ensure_seeded() -> None:
-    """Insert the pool-maintenance ToS the first time we boot with an empty collection."""
-    existing = await db.legal_documents.find_one({"slug": POOL_TOS_SLUG}, {"_id": 0, "id": 1})
-    if existing:
+    """Insert or upsert the pool + landscaping ToS documents.
+
+    Idempotent on re-boot. When the module-level ``POOL_TOS_VERSION``
+    or ``LANDSCAPING_TOS_VERSION`` is bumped above the stored version,
+    the corresponding doc is UPDATED in place — customers will be
+    re-prompted to ack on their next portal visit (the ack lookup
+    keys off ``current_version``).
+    """
+    await _seed_or_upsert(
+        slug=POOL_TOS_SLUG,
+        title=POOL_TOS_TITLE,
+        body_markdown=POOL_TOS_MARKDOWN,
+        effective_date=POOL_TOS_EFFECTIVE,
+        target_version=POOL_TOS_VERSION,
+    )
+    await _seed_or_upsert(
+        slug=LANDSCAPING_TOS_SLUG,
+        title=LANDSCAPING_TOS_TITLE,
+        body_markdown=LANDSCAPING_TOS_MARKDOWN,
+        effective_date=LANDSCAPING_TOS_EFFECTIVE,
+        target_version=LANDSCAPING_TOS_VERSION,
+    )
+
+
+async def _seed_or_upsert(*, slug: str, title: str, body_markdown: str,
+                           effective_date: str, target_version: int) -> None:
+    existing = await db.legal_documents.find_one(
+        {"slug": slug}, {"_id": 0, "id": 1, "version": 1},
+    )
+    now = now_iso()
+    if not existing:
+        await db.legal_documents.insert_one({
+            "id": new_id(), "slug": slug, "title": title,
+            "body_markdown": body_markdown,
+            "effective_date": effective_date,
+            "version": target_version,
+            "updated_at": now, "created_at": now,
+        })
+        logger.info(f"Seeded legal document {slug!r} v{target_version}")
         return
-    doc = {
-        "id": new_id(),
-        "slug": POOL_TOS_SLUG,
-        "title": POOL_TOS_TITLE,
-        "body_markdown": POOL_TOS_MARKDOWN,
-        "effective_date": POOL_TOS_EFFECTIVE,
-        "version": 1,
-        "updated_at": now_iso(),
-        "created_at": now_iso(),
-    }
-    await db.legal_documents.insert_one(doc)
-    logger.info(f"Seeded legal document {POOL_TOS_SLUG!r} v1")
+    stored_version = int(existing.get("version") or 0)
+    if stored_version >= target_version:
+        return  # Nothing to do — stored copy is already current.
+    await db.legal_documents.update_one(
+        {"slug": slug},
+        {"$set": {
+            "title": title,
+            "body_markdown": body_markdown,
+            "effective_date": effective_date,
+            "version": target_version,
+            "updated_at": now,
+        }},
+    )
+    logger.info(
+        f"Upgraded legal document {slug!r} v{stored_version} → v{target_version}",
+    )
 
 
 def _public(doc: dict) -> dict:

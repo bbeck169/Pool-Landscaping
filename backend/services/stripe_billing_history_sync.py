@@ -97,9 +97,16 @@ async def sync_stripe_billing_history(
     months_back: int = 24,
     include_subscriptions: bool = True,
     limit_total: Optional[int] = None,
+    preview_sample_size: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Import Stripe charges + invoices + optionally subscriptions
     into the CRM. Returns a structured report.
+
+    Feb 2026 · When ``dry_run=True`` we cap each entity type at
+    ``preview_sample_size`` (default 100 charges + 50 invoices +
+    25 subscriptions) so the preview HTTP request stays under the
+    proxy 60s timeout on large tenants. The commit path
+    (``dry_run=False``) still iterates the full roster.
     """
     if not tenant_id:
         raise ValueError("tenant_id is required")
@@ -169,12 +176,32 @@ async def sync_stripe_billing_history(
             quote_by_amount_date.setdefault(k, []).append(q)
 
     # ─── Report skeleton ────────────────────────────────────────────
+    # Feb 2026 · When dry_run, cap each entity type at a sample size
+    # so the preview HTTP call stays under the proxy 60s timeout.
+    # Real commit runs (dry_run=False) always walk the full roster.
+    _sample_charges = None
+    _sample_invoices = None
+    _sample_subs = None
+    if dry_run:
+        _default = preview_sample_size if preview_sample_size is not None else 100
+        _sample_charges = _default
+        _sample_invoices = max(1, _default // 2)  # 50 default
+        _sample_subs = max(1, _default // 4)      # 25 default
+
     report: Dict[str, Any] = {
         "tenant_id": tenant_id,
         "dry_run": bool(dry_run),
         "months_back": int(months_back),
         "include_subscriptions": bool(include_subscriptions),
         "cutoff_date": cutoff_dt.isoformat(),
+        # Feb 2026 · preview-cap markers so the FE can render
+        # "showing first N" hints when the roster is truncated.
+        "preview_sample_size_charges": _sample_charges,
+        "preview_sample_size_invoices": _sample_invoices,
+        "preview_sample_size_subs": _sample_subs,
+        "preview_capped_charges": False,
+        "preview_capped_invoices": False,
+        "preview_capped_subs": False,
         "matched_charges": 0,
         "unmatched_charges": 0,
         "charge_no_customer": 0,   # Stripe.Charge with no known CRM customer
@@ -191,8 +218,13 @@ async def sync_stripe_billing_history(
 
     # ─── 1) Invoices first (so charge → invoice lookup benefits) ───
     invoice_id_to_crm: Dict[str, str] = {}
+    _inv_seen = 0
     async for sinv in _iter_stripe(_stripe.Invoice.list, cutoff_ts=cutoff_ts,
                                      limit_total=limit_total):
+        _inv_seen += 1
+        if _sample_invoices is not None and _inv_seen > _sample_invoices:
+            report["preview_capped_invoices"] = True
+            break
         sinv_id = sinv.get("id")
         if not sinv_id:
             continue
@@ -236,8 +268,13 @@ async def sync_stripe_billing_history(
         invoice_id_to_crm[sinv_id] = new_id
 
     # ─── 2) Charges → payments ─────────────────────────────────────
+    _ch_seen = 0
     async for sch in _iter_stripe(_stripe.Charge.list, cutoff_ts=cutoff_ts,
                                     limit_total=limit_total):
+        _ch_seen += 1
+        if _sample_charges is not None and _ch_seen > _sample_charges:
+            report["preview_capped_charges"] = True
+            break
         ch_id = sch.get("id")
         if not ch_id:
             continue
@@ -299,10 +336,15 @@ async def sync_stripe_billing_history(
     # ─── 3) Subscriptions ──────────────────────────────────────────
     if include_subscriptions:
         try:
+            _sub_seen = 0
             async for ssub in _iter_stripe(
                 lambda **kw: _stripe.Subscription.list(status="all", **kw),
                 cutoff_ts=cutoff_ts, limit_total=limit_total,
             ):
+                _sub_seen += 1
+                if _sample_subs is not None and _sub_seen > _sample_subs:
+                    report["preview_capped_subs"] = True
+                    break
                 sub_id = ssub.get("id")
                 if not sub_id:
                     continue

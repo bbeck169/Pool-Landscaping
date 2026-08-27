@@ -425,6 +425,7 @@ async def sync_stripe_billing_history_endpoint(
             months_back=int(body.get("months_back", 24)),
             include_subscriptions=bool(body.get("include_subscriptions", True)),
             limit_total=body.get("limit_total"),
+            preview_sample_size=body.get("preview_sample_size"),
         )
     except PrereqNotMetError as exc:
         raise HTTPException(400, str(exc))

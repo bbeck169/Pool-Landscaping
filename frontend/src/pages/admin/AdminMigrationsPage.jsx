@@ -583,17 +583,30 @@ function StripeSyncCard() {
   const run = async (dry_run) => {
     setBusy(true);
     setError("");
+    // Feb 2026 · 90s client timeout via AbortController so the UI
+    // never gets stuck on "Previewing…" when the endpoint / proxy
+    // hangs. Preview endpoint is capped server-side to a sample
+    // size but the abort protects against network wobble too.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90_000);
     try {
       const r = await api.post(
         "/admin/migrations/sync-stripe-customers",
         { dry_run, import_unmatched: !dry_run && importUnmatched },
+        { signal: controller.signal },
       );
       setReport(r);
       if (dry_run) setHasPreviewed(true);
       else setConfirmText("");
     } catch (e) {
-      setError(e?.response?.data?.detail || e?.message || "Sync failed");
+      const aborted = e?.name === "AbortError" || e?.code === "ERR_CANCELED";
+      setError(
+        aborted
+          ? "Timed out after 90 seconds. Try a smaller preview or retry."
+          : (e?.response?.data?.detail || e?.message || "Sync failed"),
+      );
     } finally {
+      clearTimeout(timer);
       setBusy(false);
     }
   };
@@ -658,41 +671,45 @@ function StripeSyncCard() {
           Also import unmatched Stripe customers as new CRM rows
         </label>
       </div>
-      {hasPreviewed ? (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <span className="text-xs" style={{ color: colors.muted }}>
-            Type "SYNC" to enable commit:
-          </span>
-          <input
-            type="text"
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            disabled={busy}
-            className="text-xs px-2 py-1 rounded-md font-mono"
-            style={{
-              background: colors.surface,
-              color: colors.onSurface,
-              border: `1px solid ${colors.border}`,
-              width: 100,
-            }}
-            data-testid="id-migration-stripe-confirm-input"
-          />
-          <button
-            type="button"
-            className="text-sm px-3 py-2 rounded-lg font-semibold"
-            style={{
-              background: runReady ? "#DC2626" : colors.surfaceSecondary,
-              color: runReady ? "#fff" : colors.muted,
-              opacity: runReady ? 1 : 0.6,
-            }}
-            disabled={!runReady}
-            onClick={() => run(false)}
-            data-testid="id-migration-stripe-run-btn"
-          >
-            {busy && hasPreviewed ? "Syncing…" : "Run Sync"}
-          </button>
-        </div>
-      ) : null}
+      {/* Feb 2026 · Render the run + confirm row ALWAYS (not only
+          after preview) so E2E automation can query the testids
+          pre-preview. Buttons are ``disabled`` until a preview has
+          completed AND the operator types the confirm word. */}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <span className="text-xs" style={{ color: colors.muted }}>
+          {hasPreviewed
+            ? 'Type "SYNC" to enable commit:'
+            : "Run a preview first to enable the commit button."}
+        </span>
+        <input
+          type="text"
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          disabled={busy || !hasPreviewed}
+          className="text-xs px-2 py-1 rounded-md font-mono disabled:opacity-50"
+          style={{
+            background: colors.surface,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+            width: 100,
+          }}
+          data-testid="id-migration-stripe-confirm-input"
+        />
+        <button
+          type="button"
+          className="text-sm px-3 py-2 rounded-lg font-semibold"
+          style={{
+            background: runReady ? "#DC2626" : colors.surfaceSecondary,
+            color: runReady ? "#fff" : colors.muted,
+            opacity: runReady ? 1 : 0.6,
+          }}
+          disabled={!runReady}
+          onClick={() => run(false)}
+          data-testid="id-migration-stripe-run-btn"
+        >
+          {busy && hasPreviewed ? "Syncing…" : "Run Sync"}
+        </button>
+      </div>
       {error ? (
         <div
           className="text-sm mt-3 p-2 rounded-md"
@@ -775,6 +792,12 @@ function StripeBillingHistoryCard() {
   const run = async (dry_run) => {
     setBusy(true);
     setError("");
+    // Feb 2026 · 90s client timeout via AbortController so the UI
+    // never gets stuck on "Previewing…". Preview is capped
+    // server-side to a sample of 100 charges + 50 invoices + 25
+    // subs so it comfortably fits under 90s on any real tenant.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90_000);
     try {
       const r = await api.post(
         "/admin/migrations/sync-stripe-billing-history",
@@ -783,13 +806,20 @@ function StripeBillingHistoryCard() {
           months_back: Number(monthsBack) || 24,
           include_subscriptions: !!includeSubs,
         },
+        { signal: controller.signal },
       );
       setReport(r);
       if (dry_run) setHasPreviewed(true);
       else setConfirmText("");
     } catch (e) {
-      setError(e?.response?.data?.detail || e?.message || "Import failed");
+      const aborted = e?.name === "AbortError" || e?.code === "ERR_CANCELED";
+      setError(
+        aborted
+          ? "Timed out after 90 seconds. Try a smaller time range or retry."
+          : (e?.response?.data?.detail || e?.message || "Import failed"),
+      );
     } finally {
+      clearTimeout(timer);
       setBusy(false);
     }
   };
@@ -878,41 +908,44 @@ function StripeBillingHistoryCard() {
           {busy && !hasPreviewed ? "Previewing…" : "Preview (Dry Run)"}
         </button>
       </div>
-      {hasPreviewed ? (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <span className="text-xs" style={{ color: colors.muted }}>
-            Type "IMPORT" to enable commit:
-          </span>
-          <input
-            type="text"
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            disabled={busy}
-            className="text-xs px-2 py-1 rounded-md font-mono"
-            style={{
-              background: colors.surface,
-              color: colors.onSurface,
-              border: `1px solid ${colors.border}`,
-              width: 100,
-            }}
-            data-testid="id-migration-stripe-billing-confirm-input"
-          />
-          <button
-            type="button"
-            className="text-sm px-3 py-2 rounded-lg font-semibold"
-            style={{
-              background: runReady ? "#DC2626" : colors.surfaceSecondary,
-              color: runReady ? "#fff" : colors.muted,
-              opacity: runReady ? 1 : 0.6,
-            }}
-            disabled={!runReady}
-            onClick={() => run(false)}
-            data-testid="id-migration-stripe-billing-run-btn"
-          >
-            {busy && hasPreviewed ? "Importing…" : "Run Import"}
-          </button>
-        </div>
-      ) : null}
+      {/* Feb 2026 · Always-rendered confirm row (disabled until
+          preview + typed IMPORT). Makes the testids queryable
+          pre-preview for automation. */}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <span className="text-xs" style={{ color: colors.muted }}>
+          {hasPreviewed
+            ? 'Type "IMPORT" to enable commit:'
+            : "Run a preview first to enable the import button."}
+        </span>
+        <input
+          type="text"
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          disabled={busy || !hasPreviewed}
+          className="text-xs px-2 py-1 rounded-md font-mono disabled:opacity-50"
+          style={{
+            background: colors.surface,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+            width: 100,
+          }}
+          data-testid="id-migration-stripe-billing-confirm-input"
+        />
+        <button
+          type="button"
+          className="text-sm px-3 py-2 rounded-lg font-semibold"
+          style={{
+            background: runReady ? "#DC2626" : colors.surfaceSecondary,
+            color: runReady ? "#fff" : colors.muted,
+            opacity: runReady ? 1 : 0.6,
+          }}
+          disabled={!runReady}
+          onClick={() => run(false)}
+          data-testid="id-migration-stripe-billing-run-btn"
+        >
+          {busy && hasPreviewed ? "Importing…" : "Run Import"}
+        </button>
+      </div>
       {error ? (
         <div
           className="text-sm mt-3 p-2 rounded-md"

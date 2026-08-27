@@ -471,3 +471,79 @@ class TestBillingHistorySubscriptions:
                 {"tenant_id": TID, "stripe_subscription_id": "sub_1"},
             ) == 1
         _run(go())
+
+
+class TestBillingHistoryPreviewSampleCap:
+    """Feb 2026 · Ships to fix the 60s proxy timeout on large tenants.
+    Dry-run mode caps each entity type at ``preview_sample_size``
+    (default 100 charges / 50 invoices / 25 subs) and returns
+    ``preview_capped_{charges,invoices,subs}`` markers so the FE can
+    render "showing first N" hints.
+    """
+
+    def test_preview_caps_charges_at_default_sample_size(self):
+        async def go():
+            await _seed_customer("c1", email="a@example.com",
+                                  stripe_customer_id="cus_A")
+            # 250 charges — well above the 100 default cap.
+            _StubStripeCharge._list_data = [
+                {"id": f"ch_{i}", "customer": "cus_A",
+                  "amount": 100, "currency": "usd",
+                  "status": "succeeded", "created": 1754049600 + i}
+                for i in range(250)
+            ]
+            from services.stripe_billing_history_sync import sync_stripe_billing_history
+            r = await sync_stripe_billing_history(
+                tenant_id=TID, actor_user_id="u", dry_run=True,
+                months_back=60, include_subscriptions=False,
+            )
+            # Preview stopped after the default 100 charges.
+            assert r["preview_capped_charges"] is True
+            assert r["preview_sample_size_charges"] == 100
+            assert r["created_payment_records"] == 100
+        _run(go())
+
+    def test_preview_sample_size_override_is_respected(self):
+        async def go():
+            await _seed_customer("c1", email="a@example.com",
+                                  stripe_customer_id="cus_A")
+            _StubStripeCharge._list_data = [
+                {"id": f"ch_{i}", "customer": "cus_A",
+                  "amount": 100, "currency": "usd",
+                  "status": "succeeded", "created": 1754049600}
+                for i in range(30)
+            ]
+            from services.stripe_billing_history_sync import sync_stripe_billing_history
+            r = await sync_stripe_billing_history(
+                tenant_id=TID, actor_user_id="u", dry_run=True,
+                months_back=60, include_subscriptions=False,
+                preview_sample_size=10,
+            )
+            assert r["preview_capped_charges"] is True
+            assert r["created_payment_records"] == 10
+        _run(go())
+
+    def test_commit_ignores_sample_cap_and_walks_full_roster(self):
+        async def go():
+            from config import db
+            await _seed_customer("c1", email="a@example.com",
+                                  stripe_customer_id="cus_A")
+            _StubStripeCharge._list_data = [
+                {"id": f"ch_{i}", "customer": "cus_A",
+                  "amount": 100, "currency": "usd",
+                  "status": "succeeded", "created": 1754049600 + i}
+                for i in range(150)
+            ]
+            from services.stripe_billing_history_sync import sync_stripe_billing_history
+            r = await sync_stripe_billing_history(
+                tenant_id=TID, actor_user_id="u", dry_run=False,
+                months_back=60, include_subscriptions=False,
+                preview_sample_size=10,  # ignored on commit
+            )
+            # Commit mode always walks the full roster.
+            assert r["preview_capped_charges"] is False
+            assert r["created_payment_records"] == 150
+            assert await db.payments.count_documents(
+                {"tenant_id": TID},
+            ) == 150
+        _run(go())
