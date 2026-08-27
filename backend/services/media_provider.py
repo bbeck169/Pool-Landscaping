@@ -119,8 +119,35 @@ async def _persist_image(url_or_datauri: str) -> Tuple[str, str]:
             raise ProviderError(
                 f"download_http_error: HTTP {r.status_code}")
         data = r.content
-    path = UPLOAD_ROOT / f"{image_id}.{ext}"
-    path.write_bytes(data)
+    # Feb 2026 · Deployment fix — route ALL generated media through
+    # Emergent Object Storage. The prior pod-local ``UPLOAD_ROOT``
+    # write path was flagged as an ephemeral-storage deployment
+    # blocker (pod-local files don't survive redeployment). Object
+    # storage is initialised at server boot; if it isn't ready we
+    # surface a clear ProviderError rather than silently writing to
+    # an ephemeral pod path.
+    filename = f"{image_id}.{ext}"
+    try:
+        from services import object_storage as _obj
+    except Exception as _imp_exc:  # noqa: BLE001
+        raise ProviderError(f"object_storage_import_failed: {_imp_exc}")
+    if not _obj.is_ready():
+        try:
+            _obj.init_storage()
+        except Exception:  # noqa: BLE001
+            pass
+    if not _obj.is_ready():
+        raise ProviderError("object_storage_not_initialised")
+    storage_path = _obj.build_path(
+        tenant_id="global", entity_kind="generated",
+        entity_id="media", filename=filename,
+    )
+    content_type = f"image/{ext if ext != 'jpg' else 'jpeg'}"
+    try:
+        _obj.put_object(storage_path, data, content_type)
+    except Exception as _put_exc:  # noqa: BLE001
+        raise ProviderError(f"object_storage_put_failed: {_put_exc}")
+    return image_id, f"/objects/{storage_path}"
     return image_id, f"/uploads/generated/{image_id}.{ext}"
 
 

@@ -475,6 +475,21 @@ async def list_customers(
         # ceiling to preserve exact backwards-compat with all bare-array
         # callers (they've been living with this cap since Phase 34f).
         docs = await db.customers.find(q, {"_id": 0}).sort(_sort_spec).to_list(2000)
+
+    # Feb-2026 · P0 hotfix — legacy prod docs occasionally store BSON
+    # ``datetime`` values in fields declared as ``Optional[str]`` on
+    # ``CustomerListItem`` (``created_at`` / ``updated_at`` /
+    # ``last_portal_login_at`` / ``customer_since``). Pydantic v2's
+    # union-discriminator on the response_model can't coerce a bare
+    # datetime into ``str`` and 500s the whole list. Coerce here so
+    # the response validates cleanly regardless of what shape the
+    # underlying Mongo doc has. Idempotent — string values pass
+    # through, ``None`` stays ``None``.
+    from datetime import datetime as _dt_hotfix
+    for _d in docs:
+        for _k, _v in list(_d.items()):
+            if isinstance(_v, _dt_hotfix):
+                _d[_k] = _v.isoformat()
     # If unscheduled=true, filter out customers who have any non-completed/cancelled job.
     if unscheduled:
         from utils import not_deleted_filter as _nd

@@ -414,6 +414,29 @@ function AdminOnly({ children }) {
 }
 
 
+// Feb 2026 · Task A hotfix (route-guard companion) — generic
+// AdminOrManager wrapper. Matches the sidebar/top-bar filter's
+// ``hard_rule: "manager_only"`` semantics (super_admin, admin,
+// manager). Reused across every /admin route surfaced by a
+// manager_only nav entry — recurring-jobs, driver-activity,
+// checkins moderation, seo/auditor + seo/keywords, gps-users,
+// widget-embed. Techs and portal customers still redirect to /.
+// The bespoke ``AdminOrManagerForProfitReport / Workstream /
+// Weather / Suppliers`` wrappers above stay put — they were
+// introduced before this generic existed and swapping them is out
+// of scope for this hotfix.
+function AdminOrManager({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  const role = user?.role || "";
+  const allowed = role === "admin" || role === "super_admin" || role === "manager";
+  if (!user || !allowed) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+
 // Phase 53c-fix · Feb-2026 — profit-report is the ONLY /admin route
 // managers may reach (they render the EBIT panel read-only, and get
 // the existing profit-report page in view-only mode). All other
@@ -856,11 +879,11 @@ export default function App() {
             {/* Phase 50.D — Job Margin Leaderboard (admin/super_admin) */}
             <Route path="admin/reports/job-margins" element={<AdminOnly><JobMarginLeaderboard /></AdminOnly>} />
             {/* G2 · Feb-2026 — Driver Activity timeline (admin/super_admin/manager). */}
-            <Route path="admin/reports/driver-activity" element={<AdminOnly><DriverActivityPage /></AdminOnly>} />
+            <Route path="admin/reports/driver-activity" element={<AdminOrManager><DriverActivityPage /></AdminOrManager>} />
             {/* MR0 · Feb-2026 — Public check-in moderation queue (admin/super_admin/manager). */}
-            <Route path="admin/moderation/checkins" element={<AdminOnly><ModerationCheckinsPage /></AdminOnly>} />
+            <Route path="admin/moderation/checkins" element={<AdminOrManager><ModerationCheckinsPage /></AdminOrManager>} />
             {/* Phase SEO-A · Feb-2026 — Free on-page SEO auditor (admin+/manager). */}
-            <Route path="admin/seo/auditor" element={<AdminOnly><SeoAuditorPage /></AdminOnly>} />
+            <Route path="admin/seo/auditor" element={<AdminOrManager><SeoAuditorPage /></AdminOrManager>} />
             <Route path="admin/marketing/aeo" element={<AdminOnly><AEOPage /></AdminOnly>} />
             <Route path="admin/reports/weekly-digest" element={<AdminOnly><WeeklyDigestPage /></AdminOnly>} />
             <Route path="admin/marketing/aeo/digest" element={<AdminOnly><AEODigestPage /></AdminOnly>} />
@@ -868,9 +891,9 @@ export default function App() {
             <Route path="admin/outreach/prospects" element={<AdminOnly><ProspectsKanbanPage /></AdminOnly>} />
             <Route path="admin/outreach/templates" element={<AdminOnly><OutreachTemplatesPage /></AdminOnly>} />
             {/* Phase SEO-C · Feb-2026 — Keyword ideation (admin+/manager). */}
-            <Route path="admin/seo/keywords" element={<AdminOnly><KeywordIdeatorPage /></AdminOnly>} />
+            <Route path="admin/seo/keywords" element={<AdminOrManager><KeywordIdeatorPage /></AdminOrManager>} />
             {/* Phase G4 · Feb-2026 — GPS per-user controls (admin+/manager). */}
-            <Route path="admin/settings/gps-users" element={<AdminOnly><GpsUsersPage /></AdminOnly>} />
+            <Route path="admin/settings/gps-users" element={<AdminOrManager><GpsUsersPage /></AdminOrManager>} />
             {/* Phase G5a · Feb-2026 — Geofences + crossings inbox (admin+/manager). */}
             <Route path="admin/gps/geofences" element={<AdminOnly><GeofencesPage /></AdminOnly>} />
             <Route path="admin/gps/crossings" element={<AdminOnly><CrossingsInbox /></AdminOnly>} />
@@ -879,13 +902,13 @@ export default function App() {
             {/* Phase G5d · Feb-2026 — Driver Scorecard / Leaderboard. */}
             <Route path="admin/gps/scorecard" element={<AdminOnly><DriverScorecardPage /></AdminOnly>} />
             {/* MR1+MR2 · Feb-2026 — Public widget embed preview + snippet. */}
-            <Route path="admin/moderation/widget-embed" element={<AdminOnly><WidgetEmbedPage /></AdminOnly>} />
+            <Route path="admin/moderation/widget-embed" element={<AdminOrManager><WidgetEmbedPage /></AdminOrManager>} />
             {/* MR3 · Feb-2026 — Public widget analytics (impressions/clicks/CTR). */}
             <Route path="admin/moderation/widget-analytics" element={<AdminOnly><WidgetAnalyticsPage /></AdminOnly>} />
             {/* Phase 50.A — Chemical Costs CRUD (admin/super_admin) */}
             <Route path="admin/settings/chemical-costs" element={<AdminOnly><ChemicalCosts /></AdminOnly>} />
             {/* Phase 51.I — Recurring Jobs (admin/super_admin) */}
-            <Route path="admin/recurring-jobs" element={<AdminOnly><RecurringJobs /></AdminOnly>} />
+            <Route path="admin/recurring-jobs" element={<AdminOrManager><RecurringJobs /></AdminOrManager>} />
             {/* Phase 51.K — CFO Reports (admin/super_admin) */}
             <Route path="admin/cfo/reports" element={<AdminOnly><CFOReports /></AdminOnly>} />
             <Route path="admin/finance/bills" element={<AdminOnly><VendorBills /></AdminOnly>} />
