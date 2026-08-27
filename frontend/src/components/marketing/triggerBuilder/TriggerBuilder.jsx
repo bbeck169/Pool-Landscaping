@@ -265,7 +265,7 @@ export function TriggerBuilder({
                 crews={crews}
                 onChange={(next) => handleConditionChange(i, next)}
                 onRemove={() => removeCondition(i)}
-                onReorder={moveCondition}
+                onReorder={trigger.conditions.length > 1 ? moveCondition : undefined}
                 autoSwitchedInfo={autoSwitchMap[i] || null}
                 testIdPrefix="trigger"
               />

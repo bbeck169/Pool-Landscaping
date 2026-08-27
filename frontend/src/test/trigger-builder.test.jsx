@@ -839,4 +839,44 @@ describe("Phase 3 polish", () => {
     addSpy.mockRestore();
     removeSpy.mockRestore();
   });
+
+  it("TriggerBuilder hides the drag handle when there is only 1 condition", async () => {
+    _defaultApiMocks();
+    render(
+      <TriggerBuilder
+        sequenceId="seq-1cond"
+        initialTrigger={{
+          logic: "AND",
+          conditions: [
+            { event: "job_completed", delay: { mode: "immediate" }, filters: {} },
+          ],
+        }}
+      />,
+    );
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalled());
+    // Row is rendered but the drag handle should NOT be — nothing to
+    // reorder against.
+    expect(screen.getByTestId("trigger-row-0")).toBeInTheDocument();
+    expect(screen.queryByTestId("trigger-row-0-drag-handle"))
+      .not.toBeInTheDocument();
+  });
+
+  it("TriggerBuilder shows drag handles on every row when 2+ conditions exist", async () => {
+    _defaultApiMocks();
+    render(
+      <TriggerBuilder
+        sequenceId="seq-2cond"
+        initialTrigger={{
+          logic: "AND",
+          conditions: [
+            { event: "job_completed", delay: { mode: "immediate" }, filters: {} },
+            { event: "invoice_paid",  delay: { mode: "immediate" }, filters: {} },
+          ],
+        }}
+      />,
+    );
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalled());
+    expect(screen.getByTestId("trigger-row-0-drag-handle")).toBeInTheDocument();
+    expect(screen.getByTestId("trigger-row-1-drag-handle")).toBeInTheDocument();
+  });
 });
