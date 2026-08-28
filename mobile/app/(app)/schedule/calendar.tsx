@@ -649,6 +649,7 @@ function GridView(props: any) {
   } = props;
   const focusISO = iso(focus);
   const isToday = focusISO === iso(new Date());
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   /** Next-job: first non-terminal job in route order. */
   const _TERMINAL = new Set(["completed", "canceled", "cancelled", "skipped", "could_not_service"]);
@@ -673,26 +674,21 @@ function GridView(props: any) {
         <Text style={gStyles.dayLabel} testID="grid-day-label">{dayLabel(focus)}</Text>
       </View>
 
-      {/* Bulk-action pills. Buttons stay visible but disable when nothing is checked.
-          Phase 22 · 2026-08-02 · Sub-item A — techs only get Complete;
-          Move/Delete/Assign/Rearrange are gated to isAdmin per user brief. */}
+      {/* Phase P18 — Consolidated bulk-action dropdown (was 3-row pill cluster).
+          Single "Actions" button → dropdown list with all 6 options. */}
       {canWrite ? (
-        <View style={gStyles.pillRow} testID="grid-bulk-pills">
-          {/* Feb-2026 · Select-all / Clear pills — admin+ only.
-              Renders BEFORE the action pills so the affordance is
-              reachable even when no cards are checked yet. */}
-          {isAdmin && onSelectAllInView ? (
-            <Pressable
-              onPress={onSelectAllInView}
-              disabled={!jobs.length}
-              style={[gStyles.pill, gStyles.pillPurple, !jobs.length && { opacity: 0.4 }]}
-              testID="grid-bulk-select-all"
-            >
-              <Ionicons name="checkbox-outline" size={13} color="#fff" />
-              <Text style={gStyles.pillText}>Select all ({jobs.length})</Text>
-            </Pressable>
-          ) : null}
-          {isAdmin && onClearSelection && checked.size > 0 ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs, marginBottom: spacing.sm }}>
+          <Pressable
+            onPress={() => setActionsOpen(true)}
+            style={[gStyles.pill, { backgroundColor: colors.brand }]}
+            testID="grid-actions-trigger"
+          >
+            <Ionicons name="ellipsis-horizontal" size={14} color="#fff" />
+            <Text style={gStyles.pillText}>
+              Actions{checked.size > 0 ? ` (${checked.size})` : ""}
+            </Text>
+          </Pressable>
+          {checked.size > 0 ? (
             <Pressable
               onPress={onClearSelection}
               style={[gStyles.pill, gStyles.pillGrey]}
@@ -702,58 +698,46 @@ function GridView(props: any) {
               <Text style={gStyles.pillText}>Clear</Text>
             </Pressable>
           ) : null}
-          <Pressable
-            onPress={onBulkComplete}
-            disabled={busy || checked.size === 0}
-            style={[gStyles.pill, gStyles.pillGreen, (busy || checked.size === 0) && { opacity: 0.4 }]}
-            testID="grid-bulk-complete"
+          <Modal
+            visible={actionsOpen}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setActionsOpen(false)}
           >
-            <Ionicons name="checkmark-circle" size={13} color="#fff" />
-            <Text style={gStyles.pillText}>Complete ({checked.size})</Text>
-          </Pressable>
-          {isAdmin ? (
-          <Pressable
-            onPress={onOpenMove}
-            disabled={busy || checked.size === 0}
-            style={[gStyles.pill, gStyles.pillBlue, (busy || checked.size === 0) && { opacity: 0.4 }]}
-            testID="grid-bulk-move"
-          >
-            <Ionicons name="calendar-outline" size={13} color="#fff" />
-            <Text style={gStyles.pillText}>Move ({checked.size})</Text>
-          </Pressable>
-          ) : null}
-          {isAdmin ? (
-          <Pressable
-            onPress={onBulkDelete}
-            disabled={busy || checked.size === 0}
-            style={[gStyles.pill, gStyles.pillRed, (busy || checked.size === 0) && { opacity: 0.4 }]}
-            testID="grid-bulk-delete"
-          >
-            <Ionicons name="trash-outline" size={13} color="#fff" />
-            <Text style={gStyles.pillText}>Delete ({checked.size})</Text>
-          </Pressable>
-          ) : null}
-          {isAdmin ? (
-          <Pressable
-            onPress={onOpenReassign}
-            disabled={busy || checked.size === 0}
-            style={[gStyles.pill, gStyles.pillOrange, (busy || checked.size === 0) && { opacity: 0.4 }]}
-            testID="grid-bulk-reassign"
-          >
-            <Ionicons name="people-outline" size={13} color="#fff" />
-            <Text style={gStyles.pillText}>Assign ({checked.size})</Text>
-          </Pressable>
-          ) : null}
-          {isAdmin ? (
-          <Pressable
-            onPress={rearrangeMode ? onSaveReorder : onToggleRearrange}
-            style={[gStyles.pill, rearrangeMode ? gStyles.pillGreen : gStyles.pillPurple]}
-            testID="grid-bulk-rearrange"
-          >
-            <Ionicons name={rearrangeMode ? "save-outline" : "reorder-three-outline"} size={13} color="#fff" />
-            <Text style={gStyles.pillText}>{rearrangeMode ? "Save order" : "Rearrange"}</Text>
-          </Pressable>
-          ) : null}
+            <Pressable
+              style={actMenuStyles.backdrop}
+              onPress={() => setActionsOpen(false)}
+            >
+              <View style={actMenuStyles.sheet}>
+                <Text style={actMenuStyles.title}>Bulk Actions</Text>
+                {([
+                  { key: "select-all", label: `Select all (${jobs.length})`, icon: "checkbox-outline" as const, color: "#7C3AED", onPress: onSelectAllInView, disabled: !jobs.length, adminOnly: true },
+                  { key: "complete", label: `Complete (${checked.size})`, icon: "checkmark-circle" as const, color: "#059669", onPress: onBulkComplete, disabled: busy || checked.size === 0, adminOnly: false },
+                  { key: "move", label: `Move (${checked.size})`, icon: "calendar-outline" as const, color: "#2563EB", onPress: onOpenMove, disabled: busy || checked.size === 0, adminOnly: true },
+                  { key: "delete", label: `Delete (${checked.size})`, icon: "trash-outline" as const, color: "#DC2626", onPress: onBulkDelete, disabled: busy || checked.size === 0, adminOnly: true },
+                  { key: "assign", label: `Assign (${checked.size})`, icon: "people-outline" as const, color: "#D97706", onPress: onOpenReassign, disabled: busy || checked.size === 0, adminOnly: true },
+                  { key: "rearrange", label: rearrangeMode ? "Save order" : "Rearrange", icon: (rearrangeMode ? "save-outline" : "reorder-three-outline") as const, color: rearrangeMode ? "#059669" : "#7C3AED", onPress: rearrangeMode ? onSaveReorder : onToggleRearrange, disabled: false, adminOnly: true },
+                ] as const).map((act) => {
+                  if (act.adminOnly && !isAdmin) return null;
+                  return (
+                    <Pressable
+                      key={act.key}
+                      onPress={() => { setActionsOpen(false); act.onPress?.(); }}
+                      disabled={act.disabled}
+                      style={[actMenuStyles.row, act.disabled && { opacity: 0.4 }]}
+                      testID={`grid-action-${act.key}`}
+                    >
+                      <View style={[actMenuStyles.dot, { backgroundColor: act.color }]} />
+                      <Ionicons name={act.icon} size={18} color={act.disabled ? colors.muted : colors.onSurface} />
+                      <Text style={[actMenuStyles.rowLabel, act.disabled && { color: colors.muted }]}>
+                        {act.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </Pressable>
+          </Modal>
         </View>
       ) : null}
 
@@ -1424,4 +1408,57 @@ const cStyles = StyleSheet.create({
   eventTitle: { fontFamily: font.bold, fontSize: fontSize.xs, lineHeight: 14 },
   eventCust: { fontFamily: font.regular, fontSize: 10, marginTop: 2 },
   eventBH: { fontFamily: font.semibold, fontSize: 10, marginTop: 2, opacity: 0.85 },
+});
+
+
+/* Phase P18 — Actions dropdown menu styles. */
+const actMenuStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing.xl,
+  },
+  sheet: {
+    width: "100%",
+    maxWidth: 320,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: 2,
+    ...Platform.select({
+      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 12 },
+      android: { elevation: 8 },
+      default: {},
+    }),
+  },
+  title: {
+    fontFamily: font.bold,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.xs,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radius.md,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  rowLabel: {
+    flex: 1,
+    fontFamily: font.medium,
+    fontSize: fontSize.base,
+    color: colors.onSurface,
+  },
 });

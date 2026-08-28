@@ -37,6 +37,7 @@ import RevenueByCategoryTile from "@/components/dashboard/RevenueByCategoryTile"
 import RevenueForecastTile from "@/components/dashboard/RevenueForecastTile";
 import IncomeByServiceCategoryTile from "@/components/dashboard/IncomeByServiceCategoryTile";
 import EbitTile from "@/components/dashboard/EbitTile";
+import GlobalSearchBar from "@/components/dashboard/GlobalSearchBar";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -447,6 +448,11 @@ export default function AdminDashboard() {
           Hi{firstName ? `, ${firstName}` : ""} — here&apos;s your business at a glance.
         </p>
       </header>
+
+      {/* Feb 2026 · Dashboard quick-find — grouped search across
+          customers / jobs / invoices / leads. Reuses the shared
+          /api/search endpoint (admin | super_admin | manager). */}
+      <GlobalSearchBar />
 
       {error ? (
         <div

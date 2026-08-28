@@ -755,3 +755,21 @@
   - Jest: 81 suites (76 pass / 5 pre-existing fail), 568 tests (557 pass / 11 pre-existing fail)
   - No changes to `backend/` or `frontend/`. No new deps. No external repos.
 - **Files modified**: `calendar.tsx` (fetchedRangeRef cache, FlatList virtualization, force-reload on mutations)
+
+
+## Iteration 36 — Phase P18: Consolidate bulk-action buttons into dropdown menu
+- **Commit**: f4bf293d (uncommitted changes on top)
+- **Date**: 2026-08-27
+- **Changes**:
+  - Replaced 3-row, 6-button bulk-action pill cluster with a single "Actions" button + Modal dropdown
+  - Dropdown lists all 6 actions vertically: Select all, Complete, Move, Delete, Assign, Rearrange
+  - Each action shows colored dot accent + count + disabled state when 0 selected
+  - Role gating preserved: admin-only actions hidden for techs (adminOnly flag), entire trigger gated behind canWrite
+  - "Clear" button remains inline outside dropdown for quick access when items are selected
+  - Dropdown closes on: action tap, backdrop press, Android back button (onRequestClose)
+  - Added `actMenuStyles` StyleSheet for the dropdown card, rows, and backdrop
+  - Updated `schedule-select-all.test.tsx` to validate new dropdown pattern (7 assertions)
+  - OOM fix from P17 fully intact: fetchedRangeRef, FlatList virtualization, ±14d window
+  - Jest: 82 suites (77 pass / 5 pre-existing fail), 576 tests (565 pass / 11 pre-existing fail)
+  - No changes to `backend/` or `frontend/`. No new deps. No external repos.
+- **Files modified**: `calendar.tsx` (replaced pill row with Actions dropdown), `schedule-select-all.test.tsx` (updated to match new pattern)

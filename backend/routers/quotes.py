@@ -92,40 +92,111 @@ async def _enforce_item_type_price_lock(tenant_id: str,
 # Snapshots are IMMUTABLE once written. On every write path we look
 # at each line and only fill the ``*_snapshot`` fields that are still
 # missing / None. The retail snapshot always mirrors the ``unit_price``
-# on the write (that's the price the customer sees on the invoice at
-# this exact moment); wholesale + labor come from the linked pricebook
+# ─── PB1 snapshot helper ────────────────────────────────────────────
+# Rule: retail_price_snapshot is copied from ``unit_price`` at line
+# write-time (that's the price the customer sees on the invoice at
+# THIS exact moment); wholesale + labor come from the linked pricebook
 # ``item_id`` if present, defaulting to 0.
 #
+# Feb 2026 · Bug fix — retail snapshot is truly immutable once set,
+# but wholesale + labor cost snapshots that are currently 0 or None
+# are re-hydrated from the pricebook whenever we touch the line.
+# Rationale: a 0 cost snapshot is indistinguishable from "never
+# populated" and blocks the Internal Margin / EBIT / Profit report
+# panels from working.  The pricebook is the source of truth for
+# cost values; the invoice is the source of truth for the price the
+# customer paid.
+#
+# Same rev also adds a NAME fallback for lines missing ``item_id``
+# (manually-typed line matches an existing pricebook entry by name,
+# same tenant) and enforces tenant scoping on the pricebook lookup.
+#
 # This function mutates each line dict in place and returns the list.
-async def _stamp_line_snapshots(items: List[dict]) -> List[dict]:
+async def _stamp_line_snapshots(items: List[dict],
+                                    tenant_id: Optional[str] = None) -> List[dict]:
+    def _to_float_or_zero(v: Any) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
     # Batch-load only the items we actually reference to keep this O(N).
     ids = list({li.get("item_id") for li in items if li.get("item_id")})
     item_master: dict = {}
     if ids:
+        _q: Dict[str, Any] = {"id": {"$in": ids}}
+        if tenant_id:
+            _q["tenant_id"] = tenant_id
         rows = await db.items.find(
-            {"id": {"$in": ids}},
-            {"_id": 0, "id": 1, "wholesale_price": 1,
+            _q,
+            {"_id": 0, "id": 1, "name": 1, "wholesale_price": 1,
               "labor_cost_default": 1, "unit_price": 1},
         ).to_list(len(ids))
         item_master = {r["id"]: r for r in rows}
+
+    # Feb 2026 · Name-fallback — for lines the operator manually
+    # typed (no ``item_id``) but whose description (or legacy
+    # ``name``) matches an existing pricebook entry in the same
+    # tenant, hydrate item_id + costs.  ``LineItem.description`` is
+    # the canonical customer-visible text; ``name`` is only a
+    # transitional/writer-set field.
+    def _line_text(li):
+        return (li.get("description") or li.get("name") or "").strip()
+
+    names_needing_resolve = list({
+        _line_text(li)
+        for li in items
+        if not li.get("item_id") and _line_text(li)
+    })
+    name_master: dict = {}
+    if names_needing_resolve and tenant_id:
+        rx = [{"tenant_id": tenant_id,
+                 "name": {"$regex": f"^{re.escape(n)}$",
+                            "$options": "i"}}
+               for n in names_needing_resolve]
+        rows = await db.items.find(
+            {"$or": rx},
+            {"_id": 0, "id": 1, "name": 1, "wholesale_price": 1,
+              "labor_cost_default": 1, "unit_price": 1},
+        ).to_list(len(names_needing_resolve))
+        for r in rows:
+            name_master[(r.get("name") or "").strip().lower()] = r
+
     for li in items:
+        # retail_price_snapshot — write-once from unit_price.
         if li.get("retail_price_snapshot") is None:
-            try:
-                li["retail_price_snapshot"] = float(li.get("unit_price") or 0)
-            except (TypeError, ValueError):
-                li["retail_price_snapshot"] = 0.0
-        if li.get("wholesale_price_snapshot") is None:
-            master = item_master.get(li.get("item_id") or "") or {}
-            try:
-                li["wholesale_price_snapshot"] = float(master.get("wholesale_price") or 0)
-            except (TypeError, ValueError):
-                li["wholesale_price_snapshot"] = 0.0
-        if li.get("labor_cost_snapshot") is None:
-            master = item_master.get(li.get("item_id") or "") or {}
-            try:
-                li["labor_cost_snapshot"] = float(master.get("labor_cost_default") or 0)
-            except (TypeError, ValueError):
-                li["labor_cost_snapshot"] = 0.0
+            li["retail_price_snapshot"] = _to_float_or_zero(li.get("unit_price"))
+
+        # Resolve pricebook master for THIS line.
+        master = item_master.get(li.get("item_id") or "") or {}
+        if not master:
+            nm = _line_text(li).lower()
+            master = name_master.get(nm) or {}
+            # Backfill item_id on the line when we find a name match
+            # so subsequent updates take the fast path.
+            if master and master.get("id"):
+                li["item_id"] = master["id"]
+
+        # wholesale_price_snapshot — hydrate when None OR 0, given
+        # the pricebook has a non-zero value.  Never overwrite a
+        # non-zero snapshot (immutable once meaningfully set).
+        current_ws = li.get("wholesale_price_snapshot")
+        needs_ws = (current_ws is None or _to_float_or_zero(current_ws) == 0.0)
+        if needs_ws:
+            pb_ws = _to_float_or_zero(master.get("wholesale_price"))
+            if pb_ws > 0 or current_ws is None:
+                # Only write when we actually have a real value OR
+                # the field was outright missing (default to 0).
+                li["wholesale_price_snapshot"] = pb_ws
+
+        # labor_cost_snapshot — same rules as wholesale.
+        current_lc = li.get("labor_cost_snapshot")
+        needs_lc = (current_lc is None or _to_float_or_zero(current_lc) == 0.0)
+        if needs_lc:
+            pb_lc = _to_float_or_zero(master.get("labor_cost_default"))
+            if pb_lc > 0 or current_lc is None:
+                li["labor_cost_snapshot"] = pb_lc
+
     return items
 
 
@@ -264,7 +335,7 @@ async def create_quote(body: QuoteIn,
         from routers.income_categories import validate_line_item_categories
         await validate_line_item_categories(tenant["id"], items)
     # PB1 · Feb-2026 · Stamp immutable margin snapshots on every line.
-    await _stamp_line_snapshots(items)
+    await _stamp_line_snapshots(items, tenant_id=tenant["id"])
     subtotal, tax, total = compute_totals(items, body.tax_rate)
     due_date = body.due_date
     if body.doc_type == "invoice" and not due_date:
@@ -409,22 +480,36 @@ async def update_quote(qid: str, body: QuoteUpdate,
         # never accepts an update to them.
         existing_lines = existing.get("line_items") or []
         existing_by_id = {li.get("id"): li for li in existing_lines if li.get("id")}
-        _SNAPSHOT_KEYS = ("retail_price_snapshot",
-                            "wholesale_price_snapshot",
-                            "labor_cost_snapshot")
+        # Feb 2026 · Bug fix — retail_price_snapshot IS truly immutable
+        # (that's the price the customer saw), but cost snapshots
+        # (wholesale + labor) that are 0/None are considered "never
+        # populated" and are re-hydrated below by _stamp_line_snapshots.
+        # Only preserve retail here.
+        _IMMUTABLE_KEYS = ("retail_price_snapshot",)
+        # Preserve non-zero cost snapshots (real historical values) but
+        # allow 0/None to be re-hydrated.
+        _COST_KEYS = ("wholesale_price_snapshot", "labor_cost_snapshot")
         for idx, new_li in enumerate(upd["line_items"]):
             match = existing_by_id.get(new_li.get("id"))
             if not match and idx < len(existing_lines):
                 match = existing_lines[idx]
             if match:
-                for k in _SNAPSHOT_KEYS:
+                for k in _IMMUTABLE_KEYS:
                     if match.get(k) is not None:
-                        # Unconditional overwrite of incoming payload —
-                        # snapshots are immutable once set.
+                        new_li[k] = match[k]
+                for k in _COST_KEYS:
+                    _v = match.get(k)
+                    try:
+                        _f = float(_v) if _v is not None else 0.0
+                    except (TypeError, ValueError):
+                        _f = 0.0
+                    if _v is not None and _f > 0:
+                        # Real historical cost — preserve; snapshots
+                        # are immutable ONCE MEANINGFULLY SET.
                         new_li[k] = match[k]
         # Feb-2026 · Pricebook item_type enforcement.
         await _enforce_item_type_price_lock(tenant["id"], upd["line_items"])
-        await _stamp_line_snapshots(upd["line_items"])
+        await _stamp_line_snapshots(upd["line_items"], tenant_id=tenant["id"])
     if "line_items" in upd or "tax_rate" in upd:
         items = upd.get("line_items", existing.get("line_items", []))
         tax_rate = float(upd.get("tax_rate", existing.get("tax_rate", 0)) or 0)

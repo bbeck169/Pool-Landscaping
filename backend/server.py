@@ -362,6 +362,12 @@ api_router.include_router(_portal_media.router)
 # Feb 2026 — Admin dashboard revenue tiles (category + forecast).
 from routers import dashboard_revenue as _dashboard_revenue  # noqa: E402
 api_router.include_router(_dashboard_revenue.router)
+
+# Feb 2026 · Dashboard global-search bar — quick-find across
+# customers / jobs / invoices / leads. Tenant-scoped, admin/manager
+# gated. New file: routers/global_search.py.
+from routers import global_search as _global_search  # noqa: E402
+api_router.include_router(_global_search.router)
 # Feb 2026 — Income category picklist + enforcement.
 from routers import income_categories as _income_categories  # noqa: E402
 api_router.include_router(_income_categories.router)
@@ -2240,6 +2246,37 @@ async def startup():
             )
     except Exception as e:
         logger.warning(f"customer_merge_boot cleanup crashed: {e}")
+
+    # Feb 2026 · Invoice/Quote line cost snapshot backfill. Rehydrates
+    # ``wholesale_price_snapshot`` + ``labor_cost_snapshot`` on
+    # existing line items from the tenant pricebook when they are
+    # 0/null but the pricebook carries a real cost. Idempotent via
+    # sentinel ``feb2026_invoice_line_cost_backfill_v1``. Also links
+    # lines missing ``item_id`` by exact name match against the
+    # pricebook. Fixes the Internal Margin / EBIT / Profit report
+    # panels reading $0 costs on legacy invoices.
+    try:
+        from services.migrations.invoice_line_cost_backfill import (
+            run_invoice_line_cost_backfill,
+        )
+        _lc_boot = await run_invoice_line_cost_backfill()
+        if _lc_boot.get("already_ran"):
+            logger.info(
+                f"[invoice_line_cost_backfill] sentinel present · ran_at="
+                f"{_lc_boot.get('ran_at')} · skipping",
+            )
+        else:
+            _s = _lc_boot.get("summary") or {}
+            logger.info(
+                f"[invoice_line_cost_backfill] tenants={_s.get('tenants_scanned', 0)} "
+                f"docs_scanned={_s.get('docs_scanned', 0)} "
+                f"docs_updated={_s.get('docs_updated', 0)} "
+                f"ws_hydrated={_s.get('lines_hydrated_ws', 0)} "
+                f"lc_hydrated={_s.get('lines_hydrated_lc', 0)} "
+                f"linked_by_name={_s.get('lines_linked_by_name', 0)}",
+            )
+    except Exception as e:
+        logger.warning(f"invoice_line_cost_backfill crashed: {e}")
 
     # Feb-2026 M2 fix — idempotent single-brace → double-brace migration
     # on stored campaign templates. The render engine now accepts both

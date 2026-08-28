@@ -213,6 +213,7 @@ function Routes() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const [order, setOrder] = useState(null);
+  // eslint-disable-next-line no-unused-vars, unused-imports/no-unused-vars
   const [routeMeta, setRouteMeta] = useState({ tech_name: null, tech_color_hex: null });
   const [toast, setToast] = useState(null);
   const load = async () => {
@@ -1987,15 +1988,41 @@ export function PriceBook() {
   // (no ``?supplier_id=`` query-param needed on ``/items``). If we ever
   // switch to server-side, replace ``filteredRows`` with a fetch.
   const [supplierFilter, setSupplierFilter] = useState("all");
+  // Feb 2026 · Client-side search across name / category / unit.
+  // ``/items`` returns the full list up to 1000 rows (unpaginated
+  // upstream), so filtering in the browser stays snappy on typical
+  // tenants (< 500 items) and avoids an extra roundtrip per
+  // keystroke. Debounced ~250ms so React doesn't repaint the entire
+  // grid mid-typing.
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
   const filteredRows = useMemo(() => {
     const src = rows || [];
-    if (supplierFilter === "all") return src;
-    if (supplierFilter === "manual")
-      return src.filter((r) => !r.supplier_id);
-    // Filter by supplier slug — items have supplier_slug pinned at
-    // sync time via ``services.suppliers.sync.apply_products``.
-    return src.filter((r) => (r.supplier_slug || "") === supplierFilter);
-  }, [rows, supplierFilter]);
+    let out = src;
+    if (supplierFilter === "manual") {
+      out = out.filter((r) => !r.supplier_id);
+    } else if (supplierFilter !== "all") {
+      // Filter by supplier slug — items have supplier_slug pinned at
+      // sync time via ``services.suppliers.sync.apply_products``.
+      out = out.filter((r) => (r.supplier_slug || "") === supplierFilter);
+    }
+    if (debouncedSearch) {
+      const needle = debouncedSearch.toLowerCase();
+      out = out.filter((r) => {
+        const hay = [
+          r.name || "",
+          r.category || "",
+          r.unit || "",
+        ].map((s) => String(s).toLowerCase());
+        return hay.some((f) => f.includes(needle));
+      });
+    }
+    return out;
+  }, [rows, supplierFilter, debouncedSearch]);
   // PB1 · Feb-2026 — internal cost columns visible only to admins.
   // Uses ``useAuth`` from the app context to gate the two new columns
   // + the two new form fields. Non-admins still see the rest of the
@@ -2278,10 +2305,55 @@ export function PriceBook() {
                 </option>
               ))}
           </select>
+          {/* Feb 2026 · Pricebook client-side search — matches on
+              name / category / unit, stacks with the supplier
+              filter above. */}
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name, category, unit..."
+            aria-label="Search pricebook items"
+            data-testid="pricebook-search-input"
+            className="ml-2 px-2 py-1 rounded-md text-xs"
+            style={{
+              border: `1px solid ${colors.border}`,
+              backgroundColor: colors.surface,
+              minWidth: 220,
+            }}
+          />
         </div>
         <Button onClick={() => setOpen(true)} testid="pb-new"><Plus size={14} /> Add new item</Button>
       </div>
       {rows === null ? <Skeleton style={{ height: 160 }} /> :
+       (debouncedSearch && filteredRows.length === 0) ? (
+         /* Feb 2026 · Empty state when the search yields no matches. */
+         <div
+           className="rounded-xl p-6 text-center"
+           style={{
+             backgroundColor: colors.surfaceTertiary,
+             border: `1px dashed ${colors.border}`,
+           }}
+           data-testid="pricebook-search-empty"
+         >
+           <div className="text-sm" style={{ color: colors.onSurface }}>
+             No pricebook items match &ldquo;{debouncedSearch}&rdquo;
+           </div>
+           <button
+             type="button"
+             onClick={() => setSearch("")}
+             className="mt-3 inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold"
+             style={{
+               backgroundColor: colors.surface,
+               border: `1px solid ${colors.border}`,
+               color: colors.onSurface,
+             }}
+             data-testid="pricebook-search-clear"
+           >
+             Clear search
+           </button>
+         </div>
+       ) :
        <ul className="divide-y" style={{ borderColor: colors.divider }}>
          {filteredRows.map((r) => (
            <li key={r.id} className="py-2 flex items-center gap-3"

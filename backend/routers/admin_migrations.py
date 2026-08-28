@@ -805,3 +805,41 @@ async def force_auto_merge_sweep(
     )
     return report
 
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Feb 2026 · Invoice line cost backfill · admin force-run endpoint.
+# The backfill also runs at server boot (sentinel-guarded); this
+# endpoint lets super_admins re-run it on demand — useful after
+# importing a new pricebook or after historic invoices had their
+# costs corrected upstream.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/invoice-line-cost-backfill",
+    operation_id="admin.migrations.invoice_line_cost_backfill",
+)
+async def force_invoice_line_cost_backfill(
+    force: bool = False,
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Idempotent re-run of the invoice/quote line cost snapshot
+    backfill.  ``force=true`` bypasses the sentinel; the default
+    respects it (so a call with no query param on an already-run
+    system is a no-op)."""
+    _require_super_admin(user)
+    from services.migrations.invoice_line_cost_backfill import (
+        run_invoice_line_cost_backfill,
+    )
+    report = await run_invoice_line_cost_backfill(force=bool(force))
+    logger.info(
+        "[invoice-line-cost-backfill-force] user=%s force=%s summary=%s",
+        user.get("id"), force,
+        {k: (report.get("summary") or {}).get(k, 0) for k in (
+            "tenants_scanned", "docs_scanned", "docs_updated",
+            "lines_hydrated_ws", "lines_hydrated_lc",
+            "lines_linked_by_name",
+        )},
+    )
+    return report
+
