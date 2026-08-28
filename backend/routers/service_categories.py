@@ -43,7 +43,34 @@ _DEFAULTS = [
     "Pool Cleaning",
     "Pool Repair",
     "Pool Maintenance",
+    # Feb-2026 · Backlog #1 Part 2 — canonical service category for
+    # pricebook chemicals. Auto-linked by the write-path hook in
+    # ``routers/items.py`` and the ``service_category_chemicals_v1``
+    # boot migration when a chemical pricebook item lacks
+    # ``service_category_id``. Kept lowercase-insensitive against user-
+    # defined equivalents (e.g. "Pool Chemicals") in ``ensure_defaults``.
+    "Chemicals",
 ]
+
+
+# Feb-2026 · Backlog #1 Part 2 — resolver used by the pricebook
+# write hook + the boot migration to find the tenant's "Chemicals"
+# service category (or a user-defined case-insensitive equivalent).
+# Returns ``None`` when no matching row exists — callers decide
+# whether to seed defaults first (``ensure_defaults_for_tenant``
+# handles that).
+async def resolve_chemicals_service_category_id(
+    tenant_id: str,
+) -> Optional[str]:
+    if not tenant_id:
+        return None
+    row = await db.service_categories.find_one(
+        {"tenant_id": tenant_id,
+          "is_archived": False,
+          "name": {"$regex": r"^\s*chemical", "$options": "i"}},
+        {"_id": 0, "id": 1, "name": 1},
+    )
+    return (row or {}).get("id")
 
 
 def _require_admin(user: dict) -> None:

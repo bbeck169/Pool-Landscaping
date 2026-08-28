@@ -1,3 +1,93 @@
+## Backlog Item #1 · Feb-2026 — Revenue-by-Category UUID fix + Chemicals Service Category enforcement
+
+Two boot-time + admin-callable migrations plus tile handler hardening
+so no raw UUID ever surfaces on the Revenue-by-Category / Income-by-
+Service-Category tiles, and every chemical pricebook item is linked
+to a canonical "Chemicals" service_category.
+
+**Backend deliverables**
+- `services/migrations/service_category_chemicals.py` (T2) — idempotent,
+  sentinel-guarded (`service_category_chemicals_v1`). Per onboarded
+  tenant: ensures a case-insensitive `^chemical` service_category row
+  exists (auto-seeds "Chemicals" with a hashed color when absent) and
+  backfills any `items.category ~ ^chemical` row missing
+  `service_category_id`. Live run on aquaterra tenant:
+  `scanned_tenants=1, created_categories=1, linked_items=2` (Chlorine
+  Tablets, Pool Salt). Idempotent replay verified via `force=true`
+  → `already_linked=2, linked_items=0`.
+- `services/migrations/revenue_line_items_uuid_category.py` (T1) —
+  idempotent, sentinel-guarded
+  (`revenue_line_items_uuid_category_v1`). Walks every invoice's
+  `line_items[]`; for each entry whose `category` is UUID-shaped,
+  resolves via `income_categories` map: hit → rewrite to name +
+  stamp `income_category_id`; miss → clear category to `""` (falls
+  into Uncategorized). Live run: `scanned=0, rewritten_to_name=0,
+  cleared_orphan=0` — DB is clean of UUID-shape categories.
+- `routers/dashboard_revenue.py::revenue_by_category` — added
+  runtime `_UUID_RE` guard, income_categories id→name map,
+  additive response shape (`category_id`, `category_name`,
+  `is_orphan`, top-level `orphan_ids: [...]`).
+- `routers/items.py` — pricebook create/update auto-stamps the
+  tenant's Chemicals service_category id when `category` matches
+  `^chemical` and no explicit `service_category_id` is supplied.
+- `routers/admin_migrations.py` — two new super_admin endpoints
+  (`POST /admin/migrations/service-category-chemicals?force=1` +
+  `POST /admin/migrations/revenue-line-items-uuid-category?force=1`).
+- `server.py` — both migrations wired at boot in the correct order
+  (chemicals first, so income_categories is fully seeded before
+  the UUID→name resolver runs).
+
+**Frontend deliverables**
+- `components/dashboard/RevenueByCategoryTile.jsx` — exports the
+  `displayCategoryLabel(item)` helper (UUID-shape → "Uncategorized"
+  coercion) as defence-in-depth. Reads `category_name` with
+  `category` legacy fallback.
+
+**Empirical proof (T3)**
+- Orphan UUID `2ad6d566-c6d5-467c-b608-8acb6c6fb6c9`: 0 hits across
+  every collection scanned (`id`, `income_category_id`,
+  `service_category_id`, `category`, `line_items.category`,
+  `line_items.income_category_id`).
+- Live `GET /admin/dashboard/revenue-by-category` returns
+  `items=[{category:"Uncategorized", is_orphan:false, ...}]`,
+  `orphan_ids:[]`. Zero UUIDs in the payload.
+- Live `GET /admin/dashboard/income-by-service-category` returns
+  `items=[{category:"Uncategorized", ...}]`. Zero UUIDs.
+
+**Test coverage**
+- Backend pytest (all Backlog-#1-relevant suites): 25 passed, 13
+  skipped (skips are gated conftest fixtures, not Backlog-#1
+  regressions). 1 pre-existing failure
+  (`test_income_by_service_category_admin_success`) reproduces at
+  `HEAD` without our changes — unrelated pre-existing seed drift
+  (`status:"paid"` seed vs. handler's `payment_status:"paid"`
+  filter from an earlier "Dashboard consistency ship"). NOT in
+  Backlog-#1 scope; flagged for a future test-drift cleanup.
+- Frontend vitest (14 tests across `dashboard-revenue-labels`,
+  `revenue-tiles`, `feb2026-revenue-chart-current-month`):
+  14 passed, 0 failed.
+
+**Audit notes (transparency)**
+- `displayCategoryLabel` is exported for defence-in-depth but the
+  tile still renders `it.category` directly in the legend +
+  tooltip. Since the backend now guarantees `category`/`category_name`
+  is a display name (never a UUID), this is unused belt-and-
+  suspenders. Wiring the helper into the render path is a follow-
+  up polish item; not blocking because the backend guarantee is
+  the source of truth.
+- The pre-existing pytest failure noted above is documented but
+  not repaired here — repair is a discrete seed-drift ticket.
+
+**Sentinels persisted**
+```
+service_category_chemicals_v1        (completed_at: 2026-08-28T19:07:30Z)
+revenue_line_items_uuid_category_v1  (completed_at: 2026-08-28T19:07:30Z)
+```
+
+---
+
+
+
 ## Follow-up bundle · Feb-2026 — Items 5, 2, 4, 3, 1 (progressive delivery)
 
 Five follow-ups to the Task A + B ship, delivered in the user's

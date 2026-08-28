@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import colorsys
 import hashlib
+import re
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -32,6 +33,17 @@ from utils import get_current_user
 router = APIRouter()
 
 _UNCATEGORISED = "Uncategorized"
+
+# Feb-2026 · Backlog #1 Part 1 — RFC-4122 UUID-shape guard. Legacy
+# ``line_items[].category`` values sometimes hold an income_categories
+# id (instead of the display name); the tile handler resolves id→name
+# via a per-tenant map and, when unresolved, coerces to the
+# ``Uncategorized`` bucket with ``is_orphan=True`` so an operator can
+# spot leftover legacy data at a glance.
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 
 def _require_admin(user: dict) -> None:
@@ -119,6 +131,22 @@ async def revenue_by_category(
         if cat and row.get("id"):
             item_id_to_category[row["id"]] = cat
 
+    # Feb-2026 · Backlog #1 Part 1 — income_categories id → name map.
+    # Line items sometimes carry a raw id in ``category`` (legacy
+    # write path) or explicitly in ``income_category_id`` (newer
+    # writes). Either way the tile must render the human-readable
+    # name; unresolved ids collapse into an orphan-flagged
+    # Uncategorized bucket.
+    income_cat_by_id: Dict[str, str] = {}
+    async for row in db.income_categories.find(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "name": 1, "is_archived": 1},
+    ):
+        rid = row.get("id")
+        name = (row.get("name") or "").strip()
+        if rid and name:
+            income_cat_by_id[rid] = name
+
     # Query: invoices in this tenant, dated inside the range. Match both
     # legacy ``created_at`` (which most seed data uses) and modern
     # ``issue_date`` / ``invoice_date``.  Docs are strings ISO-sortable.
@@ -151,6 +179,11 @@ async def revenue_by_category(
     })
 
     totals: Dict[str, Dict[str, Any]] = {}
+    # Feb-2026 · Backlog #1 Part 1 — orphan tracker. Buckets whose
+    # keys are UUID-shaped strings that failed id→name resolution
+    # get flagged so the tile response carries ``is_orphan=True``.
+    orphan_flag: Dict[str, bool] = {}
+    orphan_ids_seen: set = set()
     currency = "USD"
     async for inv in cur:
         if inv.get("currency"):
@@ -178,14 +211,41 @@ async def revenue_by_category(
                 if not iid or iid not in allowed_item_ids:
                     continue
             line_matched_any = True
-            # Category resolution order:
-            #   1. inline ``line_item.category``
-            #   2. source pricebook item's ``category`` via item_id
-            #   3. ``Uncategorized`` bucket (visibility over silence)
-            inline_cat = (li.get("category") or "").strip()
-            if inline_cat:
-                cat = inline_cat
-            else:
+            # Category resolution order (Feb-2026 · Backlog #1 Part 1
+            # — extended to resolve income_category id → name):
+            #   1. ``line_item.income_category_id`` → name (canonical
+            #      new write path; wins even when ``category`` is
+            #      also set, because the id lookup is authoritative).
+            #   2. inline ``line_item.category`` — if the value is
+            #      UUID-shaped, treat as an id and resolve; if it
+            #      resolves, use the name; if it doesn't, coerce to
+            #      Uncategorized + flag orphan. Non-UUID strings pass
+            #      through verbatim (existing behaviour).
+            #   3. source pricebook item's ``category`` via item_id.
+            #   4. ``Uncategorized`` (visibility over silence).
+            cat: Optional[str] = None
+            hit_orphan_id = False
+            ic_id = (li.get("income_category_id") or "").strip()
+            if ic_id:
+                resolved = income_cat_by_id.get(ic_id)
+                if resolved:
+                    cat = resolved
+                else:
+                    hit_orphan_id = True
+                    orphan_ids_seen.add(ic_id)
+            if cat is None:
+                inline_cat = (li.get("category") or "").strip()
+                if inline_cat:
+                    if _UUID_RE.match(inline_cat):
+                        resolved = income_cat_by_id.get(inline_cat)
+                        if resolved:
+                            cat = resolved
+                        else:
+                            hit_orphan_id = True
+                            orphan_ids_seen.add(inline_cat)
+                    else:
+                        cat = inline_cat
+            if cat is None:
                 pb_cat = item_id_to_category.get(li.get("item_id"))
                 cat = pb_cat or _UNCATEGORISED
             amt = (float(li.get("quantity") or 0)
@@ -194,6 +254,8 @@ async def revenue_by_category(
             bucket = totals.setdefault(cat, {"amount": 0.0, "count": 0})
             bucket["amount"] += amt
             bucket["count"] += 1
+            if hit_orphan_id and cat == _UNCATEGORISED:
+                orphan_flag[_UNCATEGORISED] = True
 
         # Priority 6 fallback — invoice with no matched lines (or
         # all-zero priced lines) is still real revenue. Charge the
@@ -219,6 +281,13 @@ async def revenue_by_category(
 
     items_out: List[Dict[str, Any]] = []
     grand_total = 0.0
+    # Reverse the id-map so we can populate ``category_id`` when the
+    # bucket key IS a known income_categories name.
+    name_to_id: Dict[str, str] = {}
+    for _cid, _cname in income_cat_by_id.items():
+        # Prefer the first-seen id per name (case-insensitive collision
+        # is rare; deterministic order comes from Mongo cursor).
+        name_to_id.setdefault(_cname.lower(), _cid)
     for cat, b in sorted(totals.items(), key=lambda kv: kv[1]["amount"], reverse=True):
         # Feb-2026 · Priority 6 — surface the fallback bucket with
         # a distinct neutral grey (matches the sibling
@@ -226,11 +295,24 @@ async def revenue_by_category(
         # uncategorized revenue at a glance without hunting
         # through the legend.
         color = "#94A3B8" if cat == _UNCATEGORISED else _color_for(cat)
+        # Feb-2026 · Backlog #1 Part 1 — additive response shape:
+        # ``category_id`` (resolved when the bucket name maps back to
+        # a live income_categories row), ``category_name`` (the
+        # display label; NEVER a UUID), ``is_orphan`` (True iff this
+        # bucket was created by consolidating unresolved-UUID line
+        # items). FE reads ``category_name`` first with ``category``
+        # as backward-compat fallback.
+        cat_id: Optional[str] = None
+        if cat != _UNCATEGORISED:
+            cat_id = name_to_id.get(cat.lower())
         items_out.append({
-            "category": cat,
-            "amount": round(b["amount"], 2),
-            "count": b["count"],
-            "color": color,
+            "category":      cat,                       # legacy alias
+            "category_id":   cat_id,
+            "category_name": cat,
+            "amount":        round(b["amount"], 2),
+            "count":         b["count"],
+            "color":         color,
+            "is_orphan":     bool(orphan_flag.get(cat, False)),
         })
         grand_total += b["amount"]
 
@@ -239,6 +321,11 @@ async def revenue_by_category(
         "total": round(grand_total, 2),
         "currency": currency,
         "range": {"start": s_iso, "end": e_iso},
+        # Feb-2026 · Backlog #1 Part 1 — surfaces the set of orphan
+        # ids we consolidated into Uncategorized. Consumed by the
+        # future "you have N orphan-category line items, reassign?"
+        # CTA (this phase adds the field only; no CTA yet).
+        "orphan_ids": sorted(orphan_ids_seen),
     }
 
 

@@ -4,12 +4,36 @@
  * Uses recharts PieChart with a hover tooltip + center total.
  * The API caller passes { start, end } as the ``range`` prop; the tile
  * refetches whenever the range changes.
+ *
+ * Feb-2026 · Backlog #1 Part 1 · Rendering contract:
+ *   * API returns ``{category_id, category_name, amount, count, color,
+ *     is_orphan}`` per item — the tile reads ``category_name`` first
+ *     and falls back to ``category`` for backward compatibility.
+ *   * Defense-in-depth: any label matching a UUID shape (in case a
+ *     legacy write path bypasses the API guard) is coerced to
+ *     ``"Uncategorized"`` before render — the tile MUST NEVER display
+ *     a raw id string.
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { colors, money } from "@/theme";
 import { api } from "@/api";
 import { Skeleton } from "@/components/ui-kit";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Feb-2026 · Backlog #1 Part 1 — never render a UUID as a category
+// label. Prefers ``category_name``, falls back to ``category``,
+// coerces anything UUID-shaped to ``"Uncategorized"``. Kept as a
+// pure helper so the Vitest suite can lock the contract without
+// mounting the full tile.
+export function displayCategoryLabel(item) {
+  const raw = (item?.category_name || item?.category || "").trim();
+  if (!raw) return "Uncategorized";
+  if (UUID_RE.test(raw)) return "Uncategorized";
+  return raw;
+}
 
 function pct(part, total) {
   if (!total) return "0%";

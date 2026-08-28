@@ -1013,3 +1013,78 @@ async def backfill_service_reports_water_bodies(
         user.get("id"), tenant.get("id"), force, report,
     )
     return report
+
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/service-category-chemicals
+# Feb-2026 · Backlog #1 Part 2 — super_admin trigger for the
+# "Chemicals" service-category enforcement backfill. Also runs on
+# every boot (see ``server.py``); this endpoint lets ops force a
+# re-run after adding new chemical pricebook items or after fixing a
+# tenant's service_categories collection.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/service-category-chemicals",
+    operation_id="admin.migrations.service_category_chemicals",
+)
+async def backfill_service_category_chemicals(
+    force: bool = Query(
+        False,
+        description=(
+            "When true, bypasses the ``db.migrations`` sentinel and "
+            "re-runs the backfill. Per-tenant + per-item guards still "
+            "prevent double-linking."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_super_admin(user)
+    from services.migrations.service_category_chemicals import (
+        run_service_category_chemicals_migration,
+    )
+    report = await run_service_category_chemicals_migration(force=force)
+    logger.info(
+        "[service-category-chemicals-migration] user=%s "
+        "caller_tenant=%s force=%s report=%s",
+        user.get("id"), tenant.get("id"), force, report,
+    )
+    return report
+
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/revenue-line-items-uuid-category
+# Feb-2026 · Backlog #1 Tightening T1 — super_admin trigger for the
+# historical line_items[].category UUID backfill. Also runs on every
+# boot (see ``server.py``); this endpoint lets ops force a re-run
+# after a bulk restore or after fixing an income_categories rename.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/revenue-line-items-uuid-category",
+    operation_id="admin.migrations.revenue_line_items_uuid_category",
+)
+async def backfill_revenue_line_items_uuid_category(
+    force: bool = Query(
+        False,
+        description=(
+            "When true, bypasses the ``db.migrations`` sentinel and "
+            "re-runs the backfill. Line items already containing a "
+            "non-UUID ``category`` string are skipped by the per-line "
+            "filter."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_super_admin(user)
+    from services.migrations.revenue_line_items_uuid_category import (
+        run_revenue_line_items_uuid_category_migration,
+    )
+    report = await run_revenue_line_items_uuid_category_migration(force=force)
+    logger.info(
+        "[revenue-line-items-uuid-category-migration] user=%s "
+        "caller_tenant=%s force=%s report=%s",
+        user.get("id"), tenant.get("id"), force, report,
+    )
+    return report
+

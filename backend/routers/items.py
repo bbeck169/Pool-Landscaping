@@ -53,8 +53,20 @@ async def create_item(body: ItemIn, user: dict = Depends(require_admin)):
             else:
                 doc[f] = None
     # Feb-2026 · Service category enforcement on pricebook write.
-    from routers.service_categories import validate_service_category
+    from routers.service_categories import (
+        validate_service_category,
+        resolve_chemicals_service_category_id,
+    )
     tenant_id = user.get("tenant_id") or ""
+    # Feb-2026 · Backlog #1 Part 2 — auto-stamp "Chemicals" service
+    # category on pricebook items whose Taxonomy-A type is chemical
+    # when the caller omitted ``service_category_id``. Respects an
+    # explicit override — only fills the blank, never rewrites.
+    item_type_cat = (doc.get("category") or "").strip().lower()
+    if not doc.get("service_category_id") and item_type_cat == "chemical":
+        chem_svc_id = await resolve_chemicals_service_category_id(tenant_id)
+        if chem_svc_id:
+            doc["service_category_id"] = chem_svc_id
     await validate_service_category(tenant_id, doc.get("service_category_id"))
     # Phase 56-b · Aug-2026 — Multi-supplier pricing validation.
     # (No-op for services — supplier_prices was scrubbed to [] above.)

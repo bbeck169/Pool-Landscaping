@@ -2369,6 +2369,67 @@ async def startup():
             f"chemical_usage_events water_body migration crashed: {e}",
         )
 
+    # Feb-2026 · Backlog #1 Part 2 — Canonical "Chemicals" service
+    # category. Idempotent + sentinel (``service_category_chemicals_v1``).
+    # Ensures every onboarded tenant has a "Chemicals"
+    # ``service_categories`` row and backfills every chemical
+    # pricebook item (``items.category ~ /^chemical/i``) whose
+    # ``service_category_id`` is null → linked to the tenant's
+    # Chemicals category. Auto-invoice line-items inherit
+    # ``service_category_id`` from the source pricebook item so the
+    # "Income by Service Category" tile can aggregate correctly.
+    try:
+        from services.migrations.service_category_chemicals import (
+            run_service_category_chemicals_migration,
+        )
+        _sc_boot = await run_service_category_chemicals_migration()
+        if _sc_boot.get("status") == "skipped":
+            logger.info(
+                "[service_category_chemicals] sentinel present · skipping",
+            )
+        else:
+            _s = _sc_boot.get("summary") or {}
+            logger.info(
+                f"[service_category_chemicals] tenants={_s.get('scanned_tenants', 0)} "
+                f"created={_s.get('created_categories', 0)} "
+                f"linked={_s.get('linked_items', 0)} "
+                f"errors={_s.get('errors_count', 0)}",
+            )
+    except Exception as e:
+        logger.warning(
+            f"service_category_chemicals migration crashed: {e}",
+        )
+
+    # Feb-2026 · Backlog #1 Tightening T1 — historical invoice
+    # line_items with a UUID-shaped ``category`` string get rewritten
+    # in-place: resolvable id → name (+ stamp
+    # ``income_category_id``); unresolvable → clear to ``""`` so the
+    # tile's Uncategorized fallback picks them up. Idempotent +
+    # sentinel (``revenue_line_items_uuid_category_v1``). MUST run
+    # AFTER ``service_category_chemicals`` above so the income
+    # categories collection is fully seeded before resolution.
+    try:
+        from services.migrations.revenue_line_items_uuid_category import (
+            run_revenue_line_items_uuid_category_migration,
+        )
+        _rl_boot = await run_revenue_line_items_uuid_category_migration()
+        if _rl_boot.get("status") == "skipped":
+            logger.info(
+                "[revenue_line_items_uuid_category] sentinel present · skipping",
+            )
+        else:
+            _s = _rl_boot.get("summary") or {}
+            logger.info(
+                f"[revenue_line_items_uuid_category] scanned={_s.get('scanned', 0)} "
+                f"rewritten_to_name={_s.get('rewritten_to_name', 0)} "
+                f"cleared_orphan={_s.get('cleared_orphan', 0)} "
+                f"errors={_s.get('errors_count', 0)}",
+            )
+    except Exception as e:
+        logger.warning(
+            f"revenue_line_items_uuid_category migration crashed: {e}",
+        )
+
     # Feb-2026 · P0 fix — Orphan-paid invoice audit. Report-only on
     # boot so operators see the count in logs without silently
     # flipping seed / demo fixtures. Real flips happen through the
