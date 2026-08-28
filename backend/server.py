@@ -2341,6 +2341,34 @@ async def startup():
     except Exception as e:
         logger.warning(f"service_reports water_bodies migration crashed: {e}")
 
+    # Feb-2026 · Multi-body Phase 1 · Option 2 — chemical_usage_events
+    # water-body backfill. Adds ``water_body_id`` (nullable) to every
+    # legacy usage event. MUST run AFTER the
+    # ``service_reports_water_bodies`` migration above so per-body
+    # linking can consult the bodies array. Idempotent + sentinel
+    # (``chemical_usage_events_water_body_v1``).
+    try:
+        from services.migrations.chemical_usage_events_water_body import (
+            run_chemical_usage_events_water_body_migration,
+        )
+        _cue_boot = await run_chemical_usage_events_water_body_migration()
+        if _cue_boot.get("status") == "skipped":
+            logger.info(
+                "[chemical_usage_events.water_body] sentinel present · skipping",
+            )
+        else:
+            _s = _cue_boot.get("summary") or {}
+            logger.info(
+                f"[chemical_usage_events.water_body] scanned={_s.get('scanned', 0)} "
+                f"linked_to_body={_s.get('linked_to_body', 0)} "
+                f"stamped_null={_s.get('stamped_null', 0)} "
+                f"errors={_s.get('errors_count', 0)}",
+            )
+    except Exception as e:
+        logger.warning(
+            f"chemical_usage_events water_body migration crashed: {e}",
+        )
+
     # Feb-2026 · P0 fix — Orphan-paid invoice audit. Report-only on
     # boot so operators see the count in logs without silently
     # flipping seed / demo fixtures. Real flips happen through the

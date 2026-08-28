@@ -186,14 +186,27 @@ async def delete_product(slug: str,
 async def snapshot_chemical_usage(*, tenant_id: str, job_id: Optional[str],
                                      service_report_id: str,
                                      customer_id: Optional[str],
-                                     chemicals_added: List[Dict[str, Any]],
+                                     chemicals_added: Optional[List[Dict[str, Any]]] = None,
+                                     water_bodies: Optional[List[Dict[str, Any]]] = None,
                                      occurred_at: Optional[str] = None,
                                      actor_user_id: Optional[str] = None
                                      ) -> Dict[str, Any]:
     """Idempotent: replaces any prior usage-events for the same
     service_report_id so re-submits don't double-count.
 
-    ``chemicals_added`` items may be either the new shape
+    Two shapes are supported:
+
+    * **Multi-body (Feb-2026)** — pass ``water_bodies`` and each event
+      gets stamped with ``water_body_id`` (and ``water_body_type`` /
+      ``water_body_label`` for reporting convenience). The report at
+      ``/api/reports/chemical-costs`` aggregates per-body from these
+      fields; missing values roll into a ``"Legacy"`` bucket.
+    * **Legacy flat** — pass ``chemicals_added`` (top-level mirror on
+      the service_report doc). Every event gets ``water_body_id=None``
+      so the aggregator groups it under Legacy. Kept for legacy PUT
+      /jobs/{jid} and any caller that hasn't been ported yet.
+
+    Items in either array may be the new shape
     ``{product_slug, quantity, unit}`` or the legacy shape
     ``{name, amount, unit}``. Both are handled.
     """
@@ -212,9 +225,36 @@ async def snapshot_chemical_usage(*, tenant_id: str, job_id: Optional[str],
         "service_report_id": service_report_id,
     })
 
+    # Build a `(chem_line, body_context)` iterator so the two shapes
+    # share the same insert loop below. ``body_context`` = None for
+    # the legacy flat shape.
+    def _lines_from_bodies(bodies):
+        for b in bodies or []:
+            if not isinstance(b, dict):
+                continue
+            body_ctx = {
+                "water_body_id":    b.get("id"),
+                "water_body_type":  (b.get("type") or "").lower() or None,
+                "water_body_label": b.get("label"),
+            }
+            for c in (b.get("chemicals_used")
+                        or b.get("chemicals_added") or []):
+                yield c, body_ctx
+
+    def _lines_flat(chems):
+        for c in chems or []:
+            yield c, {"water_body_id": None,
+                      "water_body_type": None,
+                      "water_body_label": None}
+
+    if water_bodies:
+        line_iter = _lines_from_bodies(water_bodies)
+    else:
+        line_iter = _lines_flat(chemicals_added)
+
     inserted = 0
     total_cost_cents = 0
-    for line in chemicals_added or []:
+    for line, body_ctx in line_iter:
         if not isinstance(line, dict):
             continue
         product_slug = (line.get("product_slug")
@@ -257,6 +297,13 @@ async def snapshot_chemical_usage(*, tenant_id: str, job_id: Optional[str],
             "unit": resolved_unit,
             "unit_cost_at_time_cents": unit_cost_cents,
             "total_cost_cents": line_cost,
+            # Feb-2026 · Multi-body Phase 1 · Option 2 report rework —
+            # events carry the body context so the chemical-cost
+            # report can split rollups by body. Legacy callers pass
+            # the flat shape and get ``water_body_id=None``.
+            "water_body_id":    body_ctx.get("water_body_id"),
+            "water_body_type":  body_ctx.get("water_body_type"),
+            "water_body_label": body_ctx.get("water_body_label"),
             "occurred_at": occurred_at or now_iso(),
             "created_at": now_iso(),
             "created_by": actor_user_id,
@@ -363,3 +410,5 @@ async def pool_profitability(pool_id: str,
             "visit_count": sum(x["visit_count"] for x in series),
         },
     }
+
+

@@ -12715,3 +12715,96 @@ Legacy top-level `chemical_readings` / `chemicals_added` / `notes` remain popula
 ### 4 · Per-body dosing recommender + per-body algae flag (Phase 3)
 - Backend `dosing.py` currently reads top-level `chemical_readings` — extend to iterate `water_bodies[].readings` and produce a per-body recommendation card.
 - `observations.visible_algae` moves from top-level to `water_bodies[i].observations`.
+
+---
+
+## Backlog update (Feb-2026 · after Option 2 chemical-cost rework)
+
+### Backlog item #1 — EXPANDED scope
+User confirmed the dashboard UUID (`2ad6d566-c6d5-467c-b608-8acb6c6fb6c9`) is from the **income-category taxonomy (Taxonomy B — accounting/reporting)**, not the pricebook `category` field (Taxonomy A). Merged scope when picking this up:
+
+1. **Enforce canonical "Chemicals" income category**
+   - Idempotent boot migration (sentinel `income_category_chemicals_v1`) creates a system income category named "Chemicals" per tenant. Never hard-delete or rename existing custom categories.
+   - Auto-link every pricebook item where `category == "chemical"` to the "Chemicals" income category. Backfill existing; add a create-path hook so future chemical pricebook items default to "Chemicals" when no income category is supplied.
+   - Invoice line items generated from a pricebook item must inherit the item's income category (so Revenue-by-Category aggregates correctly).
+
+2. **UUID / orphan / grammar fixes** (as originally scoped)
+   - Revenue-by-Category endpoint returns `{category_id, category_name, amount, pct}` — join to income-categories collection.
+   - Orphan → render `"Uncategorized"` in the tile + count in the warning banner.
+   - Grammar: `"1 line item is uncategorized"` / `"N line items are uncategorized"`.
+
+3. **Root-cause the specific orphan** `2ad6d566-c6d5-467c-b608-8acb6c6fb6c9`
+   - Look it up in the income-categories collection (deleted / never existed / different tenant).
+   - Fix the write path that produced an invoice line referencing an unknown income-category id (soft-delete + reassign flow OR stale FE cache).
+
+4. **Tests**
+   - Backend: boot migration idempotent + backfill correctness + new-item default + endpoint returns names + orphan → "Uncategorized" bucket.
+   - Frontend Vitest: tile never renders a UUID; renders "Chemicals" for chemical revenue; renders "Uncategorized" for orphan; grammar pluralization.
+
+### Chemical Cost Report — scope UNCHANGED
+Confirmed with user: report shows **only chemicals actually used on a job** (option a). No pricebook-based "unused chemicals" view. Continuing Option 2 exactly as scoped.
+
+### Post-Option-2 execution order
+1. Backlog item #1 (merged Revenue-by-Category + Chemicals income category enforcement).
+2. Notification cleanup phase (duplicate weekly digest audit + `notification_dispatch_log` idempotency).
+3. Phase 3 mobile parity → handoff to `e1_expo_frontend_dev`.
+
+### Backlog item #1 — CORRECTION (Feb-2026)
+User corrected earlier note: chemicals should be tagged under **Service Category** (the taxonomy driving the "Income by Service Category" tile), NOT "Income Category". Do NOT create/touch an income-category taxonomy.
+
+- Canonical Service Category name = **"Chemicals"** per tenant, seeded via boot migration sentinel `service_category_chemicals_v1`.
+- Audit current model first (likely `service_category` field on pricebook items + possibly a `service_categories` collection) before writing code.
+- Backfill every pricebook item where `category == "chemical"` (Taxonomy A — item type) → linked to "Chemicals" Service Category. Add create-path default.
+- Invoice line items carry the item's Service Category through so the "Income by Service Category" tile aggregates correctly.
+- "Revenue by Category" tile UUID/orphan/grammar fixes UNCHANGED (this is the OTHER tile / OTHER taxonomy). Fix both tiles but keep them separate — do NOT collapse.
+- Tests scoped to Service Category (not Income Category).
+
+---
+
+## Feb-2026 · Option 2 — Chemical-cost report rewrite — SHIPPED
+
+**Symptom (from tester Bug #3)**: Multi-body invoice `6e64b146-…` returned zero chlorine_tabs across `/api/reports/chemical-costs` even after submit stamped 2 valid `chemical_usage_events`. Root cause: report aggregated from invoice line items (which the submit-path auto-invoice never emits per-chemical) and looked for `wholesale_cost_snapshot` (typo — canonical field elsewhere is `wholesale_price_snapshot`).
+
+**Fix (Option 2 — pivot to `chemical_usage_events` as source of truth)**:
+- `snapshot_chemical_usage` now accepts a `water_bodies` param and iterates each body's `chemicals_used`, stamping every event with `water_body_id / water_body_type / water_body_label`. Legacy `chemicals_added` callers still work — get `water_body_id=None`.
+- Service-report submit passes `water_bodies` to the snapshot when the report has them; falls back to the flat `chemicals_added` mirror otherwise.
+- `/api/reports/chemical-costs` rewritten to aggregate from `chemical_usage_events` filtered by `occurred_at`; joins `db.quotes` on `job_id` for the "paid work only" gate (bypassable via `include_unpaid=true` for admin audit). Adds `by_water_body` bucket splitting rollups per body with a synthetic `legacy` bucket for pre-migration events.
+- Idempotent boot migration `chemical_usage_events_water_body_v1` back-fills legacy events. Best-effort retro-links to a body when the parent report has exactly one body OR a unique body carries a chemical whose slug matches. Ambiguous cases stay `water_body_id=None`.
+- Admin endpoint `POST /api/admin/migrations/chemical-usage-events-water-body?force=` for on-demand re-runs.
+- Fixed the `wholesale_cost_snapshot` typo transparently — the report no longer reads invoice snapshots at all.
+
+**Empirical proof (invoice 6e64b146-2c00-47c4-a25a-f3b1a6f29976 paid)**:
+```
+by_water_body:
+  {water_body_id: 1771fa81-…, body_type: pool, body_label: Main Pool,
+    total_qty: 1.0, total_wholesale_cost: 0.75, chemical_count: 1, job_count: 1}
+  {water_body_id: fa3d9684-…, body_type: spa,  body_label: Backyard Spa,
+    total_qty: 0.5, total_wholesale_cost: 0.38, chemical_count: 1, job_count: 1}
+by_chemical[0]: chlorine_tabs qty=1.5 total=$1.13
+totals: {qty:1.5, cost:$1.13, jobs:1}
+```
+BOTH bodies visible; totals reconcile.
+
+**Files touched**:
+- **New**: `services/migrations/chemical_usage_events_water_body.py` (sentinel `chemical_usage_events_water_body_v1`), `tests/test_chemical_usage_events_water_body.py` (7 tests).
+- **Modified**: `routers/chemical_products.py` (`snapshot_chemical_usage` iterates `water_bodies`); `routers/chemical_cost_report.py` (rewritten — aggregates from events + adds `by_water_body`); `routers/service_reports.py` (submit passes `water_bodies` to snapshot); `routers/admin_migrations.py` (adds CUE backfill endpoint); `server.py` (boot migration hook); `tests/test_chemical_cost_report.py` (rewritten to seed events + paid invoices).
+
+**Test results**:
+- New/rewritten: `test_chemical_usage_events_water_body.py` (7 tests) + `test_chemical_cost_report.py` (8 tests) — 15/15 passing.
+- `test_service_report_multi_body.py` — 17/17 passing (backward-compat preserved).
+- Broader sweep across `test_service_report_slice3e`, `test_service_report_submit_hardening`, `test_service_report_submit_snapshots_chemical_usage`, `test_portal_service_report_customer_view`, `test_admin_migrations_backfill_endpoint`, `test_invoice_number_p0_backfill` → all passing. Zero new regressions.
+
+**Explicitly out of scope (added to backlog)**:
+- Invoice-line-item itemization for chemicals (submit path still emits a single generic line, job-complete path emits chemical lines with `product_slug` but no `item_id` / no `water_body_id`). Not needed for the cost report (Option 2 bypasses invoice lines entirely). Future work if per-body billing surfaces are requested.
+- Unifying auto-invoice Path A (submit) and Path B (job-complete) into one canonical writer. Future work.
+
+**Migration boot log (first run on preview)**:
+```
+[chemical_usage_events.water_body] scanned=2 linked_to_body=0 stamped_null=2 errors=0
+```
+Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy bucket because their parent report has 2 bodies each carrying the same slug — migration correctly refuses to guess. Re-snapshotting the same report through the fixed submit path attributes them correctly to pool + spa.
+
+### Next up in queue (per user)
+1. Backlog #1 — Revenue-by-Category UUID + orphan + grammar fix + canonical "Chemicals" **Service Category** enforcement (NOT income-category per user correction).
+2. Notification cleanup phase — duplicate weekly digest root-cause + `notification_dispatch_log` idempotency + full outbound audit.
+3. Phase 3 mobile parity — handoff to `e1_expo_frontend_dev`.

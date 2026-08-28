@@ -950,13 +950,43 @@ async def force_orphan_paid_audit(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# POST /admin/migrations/service-reports-water-bodies
-# Feb-2026 · Multi-body Phase 1 — super_admin trigger for the
-# ``water_bodies`` backfill. The boot migration runs this on every
-# server start (see ``server.py``); this endpoint lets ops force a
-# re-run without a redeploy — required after adding a new body type
-# or fixing a legacy report with a broken ``water_bodies`` value.
+# POST /admin/migrations/chemical-usage-events-water-body
+# Feb-2026 · Multi-body Phase 1 · Option 2 — super_admin trigger for
+# the ``chemical_usage_events`` water-body backfill. The boot
+# migration runs this on every server start (see ``server.py``); this
+# endpoint lets ops force a re-run without a redeploy — required
+# after fixing an ambiguous multi-body attribution or after the
+# ``service_reports.water_bodies`` migration re-links a legacy report.
 # ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/chemical-usage-events-water-body",
+    operation_id="admin.migrations.chemical_usage_events_water_body",
+)
+async def backfill_chemical_usage_events_water_body(
+    force: bool = Query(
+        False,
+        description=(
+            "When true, bypasses the ``db.migrations`` sentinel and "
+            "re-runs the backfill. Events that already carry a "
+            "``water_body_id`` (including explicit null after prior "
+            "runs) are still skipped by the per-doc guard."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_super_admin(user)
+    from services.migrations.chemical_usage_events_water_body import (
+        run_chemical_usage_events_water_body_migration,
+    )
+    report = await run_chemical_usage_events_water_body_migration(force=force)
+    logger.info(
+        "[chemical-usage-events-water-body-migration] user=%s "
+        "caller_tenant=%s force=%s report=%s",
+        user.get("id"), tenant.get("id"), force, report,
+    )
+    return report
+
 @router.post(
     "/admin/migrations/service-reports-water-bodies",
     operation_id="admin.migrations.service_reports_water_bodies",

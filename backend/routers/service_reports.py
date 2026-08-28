@@ -749,12 +749,24 @@ async def submit_service_report(
         _sr_for_snapshot = (
             fresh_rep if 'fresh_rep' in locals() and fresh_rep else rep
         )
+        # Feb-2026 · Multi-body Phase 1 · Option 2 · Bug 2 rework —
+        # prefer ``water_bodies`` so each event carries a
+        # ``water_body_id`` for the chemical-cost report's
+        # per-body rollup. Legacy top-level ``chemicals_added`` is
+        # kept as the fallback so a single-body report (or a
+        # report loaded from cache with only the legacy fields)
+        # still snapshots correctly under the ``Legacy`` bucket.
+        _snapshot_bodies = _sr_for_snapshot.get("water_bodies") or None
         await snapshot_chemical_usage(
             tenant_id=tenant["id"],
             job_id=jid,
             service_report_id=_sr_for_snapshot.get("id") or rep.get("id"),
             customer_id=job.get("customer_id"),
-            chemicals_added=_sr_for_snapshot.get("chemicals_added") or [],
+            chemicals_added=(
+                None if _snapshot_bodies
+                else (_sr_for_snapshot.get("chemicals_added") or [])
+            ),
+            water_bodies=_snapshot_bodies,
             occurred_at=job.get("scheduled_date")
                          or job.get("scheduled_start")
                          or now,
