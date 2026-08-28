@@ -134,13 +134,21 @@ async def merge_candidates_endpoint(
 
         {
           "confidence": "low"|"high"|"all",
-          "count": <int>,             # number of groups after the filter
-          "customer_ids": [...],      # unique union of every group's ids
-          "duplicate_groups": [<group>, ...]
+          "count": <int>,                   # legacy alias for duplicate_groups_total
+          "duplicate_groups_total": <int>,  # canonical: number of groups after the filter
+          "customer_ids_sample": [...],     # canonical: unique union of ids across all groups
+          "customer_ids": [...],            # legacy alias — same value
+          "duplicate_groups_sample": [...], # canonical: the full group list
+          "duplicate_groups": [...]         # legacy alias — same value
         }
 
-    Frontend uses ``customer_ids`` to filter the Customers list
-    down to just the candidates.
+    Feb 2026 · Schema alignment ship — the canonical response now
+    uses ``customer_ids_sample`` / ``duplicate_groups_sample`` /
+    ``duplicate_groups_total`` so the shape matches the frontend
+    pending-chip's expected names. Legacy fields (``customer_ids``,
+    ``duplicate_groups``, ``count``) are kept in-flight so cached
+    clients keep working during a rolling deploy; the frontend
+    prefers the new names and falls back to the legacy fields.
     """
     from services.customer_merge.detection import (
         detect_duplicates_for_tenant,
@@ -159,6 +167,9 @@ async def merge_candidates_endpoint(
     return {
         "confidence": confidence,
         "count": len(groups),
+        "duplicate_groups_total": len(groups),
+        "customer_ids_sample": ids,
         "customer_ids": ids,
+        "duplicate_groups_sample": groups,
         "duplicate_groups": groups,
     }

@@ -22,13 +22,17 @@
  * inline banner (also fires ``onError`` for the parent's toast).
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Users, Zap, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Modal, Button } from "@/components/ui-kit";
 
 
-const CONFIRM_TOKEN = "MERGE";
+// Feb 2026 · CONFIRM_TOKEN retired — the "Type MERGE" input was
+// removed as part of the app-wide type-to-confirm friction sweep.
+// Kept commented for future spelunkers so ``git log`` on this
+// file surfaces the intent without a full history walk.
+// const CONFIRM_TOKEN = "MERGE";
 
 
 function _shortDate(iso) {
@@ -326,7 +330,8 @@ export default function MergeCustomersModal({
   const [detectGroups, setDetectGroups] = useState([]);
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [confirmText, setConfirmText] = useState("");
+  // Feb 2026 · Type-to-confirm input retired — ``confirmText`` state
+  // is no longer referenced. Kept out of the render path entirely.
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const debounceRef = useRef(null);
@@ -364,7 +369,6 @@ export default function MergeCustomersModal({
     if (!open) return;
     setPrimaryId(null);
     setPreview(null);
-    setConfirmText("");
     setErrorMsg("");
     setSubmitting(false);
   }, [open, selectedIds.join(",")]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -408,7 +412,6 @@ export default function MergeCustomersModal({
   const canMerge =
     !!primaryId
     && !!preview
-    && confirmText.trim().toUpperCase() === CONFIRM_TOKEN
     && !submitting;
 
   const doMerge = async () => {
@@ -509,30 +512,11 @@ export default function MergeCustomersModal({
           />
         </div>
 
-        <div>
-          <label className="text-xs font-semibold block mb-1"
-                   style={{ color: colors.onSurfaceSecondary }}>
-            Type <span className="font-mono font-bold">{CONFIRM_TOKEN}</span> to confirm
-          </label>
-          <input
-            type="text"
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-            style={{
-              backgroundColor: colors.surface,
-              color: colors.onSurface,
-              border: `1px solid ${
-                confirmText && confirmText.toUpperCase() !== CONFIRM_TOKEN
-                  ? colors.error
-                  : colors.border
-              }`,
-            }}
-            placeholder="MERGE"
-            data-testid="merge-modal-confirm-input"
-            disabled={submitting}
-          />
-        </div>
+        {/* Feb 2026 · Type-to-confirm removed — the "Type MERGE"
+            input previously required to enable the Merge button
+            has been retired. The two-click safety flow (open modal
+            → click Merge) is preserved via the Cancel button and
+            the disabled state while dry-run preview is pending. */}
 
         {errorMsg ? (
           <div className="rounded-xl px-3 py-2 text-xs"

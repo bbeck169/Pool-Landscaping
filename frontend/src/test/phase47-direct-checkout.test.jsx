@@ -41,6 +41,16 @@ describe("Phase 47 · PaymentForm direct Stripe Checkout redirect", () => {
       configurable: true,
       value: { assign: assignSpy },
     });
+    // Feb 2026 addendum — the component now fetches the customer's
+    // saved-PM list before choosing between the fast-path auto
+    // redirect and the review-UI-with-consent flow. Every legacy
+    // spec below asserts the fast-path shape, so we default the
+    // GET to "1 PM on file" (skips the checkbox). The dedicated
+    // save-on-first-payment specs later in this file override this
+    // with a 0-PMs mock to exercise the review UI.
+    api.get.mockResolvedValue({
+      methods: [{ id: "pm-existing", last4: "0001" }],
+    });
   });
 
   it("POSTs /request-payment-link on mount and redirects to the Stripe URL", async () => {
@@ -54,7 +64,11 @@ describe("Phase 47 · PaymentForm direct Stripe Checkout redirect", () => {
     render(<PaymentForm invoice={{ id: "inv-1", total: 123.45 }} />);
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(
-        "/invoices/inv-1/request-payment-link", {},
+        "/invoices/inv-1/request-payment-link",
+        // Feb 2026 addendum — the body now carries the resolved
+        // save flag. When the customer already has 1+ saved PMs
+        // (mocked in beforeEach), the flag is FALSE regardless.
+        expect.objectContaining({ save_for_future_billing: false }),
       );
     });
     await waitFor(() => {
@@ -97,6 +111,101 @@ describe("Phase 47 · PaymentForm direct Stripe Checkout redirect", () => {
     expect(await screen.findByTestId("payment-form-preparing")).toBeInTheDocument();
     resolve({ payment_url: _stripeUrl });
     await waitFor(() => expect(assignSpy).toHaveBeenCalledWith(_stripeUrl));
+  });
+});
+
+
+describe("Phase 47 · Feb 2026 addendum · save-on-first-payment", () => {
+  let assignSpy;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    assignSpy = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { assign: assignSpy },
+    });
+  });
+
+  it("customer with ZERO PMs → renders the consent checkbox (default checked)", async () => {
+    api.get.mockResolvedValue({ methods: [] });
+    render(<PaymentForm invoice={{ id: "inv-new", total: 42 }} />);
+    // Consent row + checkbox visible, no auto-redirect fired.
+    const cb = await screen.findByTestId("payment-form-save-checkbox");
+    expect(cb).toBeInTheDocument();
+    expect(cb.checked).toBe(true);
+    // Copy per product spec.
+    expect(screen.getByTestId("payment-form-save-row").textContent)
+      .toMatch(/Save this payment method for future automatic billing/i);
+    expect(screen.getByTestId("payment-form-review").textContent)
+      .toMatch(/remove saved payment methods anytime/i);
+    // POST didn't fire yet, and the user was not redirected.
+    expect(api.post).not.toHaveBeenCalled();
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it("clicking Pay $X posts save_for_future_billing=true when the checkbox is left checked", async () => {
+    api.get.mockResolvedValue({ methods: [] });
+    api.post.mockResolvedValueOnce({ payment_url: _stripeUrl });
+    render(<PaymentForm invoice={{ id: "inv-save", total: 55 }} />);
+    await screen.findByTestId("payment-form-pay-btn");
+    fireEvent.click(screen.getByTestId("payment-form-pay-btn"));
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/invoices/inv-save/request-payment-link",
+        { save_for_future_billing: true },
+      );
+    });
+    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith(_stripeUrl));
+  });
+
+  it("unchecking the box posts save_for_future_billing=false", async () => {
+    api.get.mockResolvedValue({ methods: [] });
+    api.post.mockResolvedValueOnce({ payment_url: _stripeUrl });
+    render(<PaymentForm invoice={{ id: "inv-optout", total: 99 }} />);
+    const cb = await screen.findByTestId("payment-form-save-checkbox");
+    fireEvent.click(cb);
+    expect(cb.checked).toBe(false);
+    fireEvent.click(screen.getByTestId("payment-form-pay-btn"));
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/invoices/inv-optout/request-payment-link",
+        { save_for_future_billing: false },
+      );
+    });
+  });
+
+  it("customer with 1+ PMs → NO checkbox rendered, auto-redirect fast-path", async () => {
+    api.get.mockResolvedValue({
+      methods: [
+        { id: "pm-1", last4: "4242" },
+        { id: "pm-2", last4: "0002" },
+      ],
+    });
+    api.post.mockResolvedValueOnce({ payment_url: _stripeUrl });
+    render(<PaymentForm invoice={{ id: "inv-existing", total: 20 }} />);
+    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith(_stripeUrl));
+    // Checkbox never rendered.
+    expect(screen.queryByTestId("payment-form-save-checkbox")).toBeNull();
+    expect(screen.queryByTestId("payment-form-review")).toBeNull();
+    // Server-side save flag is false because the customer isn't new.
+    expect(api.post).toHaveBeenCalledWith(
+      "/invoices/inv-existing/request-payment-link",
+      { save_for_future_billing: false },
+    );
+  });
+
+  it("PM-count fetch failure → safe default (skip checkbox, auto-redirect with save=false)", async () => {
+    api.get.mockRejectedValue(new Error("boom"));
+    api.post.mockResolvedValueOnce({ payment_url: _stripeUrl });
+    render(<PaymentForm invoice={{ id: "inv-boom", total: 30 }} />);
+    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith(_stripeUrl));
+    // No checkbox on failure — err on the side of NOT saving.
+    expect(screen.queryByTestId("payment-form-save-checkbox")).toBeNull();
+    expect(api.post).toHaveBeenCalledWith(
+      "/invoices/inv-boom/request-payment-link",
+      { save_for_future_billing: false },
+    );
   });
 });
 

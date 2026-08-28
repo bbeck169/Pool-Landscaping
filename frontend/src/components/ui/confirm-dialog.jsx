@@ -102,11 +102,13 @@ export function ConfirmProvider({ children }) {
 
   const opts = state?.opts;
   const isDanger = opts?.tone === "danger";
-  const [typed, setTyped] = useState("");
-  useEffect(() => { setTyped(""); }, [state]);
-  const typeMatch = !opts?.requireTypeConfirm ||
-    typed === (opts?.typeConfirmString || "DELETE");
-  const confirmDisabled = !typeMatch;
+  // Feb 2026 · Type-to-confirm friction removed app-wide.
+  // The ``requireTypeConfirm`` option is intentionally ignored —
+  // callers still pass it for backwards-compat, but the modal now
+  // renders without the extra text input and the Confirm button
+  // is immediately clickable. The two-click flow (open modal →
+  // click Confirm) is preserved for safety.
+  const confirmDisabled = false;
 
   return (
     <ConfirmContext.Provider value={value}>
@@ -157,22 +159,12 @@ export function ConfirmProvider({ children }) {
                   {opts?.title}
                 </DialogPrimitive.Description>
               )}
-              {opts?.requireTypeConfirm ? (
-                <div className="mt-2 space-y-1">
-                  <div className="text-xs text-muted-foreground">
-                    Type <strong>{opts?.typeConfirmString || "DELETE"}</strong> to confirm.
-                  </div>
-                  <input
-                    type="text"
-                    value={typed}
-                    onChange={(e) => setTyped(e.target.value)}
-                    autoFocus
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    data-testid="app-confirm-type-input"
-                    placeholder={opts?.typeConfirmString || "DELETE"}
-                  />
-                </div>
-              ) : null}
+              {/* Feb 2026 · Type-to-confirm friction removed — the
+                  text input previously gated behind
+                  ``requireTypeConfirm`` is no longer rendered. Callers
+                  still pass the flag for API backwards-compat, but
+                  the two-click "open modal → click Confirm" flow is
+                  now the sole safety gate. */}
             </div>
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               {opts?.cancelable ? (
@@ -189,7 +181,7 @@ export function ConfirmProvider({ children }) {
                 type="button"
                 data-testid="app-confirm-ok"
                 onClick={() => { if (!confirmDisabled) settle(true); }}
-                autoFocus={!opts?.requireTypeConfirm}
+                autoFocus
                 disabled={confirmDisabled}
                 className={cn(
                   "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed",

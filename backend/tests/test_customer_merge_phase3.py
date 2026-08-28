@@ -328,12 +328,20 @@ def test_09_merge_candidates_low_confidence_endpoint():
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["confidence"] == "low"
+        # Feb 2026 · Schema alignment — canonical field names alongside
+        # the legacy aliases. Frontend prefers the ``*_sample`` /
+        # ``*_total`` names; backend emits both for rolling-deploy
+        # backwards-compat.
         assert body["count"] >= 1, body
+        assert body["duplicate_groups_total"] >= 1, body
+        assert body["count"] == body["duplicate_groups_total"], body
         assert all(
             (g.get("confidence") or "") == "low"
             for g in body["duplicate_groups"]
         ), body
+        assert body["duplicate_groups"] == body["duplicate_groups_sample"], body
         assert set(body["customer_ids"]) >= {a, b}
+        assert body["customer_ids"] == body["customer_ids_sample"], body
     finally:
         _cleanup(tid)
 

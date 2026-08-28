@@ -5,7 +5,7 @@ import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { usePermissions } from "@/hooks/usePermissions";
-import { PageHeader, TagChip, Chip, Skeleton, EmptyState, Button, Modal, Toast } from "@/components/ui-kit";
+import { PageHeader, Chip, Skeleton, EmptyState, Button, Modal, Toast } from "@/components/ui-kit";
 import CustomersTagFilterDropdown from "@/components/customers/CustomersTagFilterDropdown";
 import RestoreCustomerButton from "@/components/customers/RestoreCustomerButton";
 import MuteControl from "@/components/customers/MuteControl";
@@ -211,8 +211,16 @@ export default function CustomersList() {
       const r = await api.get(
         "/customers/merge-candidates?confidence=low",
       );
-      setCandidateIds(r?.customer_ids || []);
-      setCandidateGroupsCount(r?.count || 0);
+      // Feb 2026 · Schema alignment — prefer the canonical
+      // ``customer_ids_sample`` / ``duplicate_groups_total`` fields;
+      // fall back to the legacy ``customer_ids`` / ``count`` for
+      // clients that hit an older backend during a rolling deploy.
+      setCandidateIds(
+        r?.customer_ids_sample || r?.customer_ids || [],
+      );
+      setCandidateGroupsCount(
+        r?.duplicate_groups_total ?? r?.count ?? 0,
+      );
     } catch {
       setCandidateIds([]);
       setCandidateGroupsCount(0);
@@ -382,6 +390,7 @@ export default function CustomersList() {
     // so this initial-mount call primes the badges before the first
     // filter change.
     loadCounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Feb-2026 · Load tag registry for the chip filter bar. One-shot

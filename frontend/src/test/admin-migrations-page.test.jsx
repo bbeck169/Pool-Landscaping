@@ -26,7 +26,10 @@ describe("AdminMigrationsPage · P19 backfill card", () => {
     expect(SRC).toMatch(/data-testid="id-migration-p19-preview"/);
     expect(SRC).toMatch(/data-testid="id-migration-p19-run"/);
     expect(SRC).toMatch(/data-testid="id-migration-p19-diff-table"/);
-    expect(SRC).toMatch(/data-testid="id-migration-p19-confirm-input"/);
+    // Feb 2026 · Type-to-confirm friction removed app-wide — the
+    // ``id-migration-p19-confirm-input`` text field is no longer
+    // rendered. Preview-first flow is preserved as the safety gate.
+    expect(SRC).not.toMatch(/data-testid="id-migration-p19-confirm-input"/);
     expect(SRC).toMatch(/data-testid="id-migration-p19-summary"/);
   });
 
@@ -46,10 +49,12 @@ describe("AdminMigrationsPage · P19 backfill card", () => {
     );
   });
 
-  it("gates the Run button behind preview + typed 'BACKFILL' confirmation", () => {
-    // Guard expression exists AND references both conditions.
+  it("gates the Run button behind a completed dry-run preview", () => {
+    // Preview-first safety is preserved even after the type-to-confirm
+    // friction was removed. The Run button remains ``disabled`` until
+    // ``hasPreviewed`` is true; the typed-BACKFILL gate is gone.
     expect(SRC).toMatch(/hasPreviewed/);
-    expect(SRC).toMatch(/confirmText\s*===\s*["']BACKFILL["']/);
+    expect(SRC).not.toMatch(/confirmText\s*===\s*["']BACKFILL["']/);
     // The disabled attribute on the run button reads !runReady.
     expect(SRC).toMatch(
       /disabled=\{!runReady\}[\s\S]{0,300}data-testid="id-migration-p19-run"/,
@@ -67,16 +72,17 @@ describe("AdminMigrationsPage · P19 backfill card", () => {
 
 describe("AdminMigrationsPage · Roster Cleanup card", () => {
   it("card + toggle + first-class Preview/Run testids all present", () => {
-    // Feb 2026 · Preview/Run refactor — Preview + confirm-input +
-    // Run buttons are now FIRST-CLASS (always rendered), and the
-    // legacy "List roster" toggle is preserved as a secondary
-    // read-only audit view.
+    // Feb 2026 · Preview/Run refactor — Preview + Run buttons are
+    // now FIRST-CLASS (always rendered), and the legacy "List
+    // roster" toggle is preserved as a secondary read-only audit
+    // view. The type-to-confirm text input has been retired app
+    // wide; preview-first is the sole safety gate.
     expect(SRC).toMatch(/data-testid="id-roster-cleanup-card"/);
     expect(SRC).toMatch(/data-testid="id-roster-list-btn"/);
     expect(SRC).toMatch(/data-testid="id-roster-table"/);
     expect(SRC).toMatch(/data-testid="id-roster-preview-btn"/);
     expect(SRC).toMatch(/data-testid="id-roster-deactivate-btn"/);
-    expect(SRC).toMatch(/data-testid="id-roster-confirm-input"/);
+    expect(SRC).not.toMatch(/data-testid="id-roster-confirm-input"/);
   });
 
   it("audit-view row testid follows the id-roster-user-{user_id} template", () => {
@@ -106,10 +112,13 @@ describe("AdminMigrationsPage · Roster Cleanup card", () => {
     expect(block).not.toMatch(/\{\s*signal:/);
   });
 
-  it("Run button gated behind hasPreviewed + typed 'DEACTIVATE'", () => {
-    // Same shape as the Stripe cards' Preview/Run gate.
+  it("Run button gated behind hasPreviewed (type-to-confirm retired)", () => {
+    // Same shape as the Stripe cards' Preview/Run gate — preview
+    // first, then Run enables. The typed "DEACTIVATE" gate was
+    // retired in the Feb-2026 friction sweep; preview-first is
+    // the sole safety valve now.
     expect(SRC).toMatch(/hasPreviewed/);
-    expect(SRC).toMatch(/confirmText\s*===\s*["']DEACTIVATE["']/);
+    expect(SRC).not.toMatch(/confirmText\s*===\s*["']DEACTIVATE["']/);
     expect(SRC).toMatch(
       /disabled=\{!runReady\}[\s\S]{0,400}data-testid="id-roster-deactivate-btn"/,
     );

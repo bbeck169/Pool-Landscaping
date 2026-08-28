@@ -15,23 +15,57 @@ This endpoint looks in BOTH so it works regardless of provenance.
 Rate limit: 5 requests / 60s per invoice, enforced via a bounded
 in-memory dict. Not distributed — if we scale to >1 pod we'd move
 to a Mongo TTL collection.
+
+Feb 2026 addendum · save-on-first-payment.
+Accepts an optional ``save_for_future_billing`` body flag. When
+``True`` AND the customer has zero saved payment methods today, the
+Checkout Session's PaymentIntent gets ``setup_future_usage="off_
+session"``. Existing-PM customers or explicit opt-outs bypass this
+entirely — we never silently promote a new PM behind a customer who
+already chose one.
 """
 from __future__ import annotations
 
 import time
-from typing import Dict
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict
 
 from config import db
-# Phase 47 · Feb-2026 — the LZ2 Zapier dispatcher import was removed
-# with the direct-Stripe migration. The dispatcher module itself stays
-# in-tree (see services.lumino_zapier_dispatcher) as an operator-only
-# rollback path gated on PAYMENTS_PROVIDER_MODE, but the router body
-# does NOT reference it any more.
 from utils import get_current_user
 
 router = APIRouter()
+
+
+# Feb 2026 addendum body — optional so older clients that don't send
+# it keep working.
+class PayLinkBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    save_for_future_billing: Optional[bool] = False
+
+
+async def _customer_pm_count(
+    tenant_id: Optional[str],
+    customer_id: Optional[str],
+) -> int:
+    """How many saved payment methods does this customer already have?
+
+    Returns 0 when either id is missing so callers can safely treat
+    "unknown tenant/customer" as "no PMs on file". On a hard read
+    failure we err ON THE SAFE SIDE — return a sentinel large enough
+    to fail the "0 PMs" gate downstream so we DON'T silently save
+    behind an unhealthy collection.
+    """
+    if not tenant_id or not customer_id:
+        return 0
+    try:
+        return await db.payment_methods.count_documents({
+            "tenant_id": tenant_id,
+            "customer_id": customer_id,
+        })
+    except Exception:
+        return 999
 
 # invoice_id → list[timestamps]. Trimmed opportunistically.
 _RATE_STATE: Dict[str, list] = {}
@@ -64,6 +98,7 @@ async def _lookup_invoice(invoice_id: str) -> dict | None:
 @router.post("/invoices/{invoice_id}/request-payment-link")
 async def request_payment_link(
     invoice_id: str,
+    body: Optional[PayLinkBody] = None,
     user: dict = Depends(get_current_user),
 ):
     """Phase 47 · Feb-2026 — RESERVED direct-Stripe Checkout flow.
@@ -79,10 +114,16 @@ async def request_payment_link(
          "checkout_session_id": "cs_test_…",
          "amount_cents": <balance in cents>,
          "currency": "usd",
-         "mode": "test" | "live"}
+         "mode": "test" | "live",
+         "save_for_future_billing": bool  # what actually got applied}
 
     Auth: any authenticated user. Customer role is scoped to their own
     invoices; staff can trigger for any invoice.
+
+    Feb 2026 addendum — accepts ``save_for_future_billing`` in the
+    body. Effective iff the customer has ZERO saved payment methods
+    (server-side gate). Existing-PM customers keep their current
+    default untouched.
     """
     if not _rate_limit_check(invoice_id):
         raise HTTPException(429, "rate_limited")
@@ -110,12 +151,20 @@ async def request_payment_link(
             "email": inv.get("customer_email"),
         }
 
+    # Feb 2026 addendum · resolve the save flag server-side.
+    # The caller may have set it optimistically; we only honour it
+    # when the customer has 0 saved PMs today.
+    save_requested = bool((body or PayLinkBody()).save_for_future_billing)
+    pm_count = await _customer_pm_count(inv.get("tenant_id"), cid)
+    save_for_future = save_requested and pm_count == 0
+
     from services.payments import stripe_charge as stripe_svc
     try:
         out = await stripe_svc.create_invoice_checkout_session(
             tenant_id=inv.get("tenant_id"),
             invoice=inv,
             customer=customer,
+            save_for_future_billing=save_for_future,
         )
     except ValueError as exc:
         # Business-logic failures (already paid, missing config, etc.)

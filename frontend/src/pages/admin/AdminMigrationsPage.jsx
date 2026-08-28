@@ -80,7 +80,6 @@ function BackfillCard() {
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState(null);
   const [error, setError] = useState("");
-  const [confirmText, setConfirmText] = useState("");
   const [hasPreviewed, setHasPreviewed] = useState(false);
 
   const invoke = async (dry_run) => {
@@ -92,10 +91,6 @@ function BackfillCard() {
       );
       setReport(r);
       if (dry_run) setHasPreviewed(true);
-      // Reset the typed-confirm after a real run so re-clicking
-      // requires re-typing "BACKFILL" — protects against accidental
-      // double-writes.
-      if (!dry_run) setConfirmText("");
     } catch (e) {
       setError(e?.message || "Backfill invocation failed");
     } finally {
@@ -103,7 +98,10 @@ function BackfillCard() {
     }
   };
 
-  const runReady = hasPreviewed && confirmText === "BACKFILL" && !busy;
+  // Feb 2026 · Type-to-confirm friction removed. The Run button
+  // is enabled as soon as a dry-run preview has completed —
+  // eyeballing the preview report IS the confirmation step now.
+  const runReady = hasPreviewed && !busy;
 
   return (
     <div
@@ -146,22 +144,6 @@ function BackfillCard() {
         </button>
 
         <div className="flex items-center gap-2 ml-2">
-          <input
-            type="text"
-            placeholder='Type "BACKFILL" to enable →'
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            className="rounded-lg px-3 py-2 text-sm font-mono"
-            style={{
-              background: colors.surfaceSecondary,
-              border: `1px solid ${colors.border}`,
-              color: colors.onSurface,
-              width: 240,
-              opacity: hasPreviewed ? 1 : 0.5,
-            }}
-            disabled={!hasPreviewed || busy}
-            data-testid="id-migration-p19-confirm-input"
-          />
           <button
             type="button"
             className="rounded-lg px-4 py-2 text-sm font-semibold"
@@ -284,7 +266,6 @@ function RosterCleanupCard() {
   const [busy, setBusy] = useState(false);
   const [hasPreviewed, setHasPreviewed] = useState(false);
   const [report, setReport] = useState(null);
-  const [confirmText, setConfirmText] = useState("");
   const [error, setError] = useState("");
 
   // Secondary read-only audit view — preserves the "List roster"
@@ -307,11 +288,10 @@ function RosterCleanupCard() {
       );
       setReport(r);
       if (dry_run) setHasPreviewed(true);
-      else {
-        setConfirmText("");
+      else if (rows !== null) {
         // Refresh the audit table if it's currently open so the
         // newly-deactivated rows flip to the "Inactive" chip.
-        if (rows !== null) await loadRoster();
+        await loadRoster();
       }
     } catch (e) {
       const aborted = e?.name === "AbortError" || e?.code === "ERR_CANCELED";
@@ -348,7 +328,10 @@ function RosterCleanupCard() {
     }
   };
 
-  const runReady = hasPreviewed && confirmText === "DEACTIVATE" && !busy;
+  // Feb 2026 · Type-to-confirm friction removed. Preview-first flow
+  // is preserved (must dry-run before commit); the "type DEACTIVATE"
+  // gate is not.
+  const runReady = hasPreviewed && !busy;
 
   return (
     <div
@@ -408,23 +391,9 @@ function RosterCleanupCard() {
         </button>
         <span className="text-xs" style={{ color: colors.muted }}>
           {hasPreviewed
-            ? 'Type "DEACTIVATE" to enable commit:'
+            ? "Preview looks good? Run Cleanup below."
             : "Run a preview first to enable the cleanup button."}
         </span>
-        <input
-          type="text"
-          value={confirmText}
-          onChange={(e) => setConfirmText(e.target.value)}
-          disabled={busy || !hasPreviewed}
-          className="text-xs px-2 py-1 rounded-md font-mono disabled:opacity-50"
-          style={{
-            background: colors.surface,
-            color: colors.onSurface,
-            border: `1px solid ${colors.border}`,
-            width: 140,
-          }}
-          data-testid="id-roster-confirm-input"
-        />
         <button
           type="button"
           className="text-sm px-3 py-2 rounded-lg font-semibold"
@@ -823,7 +792,6 @@ function StripeSyncCard() {
   const [busy, setBusy] = useState(false);
   const [hasPreviewed, setHasPreviewed] = useState(false);
   const [report, setReport] = useState(null);
-  const [confirmText, setConfirmText] = useState("");
   const [importUnmatched, setImportUnmatched] = useState(false);
   const [error, setError] = useState("");
 
@@ -846,7 +814,6 @@ function StripeSyncCard() {
       );
       setReport(r);
       if (dry_run) setHasPreviewed(true);
-      else setConfirmText("");
     } catch (e) {
       const aborted = e?.name === "AbortError" || e?.code === "ERR_CANCELED";
       setError(
@@ -859,7 +826,9 @@ function StripeSyncCard() {
     }
   };
 
-  const runReady = hasPreviewed && confirmText === "SYNC" && !busy;
+  // Feb 2026 · Type-to-confirm friction removed. Run enables as
+  // soon as a dry-run preview has completed.
+  const runReady = hasPreviewed && !busy;
 
   return (
     <div
@@ -926,23 +895,9 @@ function StripeSyncCard() {
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="text-xs" style={{ color: colors.muted }}>
           {hasPreviewed
-            ? 'Type "SYNC" to enable commit:'
+            ? "Preview looks good? Run Sync below."
             : "Run a preview first to enable the commit button."}
         </span>
-        <input
-          type="text"
-          value={confirmText}
-          onChange={(e) => setConfirmText(e.target.value)}
-          disabled={busy || !hasPreviewed}
-          className="text-xs px-2 py-1 rounded-md font-mono disabled:opacity-50"
-          style={{
-            background: colors.surface,
-            color: colors.onSurface,
-            border: `1px solid ${colors.border}`,
-            width: 100,
-          }}
-          data-testid="id-migration-stripe-confirm-input"
-        />
         <button
           type="button"
           className="text-sm px-3 py-2 rounded-lg font-semibold"
@@ -1032,7 +987,6 @@ function StripeBillingHistoryCard() {
   const [busy, setBusy] = useState(false);
   const [hasPreviewed, setHasPreviewed] = useState(false);
   const [report, setReport] = useState(null);
-  const [confirmText, setConfirmText] = useState("");
   const [monthsBack, setMonthsBack] = useState(24);
   const [includeSubs, setIncludeSubs] = useState(true);
   const [error, setError] = useState("");
@@ -1060,7 +1014,6 @@ function StripeBillingHistoryCard() {
       );
       setReport(r);
       if (dry_run) setHasPreviewed(true);
-      else setConfirmText("");
     } catch (e) {
       const aborted = e?.name === "AbortError" || e?.code === "ERR_CANCELED";
       setError(
@@ -1073,7 +1026,10 @@ function StripeBillingHistoryCard() {
     }
   };
 
-  const runReady = hasPreviewed && confirmText === "IMPORT" && !busy;
+  // Feb 2026 · Type-to-confirm friction removed. Preview-first
+  // safeguard is preserved (must dry-run before commit); the "type
+  // IMPORT" gate is not.
+  const runReady = hasPreviewed && !busy;
 
   return (
     <div
@@ -1157,29 +1113,15 @@ function StripeBillingHistoryCard() {
           {busy && !hasPreviewed ? "Previewing…" : "Preview (Dry Run)"}
         </button>
       </div>
-      {/* Feb 2026 · Always-rendered confirm row (disabled until
-          preview + typed IMPORT). Makes the testids queryable
-          pre-preview for automation. */}
+      {/* Feb 2026 · Always-rendered run row (disabled until preview
+          completes). Makes the testids queryable pre-preview for
+          automation. */}
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="text-xs" style={{ color: colors.muted }}>
           {hasPreviewed
-            ? 'Type "IMPORT" to enable commit:'
+            ? "Preview looks good? Run Import below."
             : "Run a preview first to enable the import button."}
         </span>
-        <input
-          type="text"
-          value={confirmText}
-          onChange={(e) => setConfirmText(e.target.value)}
-          disabled={busy || !hasPreviewed}
-          className="text-xs px-2 py-1 rounded-md font-mono disabled:opacity-50"
-          style={{
-            background: colors.surface,
-            color: colors.onSurface,
-            border: `1px solid ${colors.border}`,
-            width: 100,
-          }}
-          data-testid="id-migration-stripe-billing-confirm-input"
-        />
         <button
           type="button"
           className="text-sm px-3 py-2 rounded-lg font-semibold"

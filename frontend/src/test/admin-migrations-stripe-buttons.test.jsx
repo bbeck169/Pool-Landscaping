@@ -50,18 +50,21 @@ describe("AdminMigrationsPage — Stripe cards render + testids", () => {
     expect(src).not.toMatch(/colors\.primary/);
   });
 
-  it("Sync Stripe Customers card renders Preview + Run + confirm testids pre-preview", () => {
+  it("Sync Stripe Customers card renders Preview + Run testids pre-preview", () => {
     // These testids MUST be present in the initial DOM so E2E flows
-    // can query them without first driving a preview action.
+    // can query them without first driving a preview action. The
+    // Feb-2026 friction sweep retired the ``id-migration-stripe-
+    // confirm-input`` text field; preview-first is the sole safety
+    // gate now.
     expect(src).toMatch(/data-testid="id-migration-stripe-preview-btn"/);
     expect(src).toMatch(/data-testid="id-migration-stripe-run-btn"/);
-    expect(src).toMatch(/data-testid="id-migration-stripe-confirm-input"/);
+    expect(src).not.toMatch(/data-testid="id-migration-stripe-confirm-input"/);
   });
 
-  it("Sync Stripe Billing History card renders Preview + Run + confirm testids pre-preview", () => {
+  it("Sync Stripe Billing History card renders Preview + Run testids pre-preview", () => {
     expect(src).toMatch(/data-testid="id-migration-stripe-billing-preview-btn"/);
     expect(src).toMatch(/data-testid="id-migration-stripe-billing-run-btn"/);
-    expect(src).toMatch(/data-testid="id-migration-stripe-billing-confirm-input"/);
+    expect(src).not.toMatch(/data-testid="id-migration-stripe-billing-confirm-input"/);
   });
 
   it("Preview buttons on Stripe cards use colors.brand (not undefined)", () => {

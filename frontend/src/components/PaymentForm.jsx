@@ -6,18 +6,21 @@
  * redirects on the returned ``payment_url`` (a
  * ``https://checkout.stripe.com/…`` URL).
  *
- * Behaviour:
- *   1. On mount, POST the request-payment-link endpoint.
- *   2. Backend calls ``stripe.checkout.Session.create(mode="payment",
- *      metadata={crm_invoice_id, crm_tenant_id, crm_customer_id})``.
- *      Reconciliation happens webhook-side.
- *   3. If the response carries ``payment_url`` → redirect immediately.
- *   4. On failure → error state with a retry button + friendly copy
- *      mapped from the backend error code (409 already_paid, 400
- *      invoice_not_found, 502 payment_gateway_unavailable, …).
- *
- * There is NO polling — the Session URL is returned in the same
- * response the browser initiates.
+ * Feb 2026 addendum · save-on-first-payment.
+ *   * If the customer has ZERO saved payment methods (checked via
+ *     ``GET /api/customer-portal/payment-methods`` — same endpoint the
+ *     portal PM page uses), we surface a review UI first with a
+ *     default-checked "Save this payment method for future automatic
+ *     billing" checkbox. The customer can uncheck it before clicking
+ *     "Pay $X".
+ *   * If the customer has 1+ saved PMs, we auto-redirect exactly as
+ *     before — no consent step is shown. This protects customers who
+ *     already deliberately picked a default from being silently
+ *     re-defaulted.
+ *   * The checkbox state is threaded through as
+ *     ``save_for_future_billing`` in the request body. The backend
+ *     still gates on the server-side PM count (double-check) before
+ *     applying ``setup_future_usage="off_session"`` to Stripe.
  */
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "@/api";
@@ -73,17 +76,26 @@ export function _redirect(url) {
 export default function PaymentForm({ invoice, onClose }) {
   const [errorMsg, setErrorMsg] = useState("");
   const [preparing, setPreparing] = useState(true);
+  // Feb 2026 addendum — ``pmCount === null`` means we haven't fetched
+  // yet. After the fetch resolves, ``pmCount === 0`` → review UI
+  // with checkbox; ``pmCount >= 1`` → auto-redirect (legacy).
+  const [pmCount, setPmCount] = useState(null);
+  const [saveForFuture, setSaveForFuture] = useState(true);
   const startedRef = useRef(false);
+  const autoRedirectedRef = useRef(false);
 
   const invId = invoice?.id;
 
-  const start = React.useCallback(async () => {
+  const start = React.useCallback(async (options) => {
     if (!invId) return;
     setPreparing(true);
     setErrorMsg("");
     try {
+      const body = {
+        save_for_future_billing: !!(options && options.saveForFuture),
+      };
       const result = await api.post(
-        `/invoices/${invId}/request-payment-link`, {},
+        `/invoices/${invId}/request-payment-link`, body,
       );
       const url = result?.payment_url;
       if (url) {
@@ -100,23 +112,60 @@ export default function PaymentForm({ invoice, onClose }) {
     }
   }, [invId]);
 
+  // Fetch PM count before deciding whether to auto-redirect or show
+  // the review UI. If the fetch fails, err ON THE SIDE of NOT saving
+  // (skip the checkbox) so we never save behind a customer whose
+  // account state we couldn't confirm.
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
-    start();
+    (async () => {
+      let count = 1;   // safe default = "1+" → skip checkbox
+      try {
+        const r = await api.get("/customer-portal/payment-methods");
+        const arr = Array.isArray(r?.methods) ? r.methods : [];
+        count = arr.length;
+      } catch (_) {
+        count = 1;   // fetch failed → assume ≥1 → skip checkbox path
+      }
+      setPmCount(count);
+      if (count >= 1 && !autoRedirectedRef.current) {
+        // Legacy fast path — no consent step needed.
+        autoRedirectedRef.current = true;
+        await start({ saveForFuture: false });
+      } else {
+        // 0 PMs on file — stop the preparing spinner and show the
+        // review UI with the checkbox. The customer clicks
+        // "Pay $X" to actually generate the Session.
+        setPreparing(false);
+      }
+    })();
   }, [start]);
 
   const retry = () => {
-    startedRef.current = false;
-    start();
+    // Re-fire the Session-create call with the last-known consent
+    // state. We deliberately DON'T re-fetch the PM count on retry —
+    // the customer's account state hasn't changed in the seconds
+    // since first load, and re-fetching risks the count flipping
+    // if we JUST attached a PM in a parallel tab.
+    autoRedirectedRef.current = true;
+    start({ saveForFuture: pmCount === 0 ? saveForFuture : false });
   };
+
+  const payNow = () => {
+    autoRedirectedRef.current = true;
+    start({ saveForFuture });
+  };
+
+  const amountDue = ((invoice?.total ?? 0) - (invoice?.amount_paid ?? 0)).toFixed(2);
+  const showReview = pmCount === 0 && !preparing && !errorMsg;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
          data-testid="payment-form-modal">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
         <h3 className="text-lg font-semibold mb-2" data-testid="payment-form-title">
-          Pay ${((invoice?.total ?? 0) - (invoice?.amount_paid ?? 0)).toFixed(2)}
+          Pay ${amountDue}
         </h3>
         {preparing ? (
           <p className="text-sm text-slate-600" data-testid="payment-form-preparing">
@@ -145,6 +194,53 @@ export default function PaymentForm({ invoice, onClose }) {
                 data-testid="payment-form-retry"
               >
                 Retry
+              </button>
+            </div>
+          </div>
+        ) : showReview ? (
+          <div className="space-y-4" data-testid="payment-form-review">
+            <p className="text-sm text-slate-600">
+              You'll be redirected to Stripe's secure checkout to complete this payment.
+            </p>
+            <label
+              className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 p-3"
+              data-testid="payment-form-save-row"
+            >
+              <input
+                type="checkbox"
+                checked={saveForFuture}
+                onChange={(e) => setSaveForFuture(e.target.checked)}
+                className="mt-0.5 h-4 w-4"
+                data-testid="payment-form-save-checkbox"
+              />
+              <span className="text-sm text-slate-800">
+                <span className="font-medium">
+                  Save this payment method for future automatic billing
+                </span>
+                <br />
+                <span className="text-xs text-slate-500">
+                  You can remove saved payment methods anytime from your account settings.
+                </span>
+              </span>
+            </label>
+            <div className="flex justify-end gap-2">
+              {onClose ? (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-3 py-1.5 rounded-md border border-slate-300 text-sm"
+                  data-testid="payment-form-review-cancel"
+                >
+                  Cancel
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={payNow}
+                className="px-4 py-1.5 rounded-md bg-slate-900 text-white text-sm font-semibold"
+                data-testid="payment-form-pay-btn"
+              >
+                Pay ${amountDue}
               </button>
             </div>
           </div>

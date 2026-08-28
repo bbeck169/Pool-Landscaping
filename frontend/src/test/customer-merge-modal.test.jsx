@@ -159,7 +159,12 @@ describe("MergeCustomersModal", () => {
     });
   });
 
-  it("04 · merge button disabled until primary + preview + typed confirmation", async () => {
+  it("04 · merge button disabled until primary + preview complete", async () => {
+    // Feb 2026 · Type-to-confirm friction removed — the "type MERGE"
+    // input is retired. Merge stays disabled until (a) a primary is
+    // picked AND (b) the dry-run preview arrives, then flips
+    // enabled. Two-click safety (open modal → click Merge) is
+    // preserved.
     _mockDetectAndDryRun();
     render(
       <MergeCustomersModal open customers={CUSTOMERS}
@@ -167,22 +172,16 @@ describe("MergeCustomersModal", () => {
     );
     const btn = screen.getByTestId("merge-modal-confirm");
     expect(btn).toBeDisabled();
-    // Pick primary — button still disabled (no preview yet + no confirm text).
+    // Pick primary — button still disabled (no preview yet).
     fireEvent.click(screen.getByTestId("merge-card-c-alice-primary-radio"));
+    expect(btn).toBeDisabled();
+    // Debounce → dry-run preview lands → button flips enabled.
     await act(async () => { vi.advanceTimersByTime(600); });
     await waitFor(() =>
       expect(screen.getByTestId("merge-preview")).toBeInTheDocument());
-    expect(btn).toBeDisabled();
-    // Type wrong token — still disabled.
-    fireEvent.change(screen.getByTestId("merge-modal-confirm-input"), {
-      target: { value: "delete" },
-    });
-    expect(btn).toBeDisabled();
-    // Type correct token — enabled.
-    fireEvent.change(screen.getByTestId("merge-modal-confirm-input"), {
-      target: { value: "MERGE" },
-    });
     expect(btn).not.toBeDisabled();
+    // Regression guard — the retired input is truly gone.
+    expect(screen.queryByTestId("merge-modal-confirm-input")).toBeNull();
   });
 
   it("05 · successful merge posts dry_run:false and calls onDone", async () => {
@@ -197,9 +196,8 @@ describe("MergeCustomersModal", () => {
     await act(async () => { vi.advanceTimersByTime(600); });
     await waitFor(() =>
       expect(screen.getByTestId("merge-preview")).toBeInTheDocument());
-    fireEvent.change(screen.getByTestId("merge-modal-confirm-input"), {
-      target: { value: "MERGE" },
-    });
+    // Feb 2026 · No type-to-confirm step — Merge button is
+    // immediately clickable once the preview lands.
     fireEvent.click(screen.getByTestId("merge-modal-confirm"));
     await waitFor(() => {
       expect(onDone).toHaveBeenCalledTimes(1);
@@ -247,9 +245,6 @@ describe("MergeCustomersModal", () => {
     await act(async () => { vi.advanceTimersByTime(600); });
     await waitFor(() =>
       expect(screen.getByTestId("merge-preview")).toBeInTheDocument());
-    fireEvent.change(screen.getByTestId("merge-modal-confirm-input"), {
-      target: { value: "MERGE" },
-    });
     fireEvent.click(screen.getByTestId("merge-modal-confirm"));
     await waitFor(() => {
       expect(onError).toHaveBeenCalledWith("Backend exploded");

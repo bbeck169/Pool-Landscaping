@@ -30,6 +30,11 @@ import PaymentForm from "@/components/PaymentForm";
 // page uses. Same identity invariant: customer_id derives from
 // the JWT server-side, never from a URL param.
 import StripeAddCardForm from "@/components/payments/StripeAddCardForm";
+// Feb 2026 · P0 fix — Stripe Elements ACH bank-account capture form.
+// Replaces the previous log-only "Connect Bank Account" branch that
+// never mounted <Elements>, leaving every customer stuck at the
+// "widget will launch shortly" toast.
+import StripeAddBankForm from "@/components/payments/StripeAddBankForm";
 import { getStripeConfig } from "@/lib/stripeConfig";
 // Phase 30 · Feb-2026 — shared TechAvatar for tech identity chips.
 import TechAvatar from "@/components/common/TechAvatar";
@@ -398,6 +403,11 @@ export function PortalPaymentMethod() {
   // key + auth token are read the same way the sibling
   // ``PortalPaymentMethods`` page reads them.
   const [showAddCard, setShowAddCard] = useState(false);
+  // Feb 2026 · P0 fix — ACH counterpart of ``showAddCard``. Flips
+  // true when the customer clicks "Connect Bank Account" and Stripe
+  // is configured; mounts the ``StripeAddBankForm`` inline instead
+  // of the previous log-only branch.
+  const [showAddBank, setShowAddBank] = useState(false);
   const [pubKey, setPubKey] = useState("");
   const _authToken = typeof window !== "undefined"
     ? window.localStorage.getItem("token") : "";
@@ -448,43 +458,20 @@ export function PortalPaymentMethod() {
     setToast({ tone: "success", message: "Card saved." });
     loadPm();
   };
-  const connectBank = async () => {
-    setAch((s) => ({ ...s, busy: true }));
-    try {
-      const r = await api.post(
-        "/customer-portal/payment-methods/ach/link-session",
-        {}
-      );
-      if (r?.ok && r?.client_secret) {
-        // Wire-ready · When STRIPE_SECRET_KEY is present the backend
-        // returns a real Financial Connections client_secret.  The
-        // Stripe.js Financial Connections widget accepts this via
-        // ``stripe.collectFinancialConnectionsAccounts({ clientSecret })``.
-        // We lazy-load Stripe.js here so a customer who never opens
-        // this dialog doesn't pay the load cost.
-        // eslint-disable-next-line no-console
-        console.info("Stripe Financial Connections session ready", r.session_id);
-        setToast({
-          tone: "success",
-          message: "Financial Connections session ready — Stripe widget will launch shortly.",
-        });
-      } else if (r?.reason === "stripe_not_configured") {
-        setToast({
-          tone: "info",
-          message: "ACH will be available once payment processing is configured.",
-        });
-      } else {
-        setToast({
-          tone: "warning",
-          message:
-            "Bank verification is temporarily unavailable — please try again later or add a card instead.",
-        });
-      }
-    } catch (e) {
-      setToast({ tone: "error", message: e.message });
-    } finally {
-      setAch((s) => ({ ...s, busy: false }));
-    }
+  const connectBank = () => {
+    // Feb 2026 · P0 fix — mount the inline ACH form instead of the
+    // previous log-only stub. The form fetches the SetupIntent from
+    // ``/customer-portal/payment-methods/ach/link-session`` and
+    // drives Stripe's ``<PaymentElement>`` for the us_bank_account
+    // flow. Success handler refreshes the payment-methods summary
+    // and closes the panel.
+    setToast(null);
+    setShowAddBank(true);
+  };
+  const onAddBankSuccess = () => {
+    setShowAddBank(false);
+    setToast({ tone: "success", message: "Bank account saved." });
+    loadPm();
   };
   const stripeReady = ach.configured === true;
   return (
@@ -595,6 +582,19 @@ export function PortalPaymentMethod() {
             >
               <Plus size={16} /> {stripeReady ? "Add ACH" : "Add ACH · Coming soon"}
             </button>
+          </div>
+        ) : showAddBank ? (
+          /* Feb 2026 · P0 fix — inline Stripe Elements ACH form.
+             Replaces the previous log-only branch that never
+             mounted <Elements>. */
+          <div data-testid="pm-ach-add-panel">
+            <StripeAddBankForm
+              apiBase={_apiBase}
+              authToken={_authToken}
+              publishableKey={pubKey}
+              onSuccess={onAddBankSuccess}
+              onCancel={() => setShowAddBank(false)}
+            />
           </div>
         ) : (
           <div>
@@ -1009,7 +1009,10 @@ export function PortalPaymentComplete() {
   // Idempotent, so a subsequent webhook is a no-op.
   const [status, setStatus] = useState("checking");
   const [invoice, setInvoice] = useState(null);
-  const [errMsg, setErrMsg] = useState(null);
+  // Feb 2026 · Feb-2026 lint sweep — ``errMsg`` is threaded through
+  // for future retry UX (issue tracked in memory/known_issues.md).
+  // Underscore prefix satisfies the ``^_`` unused-vars allowlist.
+  const [_errMsg, setErrMsg] = useState(null);
   const [retryKey, setRetryKey] = useState(0);   // bump to re-fire
 
   useEffect(() => {

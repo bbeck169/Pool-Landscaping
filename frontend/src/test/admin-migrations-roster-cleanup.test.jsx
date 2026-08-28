@@ -38,12 +38,14 @@ const src = fs.readFileSync(
 
 
 describe("AdminMigrationsPage — Roster Cleanup card · Preview/Run", () => {
-  it("Preview + Run + confirm testids are always rendered pre-preview", () => {
+  it("Preview + Run testids are always rendered pre-preview", () => {
     // Same shape as the Stripe cards — E2E must be able to query
-    // these testids without first driving any interaction.
+    // these testids without first driving any interaction. The
+    // Feb-2026 friction sweep retired the ``id-roster-confirm-input``
+    // text field; preview-first is the sole safety gate now.
     expect(src).toMatch(/data-testid="id-roster-preview-btn"/);
     expect(src).toMatch(/data-testid="id-roster-deactivate-btn"/);
-    expect(src).toMatch(/data-testid="id-roster-confirm-input"/);
+    expect(src).not.toMatch(/data-testid="id-roster-confirm-input"/);
   });
 
   it("Preview button is NOT wrapped in a hasPreviewed conditional", () => {
@@ -94,10 +96,12 @@ describe("AdminMigrationsPage — Roster Cleanup card · Preview/Run", () => {
     expect(block).not.toMatch(/\{\s*signal:/);
   });
 
-  it("Run button is gated behind hasPreviewed + typed 'DEACTIVATE'", () => {
-    // Same gate contract as every other migration card.
+  it("Run button is gated behind hasPreviewed (type-to-confirm retired)", () => {
+    // Same gate contract as every other migration card — preview
+    // first, then Run enables. Feb-2026 friction sweep retired
+    // the typed-DEACTIVATE gate.
     expect(src).toMatch(/hasPreviewed/);
-    expect(src).toMatch(/confirmText\s*===\s*["']DEACTIVATE["']/);
+    expect(src).not.toMatch(/confirmText\s*===\s*["']DEACTIVATE["']/);
     expect(src).toMatch(
       /disabled=\{!runReady\}[\s\S]{0,400}data-testid="id-roster-deactivate-btn"/,
     );
@@ -119,7 +123,7 @@ describe("AdminMigrationsPage — Roster Cleanup card · Preview/Run", () => {
   it("Preview report renders detail rows (email + role) via testids", () => {
     // The preview payload includes ``deactivated_details`` with
     // rich per-user info so the operator can eyeball what will be
-    // deactivated before typing "DEACTIVATE".
+    // deactivated before running the commit.
     expect(src).toMatch(/data-testid="id-roster-report"/);
     expect(src).toMatch(/data-testid="id-roster-report-count"/);
     expect(src).toMatch(/data-testid="id-roster-report-details"/);

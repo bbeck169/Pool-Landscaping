@@ -26,27 +26,35 @@ export default function ConfirmDeleteDialog({
   body = "This action cannot be undone.",
   confirmLabel = "Delete",
   destructive = true,
-  requireTypeConfirm = false,
-  typeConfirmString = "DELETE",
+  // Feb 2026 · Type-to-confirm friction removed app-wide. These
+  // props stay in the signature so existing callers keep type-
+  // checking cleanly, but they're intentionally not read below.
+  // Underscore prefix satisfies the ``^_`` unused-vars allowlist.
+  requireTypeConfirm: _requireTypeConfirm = false,
+  typeConfirmString: _typeConfirmString = "DELETE",
   onConfirm,
   onCancel,
   busy = false,
 }) {
-  const [typed, setTyped] = React.useState("");
+  // Feb 2026 · Type-to-confirm friction removed app-wide.
+  // ``requireTypeConfirm`` + ``typeConfirmString`` remain in the
+  // API surface for backwards-compat but are intentionally
+  // ignored — the text input is no longer rendered and the
+  // Confirm button starts immediately enabled. Two-click safety
+  // (click Delete to open modal → click Confirm inside) is
+  // preserved.
   const confirmRef = React.useRef(null);
 
   React.useEffect(() => {
     if (open) {
-      setTyped("");
       // Focus the confirm button on open for keyboard-first flow.
-      // Skip for the heavy-blast dialog so the input gets focus.
       const t = setTimeout(() => {
-        if (!requireTypeConfirm && confirmRef.current) confirmRef.current.focus();
+        if (confirmRef.current) confirmRef.current.focus();
       }, 50);
       return () => clearTimeout(t);
     }
     return undefined;
-  }, [open, requireTypeConfirm]);
+  }, [open]);
 
   React.useEffect(() => {
     if (!open) return undefined;
@@ -56,8 +64,7 @@ export default function ConfirmDeleteDialog({
   }, [open, onCancel]);
 
   if (!open) return null;
-  const typedMatch = !requireTypeConfirm || typed === typeConfirmString;
-  const disabled = busy || !typedMatch;
+  const disabled = busy;
 
   return (
     <div
@@ -103,27 +110,10 @@ export default function ConfirmDeleteDialog({
                data-testid="confirm-delete-body">
             {body}
           </div>
-          {requireTypeConfirm ? (
-            <div className="space-y-1">
-              <div className="text-xs" style={{ color: colors.muted }}>
-                Type <strong>{typeConfirmString}</strong> to confirm.
-              </div>
-              <input
-                type="text"
-                value={typed}
-                onChange={(e) => setTyped(e.target.value)}
-                autoFocus
-                className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
-                style={{
-                  backgroundColor: colors.surfaceSecondary,
-                  color: colors.onSurface,
-                  border: `1px solid ${typedMatch ? "#86EFAC" : colors.border}`,
-                }}
-                data-testid="confirm-delete-type-input"
-                placeholder={typeConfirmString}
-              />
-            </div>
-          ) : null}
+          {/* Feb 2026 · Type-to-confirm input removed — see comment
+              at top of the component. The ``requireTypeConfirm`` +
+              ``typeConfirmString`` props are still accepted so
+              callers don't need to be updated en masse. */}
         </div>
 
         <div className="flex items-center justify-end gap-2 px-5 py-3"
