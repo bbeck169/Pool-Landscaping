@@ -136,7 +136,37 @@ async def _log_delivery(tenant_id: str, report: Dict[str, Any],
 
 async def run_weekly_pool_service_email() -> Dict[str, Any]:
     """Iterate every tenant, compute the weekly pool-service report,
-    email admins (or MOCK) and log."""
+    email admins (or MOCK) and log.
+
+    Backlog #iv · Feb-2026 — Two-layer duplicate-fire defense:
+
+    1. **Scheduler lease** at the top of the tick — only one process
+       runs the body per (job_id, minute-of-fire).  Contested calls
+       no-op cleanly.  Combined with the fact that we call
+       ``try_acquire_lease`` before entering the tenant loop, N
+       replicas of the scheduler produce exactly one full sweep.
+    2. **Dispatch-log guard** per (tenant, iso_week) — even if the
+       lease races (fail-open on Mongo error), the compound unique
+       index on ``notification_dispatch_log`` catches the survivor
+       and returns ``already_dispatched``.  ``result="skipped_dedupe"``
+       falls through in ``results`` so ops can see the guard firing.
+    """
+    from services.comms_hardening.scheduler_lease import (
+        try_acquire_lease, release_lease,
+    )
+    from services.comms_hardening.dispatch_guard import (
+        guard_and_log, mark_dispatch_result, hash_email,
+    )
+
+    lease = await try_acquire_lease(job_id="pool_service_weekly_email")
+    if not lease.get("acquired"):
+        logger.info(
+            "[pool-service-email] lease not acquired · reason=%s tick=%s",
+            lease.get("reason"), lease.get("tick_iso"),
+        )
+        return {"tenants_processed": 0, "results": [],
+                "lease": "not_acquired", "tick_iso": lease.get("tick_iso")}
+
     # Lazy import to avoid circular jobs.py → this module.
     from routers.jobs import compute_pool_service
     results: List[Dict[str, Any]] = []
@@ -152,8 +182,62 @@ async def run_weekly_pool_service_email() -> Dict[str, Any]:
         recipients = await _get_tenant_admin_emails(tid)
         html = _compose_html(tenant_name, report)
         subject = f"{tenant_name} · Pool Service Report · {report.get('week_start')} → {report.get('week_end')}"
+
+        # Backlog #iv · dispatch-log guard.  One row per
+        # (tenant, iso_week) — this is admin-facing, so we don't
+        # apply the deny-list here (admins ARE the audience).
+        dedupe_key = (
+            f"pool_service_report:{tid}:{report.get('week_start')}"
+        )
+        # Aggregate all admin emails into a single "digest" recipient
+        # id.  A stable hash of the sorted list means adding/removing
+        # an admin creates a new dedupe row (new admins get the email
+        # even if a sibling admin already got it this week — that's
+        # the desired failure mode).
+        agg_recipient = hash_email(",".join(sorted(recipients))) or "no_admins"
+        guard = await guard_and_log(
+            tenant_id=tid,
+            notification_type="pool_service_report",
+            recipient_id=agg_recipient,
+            dedupe_key=dedupe_key,
+            channel="email",
+            resolved_address=", ".join(recipients),
+            subject=subject,
+            metadata={
+                "week_start": report.get("week_start"),
+                "week_end": report.get("week_end"),
+                "recipient_count": len(recipients),
+            },
+        )
+        if not guard["allowed"]:
+            logger.info(
+                "[pool-service-email] dedupe skip · tenant=%s week=%s "
+                "reason=%s",
+                tid, report.get("week_start"), guard["reason"],
+            )
+            results.append({"tenant_id": tid, "tenant_name": tenant_name,
+                              "sent": False, "mocked": False,
+                              "reason": "skipped_dedupe",
+                              "recipients": len(recipients)})
+            continue
+
         result = await _send_via_resend(subject, html, recipients)
+        # Belt-and-suspenders: legacy delivery log (audit history).
         await _log_delivery(tid, report, recipients, result)
+        # Backlog #iv: stamp the outcome on the dispatch-log row.
+        await mark_dispatch_result(
+            guard["dispatch_id"],
+            status=("sent" if result.get("sent")
+                     else ("mocked" if result.get("mocked") else "failed")),
+            provider_id=result.get("resend_id"),
+            error=result.get("reason") if not result.get("sent") else None,
+        )
         results.append({"tenant_id": tid, "tenant_name": tenant_name, **result,
                           "recipients": len(recipients)})
-    return {"tenants_processed": len(results), "results": results}
+
+    # Optional: release the lease so a Mon 09:00 UTC re-tick can run
+    # (won't happen — cron is Fri 17:00 UTC weekly — but keeps the
+    # collection tidy).  Safe no-op when Mongo is down.
+    await release_lease(lease.get("lease_id"))
+    return {"tenants_processed": len(results), "results": results,
+             "lease": "acquired", "tick_iso": lease.get("tick_iso")}

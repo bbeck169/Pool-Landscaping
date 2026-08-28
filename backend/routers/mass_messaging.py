@@ -496,9 +496,34 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
 
     for c in customers:
         ctx = render_context(customer=c, tenant=tenant or {})
+        # Backlog #iv · Feb-2026 — Customer-facing deny-list guardrail.
+        # Refuse to send this row's payload to any admin-owned /
+        # workforce-owned / tenant-owned address, even if the
+        # customer record was corrupted or a QA seed slipped a
+        # workforce email/phone onto the customer.
+        from services.comms_hardening.deny_list import (
+            strip_admin_owned_recipients as _iv_deny_strip,
+        )
         # ── email ─────────────────────────────────────────────
         if "email" in channels:
             addr = (c.get("email") or "").strip()
+            if addr:
+                _kept, _stripped = await _iv_deny_strip(
+                    tenant_id=tenant_id, kind="customer_facing",
+                    channel="email", recipients=[addr],
+                    context={"trigger": "mass_messaging_batch",
+                              "batch_id": batch_id,
+                              "customer_id": c.get("id")},
+                )
+                if not _kept:
+                    stats["denied_admin_owned"] = stats.get("denied_admin_owned", 0) + 1
+                    await _log_delivery(
+                        tenant_id=tenant_id, batch_id=batch_id, customer=c,
+                        channel="email", subject=None, body="",
+                        status="denied_admin_owned", provider="none",
+                        error=str(_stripped),
+                    )
+                    addr = ""
             if not addr:
                 stats["no_contact"] += 1
                 await _log_delivery(
@@ -538,6 +563,23 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
         # ── sms ───────────────────────────────────────────────
         if "sms" in channels:
             phone = (c.get("phone") or "").strip()
+            if phone:
+                _kept, _stripped = await _iv_deny_strip(
+                    tenant_id=tenant_id, kind="customer_facing",
+                    channel="sms", recipients=[phone],
+                    context={"trigger": "mass_messaging_batch",
+                              "batch_id": batch_id,
+                              "customer_id": c.get("id")},
+                )
+                if not _kept:
+                    stats["denied_admin_owned"] = stats.get("denied_admin_owned", 0) + 1
+                    await _log_delivery(
+                        tenant_id=tenant_id, batch_id=batch_id, customer=c,
+                        channel="sms", subject=None, body="",
+                        status="denied_admin_owned", provider="none",
+                        error=str(_stripped),
+                    )
+                    phone = ""
             if not phone:
                 stats["no_contact"] += 1
                 await _log_delivery(

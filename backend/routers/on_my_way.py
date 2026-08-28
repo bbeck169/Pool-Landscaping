@@ -249,6 +249,25 @@ async def on_my_way(
         )
         return {"sent": False, "reason": "outbound_disabled"}
 
+    # Backlog #iv · Feb-2026 — Customer-facing deny-list guardrail.
+    # Ensures no admin/workforce/tenant-owned phone ever receives a
+    # customer-facing SMS even if the customer record was corrupted
+    # or the ``COMMS_TEST_ALLOWLIST_PHONES`` env is misconfigured.
+    from services.comms_hardening.deny_list import (
+        strip_admin_owned_recipients,
+    )
+    kept, stripped = await strip_admin_owned_recipients(
+        tenant_id=tid, kind="customer_facing", channel="sms",
+        recipients=[phone],
+        context={"trigger": "on_my_way", "job_id": job_id,
+                  "customer_id": (cust or {}).get("id")},
+    )
+    if stripped:
+        # The one and only recipient was an admin-owned line — block.
+        return {"sent": False, "reason": "denied_admin_owned_recipient",
+                "stripped": stripped}
+    phone = kept[0] if kept else phone
+
     # Real / mocked send.
     from services.comms_sms_adapter import send_sms
     result = await send_sms(tid, phone, sms_body)

@@ -781,6 +781,69 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
         if step["channel"] == "sms":
             body = strip_html(body)
         delivery_id = new_id()
+        # Backlog #iv · Feb-2026 — Unified dispatch guard.
+        # ``sequence_step:{sequence_id}:{step_id}:{customer_id}``
+        # dedupes across scheduler ticks even if the ``claimed_at``
+        # 5-minute stale window elapses (crash + immediate restart).
+        # The adapter-level ``sms_send_ledger`` continues to guard
+        # its own retry loop — this is the outer envelope.
+        from services.comms_hardening.dispatch_guard import (
+            guard_and_log as _iv_guard, mark_dispatch_result as _iv_mark,
+            hash_email as _iv_hash_email, hash_phone as _iv_hash_phone,
+        )
+        _iv_step_id = step.get("id") or f"idx-{step_idx}"
+        _iv_dedupe = (
+            f"sequence_step:{seq['id']}:{_iv_step_id}:{e['customer_id']}"
+        )
+        _iv_recipient = e["customer_id"] or (
+            _iv_hash_email(cust.get("email") or "")
+            if step["channel"] == "email"
+            else _iv_hash_phone(cust.get("phone") or "")
+        )
+        _iv_addr = (
+            (cust.get("email") or "") if step["channel"] == "email"
+            else (cust.get("phone") or "")
+        ).strip()
+        _iv_verdict = await _iv_guard(
+            tenant_id=e["tenant_id"],
+            notification_type=f"sequence_step_{step['channel']}",
+            recipient_id=_iv_recipient or "",
+            dedupe_key=_iv_dedupe,
+            channel=step["channel"],
+            resolved_address=_iv_addr,
+            subject=None,
+            metadata={"sequence_id": seq["id"], "step_index": step_idx,
+                       "enrolment_id": e["id"]},
+        )
+        if not _iv_verdict["allowed"]:
+            logger.info(
+                "[m5c] sequence_step dedupe skip · seq=%s step=%s cust=%s "
+                "reason=%s",
+                seq["id"], _iv_step_id, e["customer_id"],
+                _iv_verdict["reason"],
+            )
+            # Advance the cursor so the enrolment isn't stuck retrying.
+            next_idx = step_idx + 1
+            history = list(e.get("history") or [])
+            history.append({
+                "step_index": step_idx,
+                "action_type": step.get("channel"),
+                "fired_at": now.isoformat(),
+                "dedupe_skipped": True,
+                "dedupe_reason": _iv_verdict["reason"],
+            })
+            done = next_idx >= len(steps)
+            await db.marketing_drip_enrolments.update_one(
+                {"id": e["id"]},
+                {"$set": {"current_step": next_idx,
+                            "next_send_at": None if done else (now + timedelta(days=1)).isoformat(),
+                            "status": "completed" if done else "active",
+                            "history": history,
+                            "claimed_at": None}},
+            )
+            if done:
+                completed += 1
+            continue
         # Slice N / S · route email through Resend, SMS through RingCentral.
         provider_status = None
         provider = "mock"
@@ -843,6 +906,13 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
             "sent_at": now.isoformat(),
             "provider_response_stub": {"ok": True, "id": f"mock-{delivery_id[:8]}"},
         })
+        # Backlog #iv · Stamp outcome on the dispatch-log envelope.
+        await _iv_mark(
+            _iv_verdict.get("dispatch_id"),
+            status=(provider_status or "unknown"),
+            provider_id=provider_response_id,
+            attempt_count=attempts,
+        )
         # Advance
         next_idx = step_idx + 1
         history = list(e.get("history") or [])

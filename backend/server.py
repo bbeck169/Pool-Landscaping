@@ -2464,6 +2464,61 @@ async def startup():
     except Exception as e:
         logger.warning(f"pricebook_suppliers migration crashed: {e}")
 
+    # Backlog #iv · Feb-2026 — Notification dispatch log + scheduler
+    # leases.  Creates ``notification_dispatch_log`` with the compound
+    # unique index that makes the ``guard_and_log`` insert-then-send
+    # pattern race-safe, plus the ``scheduler_leases`` collection
+    # with TTL index used by
+    # ``services/comms_hardening/scheduler_lease.py``.
+    # Sentinel: ``notification_dispatch_log_v1``.  Idempotent.
+    try:
+        from services.migrations.notification_dispatch_log import (
+            run_notification_dispatch_log_migration,
+        )
+        _ndl_boot = await run_notification_dispatch_log_migration()
+        if _ndl_boot.get("status") == "skipped":
+            logger.info(
+                "[notification_dispatch_log] sentinel present · skipping",
+            )
+        else:
+            _s = _ndl_boot.get("summary") or {}
+            logger.info(
+                f"[notification_dispatch_log] indexes_created="
+                f"{_s.get('indexes_created', 0)} "
+                f"already_present={_s.get('already_present', 0)} "
+                f"errors={len(_s.get('errors') or [])}",
+            )
+    except Exception as e:
+        logger.warning(f"notification_dispatch_log migration crashed: {e}")
+
+    # Backlog #iv · R1 · Feb-2026 — Allowlist-hygiene sanity check.
+    # Emits a WARN log per overlap between ``COMMS_TEST_ALLOWLIST_*``
+    # and live workforce / tenant / from-number addresses.  Log-only
+    # — never blocks startup.  This surfaces the exact config smell
+    # documented in the audit for Bug 2 (``+16028874400`` is both a
+    # tenant from-number AND in the DRY-RUN allowlist).
+    try:
+        from services.comms_hardening.deny_list import (
+            allowlist_overlap_check,
+        )
+        _ah_res = await allowlist_overlap_check()
+        if _ah_res.get("overlaps"):
+            logger.warning(
+                "[notifications] allowlist_overlap_check surfaced %s "
+                "overlap(s) between COMMS_TEST_ALLOWLIST_* and live "
+                "workforce/tenant addresses — see WARN lines above.",
+                _ah_res["overlaps"],
+            )
+        else:
+            logger.info(
+                "[notifications] allowlist_overlap_check clean · "
+                "checked_phones=%s checked_emails=%s",
+                _ah_res.get("checked_phones", 0),
+                _ah_res.get("checked_emails", 0),
+            )
+    except Exception as e:
+        logger.warning(f"allowlist_overlap_check crashed: {e}")
+
     # Feb-2026 · P0 fix — Orphan-paid invoice audit. Report-only on
     # boot so operators see the count in logs without silently
     # flipping seed / demo fixtures. Real flips happen through the

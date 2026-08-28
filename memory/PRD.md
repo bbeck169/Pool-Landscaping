@@ -1,3 +1,156 @@
+## Backlog Item #iv · Feb-2026 — Notification cleanup (P0) · SHIPPED
+
+Fixed the 4× duplicate weekly-digest email (Bug 1) and closed the
+customer-facing SMS leak vector that let ``+16028874400`` receive
+outbound customer notices (Bug 2), plus a symmetric email guardrail
+(Bug 3).
+
+**Root causes**
+- **Bug 1**: ``services/pool_service_email.py::run_weekly_pool_service_email``
+  had zero dedup ledger.  The scheduler is per-process (APScheduler
+  in ``server.py``, gated by ``ENABLE_SCHEDULER``).  When N
+  processes have the flag on (dev multi-worker, or misconfigured
+  ``APP_ENV`` on a deployed pod), the Fri 17:00 UTC cron fires N
+  times.  Fix ships two layers: Mongo advisory lease at the tick
+  head + dispatch-log guard per (tenant, iso_week).
+- **Bug 2**: no code path programmatically appended tenant/admin
+  phones to a customer-facing recipient list — but
+  ``COMMS_TEST_ALLOWLIST_PHONES`` in the non-prod env contained
+  ``+16028874400`` (which IS the tenant's ``RC_FROM_NUMBER`` +
+  ``settings.business_card.phone``).  Any bogus recipient value
+  matching that number bypassed DRY-RUN and reached the admin's
+  own line.  Fix: unconditional deny-list middleware strips any
+  admin-owned / tenant-owned recipient from every
+  ``kind="customer_facing"`` dispatch, regardless of provenance.
+- **Bug 3**: same class as Bug 2 for email — same middleware.
+
+**Files touched**
+
+Backend (created):
+- ``services/comms_hardening/__init__.py``
+- ``services/comms_hardening/dispatch_guard.py`` —
+  ``guard_and_log``, ``mark_dispatch_result``, ``hash_email``,
+  ``hash_phone``.
+- ``services/comms_hardening/deny_list.py`` —
+  ``strip_admin_owned_recipients``, ``allowlist_overlap_check`` (R1).
+- ``services/comms_hardening/scheduler_lease.py`` —
+  ``try_acquire_lease``, ``release_lease``, ``ensure_indexes``.
+- ``services/migrations/notification_dispatch_log.py`` — sentinel
+  ``notification_dispatch_log_v1``.
+- ``tests/test_notification_cleanup_iv.py`` — 12 tests.
+
+Backend (modified):
+- ``services/pool_service_email.py`` — wrapped with lease + guard.
+- ``routers/on_my_way.py`` — deny-list on customer SMS.
+- ``routers/mass_messaging.py`` — deny-list on both email + SMS
+  batch dispatch; new ``denied_admin_owned`` delivery-log status.
+- ``routers/marketing_sequences.py`` — dispatch-log guard on
+  sequence step re-fires; advances enrolment cursor on dedupe.
+- ``routers/admin_migrations.py`` — new super_admin endpoint
+  ``POST /admin/migrations/notification-dispatch-log``.
+- ``server.py`` — boot-wires the migration + R1 sanity check.
+
+Docs (modified):
+- ``memory/test_credentials.md`` — allowlist-hygiene note.
+
+**Migration & indexes**
+```
+sentinel_id:            notification_dispatch_log_v1
+indexes_created:        2 → notif_dispatch_dedup_idx, notif_dispatch_tenant_type_idx
+scheduler_leases:       scheduler_leases_unique_idx, scheduler_leases_ttl_idx
+errors:                 0
+```
+
+Compound unique indexes verified live:
+- ``notification_dispatch_log`` unique on ``(tenant_id, notification_type, recipient_id, dedupe_key)``.
+- ``scheduler_leases`` unique on ``(tenant_id, job_id, tick_iso)`` + TTL on ``expires_at``.
+
+**Empirical proof (all captured live on the aquaterra tenant)**
+
+1. **Bug 1 · dispatch guard fires**: force-invoked
+   ``run_weekly_pool_service_email`` twice within the same lease
+   tick — first pass processes tenants, second pass returns every
+   result with ``reason=skipped_dedupe`` (dispatch-log unique index
+   short-circuits).  Test:
+   ``test_weekly_pool_service_email_dispatch_guard``.
+2. **Bug 1 · scheduler lease fires**: four concurrent
+   ``try_acquire_lease(job_id, tenant_id)`` calls → exactly one
+   winner, three ``acquired=False, reason="already_held"``.  Test:
+   ``test_scheduler_lease_concurrent_only_one_wins``.
+3. **Bug 2 · SMS deny-list**: injecting ``+16028874400`` into a
+   customer-facing SMS list where the tenant's workforce OR
+   business-card phone matches → recipient stripped, structured
+   WARN log emitted with ``notifications.deny_list.stripped
+   kind=customer_facing channel=sms tenant_id=… address=…
+   context=…``.  Test:
+   ``test_on_my_way_deny_list_strips_workforce_phone``.
+4. **Bug 3 · email deny-list**: injecting an admin email
+   (``super@aquaterra.com``-style) into a mass-messaging customer
+   batch → recipient stripped + ``denied_admin_owned`` delivery-log
+   status.  Test:
+   ``test_deny_list_strips_workforce_and_tenant_addresses``.
+5. **Sequence step dedup**: re-firing the same ``(sequence_id,
+   step_id, customer_id)`` → 2nd call blocked by
+   ``notification_dispatch_log`` unique index; enrolment cursor
+   still advances so the flow doesn't get stuck. Test:
+   ``test_guard_and_log_dedupes_second_call``.
+6. **R1 · allowlist overlap detected on the LIVE env**: boot log
+   captured verbatim from ``/var/log/supervisor/backend.err.log``:
+   ```
+   WARNING notifications.deny_list · notifications.allowlist.overlap
+      kind=sms   value=6028874400
+      tenant_ids=affdfbfa-88b9-4baa-ae45-2ef78531b6e4
+      sources=env_from_number,tenant_business_card
+   WARNING notifications.deny_list · notifications.allowlist.overlap
+      kind=email value=brian@plofv.com
+      tenant_ids=affdfbfa-88b9-4baa-ae45-2ef78531b6e4
+      sources=workforce
+   WARNING pool_crm · [notifications] allowlist_overlap_check
+      surfaced 2 overlap(s) — see WARN lines above.
+   ```
+   The R1 check is doing exactly what the audit predicted:  it caught
+   the ``+16028874400`` env→tenant_business_card overlap that was the
+   Bug 2 leak vector, plus a **second** overlap
+   (``brian@plofv.com`` — a workforce email accidentally added to
+   ``COMMS_TEST_ALLOWLIST_EMAILS``).  Operator action needed to
+   scrub both from the .env; the runtime deny-list already prevents
+   the misroute regardless.
+
+   Clean run (mock env with empty allowlists) also verified in
+   ``test_allowlist_overlap_detects_workforce_phone`` — returns
+   ``overlaps=0`` on empty allowlist.
+
+**Tests**
+- Backend: **12/12** new Backlog-#iv + **54/54** regression on
+  notification/pricebook/revenue/chemical suites.
+- Frontend: no changes shipped for #iv (purely backend + docs).
+
+**Audit-note transparency**
+- Deny-list applies only to ``kind="customer_facing"``.  Internal
+  admin digests (weekly pool-service, weekly digest, scorecard)
+  intentionally reach admins.
+- Scheduler lease is fail-open on Mongo error — dispatch-log guard
+  is the second line of defence.
+- The 2 R1 overlaps caught on live env need operator action to
+  clean the ``.env`` — this ships the detector, not the fix.
+- ``sms_send_ledger`` (Feb-2026 rc_adapter idempotency) coexists
+  with ``notification_dispatch_log`` — the former is caller-
+  supplied per-adapter, the latter is the unified floor.
+- Existing feature-specific ledgers (``outbound_emails``,
+  ``email_delivery_log``, ``communication_sends``,
+  ``marketing_deliveries``) left in place as audit-trail
+  continuity; every wrapped site also writes to
+  ``notification_dispatch_log`` as the dedup floor.
+
+**Sentinels persisted**
+```
+notification_dispatch_log_v1  (completed_at: 2026-08-28T20:21:56Z)
+```
+
+---
+
+
+
 ## Backlog Item #iii · Feb-2026 — Pricebook expanded editing (Edit Item modal + multi-supplier + rich categories) · SHIPPED
 
 Rich per-item ``suppliers[]`` subdoc, effective-cost helper with

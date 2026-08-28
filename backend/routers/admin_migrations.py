@@ -1124,3 +1124,39 @@ async def backfill_pricebook_suppliers(
     )
     return report
 
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/notification-dispatch-log
+# Backlog #iv · Feb-2026 — super_admin trigger for the notification
+# dispatch log + scheduler-lease index bootstrap.  Also runs on every
+# boot (see ``server.py``); this endpoint lets ops force a re-run
+# after a manual Mongo intervention (dropped index, restored backup).
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/notification-dispatch-log",
+    operation_id="admin.migrations.notification_dispatch_log",
+)
+async def backfill_notification_dispatch_log(
+    force: bool = Query(
+        False,
+        description=(
+            "When true, bypasses the ``db.migrations`` sentinel and "
+            "re-checks every index.  Idempotent — existing indexes "
+            "are left alone."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_super_admin(user)
+    from services.migrations.notification_dispatch_log import (
+        run_notification_dispatch_log_migration,
+    )
+    report = await run_notification_dispatch_log_migration(force=force)
+    logger.info(
+        "[notification-dispatch-log-migration] user=%s "
+        "caller_tenant=%s force=%s report=%s",
+        user.get("id"), tenant.get("id"), force, report,
+    )
+    return report
+
