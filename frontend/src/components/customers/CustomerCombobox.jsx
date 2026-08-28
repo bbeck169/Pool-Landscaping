@@ -56,6 +56,24 @@ import {
   CommandList,
 } from "@/components/ui/command";
 
+
+// Feb-2026 · Backlog Item 5 — local phone display helper. Reuses
+// the E.164 → ``(XXX) XXX-XXXX`` transform the app already applies
+// elsewhere (see ``PhoneInput.jsx``, ``customers/CustomerDetail``).
+// Kept in-file to avoid a fresh import graph edge for one call site.
+function _formatPhone(raw) {
+  if (!raw) return "";
+  const digits = String(raw).replace(/\D+/g, "");
+  // 11-digit US with leading 1 → strip prefix.
+  const usDigits = digits.length === 11 && digits.startsWith("1")
+    ? digits.slice(1)
+    : digits;
+  if (usDigits.length === 10) {
+    return `(${usDigits.slice(0, 3)}) ${usDigits.slice(3, 6)}-${usDigits.slice(6)}`;
+  }
+  return String(raw);
+}
+
 export function CustomerCombobox({
   value,
   onChange,
@@ -113,25 +131,54 @@ export function CustomerCombobox({
           />
           <CommandList>
             <CommandEmpty>No customers found.</CommandEmpty>
-            {list.map((c) => (
-              <CommandItem
-                key={c.id}
-                value={c.name}
-                onSelect={() => {
-                  onChange(c.id);
-                  setOpen(false);
-                }}
-                data-testid={`${testid}-item-${c.id}`}
-              >
-                <Check
-                  size={14}
-                  className={
-                    "mr-2 " + (c.id === value ? "opacity-100" : "opacity-0")
-                  }
-                />
-                {c.name}
-              </CommandItem>
-            ))}
+            {list.map((c) => {
+              // Feb-2026 · Backlog Item 5 — auxiliary email/phone
+              // subtitle. Disambiguates duplicate customer names
+              // (e.g. the two "Mike Rivera" records that surfaced
+              // on Feb-2026 P0 dedupe). Renders nothing when neither
+              // field is populated so single-value customers stay
+              // clean. Search value carries email + phone into the
+              // cmdk filter so admins can type an email to jump to
+              // the right row.
+              const emailStr = (c.email || "").trim();
+              const phoneStr = _formatPhone(c.phone || c.primary_phone || "");
+              const hasAux = Boolean(emailStr) || Boolean(phoneStr);
+              const auxCopy = [emailStr, phoneStr].filter(Boolean).join(" · ");
+              const searchValue = [c.name, emailStr, phoneStr]
+                .filter(Boolean).join(" ");
+              return (
+                <CommandItem
+                  key={c.id}
+                  value={searchValue}
+                  onSelect={() => {
+                    onChange(c.id);
+                    setOpen(false);
+                  }}
+                  data-testid={`${testid}-item-${c.id}`}
+                >
+                  <Check
+                    size={14}
+                    className={
+                      "mr-2 " + (c.id === value ? "opacity-100" : "opacity-0")
+                    }
+                  />
+                  <div className="flex flex-col min-w-0">
+                    <span className="truncate" data-testid={`${testid}-item-${c.id}-name`}>
+                      {c.name}
+                    </span>
+                    {hasAux ? (
+                      <span
+                        className="text-xs truncate"
+                        style={{ color: colors.muted }}
+                        data-testid={`${testid}-item-${c.id}-aux`}
+                      >
+                        {auxCopy}
+                      </span>
+                    ) : null}
+                  </div>
+                </CommandItem>
+              );
+            })}
           </CommandList>
         </Command>
       </PopoverContent>

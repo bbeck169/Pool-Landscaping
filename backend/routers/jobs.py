@@ -223,10 +223,42 @@ def with_field_report(doc: dict) -> dict:
     return doc
 
 
-def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], technician_id: Optional[str]) -> dict:
-    q = {"tenant_id": tenant["id"]}
+async def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], technician_id: Optional[str]) -> dict:
+    """Feb-2026 · Backlog Item 3 — technicians now see crew-only jobs
+    (jobs with a ``crew_id`` but no ``technician_id``) when they are
+    a member of that crew. Previously the ``technician_id`` filter
+    dropped every crew-assigned job from the individual tech's
+    schedule view. The query now uses ``$or`` when the caller is a
+    tech in one-or-more crews so a job matches if EITHER
+    ``technician_id == user's tech id`` OR
+    ``crew_id IN <user's crews>``.
+
+    Async because the crew lookup requires a Motor call. The single
+    call site (``list_jobs``) is already async.
+    """
+    tid = tenant["id"]
+    q: dict = {"tenant_id": tid}
     if user.get("role") == "technician" and user.get("technician_id"):
-        q["technician_id"] = user["technician_id"]
+        tech_pk = user["technician_id"]
+        # Find every crew the tech is a member of. ``tech_ids`` on
+        # crews is the same key space as ``technicians.id``.
+        crew_ids: list = []
+        try:
+            async for row in db.crews.find(
+                {"tenant_id": tid, "tech_ids": tech_pk},
+                {"_id": 0, "id": 1},
+            ):
+                if row.get("id"):
+                    crew_ids.append(row["id"])
+        except Exception:  # noqa: BLE001 — never block on membership lookup
+            crew_ids = []
+        if crew_ids:
+            q["$or"] = [
+                {"technician_id": tech_pk},
+                {"crew_id": {"$in": crew_ids}},
+            ]
+        else:
+            q["technician_id"] = tech_pk
     elif user.get("role") == "customer":
         q["customer_id"] = user.get("customer_id")
     elif technician_id:
@@ -353,7 +385,7 @@ async def list_jobs(
     limit: int = Query(1000, ge=1, le=5000, description="Feb-2026: cap on returned rows; default 1000"),
     include_deleted: bool = Query(False, description="Feb-2026 · super_admin only — include soft-deleted jobs"),
 ):
-    q = scope_jobs_query(user, tenant, status, technician_id)
+    q = await scope_jobs_query(user, tenant, status, technician_id)
     # Feb-2026 · Schedule multi-select soft-delete — hide rows with
     # ``deleted_at`` set by default. Only a ``super_admin`` may pass
     # ``?include_deleted=true`` to view (and later undelete) previously-
@@ -361,7 +393,21 @@ async def list_jobs(
     # ignored — defense in depth.
     is_super = (user.get("role") or "").lower() == "super_admin"
     if not (include_deleted and is_super):
-        q["$or"] = [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]
+        # Feb-2026 · Backlog Item 3 — the tech-crew scope may have
+        # already stamped ``$or`` on the query (jobs matching
+        # ``technician_id`` OR ``crew_id`` in the tech's crews).
+        # Compose with the soft-delete gate using ``$and`` so a
+        # blanket ``q["$or"] = ...`` doesn't clobber the scope.
+        soft_delete_gate = [
+            {"deleted_at": None},
+            {"deleted_at": {"$exists": False}},
+        ]
+        if "$or" in q:
+            q.setdefault("$and", [])
+            q["$and"].append({"$or": q.pop("$or")})
+            q["$and"].append({"$or": soft_delete_gate})
+        else:
+            q["$or"] = soft_delete_gate
     # Phase 30 · optional inclusive date-range filter so the new calendar
     # can ask the backend for a bounded window instead of pulling all 1000
     # jobs and filtering client-side. Both ends are optional.

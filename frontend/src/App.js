@@ -286,6 +286,9 @@ import {
 } from "@/pages/aitools/AiToolsPages";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 import OpsHub from "@/pages/ops/OpsHub";
+// Feb-2026 · Job Timers Phase 1 + Chemical Cost Report — fresh pages.
+import JobTimersPage from "@/pages/timers/JobTimersPage";
+import ChemicalCostReportPage from "@/pages/reports/ChemicalCostReportPage";
 import RepairCalculatorPage from "@/pages/ops/RepairCalculatorPage";
 import ReportsHub from "@/pages/reports/ReportsHub";
 import BusinessSummary from "@/pages/reports/BusinessSummary";
@@ -1062,8 +1065,11 @@ export default function App() {
             <Route path="equipment" element={<OpsHub />} />
             <Route path="price-book" element={<OpsHub />} />
             <Route path="log-history" element={<OpsHub />} />
-            <Route path="job-timers" element={<OpsHub />} />
-            <Route path="avg-job-time" element={<OpsHub />} />
+            <Route path="job-timers" element={<AdminOnly><JobTimersPage /></AdminOnly>} />
+            <Route path="avg-job-time" element={<AdminOnly><JobTimersPage /></AdminOnly>} />
+            {/* Feb-2026 · Chemical Cost Report — /admin/reports/chemical-costs. */}
+            <Route path="admin/reports/chemical-costs"
+                element={<AdminOnly><ChemicalCostReportPage /></AdminOnly>} />
 
             {/* Phase 11 · Feb 2026 — Equipment Service Trackers.
                 Filter & Salt Cell cleaning trackers with per-tenant

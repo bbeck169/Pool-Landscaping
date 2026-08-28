@@ -557,6 +557,25 @@ async def submit_service_report(
         {"id": jid, "tenant_id": tenant["id"]},
         {"$set": _stop_updates},
     )
+    # Feb-2026 · Job Timers Phase 1 — close every open ``job_timers``
+    # row for this job. Runs after the job doc has been flipped to
+    # ``completed`` so ``ended_at`` and ``duration_seconds`` on
+    # timers stay aligned with the job lifecycle. Best-effort — a
+    # timer-close failure MUST NOT block the service-report submit.
+    try:
+        from routers.job_timers import close_open_timers_for_job
+        _closed = await close_open_timers_for_job(
+            job_id=jid, tenant_id=tenant["id"],
+            actor_user_id=user.get("id"),
+        )
+        if _closed:
+            logger.info(
+                f"[job_timers.auto_close] job={jid} closed={_closed}",
+            )
+    except Exception as _tc_exc:                                # noqa: BLE001
+        logger.warning(
+            f"[job_timers.auto_close] job={jid} failed: {_tc_exc}",
+        )
     # Feb-2026 · Door-hanger auto-send on completion transition.
     # Fire-and-forget so the submit response returns immediately.
     # Only fires when this submit actually FLIPPED the status to

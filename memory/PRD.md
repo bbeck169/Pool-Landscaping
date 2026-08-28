@@ -12534,3 +12534,43 @@ Cause: existing InvoiceView `Pay Now` button was too small + no sticky mobile ba
 ### Combined test results
 - Backend: 62 tests across 8 files — all green.
 - Frontend Vitest: 52 tests across 6 files — all green.
+
+---
+
+## Feb-2026 · Small backlog (Items 1-6) + Feature 1 (Job Timers Phase 1) + Feature 2 (Chemical Cost Report)
+
+### Small backlog items 1-6
+- **Item 1** (Repair/Service TYPE toggle colors): already shipped last session — `WorkClassToggle.jsx` uses `pool[600]` (Service, 3.68:1 vs white) + `amber[600]` (Repair, 3.19:1). Both pass WCAG AA large-text ≥ 3:1. Note: upgraded from spec's `[500]` because `[500]` fails 3:1.
+- **Item 2** (Crew → tech auto-suggest on `/jobs/new`): `pages/jobs/JobNew.jsx` — `techDirty` state + `useEffect` on `crew_id` change populates `technician_id` (crew.default_tech_id → first active member → first tech_ids entry). Manual pick sets `techDirty=true` to lock out subsequent auto-overwrites.
+- **Item 3** (Crew-only jobs on tech schedules): `routers/jobs.py::scope_jobs_query` converted to async + returns `$or` on `technician_id ∪ crew_id ∈ user's crews`. Composed with soft-delete gate via `$and`. Backend suite (`tests/test_scope_jobs_query_crew_membership.py`) — 4/4 green.
+- **Item 4** (Nullable numeric chemical readings): existing input row (`PoolChecklistForm.jsx::ReadingInputRow`) already handles null vs 0 correctly (`draft === "" → onChange(null)`; `hasValue` checks `!= null && !== ""`). Locked in via Vitest.
+- **Item 5** (CustomerCombobox aux subtitle): `components/customers/CustomerCombobox.jsx` — email + phone rendered below each name via `_formatPhone` (E.164 → `(XXX) XXX-XXXX`). Subtitle hidden when both empty. `searchValue` includes email + phone so admins can jump-search by either. Confirmed live — 120 aux subtitle elements rendered in dropdown.
+- **Item 6** (Stripe pubkey race): `StripeAddCardForm.jsx` + `StripeAddBankForm.jsx` — new `pubKeyLoading` prop + auto-detect 6-second grace window. Shows spinner + "Loading payment form…" until pubkey resolves; "not configured" error only after grace expires.
+
+### Feature 1 · Job Timers Phase 1 (backend + web reporting)
+- **New backend router** `backend/routers/job_timers.py` — 5 endpoints:
+  - `POST /api/job-timers/start` (super_admin/admin)
+  - `POST /api/job-timers/{id}/close` (super_admin/admin, idempotent)
+  - `PATCH /api/job-timers/{id}` (super_admin/admin, writes audit diff)
+  - `GET /api/job-timers` — filters: job_id/tech_id/crew_id/customer_id/date_from/date_to/open_only. Enriched with job_title, tech_name, crew_name, customer_name.
+  - `GET /api/job-timers/aggregates?group_by=service_category|customer|both`
+- **Collections**: `job_timers` + `job_timer_audit` (event = start | close | edit | auto_close, payload diff).
+- **Auto-close hook** wired into `routers/service_reports.py::submit_report` — closes every open timer for the job after service-report submit with `end_source="service_report_submit"`. Best-effort (never blocks the submit).
+- **Frontend** `frontend/src/pages/timers/JobTimersPage.jsx` — two tabs (`?t=timers` default, `?t=avgtime`). Edit modal for admins. CSV export.
+- **Route** `/job-timers` + alias `/avg-job-time`, both `AdminOnly`.
+- **Tests**: 10/10 backend (`tests/test_job_timers_phase1.py`) covering happy path, RBAC, tenant isolation, duration compute, PATCH audit, aggregate grouping, enriched-field contract.
+- **Phase 2 handoff**: mobile GPS geofence auto-start (100m / 30s+) ships separately via `e1_expo_frontend_dev`.
+
+### Feature 2 · Chemical Cost Report
+- **New backend router** `backend/routers/chemical_cost_report.py` — `GET /api/reports/chemical-costs?date_from=&date_to=&customer_id=&tech_id=&chemical_ids=`.
+  - Cost basis: `line_items[].wholesale_cost_snapshot` (write-time capture per Bug 1 ship).
+  - Aggregation: totals + `by_chemical[]` with qty_used, total_cost, avg_per_job, top_customer, top_tech.
+  - Chemical filter: `pricebook.category` case-insensitive `chemical` OR `is_chemical: true`.
+  - RBAC: super_admin/admin/manager. Tech = 403.
+- **Frontend** `frontend/src/pages/reports/ChemicalCostReportPage.jsx` — MTD default range, deep-linkable filters (useSearchParams), 3 total cards, sortable-by-cost table with top customer/tech, CSV export.
+- **Route** `/admin/reports/chemical-costs`, `AdminOnly`.
+- **Tests**: 7/7 backend (`tests/test_chemical_cost_report.py`) covering wholesale_cost_snapshot basis, non-chemical skip, unpaid-invoice skip, customer filter, RBAC, manager access, tech-filter via job join.
+
+### Test totals (this ship)
+- Backend pytest: **83 passed / 0 failed** across 11 test files.
+- Frontend Vitest: **66 passed / 0 failed** across 5 test files (16 new for features + 50 regression).

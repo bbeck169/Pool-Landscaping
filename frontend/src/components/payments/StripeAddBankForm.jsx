@@ -149,10 +149,22 @@ export default function StripeAddBankForm({
   title = "Connect bank account",
   onSuccess,
   onCancel,
+  // Feb-2026 · Backlog Item 6 — see the sibling
+  // StripeAddCardForm for the ``pubKeyLoading`` contract.
+  pubKeyLoading = undefined,
 }) {
   const [clientSecret, setClientSecret] = useState("");
   const [loadingSecret, setLoadingSecret] = useState(true);
   const [bootError, setBootError] = useState("");
+  const [autoLoadingElapsed, setAutoLoadingElapsed] = useState(false);
+  useEffect(() => {
+    if (publishableKey) return;
+    const t = setTimeout(() => setAutoLoadingElapsed(true), 6000);
+    return () => clearTimeout(t);
+  }, [publishableKey]);
+  const _effectivePubKeyLoading = pubKeyLoading !== undefined
+    ? pubKeyLoading
+    : (!publishableKey && !autoLoadingElapsed);
 
   const stripePromise = useMemo(() => {
     if (!publishableKey) return null;
@@ -197,13 +209,37 @@ export default function StripeAddBankForm({
   }, [apiBase, authToken]);
 
   if (!publishableKey) {
+    if (_effectivePubKeyLoading) {
+      return (
+        <Card data-testid="stripe-add-bank-panel">
+          <CardHeader>
+            <CardTitle>{title}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p
+              className="text-sm text-slate-500 inline-flex items-center gap-2"
+              data-testid="stripe-add-bank-loading-pubkey"
+            >
+              <span
+                className="inline-block w-4 h-4 rounded-full border-2 border-slate-300 border-t-slate-600 animate-spin"
+                aria-hidden
+              />
+              Loading payment form…
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
     return (
       <Card data-testid="stripe-add-bank-panel">
         <CardHeader>
           <CardTitle>{title}</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-red-700">
+          <p
+            className="text-sm text-red-700"
+            data-testid="stripe-add-bank-not-configured"
+          >
             Stripe publishable key not configured on the server.
           </p>
         </CardContent>

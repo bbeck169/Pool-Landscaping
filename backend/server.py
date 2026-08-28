@@ -238,11 +238,19 @@ from routers import tos as _tos_router  # noqa: E402
 from routers import muted_reasons as _p29_muted_reasons  # noqa: E402
 from routers import quiet_hours_settings as _p34_quiet_hours  # noqa: E402
 from routers import gps_auto_start as _p37_gps_auto_start  # noqa: E402
+# Feb-2026 · Job Timers Phase 1 — backend + web reporting. Mobile
+# GPS geofence auto-start ships in Phase 2 (dispatched separately
+# to ``e1_expo_frontend_dev``). See ``routers/job_timers.py``.
+from routers import job_timers as _feb2026_job_timers  # noqa: E402
 from routers import gps_audit_report as _p37d_gps_audit_report  # noqa: E402
 api_router.include_router(_tos_router.router)
 api_router.include_router(_p29_muted_reasons.router)
 api_router.include_router(_p34_quiet_hours.router)
 api_router.include_router(_p37_gps_auto_start.router)
+api_router.include_router(_feb2026_job_timers.router)
+# Feb-2026 · Chemical Cost Report — /api/reports/chemical-costs.
+from routers import chemical_cost_report as _feb2026_chem_costs  # noqa: E402
+api_router.include_router(_feb2026_chem_costs.router)
 api_router.include_router(_p37d_gps_audit_report.router)
 
 # Feb-2026 · Slice 2A — Multi-ToS backend foundation (Pool +

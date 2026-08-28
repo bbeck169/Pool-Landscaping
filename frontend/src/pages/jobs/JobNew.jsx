@@ -76,6 +76,13 @@ export default function JobNew({
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
+  // Feb-2026 · Backlog Item 2 — auto-suggest tech from crew. When the
+  // admin picks a crew, we auto-populate the technician field with
+  // the crew's ``default_tech_id`` (or first member as fallback).
+  // ``techDirty`` tracks whether the admin has manually touched the
+  // technician field — once true, a subsequent crew change no longer
+  // overwrites the pick. Reset on submit.
+  const [techDirty, setTechDirty] = useState(Boolean(preselectedTech));
   // Feb-2026 MP2 UI — property picker step. Loads active properties
   // for the selected customer; when the customer has ≥2 active
   // properties, a valid ``property_id`` is required before submit.
@@ -162,6 +169,31 @@ export default function JobNew({
     () => Array.from(new Set(items.map((i) => i.category).concat(["Pool Cleaning", "Repair", "Chemical Delivery", "Landscape"]))),
     [items]
   );
+
+  // Feb-2026 · Backlog Item 2 — crew → technician auto-suggest.
+  // When the admin picks a crew, populate the technician field
+  // with the crew's ``default_tech_id`` (if the schema starts
+  // carrying it) OR the first tech in ``tech_ids`` as the
+  // pragmatic fallback. Never overwrites a manual pick (see
+  // ``techDirty``). Runs client-side against the already-loaded
+  // ``crews`` list — no extra API call needed since the /crews
+  // response includes the members array.
+  useEffect(() => {
+    if (!form.crew_id) return;
+    if (techDirty) return;
+    const crew = crews.find((c) => c.id === form.crew_id);
+    if (!crew) return;
+    // Prefer explicit default_tech_id → first member's tech id →
+    // raw first tech_ids entry (crews may carry either shape).
+    const memberTechId =
+      crew.default_tech_id
+      || (crew.members || []).find((m) => m && m.id && m.is_active !== false)?.id
+      || (crew.tech_ids || [])[0]
+      || "";
+    if (memberTechId && memberTechId !== form.technician_id) {
+      setForm((f) => ({ ...f, technician_id: memberTechId }));
+    }
+  }, [form.crew_id, crews, techDirty]);   // eslint-disable-line react-hooks/exhaustive-deps -- form.technician_id read is intentionally not a dep to avoid rebounce loops
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -423,7 +455,12 @@ export default function JobNew({
               </label>
               <select
                 value={form.technician_id}
-                onChange={set("technician_id")}
+                onChange={(e) => {
+                  // Feb-2026 · Backlog Item 2 — flag manual pick so
+                  // the crew-auto-suggest effect stops overwriting.
+                  setTechDirty(true);
+                  set("technician_id")(e);
+                }}
                 className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
                 style={{
                   backgroundColor: colors.surface,

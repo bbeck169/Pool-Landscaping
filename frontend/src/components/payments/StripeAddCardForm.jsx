@@ -126,10 +126,32 @@ export default function StripeAddCardForm({
   onSuccess,
   onCancel,
   title = "Add a card",
+  // Feb-2026 · Backlog Item 6 — pubkey race polish. Callers that
+  // fetch the pubkey asynchronously can pass ``pubKeyLoading`` so
+  // this component renders a spinner instead of flashing the
+  // misleading "publishable key not configured" error before the
+  // fetch resolves. When callers don't pass the prop we treat an
+  // empty ``publishableKey`` as "still loading" for the first
+  // 6 seconds — protects the common case (portal ``/portal/pay``)
+  // without requiring the caller to opt in.
+  pubKeyLoading = undefined,
 }) {
   const [clientSecret, setClientSecret] = useState("");
   const [loadingSecret, setLoadingSecret] = useState(true);
   const [bootError, setBootError] = useState("");
+  // Feb-2026 · Backlog Item 6 — auto-detect race when the caller
+  // didn't wire ``pubKeyLoading``. After 6s of no key we assume
+  // the config endpoint truly failed and surface the "not
+  // configured" hint. Cheap belt-and-braces vs a hard opt-in.
+  const [autoLoadingElapsed, setAutoLoadingElapsed] = useState(false);
+  useEffect(() => {
+    if (publishableKey) return;
+    const t = setTimeout(() => setAutoLoadingElapsed(true), 6000);
+    return () => clearTimeout(t);
+  }, [publishableKey]);
+  const _effectivePubKeyLoading = pubKeyLoading !== undefined
+    ? pubKeyLoading
+    : (!publishableKey && !autoLoadingElapsed);
 
   const stripePromise = useMemo(() => {
     if (!publishableKey) return null;
@@ -167,13 +189,43 @@ export default function StripeAddCardForm({
   }, [apiBase, authToken, customerId]);
 
   if (!publishableKey) {
+    // Feb-2026 · Backlog Item 6 — during the pubkey fetch window,
+    // show a small spinner + "Loading payment form…" copy so the
+    // "not configured" error never flashes when the caller is
+    // still waiting on ``GET /api/payments/stripe/config``. Only
+    // once ``_effectivePubKeyLoading`` flips false do we surface
+    // the real "misconfigured" error.
+    if (_effectivePubKeyLoading) {
+      return (
+        <Card data-testid="stripe-add-card-panel">
+          <CardHeader>
+            <CardTitle>{title}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p
+              className="text-sm text-slate-500 inline-flex items-center gap-2"
+              data-testid="stripe-add-card-loading-pubkey"
+            >
+              <span
+                className="inline-block w-4 h-4 rounded-full border-2 border-slate-300 border-t-slate-600 animate-spin"
+                aria-hidden
+              />
+              Loading payment form…
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
     return (
       <Card data-testid="stripe-add-card-panel">
         <CardHeader>
           <CardTitle>{title}</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-red-700">
+          <p
+            className="text-sm text-red-700"
+            data-testid="stripe-add-card-not-configured"
+          >
             Stripe publishable key not configured on the server. Set{" "}
             <code>STRIPE_PUBLISHABLE_KEY_TEST</code> or{" "}
             <code>STRIPE_PUBLISHABLE_KEY_LIVE</code> in the backend
