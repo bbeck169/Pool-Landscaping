@@ -42,6 +42,29 @@ const SECTIONS = [
   { k: "avgtime",    label: "Avg Job Time", icon: BarChart3 },
 ];
 
+// Feb 2026 · Menu-route resolver.
+//
+// The sidebar's Pricebook link routes to ``/price-book`` (dashed,
+// matches the human-readable label) but the internal tab key is
+// ``pricebook``. Export the pure segment→tab resolver so vitest
+// can lock in the alias mapping without needing to mount the
+// full OpsHub tree.
+export const OPS_KNOWN_SEGMENTS = new Set([
+  "dispatch", "schedule", "routes", "workstream", "crews", "team",
+  "timesheets", "timeclock", "coverage", "maintenance",
+  "equipment", "pricebook", "loghistory", "timers", "avgtime",
+]);
+export const OPS_SEGMENT_ALIASES = { "price-book": "pricebook" };
+
+export function resolveOpsPathTab(pathname) {
+  const seg = (pathname
+                  ? String(pathname).split("/").filter(Boolean)[0]
+                  : "") || "";
+  if (OPS_SEGMENT_ALIASES[seg]) return OPS_SEGMENT_ALIASES[seg];
+  return OPS_KNOWN_SEGMENTS.has(seg) ? seg : "";
+}
+
+
 export default function OpsHub() {
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
@@ -50,17 +73,11 @@ export default function OpsHub() {
   // explicit ``?t=…`` query, fall back to a tab derived from the
   // pathname's first segment. Keeps external / bookmarked links honest
   // and matches the sidebar semantics (``/team?t=team`` etc).
-  const pathTab = (() => {
-    const seg = (typeof window !== "undefined" && window.location.pathname
-                    ? window.location.pathname.split("/").filter(Boolean)[0]
-                    : "") || "";
-    const KNOWN = new Set([
-      "dispatch", "schedule", "routes", "workstream", "crews", "team",
-      "timesheets", "timeclock", "coverage", "maintenance",
-      "equipment", "pricebook", "loghistory", "timers", "avgtime",
-    ]);
-    return KNOWN.has(seg) ? seg : "";
-  })();
+  const pathTab = resolveOpsPathTab(
+    typeof window !== "undefined" && window.location.pathname
+      ? window.location.pathname
+      : "",
+  );
   const tab = params.get("t") || pathTab || "dispatch";
   const setTab = (k) => { const s = new URLSearchParams(params); s.set("t", k); setParams(s, { replace: true }); };
 
@@ -213,8 +230,10 @@ function Routes() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const [order, setOrder] = useState(null);
-  // eslint-disable-next-line no-unused-vars, unused-imports/no-unused-vars
-  const [routeMeta, setRouteMeta] = useState({ tech_name: null, tech_color_hex: null });
+  // Feb 2026 · getter unused (setter still writes elsewhere in this
+  // component); underscore prefix satisfies the ``^_`` unused-vars
+  // allowlist without noisy plugin-specific disable comments.
+  const [_routeMeta, setRouteMeta] = useState({ tech_name: null, tech_color_hex: null });
   const [toast, setToast] = useState(null);
   const load = async () => {
     // Feb-2026 · Routes tab wiring · when a specific tech is selected,
