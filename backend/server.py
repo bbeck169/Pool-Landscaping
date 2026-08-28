@@ -2314,6 +2314,33 @@ async def startup():
     except Exception as e:
         logger.warning(f"invoice_number_backfill crashed: {e}")
 
+    # Feb-2026 · Multi-body service reports — Phase 1 migration.
+    # Populates ``water_bodies[0]`` on legacy service_report docs from
+    # the top-level ``chemical_readings`` / ``chemicals_added`` /
+    # ``photos`` / ``notes`` fields. Idempotent + sentinel-guarded
+    # (``feb2026_service_reports_water_bodies_v1``). Runs after the
+    # invoice-number backfill so all service reports are body-shaped
+    # before the first request lands.
+    try:
+        from services.migrations.service_reports_water_bodies import (
+            run_water_bodies_migration,
+        )
+        _wb_boot = await run_water_bodies_migration()
+        if _wb_boot.get("status") == "skipped":
+            logger.info(
+                "[service_reports.water_bodies] sentinel present · skipping",
+            )
+        else:
+            _s = _wb_boot.get("summary") or {}
+            logger.info(
+                f"[service_reports.water_bodies] scanned={_s.get('scanned', 0)} "
+                f"migrated={_s.get('migrated', 0)} "
+                f"skipped_already_multi={_s.get('skipped_already_multi', 0)} "
+                f"errors={_s.get('errors_count', 0)}",
+            )
+    except Exception as e:
+        logger.warning(f"service_reports water_bodies migration crashed: {e}")
+
     # Feb-2026 · P0 fix — Orphan-paid invoice audit. Report-only on
     # boot so operators see the count in logs without silently
     # flipping seed / demo fixtures. Real flips happen through the

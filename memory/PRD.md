@@ -12574,3 +12574,60 @@ Cause: existing InvoiceView `Pay Now` button was too small + no sticky mobile ba
 ### Test totals (this ship)
 - Backend pytest: **83 passed / 0 failed** across 11 test files.
 - Frontend Vitest: **66 passed / 0 failed** across 5 test files (16 new for features + 50 regression).
+
+---
+
+## Feb-2026 · Multi-Body Service Reports — Phase 1 (backend) — SHIPPED
+
+**Problem**: A single service visit can involve multiple bodies of water on the same property (Pool + Spa + Water Feature + Fountain). The legacy schema only carried one flat set of `chemical_readings` / `chemicals_added` / `photos` per report — techs had no way to log distinct chemistry / chemicals / media / notes per body, and Customer History / Chemical Cost surfaces couldn't split rollups by body.
+
+### Design decisions (approved)
+- **Type picker (fixed)**: `pool | spa | water_feature | fountain | other`.
+- **Trimmed chemistry allow-lists per type**:
+  | Body type | Readings allowed | Required | Chemicals allowed |
+  |---|---|---|---|
+  | pool | FC, TC, pH, TA, CYA, Calcium, Salt, TDS, Phosphates | 5 canonical (FC/TC/pH/TA/CYA) | all 9 |
+  | spa | FC, pH, TA, Calcium | — soft-warn only | 7 (no CYA-stab, no salt bag, no PO4-remover) |
+  | water_feature | FC, pH | — | 5 (LC, MA, Clarifier, Enzymes, PO4-remover) |
+  | fountain | FC, pH | — | 5 |
+  | other | any (free-form) | — | any |
+- Only `pool` bodies gate submit; the other four are soft-warn.
+- `water_bodies[0]` seeded with a single default body on bootstrap; migration back-fills legacy reports (24 docs on preview).
+
+### Schema
+```
+service_reports.water_bodies = [
+  { id, type, label, sequence,
+    readings: [{ key, name, unit, value, ts, not_tested? }],
+    chemicals_used: [{ product_slug, name, quantity, unit, ... }],
+    media: [{ url, kind, tags?, ... }],
+    notes: str }
+]
+```
+Legacy top-level `chemical_readings` / `chemicals_added` / `notes` remain populated (mirror) so auto-invoice, `snapshot_chemical_usage`, doorhanger renderer, mobile sync — every legacy consumer — keep working without a body-aware rewrite.
+
+### Files touched
+- **New**: `backend/services/water_bodies.py` (constants + validators + helpers), `backend/services/migrations/service_reports_water_bodies.py` (sentinel `feb2026_service_reports_water_bodies_v1`), `backend/tests/test_service_report_multi_body.py` (17 tests).
+- **Modified**: `backend/routers/service_reports.py` (bootstrap seeds body[0]; `ServiceReportPatch` accepts `water_bodies`; PATCH validates + mirrors, legacy PATCH syncs body[0]; `_redact_report_for_customer` scrubs every body; `list_my_service_reports` exposes `water_bodies_summary` + `water_body_count`), `backend/routers/admin_migrations.py` (new endpoint `POST /api/admin/migrations/service-reports-water-bodies`), `backend/server.py` (boot migration hook).
+
+### Endpoints
+- `GET /api/jobs/{jid}/service-report` — bootstrap includes 1 default body.
+- `PATCH /api/jobs/{jid}/service-report` — accepts `water_bodies`; validates per-type allow-lists; rebuilds legacy mirrors. Legacy-only PATCH also syncs `water_bodies[0]`.
+- `POST /api/jobs/{jid}/service-report/submit` — chemistry gate still fires on the primary pool body via the top-level mirror.
+- `GET /api/customers/me/service-reports` — includes `water_bodies_summary` + `water_body_count`.
+- `GET /api/customers/me/service-reports/{report_id}` — returns redacted `water_bodies` (per-body cost scrub + reading bands + private-photo filter).
+- `POST /api/admin/migrations/service-reports-water-bodies?force=` — super_admin manual re-run.
+
+### Migration
+- Idempotent + sentinel-guarded. Boot log: `[service_reports.water_bodies] scanned=24 migrated=24 skipped_already_multi=0 errors=0`.
+- Force-rerun via admin endpoint; per-doc guard prevents re-write of already-migrated docs.
+
+### Tests
+- **17 new backend pytests** (`tests/test_service_report_multi_body.py`) — validators, migration idempotency, PATCH round-trip, per-type allow-list enforcement (spa+CYA, spa+salt, fountain+salt-bag rejected), legacy-PATCH → body[0] sync, submit-time chemistry gate, redaction, customer-portal list + detail surface, chemical usage snapshot union across bodies.
+- **All 17 pass**. Adjacent test files (`test_service_report_slice3e`, `test_service_report_submit_hardening`, `test_service_report_submit_snapshots_chemical_usage`, `test_portal_service_report_customer_view`, `test_chemistry`, `test_chemistry_bands`, `test_chemical_cost_report`, `test_iteration12_field_report`) all pass unchanged (97 total in the touched surface).
+
+### Scope explicitly deferred to Phase 2
+- Frontend UI (`/app/frontend/*`) untouched.
+- Mobile (`/app/mobile/*`) untouched.
+- Per-body dosing recommender (currently operates on top-level `chemical_readings` mirror — matches pool-body chemistry).
+- Per-body algae flag (uses `observations.visible_algae` on the report doc; body-scoping deferred).

@@ -20,6 +20,16 @@ from config import db, logger
 from utils import now_iso, new_id, get_current_user, require_admin
 from routers.tenants import get_current_tenant
 from services.chemistry import classify_reading, classify_readings
+from services.water_bodies import (
+    BODY_TYPE_LABELS,
+    WaterBodyValidationError,
+    build_default_body_from_report,
+    flatten_chemicals_used,
+    flatten_pool_readings,
+    iter_water_bodies,
+    summarize_body,
+    validate_water_bodies,
+)
 
 router = APIRouter()
 
@@ -248,6 +258,28 @@ async def _bootstrap_report(tenant_id: str, job: dict, tech_id: str) -> dict:
     # key off the report doc without re-querying the job.
     from services.work_class import infer_work_class as _iwc
     work_class = _iwc(job)
+    initial_readings = [
+        {"key": f.get("key") or f["name"], "name": f["name"],
+         "unit": f.get("unit"), "value": None, "ts": None}
+        for f in tpl.get("chemical_reading_fields", [])
+    ]
+    # Feb-2026 · Multi-body Phase 1 — every new report bootstraps with
+    # a single default ``water_bodies[0]`` mirroring the legacy top-level
+    # fields. Type is inferred from the parent job (pool jobs → "pool",
+    # anything else → "other"). Backward compatible: legacy top-level
+    # ``chemical_readings`` / ``chemicals_added`` / ``photos`` / ``notes``
+    # remain the mirror source and are kept in sync by PATCH.
+    default_body_type = "pool" if kind == "pool" else "other"
+    default_body = {
+        "id": new_id(),
+        "type": default_body_type,
+        "label": BODY_TYPE_LABELS[default_body_type],
+        "sequence": 0,
+        "readings": list(initial_readings),
+        "chemicals_used": [],
+        "media": [],
+        "notes": "",
+    }
     return {
         "id": new_id(),
         "tenant_id": tenant_id,
@@ -265,12 +297,10 @@ async def _bootstrap_report(tenant_id: str, job: dict, tech_id: str) -> dict:
         # report, 60s each, 100MB each — enforced by the media router).
         "videos": [],
         "template": kind,
-        "chemical_readings": [
-            {"key": f.get("key") or f["name"], "name": f["name"],
-             "unit": f.get("unit"), "value": None, "ts": None}
-            for f in tpl.get("chemical_reading_fields", [])
-        ],
+        "chemical_readings": initial_readings,
         "chemicals_added": [],
+        # Feb-2026 · Multi-body Phase 1 — canonical per-body array.
+        "water_bodies": [default_body],
         # Phase 46.1 — starts empty; PATCH populates with `{key: True}`
         # when the tech explicitly toggles "Not tested" on a reading.
         "not_tested_flags": {},
@@ -403,6 +433,15 @@ class ServiceReportPatch(BaseModel):
     # after bootstrap. Normalized on write; unknown values → 400 in
     # the handler.
     work_class: Optional[str] = None
+    # Feb-2026 · Multi-body Phase 1 — canonical per-body array.
+    # When present, replaces the ``water_bodies`` on the report doc
+    # and mirrors ``chemicals_used`` across all bodies back into the
+    # legacy top-level ``chemicals_added`` (so auto-invoice + chemistry
+    # usage snapshots continue to see every chemical). The primary
+    # ``pool``-typed body's readings become the top-level
+    # ``chemical_readings`` so the chemistry required-readings gate
+    # keeps operating unchanged.
+    water_bodies: Optional[List[Dict[str, Any]]] = None
 
 
 @router.patch("/jobs/{jid}/service-report")
@@ -438,6 +477,48 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
             upd["work_class"] = normalize_work_class(upd["work_class"])
         except ValueError as exc:
             raise HTTPException(400, str(exc))
+    # Feb-2026 · Multi-body Phase 1 — validate + mirror when the
+    # client sends a ``water_bodies`` array. Legacy top-level
+    # ``chemical_readings`` / ``chemicals_added`` writes still work
+    # unmodified (they land on the report doc directly and continue
+    # to be the canonical source until a body-aware PATCH lands).
+    # When BOTH ``water_bodies`` and top-level ``chemical_readings`` /
+    # ``chemicals_added`` are in the same PATCH, water_bodies wins
+    # and the top-level fields are overwritten with the flattened
+    # mirror so downstream consumers see one source of truth.
+    if "water_bodies" in upd:
+        try:
+            bodies = validate_water_bodies(upd["water_bodies"])
+        except WaterBodyValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.detail)
+        upd["water_bodies"] = bodies
+        # Rebuild the legacy mirrors from the validated bodies so a
+        # single PATCH keeps both surfaces in sync.
+        upd["chemical_readings"] = flatten_pool_readings(bodies)
+        upd["chemicals_added"] = flatten_chemicals_used(bodies)
+    else:
+        # Legacy-only PATCH (no ``water_bodies`` in payload) — mirror
+        # the incoming top-level ``chemical_readings`` / ``chemicals_added``
+        # / ``notes`` writes back into ``water_bodies[0]`` so the multi-
+        # body surface never desyncs when older clients touch the legacy
+        # fields. Bodies past index 0 are left untouched.
+        _touched_legacy = any(
+            k in upd for k in ("chemical_readings", "chemicals_added", "notes")
+        )
+        if _touched_legacy:
+            existing_bodies = list(rep.get("water_bodies") or [])
+            if not existing_bodies:
+                existing_bodies = [build_default_body_from_report(rep)]
+            body0 = dict(existing_bodies[0])
+            if "chemical_readings" in upd:
+                body0["readings"] = list(upd["chemical_readings"] or [])
+            if "chemicals_added" in upd:
+                body0["chemicals_used"] = list(upd["chemicals_added"] or [])
+            if "notes" in upd:
+                body0["notes"] = str(upd["notes"] or "")
+            body0["sequence"] = 0
+            existing_bodies[0] = body0
+            upd["water_bodies"] = existing_bodies
     upd["updated_at"] = now_iso()
     await db.service_reports.update_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
@@ -1925,6 +2006,54 @@ def _redact_report_for_customer(sr: dict) -> dict:
         it for it in checklist
         if isinstance(it, dict) and bool(it.get("checked"))
     ]
+    # Feb-2026 · Multi-body Phase 1 — mirror redaction across every
+    # ``water_bodies[i]``. Each body has its own readings/chemicals/
+    # media so the same customer-safe transforms (strip chemical
+    # costs, drop internal photos, convert readings to bands) must
+    # apply per body — otherwise a stray unit cost in body[1] would
+    # bypass the top-level scrub.
+    bodies = sr.get("water_bodies") or []
+    if bodies:
+        redacted_bodies: List[Dict[str, Any]] = []
+        for b in bodies:
+            if not isinstance(b, dict):
+                continue
+            rb = dict(b)
+            rb["chemicals_used"] = _strip_chem_costs_for_customer(
+                rb.get("chemicals_used") or rb.get("chemicals_added") or [])
+            rb.pop("chemicals_added", None)
+            for _cf in ("chem_total_cents", "chemicals_total_cents",
+                          "chemicals_cost_cents", "chemicals_total",
+                          "chemical_cost", "chemicals_cost"):
+                rb.pop(_cf, None)
+            b_readings = rb.get("readings") or []
+            b_labelled: List[Dict[str, Any]] = []
+            b_labels: Dict[str, str] = {}
+            for r in b_readings:
+                if not isinstance(r, dict):
+                    continue
+                key = r.get("key") or ""
+                band = classify_reading(key, r.get("value"))
+                if band is None:
+                    continue
+                b_labels[str(key)] = band
+                b_labelled.append({
+                    "key": key,
+                    "name": r.get("name"),
+                    "unit": r.get("unit"),
+                    "label": band,
+                })
+            rb["readings"] = b_labelled
+            rb["readings_label"] = b_labels
+            b_media = rb.get("media") or []
+            rb["media"] = [
+                m for m in b_media
+                if isinstance(m, dict) and not any(
+                    str(t).lower() in ("internal", "issue", "private")
+                    for t in (m.get("tags") or []))
+            ]
+            redacted_bodies.append(rb)
+        sr["water_bodies"] = redacted_bodies
     return sr
 
 
@@ -1984,6 +2113,11 @@ async def list_my_service_reports(
     out = []
     for sr in rows:
         job = await db.jobs.find_one({"id": sr.get("job_id")}, {"_id": 0}) or {}
+        # Feb-2026 · Multi-body Phase 1 — expose a compact body summary
+        # so the customer portal history list can render badges without
+        # loading each report's full water_bodies payload.
+        bodies = iter_water_bodies(sr)
+        body_summaries = [summarize_body(b) for b in bodies]
         out.append({
             "id": sr.get("id"),
             "job_id": sr.get("job_id"),
@@ -1993,6 +2127,8 @@ async def list_my_service_reports(
             "submitted_at": sr.get("submitted_at"),
             "tech_name": _name_map.get(sr.get("tech_id")) or "",
             "customer_notes": sr.get("customer_notes") or "",
+            "water_bodies_summary": body_summaries,
+            "water_body_count": len(body_summaries),
         })
     return out
 
