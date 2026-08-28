@@ -38,7 +38,16 @@ def _login(email: str) -> str:
 def _admin_ctx() -> dict:
     if _CACHE.get("admin_ctx"):
         return _CACHE["admin_ctx"]
-    tok = _login("manager@aquaterra.com")
+    # Feb-2026 · fixture-drift fix: this fixture historically used
+    # ``manager@aquaterra.com`` (role="manager"), which pre-dates the
+    # income-category CRUD tightening to ``admin | super_admin`` (see
+    # ``routers/income_categories.py::_require_admin``).  Every test
+    # that relied on this ctx to CRUD categories/invoices now needs
+    # the elevated role.  Switch to ``admin@aquaterra.com`` so the
+    # fixture matches the current handler contract.  Grandfathered
+    # read-only tests (``test_grandfathered_invoice_readable``,
+    # ``test_uncategorized_count_endpoint``) also pass under admin.
+    tok = _login("admin@aquaterra.com")
     me = requests.get(f"{API}/auth/me",
                        headers={"Authorization": f"Bearer {tok}"},
                        timeout=15).json()

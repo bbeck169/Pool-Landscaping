@@ -15,6 +15,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { BODY_TYPE_LABELS, BODY_TYPE_TINTS, READING_LABELS } from "@/src/lib/waterBodies";
 
 /* ── helpers ──────────────────────────────── */
 
@@ -219,7 +220,49 @@ export default function PortalServiceReportDetail() {
         ) : null}
 
         {/* Water chemistry readings */}
-        {kind === "pool" && readings.length > 0 ? (
+        {/* Phase v · Multi-body display when water_bodies[] present */}
+        {Array.isArray(sr.water_bodies) && sr.water_bodies.length > 1 ? (
+          <Section icon="layers-outline" title={`Water Bodies (${sr.water_bodies.length})`} testID="portal-water-bodies-section">
+            {sr.water_bodies.map((wb: any, wbi: number) => {
+              const tint = BODY_TYPE_TINTS[wb.type] || BODY_TYPE_TINTS.pool;
+              const wbReadings = (wb.readings || []).filter(
+                (r: any) => r && r.value !== null && r.value !== undefined && r.value !== "",
+              );
+              return (
+                <View key={wb.id || wbi} style={[s.wbCard, { borderColor: tint.border }]} testID={`portal-water-body-${wbi}`}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <View style={[s.wbBadge, { backgroundColor: tint.bg }]}>
+                      <Text style={[s.wbBadgeText, { color: tint.fg }]}>{BODY_TYPE_LABELS[wb.type] || wb.type}</Text>
+                    </View>
+                    {wb.label ? <Text style={s.wbLabel}>{wb.label}</Text> : null}
+                  </View>
+                  {wbReadings.length > 0 ? (
+                    <View style={s.readingsGrid}>
+                      {wbReadings.map((r: any, ri: number) => {
+                        const meta = READING_LABELS[r.key] || {};
+                        const band = r.label || "average";
+                        const bs = CHEM_BAND[band] || CHEM_BAND.average;
+                        return (
+                          <View key={r.key || ri} style={s.readingCard}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={s.readingLabel}>{(meta as any).name || r.name || r.key}</Text>
+                            </View>
+                            <View style={[s.bandChip, { backgroundColor: bs.bg }]}>
+                              <Text style={[s.bandChipText, { color: bs.fg }]}>{bs.label}</Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : <Text style={s.emptyText}>No readings recorded</Text>}
+                  {wb.notes ? <Text style={s.wbNotes}>{wb.notes}</Text> : null}
+                </View>
+              );
+            })}
+          </Section>
+        ) : null}
+        {/* Legacy single-body readings */}
+        {kind === "pool" && readings.length > 0 && !(Array.isArray(sr.water_bodies) && sr.water_bodies.length > 1) ? (
           <Section icon="water-outline" title="Water Chemistry" testID="portal-service-report-readings">
             <View style={s.readingsGrid} testID="portal-service-report-readings-list">
               {readings.map((r: any, i: number) => {
@@ -474,4 +517,41 @@ const s = StyleSheet.create({
     borderColor: "#FCA5A5",
   },
   errorText: { fontFamily: font.medium, fontSize: fontSize.base, color: "#991B1B" },
+
+  /* Phase v · Multi-body water bodies */
+  wbCard: {
+    borderWidth: 1.5,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.surface,
+  },
+  wbBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
+  },
+  wbBadgeText: {
+    fontFamily: font.bold,
+    fontSize: 10,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  wbLabel: {
+    fontFamily: font.medium,
+    fontSize: fontSize.sm,
+    color: colors.onSurface,
+  },
+  wbNotes: {
+    fontFamily: font.regular,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+    marginTop: spacing.xs,
+    fontStyle: "italic",
+  },
+  emptyText: {
+    fontFamily: font.regular,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+  },
 });

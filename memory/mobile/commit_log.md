@@ -791,3 +791,24 @@
   - Web bundle: 2195 modules, compiled clean.
   - No changes to `backend/` or `frontend/`. No new deps. No external repos.
 - **Files modified**: `ToolsMenuBody.tsx` (2 route fixes), `(app)/_layout.tsx` (3 hidden tab registrations)
+
+
+## Iteration 38 — Phase v: Multi-body service reports + pricebook effective_cost + notification audit
+- **Commit**: f4bf293d (uncommitted changes on top)
+- **Date**: 2026-08-27
+- **Changes**:
+  - **Ship 1 (Multi-body service reports)**:
+    - Created `src/lib/waterBodies.ts` — body types, reading allow-lists, required fields, validators, factory helpers (port of web `lib/waterBodies.js`)
+    - Created `src/components/checklist/WaterBodyPanel.tsx` — per-body card with filtered chemistry inputs, chemicals editor, notes, remove button
+    - Created `src/components/checklist/WaterBodyManager.tsx` — manages water_bodies[] array, add-body picker sheet, remove-with-confirm
+    - Modified `app/job/[id]/checklist.tsx` — integrated WaterBodyManager into pool flow: auto-seeds water_bodies[0] from legacy report, includes water_bodies in PATCH body, handles 422 chemistry_core_readings_missing with per-body field highlighting
+    - Modified `app/portal/service-report/[id].tsx` — multi-body display when water_bodies.length > 1 with type badges and per-body readings grid
+  - **Ship 2 (Pricebook effective_cost)**:
+    - Modified `app/price-book.tsx` — swapped wholesale_price display to effective_cost with "from N suppliers" line
+  - **Ship 3 (Notification audit)**:
+    - Audited 7 mobile notification triggers — ALL delegate to backend endpoints, none bypass guardrails. No flags raised.
+  - **Tests**: Created `__tests__/water-bodies.test.tsx` — 18 tests covering constants, validators, WaterBodyManager, WaterBodyPanel. All pass.
+  - Jest: 83 suites (78 pass / 5 pre-existing), 594 tests (583 pass / 11 pre-existing). 0 regressions.
+  - No changes to `backend/` or `frontend/`. No new deps. No external repos.
+- **Files created**: `src/lib/waterBodies.ts`, `src/components/checklist/WaterBodyPanel.tsx`, `src/components/checklist/WaterBodyManager.tsx`, `__tests__/water-bodies.test.tsx`
+- **Files modified**: `app/job/[id]/checklist.tsx`, `app/portal/service-report/[id].tsx`, `app/price-book.tsx`

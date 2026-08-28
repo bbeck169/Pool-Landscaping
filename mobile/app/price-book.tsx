@@ -191,7 +191,12 @@ export default function PriceBook() {
                 </View>
                 {isAdmin && (
                   <View style={styles.adminCosts} testID={`item-wholesale-${item.id}`}>
-                    <Text style={styles.costLabel}>W: {money(item.wholesale_price || 0)}</Text>
+                    <Text style={styles.costLabel}>
+                      Cost: {money(item.effective_cost ?? item.wholesale_price ?? 0)}
+                      {Array.isArray(item.suppliers) && item.suppliers.length > 0
+                        ? ` from ${item.suppliers.length} supplier${item.suppliers.length > 1 ? "s" : ""}`
+                        : ""}
+                    </Text>
                     <Text style={styles.costLabel}>L: {money(item.labor_cost_default || 0)}</Text>
                   </View>
                 )}

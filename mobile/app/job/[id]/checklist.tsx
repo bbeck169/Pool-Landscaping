@@ -47,6 +47,8 @@ import PoolChecklistForm from "@/src/components/checklist/PoolChecklistForm";
 import LandscapingChecklistForm from "@/src/components/checklist/LandscapingChecklistForm";
 import GenericChecklistForm from "@/src/components/checklist/GenericChecklistForm";
 import VisitRecapModal from "@/src/components/checklist/VisitRecapModal";
+import WaterBodyManager from "@/src/components/checklist/WaterBodyManager";
+import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/waterBodies";
 import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
 import * as writeQueue from "@/src/services/writeQueue";
 import { useOnline } from "@/src/offline";
@@ -126,6 +128,12 @@ export default function JobChecklistScreen() {
   const [srPhotos, setSrPhotos] = useState<SRMedia[]>([]);
   const [srVideos, setSrVideos] = useState<SRMedia[]>([]);
 
+  // Phase v · Multi-body service reports — water_bodies[] state.
+  const [waterBodies, setWaterBodies] = useState<WaterBody[]>([]);
+  const waterBodiesRef = useRef<WaterBody[]>([]);
+  // Maps body index → list of missing reading keys for 422 highlight.
+  const [highlightBodies, setHighlightBodies] = useState<Record<number, string[]>>({});
+
   // Phase 40 · Step 2 — live write-queue + connectivity state. Drives the
   // expanded checklist-network-pill (Online / Syncing… / Offline+N / Sync
   // error). `useOnline` subscribes to `@react-native-community/netinfo`.
@@ -194,6 +202,26 @@ export default function JobChecklistScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report?.id]);
 
+  // Phase v · Seed water_bodies from report (or create default pool body).
+  useEffect(() => {
+    if (!report) return;
+    const existing: WaterBody[] | undefined = report.water_bodies;
+    if (Array.isArray(existing) && existing.length > 0) {
+      setWaterBodies(existing);
+      waterBodiesRef.current = existing;
+    } else if (waterBodies.length === 0) {
+      // Auto-seed one pool body from legacy flat readings.
+      const seed = makeEmptyBody("pool", 0);
+      seed.readings = report.chemical_readings || [];
+      seed.chemicals_used = report.chemicals_added || [];
+      seed.notes = report.notes || "";
+      const initial = [seed];
+      setWaterBodies(initial);
+      waterBodiesRef.current = initial;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report?.id]);
+
   // ─── Autosave (debounced) ────────────────────────────────────────────
   const flushSave = useCallback(async () => {
     // Read from the ref so a queued autosave timer sees the newest
@@ -204,12 +232,17 @@ export default function JobChecklistScreen() {
     savingRef.current = true;
     if (!savingShownAtRef.current) savingShownAtRef.current = Date.now();
     setSaveState("saving");
-    const patchBody = {
+    const patchBody: Record<string, any> = {
       chemical_readings: current.chemical_readings,
       chemicals_added: current.chemicals_added,
       checklist_items: current.checklist_items,
       notes: current.notes,
     };
+    // Phase v · Include water_bodies when multi-body data exists.
+    const bodies = waterBodiesRef.current;
+    if (Array.isArray(bodies) && bodies.length > 0) {
+      patchBody.water_bodies = bodies;
+    }
     try {
       // Phase 40 · Step 2 — offline? Enqueue instead of hitting the wire.
       // The queue flushes with the same X-Idempotency-Key on reconnect so
@@ -275,6 +308,14 @@ export default function JobChecklistScreen() {
       reportRef.current = merged;
       return merged;
     });
+    scheduleAutosave();
+  }, [scheduleAutosave]);
+
+  // Phase v · Water bodies change handler — keeps ref in sync + triggers autosave.
+  const handleBodiesChange = useCallback((next: WaterBody[]) => {
+    setWaterBodies(next);
+    waterBodiesRef.current = next;
+    setHighlightBodies({});
     scheduleAutosave();
   }, [scheduleAutosave]);
 
@@ -412,7 +453,31 @@ export default function JobChecklistScreen() {
               }
               setRecapOpen(true);
             } catch (e: any) {
-              Alert.alert("Close failed", e?.message || "Try again.");
+              // Phase v · Handle 422 chemistry_core_readings_missing.
+              const detail = e?.response?.data?.detail;
+              if (detail === "chemistry_core_readings_missing" || e?.response?.status === 422) {
+                const missingLabels: string[] = e?.response?.data?.missing_labels || [];
+                // Map missing reading labels back to body indices for highlighting.
+                const bodyHighlights: Record<number, string[]> = {};
+                const bodies = waterBodiesRef.current;
+                for (let bi = 0; bi < bodies.length; bi++) {
+                  const b = bodies[bi];
+                  if (b.type === "pool") {
+                    const missing = missingRequiredReadings(b);
+                    if (missing.length > 0) bodyHighlights[bi] = missing;
+                  }
+                }
+                setHighlightBodies(bodyHighlights);
+                const readableLabels = missingLabels.length > 0
+                  ? missingLabels.join(", ")
+                  : Object.values(bodyHighlights).flat().join(", ");
+                Alert.alert(
+                  "Missing required readings",
+                  `Please fill in: ${readableLabels || "required chemistry fields"}.`,
+                );
+              } else {
+                Alert.alert("Close failed", e?.message || "Try again.");
+              }
             } finally {
               setSubmitting(false);
             }
@@ -632,6 +697,17 @@ export default function JobChecklistScreen() {
 
         {/* Template-specific form */}
         <View style={styles.card} testID={`checklist-form-${clientType}`}>
+          {/* Phase v · Multi-body water bodies (pool type only). */}
+          {clientType === "pool" && (
+            <View testID="checklist-water-bodies-section">
+              <WaterBodyManager
+                bodies={waterBodies}
+                locked={locked}
+                highlightBodies={highlightBodies}
+                onChange={handleBodiesChange}
+              />
+            </View>
+          )}
           {clientType === "pool" && (
             <PoolChecklistForm
               jobId={String(id)}

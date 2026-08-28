@@ -87,7 +87,14 @@ def _seed_invoice(tid, *, created_at, line_items):
     _db.quotes.insert_one({
         "id": iid, "tenant_id": tid, "doc_type": "invoice",
         "invoice_number": iid, "created_at": created_at,
-        "status": "paid", "currency": "USD",
+        # Feb-2026 · fixture-drift fix: the ``dashboard_revenue.py``
+        # handler filters on ``payment_status="paid"`` (added by the
+        # Feb-2026 Dashboard consistency ship), NOT on the document
+        # ``status`` field which tracks lifecycle state (draft →
+        # sent → paid).  Seed both so the fixture matches the
+        # handler's read contract.
+        "status": "paid", "payment_status": "paid",
+        "currency": "USD",
         "total": total, "subtotal": total,
         "line_items": line_items,
     })

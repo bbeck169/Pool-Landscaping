@@ -64,7 +64,7 @@ function CustomTooltip({ active, payload, total }) {
                 boxShadow: "0 6px 16px rgba(0,0,0,0.10)" }}
       data-testid="revenue-cat-tooltip"
     >
-      <div className="font-semibold" style={{ color: p.color }}>{p.category}</div>
+      <div className="font-semibold" style={{ color: p.color }}>{p.displayLabel || p.category}</div>
       <div style={{ color: colors.onSurface }}>{money(p.amount)}</div>
       <div style={{ color: colors.muted }}>{pct(p.amount, total)} · {p.count} line item(s)</div>
     </div>
@@ -83,6 +83,22 @@ export default function RevenueByCategoryTile({ range }) {
       .then(setData)
       .catch((e) => setErr(e?.message || "Failed to load."));
   }, [range?.start, range?.end]);
+
+  // Feb-2026 · Cleanup — wire ``displayCategoryLabel`` into the
+  // render path.  ``data.items[*].category`` is the API-supplied
+  // raw label; we add a computed ``displayLabel`` (coerces
+  // UUID-shaped strings to "Uncategorized") and use it in the
+  // pie's ``nameKey``, the tooltip, the legend text, and the
+  // legend testid.  Backend already guarantees this label is safe,
+  // but this belt-and-suspenders protects against any future
+  // regression where a raw UUID leaks into the payload.
+  const items = useMemo(
+    () => (data?.items || []).map((it) => ({
+      ...it,
+      displayLabel: displayCategoryLabel(it),
+    })),
+    [data],
+  );
 
   return (
     <div
@@ -120,9 +136,9 @@ export default function RevenueByCategoryTile({ range }) {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={data.items}
+                  data={items}
                   dataKey="amount"
-                  nameKey="category"
+                  nameKey="displayLabel"
                   cx="50%"
                   cy="50%"
                   innerRadius={55}
@@ -136,7 +152,7 @@ export default function RevenueByCategoryTile({ range }) {
                   }
                   labelLine={false}
                 >
-                  {data.items.map((it, i) => (
+                  {items.map((it, i) => (
                     <Cell key={i} fill={it.color} />
                   ))}
                 </Pie>
@@ -146,14 +162,14 @@ export default function RevenueByCategoryTile({ range }) {
           </div>
           <ul className="flex-1 space-y-1.5 text-sm w-full"
               data-testid="revenue-cat-legend">
-            {data.items.map((it) => (
-              <li key={it.category}
+            {items.map((it) => (
+              <li key={it.category_id || it.category || it.displayLabel}
                   className="flex items-center justify-between"
-                  data-testid={`revenue-cat-legend-${it.category.replace(/\s+/g, "-")}`}>
+                  data-testid={`revenue-cat-legend-${it.displayLabel.replace(/\s+/g, "-")}`}>
                 <span className="flex items-center gap-2 truncate">
                   <span className="inline-block w-3 h-3 rounded-sm shrink-0"
                         style={{ background: it.color }} />
-                  <span className="truncate" style={{ color: colors.onSurface }}>{it.category}</span>
+                  <span className="truncate" style={{ color: colors.onSurface }}>{it.displayLabel}</span>
                 </span>
                 <span className="font-mono text-xs" style={{ color: colors.onSurface }}>
                   {money(it.amount)} · {pct(it.amount, data.total)}
