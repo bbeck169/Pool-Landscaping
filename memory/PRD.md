@@ -12631,3 +12631,87 @@ Legacy top-level `chemical_readings` / `chemicals_added` / `notes` remain popula
 - Mobile (`/app/mobile/*`) untouched.
 - Per-body dosing recommender (currently operates on top-level `chemical_readings` mirror — matches pool-body chemistry).
 - Per-body algae flag (uses `observations.visible_algae` on the report doc; body-scoping deferred).
+
+---
+
+## Feb-2026 · Multi-Body Service Reports — Phase 2 (web UI) — SHIPPED
+
+**Scope**: `/app/frontend/` only. Mobile and duplicate-email investigation deferred per user directive.
+
+### Preflight (before UI work)
+- Confirmed `https://<preview>/api/openapi.json` → 200. Ingress routes `/api/*` correctly. The tester's earlier 404 was a transient hot-reload window.
+- Migration response payload normalized to include `errors: []` array alongside `errors_count` for contract parity — non-blocking cosmetic per brief. Verified via live curl on `/api/admin/migrations/service-reports-water-bodies?force=true`.
+
+### Files touched
+- **New**:
+  - `frontend/src/lib/waterBodies.js` — client-side mirror of the Phase 1 backend allow-lists (`READING_ALLOWLIST`, `CHEMICAL_ALLOWLIST`, `READING_REQUIRED`) + helpers (`validateBodies`, `missingRequiredReadings`, `makeEmptyBody`, `MAX_BODIES=6`). Ordered lockstep with `services/water_bodies.py`.
+  - `frontend/src/components/checklist/WaterBodyPanel.jsx` — per-body compact editor (readings + chemicals + notes, per-type allow-list filtered, type-change strips disallowed rows, confirm-remove modal for bodies with data, disabled-remove on last body).
+  - `frontend/src/components/checklist/WaterBodyManager.jsx` — orchestrator. Renders the primary body via the existing `PoolChecklistWizard` (single-body baseline UX untouched — zero extra taps). Appends "+ Add body of water" affordance and per-body accordions for bodies index ≥ 1. Autosave passes `water_bodies` up when count > 1; single-body flow keeps the legacy top-level shape.
+  - `frontend/src/test/multi-body-water.test.jsx` — 14 Vitest cases (see below).
+- **Modified**:
+  - `frontend/src/components/checklist/ChecklistModal.jsx` — swaps direct `<PoolChecklistWizard>` render for `<WaterBodyManager>`; autosave sends `water_bodies` in the PATCH when present; submit-error path replaces the plain `alert(…)` with an inline `data-testid="checklist-submit-error"` banner that maps backend 422s (`chemistry_core_readings_missing` + water-body allow-list breaches) to human-readable copy and scrolls to the offending body.
+  - `frontend/src/pages/portal/PortalServiceReports.jsx` — LIST: adds a body-count badge (`{n} bodies of water`) + one-line body-mix summary ("Main Pool · Guest Spa") when `water_body_count > 1`; single-body baseline stays visually unchanged. DETAIL: adds a "Serviced N bodies of water" section that renders per-body accordion cards (chemistry band chips + chemicals-added + media count + notes) when `water_bodies.length > 1`; the flat top-level chemistry/chemicals sections are suppressed in that case to avoid duplication with `water_bodies[0]`. Single-body reports keep the classic layout.
+  - `backend/services/migrations/service_reports_water_bodies.py` — response payload adds `errors: []` alongside `errors_count`.
+
+### UX / behavior locked in Phase 1 + Phase 2 contract
+- Default state = 1 body of type `pool`. Single-body jobs render exactly like today — no extra buttons visible above the wizard, no schema divergence in the PATCH.
+- Add-body picker uses the fixed slug set `pool | spa | water_feature | fountain | other` with the display labels `Pool / Spa / Water Feature / Fountain / Other`.
+- Each additional body renders as its own accordion card under a divider labeled "Additional Bodies of Water (N)". The primary body's Pool Wizard is untouched.
+- Optional free-text label per body (small input beside the type badge). Body type can be changed post-add; readings and chemicals not allowed under the new type are dropped in the same reducer call (mirrors backend allow-list enforcement).
+- Remove button = trash icon in each accordion header. Disabled for the last remaining body. Confirms via inline yellow banner when the body has entered readings/chemicals/notes.
+- Chemistry per body respects the trimmed allow-list. Pool bodies show `*` markers on required fields and an inline "Missing required: …" pill when unpopulated. Spa/water_feature/fountain/other bodies show "(all optional)" hint text and never block submit client-side.
+- Submit failures — backend 422s route to the inline banner (`chemistry_core_readings_missing` → "Missing required pool readings: …"; allow-list breaches → "Body #N (spa) has a disallowed reading: cyanuric_acid. Remove it before closing."). The manager scrolls to the offending body panel automatically.
+- Legacy safety — reports without `water_bodies` render as a single pool body backed by the legacy top-level fields; the manager stitches them together in `_materialize()`.
+
+### Design system fidelity
+- Reuses the Tailwind primitives already in the codebase (buttons, inputs, textareas, dashed CTA border). No new palette invented.
+- Pool bodies use the existing cyan (`#E0F2FE / #0369A1 / #7DD3FC`). Spa uses a subtle violet (`#F3E8FF / #7E22CE / #D8B4FE`) matching similar sub-service accents already present. Water feature / fountain / other reuse the neutral slate tone already in use across the app.
+- All interactive controls carry `data-testid` per project convention.
+
+### Test coverage
+- **14 new Vitest cases** in `test/multi-body-water.test.jsx` — locks:
+  - Allow-list constants match the approved kickoff exactly (spa lacks CYA/TC/salt/TDS/phosphates; fountain lacks salt/chlorine_tabs/shock).
+  - Only `pool` gates required readings.
+  - `validateBodies` rejects spa+CYA and fountain+salt; accepts `other` free-form.
+  - `missingRequiredReadings` flags empty pool cores; returns `[]` for spa.
+  - `MAX_BODIES = 6`.
+  - `<WaterBodyPanel />` renders trimmed chemistry per body type.
+  - Fountain chemicals allow-list excludes salt / chlorine_tabs / shock.
+  - Pool body's required-warning banner + disabled remove button when `canRemove=false`.
+  - Confirm-remove path (data present → banner appears → yes triggers `onRemove`).
+  - Type-change reducer strips disallowed readings + chemicals.
+  - `<PortalServiceReports />` list surfaces the body-count badge + body-mix line only when `water_body_count > 1`; single-body cards stay clean.
+- **All 14 pass**. Broader sweep across every Vitest file that intersects the modified surface (`multi-body-water`, `portal-service-report-bands`, `phase27-portal-sections`, `pool-checklist-service-type-picker`, `pool-service-report-nav`) → **29 passed, 0 failed**.
+- Full frontend suite result: **2689 passed / 17 failed / 2706 total**. Verified against `git stash` clean state → **the same 17 failures exist without my changes**. Zero regressions introduced by Phase 2.
+- Backend still green: `pytest tests/test_service_report_multi_body.py` → **17/17 passed in 1.57s**.
+
+### Deferred to future phase
+- Mobile (`/app/mobile`) — same UI on Expo. Mobile keeps writing legacy top-level fields today; backend mirrors keep multi-body reads correct until mobile catches up.
+- Duplicate weekly-digest email root-cause investigation — deferred per user; will pick up after this ships and passes verification.
+- Per-body dosing recommender + per-body algae flag — still Phase 3.
+
+---
+
+## Post-Phase-2 backlog (in priority order)
+
+### 1 · Revenue-by-Category UUID bug (dashboard) — P1, small + high-visibility
+- **Symptom**: Admin dashboard "Revenue by Category (Paid, This Month)" tile renders `2ad6d566-c6d5-467c-b608-8acb6c6fb6c9` as the category label; value `$197.00 · 100.0%`. Warning banner reads "1 line item are uncategorized" (grammar bug).
+- **Fix scope**:
+  1. Backend `/api/reports/revenue-by-category` returns `{category_id, category_name, amount, pct}` — join against categories collection; missing/orphan `category_id` → `category_name = "Uncategorized"`.
+  2. Frontend tile renders `category_name` (never the UUID).
+  3. Grammar fix: `count === 1 → "is"`, `count > 1 → "are"` on the warning banner.
+  4. Root-cause the orphan itself — either soft-delete pattern for categories with references OR line-item creation validation. Log the specific orphaned category id in the writeup.
+- **Tests**: Backend test for name resolution + Uncategorized bucket; Vitest render test for tile fallback; Vitest test for grammar-banner count-1 vs count-2.
+- **Note in evidence**: orphaned category id from screenshot = `2ad6d566-c6d5-467c-b608-8acb6c6fb6c9` (start investigation here).
+
+### 2 · Duplicate weekly-digest email root-cause (already narrowed)
+- Confirmed scope: internal admin/manager digest for tenant "Pool & Landscaping of Vistancia" is duplicating (4× at 10:00 AM). Customer-facing weekly emails not confirmed impacted.
+- Approach: start root-cause search in scheduler + digest builder path first; add `notification_dispatch_log` with compound-unique index `(tenant_id, notification_type, recipient_id, dedupe_key)` + single-worker scheduler ownership as belt-and-suspenders.
+- Full audit of every automated outbound path (weekly report, monthly report, invoice send, marketing sequences, SMS, reminders) to add the same guard where missing.
+
+### 3 · Phase 3 mobile — Multi-body of Water
+- Dispatch the same picker + panel components to `e1_expo_frontend_dev`. Mobile keeps writing legacy top-level fields until then; backend mirrors keep multi-body reads correct in the meantime.
+
+### 4 · Per-body dosing recommender + per-body algae flag (Phase 3)
+- Backend `dosing.py` currently reads top-level `chemical_readings` — extend to iterate `water_bodies[].readings` and produce a per-body recommendation card.
+- `observations.visible_algae` moves from top-level to `water_bodies[i].observations`.

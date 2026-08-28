@@ -141,6 +141,12 @@ async def run_water_bodies_migration(*, force: bool = False) -> Dict[str, Any]:
         "migrated": migrated,
         "skipped_already_multi": skipped_already_multi,
         "errors_count": len(errors),
+        # Feb-2026 · Phase 2 preflight — contract wants both keys so the
+        # admin UI can render an "Errors" section without inspecting
+        # ``errors_sample``. ``errors`` is always a list (empty when
+        # ``errors_count == 0``); ``errors_sample`` is retained for
+        # backwards compat.
+        "errors": errors,
     }
     if errors:
         summary["errors_sample"] = errors[:10]

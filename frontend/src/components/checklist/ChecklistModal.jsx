@@ -64,7 +64,7 @@ import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { getChecklistType } from "@/lib/checklistType";
 import PoolChecklistForm from "@/components/checklist/PoolChecklistForm";
-import PoolChecklistWizard from "@/components/checklist/PoolChecklistWizard";
+import WaterBodyManager from "@/components/checklist/WaterBodyManager";
 import LandscapingChecklistForm from "@/components/checklist/LandscapingChecklistForm";
 import GenericChecklistForm from "@/components/checklist/GenericChecklistForm";
 import PhotoUploader from "@/components/checklist/PhotoUploader";
@@ -103,6 +103,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   const [loadErr, setLoadErr] = useState("");
   const [saveState, setSaveState] = useState("idle"); // idle|saving|saved|error
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const [wsWarning, setWsWarning] = useState("");
 
   const dirtyRef = useRef(false);
@@ -128,7 +129,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   useEffect(() => {
     if (!open) {
       setJob(null); setReport(null); setLoadErr("");
-      setSaveState("idle"); setWsWarning("");
+      setSaveState("idle"); setWsWarning(""); setSubmitError("");
       dirtyRef.current = false;
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     }
@@ -162,7 +163,14 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
     if (!savingShownAtRef.current) savingShownAtRef.current = Date.now();
     setSaveState("saving");
     try {
-      const patched = await api.patch(`/jobs/${jobId}/service-report`, {
+      // Feb-2026 · Multi-body Phase 2 — include ``water_bodies`` in the
+      // PATCH when the report has any (Phase 1 backend seeds body[0] on
+      // bootstrap, so this is effectively always set). Legacy single-
+      // body flows still send the top-level fields as the source of
+      // truth; the backend keeps them mirrored automatically. When both
+      // are present, the backend validates + rebuilds the mirrors from
+      // ``water_bodies`` (per Phase 1 spec).
+      const patchPayload = {
         chemical_readings: cur.chemical_readings,
         chemicals_added: cur.chemicals_added,
         checklist_items: cur.checklist_items,
@@ -177,7 +185,14 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         customer_notes: cur.customer_notes || "",
         photos: cur.photos || [],
         wizard_step: cur.wizard_step ?? 1,
-      });
+      };
+      if (Array.isArray(cur.water_bodies) && cur.water_bodies.length > 0) {
+        patchPayload.water_bodies = cur.water_bodies;
+      }
+      const patched = await api.patch(
+        `/jobs/${jobId}/service-report`,
+        patchPayload,
+      );
       if (patched && typeof patched === "object") {
         setReport(patched);
         reportRef.current = patched;
@@ -279,7 +294,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
       tone: "danger",
     });
     if (!ok) return;
-    setSubmitting(true); setWsWarning("");
+    setSubmitting(true); setWsWarning(""); setSubmitError("");
     try {
       // 1) Final PATCH flush.
       dirtyRef.current = true;
@@ -325,8 +340,48 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
       // rendered on top and will close everything when the tech chooses
       // Send or Skip. See `handleRecapClose` below.
     } catch (e) {
-      // eslint-disable-next-line no-alert
-      alert(`Close failed: ${e?.message || "Try again."}`);
+      // Feb-2026 · Multi-body Phase 2 — surface backend 422s for the
+      // chemistry gate + water-body allow-list breaches inline instead
+      // of a plain `alert("Close failed: …")` string. The gate returns
+      // ``detail: { detail: "chemistry_core_readings_missing", missing_fields, missing_labels, message }``;
+      // allow-list breaches return ``detail: { message, index, type, key|slug }``.
+      const raw = e?.detail || e?.data?.detail || e?.body?.detail || null;
+      if (raw && typeof raw === "object") {
+        if (raw.detail === "chemistry_core_readings_missing") {
+          const missing = (raw.missing_labels || raw.missing_fields || []).join(", ");
+          setSubmitError(
+            missing
+              ? `Missing required pool readings: ${missing}. Fill them on the primary Pool body before closing.`
+              : (raw.message || "Missing required pool readings."),
+          );
+          // Highlight the primary body — it's always the pool one.
+          try {
+            const el = document.querySelector('[data-testid="water-body-manager"]');
+            if (el && typeof el.scrollIntoView === "function") {
+              el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          } catch { /* jsdom / older browsers */ }
+        } else if (raw.message === "reading_not_allowed_for_body_type"
+                    || raw.message === "chemical_not_allowed_for_body_type") {
+          const bodyIdx = raw.index ?? 0;
+          const detail = raw.key || raw.slug || "";
+          setSubmitError(
+            `Body #${bodyIdx + 1} (${raw.type || "?"}) has a disallowed ${raw.key ? "reading" : "chemical"}` +
+            (detail ? `: ${detail}` : "") +
+            ". Remove it before closing.",
+          );
+          try {
+            const el = document.querySelector(`[data-testid="water-body-panel-${bodyIdx}"]`);
+            if (el && typeof el.scrollIntoView === "function") {
+              el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          } catch { /* jsdom / older browsers */ }
+        } else {
+          setSubmitError(raw.message || e?.message || "Close failed.");
+        }
+      } else {
+        setSubmitError(e?.message || "Close failed. Try again.");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -507,9 +562,16 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             {wsWarning}
           </div>
         ) : null}
+        {submitError ? (
+          <div className="text-xs px-3 py-2 rounded mb-3"
+               style={{ color: c.errFg, background: c.errBg, margin: useWizard ? 12 : 0 }}
+               data-testid="checklist-submit-error">
+            {submitError}
+          </div>
+        ) : null}
 
         {useWizard ? (
-          <PoolChecklistWizard
+          <WaterBodyManager
             jobId={String(jobId)}
             customerId={job?.customer_id}
             locked={locked}

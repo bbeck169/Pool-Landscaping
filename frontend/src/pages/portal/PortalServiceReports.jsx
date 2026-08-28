@@ -215,6 +215,23 @@ export function PortalServiceReports() {
                               >
                                 {fmtDate(r.submitted_at || r.scheduled_start)}
                               </span>
+                              {/* Feb-2026 · Multi-body Phase 2 — small badge showing
+                                  the number + type mix of bodies serviced on this
+                                  visit. Only rendered when the report has >1 body;
+                                  single-body baseline stays visually unchanged. */}
+                              {r.water_body_count && r.water_body_count > 1 ? (
+                                <span
+                                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                                  style={{
+                                    backgroundColor: "#E0F2FE",
+                                    color: "#0369A1",
+                                    border: "1px solid #7DD3FC",
+                                  }}
+                                  data-testid={`portal-service-report-bodies-${r.id}`}
+                                >
+                                  {r.water_body_count} bodies of water
+                                </span>
+                              ) : null}
                             </div>
                   <div
                     className="text-sm font-semibold mt-1 truncate"
@@ -239,6 +256,21 @@ export function PortalServiceReports() {
                       "Technician not recorded"
                     )}
                   </div>
+                  {/* Body-mix line — verbose enough for a quick glance
+                      but suppressed for single-body reports so the
+                      baseline UX stays clean. */}
+                  {Array.isArray(r.water_bodies_summary)
+                    && r.water_bodies_summary.length > 1 ? (
+                    <div
+                      className="text-[11px] mt-1"
+                      style={{ color: colors.muted }}
+                      data-testid={`portal-service-report-body-mix-${r.id}`}
+                    >
+                      {r.water_bodies_summary
+                        .map((s) => s.label || s.type)
+                        .join(" · ")}
+                    </div>
+                  ) : null}
                 </div>
                           <StatusPill status="completed" />
                         </li>
@@ -324,6 +356,13 @@ export function PortalServiceReportDetail() {
   // Backend already stripped internal/issue-tagged photos on this endpoint.
   const photos = Array.isArray(sr.photos) ? sr.photos : [];
   const algae = algaeLine(sr);
+  // Feb-2026 · Multi-body Phase 2 — when the report carries multiple
+  // water bodies, we render per-body sub-sections and suppress the
+  // flat top-level chemistry/chemicals surface (backend still returns
+  // them as a legacy mirror, but they'd duplicate what's inside
+  // ``water_bodies[0]``). Single-body reports keep the classic layout.
+  const bodies = Array.isArray(sr.water_bodies) ? sr.water_bodies : [];
+  const isMultiBody = bodies.length > 1;
 
   return (
     <div
@@ -439,14 +478,199 @@ export function PortalServiceReportDetail() {
         </div>
       ) : null}
 
+      {/* Feb-2026 · Multi-body Phase 2 — per-body chemistry / chemicals
+          breakdown. Only renders when the visit covered more than one
+          body of water (e.g., Pool + Spa). Each body gets its own card
+          with the type label, its qualitative readings (bands only —
+          matches Slice 3C safety rules), and its chemicals list. This
+          section replaces the flat top-level readings/chemicals for
+          multi-body reports; single-body reports keep the classic
+          layout above. */}
+      {isMultiBody
+       && (sr.work_class || "").toLowerCase() !== "repair" ? (
+        <Section
+          icon={Droplet}
+          title={`Serviced ${bodies.length} bodies of water`}
+          testid="portal-service-report-water-bodies"
+        >
+          <div
+            className="space-y-3"
+            data-testid="portal-service-report-water-bodies-list"
+          >
+            {bodies.map((b, bi) => {
+              const bReadings = Array.isArray(b?.readings)
+                ? b.readings.filter(
+                    (r) => r && (r.label || (r.value !== null && r.value !== undefined && r.value !== "")),
+                  )
+                : [];
+              const bChems = Array.isArray(b?.chemicals_used)
+                ? b.chemicals_used.filter((c_) => c_ && (c_.name || c_.chemical))
+                : [];
+              const bMedia = Array.isArray(b?.media)
+                ? b.media.filter((m) => m && m.url)
+                : [];
+              const typeSlug = (b?.type || "pool");
+              const label = b?.label || typeSlug;
+              // Reuse the pool cyan for pool bodies; neutral tint
+              // otherwise. Kept in one place so it matches the tech UI.
+              const tintBg   = typeSlug === "pool" ? "#E0F2FE" : "#F1F5F9";
+              const tintFg   = typeSlug === "pool" ? "#0369A1" : "#334155";
+              const tintBd   = typeSlug === "pool" ? "#7DD3FC" : "#CBD5E1";
+              return (
+                <div
+                  key={b?.id || bi}
+                  className="rounded-xl overflow-hidden"
+                  style={{
+                    border: `1px solid ${tintBd}`,
+                    backgroundColor: colors.surface,
+                  }}
+                  data-testid={`portal-service-report-body-${bi}`}
+                >
+                  <div
+                    className="flex items-center gap-2 px-3 py-2"
+                    style={{ backgroundColor: tintBg }}
+                  >
+                    <span
+                      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                      style={{
+                        backgroundColor: colors.surface,
+                        color: tintFg,
+                        border: `1px solid ${tintBd}`,
+                      }}
+                      data-testid={`portal-service-report-body-badge-${bi}`}
+                    >
+                      {typeSlug.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase())}
+                    </span>
+                    <span
+                      className="text-sm font-semibold"
+                      style={{ color: colors.onSurface }}
+                      data-testid={`portal-service-report-body-label-${bi}`}
+                    >
+                      {label}
+                    </span>
+                  </div>
+                  <div className="p-3 space-y-3">
+                    {bReadings.length > 0 ? (
+                      <div>
+                        <div
+                          className="text-[11px] uppercase tracking-wider font-bold mb-2"
+                          style={{ color: colors.muted }}
+                        >
+                          Water chemistry
+                        </div>
+                        <ul
+                          className="grid grid-cols-1 sm:grid-cols-2 gap-2"
+                          data-testid={`portal-service-report-body-readings-${bi}`}
+                        >
+                          {bReadings.map((r, ri) => {
+                            const derived = bandForReading(r.key, r.value);
+                            const _CHIP_KEY = {
+                              "Below Average": "below",
+                              "Average":       "average",
+                              "Above Average": "above",
+                              "Elevated":      "elevated",
+                            };
+                            const band = r.label || _CHIP_KEY[derived] || "average";
+                            const displayName = DISPLAY_LABELS[r.key] || r.name || r.key;
+                            return (
+                              <li
+                                key={r.key || r.name || ri}
+                                className="flex items-center justify-between rounded-xl p-3"
+                                style={{
+                                  backgroundColor: colors.surfaceSecondary,
+                                  border: `1px solid ${colors.divider}`,
+                                }}
+                                data-testid={`portal-service-report-body-${bi}-reading-${r.key || ri}`}
+                              >
+                                <div className="min-w-0">
+                                  <div
+                                    className="text-sm font-semibold truncate"
+                                    style={{ color: colors.onSurface }}
+                                  >
+                                    {displayName}
+                                  </div>
+                                </div>
+                                <ChemChip band={band} testid={`chem-label-${bi}-${r.key || ri}`} />
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {bChems.length > 0 ? (
+                      <div>
+                        <div
+                          className="text-[11px] uppercase tracking-wider font-bold mb-2"
+                          style={{ color: colors.muted }}
+                        >
+                          Chemicals added
+                        </div>
+                        <ul
+                          className="space-y-1.5"
+                          data-testid={`portal-service-report-body-chemicals-${bi}`}
+                        >
+                          {bChems.map((c_, ci) => {
+                            const name = c_.name || c_.chemical || "Chemical";
+                            const amount = c_.amount ?? c_.qty ?? c_.quantity ?? "";
+                            const unit = c_.unit || c_.default_unit || "";
+                            return (
+                              <li
+                                key={ci}
+                                className="flex items-center justify-between text-sm py-1"
+                                data-testid={`portal-service-report-body-${bi}-chemical-${ci}`}
+                              >
+                                <span style={{ color: colors.onSurface }}>{name}</span>
+                                <span
+                                  className="font-semibold"
+                                  style={{ color: colors.onSurface }}
+                                >
+                                  {amount} {unit}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {bMedia.length > 0 ? (
+                      <div
+                        className="text-[11px]"
+                        style={{ color: colors.muted }}
+                        data-testid={`portal-service-report-body-media-count-${bi}`}
+                      >
+                        {bMedia.length} photo{bMedia.length === 1 ? "" : "s"} attached
+                      </div>
+                    ) : null}
+                    {(b?.notes || "").trim() ? (
+                      <div
+                        className="text-xs whitespace-pre-wrap"
+                        style={{ color: colors.onSurface }}
+                        data-testid={`portal-service-report-body-notes-${bi}`}
+                      >
+                        {b.notes}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      ) : null}
+
       {/* Pool: chemical readings — Feb-2026 · Slice 3C · qualitative
           chips only. Customers see Below / Average / Above Avg /
           Elevated per reading; raw numeric values are never shown on
           the portal.  Backend already strips numeric readings and
           attaches the classification band.
           Feb-2026 · Repair-mode addition — repair visits omit the
-          chemistry surface entirely (matches the tech-facing form). */}
+          chemistry surface entirely (matches the tech-facing form).
+          Feb-2026 · Multi-body Phase 2 — when the report has multiple
+          bodies, the flat top-level readings/chemicals sections are
+          suppressed. The per-body breakdown below carries the same
+          data + labels. */}
       {kind === "pool"
+       && !isMultiBody
        && readings.length > 0
        && (sr.work_class || "").toLowerCase() !== "repair" ? (
         <Section
@@ -510,7 +734,7 @@ export function PortalServiceReportDetail() {
       ) : null}
 
       {/* Pool: chemicals added */}
-      {kind === "pool" && chemicalsAdded.length > 0 ? (
+      {kind === "pool" && !isMultiBody && chemicalsAdded.length > 0 ? (
         <Section
           icon={Beaker}
           title="Chemicals added"
