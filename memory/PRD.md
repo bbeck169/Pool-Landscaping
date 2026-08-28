@@ -1,3 +1,124 @@
+## Backlog Item #iii · Feb-2026 — Pricebook expanded editing (Edit Item modal + multi-supplier + rich categories) · SHIPPED
+
+Rich per-item ``suppliers[]`` subdoc, effective-cost helper with
+graceful fallback ladder (R1), read-only column-3 in the inline row
+with pencil deep-link to the modal Suppliers tab (R2), supplier-name
+autocomplete inside the modal (R3), chemical empty-suppliers
+guardrail (R4), and expanded pytest+vitest coverage (R5).
+
+**Files touched**
+Backend (created):
+- ``services/pricebook/__init__.py``
+- ``services/pricebook/cost.py`` — ``effective_cost(item)`` +
+  ``rebuild_mirrors(item)`` helpers.
+- ``services/migrations/pricebook_suppliers.py`` — sentinel
+  ``pricebook_suppliers_v1``; folds Phase-PB1 scalar +
+  Phase-54 slug/sku + Phase-56b compact into rich ``suppliers[]``.
+- ``routers/pricebook_supplier_names.py`` — ``GET /pricebook/supplier-names``.
+- ``tests/test_pricebook_suppliers_iii.py`` — 14 tests.
+
+Backend (modified):
+- ``models.py::ItemIn`` — added ``suppliers: List[Dict]``.
+- ``routers/items.py`` — ``_validate_suppliers`` helper; POST + PATCH
+  accept ``suppliers[]``; mirror rebuild on every write.
+- ``routers/income_categories.py`` — ``POST /income-categories/resolve-or-create``.
+- ``routers/service_categories.py`` — ``POST /service-categories/resolve-or-create``.
+- ``routers/quotes.py::_hydrate_line_item_snapshots`` — swapped to
+  ``effective_cost(item)`` for ``wholesale_price_snapshot``.
+- ``routers/pricebook_cost_comparison.py`` — reads ``suppliers[]``
+  natively with legacy compact fallback.
+- ``routers/pricebook_supplier_spend.py`` — prefers rich shape;
+  keeps compact fallback for grandfathered items.
+- ``routers/admin_migrations.py`` — new super_admin endpoint
+  ``POST /admin/migrations/pricebook-suppliers``.
+- ``server.py`` — boot-wires the migration + registers new router.
+
+Frontend (created):
+- ``components/pricebook/EditItemModal.jsx`` — 4-tab modal.
+- ``test/pricebook-edit-item-modal.test.jsx`` — 11 tests.
+
+Frontend (modified):
+- ``pages/ops/OpsHub.jsx::PriceBook`` — inline column 3 becomes
+  read-only display with pencil deep-linking to the Suppliers tab;
+  inline row keeps quick-edit for name/price/tax/labor; new
+  ``Edit`` button opens the full modal.
+
+**Migration & sentinel**
+```
+sentinel_id:      pricebook_suppliers_v1
+scanned_items:    46
+updated_items:    46
+errors:           0
+tenants_scanned:  3 (aquaterra + 2 test-tenants)
+```
+
+**Empirical proof**
+1. POST an item with 3 suppliers → ``effective_cost`` = min +
+   both mirrors auto-generated:
+   ```
+   POST /api/items · suppliers:[{Pool360:8.75},{SiteOne:9.50},{Local Rep:11.00}]
+     → wholesale_price = 8.75 (mirror)
+     → supplier_prices = [{pool360:875¢},{siteone:950¢},{local-rep:1100¢}]
+   ```
+2. Snapshot on invoice line at write time freezes the min:
+   ```
+   POST /api/quotes · line references item
+     → line_items[0].wholesale_price_snapshot = 8.75
+   ```
+3. Lower one supplier → new snapshots use new min, old snapshot
+   untouched:
+   ```
+   PATCH /api/items/{id} · Pool360 unit_cost 8.75 → 6.20
+     → wholesale_price = 6.20 (mirror)
+   POST /api/quotes · new line
+     → wholesale_price_snapshot = 6.20  (new min frozen)
+   GET  /api/quotes/{old_invoice}
+     → wholesale_price_snapshot = 8.75  (immutable)
+   ```
+4. ``resolve-or-create`` idempotent + case-insensitive:
+   ```
+   POST /income-categories/resolve-or-create {name:"ProofRun"} → created:true  · id=X
+   POST /income-categories/resolve-or-create {name:"ProofRun"} → created:false · id=X (same)
+   POST /income-categories/resolve-or-create {name:"PROOFRUN"} → created:false · id=X (case-insensitive match)
+   ```
+
+**Test coverage**
+- Backend pytest: ``test_pricebook_suppliers_iii.py`` = **14/14 passed**
+  (effective_cost precedence + fallback + null-log; rebuild_mirrors
+  both directions; POST/PATCH with rich suppliers[]; empty suppliers
+  on chemical saves silently; wholesale_price_snapshot immutability;
+  resolve-or-create idempotent + case-insensitive on both taxonomies;
+  migration via admin endpoint idempotent).
+- Backend regression suite (pricebook + revenue + chemical + income
+  categories): **58/58 passed**. Three pre-existing failures in
+  ``test_income_categories.py`` reproduce at HEAD without our
+  changes (unrelated seed drift — flagged for a future ticket).
+- Frontend vitest: ``pricebook-edit-item-modal.test.jsx`` =
+  **11/11 passed** (tabs render; deep-link to Suppliers on pencil;
+  effective_cost read-out; add/remove supplier rows; chemical-only
+  empty-suppliers warning; footer live update; resolve-or-create
+  called only for NEW names; PATCH payload shape).
+- Frontend regression (revenue tiles + pricebook cost-field-removed
+  + pricebook-modal-supplier-prices): **26/26 passed**.
+
+**Audit-note transparency**
+- The migration is additive by design — it doesn't remove supplier
+  rows that were added by prior runs. In production this is a no-op
+  because the sentinel guards re-runs; force-runs only re-fold from
+  the same source shapes. Legacy artifacts (a stray "Legacy" row
+  from a pre-fix run) can be scrubbed manually per item via the
+  Edit Item modal's Suppliers tab.
+- ``labor_cost_default`` is preserved on the Pricing tab per your
+  R4-adjacent decision — orthogonal to supplier costs, keeps
+  ``line_item.labor_cost_snapshot`` → profit/EBIT reports intact.
+- Empty-suppliers guardrail is client-side only (yellow banner).
+  Server never blocks the save — historical snapshots are immutable
+  so an empty ``suppliers[]`` never damages past invoices.
+
+---
+
+
+
 ## Backlog Item #1 · Feb-2026 — Revenue-by-Category UUID fix + Chemicals Service Category enforcement
 
 Two boot-time + admin-callable migrations plus tile handler hardening

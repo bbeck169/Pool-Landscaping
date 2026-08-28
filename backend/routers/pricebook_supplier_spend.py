@@ -38,8 +38,33 @@ UNCATEGORIZED_KEY = "__uncategorized__"
 def _primary_supplier_slug(pricebook_item: dict) -> Optional[str]:
     """Pick the lowest-cost supplier as the item's primary. Ties
     broken alphabetically. Returns None if the item has no
-    supplier_prices at all."""
-    prices = (pricebook_item or {}).get("supplier_prices") or []
+    supplier data at all.
+
+    Backlog #iii · Feb-2026 — prefers the rich ``suppliers[]`` shape;
+    falls back to legacy ``supplier_prices[]`` for grandfathered items
+    that predate the modal. The rich shape is authoritative on any
+    item written since the pricebook_suppliers_v1 migration.
+    """
+    if not pricebook_item:
+        return None
+    # 1. Rich shape.
+    rich = pricebook_item.get("suppliers") or []
+    if rich:
+        rich_valid = [r for r in rich if isinstance(r, dict)
+                       and r.get("supplier_name")
+                       and r.get("unit_cost") is not None]
+        if rich_valid:
+            best = min(rich_valid, key=lambda r: (
+                float(r.get("unit_cost") or 0),
+                str(r.get("supplier_name") or ""),
+            ))
+            # Slug from name for report join consistency.
+            import re as _re
+            s = str(best.get("supplier_name") or "").strip().lower()
+            s = _re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+            return s or None
+    # 2. Legacy compact shape.
+    prices = pricebook_item.get("supplier_prices") or []
     if not prices:
         return None
     # Sort by (cost_cents, slug) so ties collapse deterministically.
@@ -154,7 +179,10 @@ async def supplier_spend_report(
     if pids:
         async for it in db.items.find(
             {"tenant_id": tenant["id"], "id": {"$in": pids}},
-            {"_id": 0, "id": 1, "income_category_id": 1, "supplier_prices": 1},
+            # Backlog #iii · Feb-2026 — pull ``suppliers[]`` too so
+            # ``_primary_supplier_slug`` can read the rich shape.
+            {"_id": 0, "id": 1, "income_category_id": 1,
+              "supplier_prices": 1, "suppliers": 1},
         ):
             pricebook_items[it["id"]] = it
 

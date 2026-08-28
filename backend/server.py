@@ -392,6 +392,11 @@ api_router.include_router(_pb_cost_comparison.router)
 from routers import pricebook_supplier_spend as _pb_spend  # noqa: E402
 api_router.include_router(_pb_spend.router)
 
+# Backlog #iii · Feb-2026 — Supplier-name autocomplete for the
+# Edit-Item modal Suppliers tab.
+from routers import pricebook_supplier_names as _pb_supplier_names  # noqa: E402
+api_router.include_router(_pb_supplier_names.router)
+
 # Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer scaffold.
 from routers import homeworks_import as _homeworks_import  # noqa: E402
 api_router.include_router(_homeworks_import.router)
@@ -2429,6 +2434,35 @@ async def startup():
         logger.warning(
             f"revenue_line_items_uuid_category migration crashed: {e}",
         )
+
+    # Backlog #iii · Feb-2026 — Pricebook multi-supplier fold-up.
+    # Sentinel: ``pricebook_suppliers_v1``. Folds legacy scalar
+    # ``wholesale_price`` + compact ``supplier_prices[]`` +
+    # ``supplier_slug``/``external_sku`` into the new rich
+    # ``items.suppliers[]`` list and regenerates the two compat
+    # mirrors. Runs after the two Backlog-#1 migrations so income /
+    # service categories are fully seeded before the fold-up needs
+    # to resolve supplier display names. Idempotent + sentinel-guarded.
+    try:
+        from services.migrations.pricebook_suppliers import (
+            run_pricebook_suppliers_migration,
+        )
+        _ps_boot = await run_pricebook_suppliers_migration()
+        if _ps_boot.get("status") == "skipped":
+            logger.info(
+                "[pricebook_suppliers] sentinel present · skipping",
+            )
+        else:
+            _s = _ps_boot.get("summary") or {}
+            logger.info(
+                f"[pricebook_suppliers] tenants={_s.get('tenants_scanned', 0)} "
+                f"scanned={_s.get('scanned_items', 0)} "
+                f"updated={_s.get('updated_items', 0)} "
+                f"skipped={_s.get('skipped_no_change', 0)} "
+                f"errors={_s.get('errors_count', 0)}",
+            )
+    except Exception as e:
+        logger.warning(f"pricebook_suppliers migration crashed: {e}")
 
     # Feb-2026 · P0 fix — Orphan-paid invoice audit. Report-only on
     # boot so operators see the count in logs without silently

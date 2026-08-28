@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Activity, Waves, Package, History, BarChart3, Plus, Trash2, RefreshCw, MapPin, ChevronRight, Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon, Undo2, ShieldAlert, Loader2, DollarSign } from "lucide-react";
+import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Activity, Waves, Package, History, BarChart3, Plus, Trash2, RefreshCw, MapPin, ChevronRight, Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon, Undo2, ShieldAlert, Loader2, DollarSign, Pencil } from "lucide-react";
 import { api } from "@/api";
 import { SUPPLIER_METADATA } from "@/pages/settings/supplier_metadata";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
@@ -10,6 +10,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, Modal, Toast } from "@/components/ui-kit";
 import { useAttendance } from "@/hooks/useAttendance";
 import WorkstreamJobDrawer from "@/pages/ops/WorkstreamJobDrawer";
+import EditItemModal from "@/components/pricebook/EditItemModal";
 
 /* ═══ Ops hub – one page, many tabs. Kept compact by construction. ═══ */
 
@@ -2285,6 +2286,15 @@ export function PriceBook() {
       setToast({ tone: "error", message: e.message || "Delete failed" });
     }
   };
+
+  // Backlog #iii · Feb-2026 — Edit-Item modal launcher.
+  const [editModalItem, setEditModalItem] = useState(null);
+  const [editModalTab, setEditModalTab] = useState("general");
+  const openEditModal = (row, tab = "general") => {
+    setEditModalItem(row);
+    setEditModalTab(tab);
+  };
+  const closeEditModal = () => setEditModalItem(null);
   return (
     <Card testid="pricebook-page">
       <div className="flex justify-between items-center mb-3">
@@ -2418,13 +2428,19 @@ export function PriceBook() {
                           title="Tax rate (%)" />
                 {showInternalCols ? (
                   <>
-                    <input value={editDraft.wholesale_price ?? 0} type="number" step="0.01" min="0"
-                             onChange={(e) => setEditDraft({ ...editDraft, wholesale_price: e.target.value })}
-                             className="w-24 border px-2 py-1 text-sm rounded text-right"
-                             data-testid={`pb-edit-wholesale-${r.id}`}
-                             placeholder="wholesale"
-                             aria-label="Wholesale price ($, internal)"
-                             title="Wholesale — internal only" />
+                    {/* Backlog #iii · Feb-2026 — Column 3 is now
+                        read-only in inline mode. The rich
+                        ``suppliers[]`` edit lives in the Edit Item
+                        modal (Suppliers tab). The pencil-shortcut
+                        button below the row saves the operator a
+                        click. */}
+                    <div className="w-24 text-right"
+                            data-testid={`pb-edit-wholesale-readonly-${r.id}`}
+                            title={`Cheapest of ${(r.suppliers || []).length} suppliers — click Edit to change`}>
+                      <span className="text-xs font-mono" style={{ color: colors.muted }}>
+                        W {money(r.wholesale_price || 0)}
+                      </span>
+                    </div>
                     <input value={editDraft.labor_cost_default ?? 0} type="number" step="0.01" min="0"
                              onChange={(e) => setEditDraft({ ...editDraft, labor_cost_default: e.target.value })}
                              className="w-24 border px-2 py-1 text-sm rounded text-right"
@@ -2456,11 +2472,20 @@ export function PriceBook() {
                  <div className="font-semibold">{money(r.unit_price)}</div>
                 {showInternalCols ? (
                   <>
-                    <div className="text-xs font-mono w-20 text-right"
+                    <div className="text-xs font-mono w-20 text-right flex items-center justify-end gap-1"
                           style={{ color: colors.muted }}
                           data-testid={`pb-view-wholesale-${r.id}`}
-                          title="Wholesale — internal only">
+                          title={`Cheapest of ${(r.suppliers || []).length} supplier(s) — click pencil to edit`}>
                       W {money(r.wholesale_price || 0)}
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(r, "suppliers")}
+                        className="p-0.5 rounded hover:bg-slate-100"
+                        title="Edit suppliers"
+                        data-testid={`pb-view-wholesale-pencil-${r.id}`}
+                      >
+                        <Pencil size={12} style={{ color: colors.brand }} />
+                      </button>
                     </div>
                     <div className="text-xs font-mono w-20 text-right"
                           style={{ color: colors.muted }}
@@ -2470,10 +2495,15 @@ export function PriceBook() {
                     </div>
                   </>
                 ) : null}
-                 <button onClick={() => startEdit(r)}
+                 <button onClick={() => openEditModal(r, "general")}
                             className="text-xs font-semibold underline"
                             style={{ color: colors.muted }}
                             data-testid={`pb-edit-${r.id}`}>Edit</button>
+                 <button onClick={() => startEdit(r)}
+                            className="text-[10px] font-semibold underline"
+                            style={{ color: colors.muted }}
+                            data-testid={`pb-edit-inline-${r.id}`}
+                            title="Quick inline edit (name / price / tax)">Quick</button>
                  <button
                    type="button"
                    onClick={() => openPrices(r)}
@@ -2751,6 +2781,16 @@ export function PriceBook() {
           onClose={closePrices}
           onSave={savePrices}
           busy={pricesBusy}
+        />
+      ) : null}
+      {/* Backlog #iii · Feb-2026 — Edit Item modal (4 tabs). */}
+      {editModalItem ? (
+        <EditItemModal
+          open={!!editModalItem}
+          onOpenChange={(v) => { if (!v) closeEditModal(); }}
+          item={editModalItem}
+          initialTab={editModalTab}
+          onSaved={() => { refresh(); closeEditModal(); }}
         />
       ) : null}
       <Toast toast={toast} onClose={() => setToast(null)} />

@@ -167,6 +167,64 @@ class CategoryUpdate(BaseModel):
     sort_order: Optional[int] = None
 
 
+@router.post("/service-categories/resolve-or-create")
+async def resolve_or_create_service_category(
+    body: CategoryIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Backlog #iii · Feb-2026 — Autocomplete get-or-create.
+
+    Case-insensitive lookup on ``name`` within the caller's tenant.
+    If found → return ``{created: false, category}``. Otherwise
+    insert a new row using the same shape as ``POST
+    /service-categories`` and return ``{created: true, category}``.
+    Idempotent + case-preserving on first insert.
+    """
+    _require_admin(user)
+    tid = tenant["id"]
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    await ensure_defaults_for_tenant(tid)
+    import re as _re
+    existing = await db.service_categories.find_one(
+        {"tenant_id": tid,
+          "is_archived": False,
+          "name": {"$regex": f"^{_re.escape(name)}$", "$options": "i"}},
+        {"_id": 0},
+    )
+    if existing:
+        for k in ("created_at", "updated_at"):
+            if isinstance(existing.get(k), datetime):
+                existing[k] = existing[k].isoformat()
+        return {"created": False, "category": existing}
+    max_row = await db.service_categories.find_one(
+        {"tenant_id": tid},
+        {"_id": 0, "sort_order": 1},
+        sort=[("sort_order", -1)],
+    )
+    next_sort = int((max_row or {}).get("sort_order") or 0) + 1
+    now = _now()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": name,
+        "description": body.description or "",
+        "color": body.color or _auto_color(name),
+        "is_archived": False,
+        "sort_order": body.sort_order or next_sort,
+        "tenant_id": tid,
+        "created_at": now,
+        "created_by_user_id": user.get("id") or "pricebook:autocomplete",
+        "updated_at": now,
+    }
+    await db.service_categories.insert_one(dict(doc))
+    doc.pop("_id", None)
+    doc["created_at"] = now.isoformat()
+    doc["updated_at"] = now.isoformat()
+    return {"created": True, "category": doc}
+
+
 @router.get("/service-categories")
 async def list_categories(
     include_archived: bool = Query(False),

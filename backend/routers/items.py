@@ -8,8 +8,81 @@ from utils import (now_iso, new_id, hash_password, verify_password, create_token
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
 # Bucket A2 · Feb-2026 — explicit model imports (was ``from models import *``).
 from models import ItemIn
+# Backlog #iii · Feb-2026 — rich suppliers[] validator + mirror rebuild.
+from services.pricebook.cost import rebuild_mirrors
 
 router = APIRouter()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Backlog #iii · Feb-2026 — Rich multi-supplier subdoc validator.
+#
+# Validates the shape locked in models.ItemIn.suppliers[]. Rules:
+#   1. ``supplier_name`` required + non-blank, ≤ 120 chars.
+#   2. ``unit_cost``      optional; when set must be numeric ≥ 0.
+#   3. ``supplier_sku`` / ``unit_size`` / ``notes`` optional strings.
+#   4. ``id`` auto-stamped when missing (UUID).
+#   5. ``last_updated`` auto-stamped when missing (ISO-8601 now).
+#   6. Dedup on lower-cased ``supplier_name`` — the ``suppliers[]``
+#      list is a set-by-name. Duplicate names → 400 friendly detail.
+# ═══════════════════════════════════════════════════════════════════════
+def _validate_suppliers(suppliers) -> List[dict]:
+    if not suppliers:
+        return []
+    if not isinstance(suppliers, list):
+        raise HTTPException(400, {"error": "suppliers_must_be_list"})
+    seen: set = set()
+    out: List[dict] = []
+    default_last = now_iso()
+    for row in suppliers:
+        if not isinstance(row, dict):
+            raise HTTPException(400, {"error": "supplier_row_must_be_object"})
+        name = str(row.get("supplier_name") or "").strip()
+        if not name:
+            raise HTTPException(400, {
+                "error": "supplier_name_required",
+                "message": "Every supplier row needs a supplier_name",
+            })
+        if len(name) > 120:
+            raise HTTPException(400, {
+                "error": "supplier_name_too_long",
+                "supplier_name": name[:120],
+            })
+        key = name.lower()
+        if key in seen:
+            raise HTTPException(400, {
+                "error": "duplicate_supplier_name",
+                "supplier_name": name,
+            })
+        seen.add(key)
+        cost = row.get("unit_cost")
+        if cost in (None, ""):
+            cost_f = None
+        else:
+            try:
+                cost_f = float(cost)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(422, {
+                    "error": "invalid_unit_cost",
+                    "supplier_name": name,
+                }) from e
+            if cost_f < 0:
+                raise HTTPException(422, {
+                    "error": "invalid_unit_cost",
+                    "supplier_name": name,
+                    "message": "unit_cost must be ≥ 0",
+                })
+            cost_f = round(cost_f, 2)
+        out.append({
+            "id": str(row.get("id") or new_id()),
+            "supplier_name": name,
+            "supplier_sku": str(row.get("supplier_sku") or ""),
+            "unit_cost": cost_f,
+            "unit_size": str(row.get("unit_size") or ""),
+            "last_updated": str(row.get("last_updated") or default_last),
+            "notes": str(row.get("notes") or ""),
+        })
+    return out
 
 
 # ----------------------- Price Book -----------------------
@@ -73,6 +146,14 @@ async def create_item(body: ItemIn, user: dict = Depends(require_admin)):
     doc["supplier_prices"] = await _validate_supplier_prices(
         tenant_id, doc.get("income_category_id"), doc.get("supplier_prices"),
     )
+    # Backlog #iii · Feb-2026 — Rich suppliers[] validation + mirror
+    # regeneration. Services still have suppliers=[] scrubbed above.
+    doc["suppliers"] = _validate_suppliers(doc.get("suppliers"))
+    mirrors = rebuild_mirrors({"suppliers": doc["suppliers"]})
+    if mirrors:
+        # Overwrite the compact mirror + wholesale_price scalar so
+        # downstream grandfathered consumers keep working.
+        doc.update(mirrors)
     doc.update({"id": new_id(), "created_at": now_iso()})
     if tenant_id:
         doc["tenant_id"] = tenant_id
@@ -145,6 +226,8 @@ class ItemPatch(BaseModel):
     # Phase 56-b · Aug-2026 — Multi-supplier pricing patch.
     income_category_id: Optional[str] = None
     supplier_prices: Optional[List[dict]] = None
+    # Backlog #iii · Feb-2026 — Rich multi-supplier subdoc.
+    suppliers: Optional[List[dict]] = None
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -312,6 +395,23 @@ async def patch_item(iid: str, body: ItemPatch,
             row.get("tenant_id") or user.get("tenant_id") or "",
             effective_cat, upd["supplier_prices"],
         )
+    # Backlog #iii · Feb-2026 — Rich suppliers[] validation + mirror
+    # rebuild. When the patch supplies ``suppliers``, we validate,
+    # then regenerate the two compat mirrors (``wholesale_price``
+    # scalar + ``supplier_prices[]`` compact) from the new rich shape
+    # so downstream grandfathered readers stay in sync. If the caller
+    # omits ``suppliers`` we do NOT touch either mirror — legacy
+    # manual-pricing writes on ``supplier_prices[]`` round-trip.
+    if "suppliers" in upd and effective_type != "service":
+        upd["suppliers"] = _validate_suppliers(upd["suppliers"])
+        mirrors = rebuild_mirrors({"suppliers": upd["suppliers"]})
+        for k, v in mirrors.items():
+            # Only overwrite when the mirror function returned a value.
+            # Empty suppliers[] leaves mirrors alone.
+            upd[k] = v
+        # Empty-suppliers guardrail is enforced client-side (R4);
+        # server allows the write regardless — historical snapshots
+        # are immutable, so empty suppliers[] never affects them.
     upd["updated_at"] = now_iso()
     upd["updated_by_user_id"] = user.get("id")
     await db.items.update_one({"id": iid}, {"$set": upd})

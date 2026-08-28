@@ -57,31 +57,78 @@ def _compute_report(
 
     Split out so pytest can exercise the compute logic directly with
     fixture dicts instead of monkeypatching ``db.items.aggregate``.
+
+    Backlog #iii · Feb-2026 — prefers the rich ``suppliers[]`` shape
+    (min/max/spread over ``unit_cost``); falls back to legacy
+    ``supplier_prices[]`` compact rows for grandfathered items.
     """
+    import re as _re
+
+    def _slugify(s: str) -> str:
+        s = str(s or "").strip().lower()
+        s = _re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+        return s or ""
+
     rows: list = []
     for item in items:
+        rich = item.get("suppliers") or []
         prices = item.get("supplier_prices") or []
-        if not prices:
+        # Prefer rich shape; fall back to compact.
+        use_rich = bool([r for r in rich if isinstance(r, dict)
+                          and r.get("supplier_name")
+                          and r.get("unit_cost") is not None])
+        if not use_rich and not prices:
             continue
-        # Build the enriched sub-list. Every persisted price is
-        # preserved on the row (including deleted-supplier prices) so
-        # the UI can render them muted.
+
         enriched: list = []
         active_cents: list = []
-        for p in prices:
-            slug = p.get("supplier_slug")
-            cents = int(p.get("cost_cents") or 0)
-            meta = all_supplier_lookup.get(slug) or {}
-            is_deleted = bool(meta.get("deleted_at"))
-            enriched.append({
-                "supplier_slug": slug,
-                "display_name": meta.get("display_name") or slug,
-                "cost_cents": cents,
-                "is_deleted": is_deleted,
-            })
-            # Only ACTIVE suppliers contribute to min/max/spread.
-            if slug in active_supplier_lookup and not is_deleted:
-                active_cents.append(cents)
+
+        if use_rich:
+            for r in rich:
+                if not isinstance(r, dict):
+                    continue
+                name = str(r.get("supplier_name") or "").strip()
+                if not name or r.get("unit_cost") is None:
+                    continue
+                try:
+                    cents = int(round(float(r.get("unit_cost") or 0) * 100))
+                except (TypeError, ValueError):
+                    continue
+                slug = _slugify(name)
+                meta = all_supplier_lookup.get(slug) or {}
+                is_deleted = bool(meta.get("deleted_at"))
+                enriched.append({
+                    "supplier_slug": slug,
+                    "supplier_name": name,
+                    "display_name": meta.get("display_name") or name,
+                    "cost_cents": cents,
+                    "unit_cost": round(cents / 100.0, 2),
+                    "is_deleted": is_deleted,
+                    "supplier_sku": r.get("supplier_sku") or "",
+                    "unit_size": r.get("unit_size") or "",
+                    "notes": r.get("notes") or "",
+                })
+                # Rich-shape rows are always "active" — soft-delete
+                # concept lives on the pricebook_suppliers catalog,
+                # not on per-item rows.
+                if not is_deleted:
+                    active_cents.append(cents)
+        else:
+            for p in prices:
+                slug = p.get("supplier_slug")
+                cents = int(p.get("cost_cents") or 0)
+                meta = all_supplier_lookup.get(slug) or {}
+                is_deleted = bool(meta.get("deleted_at"))
+                enriched.append({
+                    "supplier_slug": slug,
+                    "display_name": meta.get("display_name") or slug,
+                    "cost_cents": cents,
+                    "is_deleted": is_deleted,
+                })
+                # Only ACTIVE suppliers contribute to min/max/spread.
+                if slug in active_supplier_lookup and not is_deleted:
+                    active_cents.append(cents)
+
         if not active_cents:
             # No live supplier drives min/max — skip this row (nothing
             # actionable to report on).
@@ -125,14 +172,16 @@ async def pricebook_cost_comparison(
     if sort not in _SORTS:
         raise HTTPException(400, f"sort must be one of {sorted(_SORTS)}")
 
-    # Aggregation pipeline — server-side narrow to items with a
-    # populated supplier_prices array. `$size > 0` via `$expr` so
-    # empty arrays are cheap-filtered before we ship rows across
-    # the wire.
+    # Aggregation pipeline — server-side narrow to items with any
+    # supplier data. Backlog #iii · Feb-2026 — accept EITHER
+    # ``suppliers[]`` (new rich shape) OR ``supplier_prices[]`` (legacy
+    # compact shape) so grandfathered items still show up.
     match: dict = {
         "tenant_id": tenant["id"],
-        "supplier_prices": {"$exists": True, "$type": "array"},
-        "$expr": {"$gt": [{"$size": {"$ifNull": ["$supplier_prices", []]}}, 0]},
+        "$expr": {"$or": [
+            {"$gt": [{"$size": {"$ifNull": ["$suppliers", []]}}, 0]},
+            {"$gt": [{"$size": {"$ifNull": ["$supplier_prices", []]}}, 0]},
+        ]},
         # Exclude soft-deleted items — hidden from every other pricebook
         # surface, so hidden here too.
         "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}],
@@ -142,7 +191,8 @@ async def pricebook_cost_comparison(
     pipeline = [
         {"$match": match},
         {"$project": {"_id": 0, "id": 1, "name": 1,
-                        "income_category_id": 1, "supplier_prices": 1}},
+                        "income_category_id": 1,
+                        "suppliers": 1, "supplier_prices": 1}},
     ]
     try:
         cursor = db.items.aggregate(pipeline)

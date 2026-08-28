@@ -496,6 +496,26 @@ class ItemIn(BaseModel):
     #                            in ``routers/items.py`` on writes.
     income_category_id: Optional[str] = None
     supplier_prices: List[Dict[str, Any]] = Field(default_factory=list)
+    # Backlog #iii · Feb-2026 — Rich multi-supplier subdoc. New
+    # authoritative source of truth for item-level supplier pricing.
+    # Legacy ``supplier_prices`` + scalar ``wholesale_price`` are
+    # kept as read-only mirrors regenerated on every write via
+    # ``services.pricebook.cost.rebuild_mirrors``. Free-form supplier
+    # name (no hard FK to ``suppliers`` / ``pricebook_suppliers``);
+    # the autocomplete at ``GET /pricebook/supplier-names`` is UI
+    # polish, not schema coupling.
+    #
+    # Row shape:
+    #   {
+    #     "id":            str (uuid),
+    #     "supplier_name": str (required, plain text — free-form),
+    #     "supplier_sku":  str (optional),
+    #     "unit_cost":     float (>= 0 when set; None means unknown),
+    #     "unit_size":     str (e.g. "25 lb", "gallon"),
+    #     "last_updated":  str (ISO-8601),
+    #     "notes":         str (optional, free-form),
+    #   }
+    suppliers: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class BillingPlanIn(BaseModel):

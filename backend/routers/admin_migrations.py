@@ -1088,3 +1088,39 @@ async def backfill_revenue_line_items_uuid_category(
     )
     return report
 
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/pricebook-suppliers
+# Backlog #iii · Feb-2026 — super_admin trigger for the multi-supplier
+# fold-up. Also runs on every boot (see ``server.py``); this endpoint
+# lets ops force a re-run after a bulk pricebook restore or after
+# fixing supplier display-name typos in the catalog.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/pricebook-suppliers",
+    operation_id="admin.migrations.pricebook_suppliers",
+)
+async def backfill_pricebook_suppliers(
+    force: bool = Query(
+        False,
+        description=(
+            "When true, bypasses the ``db.migrations`` sentinel and "
+            "re-runs the fold-up. Per-item dedup on supplier_name "
+            "still prevents duplicates."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_super_admin(user)
+    from services.migrations.pricebook_suppliers import (
+        run_pricebook_suppliers_migration,
+    )
+    report = await run_pricebook_suppliers_migration(force=force)
+    logger.info(
+        "[pricebook-suppliers-migration] user=%s caller_tenant=%s "
+        "force=%s report=%s",
+        user.get("id"), tenant.get("id"), force, report,
+    )
+    return report
+

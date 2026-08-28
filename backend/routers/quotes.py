@@ -129,8 +129,15 @@ async def _stamp_line_snapshots(items: List[dict],
             _q["tenant_id"] = tenant_id
         rows = await db.items.find(
             _q,
+            # Backlog #iii · Feb-2026 — pull the rich ``suppliers[]``
+            # subdoc so the wholesale snapshot can freeze the
+            # ``effective_cost`` (min supplier cost) at write time.
+            # Legacy ``wholesale_price`` scalar + ``supplier_prices[]``
+            # compact mirror are also projected so the effective_cost
+            # helper's fallback ladder works for grandfathered items.
             {"_id": 0, "id": 1, "name": 1, "wholesale_price": 1,
-              "labor_cost_default": 1, "unit_price": 1},
+              "labor_cost_default": 1, "unit_price": 1,
+              "suppliers": 1, "supplier_prices": 1, "tenant_id": 1},
         ).to_list(len(ids))
         item_master = {r["id"]: r for r in rows}
 
@@ -156,8 +163,11 @@ async def _stamp_line_snapshots(items: List[dict],
                for n in names_needing_resolve]
         rows = await db.items.find(
             {"$or": rx},
+            # Backlog #iii · Feb-2026 — same projection as the id-lookup
+            # path so name-fallback resolution can compute effective_cost.
             {"_id": 0, "id": 1, "name": 1, "wholesale_price": 1,
-              "labor_cost_default": 1, "unit_price": 1},
+              "labor_cost_default": 1, "unit_price": 1,
+              "suppliers": 1, "supplier_prices": 1, "tenant_id": 1},
         ).to_list(len(names_needing_resolve))
         for r in rows:
             name_master[(r.get("name") or "").strip().lower()] = r
@@ -180,10 +190,16 @@ async def _stamp_line_snapshots(items: List[dict],
         # wholesale_price_snapshot — hydrate when None OR 0, given
         # the pricebook has a non-zero value.  Never overwrite a
         # non-zero snapshot (immutable once meaningfully set).
+        # Backlog #iii · Feb-2026 — use ``effective_cost(item)`` as
+        # the source of truth so ``min(item.suppliers[].unit_cost)``
+        # (with legacy fallback ladder) drives COGS + EBIT + profit
+        # report going forward. Historical snapshots stay immutable.
         current_ws = li.get("wholesale_price_snapshot")
         needs_ws = (current_ws is None or _to_float_or_zero(current_ws) == 0.0)
         if needs_ws:
-            pb_ws = _to_float_or_zero(master.get("wholesale_price"))
+            from services.pricebook.cost import effective_cost as _ec
+            ec = _ec(master, log_warn=True)
+            pb_ws = _to_float_or_zero(ec) if ec is not None else 0.0
             if pb_ws > 0 or current_ws is None:
                 # Only write when we actually have a real value OR
                 # the field was outright missing (default to 0).

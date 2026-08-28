@@ -159,6 +159,62 @@ class CategoryUpdate(BaseModel):
 # ═══════════════════════════════════════════════════════════════════
 # Endpoints
 # ═══════════════════════════════════════════════════════════════════
+@router.post("/income-categories/resolve-or-create")
+async def resolve_or_create_income_category(
+    body: CategoryIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Backlog #iii · Feb-2026 — Autocomplete get-or-create.
+
+    Case-insensitive lookup on ``name`` within the caller's tenant.
+    If found → return the row with ``created: false``. Otherwise
+    insert a new row using the same seeding shape as ``POST
+    /income-categories`` and return with ``created: true``.
+
+    Idempotent: two consecutive calls with the same input return the
+    same id; the second call gets ``created: false``. Case-preserving
+    on first insert — "Chemicals" typed by the user stays "Chemicals"
+    even though a later "chemicals" resolves to the same id.
+    """
+    _require_admin(user)
+    tenant_id = tenant["id"]
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    await ensure_defaults_for_tenant(tenant_id)
+    import re as _re
+    existing = await db.income_categories.find_one(
+        {"tenant_id": tenant_id,
+          "is_archived": False,
+          "name": {"$regex": f"^{_re.escape(name)}$", "$options": "i"}},
+        {"_id": 0},
+    )
+    if existing:
+        for k in ("created_at", "updated_at"):
+            if isinstance(existing.get(k), datetime):
+                existing[k] = existing[k].isoformat()
+        return {"created": False, "category": existing}
+    now = _now()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": name,
+        "description": body.description or "",
+        "color": body.color or _auto_color(name),
+        "is_archived": False,
+        "sort_order": body.sort_order or 0,
+        "tenant_id": tenant_id,
+        "created_at": now,
+        "created_by_user_id": user.get("id") or "pricebook:autocomplete",
+        "updated_at": now,
+    }
+    await db.income_categories.insert_one(dict(doc))
+    doc.pop("_id", None)
+    doc["created_at"] = now.isoformat()
+    doc["updated_at"] = now.isoformat()
+    return {"created": True, "category": doc}
+
+
 @router.get("/income-categories")
 async def list_categories(
     include_archived: bool = Query(False),
