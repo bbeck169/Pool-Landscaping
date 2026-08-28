@@ -484,66 +484,18 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Hero KPI card — Total Paid Revenue.
-          Feb 2026 · Color pass — emerald-forward gradient
-          (landscape[600] → emerald[600]) makes the "money" tile
-          semantically green. Cross-fade ends the gradient on the
-          accent emerald so it reads visibly distinct from the
-          general brand gradient reused elsewhere. White text on
-          both stops passes WCAG AA large text (≥ 3:1) — locked
-          in by ``feb2026-color-pass-fixes.test.jsx``. Note we
-          use emerald[600] (not [500]) — [500] at 2.53:1 vs
-          white fails AA large text, so [600] at 3.80:1 is the
-          minimum darker step that stays legible. */}
-      <div
-        className="rounded-2xl p-6 md:p-8 mb-6 relative overflow-hidden"
-        style={{
-          background: `linear-gradient(90deg, ${colors.landscape[600]} 0%, ${colors.accent.emerald[600]} 100%)`,
-          minHeight: 180,
-        }}
-        data-testid="dashboard-hero"
-        data-tone="emerald"
-      >
-        <div
-          className="absolute inset-0 opacity-25"
-          style={{
-            backgroundImage:
-              "url(https://images.pexels.com/photos/8974468/pexels-photo-8974468.jpeg?auto=compress&cs=tinysrgb&w=1200)",
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-          }}
-        />
-        <div className="relative">
-          <p className="text-white/85 text-sm font-medium">Total Paid Revenue (lifetime)</p>
-          {data ? (
-            <p className="text-white text-4xl md:text-5xl font-bold mt-1" data-testid="dashboard-revenue">
-              {money(data.revenue)}
-            </p>
-          ) : (
-            <Skeleton className="mt-2" style={{ height: 44, width: 220, backgroundColor: "rgba(255,255,255,0.25)" }} />
-          )}
-          <div className="mt-4 flex flex-wrap gap-2">
-            {data && (
-              <>
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-xs font-medium bg-white/20 backdrop-blur">
-                  <Briefcase size={12} />
-                  {data.active_jobs} active jobs
-                </span>
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-xs font-medium bg-white/20 backdrop-blur">
-                  <Clock size={12} />
-                  {money(data.outstanding)} due
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* Feb 2026 · Priority 2 — the emerald "Total Paid Revenue"
+          hero tile was removed per operator feedback: the number
+          duplicated the split chip below and the giant gradient
+          crowded out the KPI grid. The Pool vs Landscape split
+          chip immediately below carries the same lifetime paid
+          revenue plus the mix breakdown, so no data is lost.
+          Locked-in-place by ``priority2-emerald-hero-removed.test.jsx``. */}
 
       {/* Feb 2026 · Batch 2 — Pool vs Landscape revenue split chip.
-          Sits directly below the emerald Total Paid Revenue hero
-          and visualises the mix using the theme's cyan pool + green
+          Visualises the mix using the theme's cyan pool + green
           landscape tokens. Data flows from ``/api/dashboard``
-          which now returns ``pool_revenue / landscape_revenue /
+          which returns ``pool_revenue / landscape_revenue /
           mixed_revenue`` (all in dollars — additive to
           ``data.revenue``). */}
       {data && (
@@ -629,7 +581,7 @@ export default function AdminDashboard() {
               icon={Briefcase}
               label="Active Jobs"
               value={data.active_jobs}
-              onClick={() => navigate("/jobs")}
+              onClick={() => navigate("/admin/jobs?status=active")}
               testId="kpi-active-jobs"
               tone="sky"
             />
@@ -637,7 +589,7 @@ export default function AdminDashboard() {
               icon={Hourglass}
               label="Pending"
               value={data.pending_jobs}
-              onClick={() => navigate("/jobs")}
+              onClick={() => navigate("/admin/jobs?status=pending")}
               testId="kpi-pending"
               tone="amber"
             />
@@ -653,7 +605,7 @@ export default function AdminDashboard() {
               icon={Wrench}
               label="Technicians"
               value={data.total_technicians}
-              onClick={() => navigate("/more")}
+              onClick={() => navigate("/team")}
               testId="kpi-technicians"
               tone="emerald"
             />

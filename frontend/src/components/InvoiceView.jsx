@@ -98,11 +98,24 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
             <button
               type="button"
               onClick={() => setPayOpen(true)}
-              className="iv-btn iv-btn-primary"
+              className="iv-btn iv-btn-primary iv-pay-now-cta"
               data-testid="invoice-pay-now-btn"
-              style={{ background: "#0F766E", borderColor: "#0F766E" }}
+              /* Feb-2026 · P0 Bug B — customers with a positive
+                  ``total_due`` reported the Pay Now button was too
+                  small to notice (see Hector Guerrero case). Lift
+                  the button to a full "Pay $XXX.XX" tag, size it
+                  up, and pair it with a sticky mobile bottom bar
+                  below the invoice so the CTA never falls below
+                  the fold. Green matches the ``landscape`` token
+                  semantics operators associate with paid revenue. */
+              style={{
+                background: "#059669",
+                borderColor: "#059669",
+                fontSize: 15, fontWeight: 700, padding: "10px 20px",
+              }}
             >
-              <CreditCard size={14} /> Pay Now
+              <CreditCard size={16} />
+              &nbsp;Pay ${fmtMoney(totals?.total_due || 0)}
             </button>
           ) : null}
           <button
@@ -320,6 +333,25 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
           magicToken={magicToken}
           onClose={() => setPayOpen(false)}
         />
+      ) : null}
+      {/* Feb-2026 · P0 Bug B — sticky mobile pay bar. On phones the
+          top toolbar scrolls off the viewport almost immediately;
+          this keeps the primary CTA visible for the entire session.
+          Only renders when there's an outstanding balance AND we're
+          not in printable mode. CSS lives in ``InvoiceView.css``
+          under ``.iv-mobile-pay-bar``. */}
+      {!printable && canPay ? (
+        <div className="iv-mobile-pay-bar" data-testid="invoice-mobile-pay-bar">
+          <button
+            type="button"
+            onClick={() => setPayOpen(true)}
+            className="iv-mobile-pay-btn"
+            data-testid="invoice-mobile-pay-btn"
+          >
+            <CreditCard size={18} />
+            &nbsp;Pay ${fmtMoney(totals?.total_due || 0)}
+          </button>
+        </div>
       ) : null}
     </div>
   );

@@ -899,3 +899,112 @@ async def create_service_request(
             "status": sms_result.get("provider_status"),
         },
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Feb-2026 · Priority 3 — Autobilling opt-in.
+# ═══════════════════════════════════════════════════════════════════════
+# Ship pairs with the ``save-on-first-payment`` addendum: after the
+# customer completes checkout with ``save_for_future_billing=true``,
+# ``/portal/payment-complete`` surfaces a CTA that lands here to flip
+# ``customers.autobilling_enabled`` true. The recurring-billing runner
+# (``services.finances.run_daily_autobilling``) checks the flag before
+# auto-charging future invoices to the saved default payment method.
+#
+# Endpoint scope: portal-authenticated customer flipping their OWN
+# opt-in flag. Admin-side toggling is out of scope for this ship (the
+# admin billing-plans page owns that lever).
+@router.get("/customer-portal/autobilling")
+async def get_autobilling_status(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Return the caller's autobilling opt-in flag + whether they
+    have a default payment method on file. Frontend uses this to
+    decide whether the CTA on ``/portal/payment-complete`` is
+    actionable (needs a saved PM) and whether it should even
+    render (already opted in → no-op)."""
+    cid = _require_customer(user)
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "autobilling_enabled": 1,
+          "default_payment_method_id": 1},
+    ) or {}
+    return {
+        "autobilling_enabled": bool(cust.get("autobilling_enabled")),
+        "has_default_payment_method": bool(
+            cust.get("default_payment_method_id")
+        ),
+    }
+
+
+@router.post("/customer-portal/autobilling/enable")
+async def enable_autobilling(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Flip ``customers.autobilling_enabled`` to true for the caller.
+    Requires a saved default payment method — 409 otherwise so the
+    frontend can nudge the customer to the Add-card flow instead of
+    landing them on a silent no-op.
+    """
+    cid = _require_customer(user)
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "autobilling_enabled": 1,
+          "default_payment_method_id": 1},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    if not cust.get("default_payment_method_id"):
+        raise HTTPException(
+            409,
+            "no_default_payment_method",
+        )
+    # Idempotent — repeated CTA clicks resolve as ok=true and
+    # ``changed=false`` so double-tap on a flaky connection stays safe.
+    already_on = bool(cust.get("autobilling_enabled"))
+    if not already_on:
+        await db.customers.update_one(
+            {"id": cid, "tenant_id": tenant["id"]},
+            {"$set": {
+                "autobilling_enabled": True,
+                "autobilling_enabled_at": now_iso(),
+            }},
+        )
+    return {
+        "ok": True,
+        "autobilling_enabled": True,
+        "changed": not already_on,
+    }
+
+
+@router.post("/customer-portal/autobilling/disable")
+async def disable_autobilling(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Opt-out. Mirrors ``enable`` — idempotent, returns the terminal
+    state. Kept alongside the enable endpoint so the portal-side
+    settings page (future ship) has both levers ready to wire."""
+    cid = _require_customer(user)
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "autobilling_enabled": 1},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    already_off = not bool(cust.get("autobilling_enabled"))
+    if not already_off:
+        await db.customers.update_one(
+            {"id": cid, "tenant_id": tenant["id"]},
+            {"$set": {
+                "autobilling_enabled": False,
+                "autobilling_disabled_at": now_iso(),
+            }},
+        )
+    return {
+        "ok": True,
+        "autobilling_enabled": False,
+        "changed": not already_off,
+    }

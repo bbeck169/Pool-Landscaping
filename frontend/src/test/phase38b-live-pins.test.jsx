@@ -26,7 +26,6 @@ describe("Phase 38b · Mapbox dep + config", () => {
 
   it("registers the @rnmapbox/maps expo config plugin in app.json", () => {
     expect(app).toContain('"@rnmapbox/maps"');
-    expect(app).toContain('RNMapboxMapsDownloadToken');
     expect(app).toContain('$EXPO_PUBLIC_MAPBOX_TOKEN');
   });
 

@@ -437,3 +437,84 @@ def test_owner_customer_can_reconcile_own_invoice(client, stripe_stub, customer,
     row = _sync.quotes.find_one({"id": inv_id},
                                   {"_id": 0, "payment_status": 1})
     assert row["payment_status"] == "paid"
+
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 8 · Priority 3 · Feb 2026 — reconcile surfaces ``payment_method_saved``
+#      when the session was flagged ``save_for_future_billing`` AND the
+#      customer now carries a ``default_payment_method_id`` (i.e. the
+#      ``_save_pm_after_first_payment`` finished). Frontend uses this
+#      to gate the autobilling opt-in CTA on the payment-complete page.
+# ══════════════════════════════════════════════════════════════════════
+def _paid_session_with_save_flag(session_id: str, invoice_id: str,
+                                    tenant_id: str, customer_id: str) -> dict:
+    s = _paid_session(session_id, invoice_id, tenant_id, customer_id)
+    s["metadata"]["crm_save_for_future"] = "1"
+    return s
+
+
+def test_reconcile_surfaces_payment_method_saved_when_pm_attached(
+    client, stripe_stub, admin, tenant_id,
+):
+    cust_id = _seed_customer(tenant_id)
+    # Simulate the async ``_save_pm_after_first_payment`` having
+    # already run — customer carries a default PM. Reconcile itself
+    # does not create the PM row; it reports the terminal state.
+    _sync.customers.update_one(
+        {"id": cust_id, "tenant_id": tenant_id},
+        {"$set": {"default_payment_method_id": "pm_test_srec",
+                    "autobilling_enabled": False}},
+    )
+    inv_id = _seed_invoice(tenant_id, cust_id, total=250.00)
+    sid = f"cs_test_{uuid.uuid4().hex[:16]}"
+    stripe_stub(_paid_session_with_save_flag(sid, inv_id, tenant_id, cust_id))
+
+    r = _reconcile(client, admin, sid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["reconciled"] is True
+    assert body["payment_method_saved"] is True
+    assert body["autobilling_enabled"] is False
+
+
+def test_reconcile_omits_pm_saved_flag_when_save_flag_absent(
+    client, stripe_stub, admin, tenant_id,
+):
+    cust_id = _seed_customer(tenant_id)
+    _sync.customers.update_one(
+        {"id": cust_id, "tenant_id": tenant_id},
+        {"$set": {"default_payment_method_id": "pm_test_srec"}},
+    )
+    inv_id = _seed_invoice(tenant_id, cust_id, total=250.00)
+    sid = f"cs_test_{uuid.uuid4().hex[:16]}"
+    # NO ``crm_save_for_future`` metadata → CTA should not fire even
+    # though the customer happens to have a saved PM already.
+    stripe_stub(_paid_session(sid, inv_id, tenant_id, cust_id))
+
+    r = _reconcile(client, admin, sid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["payment_method_saved"] is False
+
+
+def test_reconcile_reports_autobilling_already_enabled(
+    client, stripe_stub, admin, tenant_id,
+):
+    cust_id = _seed_customer(tenant_id)
+    _sync.customers.update_one(
+        {"id": cust_id, "tenant_id": tenant_id},
+        {"$set": {"default_payment_method_id": "pm_test_srec",
+                    "autobilling_enabled": True}},
+    )
+    inv_id = _seed_invoice(tenant_id, cust_id, total=250.00)
+    sid = f"cs_test_{uuid.uuid4().hex[:16]}"
+    stripe_stub(_paid_session_with_save_flag(sid, inv_id, tenant_id, cust_id))
+
+    r = _reconcile(client, admin, sid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Frontend uses this to suppress the CTA (customer already
+    # opted in on a prior payment).
+    assert body["payment_method_saved"] is True
+    assert body["autobilling_enabled"] is True

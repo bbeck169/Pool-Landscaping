@@ -31,7 +31,7 @@ from utils import get_current_user
 
 router = APIRouter()
 
-_UNCATEGORISED = "Uncategorised"
+_UNCATEGORISED = "Uncategorized"
 
 
 def _require_admin(user: dict) -> None:
@@ -103,6 +103,22 @@ async def revenue_by_category(
                     "range": {"start": s_iso, "end": e_iso},
                     "service_category_id": service_category_id}
 
+    # Feb-2026 · Priority 6 (Bug 3) — pricebook fallback.
+    # Line items may be missing an inline ``category`` (older
+    # invoices, manual entries, quote-cloned items). Build a single
+    # ``item_id → category`` map so the aggregation below can fall
+    # back to the source pricebook item's category before dropping
+    # the row into the ``Uncategorized`` bucket. One tenant-scoped
+    # scan; no N+1.
+    item_id_to_category: Dict[str, str] = {}
+    async for row in db.items.find(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "category": 1},
+    ):
+        cat = (row.get("category") or "").strip()
+        if cat and row.get("id"):
+            item_id_to_category[row["id"]] = cat
+
     # Query: invoices in this tenant, dated inside the range. Match both
     # legacy ``created_at`` (which most seed data uses) and modern
     # ``issue_date`` / ``invoice_date``.  Docs are strings ISO-sortable.
@@ -140,28 +156,81 @@ async def revenue_by_category(
         if inv.get("currency"):
             currency = inv["currency"]
         items = inv.get("line_items") or []
+        # Feb-2026 · Priority 6 (Bug 3) — track how much of the
+        # invoice's revenue we recognised via line items. If NONE
+        # of the lines contribute (empty ``line_items``, all
+        # filtered out by the service-category gate, or all-zero
+        # priced), fall back to the invoice ``total`` under
+        # ``Uncategorized`` so the tile total stays consistent
+        # with the top-card lifetime paid figure. Never silently
+        # drop a paid invoice from the chart.
+        recognised_amount = 0.0
+        line_matched_any = False
         for li in items:
-            # Feb-2026 · Optional service-category filter — skip any
-            # line whose source pricebook item is outside the set.
+            # Optional service-category filter — skip any line whose
+            # source pricebook item is outside the set. When a
+            # filter is active we still want the "was any line
+            # matched" signal to reflect only in-scope lines, since
+            # falling through to the invoice total would leak
+            # out-of-scope revenue into the filtered tile.
             if allowed_item_ids is not None:
                 iid = li.get("item_id")
                 if not iid or iid not in allowed_item_ids:
                     continue
-            cat = (li.get("category") or "").strip() or _UNCATEGORISED
+            line_matched_any = True
+            # Category resolution order:
+            #   1. inline ``line_item.category``
+            #   2. source pricebook item's ``category`` via item_id
+            #   3. ``Uncategorized`` bucket (visibility over silence)
+            inline_cat = (li.get("category") or "").strip()
+            if inline_cat:
+                cat = inline_cat
+            else:
+                pb_cat = item_id_to_category.get(li.get("item_id"))
+                cat = pb_cat or _UNCATEGORISED
             amt = (float(li.get("quantity") or 0)
                     * float(li.get("unit_price") or 0))
+            recognised_amount += amt
             bucket = totals.setdefault(cat, {"amount": 0.0, "count": 0})
             bucket["amount"] += amt
+            bucket["count"] += 1
+
+        # Priority 6 fallback — invoice with no matched lines (or
+        # all-zero priced lines) is still real revenue. Charge the
+        # invoice ``total`` to ``Uncategorized`` so it shows up in
+        # the pie. Skip when a service-category filter is active
+        # and NO in-scope lines matched — that invoice is out of
+        # scope for the current view.
+        try:
+            inv_total = float(inv.get("total") or 0)
+        except (TypeError, ValueError):
+            inv_total = 0.0
+        needs_fallback = (
+            inv_total > 0
+            and recognised_amount == 0
+            and (allowed_item_ids is None or line_matched_any)
+        )
+        if needs_fallback:
+            bucket = totals.setdefault(
+                _UNCATEGORISED, {"amount": 0.0, "count": 0},
+            )
+            bucket["amount"] += inv_total
             bucket["count"] += 1
 
     items_out: List[Dict[str, Any]] = []
     grand_total = 0.0
     for cat, b in sorted(totals.items(), key=lambda kv: kv[1]["amount"], reverse=True):
+        # Feb-2026 · Priority 6 — surface the fallback bucket with
+        # a distinct neutral grey (matches the sibling
+        # income-by-service-category tile) so operators can spot
+        # uncategorized revenue at a glance without hunting
+        # through the legend.
+        color = "#94A3B8" if cat == _UNCATEGORISED else _color_for(cat)
         items_out.append({
             "category": cat,
             "amount": round(b["amount"], 2),
             "count": b["count"],
-            "color": _color_for(cat),
+            "color": color,
         })
         grand_total += b["amount"]
 
@@ -228,11 +297,19 @@ async def income_by_service_category(
                   {"deleted_at": {"$exists": False}},
               ]},
           ]},
-        {"_id": 0, "id": 1, "line_items": 1, "currency": 1},
+        {"_id": 0, "id": 1, "line_items": 1, "currency": 1, "total": 1},
     )
     async for inv in cur:
         if inv.get("currency"):
             currency = inv["currency"]
+        # Feb-2026 · Priority 6 (Bug 3) — mirror the fallback that
+        # ``revenue_by_category`` now applies: recognise the
+        # invoice ``total`` under ``Uncategorized`` when no line
+        # items produced any revenue (empty ``line_items`` array
+        # OR every line has zero qty × unit_price). Prevents the
+        # sibling tile from silently under-counting paid revenue
+        # relative to the top-card lifetime number.
+        recognised_amount = 0.0
         for li in (inv.get("line_items") or []):
             iid = li.get("item_id")
             svc_id = item_to_svc.get(iid) if iid else None
@@ -240,8 +317,17 @@ async def income_by_service_category(
             bucket_key = svc_name or "Uncategorized"
             amt = (float(li.get("quantity") or 0)
                     * float(li.get("unit_price") or 0))
+            recognised_amount += amt
             b = totals.setdefault(bucket_key, {"amount": 0.0, "count": 0})
             b["amount"] += amt
+            b["count"] += 1
+        try:
+            inv_total = float(inv.get("total") or 0)
+        except (TypeError, ValueError):
+            inv_total = 0.0
+        if inv_total > 0 and recognised_amount == 0:
+            b = totals.setdefault("Uncategorized", {"amount": 0.0, "count": 0})
+            b["amount"] += inv_total
             b["count"] += 1
 
     items_out: List[Dict[str, Any]] = []

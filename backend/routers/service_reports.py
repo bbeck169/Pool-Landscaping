@@ -734,7 +734,14 @@ async def submit_service_report(
                 invoice = await apply_and_persist(db, tenant["id"], invoice)
             except Exception as e:
                 logger.warning(f"cents-credit apply skipped: {e}")
-            await db.quotes.insert_one(invoice)
+            # Feb-2026 · P0 fix — the service-report auto-invoice path
+            # was the primary source of ``invoice_number: null`` rows on
+            # production (see Hector Guerrero's "Service — Filter
+            # Service" invoice). Route through the canonical
+            # ``insert_invoice`` helper so the number gets assigned +
+            # validated before Motor sees the doc.
+            from services.invoice_numbering import insert_invoice
+            invoice = await insert_invoice(invoice, tenant)
             invoice_id = inv_id
             # Comms Phase 3 — auto-invoice from a submitted service
             # report still fires invoice.created so admins can wire a

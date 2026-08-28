@@ -246,10 +246,16 @@ async def create_setup_intent(
         raise ValueError("customer not found")
 
     provider_customer_id = customer.get("stripe_customer_id") or ""
-    if not provider_customer_id:
-        # Create a fresh Stripe customer. Use the CRM customer id as
-        # idempotency key so a retry from the same session doesn't
-        # duplicate the Stripe-side record.
+
+    async def _create_fresh_stripe_customer() -> str:
+        # Cross-mode auto-recovery: when a live-mode customer id is
+        # left over on the record after flipping ``STRIPE_MODE``, we
+        # can't reuse it (Stripe returns 404 on the SetupIntent).
+        # This helper is called both when the CRM has no id AND after
+        # ``resource_missing`` on the SetupIntent create below.
+        # Idempotency key includes the current Stripe mode so a
+        # retry after a mode flip creates a fresh customer instead
+        # of deduping back to the stale one.
         stripe_cust = await _to_thread(
             _stripe.Customer.create,
             email=(customer.get("email") or None),
@@ -259,13 +265,17 @@ async def create_setup_intent(
                 "crm_tenant_id": tenant_id,
                 "stripe_mode": _mode(),
             },
-            idempotency_key=f"cust_create:{tenant_id}:{customer_id}",
+            idempotency_key=f"cust_create:{_mode()}:{tenant_id}:{customer_id}",
         )
-        provider_customer_id = stripe_cust["id"]
+        new_id = _asdict(stripe_cust).get("id") or stripe_cust["id"]
         await db.customers.update_one(
             {"id": customer_id, "tenant_id": tenant_id},
-            {"$set": {"stripe_customer_id": provider_customer_id}},
+            {"$set": {"stripe_customer_id": new_id}},
         )
+        return new_id
+
+    if not provider_customer_id:
+        provider_customer_id = await _create_fresh_stripe_customer()
 
     # Feb 2026 · P0 fix — the ACH flow needs a ``us_bank_account``
     # SetupIntent, the card flow needs ``card`` (default). Callers
@@ -273,26 +283,56 @@ async def create_setup_intent(
     types = payment_method_types or ["card"]
     if not isinstance(types, (list, tuple)) or not types:
         types = ["card"]
-    # Bake the requested types into the idempotency key so a repeat
-    # click within the same day for a different flavour doesn't
-    # dedupe back to the wrong SetupIntent.
-    _si_idem = (
-        f"si:{tenant_id}:{customer_id}:"
-        f"{'-'.join(sorted(types))}:"
-        f"{datetime.now(timezone.utc).strftime('%Y%m%d')}"
-    )
-    setup_intent = await _to_thread(
-        _stripe.SetupIntent.create,
-        customer=provider_customer_id,
-        payment_method_types=list(types),
-        usage="off_session",
-        metadata={
-            "crm_customer_id": customer_id,
-            "crm_tenant_id": tenant_id,
-            "actor_user_id": actor_user_id or "",
-        },
-        idempotency_key=_si_idem,
-    )
+    # Bake the requested types + Stripe mode into the idempotency
+    # key so a repeat click within the same day for a different
+    # flavour (or after a mode flip) doesn't dedupe back to the
+    # wrong SetupIntent.
+    def _build_si_kwargs(cust_id: str) -> Dict[str, Any]:
+        return dict(
+            customer=cust_id,
+            payment_method_types=list(types),
+            usage="off_session",
+            metadata={
+                "crm_customer_id": customer_id,
+                "crm_tenant_id": tenant_id,
+                "actor_user_id": actor_user_id or "",
+            },
+            idempotency_key=(
+                f"si:{_mode()}:{tenant_id}:{customer_id}:"
+                f"{'-'.join(sorted(types))}:"
+                f"{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+            ),
+        )
+
+    try:
+        setup_intent = await _to_thread(
+            _stripe.SetupIntent.create, **_build_si_kwargs(provider_customer_id),
+        )
+    except Exception as exc:  # pragma: no cover — happy path first
+        # Cross-mode auto-recovery — if we're pointing at a customer
+        # id from the wrong Stripe mode (e.g. live-mode id after
+        # flipping STRIPE_MODE=test), Stripe returns 404
+        # ``resource_missing``. Clear the stale id, mint a new one
+        # in the current mode, and retry the SetupIntent create.
+        code = getattr(getattr(exc, "error", None), "code", None) or ""
+        msg = str(exc)
+        looks_stale = (
+            code == "resource_missing"
+            or "No such customer" in msg
+            or ("resource_missing" in msg and "customer" in msg)
+        )
+        if not looks_stale:
+            raise
+        logger.info(
+            "[stripe] stale stripe_customer_id=%s for CRM customer %s "
+            "(mode=%s) — auto-recovering with fresh Stripe customer",
+            provider_customer_id, customer_id, _mode(),
+        )
+        provider_customer_id = await _create_fresh_stripe_customer()
+        setup_intent = await _to_thread(
+            _stripe.SetupIntent.create, **_build_si_kwargs(provider_customer_id),
+        )
+
     si = _asdict(setup_intent)
     return {
         "client_secret": si.get("client_secret"),

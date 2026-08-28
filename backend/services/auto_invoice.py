@@ -217,10 +217,17 @@ async def create_invoice_from_job(job_id: str, tenant_id: str
                     idempotency_key=f"auto_invoice:{job_id}",
                 )
                 if isinstance(charge_result, dict) and charge_result.get("ok"):
+                    # Feb-2026 · P0 Bug A hardening — stamp
+                    # ``paid_method`` explicitly so the orphan-paid
+                    # audit's whitelist recognises this as
+                    # evidence-backed (Stripe already stamped the
+                    # PI id via ``_mark_invoice_paid`` before we
+                    # got here).
                     await db.quotes.update_one(
                         {"id": invoice_id, "tenant_id": tenant_id},
                         {"$set": {"payment_status": "paid",
                                    "paid_at": now_iso(),
+                                   "paid_method": "stripe_card_on_file",
                                    "auto_charged": True}},
                     )
                     charged = True

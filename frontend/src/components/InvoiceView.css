@@ -236,3 +236,39 @@
   .iv-totals-row { grid-template-columns: 1fr; }
   .iv-stub-cols { grid-template-columns: 1fr; }
 }
+
+/* Feb-2026 · P0 Bug B — sticky mobile pay bar. Only visible on
+   narrow viewports; hides on tablet+ where the top-toolbar Pay CTA
+   is already large enough to spot. Adds bottom padding to iv-doc
+   so the sticky bar doesn't overlap the last line of the invoice. */
+.iv-mobile-pay-bar { display: none; }
+@media (max-width: 640px) {
+  .iv-mobile-pay-bar {
+    display: block;
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.98);
+    border-top: 1px solid rgba(0,0,0,0.08);
+    box-shadow: 0 -6px 20px rgba(0,0,0,0.08);
+    z-index: 40;
+  }
+  .iv-mobile-pay-btn {
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px 20px;
+    border: none;
+    border-radius: 12px;
+    background: #059669;
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 16px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(5,150,105,0.35);
+  }
+  .iv-mobile-pay-btn:hover { background: #047857; }
+  /* Push doc so the sticky bar doesn't overlap the payment stub. */
+  .iv-shell { padding-bottom: 88px; }
+}

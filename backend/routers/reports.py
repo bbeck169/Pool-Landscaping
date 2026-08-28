@@ -553,7 +553,28 @@ async def run_all_due_billing_plans(user: dict = Depends(require_admin)):
                 invoice = await apply_and_persist(db, tid, invoice)
         except Exception as _e:                                    # noqa: BLE001
             pass
-        await db.quotes.insert_one(invoice)
+        # Feb-2026 · P0 fix — route the legacy billing-plan runner
+        # through the canonical helper so nightly runs don't emit
+        # rows with ``invoice_number: null``. Fall back to a raw
+        # ``insert_one`` if the tenant is somehow missing so a
+        # numbering failure never silently drops the invoice.
+        _tid = invoice.get("tenant_id")
+        _tenant = None
+        if _tid:
+            _tenant = await db.tenants.find_one(
+                {"id": _tid}, {"_id": 0, "id": 1, "timezone": 1},
+            )
+        if _tenant:
+            try:
+                from services.invoice_numbering import insert_invoice
+                await insert_invoice(invoice, _tenant)
+            except Exception as _num_exc:                          # noqa: BLE001
+                logger.warning(
+                    f"run_all_due_billing_plans number-assign failed: {_num_exc}"
+                )
+                await db.quotes.insert_one(invoice)
+        else:
+            await db.quotes.insert_one(invoice)
         new_next = advance_date(p.get("next_run") or now_iso(), p.get("frequency", "monthly"))
         await db.billing_plans.update_one(
             {"id": pid}, {"$set": {"next_run": new_next, "last_run": now_iso()}},

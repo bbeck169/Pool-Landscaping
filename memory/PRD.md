@@ -12456,3 +12456,81 @@ Migration is idempotent + resumable via `--limit`.
 - Backend untouched (P37a already covers).
 - Manual timer flow preserved — this phase only adds display; nothing was removed or gated.
 - Badges are field-driven — no client-side inference.
+
+---
+
+## Feb-2026 · Batch 2026-P2 — Priorities 2/3/6/7 + THREE P0 fixes
+
+### P0 · Invoice numbers missing (Bug 4)
+Cause: three write paths — `service_reports.py::submit_report`, `finances.py::accrue_chem_invoice`, `reports.py::run_all_due_billing_plans` — created invoice docs via raw `db.quotes.insert_one` without calling `assign_invoice_number_if_missing`.
+
+**Files added**
+- `backend/services/migrations/invoice_number_backfill.py` — idempotent + sentinel (`feb2026_invoice_number_backfill_v1`).
+- `backend/tests/test_invoice_number_p0_backfill.py` — 5/5 green.
+
+**Files touched**
+- `backend/services/invoice_numbering.py` — new canonical `insert_invoice()` helper + `InvoiceValidationError`. Validates doc_type, tenant.id, and regex on `invoice_number` before insert.
+- `backend/routers/service_reports.py` · `backend/routers/finances.py` · `backend/routers/reports.py` — routed through `insert_invoice()`.
+- `backend/routers/admin_migrations.py` — new super_admin `POST /api/admin/migrations/backfill-invoice-numbers`.
+- `backend/server.py` — boot hook runs the backfill once.
+
+**Preview result:** 21 live invoices renumbered, 19 soft-deleted correctly skipped, 0 errors.
+
+### P0 · Bug A (false-paid invoice)
+Cause: seed data + some auto-charge paths flipped `payment_status="paid"` without a `payment_record`. Real customer (Hector Guerrero) opened SMS invoice link and saw `paid` despite never entering a card.
+
+**Files added**
+- `backend/services/payments/mark_invoice_paid.py` — canonical helper. Rejects flip without a valid `payment_record`. Writes to `db.invoice_status_audit`.
+- `backend/services/migrations/invoice_status_audit.py` — orphan-paid audit. Filter matches paid docs missing all of: `payment_records`, `stripe_payment_intent_id`, `stripe_checkout_session_id`, and a whitelisted `paid_method`. Flips to `pending_reconciliation` (not `unpaid` — audit trail).
+- `backend/tests/test_orphan_paid_invoice_audit.py` — 13/13 green.
+
+**Files touched**
+- `backend/routers/admin_migrations.py` — new super_admin `POST /api/admin/migrations/audit-orphan-paid-invoices?dry_run=<bool>&force=<bool>`. Default `dry_run=true` (safety-first).
+- `backend/services/auto_invoice.py` — stamps `paid_method="stripe_card_on_file"` so audit whitelist recognises it as evidence-backed.
+- `backend/server.py` — boot report-only run (never auto-flips seed data on boot).
+
+**Preview result:** 5 orphan-paid invoices flagged on boot report.
+
+### P0 · Bug B (missing Pay Now button)
+Cause: existing InvoiceView `Pay Now` button was too small + no sticky mobile bar. Users missed it.
+
+**Files touched**
+- `frontend/src/components/InvoiceView.jsx` — enlarged toolbar Pay CTA (`Pay $XXX.XX`, landscape-green, 15px bold); added mobile sticky bottom bar (`iv-mobile-pay-bar`) — hidden ≥641px.
+- `frontend/src/components/InvoiceView.css` — media-query gated `.iv-mobile-pay-bar` + `.iv-mobile-pay-btn`.
+- `frontend/src/pages/portal/PortalPages.jsx::PortalInvoiceDetail` — outer top-right Pay CTA now also gated on `payment_status != "paid"` so it doesn't ghost-show on `amount_paid=0 + status=paid` seed data.
+- `frontend/src/test/p0-bug-b-pay-now-cta.test.jsx` — 9/9 green.
+
+### Priority 2 · Removed emerald "Total Paid Revenue" hero tile
+- `frontend/src/pages/admin/Dashboard.jsx` — hero div deleted; RevenueSplitChip preserved (equivalent breakdown).
+- `frontend/src/test/feb2026-color-pass-fixes.test.jsx` — Fix 3 refactored to guard the removal.
+- `frontend/src/test/dashboard-revenue-labels.test.jsx` — inverted to assert removal.
+
+### Priority 3 · Autobilling opt-in CTA on `/portal/payment-complete`
+- `backend/routers/customer_portal.py` — new endpoints:
+  - `GET /customer-portal/autobilling` — returns `autobilling_enabled` + `has_default_payment_method`.
+  - `POST /customer-portal/autobilling/enable` — idempotent, 409 if no default PM.
+  - `POST /customer-portal/autobilling/disable` — mirror.
+- `backend/routers/stripe_router.py::reconcile_checkout_session` — response now includes `payment_method_saved` + `autobilling_enabled`.
+- `frontend/src/pages/portal/PortalPages.jsx::PortalPaymentComplete` — renders "Never miss a payment" CTA when reconcile reports `payment_method_saved=true && autobilling_enabled=false`. Success / no-pm / error banners.
+- `backend/tests/test_customer_portal_autobilling.py` — 6/6 green.
+- Extended `backend/tests/test_stripe_reconcile_endpoint.py` — 3 new tests covering the reconcile response fields (10/10 green total).
+
+### Priority 6 · Fix Dashboard `revenue_by_category` missing invoices (Bug 3)
+- `backend/routers/dashboard_revenue.py`:
+  - Line `category` fallback → pricebook item's `category` via `item_id` map → `Uncategorized` bucket (American spelling).
+  - Invoice-total fallback for empty `line_items` OR all-zero-priced lines.
+  - Sibling `income_by_service_category` gets same fallback.
+  - `Uncategorized` bucket uses neutral `#94A3B8` grey (matches sibling tile).
+- `backend/tests/test_dashboard_revenue_uncategorized_fallback.py` — 5/5 green.
+
+### Priority 7 · Dashboard KPI tiles clickable → filtered lists
+- `frontend/src/pages/admin/Dashboard.jsx`:
+  - Active Jobs → `/admin/jobs?status=active`
+  - Pending → `/admin/jobs?status=pending`
+  - Customers → `/customers`
+  - Technicians → `/team`
+- `frontend/src/pages/jobs/JobsList.jsx` — reads `?status=` URL param on mount; two-way binding pushes filter changes back to URL. STATUS_OPTIONS now includes `active` + `pending` labels.
+
+### Combined test results
+- Backend: 62 tests across 8 files — all green.
+- Frontend Vitest: 52 tests across 6 files — all green.

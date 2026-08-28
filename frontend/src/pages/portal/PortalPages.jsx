@@ -246,7 +246,15 @@ export function PortalInvoiceDetail() {
           >
             <ArrowLeft size={14} /> My invoices
           </button>
-          {doc && balance > 0 ? (
+          {/* Feb-2026 · P0 Bug B — top-right Pay CTA. Previously
+              only gated on ``balance > 0``, which allowed the CTA
+              to show on invoices with ``payment_status="paid"``
+              but stale ``amount_paid`` (seed / imported data
+              artifact). We now also require the invoice to not
+              be terminally paid so the CTA is honest. Matches
+              the ``InvoiceView.canPay`` gate one level deeper. */}
+          {doc && balance > 0
+              && (doc?.payment_status || "").toLowerCase() !== "paid" ? (
             <Button onClick={() => setPayNowOpen(true)} testid="port-pay">
               <CreditCard size={16} /> {`Pay ${money(balance)}`}
             </Button>
@@ -1014,12 +1022,23 @@ export function PortalPaymentComplete() {
   // Underscore prefix satisfies the ``^_`` unused-vars allowlist.
   const [_errMsg, setErrMsg] = useState(null);
   const [retryKey, setRetryKey] = useState(0);   // bump to re-fire
+  // Feb-2026 · Priority 3 — autobilling opt-in state. Only shown when
+  // the reconcile response confirms a payment method was saved AND
+  // the customer has NOT already opted in. Local UI state tracks
+  // dismissal / success so the card doesn't linger after action.
+  const [showAutobillingCta, setShowAutobillingCta] = useState(false);
+  const [autobillingBusy, setAutobillingBusy] = useState(false);
+  const [autobillingResult, setAutobillingResult] = useState(null);
 
   useEffect(() => {
     if (!sid) { setStatus("no_session"); return; }
     let cancelled = false;
     setStatus("checking");
     setErrMsg(null);
+    // Reset CTA between retries so a stale success banner doesn't
+    // carry over into a fresh reconcile attempt.
+    setShowAutobillingCta(false);
+    setAutobillingResult(null);
 
     const loadInvoice = async (invoice_id) => {
       if (!invoice_id) return;
@@ -1040,6 +1059,12 @@ export function PortalPaymentComplete() {
         if (cancelled) return;
         if (r?.reconciled) {
           setStatus("paid");
+          // Priority 3 · Feb 2026 — surface the autobilling CTA
+          // only when Stripe confirmed a saved PM AND the customer
+          // has not already opted in on a prior payment.
+          if (r.payment_method_saved && !r.autobilling_enabled) {
+            setShowAutobillingCta(true);
+          }
           if (r.invoice_id) loadInvoice(r.invoice_id);
           return;
         }
@@ -1082,6 +1107,32 @@ export function PortalPaymentComplete() {
     return () => { cancelled = true; };
   }, [sid, retryKey]);
 
+  // Priority 3 · Feb 2026 — CTA handler. Idempotent server-side, so
+  // a double-tap resolves cleanly. On success we swap the CTA for
+  // a small confirmation so the customer sees positive feedback
+  // without leaving the payment-complete screen.
+  const handleEnableAutobilling = async () => {
+    setAutobillingBusy(true);
+    try {
+      await api.post("/customer-portal/autobilling/enable", {});
+      setAutobillingResult("enabled");
+      setShowAutobillingCta(false);
+    } catch (exc) {
+      setAutobillingResult(
+        exc?.detail === "no_default_payment_method"
+          ? "no_pm"
+          : "error",
+      );
+    } finally {
+      setAutobillingBusy(false);
+    }
+  };
+
+  const handleDismissAutobilling = () => {
+    setShowAutobillingCta(false);
+    setAutobillingResult("dismissed");
+  };
+
   return (
     <div className="max-w-md mx-auto px-4 sm:px-6 lg:px-8 py-10 text-center" data-testid="portal-pay-complete">
       {status === "checking" ? (
@@ -1100,6 +1151,97 @@ export function PortalPaymentComplete() {
               {invoice.title} · {money(invoice.total)}
             </p>
           ) : null}
+
+          {/* Priority 3 · Feb 2026 — autobilling opt-in CTA. Shows
+              only when the reconcile response confirmed a saved PM
+              AND the customer isn't already opted in. Idempotent
+              server-side; a successful click swaps the card for a
+              small success confirmation so the user gets positive
+              feedback without leaving the completion screen. */}
+          {showAutobillingCta ? (
+            <div
+              className="mt-6 rounded-2xl p-5 text-left"
+              style={{
+                backgroundColor: colors.surface,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid="autobilling-cta"
+            >
+              <h2
+                className="text-base font-bold"
+                style={{ color: colors.onSurface }}
+                data-testid="autobilling-cta-title"
+              >
+                Never miss a payment
+              </h2>
+              <p
+                className="text-sm mt-1"
+                style={{ color: colors.muted }}
+                data-testid="autobilling-cta-body"
+              >
+                Enable autobilling to charge future invoices to this saved payment method automatically.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button
+                  onClick={handleEnableAutobilling}
+                  disabled={autobillingBusy}
+                  testid="autobilling-cta-enable"
+                >
+                  {autobillingBusy ? "Enabling…" : "Enable autobilling"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={handleDismissAutobilling}
+                  disabled={autobillingBusy}
+                  testid="autobilling-cta-dismiss"
+                >
+                  Not now
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {autobillingResult === "enabled" ? (
+            <div
+              className="mt-6 rounded-xl px-4 py-3 text-sm text-left inline-flex items-center gap-2"
+              style={{
+                backgroundColor: colors.success + "15",
+                color: colors.success,
+                border: `1px solid ${colors.success}40`,
+              }}
+              data-testid="autobilling-enabled-banner"
+            >
+              <Check size={16} />
+              <span>Autobilling is on. Future invoices will charge automatically.</span>
+            </div>
+          ) : null}
+          {autobillingResult === "no_pm" ? (
+            <div
+              className="mt-6 rounded-xl px-4 py-3 text-sm text-left"
+              style={{
+                backgroundColor: "#FEF9C3",
+                color: "#A16207",
+                border: `1px solid #FDE68A`,
+              }}
+              data-testid="autobilling-nopm-banner"
+            >
+              We couldn't find a saved payment method. Add a card or bank first, then re-enable autobilling from Payment methods.
+            </div>
+          ) : null}
+          {autobillingResult === "error" ? (
+            <div
+              className="mt-6 rounded-xl px-4 py-3 text-sm text-left"
+              style={{
+                backgroundColor: "#FEE2E2",
+                color: "#B91C1C",
+                border: `1px solid #FCA5A5`,
+              }}
+              data-testid="autobilling-error-banner"
+            >
+              We couldn't enable autobilling. Try again from your Payment methods page.
+            </div>
+          ) : null}
+
           <Button className="mt-6" onClick={() => navigate("/portal/invoices")} testid="pc-back">
             Back to invoices
           </Button>

@@ -1,0 +1,90 @@
+/**
+ * Feb-2026 · P0 Bug B lock-in — Pay Now visibility on InvoiceView.
+ *
+ * Static source-lint (no full DOM mount — the InvoiceView component
+ * pulls in the entire aggregator response shape, which is too much
+ * scaffolding for a lint-level ship guard). If the CTA regresses
+ * (someone removes it or hides it behind the wrong condition),
+ * this test fires BEFORE the customer-facing bug ships.
+ */
+import { describe, it, expect } from "vitest";
+import fs from "fs";
+import path from "path";
+
+const IV_SRC = fs.readFileSync(
+  path.resolve(__dirname, "../components/InvoiceView.jsx"),
+  "utf8",
+);
+
+const IV_CSS = fs.readFileSync(
+  path.resolve(__dirname, "../components/InvoiceView.css"),
+  "utf8",
+);
+
+
+describe("P0 Bug B · Pay Now CTA on the customer-facing invoice", () => {
+  it("Toolbar Pay Now button carries the stable testid", () => {
+    expect(IV_SRC).toMatch(/data-testid="invoice-pay-now-btn"/);
+  });
+
+  it("Pay Now is gated on canPay (payment_status != paid AND total_due > 0)", () => {
+    // Regression guard — someone flipping the gate to
+    // ``payment_status === 'paid'`` (i.e. the OPPOSITE) would
+    // silently hide the CTA for every unpaid customer.
+    expect(IV_SRC).toMatch(
+      /canPay\s*=\s*\(payment_status\s*\|\|\s*""\)\.toLowerCase\(\)\s*!==\s*"paid"[\s\S]{0,80}totals\?\.total_due/,
+    );
+  });
+
+  it("Toolbar Pay Now label shows the outstanding amount, not generic 'Pay Now'", () => {
+    // Feb-2026 P0 spec — button copy is ``Pay $XXX.XX``.
+    expect(IV_SRC).toMatch(/Pay \$\{fmtMoney\(totals\?\.total_due/);
+  });
+
+  it("Toolbar Pay Now uses the landscape-green semantic tone", () => {
+    // #059669 = ``colors.landscape[500]`` / ``accent.emerald[500]``.
+    // Both the testid and the green background must coexist in
+    // the source. Widened window to accomodate multi-line style
+    // block + comment block above the style prop.
+    expect(IV_SRC).toContain('data-testid="invoice-pay-now-btn"');
+    expect(IV_SRC).toMatch(
+      /invoice-pay-now-btn[\s\S]{0,1500}background:\s*"#059669"/,
+    );
+  });
+
+  it("Sticky mobile pay bar renders when there's a balance", () => {
+    expect(IV_SRC).toMatch(/data-testid="invoice-mobile-pay-bar"/);
+    expect(IV_SRC).toMatch(/data-testid="invoice-mobile-pay-btn"/);
+    expect(IV_SRC).toMatch(/iv-mobile-pay-bar/);
+  });
+
+  it("Mobile pay bar is hidden on tablet+ viewports (max-width: 640px gate)", () => {
+    // The CSS must gate the bar behind the phone media query so
+    // desktop users don't see a floating full-width bar.
+    expect(IV_CSS).toMatch(/\.iv-mobile-pay-bar\s*\{\s*display:\s*none/);
+    expect(IV_CSS).toMatch(/@media\s*\(max-width:\s*640px\)[\s\S]{0,1200}\.iv-mobile-pay-bar\s*\{[\s\S]{0,200}display:\s*block/);
+  });
+
+  it("Mobile pay bar hides in printable mode", () => {
+    // ``!printable && canPay`` is the ONLY gate that mounts the bar.
+    expect(IV_SRC).toMatch(
+      /!printable\s*&&\s*canPay\s*\?\s*\(\s*<div\s+className="iv-mobile-pay-bar"/,
+    );
+  });
+
+  it("Mobile pay bar shows the outstanding balance in the CTA copy", () => {
+    expect(IV_SRC).toMatch(/iv-mobile-pay-btn[\s\S]{0,400}Pay \$\{fmtMoney/);
+  });
+
+  it("Both CTAs open the same PaymentForm modal (single flow)", () => {
+    // Regression guard — someone splitting the mobile CTA into a
+    // separate flow would fork the save-on-first-payment logic.
+    // Order-agnostic — setPayOpen may sit above OR below the testid.
+    expect(IV_SRC).toMatch(
+      /setPayOpen\(true\)[\s\S]{0,400}invoice-pay-now-btn|invoice-pay-now-btn[\s\S]{0,400}setPayOpen\(true\)/,
+    );
+    expect(IV_SRC).toMatch(
+      /setPayOpen\(true\)[\s\S]{0,400}invoice-mobile-pay-btn|invoice-mobile-pay-btn[\s\S]{0,400}setPayOpen\(true\)/,
+    );
+  });
+});

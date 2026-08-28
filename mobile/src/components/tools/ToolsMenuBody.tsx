@@ -245,8 +245,8 @@ const QUICK_ACCESS_ITEMS: {
   roles: string[];
 }[] = [
   { route: "/(app)/customers",         label: "Customers",   icon: "people-outline",       roles: ["admin", "super_admin"] },
-  { route: "/(app)/invoices",           label: "Invoices",    icon: "receipt-outline",       roles: ["admin", "super_admin"] },
-  { route: "/(app)/estimates",          label: "Estimates",   icon: "document-text-outline", roles: ["admin", "super_admin"] },
+  { route: "/invoices",                label: "Invoices",    icon: "receipt-outline",       roles: ["admin", "super_admin"] },
+  { route: "/(app)/estimator",         label: "Estimates",   icon: "document-text-outline", roles: ["admin", "super_admin"] },
   { route: "/(app)/schedule/calendar",  label: "Schedule",    icon: "calendar-outline",      roles: ["admin", "super_admin", "technician"] },
   { route: "/(app)/jobs",               label: "Workstream",  icon: "list-outline",          roles: ["admin", "super_admin", "technician", "customer"] },
 ];

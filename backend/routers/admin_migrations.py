@@ -843,3 +843,107 @@ async def force_invoice_line_cost_backfill(
     )
     return report
 
+
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Feb-2026 · P0 fix — Invoice number backfill.
+# Heals invoices persisted with a null / missing / empty
+# ``invoice_number`` field so no operator ever sees "Invoice #: -"
+# on the invoices list again. Ships alongside the canonical
+# ``insert_invoice`` helper that plugged the three write paths
+# feeding the bug (service_reports auto-invoice, accrue_chem_invoice
+# chem drafts, reports.py legacy billing-plan runner).
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/backfill-invoice-numbers",
+    operation_id="admin.migrations.backfill_invoice_numbers",
+)
+async def force_invoice_number_backfill(
+    force: bool = Query(
+        False,
+        description=(
+            "Bypass the ``feb2026_invoice_number_backfill_v1`` "
+            "sentinel. Default respects it so a call with no query "
+            "param on an already-run system is a no-op."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Assign human-readable ``INV-YYYY-NNNNNN`` numbers to any
+    invoice doc that was persisted with a null / missing / empty
+    ``invoice_number`` field. Idempotent — a valid number is never
+    overwritten. Response mirrors the sibling
+    ``invoice-line-cost-backfill`` endpoint's shape."""
+    _require_super_admin(user)
+    from services.migrations.invoice_number_backfill import (
+        run_invoice_number_backfill,
+    )
+    report = await run_invoice_number_backfill(force=bool(force))
+    logger.info(
+        "[invoice-number-backfill-force] user=%s force=%s summary=%s",
+        user.get("id"), force, report.get("summary"),
+    )
+    return report
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Feb-2026 · P0 fix — Orphan-paid invoice audit.
+#
+# Heals invoices flipped ``payment_status = "paid"`` without a
+# matching payment_record (Hector Guerrero bug). Idempotent +
+# sentinel-guarded (``feb2026_orphan_paid_audit_v1``). Default
+# entry point is dry-run so operators can review the diff before
+# the real flip.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/audit-orphan-paid-invoices",
+    operation_id="admin.migrations.audit_orphan_paid_invoices",
+)
+async def force_orphan_paid_audit(
+    dry_run: bool = Query(
+        True,
+        description=(
+            "Safety-first default. When true (default), the audit "
+            "returns the diff summary + per-tenant counts WITHOUT "
+            "writing. Set to false to actually flip orphan-paid "
+            "invoices to ``pending_reconciliation`` + write audit "
+            "rows."
+        ),
+    ),
+    force: bool = Query(
+        True,
+        description=(
+            "Whether to bypass the ``feb2026_orphan_paid_audit_v1`` "
+            "sentinel. Default true so the admin endpoint can be "
+            "invoked at any time even after the boot migration has "
+            "already stamped its sentinel."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Scan every invoice with ``payment_status = "paid"`` but no
+    proof (no ``payment_records``, no Stripe id, no whitelisted
+    ``paid_method``) and flip to ``pending_reconciliation``. Every
+    flip writes an audit row to ``db.invoice_status_audit`` so
+    operators have a complete trail for Stripe reconciliation.
+
+    ``dry_run=true`` (default) matches + returns the diff without
+    writing. Operators MUST review the dry-run output before
+    invoking again with ``dry_run=false``.
+    """
+    _require_super_admin(user)
+    from services.migrations.invoice_status_audit import (
+        run_orphan_paid_audit,
+    )
+    report = await run_orphan_paid_audit(
+        force=bool(force), dry_run=bool(dry_run),
+    )
+    logger.info(
+        "[orphan-paid-audit-force] user=%s dry_run=%s force=%s summary=%s",
+        user.get("id"), dry_run, force, report.get("summary"),
+    )
+    return report
+

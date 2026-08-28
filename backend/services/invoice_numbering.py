@@ -101,6 +101,69 @@ async def assign_by_tenant_id(doc: dict, tenant_id: str,
     return await assign_invoice_number_if_missing(doc, tenant, master=master)
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Canonical write path — Feb-2026 P0 hardening.
+#
+# Prior state: eight scattered call sites created invoice docs and
+# THEN called ``assign_invoice_number_if_missing`` (or forgot to).
+# Three paths skipped the helper entirely — ``service_reports.py``
+# auto-invoice, ``finances.py::accrue_chem_invoice`` chem drafts,
+# and the legacy ``reports.py::run_all_due_billing_plans`` handler
+# — which is how Hector Guerrero's "Service — Filter Service" ended
+# up on the invoices list with ``invoice_number: null``.
+#
+# The fix is one canonical helper every write path calls. It:
+#   1. Refuses to persist a doc that isn't ``doc_type: 'invoice'``
+#      (guards against a copy-paste that would number a quote).
+#   2. Assigns a number if the caller didn't (idempotent — the
+#      helper short-circuits when ``invoice_number`` is already
+#      populated).
+#   3. Validates the number matches the ``NUMBER_REGEX`` before
+#      the ``insert_one`` fires — a schema-level guard so a new
+#      code path can't slip a null past it.
+#   4. Delegates the actual insert to Motor, returning the doc
+#      with any Motor-added ``_id`` stripped for the caller.
+# ═════════════════════════════════════════════════════════════════════
+class InvoiceValidationError(ValueError):
+    """Raised when ``insert_invoice`` receives a doc that would produce
+    an invalid invoice row. Never caught inside the helper — the
+    caller must fix the doc before it hits the database."""
+
+
+async def insert_invoice(doc: dict, tenant: dict,
+                          *, master: bool = False) -> dict:
+    """Canonical invoice-birth path. See module docstring above.
+
+    ``tenant`` — the caller's tenant doc (must carry ``id`` at
+    minimum; ``timezone`` is used to compute the year segment).
+    ``master`` — set to True for master-invoice rows (``MINV-…``
+    prefix); defaults to False (``INV-…`` prefix).
+    """
+    field = "master_invoice_number" if master else "invoice_number"
+    if doc.get("doc_type") not in (None, "invoice"):
+        raise InvoiceValidationError(
+            f"insert_invoice refuses doc_type={doc.get('doc_type')!r} "
+            f"— only 'invoice' docs may pass this helper."
+        )
+    doc.setdefault("doc_type", "invoice")
+    if not (tenant or {}).get("id"):
+        raise InvoiceValidationError(
+            "insert_invoice requires tenant.id to assign the invoice "
+            "number sequence."
+        )
+    doc.setdefault("tenant_id", tenant["id"])
+    await assign_invoice_number_if_missing(doc, tenant, master=master)
+    num = doc.get(field)
+    if not num or not NUMBER_REGEX.match(num):
+        raise InvoiceValidationError(
+            f"insert_invoice produced an invalid {field}={num!r}; "
+            f"expected {NUMBER_REGEX.pattern!r}."
+        )
+    await db.quotes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
 async def ensure_uniqueness_indexes():
     """Idempotent — creates the uniqueness guards on the two number
     columns and the counter table itself. Called once at startup and

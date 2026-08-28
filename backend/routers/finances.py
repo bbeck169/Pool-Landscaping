@@ -121,7 +121,27 @@ async def accrue_chem_invoice(job: dict):
                     )
             except Exception as _e:                                # noqa: BLE001
                 pass
-            await db.quotes.insert_one(payload)
+            # Feb-2026 · P0 fix — chemical draft invoices were being
+            # written with ``invoice_number: null`` because the draft
+            # side of this branch skipped the number generator. Chem
+            # drafts DO ultimately get sent + charged (see
+            # ``run_monthly_chem_billing``), so treat them as
+            # first-class invoices from birth.
+            try:
+                from services.invoice_numbering import insert_invoice
+                tenant_doc = await db.tenants.find_one(
+                    {"id": payload["tenant_id"]},
+                    {"_id": 0, "id": 1, "timezone": 1},
+                ) if payload.get("tenant_id") else None
+                await insert_invoice(payload, tenant_doc or {"id": payload.get("tenant_id")})
+            except Exception as _num_exc:                          # noqa: BLE001
+                # Never block the accrue-loop on numbering — the
+                # backfill migration will heal any orphan drafts on
+                # the next boot. Log so we can surface it in Sentry.
+                logger.warning(
+                    f"accrue_chem_invoice number-assign failed: {_num_exc}"
+                )
+                await db.quotes.insert_one(payload)
     except Exception as e:
         logger.warning(f"accrue_chem_invoice error: {e}")
 

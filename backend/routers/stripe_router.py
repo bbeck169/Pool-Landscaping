@@ -404,12 +404,36 @@ async def reconcile_checkout_session(
         {"id": invoice_id, "tenant_id": tenant["id"]},
         {"_id": 0, "id": 1, "amount_paid": 1, "payment_status": 1},
     ) or {}
+    # Feb-2026 · Priority 3 — surface whether the checkout saved a
+    # payment method for future billing so the payment-complete
+    # screen can decide whether to prompt for autobilling. Flag
+    # sources: session metadata (customer explicitly opted in at
+    # checkout) AND the customer now carries a
+    # ``default_payment_method_id`` (i.e. the async
+    # ``_save_pm_after_first_payment`` finished). We also read
+    # back ``autobilling_enabled`` so the frontend hides the CTA
+    # for customers who already opted in on an earlier payment.
+    payment_method_saved = False
+    autobilling_enabled = False
+    save_flag = str(metadata.get("crm_save_for_future") or "") == "1"
+    if save_flag and invoice.get("customer_id"):
+        cust_doc = await db.customers.find_one(
+            {"id": invoice["customer_id"], "tenant_id": tenant["id"]},
+            {"_id": 0, "default_payment_method_id": 1,
+              "autobilling_enabled": 1},
+        ) or {}
+        payment_method_saved = bool(
+            cust_doc.get("default_payment_method_id")
+        )
+        autobilling_enabled = bool(cust_doc.get("autobilling_enabled"))
     return {
         "reconciled": True,
         "already_paid": not updated,
         "invoice_id": invoice_id,
         "amount_paid": final.get("amount_paid") or 0.0,
         "payment_status": final.get("payment_status") or "paid",
+        "payment_method_saved": payment_method_saved,
+        "autobilling_enabled": autobilling_enabled,
     }
 
 

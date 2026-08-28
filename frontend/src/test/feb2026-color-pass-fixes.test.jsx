@@ -150,6 +150,13 @@ describe("Fix 2 · Button primary variant DOM output", () => {
 // FIX 3 — Total Paid Revenue hero contrast lock-in + tile-wide
 //         readability guarantee (WCAG AA ≥ 4.5:1 on body-text
 //         KPI values).
+//
+// Feb-2026 · Priority 2 (Batch 2026-P2) — the emerald hero itself
+// was removed from the dashboard per operator feedback (duplicated
+// the split chip below, crowded out the KPI grid). The
+// hero-specific assertions below flipped into a *guard* that
+// enforces the removal, and the KPI-tile readability assertions
+// still stand — they cover the tiles the hero used to sit above.
 // ══════════════════════════════════════════════════════════════════
 describe("Fix 3 · Total Paid Revenue hero + KPI tile readability", () => {
   const DASH_SRC = fs.readFileSync(
@@ -157,29 +164,12 @@ describe("Fix 3 · Total Paid Revenue hero + KPI tile readability", () => {
     "utf8",
   );
 
-  it("hero data-tone=\"emerald\" identifies the semantic tone", () => {
-    expect(DASH_SRC).toMatch(/data-testid="dashboard-hero"/);
-    expect(DASH_SRC).toMatch(/data-tone="emerald"/);
-  });
-
-  it("hero gradient sources both stops from theme tokens (no raw hex)", () => {
-    // ``landscape[600]`` → ``accent.emerald[600]``.
-    expect(DASH_SRC).toMatch(
-      /linear-gradient\(90deg,\s*\$\{colors\.landscape\[600\]\}\s*0%,\s*\$\{colors\.accent\.emerald\[600\]\}\s*100%\)/,
-    );
-  });
-
-  it("white text passes AA-large-text ≥ 3:1 on both gradient stops", () => {
-    // Hero uses white text on the gradient. Both stops must
-    // survive at ≥ 3:1 (the large-text AA gate) — otherwise the
-    // "$X,XXX" numeric label at the center of the gradient goes
-    // unreadable at the middle blend. Emerald[500] at 2.53:1
-    // failed; emerald[600] at 3.80:1 is the minimum darker step
-    // that keeps the label legible.
-    const stopA = colors.landscape[600];
-    const stopB = colors.accent.emerald[600];
-    expect(getContrastRatio(stopA, "#FFFFFF")).toBeGreaterThanOrEqual(3);
-    expect(getContrastRatio(stopB, "#FFFFFF")).toBeGreaterThanOrEqual(3);
+  it("emerald hero tile has been removed (Priority 2, Feb-2026)", () => {
+    expect(DASH_SRC).not.toMatch(/data-testid="dashboard-hero"/);
+    expect(DASH_SRC).not.toMatch(/data-tone="emerald"/);
+    // The pool/landscape split chip must survive the removal —
+    // it carries the equivalent revenue breakdown.
+    expect(DASH_SRC).toMatch(/RevenueSplitChip/);
   });
 
   it.each([

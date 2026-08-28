@@ -689,7 +689,7 @@
 - **Files modified**:
   - `/app/mobile/app.json` (line 148-152: plugin options `{ "RNMapboxMapsDownloadToken": "..." }` → `{}`)
   - `/app/mobile/.env.example` (expanded Mapbox secret token comment)
-- **NOTE**: This code change alone does NOT fix the 401 Mapbox download error. User MUST run: `eas secret:create --scope project --name RNMAPBOX_MAPS_DOWNLOAD_TOKEN --value <fresh sk. token>`
+- **NOTE (CORRECTED 2026-08-28, support ticket #238711)**: This change WAS the fix. Emptying the plugin options to `{}` is exactly what let iOS and Android build green from Aug 22 to Aug 27. The `eas secret:create` instruction is NOT actionable here: the Expo project is an Emergent-managed **partner account**, so there is no EAS CLI access to create a project secret. The token is read from `mobile/.env` at build time. Do NOT re-add the plugin prop.
 
 
 ## Iteration 32 — Phase P14: Split DailyRouteMap into platform-specific files
@@ -732,7 +732,7 @@
 - **Commit**: f4bf293d (uncommitted changes on top)
 - **Date**: 2026-08-27
 - **Changes**:
-  - **Task 1a**: Restored `RNMapboxMapsDownloadToken: "$RNMAPBOX_MAPS_DOWNLOAD_TOKEN"` in `@rnmapbox/maps` plugin config in `app.json`. EAS resolves this at build time from the project's secret env var.
+  - **Task 1a**: ~~Restored `RNMapboxMapsDownloadToken: "$RNMAPBOX_MAPS_DOWNLOAD_TOKEN"` in `@rnmapbox/maps` plugin config in `app.json`.~~ **REVERTED 2026-08-28 (support ticket #238711) - this broke EVERY iOS and Android build.** The claim that "EAS resolves this at build time from the project's secret env var" is FALSE: `app.json` is static JSON and nothing expands `$VAR` in it. The literal string was handed to Mapbox as the download password and rejected with HTTP 401 (iOS `Install pods`, Android `Run gradlew`). Plugin options are back to `{}`; the token is read from the `RNMAPBOX_MAPS_DOWNLOAD_TOKEN` environment variable. Do NOT re-add this prop.
   - **Task 1b**: Created `src/components/MapErrorBoundary.tsx` — class component with `getDerivedStateFromError` + `componentDidCatch`. Fallback: amber card with "Route map unavailable — {error.message}" and Retry button. Wraps `<DailyRouteMap>` in `calendar.tsx`.
   - **Task 2**: Enabled Expo OTA updates: `enabled: true`, `checkAutomatically: "ON_LOAD"`, `fallbackToCacheTimeout: 0`, URL `https://u.expo.dev/bdd4bc95-5d7c-46d8-8243-0b6ed1e9aa19` (project ID from `expo.extra.eas.projectId`). `runtimeVersion` with `policy: "appVersion"` was already present.
   - JSON validity: ✅. Lint: MapErrorBoundary clean ✅, calendar.tsx pre-existing hook warnings only.
@@ -773,3 +773,21 @@
   - Jest: 82 suites (77 pass / 5 pre-existing fail), 576 tests (565 pass / 11 pre-existing fail)
   - No changes to `backend/` or `frontend/`. No new deps. No external repos.
 - **Files modified**: `calendar.tsx` (replaced pill row with Actions dropdown), `schedule-select-all.test.tsx` (updated to match new pattern)
+
+
+## Iteration 37 — Phase P19: Fix Quick Access broken routes (Unmatched Route bug)
+- **Commit**: f4bf293d (uncommitted changes on top)
+- **Date**: 2026-08-27
+- **Root cause**: QUICK_ACCESS_ITEMS route strings didn't match actual Expo Router file paths:
+  - `/(app)/invoices` → no file under `(app)/`; real file at top-level `app/invoices.tsx`
+  - `/(app)/estimates` → no such file at all; estimator at `app/(app)/estimator/index.tsx` (different name)
+  - `/(app)/customers` → was correct (file + tab exist)
+- **Changes**:
+  - Fixed `ToolsMenuBody.tsx` QUICK_ACCESS_ITEMS routes:
+    - Invoices: `/(app)/invoices` → `/invoices`
+    - Estimates: `/(app)/estimates` → `/(app)/estimator`
+  - Registered `estimator/index`, `estimator/[id]`, `estimator/new` as hidden tabs in `(app)/_layout.tsx`
+  - Jest: 82 suites (77 pass / 5 pre-existing), 576 tests (565 pass / 11 pre-existing). 0 regressions.
+  - Web bundle: 2195 modules, compiled clean.
+  - No changes to `backend/` or `frontend/`. No new deps. No external repos.
+- **Files modified**: `ToolsMenuBody.tsx` (2 route fixes), `(app)/_layout.tsx` (3 hidden tab registrations)

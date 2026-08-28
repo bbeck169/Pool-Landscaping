@@ -231,6 +231,10 @@ export default function AppLayout() {
       {/* QuoteIQ Q1-UI · Feb 2026 — Credits + Deals (hidden from tab bar; reachable via Tools hub). */}
       <Tabs.Screen name="credits/index" options={{ title: "AI Credits", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="sparkles-outline" size={size} color={color} /> }} />
       <Tabs.Screen name="ai-estimator" options={{ title: "AI Estimator", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="bulb-outline" size={size} color={color} /> }} />
+      {/* Phase P19 · Quick Access routes — estimator screens need tab registration. */}
+      <Tabs.Screen name="estimator/index" options={{ title: "Estimator", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="document-text-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="estimator/[id]" options={{ title: "Estimate", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="document-text-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="estimator/new" options={{ title: "New Estimate", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="add-outline" size={size} color={color} /> }} />
       <Tabs.Screen name="deals/index"   options={{ title: "Deals", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="git-branch-outline" size={size} color={color} /> }} />
       <Tabs.Screen name="deals/new"     options={{ title: "New Deal", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="add-outline" size={size} color={color} /> }} />
       <Tabs.Screen name="deals/[id]"    options={{ title: "Deal", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="git-branch-outline" size={size} color={color} /> }} />

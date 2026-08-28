@@ -22,6 +22,9 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { Modal, Button, TextInput } from "@/components/ui-kit";
 import JobTitleCombobox from "@/components/JobTitleCombobox";
+// Feb 2026 · Same color-coded toggle as ``JobNew`` — one component
+// keeps both surfaces consistent.
+import WorkClassToggle from "@/components/jobs/WorkClassToggle";
 
 const SERVICE_TYPES = [
   "Pool Cleaning", "Repair", "Landscaping", "Inspection",
@@ -110,7 +113,7 @@ export default function ScheduleJobEditModal({
     } else {
       setProperties([]);
     }
-  }, [open, job?.id, job?.customer_id]);
+  }, [open, job?.id, job?.customer_id]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open || !job) return null;
 
@@ -216,41 +219,13 @@ export default function ScheduleJobEditModal({
           >
             Type
           </label>
-          <div
-            className="inline-flex rounded-lg overflow-hidden mt-1"
-            role="radiogroup"
-            aria-label="Job type"
-            data-testid="schedule-job-edit-work-class"
-            style={{ border: `1px solid ${colors.border}` }}
-          >
-            {[
-              { value: "service", label: "Service" },
-              { value: "repair", label: "Repair" },
-            ].map((opt) => {
-              const selected = form.work_class === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() =>
-                    setForm((f) => ({ ...f, work_class: opt.value }))
-                  }
-                  disabled={busy}
-                  className="px-4 py-2 text-sm font-semibold focus:outline-none focus-visible:ring-2"
-                  style={{
-                    backgroundColor: selected
-                      ? colors.primary
-                      : colors.surface,
-                    color: selected ? "#fff" : colors.onSurface,
-                  }}
-                  data-testid={`schedule-job-edit-work-class-${opt.value}`}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
+          <div className="mt-1">
+            <WorkClassToggle
+              value={form.work_class}
+              onChange={(v) => setForm((f) => ({ ...f, work_class: v }))}
+              disabled={busy}
+              testIdPrefix="schedule-job-edit-work-class"
+            />
           </div>
         </div>
         <div>

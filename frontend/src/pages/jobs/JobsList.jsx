@@ -8,7 +8,7 @@
  * action bar. Full editing lives on the JobDetail route.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Briefcase, RefreshCw, X as XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
@@ -22,7 +22,14 @@ import {
   LockedPill,
 } from "@/components/bulk-select/BulkSelectToolkit";
 
+// Phase 34 · Feb 2026 — Dashboard KPI tiles link into this list
+// with ``?status=active`` / ``?status=pending`` (backend job docs
+// carry these as ``status`` values; JobsList treats them as a
+// straight passthrough to /api/jobs). Adding the two entries here
+// keeps the ``<select>`` label honest when the KPI drill-down lands.
 const STATUS_OPTIONS = [
+  { value: "active", label: "Active" },
+  { value: "pending", label: "Pending" },
   { value: "scheduled", label: "Scheduled" },
   { value: "in_progress", label: "In progress" },
   { value: "completed", label: "Completed" },
@@ -40,8 +47,14 @@ function formatFriendly(dateStr) {
 
 export default function JobsList() {
   const navigate = useNavigate();
+  // Feb-2026 · Priority 7 — hydrate the status filter from the URL
+  // so Dashboard KPI drill-downs land pre-filtered (e.g. Active
+  // Jobs → /jobs?status=active). Two-way binding: user changes to
+  // the ``<select>`` push the new value back into the URL, keeping
+  // deep-links / back-button honest.
+  const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState(null);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(searchParams.get("status") || "");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lockedFailures, setLockedFailures] = useState({});
@@ -179,7 +192,18 @@ export default function JobsList() {
       <div className="rounded-2xl p-3 mb-3 flex flex-wrap items-center gap-2"
            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
         <label className="text-xs font-semibold" style={{ color: colors.muted }}>Status</label>
-        <select value={status} onChange={(e) => setStatus(e.target.value)}
+        <select value={status} onChange={(e) => {
+                  const v = e.target.value;
+                  setStatus(v);
+                  // Priority 7 · Feb 2026 — mirror the filter into
+                  // the URL so refresh / share preserves the drill-
+                  // down state that Dashboard KPI clicks arrived
+                  // with. ``replace: true`` avoids polluting the
+                  // history stack with every filter toggle.
+                  const next = new URLSearchParams(searchParams);
+                  if (v) next.set("status", v); else next.delete("status");
+                  setSearchParams(next, { replace: true });
+                }}
                 className="text-xs font-semibold px-3 py-2 rounded-lg"
                 style={{ backgroundColor: colors.surfaceSecondary,
                           color: colors.onSurfaceSecondary,

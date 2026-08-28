@@ -91,7 +91,7 @@ Mapbox requires **two** token types for React Native (`@rnmapbox/maps`):
 | Token Type | Prefix | Scope | Where Used | Security |
 |---|---|---|---|---|
 | **Public Access Token** | `pk.` | Read-only map tiles, geocoding, directions | Runtime — embedded in JS bundle via `EXPO_PUBLIC_MAPBOX_TOKEN` env var | Safe to ship in client builds. Restrict to your bundle ID in Mapbox Dashboard → Token Scopes. |
-| **Secret Download Token** | `sk.` | `DOWNLOADS:READ` — fetches the Mapbox native SDK binary at build time | Build-time only — referenced in `RNMAPBOX_MAPS_DOWNLOAD_TOKEN` env var, interpolated into `app.json` plugin config | **NEVER** ship in client bundle. Used only by EAS Build / `pod install`. Store in EAS Secrets or CI env vars. |
+| **Secret Download Token** | `sk.` | `DOWNLOADS:READ` — fetches the Mapbox native SDK binary at build time | Build-time only — read from the `RNMAPBOX_MAPS_DOWNLOAD_TOKEN` environment variable. NOT interpolated into `app.json` (see 9.3) | **NEVER** ship in client bundle. Used only by EAS Build / `pod install`. Store in EAS Secrets or CI env vars. |
 
 ### 9.2  Environment Variable Wiring
 
@@ -110,14 +110,23 @@ eas secret:create --name RNMAPBOX_MAPS_DOWNLOAD_TOKEN --value "sk.eyJ1Ijo..."
 ```json
 {
   "plugins": [
-    ["@rnmapbox/maps", {
-      "RNMapboxMapsDownloadToken": "$RNMAPBOX_MAPS_DOWNLOAD_TOKEN"
-    }]
+    ["@rnmapbox/maps", {}]
   ]
 }
 ```
 
-The `$`-interpolation means EAS Build reads the env var at build time. The `sk.` token never enters the JS bundle.
+> **CORRECTED 2026-08-28 (support ticket #238711). There is no `$`-interpolation.**
+> `app.json` is static JSON - nothing expands `$VAR` in it, not Expo and not EAS. If you put
+> `"RNMapboxMapsDownloadToken": "$RNMAPBOX_MAPS_DOWNLOAD_TOKEN"` here, that literal 29-character
+> string is written verbatim into `gradle.properties` (Android) and the Podfile (iOS), Mapbox
+> rejects it with HTTP 401, and EVERY native build fails. This happened Aug 4-22 and again Aug 27-28.
+>
+> **Leave the plugin options empty (`{}`).** The library then reads the token from the environment:
+> - iOS - `rnmapbox-maps.podspec`: `if !$RNMapboxMapsDownloadToken && ENV['RNMAPBOX_MAPS_DOWNLOAD_TOKEN']`
+> - Android - plugin-generated gradle: `project.properties['MAPBOX_DOWNLOADS_TOKEN'] ?: System.getenv('RNMAPBOX_MAPS_DOWNLOAD_TOKEN')`
+>
+> Setting the plugin prop OVERRIDES both fallbacks - that is the bug, not the fix.
+> The `sk.` token lives in `mobile/.env` and never enters the JS bundle.
 
 ### 9.4  `__DEV__` Startup Guard
 

@@ -95,23 +95,25 @@ describe("IncomeByServiceCategoryTile · relabeled copy", () => {
 
 
 // ══════════════════════════════════════════════════════════════════════
-// 3 · Admin Dashboard — top-card reads "Total Paid Revenue (lifetime)".
-//      Verified by a lightweight substring check on the file's JSX
-//      (rendering the full Dashboard requires more app context than
-//      is worth mounting here — the tile-copy tests above already
-//      demonstrate DOM rendering).
+// 3 · Admin Dashboard — Feb-2026 Priority 2 removed the "Total Paid
+//      Revenue (lifetime)" emerald hero tile entirely. The RevenueSplitChip
+//      that sits directly below now carries the equivalent breakdown, so
+//      the hero copy is intentionally absent. This test used to lock in
+//      the hero's "(lifetime)" qualifier — it now guards the removal
+//      so a future paste-back regression fails loudly at CI time.
 // ══════════════════════════════════════════════════════════════════════
 describe("Admin Dashboard · top-card label", () => {
-  it("Dashboard.jsx contains the new lifetime qualifier copy", async () => {
-    // We use Vite's ?raw import so this is a static-source assertion
-    // rather than a full render — avoids pulling in the entire
-    // Dashboard component tree just to verify one label.
+  it("Dashboard.jsx no longer renders the emerald hero copy", async () => {
+    // Priority 2 removed the ``Total Paid Revenue (lifetime)`` hero.
+    // If it's back, someone regressed the removal — this test fails
+    // BEFORE the emerald gradient ships.
     // eslint-disable-next-line import/no-unresolved
     const src = (
       await import("@/pages/admin/Dashboard.jsx?raw")
     ).default;
-    expect(src).toContain("Total Paid Revenue (lifetime)");
-    // Guardrail — the exact terse form must be gone.
-    expect(src).not.toMatch(/>\s*Total Revenue\s*</);
+    expect(src).not.toContain("Total Paid Revenue (lifetime)");
+    expect(src).not.toMatch(/data-testid="dashboard-hero"/);
+    // RevenueSplitChip carries the equivalent breakdown — must survive.
+    expect(src).toMatch(/<RevenueSplitChip/);
   });
 });

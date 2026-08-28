@@ -2278,6 +2278,59 @@ async def startup():
     except Exception as e:
         logger.warning(f"invoice_line_cost_backfill crashed: {e}")
 
+    # Feb-2026 · P0 fix — Invoice number backfill. Heals invoice
+    # docs persisted with a null / missing / empty
+    # ``invoice_number`` field so operators never see "Invoice #: -"
+    # on the invoices list. Idempotent + sentinel-guarded
+    # (``feb2026_invoice_number_backfill_v1``); a subsequent boot
+    # is a no-op unless the sentinel is cleared. Ships alongside
+    # the canonical ``insert_invoice`` helper that plugged the
+    # three write paths feeding the bug.
+    try:
+        from services.migrations.invoice_number_backfill import (
+            run_invoice_number_backfill,
+        )
+        _inv_num_boot = await run_invoice_number_backfill()
+        if _inv_num_boot.get("status") == "skipped":
+            logger.info(
+                "[invoice_number_backfill] sentinel present · skipping",
+            )
+        else:
+            _s = _inv_num_boot.get("summary") or {}
+            logger.info(
+                f"[invoice_number_backfill] scanned={_s.get('scanned', 0)} "
+                f"updated={_s.get('updated', 0)} "
+                f"skipped={_s.get('skipped', 0)} "
+                f"errors={_s.get('errors_count', 0)}",
+            )
+    except Exception as e:
+        logger.warning(f"invoice_number_backfill crashed: {e}")
+
+    # Feb-2026 · P0 fix — Orphan-paid invoice audit. Report-only on
+    # boot so operators see the count in logs without silently
+    # flipping seed / demo fixtures. Real flips happen through the
+    # super_admin admin endpoint
+    # (``POST /api/admin/migrations/audit-orphan-paid-invoices``)
+    # after the operator reviews the dry-run diff.
+    try:
+        from services.migrations.invoice_status_audit import (
+            run_orphan_paid_audit,
+        )
+        _op_boot = await run_orphan_paid_audit(force=True, dry_run=True)
+        _s = _op_boot.get("summary") or {}
+        if _s.get("corrected", 0) > 0:
+            logger.warning(
+                f"[orphan_paid_audit] boot report · "
+                f"{_s.get('corrected', 0)} invoices flagged as "
+                f"paid without a payment_record. Trigger "
+                f"POST /api/admin/migrations/audit-orphan-paid-invoices"
+                f"?dry_run=false to flip them to pending_reconciliation.",
+            )
+        else:
+            logger.info("[orphan_paid_audit] boot report · 0 orphans")
+    except Exception as e:
+        logger.warning(f"orphan_paid_audit boot report crashed: {e}")
+
     # Feb-2026 M2 fix — idempotent single-brace → double-brace migration
     # on stored campaign templates. The render engine now accepts both
     # shapes; this migration just normalises DB snapshots so admins

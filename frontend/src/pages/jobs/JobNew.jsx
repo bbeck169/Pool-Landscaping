@@ -16,6 +16,9 @@ import {
 } from "@/components/recurring/MonthlyNthWeekdaySelector";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import JobTitleCombobox from "@/components/JobTitleCombobox";
+// Feb 2026 · Color-coded Service / Repair segmented toggle. Same
+// control lives on ScheduleJobEditModal via the shared component.
+import WorkClassToggle from "@/components/jobs/WorkClassToggle";
 
 const CADENCES = [
   { k: "one_time", label: "One-time" },
@@ -375,41 +378,11 @@ export default function JobNew({
             >
               TYPE
             </label>
-            <div
-              className="inline-flex rounded-lg overflow-hidden"
-              role="radiogroup"
-              aria-label="Job type"
-              data-testid="jf-work-class"
-              style={{ border: `1px solid ${colors.border}` }}
-            >
-              {[
-                { value: "service", label: "Service" },
-                { value: "repair", label: "Repair" },
-              ].map((opt) => {
-                const selected = form.work_class === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    onClick={() =>
-                      setForm((f) => ({ ...f, work_class: opt.value }))
-                    }
-                    className="px-4 py-2 text-sm font-semibold focus:outline-none focus-visible:ring-2"
-                    style={{
-                      backgroundColor: selected
-                        ? colors.primary
-                        : colors.surface,
-                      color: selected ? "#fff" : colors.onSurface,
-                    }}
-                    data-testid={`jf-work-class-${opt.value}`}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
+            <WorkClassToggle
+              value={form.work_class}
+              onChange={(v) => setForm((f) => ({ ...f, work_class: v }))}
+              testIdPrefix="jf-work-class"
+            />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
