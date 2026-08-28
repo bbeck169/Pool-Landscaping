@@ -137,6 +137,13 @@ export const ADMIN_NAV_V2 = [
     // Route target is the existing ``/admin/recurring-jobs`` page
     // (also still linked from Reports for backwards compat).
     { to: "/admin/recurring-jobs",   label: "Recurring Jobs",     icon: CalendarClock, feature: "scheduling", hard_rule: "manager_only", subsection: "Schedule & Dispatch" },
+    // Feb 2026 · Sidebar Pricebook shortcut — promoted from the
+    // former Field Service subsection so it sits with the other
+    // manager-facing quick-links (Recurring Jobs, Dispatch). Same
+    // three-role gate as Recurring Jobs via ``manager_only``;
+    // techs and portal customers never see it. Route target is the
+    // existing OpsHub Price Book grid at ``/price-book``.
+    { to: "/price-book",             label: "Pricebook",          icon: Tag,          feature: "jobs",       hard_rule: "manager_only", subsection: "Schedule & Dispatch" },
     { to: "/admin/reflow-history",   label: "Reflow History",     icon: History,      feature: "jobs", subsection: "Schedule & Dispatch" },
     // Task RR/SS Phase 2 · Feb 2026 — AI Employee data-access controls.
     { to: "/admin/ai-personas-scope", label: "AI Access Scope",    icon: History,      subsection: "AI Operations" },
@@ -184,7 +191,6 @@ export const ADMIN_NAV_V2 = [
     { to: "/pool-service", label: "Pool Service", icon: Waves,    feature: "jobs", subsection: "Field Service" },
     { to: "/equipment",    label: "Equipment",    icon: Wrench,   feature: "jobs", subsection: "Field Service" },
     { to: "/admin/assets", label: "Assets",       icon: Wrench,   feature: "jobs", subsection: "Field Service" },
-    { to: "/price-book",   label: "Price Book",   icon: BookOpen, feature: "jobs", subsection: "Field Service" },
     // Inventory
     { to: "/admin/inventory",                 label: "Inventory",            icon: Boxes,             feature: "jobs",    subsection: "Inventory" },
     { to: "/admin/inventory/alerts",          label: "Stock Alerts",         icon: AlertTriangleIcon, feature: "jobs",    subsection: "Inventory" },
