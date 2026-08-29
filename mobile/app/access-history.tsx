@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 const when = (iso?: string) => {
   if (!iso) return "";
@@ -59,7 +60,7 @@ export default function AccessHistory() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.title}>
                     {started
-                      ? `${item.admin_name || "Admin"} viewed ${item.customer_name || "a customer"}`
+                      ? `${item.admin_name || "Admin"} viewed ${formatCustomerName(item)}`
                       : `Session ended`}
                   </Text>
                   <Text style={styles.meta}>{when(item.created_at)}</Text>

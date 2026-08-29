@@ -812,3 +812,16 @@
   - No changes to `backend/` or `frontend/`. No new deps. No external repos.
 - **Files created**: `src/lib/waterBodies.ts`, `src/components/checklist/WaterBodyPanel.tsx`, `src/components/checklist/WaterBodyManager.tsx`, `__tests__/water-bodies.test.tsx`
 - **Files modified**: `app/job/[id]/checklist.tsx`, `app/portal/service-report/[id].tsx`, `app/price-book.tsx`
+
+
+## Iteration — Ship 1, 2, 3: Mobile Parity (Dashboard tiles, Customer Delete UX, formatCustomerName)
+- **Commit**: 47278d5f2d483726ccd02aa4ed05caa1c5c552ee
+- **Date**: 2026-08-29
+- **Changes**:
+  - **Ship 3 (formatCustomerName)**: Created `/app/mobile/src/utils/formatCustomerName.ts`. Swept 25+ files replacing raw `customer_name` renders with `formatCustomerName(item)`. Orphan-safe on all surfaces.
+  - **Ship 1 (Dashboard tiles)**: Replaced legacy Customers/Technicians tiles with Active/Inactive Customers using `active_customers_count` / `inactive_customers_count`. Technicians tile removed.
+  - **Ship 2 (Customer Delete UX)**: Created `CustomerDeleteModal.tsx` (3-button modal) + `RestoreCustomerButton.tsx`. Wired into `customer/[id].tsx` with 409 handling. Added `include_deleted` chip + `canManageDeleted` gate + soft-deleted row styling to `customers.tsx`.
+  - **Jest tests**: 5 new suites, 32 tests — all pass.
+- **Files created**: `src/utils/formatCustomerName.ts`, `src/components/customers/CustomerDeleteModal.tsx`, `src/components/customers/RestoreCustomerButton.tsx`, 5 test files
+- **Files modified**: `app/(app)/index.tsx`, `app/customer/[id].tsx`, `app/(app)/customers.tsx`, + ~22 files for formatCustomerName sweep
+- **Component code changes during test wiring**: ZERO

@@ -21,6 +21,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { getServiceLog, emailDoorHanger, type ServiceLogData } from "@/src/api/serviceLog";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const SLIDE_W = SCREEN_W - spacing.lg * 2;
@@ -151,7 +152,7 @@ export default function ServiceLogScreen() {
           {/* Customer → Property */}
           <View style={s.detailRow}>
             <Ionicons name="person" size={16} color={colors.brand} />
-            <Text style={s.detailValue}>{data.log_details.customer_name || "Unknown"}</Text>
+            <Text style={s.detailValue}>{formatCustomerName(data.log_details)}</Text>
           </View>
           <View style={[s.detailRow, { marginLeft: 16 }]}>
             <Ionicons name="arrow-forward" size={12} color={colors.muted} />

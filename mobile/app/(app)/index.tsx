@@ -9,6 +9,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money, IMAGES } from "@/src/theme";
 import { Loading, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { Header } from "@/src/components/widgets";
 import SyncStatusPill from "@/src/components/SyncStatusPill";
 import BudgetHealthCard from "@/src/components/BudgetHealthCard";
@@ -190,8 +191,8 @@ export default function Dashboard() {
         <View style={styles.grid}>
           <Kpi icon="briefcase" label="Active Jobs" value={data.active_jobs ?? 0} onPress={() => router.push("/(app)/jobs")} />
           <Kpi icon="hourglass-outline" label="Pending" value={data.pending_jobs ?? 0} onPress={() => router.push("/(app)/jobs")} />
-          <Kpi icon="people" label="Customers" value={data.total_customers ?? 0} onPress={() => router.push("/(app)/customers")} />
-          <Kpi icon="construct" label="Technicians" value={data.total_technicians ?? 0} onPress={() => router.push("/technicians")} />
+          <Kpi icon="checkmark-circle" label="Active Customers" value={data.active_customers_count ?? 0} onPress={() => router.push("/(app)/customers")} />
+          <Kpi icon="close-circle" label="Inactive Customers" value={data.inactive_customers_count ?? 0} onPress={() => router.push("/(app)/customers")} />
         </View>
 
         <ReferralRevenueTile />
@@ -255,7 +256,7 @@ export default function Dashboard() {
               <Text style={styles.activityTitle} numberOfLines={1}>
                 {j.title}
               </Text>
-              <Text style={styles.activitySub}>{j.customer_name}</Text>
+              <Text style={styles.activitySub}>{formatCustomerName(j)}</Text>
             </View>
             <StatusChip status={j.status} />
           </Pressable>
@@ -359,7 +360,7 @@ function MaintenanceDigest({ onOpen }: { onOpen: () => void }) {
                 <Ionicons name={it.type === "filter" ? "filter" : "flash"} size={16} color={colors.brand} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.overdueName} numberOfLines={1}>{it.customer_name}</Text>
+                <Text style={styles.overdueName} numberOfLines={1}>{formatCustomerName(it)}</Text>
                 <Text style={styles.overdueMeta} numberOfLines={1}>{it.label}</Text>
               </View>
               <View style={[styles.digestBadge, { backgroundColor: it.overdue ? "#FEE2E2" : "#FEF9C3" }]}>
@@ -476,7 +477,7 @@ function ReadyToSchedule({ onOpenQuote }: { onOpenQuote: (id: string) => void })
       {items.map((it) => (
         <View key={it.id} style={styles.overdueRow} testID={`rts-${it.id}`}>
           <Pressable style={{ flex: 1 }} onPress={() => onOpenQuote(it.id)}>
-            <Text style={styles.overdueName} numberOfLines={1}>{it.customer_name}</Text>
+            <Text style={styles.overdueName} numberOfLines={1}>{formatCustomerName(it)}</Text>
             <Text style={styles.overdueMeta} numberOfLines={1}>{it.title} · {money(it.total)}</Text>
           </Pressable>
           <Pressable style={styles.rtsBtn} onPress={() => openSheet(it)} testID={`rts-schedule-${it.id}`}>
@@ -489,7 +490,7 @@ function ReadyToSchedule({ onOpenQuote }: { onOpenQuote: (id: string) => void })
       <Sheet visible={!!active} onClose={() => setActive(null)} title="Schedule Service" testID="rts-sheet">
         {active ? (
           <>
-            <Text style={styles.bulkHint}>{active.customer_name} · {active.title} · {money(active.total)}</Text>
+            <Text style={styles.bulkHint}>{formatCustomerName(active)} · {active.title} · {money(active.total)}</Text>
             <Text style={styles.bulkLabel}>Service date</Text>
             <View style={styles.bulkPresetRow}>
               {[["Tomorrow", 1], ["+3 days", 3], ["+1 week", 7]].map(([lbl, dd]) => (
@@ -584,7 +585,7 @@ function PaymentsWidget({ onOpen, onOpenInvoice }: { onOpen: () => void; onOpenI
             return (
               <View key={o.id} style={styles.overdueRow} testID={`overdue-${o.id}`}>
                 <Pressable style={{ flex: 1 }} onPress={() => onOpenInvoice(o.id)}>
-                  <Text style={styles.overdueName} numberOfLines={1}>{o.customer_name}</Text>
+                  <Text style={styles.overdueName} numberOfLines={1}>{formatCustomerName(o)}</Text>
                   <Text style={styles.overdueMeta} numberOfLines={1}>
                     {money(o.total)} · {o.days === 0 ? "today" : `${o.days}d`}
                   </Text>

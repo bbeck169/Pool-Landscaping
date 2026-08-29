@@ -23,6 +23,7 @@ import { api, getAuthToken } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 import * as GpsTracker from "@/src/services/gpsTracker";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 const QUEUE_KEY = "workforce_ping_queue_v1";
 const PING_MS = 30_000;
@@ -259,7 +260,7 @@ export default function TimeClockScreen() {
                           color={selectedJob === j.id ? colors.brand : colors.muted}/>
                 <View style={{ marginLeft: spacing.sm, flex: 1 }}>
                   <Text style={styles.jobTitle}>{j.title}</Text>
-                  <Text style={styles.jobSub}>{j.customer_name || j.address}</Text>
+                  <Text style={styles.jobSub}>{formatCustomerName(j) || j.address}</Text>
                 </View>
               </Pressable>
             ))

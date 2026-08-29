@@ -10,6 +10,8 @@ import { Loading, EmptyState } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
 import { ImportExport } from "@/src/components/ImportExport";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
+import RestoreCustomerButton from "@/src/components/customers/RestoreCustomerButton";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function Customers() {
   const router = useRouter();
@@ -18,6 +20,9 @@ export default function Customers() {
   // Feb-2026 · Bulk-mark-inactive — manager is included per the dispatch
   // spec (super_admin / admin / manager permitted; tech / customer blocked).
   const isAdminOrManager = isAdmin || user?.role === "manager";
+  // Ship 2 · Soft-deleted filter — admin+ can toggle
+  const canManageDeleted = isAdmin || user?.role === "owner";
+  const [includeDeleted, setIncludeDeleted] = useState(false);
   const [items, setItems] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -38,12 +43,13 @@ export default function Customers() {
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
   const bulk = useBulkSelect(visibleIds);
 
-  const load = useCallback(async (s: string, targetPage: number = 1) => {
+  const load = useCallback(async (s: string, targetPage: number = 1, showDeleted: boolean = false) => {
     try {
       const qp = new URLSearchParams();
       if (s) qp.set("search", s);
       qp.set("page", String(targetPage));
       qp.set("page_size", String(_PAGE_SIZE));
+      if (showDeleted && canManageDeleted) qp.set("include_deleted", "true");
       const res: any = await api.get(`/customers?${qp.toString()}`);
       // P35 envelope: {items, total, page, page_size, total_pages}.
       // Defensive: legacy bare-array fallback for pre-P35 backends.
@@ -65,10 +71,10 @@ export default function Customers() {
     if (loadingMore) return;
     if (page >= totalPages) return;
     setLoadingMore(true);
-    load(search, page + 1);
-  }, [loadingMore, page, totalPages, search, load]);
+    load(search, page + 1, includeDeleted);
+  }, [loadingMore, page, totalPages, search, load, includeDeleted]);
 
-  useFocusEffect(useCallback(() => { load(search, 1); }, [load, search]));
+  useFocusEffect(useCallback(() => { load(search, 1, includeDeleted); }, [load, search, includeDeleted]));
 
   const exitSelectMode = () => { setSelectMode(false); bulk.clear(); };
 
@@ -81,7 +87,7 @@ export default function Customers() {
             await api.post("/customers/bulk-delete", { ids: [...bulk.selected] });
             Alert.alert("Deleted", `${bulk.count} customer${bulk.count !== 1 ? "s" : ""} removed.`);
             exitSelectMode();
-            load(search);
+            load(search, 1, includeDeleted);
           } catch (e: any) { Alert.alert("Error", e?.message || "Delete failed"); }
         },
       },
@@ -117,7 +123,7 @@ export default function Customers() {
       );
       setInactiveModalOpen(false);
       exitSelectMode();
-      load(search);
+      load(search, 1, includeDeleted);
     } catch (e: any) {
       // Rollback: restore pre-flip state, notify.
       setItems((prev) => prev.map((r) =>
@@ -140,7 +146,7 @@ export default function Customers() {
             </Pressable>
           ) : (
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-              {isAdmin ? <ImportExport entity="customers" label="customers" exportPath="/export/customers" importPath="/import/customers" onDone={() => load(search)} /> : null}
+              {isAdmin ? <ImportExport entity="customers" label="customers" exportPath="/export/customers" importPath="/import/customers" onDone={() => load(search, 1, includeDeleted)} /> : null}
               <IconButton icon="add" onPress={() => router.push("/customer/new")} testID="add-customer-button" />
             </View>
           )
@@ -168,6 +174,19 @@ export default function Customers() {
             autoCapitalize="none"
           />
         </View>
+        {/* Ship 2 · "Show deleted" toggle chip — admin+ only */}
+        {canManageDeleted ? (
+          <Pressable
+            style={[cs.deletedChip, includeDeleted && cs.deletedChipActive]}
+            onPress={() => setIncludeDeleted((v) => !v)}
+            testID="customers-filter-include-deleted"
+          >
+            <View style={[cs.deletedDot, includeDeleted && cs.deletedDotActive]} />
+            <Text style={[cs.deletedChipText, includeDeleted && cs.deletedChipTextActive]}>
+              Show deleted
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
       {loading ? (
         <Loading testID="customers-loading" />
@@ -179,12 +198,12 @@ export default function Customers() {
           data={items}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ padding: spacing.lg, paddingTop: spacing.sm, paddingBottom: selectMode ? 100 : spacing["3xl"] }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(search, 1); }} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(search, 1, includeDeleted); }} />}
           onEndReached={loadMore}
           onEndReachedThreshold={0.4}
           renderItem={({ item }) => (
             <Pressable
-              style={[styles.row, bulk.selected.has(item.id) && styles.rowSelected]}
+              style={[styles.row, bulk.selected.has(item.id) && styles.rowSelected, item.deleted_at && cs.rowDeleted]}
               onPress={() => selectMode ? bulk.toggleOne(item.id) : router.push(`/customer/${item.id}`)}
               onLongPress={() => { if (!selectMode) { setSelectMode(true); bulk.toggleOne(item.id); } }}
               testID={`customer-row-${item.id}`}
@@ -196,7 +215,19 @@ export default function Customers() {
                 <Text style={styles.avatarText}>{item.name?.charAt(0)?.toUpperCase()}</Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <Text style={[styles.name, item.deleted_at && cs.nameDeleted]} numberOfLines={1}>{item.name}</Text>
+                  {item.deleted_at && canManageDeleted ? (
+                    <RestoreCustomerButton
+                      customer={item}
+                      onRestored={(res) => {
+                        Alert.alert("Restored", res?.was_anonymized ? "Customer restored (PII stays scrubbed)" : "Customer restored");
+                        load(search, 1, includeDeleted);
+                      }}
+                      onError={(msg) => Alert.alert("Restore failed", msg)}
+                    />
+                  ) : null}
+                </View>
                 <Text style={styles.sub} numberOfLines={1}>{item.address || item.phone || item.email || "—"}</Text>
               </View>
               {!selectMode ? <Ionicons name="chevron-forward" size={18} color={colors.muted} /> : null}
@@ -362,5 +393,49 @@ const styles = StyleSheet.create({
   modalBtnDanger: { backgroundColor: "#B45309" },
   modalBtnDangerText: {
     fontFamily: font.bold, fontSize: fontSize.sm, color: "#FFFFFF",
+  },
+});
+
+// Ship 2 · extra styles for soft-deleted UX
+const cs = StyleSheet.create({
+  deletedChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    marginTop: spacing.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  deletedChipActive: {
+    backgroundColor: "#FEE2E2",
+    borderColor: "#FCA5A5",
+  },
+  deletedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#94A3B8",
+  },
+  deletedDotActive: {
+    backgroundColor: "#B91C1C",
+  },
+  deletedChipText: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.xs,
+    color: colors.onSurfaceSecondary,
+  },
+  deletedChipTextActive: {
+    color: "#991B1B",
+  },
+  rowDeleted: {
+    opacity: 0.6,
+  },
+  nameDeleted: {
+    textDecorationLine: "line-through",
   },
 });

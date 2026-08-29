@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, StatusChip, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 function ymd(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -141,7 +142,7 @@ export default function Dispatch() {
         {assign ? (
           <>
             <Text style={styles.assignJob}>{assign.title}</Text>
-            <Text style={styles.assignSub}>{assign.customer_name}</Text>
+            <Text style={styles.assignSub}>{formatCustomerName(assign)}</Text>
             <View style={{ height: spacing.md }} />
             {(data?.columns || []).map((c: any) => (
               <Pressable key={c.technician_id} style={styles.assignRow} onPress={() => doAssign(c.technician_id)} testID={`assign-${c.technician_id}`}>
@@ -170,7 +171,7 @@ function DispatchJob({ job, onPress, onAssign }: { job: any; onPress: () => void
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.jobTitle} numberOfLines={1}>{job.title}</Text>
-        <Text style={styles.jobSub} numberOfLines={1}>{job.address || job.customer_name}</Text>
+        <Text style={styles.jobSub} numberOfLines={1}>{job.address || formatCustomerName(job)}</Text>
       </View>
       {!job.technician_id ? (
         <Pressable style={styles.assignBtn} onPress={onAssign} testID={`dispatch-assign-${job.id}`} hitSlop={6}>

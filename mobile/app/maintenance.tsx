@@ -8,6 +8,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header, FilterRow } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -150,7 +151,7 @@ export default function Maintenance() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
           renderItem={({ item }) => (
             <View style={styles.card} testID={`maint-${item.customer_id}`}>
-              <Text style={styles.custName} numberOfLines={1}>{item.customer_name}</Text>
+              <Text style={styles.custName} numberOfLines={1}>{formatCustomerName(item)}</Text>
               {item.address ? <Text style={styles.custAddr} numberOfLines={1}>{item.address}</Text> : null}
               <TypeRow row={item} mtype="filter" onSchedule={openSchedule} onHistory={openHistory} onOpenJob={(id) => router.push(`/job/${id}`)} />
               <TypeRow row={item} mtype="salt_cell" onSchedule={openSchedule} onHistory={openHistory} onOpenJob={(id) => router.push(`/job/${id}`)} />
@@ -163,7 +164,7 @@ export default function Maintenance() {
       <Sheet visible={!!sched} onClose={() => setSched(null)} title={sched ? `Schedule ${sched.label}` : ""} testID="maint-schedule-sheet">
         {sched ? (
           <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 460 }}>
-            <Text style={styles.schedSub}>{sched.customer_name}</Text>
+            <Text style={styles.schedSub}>{formatCustomerName(sched)}</Text>
 
             <Text style={styles.fieldLabel}>Service date</Text>
             <View style={styles.presetRow}>
@@ -201,7 +202,7 @@ export default function Maintenance() {
       <Sheet visible={!!hist} onClose={() => setHist(null)} title={hist ? `${hist.label} history` : ""} testID="maint-history-sheet">
         {hist ? (
           <ScrollView style={{ maxHeight: 480 }}>
-            <Text style={styles.schedSub}>{hist.customer_name}</Text>
+            <Text style={styles.schedSub}>{formatCustomerName(hist)}</Text>
             {histRecords === null ? (
               <Text style={styles.hint}>Loading…</Text>
             ) : histRecords.length === 0 ? (

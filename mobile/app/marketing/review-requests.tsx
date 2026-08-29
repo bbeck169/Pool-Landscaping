@@ -14,6 +14,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 type ReviewReq = {
   id: string;
@@ -129,7 +130,7 @@ export default function ReviewRequestsScreen() {
           }
           renderItem={({ item }) => {
             const sc = stColor[item.status || ""] || { bg: "#F1F5F9", fg: "#475569" };
-            const displayName = item.customer_name || item.customer_id || "Customer";
+            const displayName = formatCustomerName(item);
             return (
               <View style={s.card} testID={`rr-${item.id}`}>
                 <View style={s.cardTop}>

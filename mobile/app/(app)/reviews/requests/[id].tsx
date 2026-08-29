@@ -9,6 +9,7 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { getRequest, resendRequest } from "@/src/api/reviews";
 import { OutcomePillNative } from "@/src/components/reviews/OutcomePillNative";
 import { StarRatingDisplayNative } from "@/src/components/reviews/StarRatingDisplayNative";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function ReviewsRequestDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -41,7 +42,7 @@ export default function ReviewsRequestDetailScreen() {
   return (
     <View testID="reviews-request-detail" style={styles.root}>
       <Header
-        title={data.customer_name || "Review request"}
+        title={formatCustomerName(data) || "Review request"}
         back
         right={
           <TouchableOpacity testID="reviews-request-resend" style={styles.actionBtn} onPress={onResend} disabled={busy}>
@@ -53,7 +54,7 @@ export default function ReviewsRequestDetailScreen() {
       />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: insets.bottom + 24 }}>
         <View style={styles.metaCard}>
-          <Kv k="Customer" v={data.customer_name} />
+          <Kv k="Customer" v={formatCustomerName(data)} />
           <Kv k="Tech" v={data.technician_name || "unassigned"} />
           <Kv k="Sent via" v={(data.sent_via || "").replace("_", " ")} />
           <Kv k="Sent at" v={(data.sent_at || "").replace("T", " ").slice(0, 16)} />

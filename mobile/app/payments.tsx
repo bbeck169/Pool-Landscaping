@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 function fmtDate(iso?: string) {
   if (!iso) return "—";
@@ -63,7 +64,7 @@ export default function Payments() {
                 <Ionicons name="checkmark-circle" size={20} color={colors.success} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{item.customer_name}</Text>
+                <Text style={styles.name}>{formatCustomerName(item)}</Text>
                 <Text style={styles.sub}>{item.title} · {fmtDate(item.paid_at)}</Text>
               </View>
               <Text style={styles.amount}>{money(item.amount)}</Text>

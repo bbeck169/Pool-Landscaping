@@ -10,6 +10,7 @@ import { useOnline, cacheJobs, getCachedJobs, flushPendingPhotos, flushPendingMu
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header, JobCard, FilterRow, NotificationBell, OfflineBanner } from '@/src/components/widgets';
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -138,7 +139,7 @@ export default function Jobs() {
         >
           <Ionicons name="flash" size={14} color="#fff" />
           <Text style={styles.nextChipText} numberOfLines={1}>
-            Next: {nextJob.customer_name || nextJob.title}
+            Next: {formatCustomerName(nextJob) || nextJob.title}
             {nextJob.scheduled_start ? ` @ ${String(nextJob.scheduled_start).slice(11, 16)}` : ""}
           </Text>
           <Ionicons name="chevron-forward" size={14} color="#fff" />

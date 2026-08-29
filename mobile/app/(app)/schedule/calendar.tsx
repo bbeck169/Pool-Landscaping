@@ -66,6 +66,7 @@ import { MapErrorBoundary } from "@/src/components/MapErrorBoundary";
 import JobNotesCallout from "@/src/components/schedule/JobNotesCallout";
 import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 import type { HourlyEntry } from "@/src/api/weather";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 type Job = {
   id: string;
@@ -989,7 +990,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             the schedule day view is already tech-scoped in the
             header, so the per-card avatar was redundant clutter. */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
-          <Text style={gStyles.cust} numberOfLines={1}>{job.customer_name || "Unknown"}</Text>
+          <Text style={gStyles.cust} numberOfLines={1}>{formatCustomerName(job)}</Text>
         </View>
         {job.property_label ? (
           <View
@@ -1162,7 +1163,7 @@ function CalendarView({
                         {j.service_type || j.title || "Job"}
                       </Text>
                       <Text style={[cStyles.eventCust, { color: svc.fg }]} numberOfLines={1}>
-                        {j.customer_is_vip ? "★ " : ""}{j.customer_name || "—"}
+                        {j.customer_is_vip ? "★ " : ""}{formatCustomerName(j)}
                       </Text>
                       {showBH ? (
                         <Text style={[cStyles.eventBH, { color: svc.fg }]}>{jobHours(j)}</Text>

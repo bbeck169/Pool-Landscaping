@@ -10,6 +10,7 @@ import { Loading, Sheet, PrimaryButton, EmptyState } from "@/src/components/ui";
 import { computeEstimate, CATEGORIES, CATEGORY_META, EstimateLine } from "@/src/utils/estimate";
 import { exportEstimatePdf } from "@/src/utils/exportEstimatePdf";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 const emptyLine = (): EstimateLine => ({ category: "Material", description: "", quantity: 1, unit_cost: 0 });
 
@@ -72,7 +73,7 @@ export default function EstimateBuilder() {
       } else {
         const e = await api.get(`/estimates/${id}`);
         setTitle(e.title || "");
-        setCustomer({ id: e.customer_id, name: e.customer_name });
+        setCustomer({ id: e.customer_id, name: formatCustomerName(e) });
         setLines(e.line_items || []);
         setOverhead(String(e.overhead_pct ?? 15));
         setMargin(String(e.margin_pct ?? 30));

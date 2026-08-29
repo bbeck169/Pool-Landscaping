@@ -10,6 +10,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money, statusMeta } from "@/src/theme";
 import { Loading, EmptyState, StatusChip, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, FilterRow, IconButton } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 // Repair status meta
 Object.assign(statusMeta, {
@@ -121,7 +122,7 @@ export default function Equipment() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.equipment}>{item.equipment}</Text>
-                  <Text style={styles.customer}>{item.customer_name}</Text>
+                  <Text style={styles.customer}>{formatCustomerName(item)}</Text>
                 </View>
                 <StatusChip status={item.status} />
               </View>
@@ -194,7 +195,7 @@ export default function Equipment() {
       <Sheet visible={!!sel} onClose={() => setSel(null)} title={sel?.equipment} testID="repair-detail-sheet">
         {sel ? (
           <>
-            <Text style={styles.customer}>{sel.customer_name}</Text>
+            <Text style={styles.customer}>{formatCustomerName(sel)}</Text>
             <Text style={styles.detailIssue}>{sel.issue}</Text>
             {sel.cost ? <Text style={styles.detailCost}>Cost: {money(sel.cost)}</Text> : null}
             {sel.photos?.length ? (

@@ -11,6 +11,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function DunningQueueMobile() {
   const { user } = useAuth();
@@ -43,7 +44,7 @@ export default function DunningQueueMobile() {
 
   const send = async (it: any) => {
     Alert.alert("Send reminder now?",
-                 `${it.stage_name} → ${it.customer_name}`, [
+                 `${it.stage_name} → ${formatCustomerName(it)}`, [
       { text: "Cancel", style: "cancel" },
       { text: "Send", onPress: async () => {
           await api.post(
@@ -77,7 +78,7 @@ export default function DunningQueueMobile() {
                 <Text style={styles.title}
                        numberOfLines={1}>{it.stage_name}</Text>
                 <Text style={styles.meta} numberOfLines={1}>
-                  {it.customer_name} · fire {it.fire_date}
+                  {formatCustomerName(it)} · fire {it.fire_date}
                 </Text>
                 <View style={styles.chipRow}>
                   {it.channels.map((c: string) => (

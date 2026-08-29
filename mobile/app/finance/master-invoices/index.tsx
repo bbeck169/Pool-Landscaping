@@ -14,6 +14,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { RoleGate } from "@/src/components/RoleGate";
 
 type Master = {
@@ -88,7 +89,7 @@ export default function MasterInvoicesList() {
                   <Ionicons name="chevron-forward" size={18} color={colors.muted} />
                 </View>
                 <Text style={styles.customer} numberOfLines={1}>
-                  {r.customer_name || r.customer_id || "—"}
+                  {formatCustomerName(r)}
                 </Text>
                 <View style={styles.metaRow}>
                   <Text style={styles.meta}>{r.child_count ?? 0} children</Text>

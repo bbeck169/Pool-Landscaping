@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/auth";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { api } from "@/src/api";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 type WsJob = {
   id: string;
@@ -127,7 +128,7 @@ export default function WorkstreamScreen() {
           {item.customer_name ? (
             <View style={s.metaChip}>
               <Ionicons name="person" size={12} color={colors.muted} />
-              <Text style={s.metaText} numberOfLines={1}>{item.customer_name}</Text>
+              <Text style={s.metaText} numberOfLines={1}>{formatCustomerName(item)}</Text>
             </View>
           ) : null}
           {item.technician_name ? (

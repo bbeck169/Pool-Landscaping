@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function EstimatorList() {
   const router = useRouter();
@@ -64,7 +65,7 @@ export default function EstimatorList() {
               <Pressable style={styles.card} onPress={() => router.push(`/estimator/${item.id}`)} testID={`estimate-${item.id}`}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
-                  <Text style={styles.cardMeta} numberOfLines={1}>{item.customer_name} · GM {item.gross_margin_pct}%</Text>
+                  <Text style={styles.cardMeta} numberOfLines={1}>{formatCustomerName(item)} · GM {item.gross_margin_pct}%</Text>
                 </View>
                 <View style={{ alignItems: "flex-end", gap: 4 }}>
                   <Text style={styles.price}>{money(item.sell_price)}</Text>

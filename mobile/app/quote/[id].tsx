@@ -10,6 +10,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, StatusChip, PrimaryButton } from "@/src/components/ui";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { Header, IconButton } from "@/src/components/widgets";
 import { exportInvoicePdf } from "@/src/utils/exportInvoicePdf";
 
@@ -179,7 +180,7 @@ export default function QuoteDetail() {
         <View style={styles.headerCard}>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>{q.title}</Text>
-            <Text style={styles.customer}>{q.customer_name}</Text>
+            <Text style={styles.customer}>{formatCustomerName(q)}</Text>
           </View>
           <StatusChip status={paid ? "paid" : q.status} testID="quote-status-chip" />
         </View>

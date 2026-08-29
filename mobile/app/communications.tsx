@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function Communications() {
   const router = useRouter();
@@ -41,10 +42,10 @@ export default function Communications() {
           renderItem={({ item }) => (
             <Pressable style={styles.row} onPress={() => router.push(`/communication/${item.customer_id}`)} testID={`thread-${item.customer_id}`}>
               <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{item.customer_name?.charAt(0)?.toUpperCase() || "?"}</Text>
+                <Text style={styles.avatarText}>{formatCustomerName(item).charAt(0).toUpperCase()}</Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.name} numberOfLines={1}>{item.customer_name}</Text>
+                <Text style={styles.name} numberOfLines={1}>{formatCustomerName(item)}</Text>
                 <Text style={styles.preview} numberOfLines={1}>{item.last_text}</Text>
               </View>
               {item.unread > 0 ? <View style={styles.badge}><Text style={styles.badgeText}>{item.unread}</Text></View> : null}

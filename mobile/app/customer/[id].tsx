@@ -18,6 +18,8 @@ import CustomerTagsSection from "@/src/components/customers/CustomerTagsSection"
 import DemoAccountToggle from "@/src/components/comms/DemoAccountToggle";
 // Feb-2026 · P29b — Mobile parity for the web mute picker.
 import MuteControlSheet from "@/src/components/customers/MuteControlSheet";
+import CustomerDeleteModal from "@/src/components/customers/CustomerDeleteModal";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -48,6 +50,9 @@ export default function CustomerDetail() {
   const [adjReason, setAdjReason] = useState("");
   const [adjError, setAdjError] = useState("");
   const [adjBusy, setAdjBusy] = useState(false);
+  // Ship 2 · Customer Delete UX
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBusyMode, setDeleteBusyMode] = useState<"soft" | "hard" | null>(null);
 
   const loadCredits = useCallback(async () => {
     try {
@@ -132,6 +137,45 @@ export default function CustomerDetail() {
         },
       },
     ]);
+  };
+
+  // Ship 2 · Customer Delete UX — mode-aware delete handler
+  const doDelete = async (mode: "soft" | "hard") => {
+    if (deleteBusyMode) return;
+    setDeleteBusyMode(mode);
+    try {
+      const res: any = await api.del(`/customers/${id}?mode=${mode}`);
+      const verb = mode === "hard" ? "permanently deleted" : "soft-deleted";
+      Alert.alert(
+        "Success",
+        res?.already_deleted ? "Customer was already soft-deleted" : `Customer ${verb}`,
+      );
+      setConfirmDelete(false);
+      router.back();
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail || e?.data?.detail;
+      const isDict = detail && typeof detail === "object";
+      if (
+        mode === "hard" &&
+        (e?.response?.status === 409 || e?.status === 409) &&
+        isDict &&
+        detail.detail === "customer_has_unpaid_invoices"
+      ) {
+        const n = detail.invoice_count ?? "some";
+        Alert.alert(
+          "Cannot hard-delete",
+          `Cannot hard-delete \u2014 ${n} unpaid invoice(s). Resolve them or use Soft Delete instead.`,
+          [
+            { text: "View invoices", onPress: () => { setConfirmDelete(false); router.push("/invoices"); } },
+            { text: "OK" },
+          ],
+        );
+      } else {
+        Alert.alert("Delete failed", e?.message || "Please try again.");
+      }
+    } finally {
+      setDeleteBusyMode(null);
+    }
   };
 
   const loginAsCustomer = () => setConfirmImp(true);
@@ -294,6 +338,17 @@ export default function CustomerDetail() {
             }}
             onError={(msg) => Alert.alert("Update failed", msg)}
           />
+        ) : null}
+        {/* Ship 2 · Delete customer button (admin+ only) */}
+        {isAdmin ? (
+          <TouchableOpacity
+            style={s2.deleteBtn}
+            onPress={() => setConfirmDelete(true)}
+            testID="customer-delete-button"
+          >
+            <Ionicons name="trash-outline" size={16} color="#B91C1C" />
+            <Text style={s2.deleteBtnText}>Delete customer</Text>
+          </TouchableOpacity>
         ) : null}
         <View style={styles.card}>
           <ContactRow icon="call-outline" value={c.phone} onPress={() => c.phone && Linking.openURL(`tel:${c.phone}`)} />
@@ -683,6 +738,16 @@ export default function CustomerDetail() {
         customerId={id as string}
         onAddNote={() => setNoteComposerOpen(true)}
       />
+
+      {/* Ship 2 · Customer Delete UX overhaul — 3-button modal */}
+      <CustomerDeleteModal
+        visible={confirmDelete}
+        customerName={c?.name}
+        busyMode={deleteBusyMode}
+        onCancel={() => setConfirmDelete(false)}
+        onSoftDelete={() => doDelete("soft")}
+        onHardDelete={() => doDelete("hard")}
+      />
     </View>
   );
 }
@@ -812,5 +877,28 @@ const styles = StyleSheet.create({
     shadowColor: "#000", shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25, shadowRadius: 4,
     zIndex: 40,
+  },
+});
+
+// Ship 2 · extra styles
+const s2 = StyleSheet.create({
+  deleteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#FEE2E2",
+    borderColor: "#FCA5A5",
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  deleteBtnText: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: "#B91C1C",
   },
 });

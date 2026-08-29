@@ -53,6 +53,7 @@ import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCac
 import * as writeQueue from "@/src/services/writeQueue";
 import { useOnline } from "@/src/offline";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 // Phase 37 — minimum time the pill stays on "Saving…" so techs actually
@@ -436,7 +437,7 @@ export default function JobChecklistScreen() {
                     alert_phone: cust?.alert_phone,
                   });
                 } else {
-                  setRecapCustomer({ name: job?.customer_name });
+                  setRecapCustomer({ name: formatCustomerName(job) });
                 }
               } catch {
                 // Offline — try the SQLite read cache before we
@@ -449,7 +450,7 @@ export default function JobChecklistScreen() {
                   id: cached.id, name: cached.name,
                   email: cached.email, phone: cached.phone,
                   alert_phone: cached.alert_phone,
-                } : { name: job?.customer_name });
+                } : { name: formatCustomerName(job) });
               }
               setRecapOpen(true);
             } catch (e: any) {
@@ -540,7 +541,7 @@ export default function JobChecklistScreen() {
             {job.title || job.service_type || "Service"}
           </Text>
           <Text style={styles.heroSub}>
-            {job.customer_name || "—"} · {job.address || ""}
+            {formatCustomerName(job)} · {job.address || ""}
           </Text>
           <View
             testID="checklist-autosave-pill"

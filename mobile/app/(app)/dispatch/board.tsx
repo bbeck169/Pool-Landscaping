@@ -23,6 +23,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { Header } from "@/src/components/widgets";
 import { TechLoadStrip, TechLoad } from "@/src/components/dispatch/TechLoadStrip";
 import { UnroutedPanel, UnroutedPin } from "@/src/components/dispatch/UnroutedPanel";
@@ -228,7 +229,7 @@ export default function DispatchBoardMobile() {
       .filter((p: any) => !(p.assigned_tech_ids || []).length)
       .map((p: any) => ({
         customer_id: p.customer_id || p.id,
-        customer_name: p.customer_name || p.name || "—",
+        customer_name: formatCustomerName(p) || p.name || "—",
         service_days: p.service_days,
         category_ids: p.category_ids,
       }));
@@ -427,7 +428,7 @@ export default function DispatchBoardMobile() {
           jobsPreview.map((j) => (
             <View key={j.id} style={styles.jobCard} testID={`dispatch-job-row-${j.id}`}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.jobCustomer}>{j.customer_name || "Unknown customer"}</Text>
+                <Text style={styles.jobCustomer}>{formatCustomerName(j)}</Text>
                 <Text style={styles.jobMeta} numberOfLines={1}>
                   {(j.scheduled_date || "").slice(0, 10)}
                   {" · "}{j.service_type || j.address || "no address"}

@@ -8,6 +8,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState, StatusChip } from "@/src/components/ui";
 import { Header, FilterRow, IconButton, NotificationBell } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -74,7 +75,7 @@ export default function Quotes() {
                 <StatusChip status={item.payment_status === "paid" ? "paid" : item.status} />
               </View>
               <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
-              <Text style={styles.customer}>{item.customer_name}</Text>
+              <Text style={styles.customer}>{formatCustomerName(item)}</Text>
               <View style={styles.footer}>
                 <Text style={styles.total}>{money(item.total)}</Text>
                 <Ionicons name="chevron-forward" size={18} color={colors.muted} />

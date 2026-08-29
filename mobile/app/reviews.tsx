@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 function Stars({ n, size = 14 }: { n: number; size?: number }) {
   return (
@@ -79,7 +80,7 @@ export default function Reviews() {
           renderItem={({ item }) => (
             <View style={styles.card} testID={`review-${item.id}`}>
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                <Text style={styles.name}>{item.customer_name}</Text>
+                <Text style={styles.name}>{formatCustomerName(item)}</Text>
                 <View style={styles.sourcePill}>
                   <Text style={styles.sourceText}>{item.source}</Text>
                 </View>
@@ -105,7 +106,7 @@ export default function Reviews() {
       <Sheet visible={!!sel} onClose={() => setSel(null)} title="Respond to review" testID="respond-sheet">
         {sel ? (
           <>
-            <Text style={styles.name}>{sel.customer_name}</Text>
+            <Text style={styles.name}>{formatCustomerName(sel)}</Text>
             <View style={{ marginTop: 4 }}><Stars n={sel.rating} /></View>
             <Text style={styles.text}>{sel.text}</Text>
             <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>YOUR RESPONSE</Text>

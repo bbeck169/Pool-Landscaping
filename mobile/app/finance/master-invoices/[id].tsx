@@ -13,6 +13,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Card, Loading, EmptyState, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { RoleGate } from "@/src/components/RoleGate";
 import { showConfirm } from "@/src/components/ConfirmModal";
 
@@ -109,7 +110,7 @@ export default function MasterInvoiceDetail() {
             }
           >
             <Card style={styles.summary}>
-              <Text style={styles.summaryLabel}>{doc.customer_name || doc.customer_id}</Text>
+              <Text style={styles.summaryLabel}>{formatCustomerName(doc)}</Text>
               <View style={styles.summaryRow}>
                 <View style={styles.summaryCell}>
                   <Text style={styles.summaryHead}>Total</Text>

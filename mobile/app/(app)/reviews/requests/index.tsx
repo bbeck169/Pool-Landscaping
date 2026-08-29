@@ -8,6 +8,7 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { listRequests, OUTCOMES } from "@/src/api/reviews";
 import { OutcomePillNative } from "@/src/components/reviews/OutcomePillNative";
 import { StarRatingDisplayNative } from "@/src/components/reviews/StarRatingDisplayNative";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function ReviewsRequestsListScreen() {
   const router = useRouter();
@@ -65,7 +66,7 @@ export default function ReviewsRequestsListScreen() {
               onPress={() => router.push({ pathname: "/(app)/reviews/requests/[id]", params: { id: item.id } })}
             >
               <View style={styles.rowTop}>
-                <Text style={styles.rowName} numberOfLines={1}>{item.customer_name || "—"}</Text>
+                <Text style={styles.rowName} numberOfLines={1}>{formatCustomerName(item)}</Text>
                 <OutcomePillNative outcome={item.outcome} />
               </View>
               <Text style={styles.rowMeta} numberOfLines={1}>

@@ -32,6 +32,7 @@ import JobTimerCard from "@/src/components/job/JobTimerCard";
 import { isWithinEditWindow, hoursSinceCompletion, EDIT_WINDOW_HOURS } from "@/src/lib/editWindow";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 // Phase 49.0 — inline styles for the "Open Service Report" CTA. Kept
 // local so we don't touch the shared `styles` module.
@@ -325,7 +326,7 @@ export default function JobDetail() {
           <View style={styles.heroContent}>
             <StatusChip status={job.status} testID="job-status-chip" />
             <Text style={styles.heroTitle}>{job.title}</Text>
-            <Text style={styles.heroCustomer}>{job.customer_name}</Text>
+            <Text style={styles.heroCustomer}>{formatCustomerName(job)}</Text>
           </View>
         </View>
 

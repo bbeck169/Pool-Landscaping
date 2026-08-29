@@ -8,6 +8,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { exportCsv, toCsvRow } from "@/src/utils/exportCsv";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 function fmtDuration(s: number) {
   if (!s) return "0m";
@@ -100,7 +101,7 @@ export default function AvgJobTimeReport() {
               <View key={r.customer_id} style={styles.card} testID={`avg-row-${r.customer_id}`}>
                 <View style={styles.rankBadge}><Text style={styles.rankText}>{idx + 1}</Text></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.cardTitle} numberOfLines={1}>{r.customer_name || "Customer"}</Text>
+                  <Text style={styles.cardTitle} numberOfLines={1}>{formatCustomerName(r)}</Text>
                   <Text style={styles.cardMeta} numberOfLines={1}>{r.visits} visit{r.visits === 1 ? "" : "s"} · {fmtDuration(r.total_seconds)} total{r.last_visit ? ` · last ${r.last_visit}` : ""}</Text>
                 </View>
                 <View style={styles.avgWrap}>

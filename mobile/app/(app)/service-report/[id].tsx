@@ -15,6 +15,7 @@ import { Header } from "@/src/components/widgets";
 // Feb-2026 · Chemistry required-readings gate — mirror of backend
 // helper (see ``backend/services/chemistry_gate.py``).
 import { missingCoreReadings } from "@/utils/chemistryGate";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 const AUTOSAVE_MS = 5000;
 const PHOTO_CAP = 10;
@@ -233,7 +234,7 @@ export default function ServiceReportScreen() {
         <View style={styles.hero}>
           <Text style={styles.heroLabel}>{report.template} template{locked ? " · LOCKED" : ""}</Text>
           <Text style={styles.heroTitle}>{job.title || job.service_type || "Service"}</Text>
-          <Text style={styles.heroSub}>{job.customer_name || "—"} · {job.address || ""}</Text>
+          <Text style={styles.heroSub}>{formatCustomerName(job)} · {job.address || ""}</Text>
           {job.gate_code && (
             <View style={styles.gate}>
               <Ionicons name="key-outline" size={12} color="#92400E"/>

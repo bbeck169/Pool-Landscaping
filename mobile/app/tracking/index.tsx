@@ -14,6 +14,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 type Tracker = {
   id: string;
@@ -159,7 +160,7 @@ export default function TrackingScreen() {
                     <Ionicons name={isFilter ? "funnel" : "water"} size={18} color={isFilter ? "#166534" : "#0369A1"} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={s.cardName} numberOfLines={1}>{item.customer_name || "Customer"}</Text>
+                    <Text style={s.cardName} numberOfLines={1}>{formatCustomerName(item)}</Text>
                     {item.property_address ? <Text style={s.cardAddr} numberOfLines={1}>{item.property_address}</Text> : null}
                   </View>
                   <View style={[s.statusPill, { backgroundColor: sc.bg }]}>

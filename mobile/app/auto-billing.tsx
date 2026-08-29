@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 const FREQS = ["weekly", "monthly", "quarterly"];
 
@@ -49,7 +50,7 @@ export default function AutoBilling() {
 
   const runNow = async (plan: any) => {
     await api.post(`/billing-plans/${plan.id}/run`);
-    Alert.alert("Invoice generated", `A new invoice for ${plan.customer_name} was created.`);
+    Alert.alert("Invoice generated", `A new invoice for ${formatCustomerName(plan)} was created.`);
     load();
   };
 
@@ -103,7 +104,7 @@ export default function AutoBilling() {
               <View style={styles.cardTop}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.service}>{item.service}</Text>
-                  <Text style={styles.customer}>{item.customer_name}</Text>
+                  <Text style={styles.customer}>{formatCustomerName(item)}</Text>
                 </View>
                 <Switch
                   value={!!item.active}

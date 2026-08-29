@@ -20,6 +20,7 @@ import { Card, Loading, EmptyState, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 function _fmtKm(n: any): string {
   if (n == null || Number.isNaN(Number(n))) return "—";
@@ -111,7 +112,7 @@ export default function OptimizeRoutePage() {
                   <View key={i} style={styles.leg} testID={`dispatch-optimize-leg-${i}`}>
                     <Text style={styles.legIdx}>{i + 1}</Text>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.legName}>{l.customer_name || l.name || "—"}</Text>
+                      <Text style={styles.legName}>{formatCustomerName(l) || l.name || "—"}</Text>
                       <Text style={styles.legDist}>
                         Leg {_fmtKm(l.leg_km)} · Cum {_fmtKm(l.cumulative_km)}
                       </Text>
@@ -125,7 +126,7 @@ export default function OptimizeRoutePage() {
                   <Text style={styles.skippedHead}>Skipped ({skipped.length})</Text>
                   {skipped.map((s: any, i: number) => (
                     <Text key={i} style={styles.skippedItem}>
-                      • {s.customer_name || s.reason || "—"}
+                      • {formatCustomerName(s) || s.reason || "—"}
                     </Text>
                   ))}
                 </View>

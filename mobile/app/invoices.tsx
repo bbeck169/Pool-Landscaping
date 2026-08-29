@@ -8,6 +8,7 @@ import { colors, spacing, radius, font, fontSize, money, statusMeta } from "@/sr
 import { Loading, EmptyState, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header, FilterRow } from "@/src/components/widgets";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 Object.assign(statusMeta, {
   pending: { label: "Pending", bg: "#FEF9C3", fg: "#A16207" },
@@ -118,7 +119,7 @@ export default function Invoices() {
   const requestMethod = async (inv: any) => {
     try {
       await api.post(`/payments/request-method/${inv.customer_id}`, {});
-      Alert.alert("Request sent ✅", `${inv.customer_name} was asked to add a card/bank on file.`);
+      Alert.alert("Request sent ✅", `${formatCustomerName(inv)} was asked to add a card/bank on file.`);
     } catch (e: any) {
       Alert.alert("Failed", e.message);
     }
@@ -132,7 +133,7 @@ export default function Invoices() {
       await load();
       Alert.alert(
         "Reminder sent ✅",
-        `${inv.customer_name} was notified in-app${r.email_sent ? " and by email" : ""}.` +
+        `${formatCustomerName(inv)} was notified in-app${r.email_sent ? " and by email" : ""}.` +
           (r.email_sent ? "" : "\n(Email/SMS delivery not configured — logged only.)")
       );
     } catch (e: any) {
@@ -200,7 +201,7 @@ export default function Invoices() {
                   <Text style={[styles.title, { flex: 1 }]} numberOfLines={1}>{item.title}</Text>
                   <StatusChip status={chipFor(item)} />
                 </View>
-                <Text style={styles.customer}>{item.customer_name}</Text>
+                <Text style={styles.customer}>{formatCustomerName(item)}</Text>
                 <Text style={[styles.due, item.past_due && { color: colors.error }]}>{dueLabel(item)}</Text>
                 <View style={styles.amountRow}>
                   <View>
@@ -253,7 +254,7 @@ export default function Invoices() {
       <Sheet visible={!!payFor} onClose={() => setPayFor(null)} title="Record Payment" testID="invoice-pay-sheet">
         {payFor ? (
           <>
-            <Text style={styles.paySub}>{payFor.title} · {payFor.customer_name}</Text>
+            <Text style={styles.paySub}>{payFor.title} · {formatCustomerName(payFor)}</Text>
             <Text style={styles.paySub}>Balance due: {money(payFor.balance)}</Text>
             <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>AMOUNT RECEIVED ($)</Text>
             <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholderTextColor={colors.muted} testID="invoice-pay-amount" />

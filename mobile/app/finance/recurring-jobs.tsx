@@ -22,6 +22,7 @@ import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
 import { showConfirm } from "@/src/components/ConfirmModal";
 import { AdminListPage } from "@/src/components/layout/AdminListPage";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 type RecurringJob = {
   id: string;
@@ -234,7 +235,7 @@ export default function RecurringJobsMobile() {
 
   const generateNow = useCallback((row: RecurringJob) => {
     showConfirm({
-      title: `Generate jobs for "${row.customer_name || row.customer_id}"?`,
+      title: `Generate jobs for "${formatCustomerName(row)}"?`,
       message:
         "Creates the next ~2 weeks of scheduled jobs from this template. Safe to re-run.",
       confirmLabel: "Generate",
@@ -304,7 +305,7 @@ export default function RecurringJobsMobile() {
           <View style={s.rowHead}>
             <Pressable onPress={() => openEdit(r)} style={{ flex: 1 }}
                         testID={`recurring-edit-${r.id}`}>
-              <Text style={s.customer}>{r.customer_name || r.customer_id || "—"}</Text>
+              <Text style={s.customer}>{formatCustomerName(r)}</Text>
             </Pressable>
             <Switch
               value={r.active}

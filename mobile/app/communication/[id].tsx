@@ -8,6 +8,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading } from "@/src/components/ui";
+import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function CommunicationThread() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -22,7 +23,7 @@ export default function CommunicationThread() {
   const load = useCallback(async () => {
     try {
       const d = await api.get(`/communications/${id}`);
-      setName(d.customer_name);
+      setName(formatCustomerName(d));
       setAiPaused(!!d.ai_paused);
       setMsgs(d.messages || []);
     } finally {
