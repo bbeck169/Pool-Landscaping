@@ -24,6 +24,7 @@
  */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ApiNetworkError, api } from "@/src/api";
+import { clientUuid } from "@/src/services/ids/clientUuid";
 
 const KEY = "checklist-write-queue-v1";
 
@@ -47,17 +48,9 @@ export type QueueState = {
   lastError?: string;
 };
 
-// ────────────────── uuid (RFC-4122 v4, no external deps) ───────────────
-function uuid(): string {
-  // A pragmatic v4 — good enough for a per-device idempotency key. Not
-  // suitable for cryptographic contexts.
-  let d = Date.now();
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (d + Math.random() * 16) % 16 | 0;
-    d = Math.floor(d / 16);
-    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
+// ────────────────── uuid (RFC-4122 v4, crypto-strong) ──────────────
+// Phase O2: migrated from Math.random() to react-native-get-random-values + uuid.
+const uuid = clientUuid;
 
 // ────────────────── pub-sub for React subscribers ──────────────────────
 type Listener = (s: QueueState) => void;

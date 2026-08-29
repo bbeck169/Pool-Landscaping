@@ -25,6 +25,9 @@ import { ConfirmModalHost } from "@/src/components/ConfirmModal";
 import { StripeConfigProvider } from "@/src/config/stripe";
 import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTemplateDrafts";
 import { SyncManagerProvider } from "@/src/services/SyncManager";
+// Phase O2 · Offline sync foundation — boot the sync infra.
+import { startListening as startNetBus, wireAutoFlush } from "@/src/services/sync";
+import { getSyncDb } from "@/src/services/sync/db";
 // Phase 20 · Feb-2026 · Sub-item B — role-aware push tap-through.
 import { resolveNotificationRoute } from "@/src/services/notificationRoutes";
 
@@ -59,6 +62,13 @@ export default function RootLayout() {
   useEffect(() => {
     const unsub = registerOfflineTemplateDraftListeners();
     return unsub;
+  }, []);
+
+  // Phase O2 · Offline sync foundation — init SQLite schema + net bus + auto-flush.
+  useEffect(() => {
+    getSyncDb().catch((e) => console.warn("[O2] SQLite init failed:", e));
+    startNetBus();
+    wireAutoFlush();
   }, []);
 
   // Phase P11c — Mapbox token placeholder guard (__DEV__ only).
