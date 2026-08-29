@@ -2519,6 +2519,32 @@ async def startup():
     except Exception as e:
         logger.warning(f"allowlist_overlap_check crashed: {e}")
 
+    # Feb-2026 · Active/Inactive Customers dashboard tile swap —
+    # compound index for the ``recurring_job_templates`` distinct
+    # aggregation. Idempotent + sentinel-guarded. Cheap belt-and-
+    # suspenders for the dashboard query as template counts grow.
+    try:
+        from services.migrations.recurring_templates_active_customer_idx import (
+            run_recurring_templates_active_customer_idx_migration,
+        )
+        _rjti_boot = await run_recurring_templates_active_customer_idx_migration()
+        if _rjti_boot.get("status") == "skipped":
+            logger.info(
+                "[recurring_templates_active_customer_idx] sentinel present · skipping",
+            )
+        else:
+            _s = _rjti_boot.get("summary") or {}
+            logger.info(
+                "[recurring_templates_active_customer_idx] created=%s "
+                "already_present=%s errors=%s",
+                _s.get("created"), _s.get("already_present"),
+                len(_s.get("errors") or []),
+            )
+    except Exception as e:
+        logger.warning(
+            f"recurring_templates_active_customer_idx migration crashed: {e}",
+        )
+
     # Feb-2026 · P0 fix — Orphan-paid invoice audit. Report-only on
     # boot so operators see the count in logs without silently
     # flipping seed / demo fixtures. Real flips happen through the

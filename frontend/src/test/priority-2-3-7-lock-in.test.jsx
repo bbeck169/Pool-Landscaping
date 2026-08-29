@@ -91,16 +91,26 @@ describe("Priority 7 · Dashboard KPI tiles are clickable drill-downs", () => {
     );
   });
 
-  it("Customers routes to /customers list", () => {
+  it("Active Customers routes to /customers?status=active (Feb-2026 tile swap)", () => {
+    // Feb-2026 · The bottom row of the KPI grid was swapped from
+    // ``Customers`` (total) + ``Technicians`` to Active Customers +
+    // Inactive Customers.  Both drill down into a filtered customer
+    // list keyed by ``?status=``.  Legacy lock-ins for ``kpi-customers``
+    // and ``kpi-technicians`` are retired below.
     expect(block).toMatch(
-      /testId="kpi-customers"[\s\S]{0,200}navigate\("\/customers"\)|navigate\("\/customers"\)[\s\S]{0,200}testId="kpi-customers"/,
+      /testId="kpi-active-customers"[\s\S]{0,200}navigate\("\/customers\?status=active"\)|navigate\("\/customers\?status=active"\)[\s\S]{0,200}testId="kpi-active-customers"/,
     );
   });
 
-  it("Technicians routes to /team (OpsHub team tab)", () => {
+  it("Inactive Customers routes to /customers?status=inactive (Feb-2026 tile swap)", () => {
     expect(block).toMatch(
-      /testId="kpi-technicians"[\s\S]{0,200}navigate\("\/team"\)|navigate\("\/team"\)[\s\S]{0,200}testId="kpi-technicians"/,
+      /testId="kpi-inactive-customers"[\s\S]{0,200}navigate\("\/customers\?status=inactive"\)|navigate\("\/customers\?status=inactive"\)[\s\S]{0,200}testId="kpi-inactive-customers"/,
     );
+  });
+
+  it("Legacy Customers + Technicians tiles are gone from the KPI grid", () => {
+    expect(block).not.toMatch(/testId="kpi-customers"/);
+    expect(block).not.toMatch(/testId="kpi-technicians"/);
   });
 
   it("JobsList reads the ?status= URL param on mount", () => {

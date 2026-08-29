@@ -15,6 +15,8 @@ import {
   Hourglass,
   Users,
   Wrench,
+  UserCheck,
+  UserX,
   TrendingUp,
   Clock,
   AlertCircle,
@@ -578,20 +580,28 @@ export default function AdminDashboard() {
               testId="kpi-pending"
               tone="amber"
             />
+            {/* Feb-2026 · Active/Inactive Customers tile swap.
+                Bottom row of the KPI grid replaces the legacy
+                Customers total + Technicians tiles with a pair
+                keyed to the recurring-service-contract signal.
+                See ``routers/dashboard.py`` for the
+                ``active_customers_count`` /
+                ``inactive_customers_count`` fields; sum invariant
+                (active + inactive == total_customers) preserved. */}
             <KpiCard
-              icon={Users}
-              label="Customers"
-              value={data.total_customers}
-              onClick={() => navigate("/customers")}
-              testId="kpi-customers"
+              icon={UserCheck}
+              label="Active Customers"
+              value={data.active_customers_count}
+              onClick={() => navigate("/customers?status=active")}
+              testId="kpi-active-customers"
               tone="violet"
             />
             <KpiCard
-              icon={Wrench}
-              label="Technicians"
-              value={data.total_technicians}
-              onClick={() => navigate("/team")}
-              testId="kpi-technicians"
+              icon={UserX}
+              label="Inactive Customers"
+              value={data.inactive_customers_count}
+              onClick={() => navigate("/customers?status=inactive")}
+              testId="kpi-inactive-customers"
               tone="emerald"
             />
           </>
