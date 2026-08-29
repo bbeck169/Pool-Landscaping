@@ -27,6 +27,7 @@ import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTempla
 import { SyncManagerProvider } from "@/src/services/SyncManager";
 // Phase O2 · Offline sync foundation — boot the sync infra.
 import { startListening as startNetBus, wireAutoFlush } from "@/src/services/sync";
+import { wirePhotoAutoUpload } from "@/src/services/sync/photoWorker";
 import { getSyncDb } from "@/src/services/sync/db";
 // Phase 20 · Feb-2026 · Sub-item B — role-aware push tap-through.
 import { resolveNotificationRoute } from "@/src/services/notificationRoutes";
@@ -65,10 +66,12 @@ export default function RootLayout() {
   }, []);
 
   // Phase O2 · Offline sync foundation — init SQLite schema + net bus + auto-flush.
+  // Phase O3 · Wire photo auto-upload on reconnect.
   useEffect(() => {
     getSyncDb().catch((e) => console.warn("[O2] SQLite init failed:", e));
     startNetBus();
     wireAutoFlush();
+    wirePhotoAutoUpload();
   }, []);
 
   // Phase P11c — Mapbox token placeholder guard (__DEV__ only).

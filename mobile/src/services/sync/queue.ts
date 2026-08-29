@@ -18,6 +18,7 @@ import { getSyncDb } from "./db";
 import { clientUuid } from "../ids/clientUuid";
 import { isOnlineNow, on } from "./netBus";
 import { api, ApiNetworkError } from "@/src/api";
+import { recordConflict } from "./conflicts";
 
 // ─── types ─────────────────────────────────────────────────────────
 export type SyncEntry = {
@@ -260,6 +261,22 @@ async function _dispatchOne(
         [errMsg, now, entry.id],
       );
       return "network_error";
+    }
+
+    // Phase O3 · Conflict detection: capture 409 responses.
+    const statusCode = e?.response?.status ?? e?.statusCode ?? 0;
+    if (statusCode === 409) {
+      const serverState = e?.response?.data ?? {};
+      try {
+        await recordConflict({
+          queueEntryId: entry.id,
+          opType: entry.op_type,
+          entityId: entry.entity_id,
+          clientPayload: JSON.parse(entry.payload_json),
+          serverState,
+          statusCode: 409,
+        });
+      } catch { /* non-fatal — don't block queue drain */ }
     }
 
     if (attempt >= entry.max_retries) {

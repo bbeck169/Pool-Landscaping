@@ -11,6 +11,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useAttendance } from "@/src/hooks/useAttendance";
 import { useOnline, queuePhoto, pendingForJob, flushPendingPhotos, getCachedJobs, cacheJob, getCachedJob, queueMutation, flushPendingMutations } from "@/src/offline";
+import { enqueueJobArrive } from "@/src/services/sync/jobArrive";
 import { colors, spacing, money, IMAGES , colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
 // Feb-2026 · Phase 1 offline foundation — cache /properties/{id}
 // on success + fall back to the SQLite cache on network failure so
@@ -243,10 +244,15 @@ export default function JobDetail() {
   const sendOnMyWay = async () => {
     setOnWaySending(true);
     try {
-      await api.post(`/jobs/${id}/on-my-way`);
+      if (online) {
+        await api.post(`/jobs/${id}/on-my-way`);
+      }
+      // Always enqueue job.arrive through the sync queue for offline resilience.
+      await enqueueJobArrive(id as string);
       setOnWaySent(true);
     } catch (e) {
-      // retry allowed
+      // Offline fallback — still enqueue so it fires on reconnect.
+      try { await enqueueJobArrive(id as string); setOnWaySent(true); } catch { /* */ }
     } finally {
       setOnWaySending(false);
     }

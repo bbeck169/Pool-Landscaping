@@ -51,6 +51,8 @@ import WaterBodyManager from "@/src/components/checklist/WaterBodyManager";
 import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/waterBodies";
 import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
 import * as writeQueue from "@/src/services/writeQueue";
+import { submitOffline, cacheServiceReport } from "@/src/services/sync/offlineServiceLog";
+import { capturePhoto, getPhotosForEntity, purgePhotosForEntity, type PendingPhoto as SyncPendingPhoto } from "@/src/services/sync/photoWorker";
 import { useOnline } from "@/src/offline";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
@@ -174,6 +176,8 @@ export default function JobChecklistScreen() {
       setOfflineMode(false);
       // Cache the bootstrap for later offline access.
       await cacheJobBootstrap(String(id), { job: jobResp, report: reportResp });
+      // Phase O3 · Also cache in SQLite for offline service-log.
+      await cacheServiceReport(String(id), reportResp).catch(() => {});
     } catch (e: any) {
       // Phase 40 · Try to fall back to cache before surfacing the error.
       const cached = await getCachedBootstrap(String(id));
@@ -384,16 +388,12 @@ export default function JobChecklistScreen() {
 
               // 2) Submit / close.
               if (!online) {
-                // Offline: queue the submit and inform the tech that the
-                // job will actually close server-side once we reconnect.
-                // The optimistic local UX still navigates back so the
-                // tech isn't stuck on a locked-looking screen.
-                await writeQueue.enqueue({
-                  kind: "submit-service-report",
-                  jobId: String(id),
-                });
+                // Phase O3 — Offline: enqueue service_report.upsert through
+                // the SQLite sync queue (survives force-quit).
+                const current = reportRef.current;
+                await submitOffline(String(id), current || report);
                 Alert.alert(
-                  "Job queued",
+                  "Submitted (pending sync)",
                   "You're offline — the job will close automatically when your device reconnects.",
                   [{ text: "OK", onPress: () => router.replace("/(app)/schedule/calendar") }],
                 );

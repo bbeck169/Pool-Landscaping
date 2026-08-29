@@ -1,5 +1,5 @@
 /**
- * Phase O2 · Sync infrastructure — public barrel export.
+ * Phase O2/O3 · Sync infrastructure — public barrel export.
  */
 
 // Database + schema
@@ -35,3 +35,43 @@ export {
 
 // UUID
 export { clientUuid } from "../ids/clientUuid";
+
+// Phase O3: Offline service log
+export {
+  cacheServiceReport,
+  getCachedServiceReport,
+  markDirty,
+  clearDirty,
+  submitOffline,
+} from "./offlineServiceLog";
+
+// Phase O3: Photo pipeline
+export {
+  capturePhoto,
+  downscaleAndStage,
+  insertPendingPhoto,
+  flushPhotos,
+  retryStalled,
+  retryAllStalled,
+  getPendingPhotos,
+  getStalledPhotos,
+  getPhotosForEntity,
+  purgePhotosForEntity,
+  cleanupUploaded,
+  wirePhotoAutoUpload,
+  subscribePhotos,
+  type PendingPhoto,
+} from "./photoWorker";
+
+// Phase O3: Job arrive
+export { enqueueJobArrive } from "./jobArrive";
+
+// Phase O3: Conflict detection
+export {
+  recordConflict,
+  onConflict,
+  getUnresolvedConflicts,
+  resolveConflict,
+  getConflictCount,
+  type SyncConflict,
+} from "./conflicts";
