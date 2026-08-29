@@ -57,12 +57,14 @@ describe("Priority 2 · Emerald hero tile removed from admin Dashboard", () => {
     expect(heroToneMatches.length).toBe(0);
   });
 
-  it("Pool vs Landscape split chip survives the removal", () => {
-    expect(DASH_SRC).toMatch(/<RevenueSplitChip/);
-    // Must still receive all three revenue bucket props.
-    expect(DASH_SRC).toMatch(/pool=\{data\.pool_revenue\}/);
-    expect(DASH_SRC).toMatch(/landscape=\{data\.landscape_revenue\}/);
-    expect(DASH_SRC).toMatch(/mixed=\{data\.mixed_revenue\}/);
+  it("Pool vs Landscape split chip has been removed by user request (Feb-2026 cleanup)", () => {
+    // User requested removal of the ``Mixed $X.XX (100%)`` full-
+    // width gray bar that this chip rendered when the tenant had
+    // no Pool/Landscape breakdown. Removal is intentional; a
+    // paste-back regression must fail loudly. RevenueByCategoryTile
+    // carries the by-category breakdown at higher fidelity now.
+    expect(DASH_SRC).not.toMatch(/<RevenueSplitChip/);
+    expect(DASH_SRC).not.toMatch(/from ["']@\/components\/dashboard\/RevenueSplitChip["']/);
   });
 
   it("The removal comment references Priority 2 so future greps land it", () => {

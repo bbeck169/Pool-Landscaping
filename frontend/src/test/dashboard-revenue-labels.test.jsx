@@ -96,24 +96,24 @@ describe("IncomeByServiceCategoryTile · relabeled copy", () => {
 
 // ══════════════════════════════════════════════════════════════════════
 // 3 · Admin Dashboard — Feb-2026 Priority 2 removed the "Total Paid
-//      Revenue (lifetime)" emerald hero tile entirely. The RevenueSplitChip
-//      that sits directly below now carries the equivalent breakdown, so
-//      the hero copy is intentionally absent. This test used to lock in
-//      the hero's "(lifetime)" qualifier — it now guards the removal
-//      so a future paste-back regression fails loudly at CI time.
+//      Revenue (lifetime)" emerald hero tile entirely, and the Feb-2026
+//      cleanup ship removed the RevenueSplitChip that sat directly
+//      below (users complained about the "Mixed $X.XX (100%)" gray
+//      bar when their tenant had no Pool/Landscape breakdown).
+//      RevenueByCategoryTile now carries the equivalent breakdown at
+//      higher fidelity.  This test guards the removal so a paste-back
+//      regression fails loudly at CI time.
 // ══════════════════════════════════════════════════════════════════════
 describe("Admin Dashboard · top-card label", () => {
-  it("Dashboard.jsx no longer renders the emerald hero copy", async () => {
-    // Priority 2 removed the ``Total Paid Revenue (lifetime)`` hero.
-    // If it's back, someone regressed the removal — this test fails
-    // BEFORE the emerald gradient ships.
+  it("Dashboard.jsx no longer renders the emerald hero OR the split chip", async () => {
     // eslint-disable-next-line import/no-unresolved
     const src = (
       await import("@/pages/admin/Dashboard.jsx?raw")
     ).default;
     expect(src).not.toContain("Total Paid Revenue (lifetime)");
     expect(src).not.toMatch(/data-testid="dashboard-hero"/);
-    // RevenueSplitChip carries the equivalent breakdown — must survive.
-    expect(src).toMatch(/<RevenueSplitChip/);
+    // RevenueSplitChip removed by user request (Feb-2026 cleanup) —
+    // must NOT come back without an explicit design decision.
+    expect(src).not.toMatch(/<RevenueSplitChip/);
   });
 });

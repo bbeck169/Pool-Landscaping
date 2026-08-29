@@ -28,7 +28,6 @@ import { api } from "@/api";
 import { brandGradientCss, colors, money } from "@/theme";
 import { KPI_TONE_ROTATION, getAccentTone } from "@/utils/serviceLineTheme";
 import LiveWeatherWidget from "@/components/Weather/WeatherWidget";
-import RevenueSplitChip from "@/components/dashboard/RevenueSplitChip";
 import MassMessagingCard from "@/components/mass-messaging/MassMessagingCard";
 import TeamCpoReadinessWidget from "@/components/admin/TeamCpoReadinessWidget";
 import RecommendationsQueueWidget from "@/components/admin/RecommendationsQueueWidget";
@@ -491,20 +490,6 @@ export default function AdminDashboard() {
           chip immediately below carries the same lifetime paid
           revenue plus the mix breakdown, so no data is lost.
           Locked-in-place by ``priority2-emerald-hero-removed.test.jsx``. */}
-
-      {/* Feb 2026 · Batch 2 — Pool vs Landscape revenue split chip.
-          Visualises the mix using the theme's cyan pool + green
-          landscape tokens. Data flows from ``/api/dashboard``
-          which returns ``pool_revenue / landscape_revenue /
-          mixed_revenue`` (all in dollars — additive to
-          ``data.revenue``). */}
-      {data && (
-        <RevenueSplitChip
-          pool={data.pool_revenue}
-          landscape={data.landscape_revenue}
-          mixed={data.mixed_revenue}
-        />
-      )}
 
       {/* Requested jobs banner */}
       {data?.requested_jobs > 0 ? (

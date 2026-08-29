@@ -167,9 +167,12 @@ describe("Fix 3 · Total Paid Revenue hero + KPI tile readability", () => {
   it("emerald hero tile has been removed (Priority 2, Feb-2026)", () => {
     expect(DASH_SRC).not.toMatch(/data-testid="dashboard-hero"/);
     expect(DASH_SRC).not.toMatch(/data-tone="emerald"/);
-    // The pool/landscape split chip must survive the removal —
-    // it carries the equivalent revenue breakdown.
-    expect(DASH_SRC).toMatch(/RevenueSplitChip/);
+    // Feb-2026 cleanup: the pool/landscape split chip was also
+    // removed per user request (the "Mixed $X.XX (100%)" full-
+    // width gray bar was visual noise for tenants with no
+    // Pool/Landscape breakdown).  RevenueByCategoryTile now carries
+    // the by-category breakdown at higher fidelity.
+    expect(DASH_SRC).not.toMatch(/RevenueSplitChip/);
   });
 
   it.each([
