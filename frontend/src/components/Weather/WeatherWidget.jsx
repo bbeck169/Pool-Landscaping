@@ -27,14 +27,35 @@ import useTenantLocation from "@/hooks/useTenantLocation";
 // true (Dashboard.jsx passes this), the widget renders only the
 // current-conditions row plus three toggle buttons (Hourly / 7-Day /
 // Radar). Last-chosen view persists under
-// ``localStorage['dashboard.weatherView']`` so refresh keeps user
-// preference. Non-dashboard callers (tech ``/schedule``) leave the
-// prop off and continue to see every panel by default.
-const LS_VIEW_KEY = "dashboard.weatherView";
+// ``localStorage['weather.view']`` so refresh keeps user preference.
+// Feb-2026 · Weather-bar reconciliation — the Schedule page now
+// passes ``collapsible`` too (matching Dashboard density). The key
+// was renamed from ``dashboard.weatherView`` → ``weather.view`` so
+// both pages share one preference. A one-shot migration in
+// ``_loadViewPref`` reads the legacy key on first load so existing
+// Dashboard users don't reset. Non-collapsible callers (if any land
+// in the future) leave the prop off and continue to see every panel
+// by default.
+const LS_VIEW_KEY = "weather.view";
+const LS_LEGACY_VIEW_KEY = "dashboard.weatherView";
 const VALID_VIEWS = new Set(["collapsed", "hourly", "seven_day", "radar"]);
 function _loadViewPref() {
   try {
-    const v = window.localStorage.getItem(LS_VIEW_KEY);
+    let v = window.localStorage.getItem(LS_VIEW_KEY);
+    // One-shot migration — Feb-2026 · Weather-bar reconciliation.
+    // If the new key is absent but the legacy Dashboard-scoped key
+    // holds a valid value, adopt it and persist under the new name
+    // so subsequent reads short-circuit. Legacy key is left in
+    // place (harmless; a future cleanup migration can strip it).
+    if ((v == null || !VALID_VIEWS.has(v))
+        && window.localStorage.getItem(LS_LEGACY_VIEW_KEY)) {
+      const legacy = window.localStorage.getItem(LS_LEGACY_VIEW_KEY);
+      if (VALID_VIEWS.has(legacy)) {
+        v = legacy;
+        try { window.localStorage.setItem(LS_VIEW_KEY, legacy); }
+        catch { /* noop */ }
+      }
+    }
     return VALID_VIEWS.has(v) ? v : "collapsed";
   } catch { return "collapsed"; }
 }

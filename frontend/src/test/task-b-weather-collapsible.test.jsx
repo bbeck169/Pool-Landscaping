@@ -9,8 +9,11 @@
  *     can be active at a time.
  *   * Clicking the SAME button toggles back to the collapsed
  *     today-only state.
- *   * localStorage['dashboard.weatherView'] is written on toggle
+ *   * localStorage['weather.view'] is written on toggle
  *     and read on mount (default "collapsed" on first-ever load).
+ *     Feb-2026 · Weather-bar reconciliation renamed the key from
+ *     ``weather.view`` → ``weather.view``; migration
+ *     fallback is covered in ``weather-bar-reconciliation.test.jsx``.
  *   * When ``collapsible`` is falsy (or omitted) every row still
  *     renders — /schedule stays unchanged.
  */
@@ -191,27 +194,27 @@ describe("WeatherWidget · collapsible dashboard mode", () => {
     );
   });
 
-  it("persists the chosen view to localStorage['dashboard.weatherView']", async () => {
+  it("persists the chosen view to localStorage['weather.view']", async () => {
     render(<WeatherWidget user={admin} collapsible />);
     await waitFor(() =>
       expect(screen.getByTestId("weather-current-temp")).toBeInTheDocument(),
     );
     fireEvent.click(screen.getByTestId("weather-toggle-radar"));
     await waitFor(() => {
-      expect(window.localStorage.getItem("dashboard.weatherView")).toBe("radar");
+      expect(window.localStorage.getItem("weather.view")).toBe("radar");
     });
     fireEvent.click(screen.getByTestId("weather-toggle-hourly"));
     await waitFor(() => {
-      expect(window.localStorage.getItem("dashboard.weatherView")).toBe("hourly");
+      expect(window.localStorage.getItem("weather.view")).toBe("hourly");
     });
     fireEvent.click(screen.getByTestId("weather-collapse-btn"));
     await waitFor(() => {
-      expect(window.localStorage.getItem("dashboard.weatherView")).toBe("collapsed");
+      expect(window.localStorage.getItem("weather.view")).toBe("collapsed");
     });
   });
 
   it("hydrates the last-chosen view from localStorage on mount", async () => {
-    window.localStorage.setItem("dashboard.weatherView", "seven_day");
+    window.localStorage.setItem("weather.view", "seven_day");
     render(<WeatherWidget user={admin} collapsible />);
     await waitFor(() =>
       expect(screen.getByTestId("weather-5day-forecast")).toBeInTheDocument(),
@@ -222,7 +225,7 @@ describe("WeatherWidget · collapsible dashboard mode", () => {
   });
 
   it("ignores garbage localStorage values and falls back to collapsed", async () => {
-    window.localStorage.setItem("dashboard.weatherView", "totally-not-a-view");
+    window.localStorage.setItem("weather.view", "totally-not-a-view");
     render(<WeatherWidget user={admin} collapsible />);
     await waitFor(() =>
       expect(screen.getByTestId("weather-current-temp")).toBeInTheDocument(),
@@ -262,7 +265,7 @@ describe("WeatherWidget · non-collapsible (default) mode", () => {
     await waitFor(() =>
       expect(screen.getByTestId("weather-current-temp")).toBeInTheDocument(),
     );
-    expect(window.localStorage.getItem("dashboard.weatherView")).toBeNull();
+    expect(window.localStorage.getItem("weather.view")).toBeNull();
   });
 });
 

@@ -785,10 +785,15 @@ export default function CalendarSchedule() {
       style={{ fontFamily: font.family }}
       data-testid="calendar-schedule"
     >
-      {/* Feb-2026 · Tech-only weather header. TechWeatherWidget
-          self-gates on ``user.role === "technician"``, so admins and
-          impersonated views render nothing here. */}
-      <TechWeatherWidget user={user} />
+      {/* Feb-2026 · Weather-bar reconciliation — same shared
+          ``WeatherWidget`` the admin Dashboard mounts. ``collapsible``
+          collapses the widget to the current-conditions row + an
+          expand toolbar (Hourly / 7-Day / Radar), matching the
+          Dashboard's density. The widget's role gate allows
+          technician / admin / super_admin (customers are hidden
+          server-side too); it self-renders ``null`` for any other
+          role. */}
+      <TechWeatherWidget user={user} collapsible />
 
       {/* Feb-2026 · Schedule-UI · 7-day toggle strip.
           The strip drives the shared ``date`` state which also feeds
