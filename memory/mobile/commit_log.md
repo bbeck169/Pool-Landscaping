@@ -825,3 +825,20 @@
 - **Files created**: `src/utils/formatCustomerName.ts`, `src/components/customers/CustomerDeleteModal.tsx`, `src/components/customers/RestoreCustomerButton.tsx`, 5 test files
 - **Files modified**: `app/(app)/index.tsx`, `app/customer/[id].tsx`, `app/(app)/customers.tsx`, + ~22 files for formatCustomerName sweep
 - **Component code changes during test wiring**: ZERO
+
+
+## Iteration — Phase O2: Test & Empirical Proof Pass
+- **Commit**: b176f7cbd89e08bc2c05cf8f7bb3668a3459a343
+- **Date**: 2026-08-29
+- **Changes**:
+  - **Jest test suite** (4 files, 27 tests — ALL GREEN):
+    - `__tests__/client-uuid.test.ts` (3 tests) — RFC-4122 format, 1000-unique, no Math.random
+    - `__tests__/sync-db.test.ts` (3 tests) — Fresh migration v0→v1, idempotent re-run, config round-trip
+    - `__tests__/sync-queue.test.ts` (10 tests) — Enqueue, online dispatch, offline hold, reconnect flush, max-retry shelving, network error resilience, triggerSyncNow, retrySingle, status counts, clearDone
+    - `__tests__/sync-status.test.ts` (11 tests) — Empty counts, online/offline flag, pending/failed counts, last_sync_at config, queue subscribe/unsubscribe, netBus event fire/unsub
+  - **In-memory SQLite mock** fixes: INSERT handler now handles mixed `?` and literal VALUES; UPDATE handler handles mixed `?` and literal SET values + multiline SQL (`[\s\S]` regex fix)
+  - **jest.config.js**: Added `uuid` to `transformIgnorePatterns` exception list (ESM compat)
+  - **Empirical proof script** (`scripts/empirical-proof-o2.cjs`): EP-1 Boot, EP-2 Airplane toggle, EP-3 Force-quit — all pass
+- **Files created**: `__tests__/sync-status.test.ts`, `scripts/empirical-proof-o2.cjs`
+- **Files modified**: `__tests__/sync-queue.test.ts`, `__tests__/sync-db.test.ts` (mocks were already there; fixed INSERT/UPDATE handlers), `jest.config.js` (uuid transform)
+- **Component code changes during test wiring**: ZERO (all fixes confined to test mocks)
