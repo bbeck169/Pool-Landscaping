@@ -9,11 +9,12 @@ import os
 from typing import List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from config import db, logger
 from utils import now_iso, new_id, get_current_user, require_admin
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -25,7 +26,22 @@ class RegisterTokenIn(BaseModel):
 
 
 @router.post("/mobile-tokens")
-async def register_token(body: RegisterTokenIn, user: dict = Depends(get_current_user)):
+async def register_token(body: RegisterTokenIn,
+                          request: Request,
+                          user: dict = Depends(get_current_user),
+                          tenant: dict = Depends(get_current_tenant)):
+    # Phase O4 · Feb-2026 — Idempotency wiring.  Expo re-registers the
+    # push token on every app launch; a mobile queue replay MUST NOT
+    # write a second row.  The endpoint was already app-idempotent
+    # via ``find_one``+upsert but the header-level cache also lets
+    # the client dedupe intent without a DB round-trip.
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_body = body.dict(exclude_unset=False)
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"], "POST /mobile-tokens", idem_body,
+    )
+    if cached is not None:
+        return cached
     # Idempotent upsert keyed by token — one row per device.
     now = now_iso()
     existing = await db.mobile_tokens.find_one({"token": body.token}, {"_id": 0})
@@ -36,7 +52,11 @@ async def register_token(body: RegisterTokenIn, user: dict = Depends(get_current
                       "device_name": body.device_name or existing.get("device_name"),
                       "last_seen": now}}
         )
-        return {"ok": True, "updated": True, "id": existing["id"]}
+        resp = {"ok": True, "updated": True, "id": existing["id"]}
+        if idem_key:
+            await store_response(idem_key, "POST /mobile-tokens",
+                                  tenant["id"], resp, idem_body)
+        return resp
     doc = {
         "id": new_id(),
         "user_id": user["id"],
@@ -47,7 +67,11 @@ async def register_token(body: RegisterTokenIn, user: dict = Depends(get_current
         "last_seen": now,
     }
     await db.mobile_tokens.insert_one(doc)
-    return {"ok": True, "created": True, "id": doc["id"]}
+    resp = {"ok": True, "created": True, "id": doc["id"]}
+    if idem_key:
+        await store_response(idem_key, "POST /mobile-tokens",
+                              tenant["id"], resp, idem_body)
+    return resp
 
 
 @router.delete("/mobile-tokens")

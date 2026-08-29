@@ -337,6 +337,80 @@ async def _authorize_report(job: dict, user: dict) -> str:
 
 
 # ─── GET (bootstrap-or-reload) ─────────────────────────────────────────────
+# ─── POST create (Phase O4 — Client-UUID acceptance) ───────────────────────
+# The mobile app mints a UUID for a fresh service report while
+# offline, then when the offline queue drains it POSTs here to
+# create the row on the server.  The endpoint is idempotent by both
+# ``client_uuid`` (row-level) AND ``X-Idempotency-Key`` (request-
+# level) — hitting it twice with the same body returns the same row.
+class ServiceReportCreateIn(BaseModel):
+    job_id: str
+    # ``client_uuid`` becomes the canonical ``id`` on the persisted
+    # row when provided.  If a report with that id already exists we
+    # return it verbatim (no re-bootstrap, no template redetection).
+    client_uuid: Optional[str] = None
+
+
+@router.post("/service-reports", status_code=201)
+async def create_service_report(body: ServiceReportCreateIn,
+                                     request: Request,
+                                     user: dict = Depends(get_current_user),
+                                     tenant: dict = Depends(get_current_tenant)):
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_body = body.dict(exclude_unset=False)
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"], "POST /service-reports", idem_body,
+    )
+    if cached is not None:
+        return cached
+    job = await db.jobs.find_one(
+        {"id": body.job_id, "tenant_id": tenant["id"]}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    tech_id = await _authorize_report(job, user)
+
+    # Phase O4 — client-UUID lookup MUST short-circuit before the
+    # (tenant, job, tech) uniqueness check so a mobile client that
+    # already synced this row gets its own row back (not a different
+    # tech's report on the same job).
+    if body.client_uuid:
+        existing_by_uuid = await db.service_reports.find_one(
+            {"id": body.client_uuid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if existing_by_uuid:
+            if idem_key:
+                await store_response(idem_key, "POST /service-reports",
+                                      tenant["id"], existing_by_uuid, idem_body)
+            return existing_by_uuid
+
+    # Fall through to (tenant, job, tech) uniqueness — a report may
+    # already exist for this triple even without a client_uuid match
+    # (e.g. the tech opened the report on the web first).
+    existing = await db.service_reports.find_one(
+        {"tenant_id": tenant["id"], "job_id": body.job_id, "tech_id": tech_id},
+        {"_id": 0},
+    )
+    if existing:
+        if idem_key:
+            await store_response(idem_key, "POST /service-reports",
+                                  tenant["id"], existing, idem_body)
+        return existing
+
+    # Fresh bootstrap.  Force the row's ``id`` to the client-minted
+    # UUID when provided so mobile can cross-reference locally
+    # without a server round-trip.
+    fresh = await _bootstrap_report(tenant["id"], job, tech_id)
+    if body.client_uuid:
+        fresh["id"] = body.client_uuid
+        fresh["client_uuid"] = body.client_uuid
+    await db.service_reports.insert_one(fresh)
+    fresh.pop("_id", None)
+    if idem_key:
+        await store_response(idem_key, "POST /service-reports",
+                              tenant["id"], fresh, idem_body)
+    return fresh
+
+
 @router.get("/jobs/{jid}/service-report")
 async def get_service_report(jid: str,
                              user: dict = Depends(get_current_user),
@@ -539,9 +613,24 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
 async def submit_service_report(
     jid: str,
     background_tasks: BackgroundTasks,
+    request: Request,
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
+    # Phase O4 · Feb-2026 — Idempotency wiring.  The submit endpoint
+    # takes no request body but is the heaviest side-effect surface
+    # in the CRM (invoice auto-create, review-request enqueue, drip
+    # emit, chemistry snapshot).  A mobile queue that replays this
+    # after a 30s timeout MUST see the cached response — otherwise
+    # we double-invoice, double-email, and re-snapshot the chemistry.
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_body: Dict[str, Any] = {}
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"],
+        "POST /jobs/{jid}/service-report/submit", idem_body,
+    )
+    if cached is not None:
+        return cached
     # Feb-2026 · P12A — Preventive 520 mitigation.  Cloudflare's
     # 100-second origin timeout was firing on prod (``app.plofv.com``)
     # even though the same handler ran in ~650ms on preview — heavy
@@ -571,6 +660,13 @@ async def submit_service_report(
     if not rep:
         raise HTTPException(404, "No report to submit — GET first")
     if rep.get("submitted_at"):
+        # App-level idempotency already caught this; still cache the
+        # response so the header-level idempotency dedupe path also
+        # returns instantly on a subsequent replay.
+        if idem_key:
+            await store_response(idem_key,
+                                  "POST /jobs/{jid}/service-report/submit",
+                                  tenant["id"], rep, idem_body)
         return rep  # idempotent
     # Feb-2026 · Chemistry required-readings gate.  Pool jobs MUST
     # have all 5 core readings (Free Cl, Total Cl, Alkalinity, pH,
@@ -1185,6 +1281,10 @@ async def submit_service_report(
             f"service_report_submit end job={jid} tenant={tenant['id']} "
             f"elapsed_ms={_sr_elapsed_ms}"
         )
+    if idem_key:
+        await store_response(idem_key,
+                              "POST /jobs/{jid}/service-report/submit",
+                              tenant["id"], out, idem_body)
     return out
 
 

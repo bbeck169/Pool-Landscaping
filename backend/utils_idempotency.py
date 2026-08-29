@@ -2,18 +2,27 @@
 
 When a client sends `X-Idempotency-Key: <uuid>` on a mutating endpoint,
 we cache the first response in `idempotency_keys` and short-circuit
-duplicate replays for 24 hours. Enables offline mobile clients to
-safely retry a queued write without double-billing (e.g. two invoice
-creations on the same submit).
+duplicate replays for 48 hours (Phase O4 — bumped from 24h so a weekend
+tech coming back online after ~40h of accumulated writes still hits the
+cached responses instead of double-triggering side effects).
 
 Only endpoints that opt in (by calling `check_and_reserve` +
 `store_response`) participate — everything else remains fire-and-forget.
+
+Phase O4 · Feb-2026 — Backend Idempotency Sprint hardened this helper:
+  * TTL bumped 24h → 48h (constant below).
+  * ``expires_at`` is now persisted as a real ``datetime`` so the
+    Mongo TTL index (created by
+    ``services.migrations.idempotency_keys_indexes``) can auto-GC
+    expired rows.
+  * Unique compound index on ``(tenant_id, key, endpoint)`` closes
+    the race window in ``store_response``'s upsert.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Tuple
 
 from fastapi import Request
@@ -21,7 +30,10 @@ from fastapi import Request
 from config import db
 from utils import now_iso, new_id
 
-TTL_SECONDS = 24 * 60 * 60  # 24h
+# Phase O4 · Feb-2026 — bumped from 24h to 48h to cover weekend tech
+# offline windows without pushing so far out that body-fingerprint
+# staleness becomes a real risk.
+TTL_SECONDS = 48 * 60 * 60
 
 
 def _fingerprint(body: Any) -> str:
@@ -52,8 +64,20 @@ async def replay_or_reserve(
     )
     if not row:
         return key, None
-    # Expired? Treat as new.
-    if row.get("expires_at") and row["expires_at"] < now_iso():
+    # Expired? Treat as new. Guard both datetime + legacy ISO-string
+    # rows written before the Phase O4 type migration.
+    expires = row.get("expires_at")
+    now = datetime.now(timezone.utc)
+    is_expired = False
+    if isinstance(expires, datetime):
+        # Mongo returns tz-naive datetimes for pre-Motor writes on
+        # some driver versions — coerce to utc for the comparison.
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        is_expired = expires < now
+    elif isinstance(expires, str) and expires:
+        is_expired = expires < now.isoformat()
+    if is_expired:
         await db.idempotency_keys.delete_one({"id": row["id"]})
         return key, None
     # Body must match — different body with same key is a client bug we
@@ -70,9 +94,8 @@ async def store_response(
 ):
     if not key:
         return
-    from datetime import datetime, timezone
-    expires = (datetime.now(timezone.utc)
-                + timedelta(seconds=TTL_SECONDS)).isoformat()
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(seconds=TTL_SECONDS)
     doc = {
         "id": new_id(),
         "tenant_id": tenant_id,
@@ -81,12 +104,23 @@ async def store_response(
         "body_fingerprint": _fingerprint(body),
         "response": response,
         "first_seen_at": now_iso(),
+        # Real datetime for the Mongo TTL index to reap on expiry.
+        # See services/migrations/idempotency_keys_indexes.py.
         "expires_at": expires,
     }
     # Upsert on (tenant_id, key, endpoint) so a rapid double-hit within
-    # the same request doesn't insert duplicates.
-    await db.idempotency_keys.update_one(
-        {"tenant_id": tenant_id, "key": key, "endpoint": endpoint},
-        {"$setOnInsert": doc},
-        upsert=True,
-    )
+    # the same request doesn't insert duplicates. The unique compound
+    # index on this triple (added by the Phase O4 boot migration)
+    # makes this race-safe under concurrent load — an insert loser
+    # gets a DuplicateKey which we swallow silently.
+    try:
+        await db.idempotency_keys.update_one(
+            {"tenant_id": tenant_id, "key": key, "endpoint": endpoint},
+            {"$setOnInsert": doc},
+            upsert=True,
+        )
+    except Exception:                                              # noqa: BLE001
+        # Race loser — the winning writer's row is authoritative.
+        # No-op; body_fingerprint mismatch on the next replay is the
+        # only way this diverges, and that's already handled.
+        pass

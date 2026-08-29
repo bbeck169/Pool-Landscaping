@@ -2545,6 +2545,34 @@ async def startup():
             f"recurring_templates_active_customer_idx migration crashed: {e}",
         )
 
+    # Phase O4 · Feb-2026 — idempotency_keys index hardening. Adds a
+    # unique compound on (tenant_id, key, endpoint) + TTL on
+    # ``expires_at`` so Phase 40's idempotency helper is race-safe
+    # AND self-GCs. Also purges any legacy string-typed ``expires_at``
+    # rows the pre-Phase-O4 helper wrote. Idempotent + sentinel-guarded.
+    try:
+        from services.migrations.idempotency_keys_indexes import (
+            run_idempotency_keys_indexes_migration,
+        )
+        _idem_boot = await run_idempotency_keys_indexes_migration()
+        if _idem_boot.get("status") == "skipped":
+            logger.info(
+                "[idempotency_keys_indexes] sentinel present · skipping",
+            )
+        else:
+            _s = _idem_boot.get("summary") or {}
+            logger.info(
+                "[idempotency_keys_indexes] indexes_created=%s "
+                "already_present=%s legacy_purged=%s errors=%s",
+                _s.get("indexes_created"), _s.get("already_present"),
+                _s.get("legacy_strings_purged"),
+                len(_s.get("errors") or []),
+            )
+    except Exception as e:
+        logger.warning(
+            f"idempotency_keys_indexes migration crashed: {e}",
+        )
+
     # Feb-2026 · P0 fix — Orphan-paid invoice audit. Report-only on
     # boot so operators see the count in logs without silently
     # flipping seed / demo fixtures. Real flips happen through the

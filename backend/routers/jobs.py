@@ -856,9 +856,20 @@ async def jobs_recurrence_preview(body: dict, user: dict = Depends(require_admin
 
 @router.post("/jobs/{jid}/reopen")
 async def reopen_job(jid: str,
+                     request: Request,
                      user: dict = Depends(require_admin),
                      tenant: dict = Depends(get_current_tenant)):
     """Flip a completed job back to 'active' and log an activity entry."""
+    # Phase O4 · Feb-2026 — Idempotency wiring.  An offline mobile
+    # "reopen" queued while flaky can retry with the same
+    # ``X-Idempotency-Key`` and the second call is a no-op replay.
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_body: Dict[str, Any] = {}  # endpoint takes no body
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"], "POST /jobs/{jid}/reopen", idem_body,
+    )
+    if cached is not None:
+        return cached
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
@@ -882,6 +893,9 @@ async def reopen_job(jid: str,
     except Exception:
         pass
     updated = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    if idem_key:
+        await store_response(idem_key, "POST /jobs/{jid}/reopen",
+                              tenant["id"], updated, idem_body)
     return updated
 
 
@@ -2278,6 +2292,25 @@ async def job_arrive(jid: str, body: JobArriveIn,
     A successful start stamps ``timer_start_method="gps_arrival"``
     and writes an audit-log row ``job_timer_auto_start``.
     """
+    # Phase O4 · Feb-2026 — Idempotency wiring.  A weekend tech whose
+    # mobile queue replays a stale /arrive on reconnect must not
+    # re-log the audit row, re-throttle, or re-flip the job status.
+    # Cached response wins the whole path.
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_body = body.dict(exclude_unset=False)
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"], "POST /jobs/{jid}/arrive", idem_body,
+    )
+    if cached is not None:
+        return cached
+
+    async def _sar(_resp: dict) -> dict:
+        """store-and-return helper — persists the cached response so a
+        mobile replay with the same X-Idempotency-Key short-circuits."""
+        if idem_key:
+            await store_response(idem_key, "POST /jobs/{jid}/arrive",
+                                  tenant["id"], _resp, idem_body)
+        return _resp
     from routers.gps_auto_start import (
         DEFAULT_ARRIVAL_RADIUS_M,
         get_arrival_radius_m,
@@ -2339,20 +2372,20 @@ async def job_arrive(jid: str, body: JobArriveIn,
     # P37a Gate 1 — tenant feature flag.
     if not is_gps_auto_start_enabled(tenant):
         await _log("feature_disabled")
-        return {"started": False, "reason": "feature_disabled"}
+        return await _sar({"started": False, "reason": "feature_disabled"})
 
     # P37a Gate 2 — tech consent (dispatcher / admin roles bypass).
     if user.get("role") == "technician":
         if not await has_active_consent(user["id"], tenant["id"]):
             _consent_state_hint = "missing"
             await _log("consent_required", consent_state="missing")
-            return {"started": False, "reason": "consent_required"}
+            return await _sar({"started": False, "reason": "consent_required"})
         _consent_state_hint = "active"
 
     # P37a Gate 3 — per-(user, job) 60s rate limit.
     if not rate_limit_check(user["id"], jid):
         await _log("throttled")
-        return {"started": False, "reason": "throttled"}
+        return await _sar({"started": False, "reason": "throttled"})
 
     # P37a Gate 4 — distance check via haversine (meters).
     site_lat = body.site_lat if body.site_lat is not None else (
@@ -2369,9 +2402,9 @@ async def job_arrive(jid: str, body: JobArriveIn,
         if distance_m > radius_m:
             await _log("out_of_radius", distance_m=distance_m,
                           radius_m=radius_m)
-            return {"started": False, "reason": "out_of_radius",
+            return await _sar({"started": False, "reason": "out_of_radius",
                      "distance_m": round(distance_m, 1),
-                     "radius_m": radius_m}
+                     "radius_m": radius_m})
     # If site coords are missing (geocode gap) we do NOT block — a job
     # without coords participates in manual start only, and this call
     # is treated as "no radius data → skip radius gate". The audit
@@ -2387,11 +2420,11 @@ async def job_arrive(jid: str, body: JobArriveIn,
             await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": site})
         await _log("already_running", distance_m=distance_m,
                       radius_m=radius_m)
-        return {"started": True, "already_running": True, "timer_started_at": job["timer_started_at"]}
+        return await _sar({"started": True, "already_running": True, "timer_started_at": job["timer_started_at"]})
     if job.get("status") == "completed":
         await _log("job_completed", distance_m=distance_m,
                       radius_m=radius_m)
-        return {"started": False, "reason": "job_completed"}
+        return await _sar({"started": False, "reason": "job_completed"})
     started = now_iso()
     upd = {"timer_started_at": started, "timer_start_method": "gps_arrival",
               "arrival_lat": body.lat, "arrival_lng": body.lng, **site}
@@ -2409,10 +2442,10 @@ async def job_arrive(jid: str, body: JobArriveIn,
     # P37a — audit log breadcrumb (P37d — extended to log outcome=started).
     await _log("started", distance_m=distance_m, radius_m=radius_m)
 
-    return {"started": True, "already_running": False,
+    return await _sar({"started": True, "already_running": False,
               "timer_started_at": started,
               "distance_m": round(distance_m, 1) if distance_m is not None else None,
-              "radius_m": radius_m}
+              "radius_m": radius_m})
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -2979,8 +3012,12 @@ async def add_job_photo(jid: str, body: PhotoIn,
     # can't create duplicate images against the same job. Fingerprint the
     # full body (data + label) so a re-key on a different photo is
     # correctly flagged as a body_mismatch.
+    # Phase O4 · Feb-2026 — added ``client_uuid`` to the fingerprint so
+    # the mobile app can mint an id offline; if the row is already on
+    # the job we return the existing job doc without a second upload.
     from utils_idempotency import replay_or_reserve, store_response
-    idem_body = {"data": body.data, "label": body.label or "photo"}
+    idem_body = {"data": body.data, "label": body.label or "photo",
+                  "client_uuid": body.client_uuid}
     idem_key, cached = await replay_or_reserve(
         request, tenant["id"], "POST /jobs/{jid}/photos", idem_body,
     )
@@ -2995,6 +3032,19 @@ async def add_job_photo(jid: str, body: PhotoIn,
         assigned = job.get("technician_id")
         if assigned not in (user.get("id"), user.get("technician_id")):
             raise HTTPException(403, "Not your job")
+    # Phase O4 · Feb-2026 — Client-UUID lookup.  If the mobile app
+    # minted an id and already synced this photo, return the existing
+    # job doc verbatim — no duplicate row, no cap bump.
+    if body.client_uuid:
+        _existing_ids = {p.get("id") for p in (job.get("photos") or [])
+                          if isinstance(p, dict)}
+        if body.client_uuid in _existing_ids:
+            resp_existing = await db.jobs.find_one(
+                {"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+            if idem_key:
+                await store_response(idem_key, "POST /jobs/{jid}/photos",
+                                      tenant["id"], resp_existing, idem_body)
+            return resp_existing
     existing = len(job.get("photos") or [])
     if existing >= 10:
         raise HTTPException(
@@ -3005,7 +3055,11 @@ async def add_job_photo(jid: str, body: PhotoIn,
                 "existing": existing,
             },
         )
-    photo = {"id": new_id(), "data": body.data, "label": body.label or "photo", "created_at": now_iso()}
+    photo = {"id": body.client_uuid or new_id(),
+              "data": body.data, "label": body.label or "photo",
+              "created_at": now_iso()}
+    if body.client_uuid:
+        photo["client_uuid"] = body.client_uuid
     await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$push": {"photos": photo}})
     resp = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if idem_key:
@@ -3029,8 +3083,23 @@ async def delete_job_photo(jid: str, pid: str,
 # ----------------------- Service Issues -----------------------
 @router.post("/jobs/{jid}/issues")
 async def add_service_issue(jid: str, body: ServiceIssueIn,
+                            request: Request,
                             user: dict = Depends(get_current_user),
                             tenant: dict = Depends(get_current_tenant)):
+    # Phase O4 · Feb-2026 — Idempotency wiring + Client-UUID acceptance.
+    # A tech marking a leaking-valve issue offline gets a UUID minted
+    # locally; when the queue drains we check for an existing row with
+    # that id on ``jobs.service_issues[]`` and short-circuit.  The
+    # ``X-Idempotency-Key`` header protects against a duplicate POST
+    # from the same replay attempt (different body → 200 with
+    # body-mismatch marker so the client can surface it).
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_body = body.dict(exclude_unset=False)
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"], "POST /jobs/{jid}/issues", idem_body,
+    )
+    if cached is not None:
+        return cached
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
     if not job:
         raise HTTPException(404, "Job not found")
@@ -3038,17 +3107,40 @@ async def add_service_issue(jid: str, body: ServiceIssueIn,
         raise HTTPException(403, "Not allowed")
     if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
         raise HTTPException(403, "Not your job")
+    # Phase O4 · Feb-2026 — Client-UUID lookup.  If the mobile app
+    # minted an id and already synced this issue, return the existing
+    # job doc verbatim — no duplicate row, no re-notify.
+    if body.client_uuid:
+        _existing_ids = {i.get("id") for i in (job.get("service_issues") or [])
+                          if isinstance(i, dict)}
+        if body.client_uuid in _existing_ids:
+            resp_existing = with_field_report(
+                await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+            )
+            if idem_key:
+                await store_response(idem_key, "POST /jobs/{jid}/issues",
+                                      tenant["id"], resp_existing, idem_body)
+            return resp_existing
     issue = {
-        "id": new_id(), "description": body.description, "cost": body.cost,
+        "id": body.client_uuid or new_id(),
+        "description": body.description, "cost": body.cost,
         "photo": body.photo, "status": "open", "reported_by": user.get("name", "Staff"),
         "created_at": now_iso(), "approved_at": None,
     }
+    # Track the client-minted id (if any) so a subsequent request can
+    # match on it even if some later flow rewrites the ``id`` field.
+    if body.client_uuid:
+        issue["client_uuid"] = body.client_uuid
     await db.jobs.update_one(
         {"id": jid, "tenant_id": tenant["id"]}, {"$push": {"service_issues": issue}}
     )
-    return with_field_report(
+    resp = with_field_report(
         await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     )
+    if idem_key:
+        await store_response(idem_key, "POST /jobs/{jid}/issues",
+                              tenant["id"], resp, idem_body)
+    return resp
 
 
 @router.post("/jobs/{jid}/issues/{iid}/approve")

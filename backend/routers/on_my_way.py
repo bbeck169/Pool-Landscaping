@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 
 from config import db, logger
@@ -175,9 +175,29 @@ def _render_body(customer_first: str, tech_first: str, company: str,
 async def on_my_way(
     job_id: str,
     body: OnMyWayBody,
+    request: Request,
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
+    # Phase O4 · Feb-2026 — Idempotency wiring.  A tech tapping the
+    # "On my way" button while the mobile SMS gate is still loading
+    # can double-fire the request; the queue also replays if the
+    # response was lost.  Cached response wins the whole path so the
+    # once-per-job-per-day guard is only exercised on the FIRST call.
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_body = body.dict(exclude_unset=False)
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"], "POST /jobs/{jid}/on-my-way", idem_body,
+    )
+    if cached is not None:
+        return cached
+
+    async def _sar(_resp: dict) -> dict:
+        if idem_key:
+            await store_response(idem_key, "POST /jobs/{jid}/on-my-way",
+                                  tenant["id"], _resp, idem_body)
+        return _resp
+
     role = (user.get("role") or "").lower()
     if role not in _ALLOWED_ROLES:
         raise HTTPException(403, "role not permitted")
@@ -205,17 +225,17 @@ async def on_my_way(
 
     # Guardrails (200 with reason, not 4xx).
     if cust.get("is_demo") or cust.get("demo"):
-        return {"sent": False, "reason": "customer_blocked"}
+        return await _sar({"sent": False, "reason": "customer_blocked"})
     if cust.get("blocked") or cust.get("is_blocked"):
-        return {"sent": False, "reason": "customer_blocked"}
+        return await _sar({"sent": False, "reason": "customer_blocked"})
     if cust.get("sms_opt_in") is False:
-        return {"sent": False, "reason": "sms_opt_in_false"}
+        return await _sar({"sent": False, "reason": "sms_opt_in_false"})
     phone = (cust.get("phone")
              or (cust.get("mobiles") or [{}])[0].get("number_e164"))
     if not phone:
-        return {"sent": False, "reason": "no_phone"}
+        return await _sar({"sent": False, "reason": "no_phone"})
     if await _already_sent_today(tid, job_id):
-        return {"sent": False, "reason": "already_sent_today"}
+        return await _sar({"sent": False, "reason": "already_sent_today"})
 
     # ETA (best-effort).
     prop = await _lookup_property_and_address(job, cust, tid)
@@ -247,7 +267,7 @@ async def on_my_way(
             "[on_my_way] outbound gate blocked send tenant=%s job=%s user=%s",
             tid, job_id, user.get("id"),
         )
-        return {"sent": False, "reason": "outbound_disabled"}
+        return await _sar({"sent": False, "reason": "outbound_disabled"})
 
     # Backlog #iv · Feb-2026 — Customer-facing deny-list guardrail.
     # Ensures no admin/workforce/tenant-owned phone ever receives a
@@ -264,8 +284,8 @@ async def on_my_way(
     )
     if stripped:
         # The one and only recipient was an admin-owned line — block.
-        return {"sent": False, "reason": "denied_admin_owned_recipient",
-                "stripped": stripped}
+        return await _sar({"sent": False, "reason": "denied_admin_owned_recipient",
+                "stripped": stripped})
     phone = kept[0] if kept else phone
 
     # Real / mocked send.
@@ -278,7 +298,7 @@ async def on_my_way(
             "[on_my_way] send failed tenant=%s job=%s error=%s",
             tid, job_id, result.get("error"),
         )
-        return {"sent": False, "reason": "send_failed"}
+        return await _sar({"sent": False, "reason": "send_failed"})
 
     # Communications row.
     now = now_iso()
@@ -303,8 +323,8 @@ async def on_my_way(
         "[on_my_way] sent tenant=%s job=%s customer=%s comm=%s eta=%s status=%s",
         tid, job_id, cust["id"], comm_id, eta_min, status,
     )
-    return {
+    return await _sar({
         "sent": True,
         "eta_minutes": eta_min,
         "communication_id": comm_id,
-    }
+    })

@@ -42,11 +42,24 @@ OFFLINE_BUNDLE_WINDOW_DAYS = 7
 BUNDLE_MAX_JOBS = 200
 SYNC_RECEIPT_TTL_DAYS = 60
 
+# Phase O4 · Feb-2026 — Offline bundle expansion caps.  Kept small
+# so the mobile SQLite cache stays under 5 MB even for tenants with
+# thousands of active invoices.  Ordering is ``updated_at`` DESC so
+# the freshest data lands first when the cap trims.
+BUNDLE_MAX_INVOICES = 500
+BUNDLE_MAX_QUOTES = 200
+BUNDLE_MAX_PRICEBOOK_ITEMS = 500
+
 # op_types accepted by /mobile/sync — routed via ``_HANDLERS`` below.
+# Phase O4 · Feb-2026 — added job.arrive, invoice.create,
+# quote.create, customer.upsert so mobile can capture full offline
+# work (arrival GPS, on-site invoice/quote, lead capture).
 SUPPORTED_OP_TYPES = {
     "job.update", "job.close", "job.edit", "service_report.upsert",
     "photo.upload", "chemistry.record", "chemical.add",
     "checklist.tick", "note.add",
+    # Phase O4 additions:
+    "job.arrive", "invoice.create", "quote.create", "customer.upsert",
 }
 
 
@@ -279,6 +292,146 @@ async def _handle_photo_upload(op: _SyncOp, tenant_id: str, user_id: str) -> dic
               "note": "photo bytes must be uploaded via /service-reports/{id}/media"}
 
 
+# ═══════════ Phase O4 · Feb-2026 — new op_type handlers ═══════════════
+
+async def _handle_job_arrive(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
+    """Offline replay of a GPS arrival event.  Mirrors the effect of
+    ``POST /jobs/{jid}/arrive`` but skips the gates that only make
+    sense at real-time (consent, radius, throttle) — the online
+    endpoint is the source of truth for those, and this replay path
+    is only ever entered when the tech was already offline (i.e.
+    they've physically arrived; the pings just took a while to
+    reach us).  The handler stamps ``timer_started_at`` +
+    ``timer_start_method="mobile_offline_arrival"`` on the job doc
+    and flips ``pending``/``scheduled`` → ``in_progress`` if needed,
+    mirroring the web endpoint's status transition.  Idempotent: a
+    replay with the same ``client_op_id`` on a row that already has
+    a ``timer_started_at`` is a no-op."""
+    job = await db.jobs.find_one(
+        {"id": op.entity_id, "tenant_id": tenant_id}, {"_id": 0})
+    if not job:
+        raise ValueError("job not found")
+    if job.get("timer_started_at"):
+        # Already running — either the online /arrive beat us to it
+        # or this is a replay of a replay.  Idempotent no-op.
+        return {"server_id": op.entity_id, "server_ts": now_iso(),
+                  "note": "already_running"}
+    if (job.get("status") or "").lower() == "completed":
+        return {"server_id": op.entity_id, "server_ts": now_iso(),
+                  "reason": "job_completed"}
+    payload = op.payload or {}
+    upd = {
+        "timer_started_at": payload.get("arrived_at") or now_iso(),
+        "timer_start_method": "mobile_offline_arrival",
+        "last_synced_at": now_iso(),
+        "client_op_id": op.client_op_id,
+        "updated_at": now_iso(),
+    }
+    if payload.get("lat") is not None and payload.get("lng") is not None:
+        upd["arrival_lat"] = payload["lat"]
+        upd["arrival_lng"] = payload["lng"]
+    if (job.get("status") or "").lower() in ("", "pending", "requested", "scheduled"):
+        upd["pre_arrival_status"] = job.get("status") or "scheduled"
+        upd["status"] = "in_progress"
+    await db.jobs.update_one(
+        {"id": op.entity_id, "tenant_id": tenant_id}, {"$set": upd})
+    return {"server_id": op.entity_id, "server_ts": now_iso(),
+              "timer_started_at": upd["timer_started_at"]}
+
+
+async def _handle_invoice_create(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
+    """Offline replay of an on-site invoice creation.  Routes through
+    the canonical ``insert_invoice`` helper so ``invoice_number``
+    gets assigned atomically (see the P0 fix documented on
+    service_reports.py's auto-invoice path).  Note: this CRM
+    persists invoice rows on ``db.quotes`` (with ``doc_type =
+    "invoice"``) — the ``invoices`` name is an alias for
+    ``doc_type = "invoice"`` filtered reads.  Idempotent by
+    ``op.entity_id`` — a replay on an existing row returns it
+    verbatim instead of double-inserting."""
+    existing = await db.quotes.find_one(
+        {"id": op.entity_id, "tenant_id": tenant_id,
+          "doc_type": "invoice"}, {"_id": 0})
+    if existing:
+        return {"server_id": op.entity_id, "server_ts": now_iso(),
+                  "note": "idempotent replay"}
+    doc = dict(op.payload or {})
+    doc.update({"id": op.entity_id, "tenant_id": tenant_id,
+                 "created_at": doc.get("created_at") or now_iso(),
+                 "updated_at": now_iso(),
+                 "last_synced_at": now_iso(),
+                 "client_op_id": op.client_op_id,
+                 "doc_type": "invoice"})
+    try:
+        # Route through the numbering helper so the persisted row has
+        # a real ``invoice_number`` at insert time (avoids the null-
+        # number regression fixed in the service-report auto-invoice
+        # path).  Falls back to a plain ``db.quotes`` insert if the
+        # numbering service errors — mobile-wins semantics.
+        from services.invoice_numbering import insert_invoice
+        tenant_doc = await db.tenants.find_one(
+            {"id": tenant_id}, {"_id": 0}) or {"id": tenant_id}
+        doc = await insert_invoice(doc, tenant_doc)
+    except Exception as e:                                        # noqa: BLE001
+        logger.warning(
+            "[mobile_sync] invoice.create numbering fallback: %s", e)
+        await db.quotes.insert_one(doc)
+    return {"server_id": op.entity_id, "server_ts": now_iso(),
+              "invoice_number": doc.get("invoice_number")}
+
+
+async def _handle_quote_create(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
+    """Offline replay of an on-site quote creation.  Same idempotency
+    contract as invoice.create — an existing row wins."""
+    existing = await db.quotes.find_one(
+        {"id": op.entity_id, "tenant_id": tenant_id}, {"_id": 0})
+    if existing:
+        return {"server_id": op.entity_id, "server_ts": now_iso(),
+                  "note": "idempotent replay"}
+    doc = dict(op.payload or {})
+    doc.update({"id": op.entity_id, "tenant_id": tenant_id,
+                 "created_at": doc.get("created_at") or now_iso(),
+                 "updated_at": now_iso(),
+                 "last_synced_at": now_iso(),
+                 "client_op_id": op.client_op_id,
+                 "doc_type": doc.get("doc_type") or "quote"})
+    await db.quotes.insert_one(doc)
+    return {"server_id": op.entity_id, "server_ts": now_iso()}
+
+
+async def _handle_customer_upsert(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
+    """Offline lead capture.  Insert-or-update on ``customers`` keyed
+    by ``op.entity_id``.  Downstream customer-merge machinery
+    (routers.customer_merge) picks up duplicates on the next batch
+    run — this handler intentionally does NOT re-run merge logic
+    here so the mobile-wins contract stays cheap.  A conflict log
+    entry captures the pre-mobile snapshot for the audit trail."""
+    existing = await db.customers.find_one(
+        {"id": op.entity_id, "tenant_id": tenant_id}, {"_id": 0})
+    payload = {k: v for k, v in (op.payload or {}).items()
+                if k not in ("id", "tenant_id", "created_at")}
+    if existing:
+        await _log_conflict(op, tenant_id, existing)
+        payload.update({"updated_at": now_iso(),
+                         "last_synced_at": now_iso(),
+                         "client_op_id": op.client_op_id})
+        await db.customers.update_one(
+            {"id": op.entity_id, "tenant_id": tenant_id},
+            {"$set": payload},
+        )
+        return {"server_id": op.entity_id, "server_ts": now_iso(),
+                  "upserted": "updated"}
+    # Fresh insert — mobile-generated id becomes canonical.
+    doc = dict(payload)
+    doc.update({"id": op.entity_id, "tenant_id": tenant_id,
+                 "created_at": now_iso(), "updated_at": now_iso(),
+                 "last_synced_at": now_iso(),
+                 "client_op_id": op.client_op_id})
+    await db.customers.insert_one(doc)
+    return {"server_id": op.entity_id, "server_ts": now_iso(),
+              "upserted": "inserted"}
+
+
 async def _handle_generic_report_field_append(op: _SyncOp, tenant_id: str,
                                                     user_id: str, field: str) -> dict:
     """Common path for chemistry / chemical / checklist / note ops —
@@ -320,6 +473,11 @@ _HANDLERS = {
                                     op, t, u, "checklist_events"),
     "note.add":                lambda op, t, u: _handle_generic_report_field_append(
                                     op, t, u, "notes_log"),
+    # Phase O4 · Feb-2026 — Offline sync additions.
+    "job.arrive":              _handle_job_arrive,
+    "invoice.create":          _handle_invoice_create,
+    "quote.create":            _handle_quote_create,
+    "customer.upsert":         _handle_customer_upsert,
 }
 
 
@@ -388,7 +546,10 @@ async def mobile_sync(body: _SyncBatchIn,
         # Every accepted op that touched an entity is treated as
         # conflict-resolved (mobile wins). We echo the resolution back
         # so mobile can badge the timeline entry.
-        if op.op_type in ("job.update", "job.close", "service_report.upsert"):
+        # Phase O4 · Feb-2026 — added customer.upsert so lead-capture
+        # duplicates also surface in the mobile timeline.
+        if op.op_type in ("job.update", "job.close",
+                           "service_report.upsert", "customer.upsert"):
             conflicts.append({"client_op_id": op.client_op_id,
                                  "resolution": "mobile_wins"})
 
@@ -396,6 +557,19 @@ async def mobile_sync(body: _SyncBatchIn,
 
 
 # ═══════════ GET /api/mobile/offline-bundle ════════════════════════════
+async def _max_updated_at(cursor) -> Optional[str]:
+    """Phase O4 helper — walk a Motor cursor once to find the freshest
+    ``updated_at`` (or ``created_at`` fallback) across a small slice.
+    Returned as an ISO string so the mobile client can compare via
+    plain string ordering.  Returns ``None`` on empty."""
+    latest = ""
+    async for row in cursor:
+        v = row.get("updated_at") or row.get("created_at") or ""
+        if isinstance(v, str) and v > latest:
+            latest = v
+    return latest or None
+
+
 @router.get("/mobile/offline-bundle", operation_id="mobile.offlineBundle")
 async def mobile_offline_bundle(tech_id: str = "me",
                                      user: dict = Depends(get_current_user),
@@ -421,7 +595,7 @@ async def mobile_offline_bundle(tech_id: str = "me",
         {"_id": 0, "id": 1, "customer_id": 1, "title": 1,
           "service_type": 1, "scheduled_at": 1, "scheduled_end": 1,
           "notes": 1, "status": 1, "checklist_template": 1,
-          "address": 1, "customer_name": 1},
+          "address": 1, "customer_name": 1, "updated_at": 1},
     ).sort("scheduled_at", 1).limit(BUNDLE_MAX_JOBS)
     jobs = [j async for j in jobs_cur]
 
@@ -432,11 +606,12 @@ async def mobile_offline_bundle(tech_id: str = "me",
         async for c in db.customers.find(
                 {"id": {"$in": customer_ids}, "tenant_id": tenant_id},
                 {"_id": 0, "id": 1, "name": 1, "phone": 1,
-                  "address": 1, "address_line_1": 1}):
+                  "address": 1, "address_line_1": 1, "updated_at": 1}):
             customers.append({
                 "id": c.get("id"), "name": c.get("name"),
                 "phone": c.get("phone"),
                 "address": c.get("address_line_1") or c.get("address") or "",
+                "updated_at": c.get("updated_at"),
             })
 
     # In-progress service reports for those jobs.
@@ -457,12 +632,99 @@ async def mobile_offline_bundle(tech_id: str = "me",
     async for c in db.chemicals_catalog.find({"tenant_id": tenant_id}, {"_id": 0}):
         chemicals_catalog.append(c)
 
+    # Phase O4 · Feb-2026 — five new collections cached for offline
+    # invoicing / quoting / lead capture. ``updated_at`` DESC so the
+    # freshest rows survive the cap when the tenant is large.
+    #
+    # Note: invoices/quotes/pricebook are tenant-wide (not scoped to
+    # a single tech's route) because a tech on-site might invoice
+    # ANY customer they're servicing that day, and the pricebook is
+    # a catalog. The caps below keep the payload bounded regardless.
+    #
+    # CRM quirk: invoices and quotes both live in ``db.quotes`` —
+    # ``doc_type`` distinguishes ("invoice" vs "quote").  Filter
+    # accordingly (defaulting missing ``doc_type`` to "quote" so
+    # legacy rows written before the discriminator was added still
+    # appear on the quotes tab, matching finances.py's read pattern).
+    invoices: List[Dict[str, Any]] = []
+    async for i in db.quotes.find(
+            {"tenant_id": tenant_id, "doc_type": "invoice"},
+            {"_id": 0}).sort("updated_at", -1).limit(BUNDLE_MAX_INVOICES):
+        invoices.append(i)
+
+    quotes: List[Dict[str, Any]] = []
+    async for q in db.quotes.find(
+            {"tenant_id": tenant_id,
+              "$or": [{"doc_type": "quote"}, {"doc_type": {"$exists": False}}]},
+            {"_id": 0}).sort("updated_at", -1).limit(BUNDLE_MAX_QUOTES):
+        quotes.append(q)
+
+    # Categories — small tables, full copy. Two distinct taxonomies:
+    #   income_categories = P&L taxonomy on invoice line items
+    #   service_categories = job-type taxonomy on the pricebook
+    income_categories: List[Dict[str, Any]] = []
+    async for c in db.income_categories.find(
+            {"tenant_id": tenant_id}, {"_id": 0}):
+        income_categories.append(c)
+
+    service_categories: List[Dict[str, Any]] = []
+    async for c in db.service_categories.find(
+            {"tenant_id": tenant_id}, {"_id": 0}):
+        service_categories.append(c)
+
+    pricebook_items: List[Dict[str, Any]] = []
+    async for p in db.pricebook_items.find(
+            {"tenant_id": tenant_id},
+            {"_id": 0}).sort("updated_at", -1).limit(BUNDLE_MAX_PRICEBOOK_ITEMS):
+        pricebook_items.append(p)
+
+    # ``versions`` — per-collection freshness fingerprint so the
+    # mobile client can decide when to re-fetch the bundle without
+    # comparing every row.  ISO strings compare lexicographically.
+    def _max_iso(rows: List[Dict[str, Any]]) -> Optional[str]:
+        latest = ""
+        for r in rows:
+            v = r.get("updated_at") or r.get("created_at") or ""
+            if isinstance(v, str) and v > latest:
+                latest = v
+        return latest or None
+
+    versions = {
+        "jobs": _max_iso(jobs),
+        "customers": _max_iso(customers),
+        "service_reports_in_progress": _max_iso(reports),
+        "invoices": _max_iso(invoices),
+        "quotes": _max_iso(quotes),
+        "income_categories": _max_iso(income_categories),
+        "service_categories": _max_iso(service_categories),
+        "pricebook_items": _max_iso(pricebook_items),
+    }
+
+    # ``caps`` — mirror of the module-level constants so the mobile
+    # client can render a "showing N of M" hint without hard-coding
+    # the caps in two places.
+    caps = {
+        "jobs": BUNDLE_MAX_JOBS,
+        "invoices": BUNDLE_MAX_INVOICES,
+        "quotes": BUNDLE_MAX_QUOTES,
+        "pricebook_items": BUNDLE_MAX_PRICEBOOK_ITEMS,
+        "window_days": OFFLINE_BUNDLE_WINDOW_DAYS,
+    }
+
     return {
         "jobs": jobs,
         "customers": customers,
         "service_reports_in_progress": reports,
         "chemistry_types": chemistry_types,
         "chemicals_catalog": chemicals_catalog,
+        # Phase O4 additions:
+        "invoices": invoices,
+        "quotes": quotes,
+        "income_categories": income_categories,
+        "service_categories": service_categories,
+        "pricebook_items": pricebook_items,
+        "versions": versions,
+        "caps": caps,
         "offline_bundle_expires_at": horizon.isoformat(),
         "generated_at": now.isoformat(),
         "job_count": len(jobs),

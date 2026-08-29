@@ -251,9 +251,22 @@ class MediaReorderIn(BaseModel):
 async def reorder_service_report_media(
     report_id: str,
     body: MediaReorderIn,
+    request: Request,
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ) -> dict:
+    # Phase O4 · Feb-2026 — Idempotency wiring.  Reorder is idempotent
+    # by definition (same order → same doc) but a mobile drag-drop
+    # that fires twice on network flakiness would still overwrite a
+    # concurrent edit; the header lets the client dedupe by intent.
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_body = body.dict(exclude_unset=False)
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"],
+        "PATCH /service-reports/{report_id}/media/reorder", idem_body,
+    )
+    if cached is not None:
+        return cached
     _forbid_customer(user)
     if _role(user) not in UPLOAD_ROLES:
         raise HTTPException(403, "Not allowed to reorder service media")
@@ -296,7 +309,12 @@ async def reorder_service_report_media(
         {"id": report_id, "tenant_id": tenant["id"]},
         {"_id": 0, "photos": 1, "videos": 1},
     )
-    return {"photos": fresh.get("photos") or [], "videos": fresh.get("videos") or []}
+    resp = {"photos": fresh.get("photos") or [], "videos": fresh.get("videos") or []}
+    if idem_key:
+        await store_response(idem_key,
+                              "PATCH /service-reports/{report_id}/media/reorder",
+                              tenant["id"], resp, idem_body)
+    return resp
 
 
 # ═══════════ Public video streaming (no auth) ═════════════════════════

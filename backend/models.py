@@ -381,12 +381,22 @@ class CustomerProfileUpdate(BaseModel):
 class PhotoIn(BaseModel):
     data: str  # base64 data URI
     label: Optional[str] = "photo"
+    # Phase O4 · Feb-2026 — Client-UUID acceptance. The mobile app
+    # mints a UUID for a photo offline; when the offline queue drains
+    # we look up ``jobs.photos.id == client_uuid`` first and return
+    # the existing job doc if the row is already there.  When absent
+    # we persist ``photo.id = client_uuid`` so mobile can cross-reference
+    # by its own id without a server round-trip.
+    client_uuid: Optional[str] = None
 
 
 class ServiceIssueIn(BaseModel):
     description: str
     cost: Optional[float] = None
     photo: Optional[str] = None  # base64 data URI
+    # Phase O4 · Feb-2026 — Client-UUID acceptance (same semantics as
+    # ``PhotoIn.client_uuid`` above).
+    client_uuid: Optional[str] = None
 
 
 class ServiceRequestIn(BaseModel):
