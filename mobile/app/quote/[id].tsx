@@ -8,6 +8,7 @@ import * as Linking from "expo-linking";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, StatusChip, PrimaryButton } from "@/src/components/ui";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
@@ -27,8 +28,13 @@ export default function QuoteDetail() {
 
   const load = useCallback(async () => {
     try {
-      setQ(await api.get(`/quotes/${id}`));
+      const data = await api.get(`/quotes/${id}`);
+      setQ(data);
+      writeCache(`quote:${id}`, data).catch(() => {});
       if (!company) api.get("/card").then((r) => setCompany(r.company)).catch(() => {});
+    } catch {
+      const cached = await readCache<any>(`quote:${id}`);
+      if (cached) setQ(cached);
     } finally {
       setLoading(false);
     }

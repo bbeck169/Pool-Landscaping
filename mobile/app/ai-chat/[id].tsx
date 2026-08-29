@@ -8,6 +8,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import PersonaAvatar from "@/src/components/personas/PersonaAvatar";
+import { OfflineGate } from "@/src/components/OfflineGate";
 
 type Msg = { id: string; role: "user" | "assistant"; text: string };
 
@@ -63,6 +64,7 @@ export default function AIChat() {
   }, [employeeId, sending]);
 
   return (
+    <OfflineGate testID="ai-chat-offline-gate" message="AI Chat requires an internet connection.">
     <View style={styles.root}>
       <Header
         title={name}
@@ -137,6 +139,7 @@ export default function AIChat() {
         </View>
       </KeyboardAvoidingView>
     </View>
+    </OfflineGate>
   );
 }
 

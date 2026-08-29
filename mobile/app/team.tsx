@@ -24,6 +24,7 @@ import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
@@ -77,9 +78,12 @@ export default function Team() {
   const load = useCallback(async () => {
     try {
       const path = showDeleted ? "/team?include_deleted=true" : "/team";
-      setItems(await api.get(path));
+      const data = await api.get(path);
+      setItems(data);
+      writeCache(`team:${showDeleted ? "deleted" : "active"}`, data).catch(() => {});
     } catch {
-      setItems([]);
+      const cached = await readCache<any[]>(`team:${showDeleted ? "deleted" : "active"}`);
+      setItems(cached ?? []);
     } finally {
       setLoading(false);
       setRefreshing(false);

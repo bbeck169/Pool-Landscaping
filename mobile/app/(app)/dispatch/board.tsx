@@ -22,6 +22,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { Header } from "@/src/components/widgets";
@@ -117,8 +118,23 @@ export default function DispatchBoardMobile() {
       // Phase 38 — hydrate board data for the new sub-panels.
       setBoardPins(Array.isArray((bRes as any)?.pins) ? (bRes as any).pins : []);
       setTechDirectory((bRes as any)?.tech_directory || {});
+      // Phase O5 · Cache dispatch board data for offline.
+      writeCache("dispatch:board", {
+        jobs: arr, techs: Array.from(byKey.values()),
+        settings: sRes, boardPins: (bRes as any)?.pins || [], techDirectory: (bRes as any)?.tech_directory || {},
+      }).catch(() => {});
     } catch (e: any) {
-      setMsg({ text: e.message || "Failed to load", kind: "err" });
+      // Phase O5 · Offline fallback for dispatch board.
+      const cached = await readCache<any>("dispatch:board");
+      if (cached) {
+        setJobs(cached.jobs || []);
+        setTechs(cached.techs || []);
+        setSettings(cached.settings || {});
+        setBoardPins(cached.boardPins || []);
+        setTechDirectory(cached.techDirectory || {});
+      } else {
+        setMsg({ text: e.message || "Failed to load", kind: "err" });
+      }
     } finally { setLoading(false); }
   }, []);
 

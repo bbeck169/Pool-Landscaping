@@ -12,6 +12,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Card, Loading } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
+import { OfflineGate } from "@/src/components/OfflineGate";
 
 type Tile = {
   key: string;
@@ -50,6 +51,7 @@ export default function AeoIndex() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   return (
+    <OfflineGate testID="aeo-offline-gate" message="AEO Suite requires an internet connection.">
     <RoleGate level="admin_plus">
       <View style={styles.container}>
         <Header title="AEO Suite" />
@@ -93,6 +95,7 @@ export default function AeoIndex() {
         </ScrollView>
       </View>
     </RoleGate>
+    </OfflineGate>
   );
 }
 

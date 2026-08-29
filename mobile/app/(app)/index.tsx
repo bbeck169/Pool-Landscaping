@@ -7,6 +7,7 @@ import { useFocusEffect, useRouter, Redirect } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useOfflineQuery } from "@/src/hooks/useOfflineQuery";
 import { colors, spacing, radius, font, fontSize, money, IMAGES } from "@/src/theme";
 import { Loading, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
@@ -21,39 +22,22 @@ import EbitTile from "@/src/components/dashboard/EbitTile";
 export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  // Feb-2026 P0 · fetch-failure guard. Previously the `load` callback
-  // had no `catch`, so a throwing `/dashboard` call (401 after token
-  // expiry, network drop, backend hiccup) would leave `data === null`
-  // AND `loading === false` (via `finally`), and the main render tried
-  // to read `data.revenue` → uncaught null-deref redbox. We now capture
-  // the failure and the guarded render below surfaces an empty state
-  // instead of dereferencing null.
-  const [error, setError] = useState<string | null>(null);
+
+  // Phase O5 · Offline-first dashboard — reads from SQLite cache first,
+  // then fetches fresh data in the background when online.
+  const dashQ = useOfflineQuery("dashboard", () => api.get("/dashboard"));
+  const data = dashQ.data;
+  const loading = dashQ.isLoading;
+  const error = dashQ.error?.message || null;
 
   const load = useCallback(async () => {
     try {
-      setError(null);
-      const d = await api.get("/dashboard");
-      setData(d);
-    } catch (e: any) {
-      // 401 is handled at the api layer (clears token + fires logout
-      // callback registered by AuthProvider). Any other failure just
-      // needs a user-visible message with a pull-to-refresh retry.
-      setError(e?.message || "Dashboard unavailable — pull down to retry.");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    dashQ.refetch();
+    setTimeout(() => setRefreshing(false), 500);
   }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
-  );
 
   // Technicians don't have a Dashboard tab — send them to their Today's Schedule.
   if (user?.role === "technician") return <Redirect href="/(app)/today" />;
@@ -85,7 +69,7 @@ export default function Dashboard() {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => { setRefreshing(true); load(); }}
+              onRefresh={onRefresh}
             />
           }
         >

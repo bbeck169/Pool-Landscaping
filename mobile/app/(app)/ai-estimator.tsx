@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
 import { Header } from "@/src/components/widgets";
+import { OfflineGate } from "@/src/components/OfflineGate";
 import { colors, fontSize, radius, spacing } from "@/src/theme";
 import { api } from "@/src/api";
 
@@ -51,6 +52,7 @@ export default function AiEstimator() {
   };
 
   return (
+    <OfflineGate testID="ai-estimator-offline-gate" message="AI Estimator requires an internet connection to generate estimates.">
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Header title="AI Estimator" />
       <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: insets.bottom + 40 }}>
@@ -139,6 +141,7 @@ export default function AiEstimator() {
         )}
       </ScrollView>
     </View>
+    </OfflineGate>
   );
 }
 

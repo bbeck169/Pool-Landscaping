@@ -5,6 +5,7 @@ import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
@@ -83,9 +84,12 @@ export default function PriceBook() {
 
   const load = useCallback(async () => {
     try {
-      setItems(await api.get("/items"));
+      const data = await api.get("/items");
+      setItems(data);
+      writeCache("pricebook:items", data).catch(() => {});
     } catch {
-      setItems([]);
+      const cached = await readCache<any[]>("pricebook:items");
+      setItems(cached ?? []);
     } finally {
       setLoading(false);
       setRefreshing(false);

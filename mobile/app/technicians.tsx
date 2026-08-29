@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
@@ -17,7 +18,12 @@ export default function Technicians() {
 
   const load = useCallback(async () => {
     try {
-      setItems(await api.get("/technicians"));
+      const data = await api.get("/technicians");
+      setItems(data);
+      writeCache("technicians", data).catch(() => {});
+    } catch {
+      const cached = await readCache<any[]>("technicians");
+      if (cached) setItems(cached);
     } finally {
       setLoading(false);
       setRefreshing(false);

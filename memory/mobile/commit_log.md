@@ -842,3 +842,38 @@
 - **Files created**: `__tests__/sync-status.test.ts`, `scripts/empirical-proof-o2.cjs`
 - **Files modified**: `__tests__/sync-queue.test.ts`, `__tests__/sync-db.test.ts` (mocks were already there; fixed INSERT/UPDATE handlers), `jest.config.js` (uuid transform)
 - **Component code changes during test wiring**: ZERO (all fixes confined to test mocks)
+
+
+## Iteration — Phase O3: Mobile Hardening — Service Log Offline + Photo Pipeline
+- **Commit**: f0b12e73c4be59ba7726a8c7bc1577c4d13a0ed5
+- **Date**: 2026-08-29
+- **Changes**:
+  - **Offline service-log plumbing** (`offlineServiceLog.ts`, 95 lines):
+    - `cacheServiceReport()` / `getCachedServiceReport()` — SQLite round-trip
+    - `markDirty()` / `clearDirty()` — local-edit flags
+    - `submitOffline()` — enqueues `service_report.upsert` with full payload into sync_queue
+    - Checklist screen submit now uses `submitOffline()` when offline → "Submitted (pending sync)"
+  - **Photo pipeline** (`photoWorker.ts`, 324 lines):
+    - `downscaleAndStage()` — expo-image-manipulator 2048px JPEG 0.85 → documentDirectory staging
+    - `insertPendingPhoto()` / `capturePhoto()` — SQLite photos_pending table
+    - `flushPhotos()` — upload worker with base64 encoding + `POST /jobs/{jid}/photos` + X-Idempotency-Key
+    - 3-failure stalling, `retryStalled()` / `retryAllStalled()`
+    - `purgePhotosForEntity()` — orphan cleanup when parent entity deleted
+    - `cleanupUploaded()` — delete local files after server confirmation
+    - `wirePhotoAutoUpload()` — auto-flush on network:online event
+  - **job.arrive** (`jobArrive.ts`, 24 lines):
+    - `enqueueJobArrive()` — queues `job.arrive` op through sync_queue
+    - Job detail On My Way button now routes through sync queue (offline-safe)
+  - **Conflict detection starter** (`conflicts.ts`, 144 lines):
+    - `recordConflict()` — persists 409 responses in `sync_conflicts` SQLite table
+    - `onConflict()` — event subscription for UI (O6 will render diff banner)
+    - `getUnresolvedConflicts()` / `resolveConflict()` / `getConflictCount()`
+    - Queue dispatch (`queue.ts`) now captures 409 → records conflict
+  - **Barrel re-export** (`index.ts`) updated with all O3 modules
+  - **App boot** (`_layout.tsx`) now calls `wirePhotoAutoUpload()`
+  - **Package additions**: `expo-image-manipulator@57.0.14`, `expo-image-loader@57.0.1`
+  - **Jest: 4 suites, 25 tests — ALL GREEN**
+  - **Empirical proof: 5/5 PASS** (queue drain, 2 ops done, 3 photos uploaded, 0 pending, dirty cleared)
+- **Files created**: offlineServiceLog.ts, photoWorker.ts, conflicts.ts, jobArrive.ts, 4 test files, empirical proof
+- **Files modified**: index.ts, queue.ts, _layout.tsx, [id].tsx, checklist.tsx, jest.config.js
+- **Component code changes**: queue.ts (conflict detection in catch block), [id].tsx (arrive → sync queue), checklist.tsx (submitOffline), _layout.tsx (wirePhotoAutoUpload)

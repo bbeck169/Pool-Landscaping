@@ -5,6 +5,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState, StatusChip } from "@/src/components/ui";
 import { Header, FilterRow, IconButton, NotificationBell } from "@/src/components/widgets";
@@ -28,7 +29,12 @@ export default function Quotes() {
   const load = useCallback(async (f: string) => {
     try {
       const q = f === "all" ? "" : `?doc_type=${f}`;
-      setItems(await api.get(`/quotes${q}`));
+      const data = await api.get(`/quotes${q}`);
+      setItems(data);
+      writeCache(`quotes:${f}`, data).catch(() => {});
+    } catch {
+      const cached = await readCache<any[]>(`quotes:${f}`);
+      if (cached) setItems(cached);
     } finally {
       setLoading(false);
       setRefreshing(false);

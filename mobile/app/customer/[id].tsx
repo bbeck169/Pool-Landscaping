@@ -6,6 +6,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, JobCard } from "@/src/components/widgets";
@@ -71,6 +72,11 @@ export default function CustomerDetail() {
         .then((rows) => setProperties(rows || []))
         .catch(() => setProperties([]));
       loadCredits();
+      writeCache(`customer:${id}`, data).catch(() => {});
+    } catch {
+      // Phase O5 · Offline fallback for customer detail.
+      const cached = await readCache<any>(`customer:${id}`);
+      if (cached) { setC(cached); setLoginEmail(cached.email || ""); }
     } finally {
       setLoading(false);
     }

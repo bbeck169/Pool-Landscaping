@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize, money, statusMeta } from "@/src/theme";
 import { Loading, EmptyState, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header, FilterRow } from "@/src/components/widgets";
@@ -37,9 +38,12 @@ export default function Invoices() {
 
   const load = useCallback(async () => {
     try {
-      setData(await api.get("/invoices/overview"));
+      const d = await api.get("/invoices/overview");
+      setData(d);
+      writeCache("invoices:overview", d).catch(() => {});
     } catch {
-      setData({ summary: null, invoices: [] });
+      const cached = await readCache<any>("invoices:overview");
+      setData(cached ?? { summary: null, invoices: [] });
     } finally {
       setLoading(false);
       setRefreshing(false);

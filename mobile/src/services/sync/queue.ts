@@ -19,6 +19,7 @@ import { clientUuid } from "../ids/clientUuid";
 import { isOnlineNow, on } from "./netBus";
 import { api, ApiNetworkError } from "@/src/api";
 import { recordConflict } from "./conflicts";
+import { invalidateForEntry } from "../cacheInvalidation";
 
 // ─── types ─────────────────────────────────────────────────────────
 export type SyncEntry = {
@@ -248,6 +249,8 @@ async function _dispatchOne(
       `UPDATE sync_queue SET status = 'done', updated_at = ? WHERE id = ?`,
       [now, entry.id],
     );
+    // Phase O5 · Invalidate read caches affected by this write.
+    invalidateForEntry(entry).catch(() => {});
     return "done";
   } catch (e: any) {
     const attempt = entry.attempt_count + 1;

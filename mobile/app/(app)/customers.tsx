@@ -5,6 +5,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
@@ -51,8 +52,6 @@ export default function Customers() {
       qp.set("page_size", String(_PAGE_SIZE));
       if (showDeleted && canManageDeleted) qp.set("include_deleted", "true");
       const res: any = await api.get(`/customers?${qp.toString()}`);
-      // P35 envelope: {items, total, page, page_size, total_pages}.
-      // Defensive: legacy bare-array fallback for pre-P35 backends.
       const rows = Array.isArray(res) ? res : (res?.items || []);
       const tp = Number.isFinite(res?.total_pages)
         ? res.total_pages
@@ -60,6 +59,16 @@ export default function Customers() {
       setTotalPages(tp);
       setPage(targetPage);
       setItems((prev) => targetPage <= 1 ? rows : [...prev, ...rows]);
+      // Phase O5 · Cache first page for offline access.
+      if (targetPage <= 1 && rows.length) {
+        writeCache("customers:page1", rows).catch(() => {});
+      }
+    } catch {
+      // Phase O5 · Offline fallback: read from SQLite cache.
+      if (targetPage <= 1) {
+        const cached = await readCache<any[]>("customers:page1");
+        if (cached) { setItems(cached); setTotalPages(1); setPage(1); }
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);

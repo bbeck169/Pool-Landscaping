@@ -12,6 +12,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import { writeCache, readCache } from "@/src/services/readCache";
 // Feb-2026 · Chemistry required-readings gate — mirror of backend
 // helper (see ``backend/services/chemistry_gate.py``).
 import { missingCoreReadings } from "@/utils/chemistryGate";
@@ -36,8 +37,14 @@ export default function ServiceReportScreen() {
   const load = useCallback(async () => {
     if (!id) return;
     setBusy(true);
-    try { setReport(await api.get(`/jobs/${id}/service-report`)); }
-    catch (e: any) { Alert.alert("Load failed", e?.message || ""); }
+    try {
+      const data = await api.get(`/jobs/${id}/service-report`);
+      setReport(data);
+      writeCache(`service-report:${id}`, data).catch(() => {});
+    } catch {
+      const cached = await readCache<any>(`service-report:${id}`);
+      if (cached) setReport(cached);
+    }
     finally { setBusy(false); }
   }, [id]);
   useEffect(() => { load(); }, [load]);

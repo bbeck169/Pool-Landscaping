@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
@@ -41,8 +42,11 @@ export default function Notifications() {
     try {
       const data = await api.get("/notifications");
       setItems(data);
-      // Mark all as read once viewed
+      writeCache("notifications", data).catch(() => {});
       if (data.some((n: any) => !n.read)) await api.post("/notifications/read-all");
+    } catch {
+      const cached = await readCache<any[]>("notifications");
+      if (cached) setItems(cached);
     } finally {
       setLoading(false);
       setRefreshing(false);
