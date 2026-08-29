@@ -13,6 +13,7 @@ import { Briefcase, RefreshCw, X as XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { formatCustomerName } from "@/utils/formatCustomerName";
 import {
   useBulkSelect,
   BulkSelectAll,
@@ -256,8 +257,9 @@ export default function JobsList() {
                 </td>
                 <td className="px-3 py-3 hidden md:table-cell"
                     style={{ color: colors.onSurfaceSecondary }}
-                    onClick={() => navigate(`/jobs/${r.id}`)}>
-                  {r.customer_name || "—"}
+                    onClick={() => navigate(`/jobs/${r.id}`)}
+                    data-testid={`job-row-customer-${r.id}`}>
+                  {formatCustomerName(r)}
                 </td>
                 <td className="px-3 py-3 hidden lg:table-cell text-xs"
                     style={{ color: colors.muted }}

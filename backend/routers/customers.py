@@ -311,15 +311,21 @@ async def list_customers(
         raise HTTPException(403, "Not allowed")
     # Feb-2026 · P25 — soft-delete read-filter. Mirror the P4/P4.5 job
     # list pattern: default filters out ``deleted_at`` (both null and
-    # missing key); ``?include_deleted=true`` is super_admin-only and
-    # surfaces the soft-deleted rows for restore tooling. P11b
-    # anonymized customers also carry ``deleted_at`` so they're hidden
-    # too. Non-super_admin passing ``include_deleted=true`` is rejected
-    # rather than silently ignored, so the UI catches accidental use.
+    # missing key); ``?include_deleted=true`` is admin-tier only (admin
+    # / super_admin / owner — widened from super_admin-only by the
+    # Customer Delete UX overhaul so the admin restore path can list
+    # soft-deleted rows). P11b anonymized customers also carry
+    # ``deleted_at`` so they're hidden too. Lower roles passing
+    # ``include_deleted=true`` are rejected rather than silently
+    # ignored, so the UI catches accidental use.
     q: dict = {"tenant_id": tenant["id"]}
-    is_super = (user.get("role") == "super_admin")
-    if include_deleted and not is_super:
-        raise HTTPException(403, "Only super_admin can include soft-deleted customers")
+    role_lc = (user.get("role") or "").lower()
+    is_admin_tier = role_lc in ("admin", "super_admin", "owner")
+    if include_deleted and not is_admin_tier:
+        raise HTTPException(
+            403,
+            "Only admin, super_admin, or owner can include soft-deleted customers",
+        )
     if not include_deleted:
         from utils import not_deleted_filter as _nd_cust
         q.update(_nd_cust())
@@ -630,8 +636,29 @@ async def customers_bulk(body: CustomerBulkAction,
         return {"ok": True, "updated": 0}
     q = {"id": {"$in": body.ids}, "tenant_id": tenant["id"]}
     if body.action == "delete":
+        # Feb-2026 · Customer Delete UX overhaul — the legacy
+        # ``POST /customers/bulk`` action=delete path is a HARD
+        # ``delete_many`` with NO audit trail and NO locked-check.
+        # Frontends have already migrated to the soft-delete
+        # ``POST /customers/bulk-delete`` endpoint in ``bulk_crm.py``
+        # (audit-logged, locked-checked). This path stays working
+        # for one release so any lingering caller doesn't 404, but
+        # emits a structured WARN so ops can trace and cutover, and
+        # advertises the retirement date in the response.
+        logger.warning(
+            "customers.bulk_delete.deprecated actor=%s email=%s "
+            "called=%d deprecated_until=2026-05-01 "
+            "use_instead=POST /customers/bulk-delete",
+            user.get("id"), user.get("email"), len(body.ids),
+        )
         res = await db.customers.delete_many(q)
-        return {"ok": True, "deleted": res.deleted_count}
+        return {
+            "ok": True,
+            "deleted": res.deleted_count,
+            "deprecated": True,
+            "deprecated_until": "2026-05-01",
+            "use_instead": "POST /customers/bulk-delete (soft-delete + audit)",
+        }
     if body.action in ("add_tag", "remove_tag"):
         if not body.tag:
             raise HTTPException(400, "tag is required")
@@ -922,7 +949,7 @@ async def restore_customer(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Feb-2026 · P26 — Super_admin restore surface for soft-deleted
+    """Feb-2026 · P26 — Admin-tier restore surface for soft-deleted
     customers (companion to the P25 read-filter). Clears ``deleted_at``
     and — if the row was P11b-anonymized — ``anonymized_at`` as well.
 
@@ -933,14 +960,16 @@ async def restore_customer(
     the PII fields (name/email/phone/address) were already scrubbed
     and will NOT come back — P11b anonymization is one-way.
 
-    Auth: super_admin only. Every other role → 403 role_not_permitted.
+    Auth: admin / super_admin / owner (Feb-2026 · Customer Delete UX
+    overhaul widened from super_admin-only). Every other role → 403
+    role_not_permitted.
     """
     role = (user.get("role") or "").lower()
-    if role != "super_admin":
+    if role not in ("admin", "super_admin", "owner"):
         raise HTTPException(
             status_code=403,
             detail={"detail": "role_not_permitted",
-                      "message": "Only super_admin can restore a customer."},
+                      "message": "Only admin, super_admin, or owner can restore a customer."},
         )
     doc = await db.customers.find_one(
         {"id": cid, "tenant_id": tenant["id"]},
@@ -1472,11 +1501,220 @@ async def patch_customer_activation(cid: str, body: dict,
 
 
 @router.delete("/customers/{cid}")
-async def delete_customer(cid: str,
-                          user: dict = Depends(require_admin),
-                          tenant: dict = Depends(get_current_tenant)):
+async def delete_customer(
+    cid: str,
+    request: Request,
+    mode: str = Query(
+        "soft",
+        description=(
+            "Feb-2026 · Customer Delete UX overhaul — ``soft`` (default) "
+            "stamps ``deleted_at`` (recoverable via "
+            "``PATCH /customers/{cid}/restore``); ``hard`` removes the "
+            "customer row from ``db.customers`` and writes a rich "
+            "pre-delete snapshot to ``db.deletion_audit`` + a "
+            "``customer.hard_delete`` row to ``db.audit_logs``. Hard-"
+            "delete never cascades — jobs/invoices/service reports/"
+            "recurring templates keep a dangling ``customer_id`` and "
+            "reads render 'Unknown Customer' gracefully. Hard-delete "
+            "is blocked with 409 if the customer has any unpaid "
+            "invoice (soft is not blocked — soft is recoverable)."
+        ),
+    ),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Delete a customer. Defaults to ``soft`` for safety — any legacy
+    caller that doesn't pass ``?mode=`` gets the safe path.
+
+    Response shape::
+
+        soft: { ok: true, mode: "soft", customer_id, deleted_at,
+                already_deleted? }
+        hard: { ok: true, mode: "hard", customer_id, deleted_at }
+        409 : { detail: "customer_has_unpaid_invoices",
+                invoice_ids: [...], invoice_count: N }
+    """
+    mode = (mode or "soft").lower()
+    if mode not in ("soft", "hard"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "detail": "invalid_mode",
+                "message": "mode must be 'soft' or 'hard'",
+                "received": mode,
+            },
+        )
+
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "Customer not found")
+
+    now = now_iso()
+
+    if mode == "soft":
+        # Idempotent — already soft-deleted returns 200 so the UI can
+        # safely retry a Soft-Delete click. Matches the P26 restore
+        # endpoint's idempotent contract.
+        if doc.get("deleted_at"):
+            return {
+                "ok": True, "mode": "soft", "customer_id": cid,
+                "already_deleted": True,
+                "deleted_at": doc.get("deleted_at"),
+            }
+        await db.customers.update_one(
+            {"id": cid, "tenant_id": tenant["id"]},
+            {"$set": {"deleted_at": now,
+                      "deleted_by_user_id": user.get("id")}},
+        )
+        # Symmetric audit — single-row soft-delete writes the same
+        # ``customer.soft_delete`` event that ``bulk_crm.py`` writes
+        # for the bulk path, so downstream forensic tooling can't
+        # tell single vs bulk apart.
+        try:
+            await db.audit_logs.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "event": "customer.soft_delete",
+                "customer_id": cid,
+                "actor_id": user.get("id"),
+                "actor_email": user.get("email"),
+                "actor_role": (user.get("role") or "").lower(),
+                "ip": _p26_client_ip(request),
+                "user_agent": (request.headers.get("user-agent") or "")[:400],
+                "deleted_at": now,
+                "created_at": now,
+            })
+        except Exception:                                          # noqa: BLE001
+            logger.exception(
+                "[customer.delete] soft-delete audit insert failed for %s", cid,
+            )
+        logger.info(
+            "[customer.delete] soft actor=%s cid=%s",
+            user.get("email"), cid,
+        )
+        return {
+            "ok": True, "mode": "soft", "customer_id": cid,
+            "deleted_at": now,
+        }
+
+    # ── mode == "hard" ────────────────────────────────────────────────
+    # Locked-check: any unpaid invoice blocks the hard delete. Soft-
+    # delete is NOT blocked (soft is recoverable, so no risk of
+    # losing the invoice → customer link if the operator later
+    # restores). Match the bulk-soft-delete pipeline query shape so
+    # the two locked-checks stay semantically identical.
+    unpaid_cursor = db.quotes.find(
+        {"tenant_id": tenant["id"],
+         "customer_id": cid,
+         "doc_type": "invoice",
+         "payment_status": {"$ne": "paid"},
+         "$or": [{"deleted_at": None},
+                 {"deleted_at": {"$exists": False}}]},
+        {"_id": 0, "id": 1, "invoice_number": 1, "total": 1,
+         "payment_status": 1, "title": 1},
+    )
+    unpaid = await unpaid_cursor.to_list(200)
+    if unpaid:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": "customer_has_unpaid_invoices",
+                "message": (
+                    f"Customer has {len(unpaid)} unpaid invoice(s) — "
+                    "resolve or soft-delete first."
+                ),
+                "invoice_count": len(unpaid),
+                "invoice_ids": [i["id"] for i in unpaid],
+                # First 20 invoice summaries help the UI render a
+                # "resolve these first" toast without a follow-up
+                # fetch. Capped so a customer with 5000 unpaid
+                # invoices doesn't OOM the response body.
+                "invoices": [
+                    {"id": i["id"],
+                     "invoice_number": i.get("invoice_number"),
+                     "title": i.get("title"),
+                     "total": i.get("total"),
+                     "payment_status": i.get("payment_status")}
+                    for i in unpaid[:20]
+                ],
+            },
+        )
+
+    # Pre-delete snapshot for the deletion_audit collection.
+    # Excludes ``password_hash`` and ``password_reset_token`` — the
+    # collection is super_admin-gated but scrubbing sensitive fields
+    # is still the right posture (defence in depth).
+    snapshot = {
+        k: v for k, v in doc.items()
+        if k not in ("password_hash", "password_reset_token", "_id")
+    }
+
+    # Rich forensic audit — deletion_audit collection (super_admin-
+    # readable via GET /admin/audit/deletions).
+    try:
+        from routers.deletion_audit import write_deletion_audit_entry
+        await write_deletion_audit_entry(
+            tenant_id=tenant["id"],
+            resource_type="customer",
+            resource_id=cid,
+            user=user,
+            snapshot=snapshot,
+            cascade_deleted_ids=[],  # NEVER cascade — spec.
+            deletion_reason=None,
+        )
+    except Exception:                                              # noqa: BLE001
+        logger.exception(
+            "[customer.delete] deletion_audit insert failed for %s", cid,
+        )
+
+    # Symmetric ``customer.hard_delete`` event in audit_logs so the
+    # legacy audit consumers see a per-row row too.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "event": "customer.hard_delete",
+            "customer_id": cid,
+            "actor_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "actor_role": (user.get("role") or "").lower(),
+            "ip": _p26_client_ip(request),
+            "user_agent": (request.headers.get("user-agent") or "")[:400],
+            # Denormalised name/email so a quick ``audit_logs`` scan
+            # doesn't require a cross-collection lookup into
+            # deletion_audit for the operator-visible summary.
+            "customer_snapshot_name": doc.get("name") or "",
+            "customer_snapshot_email": doc.get("email") or "",
+            "deleted_at": now,
+            "created_at": now,
+        })
+    except Exception:                                              # noqa: BLE001
+        logger.exception(
+            "[customer.delete] hard-delete audit_logs insert failed for %s",
+            cid,
+        )
+
+    # Finally — the actual destructive op. Customer row ONLY.
+    # No cascade to jobs / invoices / service_reports /
+    # recurring_job_templates / customer_equipment_photos /
+    # customer_communications_log / customer_tasks / csat_surveys /
+    # customer_reviews / leads / churn_signals /
+    # marketing_review_requests. Orphan child rows keep their
+    # snapshot ``customer_name`` — frontend renders "Unknown
+    # Customer" via ``formatCustomerName()`` if the snapshot is
+    # missing.
     await db.customers.delete_one({"id": cid, "tenant_id": tenant["id"]})
-    return {"ok": True}
+
+    logger.info(
+        "[customer.delete] hard actor=%s cid=%s name=%r",
+        user.get("email"), cid, doc.get("name"),
+    )
+    return {
+        "ok": True, "mode": "hard", "customer_id": cid,
+        "deleted_at": now,
+    }
 
 
 # ─── Feb-2026 Customer Detail Additions ──────────────────────────────

@@ -311,7 +311,13 @@ async def maintenance_settings(customer_id: str, body: MaintSettingsIn, admin: d
         upd["maintenance_intervals.salt_cell_interval_days"] = int(body.salt_cell_interval_days)
     if upd:
         await db.customers.update_one({"id": customer_id}, {"$set": upd})
-    return await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    # Feb-2026 · Customer Delete UX overhaul — belt-and-suspenders
+    # orphan guard: if the customer row got hard-deleted between the
+    # existence check above and this re-read (concurrent admin
+    # session), return the pre-update snapshot rather than ``null``
+    # so the client never has to null-check the response body.
+    fresh = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    return fresh or cust
 
 
 @router.post("/jobs/{jid}/maintenance-log")

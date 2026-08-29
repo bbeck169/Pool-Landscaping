@@ -78,7 +78,26 @@ async def accrue_chem_invoice(job: dict):
             return
         billing_month, pretty = _fmt_service_date(job.get("scheduled_date"))
         new_items = _chem_line_items(job, pretty)
-        cust = await db.customers.find_one({"id": cid}, {"_id": 0})
+        cust = await db.customers.find_one({"id": cid}, {"_id": 0}) or {}
+        # Feb-2026 · Customer Delete UX overhaul — orphan guard.
+        # If the customer row has been hard-deleted between the job
+        # completing and this accrual running, refuse to mint a
+        # fresh invoice for a non-existent customer. Existing draft
+        # invoices for the (now-deleted) customer are left in place
+        # for the accountant to reconcile — we don't cascade-delete
+        # them either.
+        if not cust and not (await db.quotes.find_one(
+            {"doc_type": "invoice", "auto_chem": True,
+             "customer_id": cid, "billing_month": billing_month,
+             "status": "draft"},
+            {"_id": 0, "id": 1},
+        )):
+            logger.warning(
+                "accrue_chem_invoice skipped for cid=%s — customer not found "
+                "(possibly hard-deleted; orphan-safe short-circuit).",
+                cid,
+            )
+            return
         cust_name = cust.get("name", "") if cust else ""
         inv = await db.quotes.find_one(
             {"doc_type": "invoice", "auto_chem": True, "customer_id": cid, "billing_month": billing_month, "status": "draft"},

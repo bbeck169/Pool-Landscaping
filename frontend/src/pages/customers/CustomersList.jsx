@@ -70,19 +70,37 @@ export default function CustomersList() {
     effectiveRole === "admin" || effectiveRole === "super_admin";
   const isAdminOrManager =
     isAdmin || role === "manager" || effectiveRole === "manager";
-  // Feb-2026 · P26 — super_admin-only escape hatch to browse
-  // soft-deleted customers and Restore them.  Gated to super_admin
-  // to match the P25 backend contract (403 for lower roles).
+  // Feb-2026 · P26 — admin-tier (admin + super_admin + owner)
+  // escape hatch to browse soft-deleted customers and Restore
+  // them.  Widened from super_admin-only by the Customer Delete
+  // UX overhaul (Feb-2026) — the backend P25 / P26 gates were
+  // widened symmetrically. ``isSuperAdmin`` is still exported for
+  // the anonymized-warning affordance in the RestoreCustomerButton
+  // modal (P11b) but the chip + inline Restore button are open to
+  // every admin-tier role.
   const isSuperAdmin =
     role === "super_admin" || effectiveRole === "super_admin";
+  const canManageDeleted =
+    isAdmin ||
+    role === "owner" ||
+    effectiveRole === "owner";
   const [includeDeleted, setIncludeDeleted] = useState(false);
 
   // Phase 56.2 — active | inactive tabs. `all` retained as a legacy escape
   // hatch (used to be the default) — accessible via `?tab=all` for admins
   // who need to see everything in one list.
+  //
+  // Feb-2026 · Customer Delete UX overhaul — the Dashboard KPI
+  // tile-swap (Active / Inactive Customers) navigates here with
+  // ``?status=active`` / ``?status=inactive``. We accept ``?status``
+  // as an alias for ``?tab`` so the tile deep-link lands on the
+  // right cohort. ``?tab`` still wins if both are present (existing
+  // bookmarks / manual URL edits keep their meaning).
   const initialTab = cohortParam === "inactive" ? "inactive"
                     : cohortParam === "active" ? "active"
-                    : (searchParams.get("tab") || "active");
+                    : (searchParams.get("tab")
+                       || searchParams.get("status")
+                       || "active");
   const [tab, setTab] = useState(initialTab);
   const [counts, setCounts] = useState({ active: null, inactive: null });
 
@@ -260,8 +278,9 @@ export default function CustomersList() {
     // key per selected value so backend gets a proper list.
     if (city && city.trim()) params.set("city", city.trim());
     for (const t of selectedTags) params.append("tags", t);
-    // Feb-2026 · P26 — super_admin escape hatch to see soft-deleted rows.
-    if (includeDeleted && isSuperAdmin) params.set("include_deleted", "true");
+    // Feb-2026 · P26 — admin-tier escape hatch (widened by the
+    // Customer Delete UX overhaul) to see soft-deleted rows.
+    if (includeDeleted && canManageDeleted) params.set("include_deleted", "true");
     // Feb 2026 · Customer Merge Phase 2 — surface merged rows when
     // "Show merged" is on. Backend default is false, so a merged
     // customer normally disappears from the list post-merge.
@@ -948,8 +967,10 @@ export default function CustomersList() {
           />
           No phone number
         </button>
-        {/* Feb-2026 · P26 — super_admin-only "Show deleted" toggle. */}
-        {isSuperAdmin && (
+        {/* Feb-2026 · P26 — admin-tier "Show deleted" toggle
+             (widened from super_admin by the Customer Delete UX
+             overhaul; backend gates are widened symmetrically). */}
+        {canManageDeleted && (
           <button
             onClick={() => setIncludeDeleted((v) => !v)}
             data-testid="customers-filter-include-deleted"
@@ -959,7 +980,7 @@ export default function CustomersList() {
               color: includeDeleted ? "#991B1B" : colors.onSurfaceSecondary,
               border: `1px solid ${includeDeleted ? "#FCA5A5" : colors.border}`,
             }}
-            title="Super_admin: include soft-deleted customers in the list"
+            title="Admin: include soft-deleted customers in the list"
           >
             <span
               className="inline-block w-2 h-2 rounded-full"
@@ -1205,8 +1226,10 @@ export default function CustomersList() {
                       >
                         {c.name}
                       </span>
-                      {/* Feb-2026 · P26 — Restore pill for super_admin. */}
-                      {c.deleted_at && isSuperAdmin ? (
+                      {/* Feb-2026 · P26 — Restore pill for admin-tier
+                           (widened from super_admin by the Customer
+                           Delete UX overhaul). */}
+                      {c.deleted_at && canManageDeleted ? (
                         <RestoreCustomerButton
                           customer={c}
                           onRestored={(res) => {

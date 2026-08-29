@@ -124,6 +124,13 @@ async function request(path, options = {}, timeoutMs = 30000) {
     }
     const err = new Error(msg);
     err.status = res.status;
+    // Feb-2026 · Customer Delete UX overhaul — attach the parsed
+    // response body so callers can surface rich failure payloads
+    // (e.g. the 409 ``customer_has_unpaid_invoices`` shape carries
+    // ``invoice_ids`` + ``invoice_count`` in ``data.detail``).
+    // ``err.data`` mirrors axios' ``err.response?.data`` shape so
+    // consumers can migrate later without churn.
+    err.data = data;
     throw err;
   }
   return data;

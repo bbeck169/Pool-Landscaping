@@ -56,7 +56,7 @@ COLLECTION = "deletion_audit"
 async def write_deletion_audit_entry(
     *,
     tenant_id: str,
-    resource_type: str,               # "invoice" | "payment"
+    resource_type: str,               # "invoice" | "payment" | "customer"
     resource_id: str,
     user: Dict[str, Any],
     snapshot: Dict[str, Any],
@@ -68,9 +68,20 @@ async def write_deletion_audit_entry(
     on a write error — logs and returns an empty string on failure.
 
     Snapshot is truncated to a sane cap (strips ``_id`` if present).
+
+    Feb-2026 · Customer Delete UX overhaul — ``"customer"`` accepted
+    as a resource_type. Hard-delete of a customer row writes the
+    full pre-delete snapshot (minus ``password_hash`` and
+    ``password_reset_token`` — scrubbed by the caller) so forensic
+    reconstruction is possible even though the row is gone from
+    ``db.customers``. ``cascade_deleted_ids`` stays ``[]`` for
+    customer because hard-delete never cascades — kept for schema
+    parity with the invoice/payment shape.
     """
-    if resource_type not in ("invoice", "payment"):
-        raise ValueError(f"resource_type must be invoice|payment, got {resource_type!r}")
+    if resource_type not in ("invoice", "payment", "customer"):
+        raise ValueError(
+            f"resource_type must be invoice|payment|customer, got {resource_type!r}"
+        )
     doc = {
         "id": new_id(),
         "tenant_id": tenant_id,

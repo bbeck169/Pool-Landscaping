@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Trash2, MapPin, Clock, User, FileDown, Mail, RotateCw, Play, Check, AlertTriangle, Camera, X as XIcon, Plus } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import { colors, money } from "@/theme";
+import { formatCustomerName } from "@/utils/formatCustomerName";
 import { Button, Skeleton, StatusPill, Chip, Modal, TextInput, Toast } from "@/components/ui-kit";
 import { useAuth } from "@/auth";
 import { useAttendance } from "@/hooks/useAttendance";
@@ -198,8 +199,9 @@ export default function JobDetail() {
               <span
                 onClick={() => customer && navigate(`/customers/${customer.id}`)}
                 className="font-semibold cursor-pointer hover:underline"
+                data-testid="job-detail-customer-name"
               >
-                {job.customer_name}
+                {formatCustomerName(job)}
               </span>
               <span className="mx-1.5">·</span>
               <MapPin size={12} className="inline" /> {job.address || "—"}

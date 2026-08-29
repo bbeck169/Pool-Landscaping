@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, Search, FileText } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
+import { formatCustomerName } from "@/utils/formatCustomerName";
 import { PageHeader, Button, Skeleton, StatusPill, EmptyState } from "@/components/ui-kit";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 
@@ -135,7 +136,7 @@ export default function QuotesList() {
                   data-testid={`quote-row-${r.id}`}
                 >
                   <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }}>{r.title}</td>
-                  <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>{r.customer_name}</td>
+                  <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} data-testid={`quote-row-customer-${r.id}`}>{formatCustomerName(r)}</td>
                   <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }}>{money(r.total)}</td>
                   <td className="px-3 py-3 text-right"><StatusPill status={r.decision || r.status} /></td>
                 </tr>

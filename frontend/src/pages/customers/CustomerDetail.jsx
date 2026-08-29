@@ -114,7 +114,7 @@ function PortalInviteQuickAction({ customer, onToast }) {
 }
 import CardOnFileControl from "@/components/customers/CardOnFileControl";
 import CardOnFileWarningBanner from "@/components/customers/CardOnFileWarningBanner";
-import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
+import CustomerDeleteModal from "@/components/customers/CustomerDeleteModal";
 import CustomerReviewsTab from "@/components/customers/CustomerReviewsTab";
 import AdminCardCapturePanel from "@/components/customers/AdminCardCapturePanel";
 import ResponsiveTabs from "@/components/ui/responsive-tabs";
@@ -174,6 +174,9 @@ export default function CustomerDetail() {
   const [tab, setTab] = useState("overview");
   const [toast, setToast] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Feb-2026 · Customer Delete UX overhaul — which mode is currently
+  // in flight from the modal. null = idle, "soft" | "hard" = busy.
+  const [deleteBusyMode, setDeleteBusyMode] = useState(null);
   const [loginModal, setLoginModal] = useState(false);
   const [vipModal, setVipModal] = useState(false);
   const [sendModal, setSendModal] = useState(null); // { channel, to }
@@ -223,13 +226,48 @@ export default function CustomerDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const doDelete = async () => {
+  const doDelete = async (mode) => {
+    // Feb-2026 · Customer Delete UX overhaul — mode-aware delete.
+    // Backend defaults to "soft" if no ?mode is passed, but we
+    // always pass the mode explicitly for observability + so the
+    // audit-log ``event`` is unambiguous.
+    if (deleteBusyMode) return;                    // guard double-click
+    setDeleteBusyMode(mode);
     try {
-      await api.del(`/customers/${id}`);
-      setToast({ tone: "success", message: "Customer deleted" });
+      const res = await api.del(`/customers/${id}?mode=${mode}`);
+      const verb = mode === "hard" ? "permanently deleted" : "soft-deleted";
+      setToast({
+        tone: "success",
+        message: res?.already_deleted
+          ? "Customer was already soft-deleted"
+          : `Customer ${verb}`,
+      });
+      setConfirmDelete(false);
       setTimeout(() => navigate("/customers"), 500);
     } catch (e) {
-      setToast({ tone: "error", message: e.message });
+      // 409 unpaid-invoice branch — surface a helpful description
+      // with the count and (optionally) the first few invoice ids
+      // so the toast is directly actionable.
+      const detail = e?.data?.detail;
+      const isDict = detail && typeof detail === "object";
+      if (
+        mode === "hard" &&
+        e?.status === 409 &&
+        isDict &&
+        detail.detail === "customer_has_unpaid_invoices"
+      ) {
+        const n = detail.invoice_count ?? "some";
+        setToast({
+          tone: "error",
+          message:
+            `Cannot hard-delete: ${n} unpaid invoice(s). ` +
+            "Resolve them or use Soft Delete instead.",
+        });
+      } else {
+        setToast({ tone: "error", message: e.message });
+      }
+    } finally {
+      setDeleteBusyMode(null);
     }
   };
 
@@ -820,15 +858,18 @@ export default function CustomerDetail() {
         <span />
       </Modal>
 
-      <ConfirmDeleteDialog
+      {/* Feb-2026 · Customer Delete UX overhaul — dedicated 3-button
+          modal (Cancel / Soft Delete / Hard Delete). Replaces the
+          previous ``ConfirmDeleteDialog`` which silently HARD-
+          deleted while its copy claimed to "archive" — a real
+          safety hole this modal closes. */}
+      <CustomerDeleteModal
         open={confirmDelete}
-        title={`Delete ${customer?.name || "customer"}?`}
-        body={`This will archive ${customer?.name || "this customer"} and remove them from active lists. Their jobs, quotes and history remain, but references become read-only.`}
-        requireTypeConfirm={true}
-        typeConfirmString="DELETE"
-        confirmLabel="Delete permanently"
+        customer={customer}
+        busyMode={deleteBusyMode}
         onCancel={() => setConfirmDelete(false)}
-        onConfirm={doDelete}
+        onSoftDelete={() => doDelete("soft")}
+        onHardDelete={() => doDelete("hard")}
       />
 
       {/* Feb-2026 Customer Detail Additions — VIP note modal (double-click star). */}
