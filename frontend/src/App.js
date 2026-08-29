@@ -296,6 +296,7 @@ import Forecast from "@/pages/reports/Forecast";
 import CustomerRetentionReport from "@/pages/reports/CustomerRetentionReport";
 import GpsAutoStartAudit from "@/pages/reports/GpsAutoStartAudit";
 import IncomeByCategory from "@/pages/reports/IncomeByCategoryPage";
+import UncategorizedItemsReport from "@/pages/reports/UncategorizedItemsReport";
 import {
   RevenueByCity, RevenueByCrew, RevenueByCustomer, GrossSales, InvoicedItems,
 } from "@/pages/reports/RevenueSlices";
@@ -1021,6 +1022,9 @@ export default function App() {
             <Route path="reports/revenue-by-customer" element={<AdminOnly><RevenueByCustomer /></AdminOnly>} />
             <Route path="reports/gross-sales" element={<AdminOnly><GrossSales /></AdminOnly>} />
             <Route path="reports/invoiced-items" element={<AdminOnly><InvoicedItems /></AdminOnly>} />
+            {/* Feb-2026 · Dashboard "Review →" click-through — was
+                a 404, now a real page. */}
+            <Route path="reports/uncategorized-items" element={<AdminOnly><UncategorizedItemsReport /></AdminOnly>} />
             <Route path="income-by-category" element={<AdminOnly><IncomeByCategory /></AdminOnly>} />
             <Route path="income-categories" element={<AdminOnly><IncomeCategoriesCrud /></AdminOnly>} />
             <Route path="payments" element={<AdminOnly><PaymentsLedger /></AdminOnly>} />

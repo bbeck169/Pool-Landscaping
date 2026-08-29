@@ -545,8 +545,13 @@ export default function AdminDashboard() {
           >
             <span className="text-lg" aria-hidden="true">⚠️</span>
             <span className="flex-1 text-sm font-semibold">
-              {uncategorized.count} line item
-              {uncategorized.count === 1 ? "" : "s"} are uncategorized.
+              {/* Feb-2026 · Grammar hotfix — backlog (ii) fixed the
+                  noun pluralization but the verb ``are`` was left
+                  hardcoded; count=1 rendered "1 line item are
+                  uncategorized." Now: is/are pivots on the count
+                  too. */}
+              {uncategorized.count} line item{uncategorized.count === 1 ? "" : "s"}{" "}
+              {uncategorized.count === 1 ? "is" : "are"} uncategorized.
             </span>
             <span className="text-xs font-bold underline">Review →</span>
           </button>

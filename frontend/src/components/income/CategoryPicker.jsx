@@ -1,39 +1,56 @@
 /**
  * CategoryPicker · Feb-2026
  *
- * Compact dropdown for choosing an income category. Renders the
- * category color swatch inline. When ``required`` is set + no value,
- * shows a red border and inline "Category required" hint on focusout.
+ * Compact dropdown for choosing an income OR service category.
+ * Renders the category color swatch inline. When ``required`` is
+ * set + no value, shows a red border and inline "Category required"
+ * hint on focusout.
+ *
+ * Feb-2026 · UncategorizedItemsReport scope-addendum — accepts a
+ * ``source`` prop selecting which taxonomy to fetch:
+ *   * ``"income"``  (default, backwards-compat) — ``/income-categories``
+ *   * ``"service"`` — ``/service-categories``
+ * Both feed a per-source module-level cache so N pickers on one
+ * page share exactly one HTTP round-trip.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { ChevronDown, AlertCircle } from "lucide-react";
 import { colors } from "@/theme";
 import { api } from "@/api";
 
-/** Module-level cache so N line-item pickers don't each fire the same
- *  /income-categories GET on mount. */
-let _cachedPromise = null;
-function loadCategories() {
-  if (!_cachedPromise) {
-    _cachedPromise = api.get("/income-categories")
+/** Per-source cache so N pickers don't each fire the same GET on mount. */
+const _cachedPromises = { income: null, service: null };
+function loadCategories(source = "income") {
+  if (!_cachedPromises[source]) {
+    const url = source === "service"
+      ? "/service-categories"
+      : "/income-categories";
+    _cachedPromises[source] = api.get(url)
       .then((r) => (r?.items || []))
       .catch(() => []);
   }
-  return _cachedPromise;
+  return _cachedPromises[source];
 }
-export function invalidateCategoryCache() { _cachedPromise = null; }
+export function invalidateCategoryCache(source) {
+  if (source == null) {
+    _cachedPromises.income = null;
+    _cachedPromises.service = null;
+  } else {
+    _cachedPromises[source] = null;
+  }
+}
 
 export default function CategoryPicker({
   value, onChange, required = false, disabled = false,
   testid = "category-picker", placeholder = "Choose category",
-  size = "sm",
+  size = "sm", source = "income",
 }) {
   const [cats, setCats] = useState([]);
   const [open, setOpen] = useState(false);
   const [touched, setTouched] = useState(false);
   const [filter, setFilter] = useState("");
 
-  useEffect(() => { loadCategories().then(setCats); }, []);
+  useEffect(() => { loadCategories(source).then(setCats); }, [source]);
 
   const active = useMemo(() => cats.filter((c) => !c.is_archived), [cats]);
   const chosen = useMemo(
