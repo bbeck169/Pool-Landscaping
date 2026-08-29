@@ -844,6 +844,26 @@
 - **Component code changes during test wiring**: ZERO (all fixes confined to test mocks)
 
 
+## Iteration — Phase O5: Full Read Parity
+- **Commit**: 20208daab917b282df60df222d2f9097421c0720
+- **Date**: 2026-08-29
+- **Changes**:
+  - **readCache.ts** (92 lines): Generic SQLite `read_cache` table — writeCache, readCache, invalidateCache, invalidateCachePrefix, clearAllCache
+  - **useOfflineQuery.ts** (111 lines): Shared hook — read cache → render → fetch online → write cache → re-render. No infinite loops. isStale/isOffline/error tracking.
+  - **cacheInvalidation.ts** (98 lines): Maps 10 op_types to cache prefixes. `invalidateForEntry()` called from queue dispatch success path.
+  - **OfflineGate.tsx** (63 lines): Category-D screen wrapper — shows "No connection" state.
+  - **12 screens wired with cache read/write fallback** (Category B):
+    - Dashboard, Customers list, Customer detail, Quotes list, Quote detail, Invoices list, Price Book, Notifications, Technicians, Team, Service Report detail, Dispatch Board
+  - **3 screens wrapped with OfflineGate** (Category D):
+    - AI Estimator, AEO Suite, AI Chat
+  - **Queue dispatch** now calls `invalidateForEntry()` on success
+  - **Jest: 1 suite, 12 tests — ALL GREEN** (readCache round-trip, invalidation, prefix delete, clearAll, cache invalidation mapping, offline/online contract)
+  - **Empirical proof: 15/15 PASS** (10 category-B + 5 category-D)
+- **Files created**: readCache.ts, useOfflineQuery.ts, cacheInvalidation.ts, OfflineGate.tsx, o5-offline-query.test.ts, empirical-proof-o5.cjs
+- **Files modified**: 12 screen files + queue.ts
+- **Total tests across O2+O3+O5**: 64 all green
+
+
 ## Iteration — Phase O3: Mobile Hardening — Service Log Offline + Photo Pipeline
 - **Commit**: f0b12e73c4be59ba7726a8c7bc1577c4d13a0ed5
 - **Date**: 2026-08-29

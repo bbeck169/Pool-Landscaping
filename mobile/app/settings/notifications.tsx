@@ -23,6 +23,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
@@ -127,15 +128,24 @@ export default function NotificationPrefsScreen() {
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.put("/settings/notifications",
-        { channels, quiet_hours: quiet });
-      const nextCh = r?.channels || channels;
-      const nextQh = r?.quiet_hours || quiet;
-      setChannels(nextCh);
-      setInitial(clone(nextCh));
-      setQuiet(nextQh);
-      setInitialQuiet(clone(nextQh));
-      showToast(true, "Preferences saved");
+      const payload = { channels, quiet_hours: quiet };
+      const { data: r, queued } = await offlineWrite({
+        op_type: "notification_settings.update",
+        entity_id: "self",
+        endpoint: "/settings/notifications",
+        method: "PUT",
+        payload,
+        onlineFn: () => api.put("/settings/notifications", payload),
+      });
+      if (r) {
+        const nextCh = r?.channels || channels;
+        const nextQh = r?.quiet_hours || quiet;
+        setChannels(nextCh);
+        setInitial(clone(nextCh));
+        setQuiet(nextQh);
+        setInitialQuiet(clone(nextQh));
+      }
+      showToast(true, queued ? "Saved offline — will sync later" : "Preferences saved");
     } catch (e: any) {
       showToast(false, e?.message || "Save failed");
     } finally {

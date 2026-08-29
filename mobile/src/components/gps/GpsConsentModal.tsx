@@ -14,6 +14,7 @@ import {
 } from "react-native";
 
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { invalidateConsentCache } from "@/src/background/jobGeofence";
 
 
@@ -41,8 +42,14 @@ export default function GpsConsentModal({ onDismiss, autoOpen }: GpsConsentModal
   const grant = useCallback(async () => {
     setBusy(true);
     try {
-      await api.post("/tech-gps-consent", {
-        granted: true, method: "mobile_onboarding_modal",
+      const payload = { granted: true, method: "mobile_onboarding_modal" };
+      await offlineWrite({
+        op_type: "gps_consent",
+        entity_id: "self",
+        endpoint: "/tech-gps-consent",
+        method: "POST",
+        payload,
+        onlineFn: () => api.post("/tech-gps-consent", payload),
       });
       invalidateConsentCache();
       setVisible(false);

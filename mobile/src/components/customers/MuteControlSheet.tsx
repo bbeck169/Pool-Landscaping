@@ -17,6 +17,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Sheet } from "@/src/components/ui";
 
@@ -87,14 +88,21 @@ export default function MuteControlSheet({
         }
         if (reasonText) body = { muted_reason: reasonText.slice(0, 500) };
       }
-      const res = await api.patch(`/customers/${cid}/${path}`, body);
+      const res = await offlineWrite({
+        op_type: "customer.mute",
+        entity_id: cid,
+        endpoint: `/customers/${cid}/${path}`,
+        method: "PATCH",
+        payload: body,
+        onlineFn: () => api.patch(`/customers/${cid}/${path}`, body),
+      });
       setOpen(false);
       setSelectedReasonId("");
       setCustomReason("");
       // Feb-2026 · P32 — drop the cached reason list on mute so the
       // next open re-fetches any server-side auto-persisted reason.
       if (!isMuted) setReasons([]);
-      onChange?.(res);
+      onChange?.(res.data);
     } catch (err: any) {
       onError?.(err?.message || `Failed to ${isMuted ? "unmute" : "mute"} customer`);
     } finally {

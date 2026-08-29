@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors } from "@/src/theme";
 import { api } from "@/src/api";
 import { cacheJob, queueMutation } from "@/src/offline";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { Sheet } from "@/src/components/ui";
 import { styles, READING_RANGES, chemOptions, readingOptions } from "./styles";
 import ChecklistSection from "./ChecklistSection";
@@ -65,26 +66,31 @@ export default function FieldReport({ job, online, onSaved, readOnly }: { job: a
   }, [job.id, job.service_type, job.job_type]);
 
   const save = async (partial: any) => {
-    if (!online) {
-      // Offline: apply optimistically, cache, and queue for sync on reconnect.
-      const merged = { ...job, ...partial };
-      onSaved(merged);
-      cacheJob(merged);
-      await queueMutation(`/jobs/${job.id}/field-report`, partial);
-      return;
-    }
     setSaving(true);
     try {
-      const updated = await api.put(`/jobs/${job.id}/field-report`, partial);
-      onSaved(updated);
-      cacheJob(updated);
+      const { data: updated, queued } = await offlineWrite({
+        op_type: "field_report.update",
+        entity_id: job.id,
+        endpoint: `/jobs/${job.id}/field-report`,
+        method: "PUT",
+        payload: partial,
+        onlineFn: () => api.put(`/jobs/${job.id}/field-report`, partial),
+      });
+      if (updated) {
+        onSaved(updated);
+        cacheJob(updated);
+      } else if (queued) {
+        const merged = { ...job, ...partial };
+        onSaved(merged);
+        cacheJob(merged);
+      }
     } catch {
       const merged = { ...job, ...partial };
       onSaved(merged);
       cacheJob(merged);
-      await queueMutation(`/jobs/${job.id}/field-report`, partial);
+    } finally {
+      setSaving(false);
     }
-    finally { setSaving(false); }
   };
 
   const toggleItem = (idx: number) => {

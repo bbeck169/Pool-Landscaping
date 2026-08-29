@@ -29,6 +29,8 @@ import { SyncManagerProvider } from "@/src/services/SyncManager";
 import { startListening as startNetBus, wireAutoFlush } from "@/src/services/sync";
 import { wirePhotoAutoUpload } from "@/src/services/sync/photoWorker";
 import { getSyncDb } from "@/src/services/sync/db";
+// Phase O6 · Sync UI components.
+import { OfflineBanner, ConflictSheet, SyncToast, StoragePressureBanner } from "@/src/components/sync";
 // Phase 20 · Feb-2026 · Sub-item B — role-aware push tap-through.
 import { resolveNotificationRoute } from "@/src/services/notificationRoutes";
 
@@ -101,10 +103,14 @@ export default function RootLayout() {
             <AuthProvider>
               <SyncManagerProvider>
                 <StripeConfigProvider>
+                  <OfflineBanner />
+                  <StoragePressureBanner />
                   <ImpersonationBanner />
                   <PushTapRouter />
                   <Stack screenOptions={{ headerShown: false }} />
                   <ConfirmModalHost />
+                  <ConflictSheet />
+                  <SyncToast />
                 </StripeConfigProvider>
               </SyncManagerProvider>
             </AuthProvider>

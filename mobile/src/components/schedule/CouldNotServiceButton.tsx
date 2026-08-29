@@ -24,6 +24,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, font, fontSize, radius, spacing } from "@/src/theme";
 import { FileUpload } from "@/src/components/files/FileUpload";
 
@@ -89,11 +90,24 @@ export function CouldNotServiceModal({ visible, jobId, onClose, onDone }: ModalP
     if (!canSubmit) return;
     setSubmitting(true);
     try {
-      const resp: any = await api.post(`/jobs/${jobId}/could-not-service`, {
+      const body = {
         reason_id: reasonId,
         reason_notes: notes,
         photo_file_ids: photoIds,
+      };
+      const { data: resp, queued } = await offlineWrite({
+        op_type: "job.could_not_service",
+        entity_id: jobId,
+        endpoint: `/jobs/${jobId}/could-not-service`,
+        method: "POST",
+        payload: body,
+        onlineFn: () => api.post(`/jobs/${jobId}/could-not-service`, body),
       });
+      if (queued) {
+        Alert.alert("Queued", "Will sync when you're back online.");
+        onClose();
+        return;
+      }
       const sr = resp?.sms_result;
       const secondary = sr?.sent ? "Customer notified" : humanizeSmsReason(sr?.reason);
       const body = secondary

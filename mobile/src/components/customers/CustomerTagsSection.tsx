@@ -22,6 +22,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
 type Tag = {
@@ -54,9 +55,15 @@ export default function CustomerTagsSection({
   const detach = async (tag: Tag) => {
     const next = attached.filter((t) => t.id !== tag.id);
     try {
-      // Feb-2026 · P36-followup — full-replace via PATCH; the web
-      // widget uses the same endpoint and shape.
-      await api.patch(`/customers/${customerId}/tags`, _toPayload(next));
+      const payload = _toPayload(next);
+      await offlineWrite({
+        op_type: "customer.tags",
+        entity_id: customerId,
+        endpoint: `/customers/${customerId}/tags`,
+        method: "PATCH",
+        payload,
+        onlineFn: () => api.patch(`/customers/${customerId}/tags`, payload),
+      });
       onChange?.(next);
     } catch { /* silent — parent stays on old value until next reload */ }
   };
@@ -164,8 +171,15 @@ function TagPickerSheet({
     setBusy(tag.id);
     const next = [...attached, tag];
     try {
-      // Feb-2026 · P36-followup — full-replace PATCH.
-      await api.patch(`/customers/${customerId}/tags`, _toPayload(next));
+      const payload = _toPayload(next);
+      await offlineWrite({
+        op_type: "customer.tags",
+        entity_id: customerId,
+        endpoint: `/customers/${customerId}/tags`,
+        method: "PATCH",
+        payload,
+        onlineFn: () => api.patch(`/customers/${customerId}/tags`, payload),
+      });
       onAttached(tag);
       onClose();
     } catch { /* silent */ }
@@ -176,18 +190,21 @@ function TagPickerSheet({
     if (!name) return;
     setBusy("__create__");
     try {
-      // Feb-2026 · P36-followup — the PATCH endpoint auto-persists
-      // any name missing from the catalog (P33 wiring). No need for
-      // a separate ``POST /customer-tags`` call. Synthesize a Tag
-      // for the parent's ``onChange`` callback; the real id lands
-      // when the parent's next GET /customer-tags refresh runs.
       const synthetic: Tag = {
         id: `pending:${name.toLowerCase()}`,
         name,
         color: "#DBEAFE",
       };
       const next = [...attached, synthetic];
-      await api.patch(`/customers/${customerId}/tags`, _toPayload(next));
+      const payload = _toPayload(next);
+      await offlineWrite({
+        op_type: "customer.tags",
+        entity_id: customerId,
+        endpoint: `/customers/${customerId}/tags`,
+        method: "PATCH",
+        payload,
+        onlineFn: () => api.patch(`/customers/${customerId}/tags`, payload),
+      });
       onAttached(synthetic);
       onClose();
     } catch { /* silent */ }

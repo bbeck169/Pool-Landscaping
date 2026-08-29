@@ -15,6 +15,12 @@ const INVALIDATION_MAP: Record<string, { keys?: string[]; prefixes?: string[] }>
   "service_report.upsert": {
     prefixes: ["service-report:", "job:"],
   },
+  "service_report.patch": {
+    prefixes: ["service-report:", "job:"],
+  },
+  "service_report.submit": {
+    prefixes: ["service-report:", "job:"],
+  },
   "job.arrive": {
     prefixes: ["job:", "jobs:", "schedule:", "dashboard"],
   },
@@ -24,20 +30,95 @@ const INVALIDATION_MAP: Record<string, { keys?: string[]; prefixes?: string[] }>
   "job.status": {
     prefixes: ["job:", "jobs:", "schedule:", "dashboard"],
   },
+  "job.assign": {
+    prefixes: ["job:", "jobs:", "schedule:", "dashboard", "dispatch"],
+  },
+  "job.create": {
+    prefixes: ["job:", "jobs:", "schedule:", "dashboard"],
+  },
+  "job.could_not_service": {
+    prefixes: ["job:", "jobs:", "schedule:", "dashboard"],
+  },
   "customer.upsert": {
+    prefixes: ["customer:", "customers"],
+  },
+  "customer.create": {
     prefixes: ["customer:", "customers"],
   },
   "customer.update": {
     prefixes: ["customer:", "customers"],
+  },
+  "customer.service_notes": {
+    prefixes: ["customer:"],
+  },
+  "customer.tags": {
+    prefixes: ["customer:"],
+  },
+  "customer.mute": {
+    prefixes: ["customer:"],
+  },
+  "field_report.update": {
+    prefixes: ["job:", "service-report:"],
+  },
+  "maintenance_log.create": {
+    prefixes: ["job:"],
+  },
+  "issue.create": {
+    prefixes: ["job:"],
+  },
+  "issue.approve": {
+    prefixes: ["job:"],
+  },
+  "clock.punch": {
+    prefixes: ["schedule:", "dashboard"],
+  },
+  "clock.landscape": {
+    prefixes: ["schedule:", "dashboard"],
+  },
+  "notification_settings.update": {
+    prefixes: ["settings:"],
+  },
+  "gps_consent": {
+    prefixes: [],
+  },
+  "lead.create": {
+    prefixes: ["lead:", "leads"],
+  },
+  "estimate.create": {
+    prefixes: ["estimate:", "estimates"],
+  },
+  "estimate.update": {
+    prefixes: ["estimate:", "estimates"],
+  },
+  "time_off.request": {
+    prefixes: ["time-off:"],
+  },
+  "automation.toggle": {
+    prefixes: ["automation:"],
+  },
+  "tag.create": {
+    prefixes: ["customer-tag:"],
+  },
+  "tag.update": {
+    prefixes: ["customer-tag:"],
+  },
+  "tag.delete": {
+    prefixes: ["customer-tag:"],
+  },
+  "deal.create": {
+    prefixes: ["deal:", "deals"],
+  },
+  "deal.move": {
+    prefixes: ["deal:", "deals"],
+  },
+  "visit_recap.create": {
+    prefixes: ["job:"],
   },
   "invoice.create": {
     prefixes: ["invoice:", "invoices"],
   },
   "quote.create": {
     prefixes: ["quote:", "quotes"],
-  },
-  "issue.create": {
-    prefixes: ["job:"],
   },
   "photo.upload": {
     prefixes: ["job:", "service-report:"],

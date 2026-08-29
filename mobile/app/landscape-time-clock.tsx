@@ -11,6 +11,7 @@ import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
 type Punch = {
@@ -119,15 +120,24 @@ export default function LandscapingTimeClockScreen() {
     setError(null);
     try {
       const geo = await readGeo();
-      await api.post("/timeclock/punch", {
+      const payload = {
         punch_type: type,
         lat: geo.lat,
         lng: geo.lng,
         accuracy_m: geo.accuracy_m,
         source: "mobile",
         geo_denied: geo.geo_denied,
+      };
+      const { queued } = await offlineWrite({
+        op_type: "clock.landscape",
+        entity_id: "self",
+        endpoint: "/timeclock/punch",
+        method: "POST",
+        payload,
+        onlineFn: () => api.post("/timeclock/punch", payload),
       });
-      await load();
+      if (!queued) await load();
+      else setError("Queued offline — will sync later.");
     } catch (e: any) {
       setError(e?.message || "Punch failed");
     } finally { setBusy(false); }

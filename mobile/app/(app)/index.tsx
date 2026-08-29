@@ -13,6 +13,7 @@ import { Loading, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { Header } from "@/src/components/widgets";
 import SyncStatusPill from "@/src/components/SyncStatusPill";
+import { PendingChangesChip } from "@/src/components/sync/PendingChangesChip";
 import BudgetHealthCard from "@/src/components/BudgetHealthCard";
 import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
@@ -31,8 +32,10 @@ export default function Dashboard() {
   const loading = dashQ.isLoading;
   const error = dashQ.error?.message || null;
 
-  const load = useCallback(async () => {
-    try {
+  const load = useCallback(() => {
+    dashQ.refetch();
+  }, [dashQ]);
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     dashQ.refetch();
@@ -87,7 +90,7 @@ export default function Dashboard() {
   return (
     <View style={styles.root}>
       <Header title="Dashboard" subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`}
-        right={<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}><SyncStatusPill /><CreditsBudgetChip /></View>}
+        right={<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}><PendingChangesChip /><SyncStatusPill /><CreditsBudgetChip /></View>}
       />
       <ScrollView
         testID="dashboard-scroll"

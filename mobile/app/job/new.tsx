@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable } from "react-native";
+import { View, Text, StyleSheet, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
@@ -75,7 +76,7 @@ export default function JobForm() {
     setBusy(true);
     setError("");
     try {
-      await api.post("/jobs", {
+      const body = {
         title,
         customer_id: customer.id,
         technician_id: tech?.id || null,
@@ -83,7 +84,18 @@ export default function JobForm() {
         scheduled_date: date,
         price: parseFloat(price) || 0,
         notes,
+      };
+      const { queued } = await offlineWrite({
+        op_type: "job.create",
+        entity_id: customer.id,
+        endpoint: "/jobs",
+        method: "POST",
+        payload: body,
+        onlineFn: () => api.post("/jobs", body),
       });
+      if (queued) {
+        Alert.alert("Saved offline", "Job will be created when you're back online.");
+      }
       router.back();
     } catch (e: any) {
       setError(e.message || "Failed to create job");

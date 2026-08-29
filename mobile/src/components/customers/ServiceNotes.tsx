@@ -9,6 +9,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
 type Props = { customerId: string };
@@ -34,8 +35,16 @@ export default function ServiceNotes({ customerId }: Props) {
     if (!newNote.trim()) return;
     setSaving(true);
     try {
-      await api.patch(`/customers/${customerId}/service-notes`, {
+      const payload = {
         notes: [{ text: newNote.trim(), created_at: new Date().toISOString() }, ...notes],
+      };
+      await offlineWrite({
+        op_type: "customer.service_notes",
+        entity_id: customerId,
+        endpoint: `/customers/${customerId}/service-notes`,
+        method: "PATCH",
+        payload,
+        onlineFn: () => api.patch(`/customers/${customerId}/service-notes`, payload),
       });
       setNewNote("");
       setComposerOpen(false);

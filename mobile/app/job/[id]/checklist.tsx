@@ -52,6 +52,7 @@ import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/wat
 import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
 import * as writeQueue from "@/src/services/writeQueue";
 import { submitOffline, cacheServiceReport } from "@/src/services/sync/offlineServiceLog";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { capturePhoto, getPhotosForEntity, purgePhotosForEntity, type PendingPhoto as SyncPendingPhoto } from "@/src/services/sync/photoWorker";
 import { useOnline } from "@/src/offline";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
@@ -271,7 +272,14 @@ export default function JobChecklistScreen() {
         }, holdMs);
         return;
       }
-      const patched = await api.patch(`/jobs/${id}/service-report`, patchBody);
+      const { data: patched } = await offlineWrite({
+        op_type: "service_report.patch",
+        entity_id: String(id),
+        endpoint: `/jobs/${id}/service-report`,
+        method: "PATCH",
+        payload: patchBody,
+        onlineFn: () => api.patch(`/jobs/${id}/service-report`, patchBody),
+      });
       if (patched && typeof patched === "object") { setReport(patched); reportRef.current = patched; }
       dirtyRef.current = false;
       const elapsed = Date.now() - (savingShownAtRef.current || Date.now());

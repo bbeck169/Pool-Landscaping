@@ -11,6 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
 function weekBounds() {
@@ -106,20 +107,30 @@ export default function LandscapingClockWidget() {
     try {
       const geo = await readGeo();
       const punch_type = today?.clocked_in ? "out" : "in";
-      await api.post("/timeclock/punch", {
+      const payload = {
         punch_type,
         lat: geo.lat, lng: geo.lng, accuracy_m: geo.accuracy_m,
         source: "mobile", geo_denied: geo.geo_denied,
-        // Phase 50.H — attach the picked job on clock-in. Blank ⇒ null.
         job_id: punch_type === "in" ? (selectedJobId || null) : null,
+      };
+      const { queued } = await offlineWrite({
+        op_type: "clock.landscape",
+        entity_id: "self",
+        endpoint: "/timeclock/punch",
+        method: "POST",
+        payload,
+        onlineFn: () => api.post("/timeclock/punch", payload),
       });
-      const t = await api.get("/timeclock/mine-today"); setToday(t);
-      const { start, end } = weekBounds();
-      try {
-        const w = await api.get(`/timeclock/mine-summary?start=${start}&end=${end}`);
-        setWeek(w);
-      } catch {}
+      if (!queued) {
+        const t = await api.get("/timeclock/mine-today"); setToday(t);
+        const { start, end } = weekBounds();
+        try {
+          const w = await api.get(`/timeclock/mine-summary?start=${start}&end=${end}`);
+          setWeek(w);
+        } catch {}
+      }
       if (geo.geo_denied) setError("GPS denied — punch recorded without location.");
+      if (queued) setError("Queued offline — will sync later.");
     } catch (e: any) {
       setError(e?.message || "Punch failed");
     } finally { setBusy(false); }

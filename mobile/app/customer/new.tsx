@@ -7,6 +7,7 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { PrimaryButton } from "@/src/components/ui";
@@ -71,9 +72,18 @@ export default function CustomerForm() {
     const runSave = async () => {
       try {
         const payload = { ...form, pool_gallons: poolGallonsPayload, is_vip: !!form.is_vip, is_active: !!form.is_active };
-        let saved: any;
-        if (editing) saved = await api.put(`/customers/${id}`, payload);
-        else saved = await api.post("/customers", payload);
+        const opType = editing ? "customer.update" : "customer.create";
+        const { data: saved, queued } = await offlineWrite({
+          op_type: opType,
+          entity_id: id || "new",
+          endpoint: editing ? `/customers/${id}` : "/customers",
+          method: editing ? "PUT" : "POST",
+          payload,
+          onlineFn: () => editing ? api.put(`/customers/${id}`, payload) : api.post("/customers", payload),
+        });
+        if (queued) {
+          Alert.alert("Saved offline", "Customer will sync when you're back online.");
+        }
         if (flippingOff && saved) {
           Alert.alert(
             "Customer marked inactive",

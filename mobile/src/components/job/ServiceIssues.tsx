@@ -5,6 +5,7 @@ import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, money } from "@/src/theme";
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
 import { styles } from "./styles";
 
@@ -35,8 +36,15 @@ export default function ServiceIssues({ job, canManage, isCustomer, onSaved }: {
       const c = parseFloat(cost);
       if (!isNaN(c) && c > 0) body.cost = c;
       if (photo) body.photo = photo;
-      const updated = await api.post(`/jobs/${job.id}/issues`, body);
-      onSaved(updated);
+      const { data: updated, queued } = await offlineWrite({
+        op_type: "issue.create",
+        entity_id: job.id,
+        endpoint: `/jobs/${job.id}/issues`,
+        method: "POST",
+        payload: body,
+        onlineFn: () => api.post(`/jobs/${job.id}/issues`, body),
+      });
+      if (updated) onSaved(updated);
       setDesc(""); setCost(""); setPhoto(""); setSheet(false);
     } catch {}
     finally { setBusy(false); }
@@ -45,7 +53,15 @@ export default function ServiceIssues({ job, canManage, isCustomer, onSaved }: {
   const approve = async (iid: string) => {
     setApproving(iid);
     try {
-      onSaved(await api.post(`/jobs/${job.id}/issues/${iid}/approve`));
+      const { data } = await offlineWrite({
+        op_type: "issue.approve",
+        entity_id: job.id,
+        endpoint: `/jobs/${job.id}/issues/${iid}/approve`,
+        method: "POST",
+        payload: {},
+        onlineFn: () => api.post(`/jobs/${job.id}/issues/${iid}/approve`),
+      });
+      if (data) onSaved(data);
     } catch {}
     finally { setApproving(null); }
   };

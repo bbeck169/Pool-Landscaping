@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { showConfirm } from "@/src/components/ConfirmModal";
@@ -116,9 +117,20 @@ function RequestSheet({ onClose, onDone }: { onClose: () => void; onDone: () => 
   const submit = async () => {
     setBusy(true); setErr("");
     try {
-      await api.post("/time-off/requests", {
+      const payload = {
         type, from_date: from, to_date: to, hours: Number(hours), reason,
+      };
+      const { queued } = await offlineWrite({
+        op_type: "time_off.request",
+        entity_id: "new",
+        endpoint: "/time-off/requests",
+        method: "POST",
+        payload,
+        onlineFn: () => api.post("/time-off/requests", payload),
       });
+      if (queued) {
+        // Still close the modal — user sees "pending" in the chip.
+      }
       onDone();
     } catch (e: any) {
       const code = e?.response?.data?.detail?.code;

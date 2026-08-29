@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, StatusChip, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
@@ -61,7 +62,15 @@ export default function Dispatch() {
 
   const doAssign = async (technician_id: string) => {
     if (!assign) return;
-    await api.put(`/jobs/${assign.id}`, { technician_id });
+    const body = { technician_id };
+    await offlineWrite({
+      op_type: "job.assign",
+      entity_id: assign.id,
+      endpoint: `/jobs/${assign.id}`,
+      method: "PUT",
+      payload: body,
+      onlineFn: () => api.put(`/jobs/${assign.id}`, body),
+    });
     setAssign(null);
     load(date);
   };

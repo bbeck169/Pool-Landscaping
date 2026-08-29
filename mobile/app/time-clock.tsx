@@ -20,6 +20,7 @@ import NetInfo from "@react-native-community/netinfo";
 
 import { useAuth } from "@/src/auth";
 import { api, getAuthToken } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 import * as GpsTracker from "@/src/services/gpsTracker";
@@ -183,11 +184,20 @@ export default function TimeClockScreen() {
     try {
       const g = await requestGps();
       if (!g) return;
-      const r = await api.post("/workforce/clock-in", {
-        job_id: selectedJob, lat: g.lat, lng: g.lng, accuracy: g.acc,
+      const body = { job_id: selectedJob, lat: g.lat, lng: g.lng, accuracy: g.acc };
+      const { data: r, queued } = await offlineWrite({
+        op_type: "clock.punch",
+        entity_id: selectedJob,
+        endpoint: "/workforce/clock-in",
+        method: "POST",
+        payload: body,
+        onlineFn: () => api.post("/workforce/clock-in", body),
       });
-      setEntry(r);
-      setInGeofence(!r.out_of_geofence);
+      if (r) {
+        setEntry(r);
+        setInGeofence(!r.out_of_geofence);
+      }
+      if (queued) Alert.alert("Queued", "Clock-in will sync when online.");
       // G1: Start GPS batch tracker
       const token = await getAuthToken();
       GpsTracker.startTracking(token).then((ok) => setGpsActive(ok)).catch(() => {});

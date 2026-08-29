@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
 
@@ -57,7 +58,7 @@ export default function NewLeadForm({ onDone }: { onDone?: () => void }) {
     if (!form.name.trim()) return Alert.alert("Name required", "Please enter the lead's name.");
     setSaving(true);
     try {
-      await api.post("/leads", {
+      const body = {
         name: form.name.trim(),
         phone: form.phone.trim(),
         email: form.email.trim(),
@@ -68,8 +69,19 @@ export default function NewLeadForm({ onDone }: { onDone?: () => void }) {
         address: form.address.trim(),
         lat: geo?.lat ?? null,
         lng: geo?.lng ?? null,
+      };
+      const { queued } = await offlineWrite({
+        op_type: "lead.create",
+        entity_id: "new",
+        endpoint: "/leads",
+        method: "POST",
+        payload: body,
+        onlineFn: () => api.post("/leads", body),
       });
-      Alert.alert("Lead saved ✅", geo ? "Geo-tagged and added to the pipeline." : "The new lead was added to the pipeline.", [
+      const msg = queued
+        ? "Lead queued — will sync when online."
+        : (geo ? "Geo-tagged and added to the pipeline." : "The new lead was added to the pipeline.");
+      Alert.alert(queued ? "Saved offline" : "Lead saved ✅", msg, [
         { text: "Add another", onPress: () => { setForm({ ...blank }); setGeo(null); } },
         { text: "Done", onPress: () => { setForm({ ...blank }); setGeo(null); onDone?.(); } },
       ]);

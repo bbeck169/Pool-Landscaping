@@ -8,6 +8,8 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { registerForPushNotifications, deregisterPushToken } from "@/src/services/pushNotifications";
+// Phase O6 · Manual sync surface.
+import { ManualSyncButton } from "@/src/components/sync/ManualSyncButton";
 // Phase (Feb-2026) — mobile admin drawer parity with the web sidebar.
 // Renders the ``QUICK_ACCESS`` shortcut group + the eight canonical
 // admin groups from a single source of truth so parity edits are a
@@ -228,6 +230,12 @@ export default function More() {
             <Text style={styles.linkLabel}>Change Password</Text>
             <Ionicons name="chevron-forward" size={18} color={colors.muted} />
           </Pressable>
+        </View>
+
+        {/* Phase O6 · Manual sync surface */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Offline & Sync</Text>
+          <ManualSyncButton />
         </View>
 
         <Pressable style={styles.logout} onPress={logout} testID="logout-button">

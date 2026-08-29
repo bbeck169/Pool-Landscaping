@@ -5,6 +5,7 @@ import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { api } from "@/src/api";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { styles as jobStyles } from "./styles";
 
 
@@ -62,8 +63,15 @@ export default function MaintenanceLog({
         body.cell_condition = condition || null;
       }
       body.photos = photos.map((p) => ({ label: p.label, data: p.data }));
-      const updated = await api.post(`/jobs/${job.id}/maintenance-log`, body);
-      onSaved(updated);
+      const { data: updated, queued } = await offlineWrite({
+        op_type: "maintenance_log.create",
+        entity_id: job.id,
+        endpoint: `/jobs/${job.id}/maintenance-log`,
+        method: "POST",
+        payload: body,
+        onlineFn: () => api.post(`/jobs/${job.id}/maintenance-log`, body),
+      });
+      if (updated) onSaved(updated);
       setSavedAt(new Date().toISOString());
     } catch {}
     finally { setSaving(false); }

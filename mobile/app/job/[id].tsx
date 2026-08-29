@@ -12,6 +12,7 @@ import { useAuth } from "@/src/auth";
 import { useAttendance } from "@/src/hooks/useAttendance";
 import { useOnline, queuePhoto, pendingForJob, flushPendingPhotos, getCachedJobs, cacheJob, getCachedJob, queueMutation, flushPendingMutations } from "@/src/offline";
 import { enqueueJobArrive } from "@/src/services/sync/jobArrive";
+import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, money, IMAGES , colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
 // Feb-2026 · Phase 1 offline foundation — cache /properties/{id}
 // on success + fall back to the SQLite cache on network failure so
@@ -162,18 +163,25 @@ export default function JobDetail() {
 
   const saveEdit = async () => {
     if (editSaving || !job?.id) return;
-    if (!online) {
-      setEditError("Online required to save edits.");
-      return;
-    }
     setEditSaving(true);
     setEditError("");
     try {
       const body: any = { notes: editNotes, edit_source: "mobile" };
       const trimmed = editReason.trim();
       if (trimmed) body.edit_reason = trimmed;
-      const fresh = await api.patch(`/jobs/${job.id}`, body);
-      setJob(fresh);
+      const { data: fresh, queued } = await offlineWrite({
+        op_type: "job.update",
+        entity_id: job.id,
+        endpoint: `/jobs/${job.id}`,
+        method: "PATCH",
+        payload: body,
+        onlineFn: () => api.patch(`/jobs/${job.id}`, body),
+      });
+      if (fresh) setJob(fresh);
+      else if (queued) {
+        // Optimistic: apply locally.
+        setJob({ ...job, ...body });
+      }
       setEditSheet(false);
     } catch (e: any) {
       const detail = e?.detail || e?.data?.detail;
@@ -261,18 +269,25 @@ export default function JobDetail() {
   const setStatus = async (status: string) => {
     setBusy(true);
     try {
-      if (online) {
-        const updated = await api.put(`/jobs/${id}`, { status });
+      const body = { status };
+      const { data: updated, queued } = await offlineWrite({
+        op_type: "job.status",
+        entity_id: id as string,
+        endpoint: `/jobs/${id}`,
+        method: "PUT",
+        payload: body,
+        onlineFn: () => api.put(`/jobs/${id}`, body),
+      });
+      if (updated) {
         setJob(updated);
         cacheJob(updated);
-      } else {
+      } else if (queued) {
         const optimistic = { ...job, status };
         setJob(optimistic);
         cacheJob(optimistic);
-        await queueMutation(`/jobs/${id}`, { status });
       }
     } catch {
-      // If the online call failed, queue it so the change isn't lost.
+      // Last resort — optimistic update + legacy queue.
       const optimistic = { ...job, status };
       setJob(optimistic);
       cacheJob(optimistic);
@@ -291,7 +306,17 @@ export default function JobDetail() {
     setTechSheet(false);
     setBusy(true);
     try {
-      setJob(await api.put(`/jobs/${id}`, { technician_id: tid }));
+      const body = { technician_id: tid };
+      const { data: fresh, queued } = await offlineWrite({
+        op_type: "job.assign",
+        entity_id: id as string,
+        endpoint: `/jobs/${id}`,
+        method: "PUT",
+        payload: body,
+        onlineFn: () => api.put(`/jobs/${id}`, body),
+      });
+      if (fresh) setJob(fresh);
+      else if (queued) setJob({ ...job, technician_id: tid } as any);
     } finally {
       setBusy(false);
     }
