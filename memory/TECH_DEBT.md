@@ -43,6 +43,17 @@ For the linter-noise-suppression rationale (why we're NOT chasing the reviewer's
 - **Why deferred:** Indexes should be dropped in a dedicated cleanup phase — folding an index-drop into a semantic change makes rollback complicated. Keep the index in production until we bundle it with the next cross-collection index-audit.
 - **When to ship:** Next cross-collection Mongo index audit (or if the recurring-job cron ever grows a tenant-scoped variant that COULD use it, in which case reevaluate before dropping).
 
+### TD-07 · WP host sgcaptcha bot-challenge blocks Soshie autopilot publish (**operator action item**)
+- **Current state:** The WordPress adapter (`services/social/wordpress_adapter.py`) succeeds up to the HTTP layer, but the target host (SiteGround) returns an sgcaptcha HTML bot-challenge with HTTP 202 instead of accepting the post. The app handles this correctly — the action row flips to `status="failed"` with the captcha response surfaced on `result.error` — but real autopilot publishes to WordPress will continue to fail until the operator resolves it host-side.
+- **Priority:** P1 (blocks real WP flows in production).
+- **App-side impact:** None right now. The scheduler treats the failure like any other adapter error; retries are user-driven from the Review Queue.
+- **Resolution options (any one):**
+    - (a) Whitelist the app-server egress IP on SiteGround's Web Application Firewall.
+    - (b) Update the WP adapter to send a browser-like User-Agent + retry-on-challenge with the sgcaptcha token echoed back.
+    - (c) Migrate the WP site behind a different edge that doesn't gate REST-API POSTs behind a bot-check.
+- **When to ship:** Pending operator action — logged as an operator ticket, not a dev refactor. Do NOT ship option (b) app-side until the operator confirms (a) and (c) are both off the table.
+- **Status:** Pending operator (Feb-2026).
+
 ---
 
 ## Related — items explicitly REJECTED (do NOT resurrect these)

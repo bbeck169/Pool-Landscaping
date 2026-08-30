@@ -380,6 +380,16 @@ async def _process_tenant(tenant_id: str) -> Dict[str, Any]:
     if not lease.get("acquired"):
         return {"tenant": tenant_id, "skipped": "lease_lost"}
     try:
+        # Global kill switch — Phase S2 · Feb-2026.  Tenant-wide
+        # off overrides per-platform ``enabled=True`` and short-
+        # circuits the entire tick.
+        t = await db.tenants.find_one(
+            {"id": tenant_id},
+            {"_id": 0, "soshie_autopilot_enabled": 1},
+        ) or {}
+        if t.get("soshie_autopilot_enabled") is False:
+            return {"tenant": tenant_id,
+                    "skipped": "global_kill_switch_off"}
         # Requeue any deferred_no_credits rows in case credits recovered.
         await _requeue_deferred(tenant_id)
         # Autopilot-enabled platforms (Reddit hardblocked below).

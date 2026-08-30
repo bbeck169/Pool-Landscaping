@@ -522,3 +522,95 @@ async def trigger_autopilot_tick(
         raise HTTPException(403, "Super-admin only")
     from services.soshie.autopilot_scheduler import _process_tenant
     return await _process_tenant(tenant["id"])
+
+
+
+# ─── S2 · Frontend-support endpoints (Phase S2 · Feb-2026) ───────────────
+
+@router.get("/soshie/brand-brain")
+async def get_soshie_brand_brain(
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Combined view: brand_brain shared context row + latest
+    ``brand_brain_ingested_pages`` row so the S2 Brand Brain tab
+    can render one payload."""
+    bb = await db.brand_brain.find_one(
+        {"tenant_id": tenant["id"]}, {"_id": 0},
+    ) or {}
+    latest = await db.brand_brain_ingested_pages.find_one(
+        {"tenant_id": tenant["id"]},
+        {"_id": 0},
+        sort=[("ingested_at", -1)],
+    ) or {}
+    return {
+        "brand_brain": bb,
+        "latest_ingest": latest or None,
+    }
+
+
+class GlobalKillSwitchIn(BaseModel):
+    enabled: bool
+
+
+@router.get("/soshie/autopilot/global")
+async def get_autopilot_global(
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Return the global tenant-wide autopilot kill switch state.
+    Defaults to True (autopilot enabled) — per-platform ``enabled``
+    flags are the primary gate; this switch is a hard-off override."""
+    t = await db.tenants.find_one(
+        {"id": tenant["id"]},
+        {"_id": 0, "soshie_autopilot_enabled": 1},
+    ) or {}
+    return {
+        "enabled": bool(t.get("soshie_autopilot_enabled", True)),
+    }
+
+
+@router.patch("/soshie/autopilot/global")
+async def patch_autopilot_global(
+    body: GlobalKillSwitchIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Admin-only tenant-wide kill switch.  When False, the
+    scheduler ``_process_tenant`` short-circuits regardless of
+    per-platform ``enabled`` flags."""
+    if (user or {}).get("role") not in {"admin", "super_admin", "manager"}:
+        raise HTTPException(403, "Admin only")
+    await db.tenants.update_one(
+        {"id": tenant["id"]},
+        {"$set": {"soshie_autopilot_enabled": bool(body.enabled)}},
+    )
+    return {"enabled": bool(body.enabled)}
+
+
+@router.get("/soshie/autopilot/recent-actions")
+async def list_recent_autopilot_actions(
+    limit: int = 20,
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Return the last N Soshie action rows whose result was
+    written by the autopilot pipeline (``result.kind`` matches
+    ``soshie_autopilot_*``) OR whose status is
+    ``deferred_no_credits``.  Powers the autopilot audit feed."""
+    try:
+        limit = max(1, min(100, int(limit)))
+    except (TypeError, ValueError):
+        limit = 20
+    query = {
+        "tenant_id": tenant["id"],
+        "$or": [
+            {"result.kind": {"$in": [
+                "soshie_autopilot_published",
+                "soshie_autopilot_failed",
+            ]}},
+            {"status": "deferred_no_credits"},
+        ],
+    }
+    rows: List[Dict[str, Any]] = []
+    async for r in db.ai_employee_actions.find(query, {"_id": 0}) \
+            .sort("updated_at", -1).limit(limit):
+        rows.append(r)
+    return {"items": rows, "count": len(rows)}

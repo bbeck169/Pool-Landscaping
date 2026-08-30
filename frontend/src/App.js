@@ -263,6 +263,8 @@ import {
 import { AiEmployeesList, AiEmployeeDetail, TasksPage,
   AccessSettings, AccessHistory, RingCentralSettings, CallLogsPage,
 } from "@/pages/aiops/AiOpsPages";
+// Phase S2 · Feb-2026 — Soshie Hub (Brand Brain + Autopilot + Review Queue).
+import SoshieHub from "@/pages/soshie/SoshieHub";
 // Phase 11 · Feb 2026 — Equipment Service Trackers (Filter & Salt Cell).
 import {
   FilterTrackerListPage, FilterTrackerManagePage,
@@ -833,6 +835,8 @@ export default function App() {
             <Route path="ai-employees" element={<AdminOnly><AiEmployeesList /></AdminOnly>} />
             <Route path="ai-employees/:id" element={<AdminOnly><AiEmployeeDetail /></AdminOnly>} />
             <Route path="ai-chat/:id" element={<AdminOnly><AiEmployeeDetail /></AdminOnly>} />
+            {/* Phase S2 · Feb-2026 — Soshie hub (brand brain + autopilot + review queue) */}
+            <Route path="soshie" element={<AdminOnly><SoshieHub /></AdminOnly>} />
             <Route path="tasks" element={<AdminOnly><TasksPage /></AdminOnly>} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="settings/notifications" element={<NotificationPrefs />} />

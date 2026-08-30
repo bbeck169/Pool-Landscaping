@@ -307,6 +307,15 @@ class ActionDecision(BaseModel):
     note: Optional[str] = None
 
 
+class ActionDraftPatch(BaseModel):
+    """S2 · Feb-2026 — edit a Soshie draft body from the review
+    queue. When the text changes, the server re-runs the regex
+    moderation gate so the ``moderation_flags`` field stays in
+    sync with the new copy."""
+    text: Optional[str] = Field(None, min_length=1, max_length=8000)
+    title: Optional[str] = Field(None, max_length=200)
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────
 
 def _strip(doc: Optional[dict]) -> Optional[dict]:
@@ -1094,6 +1103,59 @@ async def reject_action(aid: str, body: Optional[ActionDecision] = None,
             "decision_note": (body.note if body else None),
             "updated_at": now_iso(),
         }},
+    )
+    return await db.ai_employee_actions.find_one(
+        {"id": aid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+
+
+@router.patch("/ai-employees/actions/{aid}/draft")
+async def patch_action_draft(aid: str, body: ActionDraftPatch,
+                                  user: dict = Depends(require_admin),
+                                  tenant: dict = Depends(get_current_tenant)):
+    """Edit the draft body/title of a pending action.  When the
+    text changes, re-runs regex moderation so ``moderation_flags``
+    stays in sync with the current copy.  Rejects edits on
+    non-pending rows (already published/rejected/executed)."""
+    doc = await db.ai_employee_actions.find_one(
+        {"id": aid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not doc:
+        raise HTTPException(404, "Action not found")
+    if doc["status"] not in ("pending", "deferred_no_credits"):
+        raise HTTPException(400, f"Action is {doc['status']} — cannot edit")
+    patch = body.model_dump(exclude_unset=True)
+    if not patch:
+        return doc
+    draft = dict(doc.get("draft") or {})
+    if "text" in patch and patch["text"] is not None:
+        draft["text"] = patch["text"]
+    if "title" in patch and patch["title"] is not None:
+        draft["title"] = patch["title"]
+    upd: Dict[str, Any] = {
+        "draft": draft,
+        "summary": (draft.get("text") or "")[:200],
+        "updated_at": now_iso(),
+    }
+    # Re-run regex moderation when the body changed.
+    if "text" in patch and patch["text"] is not None:
+        try:
+            from services.soshie.moderation import moderate as _moderate
+            bb = await db.brand_brain.find_one(
+                {"tenant_id": tenant["id"]},
+                {"_id": 0, "dont_say": 1},
+            ) or {}
+            mod = _moderate(
+                draft.get("text") or "",
+                dont_say=bb.get("dont_say") or [],
+            )
+            upd["moderation_flags"] = mod.get("flags") or []
+        except Exception as e:                                # noqa: BLE001
+            logger.warning(
+                "[s2.patch_draft] moderation re-eval failed: %s", e,
+            )
+    await db.ai_employee_actions.update_one(
+        {"id": aid, "tenant_id": tenant["id"]}, {"$set": upd},
     )
     return await db.ai_employee_actions.find_one(
         {"id": aid, "tenant_id": tenant["id"]}, {"_id": 0}
