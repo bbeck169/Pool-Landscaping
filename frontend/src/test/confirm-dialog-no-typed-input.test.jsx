@@ -158,26 +158,31 @@ describe("Global confirm dialog · `requireTypeConfirm` is a no-op", () => {
 });
 
 
-// ── Behavioural: CustomersList arm-and-execute testids ──────────
-describe("CustomersList catastrophic modal · arm-and-execute testids exist", () => {
+// ── Behavioural: CustomersList arm-and-execute uses shared primitive ─
+describe("CustomersList catastrophic modal · arm-and-execute wired to shared primitive", () => {
   const src = FILES_TO_SWEEP["pages/customers/CustomersList.jsx"];
 
-  it("declares the arm-state + cooldown-state hooks", () => {
+  it("imports the shared ArmToDelete primitive", () => {
     const code = stripComments(src);
-    expect(code).toMatch(/const\s*\[\s*deleteArmed\s*,\s*setDeleteArmed\s*\]\s*=\s*useState\s*\(\s*false\s*\)/);
-    expect(code).toMatch(/const\s*\[\s*armCooldown\s*,\s*setArmCooldown\s*\]\s*=\s*useState\s*\(\s*0\s*\)/);
+    expect(code).toMatch(/import\s+ArmToDelete\s+from\s+["']@\/components\/ui\/ArmToDelete["']/);
   });
 
-  it("renders the catastrophic modal + arm/execute button testids", () => {
+  it("mounts <ArmToDelete/> inside the catastrophic modal branch", () => {
+    // Presence of an <ArmToDelete opening tag with the expected
+    // testIdPrefix. The old inline state machine is gone.
+    expect(src).toMatch(/<ArmToDelete\b/);
+    expect(src).toMatch(/testIdPrefix="customers-bulk-delete-catastrophic"/);
+  });
+
+  it("no inline `deleteArmed` / `armCooldown` state remains on the page", () => {
+    const code = stripComments(src);
+    expect(code).not.toMatch(/setDeleteArmed/);
+    expect(code).not.toMatch(/setArmCooldown/);
+  });
+
+  it("keeps the catastrophic modal + cancel testids for stable QA drivers", () => {
     expect(src).toMatch(/data-testid="customers-bulk-delete-catastrophic-modal"/);
-    expect(src).toMatch(/data-testid="customers-bulk-delete-catastrophic-btn"/);
     expect(src).toMatch(/data-testid="customers-bulk-delete-catastrophic-cancel"/);
-  });
-
-  it("carries the `Arm delete` / `Confirm again in {n}s` copy branches", () => {
-    const code = stripComments(src);
-    expect(code).toMatch(/"Arm delete"/);
-    expect(code).toMatch(/`Confirm again in \$\{armCooldown\}s`/);
   });
 });
 

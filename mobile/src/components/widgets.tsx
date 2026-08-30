@@ -50,6 +50,25 @@ export function NotificationBell() {
   );
 }
 
+function SettingsSprocket() {
+  const { user } = useAuth();
+  const router = useRouter();
+  const role = String((user as any)?.role || "");
+  if (role !== "admin" && role !== "super_admin") return null;
+  return (
+    <Pressable
+      onPress={() => router.push("/settings")}
+      style={styles.sprocketBtn}
+      hitSlop={8}
+      testID="header-settings-sprocket"
+      accessibilityLabel="Settings"
+      accessibilityRole="button"
+    >
+      <Ionicons name="settings-outline" size={20} color={colors.onSurface} />
+    </Pressable>
+  );
+}
+
 export function Header({
   title,
   subtitle,
@@ -85,7 +104,10 @@ export function Header({
             {subtitle ? <Text style={styles.headerSub}>{subtitle}</Text> : null}
           </View>
         </View>
-        {right}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <SettingsSprocket />
+          {right}
+        </View>
       </View>
       {crumbs.length > 0 && <Breadcrumbs items={crumbs} />}
     </View>
@@ -398,6 +420,16 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
   },
   backBtn: { marginRight: spacing.xs, marginLeft: -6 },
+  sprocketBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   headerTitle: { fontFamily: font.bold, fontSize: fontSize["2xl"], color: colors.onSurface },
   headerSub: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, marginTop: 2 },
   iconBtn: {

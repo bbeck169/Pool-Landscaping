@@ -5,20 +5,19 @@
  * web ``DeleteAccountDangerCard``:
  *
  *   1. Danger button at the bottom of the customer portal profile.
- *   2. Modal opens on tap requiring the user to type ``DELETE``
- *      verbatim before the destructive action button is enabled.
+ *   2. Modal opens on tap with single-click Confirm (typed-confirm
+ *      friction removed app-wide per Feb-2026 UX simplification).
  *   3. On confirm the component fires
  *      ``DELETE /api/customer-portal/account``, clears
  *      AsyncStorage, and navigates back to the public landing
- *      screen.  The active JWT is server-side dead immediately
- *      (utils.get_current_user hard-401s on ``deleted_at``).
+ *      screen.
  *
  * Uses a bottom-sheet-style ``Modal`` instead of ``Alert.alert``
  * because Android's Alert has no inline ``TextInput`` support.
  */
 import React, { useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, Modal, TextInput,
+  View, Text, StyleSheet, Pressable, Modal,
   ActivityIndicator, Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -28,9 +27,6 @@ import { router } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
-const REQUIRED_PHRASE = "DELETE";
-
-
 type Props = {
   onDeleted?: () => void;
 };
@@ -38,32 +34,25 @@ type Props = {
 
 export default function DeleteAccountSection({ onDeleted }: Props) {
   const [open, setOpen] = useState(false);
-  const [phrase, setPhrase] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>("");
-
-  const canConfirm = phrase === REQUIRED_PHRASE && !busy;
 
   const close = () => {
     if (busy) return;
     setOpen(false);
-    setPhrase("");
     setErr("");
   };
 
   const onConfirm = async () => {
-    if (!canConfirm) return;
+    if (busy) return;
     setBusy(true);
     setErr("");
     try {
       await api.delete("/customer-portal/account");
-      // Clear local session — the JWT is now dead server-side.
       try { await AsyncStorage.clear(); } catch (_e) { /* best effort */ }
       try { onDeleted && onDeleted(); } catch (_e) { /* best effort */ }
       Alert.alert("Account deleted",
         "Your account has been deleted. Your service history stays on file with your provider, but your personal details have been removed.");
-      // ``/`` is the mobile public landing (auth gate re-routes to
-      // /login as needed).
       try { router.replace("/"); } catch (_e) { /* best effort */ }
     } catch (e: any) {
       setErr(e?.message || "Something went wrong. Please try again.");
@@ -104,19 +93,8 @@ export default function DeleteAccountSection({ onDeleted }: Props) {
           >
             <Text style={styles.modalTitle}>Confirm deletion</Text>
             <Text style={styles.modalBody}>
-              To confirm, type <Text style={styles.emphasis}>{REQUIRED_PHRASE}</Text> below.
+              This will permanently delete your account. Are you sure?
             </Text>
-            <TextInput
-              value={phrase}
-              onChangeText={setPhrase}
-              placeholder={REQUIRED_PHRASE}
-              placeholderTextColor={colors.muted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              spellCheck={false}
-              style={styles.input}
-              testID="portal-profile-delete-account-phrase-input"
-            />
             {err ? (
               <Text
                 style={styles.error}
@@ -134,9 +112,8 @@ export default function DeleteAccountSection({ onDeleted }: Props) {
                 <Text style={styles.cancelText}>Cancel</Text>
               </Pressable>
               <Pressable
-                style={[styles.confirmBtn,
-                          !canConfirm && styles.confirmBtnDisabled]}
-                disabled={!canConfirm}
+                style={[styles.confirmBtn, busy && styles.confirmBtnDisabled]}
+                disabled={busy}
                 onPress={onConfirm}
                 testID="portal-profile-delete-account-confirm-btn"
               >
@@ -218,22 +195,7 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     color: colors.onSurface,
     marginTop: spacing.sm,
-  },
-  emphasis: {
-    fontFamily: font.bold,
-    color: colors.onSurface,
-  },
-  input: {
-    marginTop: spacing.md,
-    height: 44,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: "#FCA5A5",
-    paddingHorizontal: spacing.md,
-    fontFamily: font.regular,
-    fontSize: fontSize.base,
-    color: colors.onSurface,
-    backgroundColor: "#FEF2F2",
+    lineHeight: 20,
   },
   error: {
     marginTop: spacing.sm,

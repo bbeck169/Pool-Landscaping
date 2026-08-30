@@ -6,6 +6,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PageHeader, Chip, Skeleton, EmptyState, Button, Modal, Toast } from "@/components/ui-kit";
+import ArmToDelete from "@/components/ui/ArmToDelete";
 import CustomersTagFilterDropdown from "@/components/customers/CustomersTagFilterDropdown";
 import RestoreCustomerButton from "@/components/customers/RestoreCustomerButton";
 import MuteControl from "@/components/customers/MuteControl";
@@ -517,33 +518,9 @@ export default function CustomersList() {
   // confirm" from "plain confirm". Type-to-confirm was retired
   // app-wide, so the threshold now separates "single-click
   // confirm" (small deletes) from "2-click arm-and-execute"
-  // (mass delete >=500, catastrophic).
+  // (mass delete >=500, catastrophic) — the state machine lives
+  // in the shared <ArmToDelete/> primitive.
   const _CATASTROPHIC_THRESHOLD = 500;
-  // Feb 2026 · Type-to-confirm removed app-wide. The large bulk
-  // delete (>=500 rows) now uses a 2-click arm-and-execute pattern
-  // instead of a typed-number input. State drives:
-  //   1st click  → set ``deleteArmed`` + start ``armCooldown`` at 3
-  //                and count down to 0 (button disabled during
-  //                the cooldown so muscle-memory double-taps
-  //                can't fire the delete).
-  //   2nd click  → runs ``doBulkDelete`` (enabled once cooldown
-  //                hits 0). Cancel or modal-close resets both.
-  const [deleteArmed, setDeleteArmed] = useState(false);
-  const [armCooldown, setArmCooldown] = useState(0);
-
-  // Countdown effect — ticks while armed and cooldown > 0.
-  React.useEffect(() => {
-    if (!deleteArmed || armCooldown <= 0) return undefined;
-    const t = setTimeout(() => setArmCooldown((n) => Math.max(0, n - 1)), 1000);
-    return () => clearTimeout(t);
-  }, [deleteArmed, armCooldown]);
-
-  // Reset the arm-and-execute state whenever the modal closes.
-  const _resetArm = React.useCallback(() => {
-    setDeleteArmed(false);
-    setArmCooldown(0);
-  }, []);
-
   // Feb-2026 · Total matching the current tab — used both by the
   // "Select all N matching" affordance and the confirm-modal
   // headline. The endpoint at ``/customers?count_only=true`` is
@@ -616,7 +593,8 @@ export default function CustomersList() {
       setRows((prev) => (prev || []).filter((r) => !(res.deleted || []).includes(r.id)));
       setSelected(new Set());
       setSelectAllMatching(false);
-      _resetArm();
+      // Feb-2026 · ArmToDelete primitive owns its own reset via
+      // unmount when the modal closes below.
       setConfirmDeleteOpen(false);
       if (failed.length === 0) {
         sonnerToast.success(`${okC} customer${okC === 1 ? "" : "s"} deleted`);
@@ -1674,14 +1652,15 @@ export default function CustomersList() {
           </button>
         </div>
       ) : null}
-      {/* Feb-2026 · Unlimited bulk delete — small deletes use the
+      {/* Feb-2026 · Unlimited bulk delete — small deletes keep the
           shared single-click ``BulkConfirmModal``; large deletes
-          (>=500 rows, catastrophic) render a bespoke 2-click
-          arm-and-execute modal below. */}
+          (>=500 rows, catastrophic) render the shared
+          ``<ArmToDelete>`` primitive inside a bespoke modal so the
+          state machine + cooldown live in one place. */}
       {confirmDeleteOpen && _pendingDeleteCount < _CATASTROPHIC_THRESHOLD ? (
         <BulkConfirmModal
           open={confirmDeleteOpen}
-          onClose={() => { setConfirmDeleteOpen(false); _resetArm(); }}
+          onClose={() => setConfirmDeleteOpen(false)}
           onConfirm={doBulkDelete}
           title={`Delete ${_pendingDeleteCount} customer${_pendingDeleteCount === 1 ? "" : "s"}?`}
           description="Customers with active invoices will show as locked and be skipped."
@@ -1696,7 +1675,6 @@ export default function CustomersList() {
           onMouseDown={(e) => {
             if (e.target === e.currentTarget && !bulkBusy) {
               setConfirmDeleteOpen(false);
-              _resetArm();
             }
           }}
           data-testid="customers-bulk-delete-catastrophic-modal"
@@ -1722,11 +1700,8 @@ export default function CustomersList() {
             <p className="text-xs mt-3 font-semibold uppercase tracking-wider"
                 style={{ color: colors.onSurfaceSecondary }}
                 data-testid="customers-bulk-delete-catastrophic-help">
-              {deleteArmed
-                ? (armCooldown > 0
-                    ? `Armed — hold for ${armCooldown}s then click Delete to execute.`
-                    : "Armed — click Delete again to execute.")
-                : "This action is irreversible. Click Arm delete to arm, then click Delete again to execute."}
+              This action is irreversible. Click Arm delete to arm,
+              then click Delete again to execute.
             </p>
             {bulkBusy ? (
               <div
@@ -1747,7 +1722,7 @@ export default function CustomersList() {
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => { setConfirmDeleteOpen(false); _resetArm(); }}
+                onClick={() => setConfirmDeleteOpen(false)}
                 disabled={bulkBusy}
                 className="px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-60"
                 style={{ backgroundColor: colors.surfaceSecondary,
@@ -1756,35 +1731,17 @@ export default function CustomersList() {
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (bulkBusy) return;
-                  if (!deleteArmed) {
-                    // 1st click — arm + start 3-second cooldown.
-                    setDeleteArmed(true);
-                    setArmCooldown(3);
-                    return;
-                  }
-                  if (armCooldown > 0) return; // guard: still cooling.
-                  // 2nd click — execute.
-                  doBulkDelete();
-                }}
-                disabled={bulkBusy || (deleteArmed && armCooldown > 0)}
-                className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
-                style={{ backgroundColor: "#DC2626" }}
-                data-testid="customers-bulk-delete-catastrophic-btn"
-                data-armed={deleteArmed ? "1" : "0"}
-                data-cooldown={armCooldown}
-              >
-                {bulkBusy
-                  ? "Deleting…"
-                  : !deleteArmed
-                    ? "Arm delete"
-                    : armCooldown > 0
-                      ? `Confirm again in ${armCooldown}s`
-                      : `Delete ${_pendingDeleteCount}`}
-              </button>
+              <ArmToDelete
+                count={_pendingDeleteCount}
+                catastrophicThreshold={_CATASTROPHIC_THRESHOLD}
+                cooldownMs={3000}
+                onConfirm={doBulkDelete}
+                label="Delete"
+                armLabel="Arm delete"
+                disabled={bulkBusy}
+                size="md"
+                testIdPrefix="customers-bulk-delete-catastrophic"
+              />
             </div>
           </div>
         </div>

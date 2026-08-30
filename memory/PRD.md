@@ -1,3 +1,57 @@
+## Shared `<ArmToDelete>` Primitive · Feb-2026 · SHIPPED
+
+Extracted the inline arm-and-execute state machine from
+``CustomersList`` into a reusable UI primitive so future
+catastrophic operations (mass invoice void, mass job delete, etc.)
+can reuse the same UX without duplicating logic.
+
+**Location**: ``frontend/src/components/ui/ArmToDelete.jsx``
+
+**API**:
+```jsx
+<ArmToDelete
+  count={500}
+  catastrophicThreshold={500}   // default 500
+  cooldownMs={3000}             // default 3000
+  onConfirm={handler}           // Promise<void> | void
+  onError={handler}             // optional — fired on rejection
+  label="Delete"                // default "Delete"
+  armLabel="Arm delete"         // default "Arm delete"
+  disabled={false}
+  size="md"                     // "sm" | "md" | "lg"
+  testIdPrefix="arm-to-delete"  // stable driver hook
+/>
+```
+
+**State machine**:
+- ``count < catastrophicThreshold`` → single-click ``Delete N``.
+- ``count >= catastrophicThreshold`` → ``idle → arming (3s cooldown
+  disabled) → armed → executing → idle`` (or ``armed`` on
+  rejection).
+- Escape resets to ``idle`` at any pre-execute state.
+- ``aria-live="polite"`` region announces every state transition.
+
+**Refactor**: ``pages/customers/CustomersList.jsx`` — removed the
+inline ``deleteArmed`` / ``armCooldown`` state hooks, the countdown
+``useEffect``, and the ``_resetArm`` helper. Replaced the
+catastrophic modal's inline button block with a single
+``<ArmToDelete>`` mount. Visual style pixel-identical to the
+previous inline button.
+
+**Tests**: ``frontend/src/test/arm-to-delete.test.jsx`` — 15 tests
+covering both paths (single-click + arm-and-execute), the state
+machine, rejection handling, Escape cancel, aria-live
+announcements, and testIdPrefix contract. Also updated
+``test/confirm-dialog-no-typed-input.test.jsx`` to assert the
+primitive is imported/mounted in CustomersList (replacing the
+old inline-state assertions).
+
+Full-suite delta remains net-positive from the hub bundle: 17
+pre-existing failing files unchanged; 15 new primitive tests all
+pass.
+
+
+
 ## Consolidated Settings Hub + Sprocket + Type-to-Confirm Removal · Feb-2026 · SHIPPED
 
 Three-part shipped in one bundle:
