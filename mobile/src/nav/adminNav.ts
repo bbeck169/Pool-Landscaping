@@ -92,6 +92,7 @@ export const ADMIN_NAV: NavGroup[] = [
     entries: [
       { label: "AI Employees Hub",   route: "/ai-employees",         icon: "sparkles-outline",   tier: "t1", testID: "drawer-nav-ai-employees" },
       { label: "AI Brain",           route: "/settings/ai-brain",    icon: "hardware-chip-outline", tier: "t1", testID: "drawer-nav-ai-brain" },
+      { label: "Soshie Hub",         route: "/soshie",               icon: "megaphone-outline",  tier: "t1", testID: "drawer-nav-soshie" },
       { label: "Atlas SEO Agent",    route: "/admin/seo/atlas",      icon: "compass-outline",    tier: "t1", testID: "drawer-nav-atlas" },
       { label: "Communications",     route: "/communications",       icon: "mail-outline",       tier: "t1", testID: "drawer-nav-communications" },
     ],
