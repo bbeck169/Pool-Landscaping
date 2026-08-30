@@ -1,3 +1,107 @@
+## B4 Follow-up · Price Enrichment on Subscription List — SHIPPED
+
+Replaces the raw ``price_1UAI...`` in the Plan column with the
+humanised ``Pool Pro — $29.99/month``.
+
+### Backend
+- ``services/payments/stripe_subscription.py`` extended:
+  - New helper ``_extract_price_meta(stripe_sub)`` pulls the 5
+    enriched fields off an expanded Stripe.Subscription payload
+    (``items.data[0].price`` + expanded ``product``).
+  - New helper ``_enrich_price_from_id(price_id)`` fetches a
+    Stripe Price by id with product expanded — used by the
+    webhook handler + the backfill script when the incoming
+    payload wasn't expanded.
+  - New helper ``format_plan_label(row)`` renders the canonical
+    labels: ``Product — $X/month`` / ``…/year`` / ``…/week`` /
+    ``… every 3 months`` / non-USD ``… USD``.
+  - ``create_subscription`` now passes
+    ``expand=["items.data.price.product"]`` on
+    ``Subscription.create`` and stamps ``price_id``,
+    ``price_product_name``, ``price_amount_cents``,
+    ``price_currency``, ``price_interval``,
+    ``price_interval_count`` on the mirror row.
+  - ``update_subscription`` does the same on ``Subscription.modify``
+    so a price change refreshes the enriched fields.
+  - ``list_subscriptions`` stamps ``formatted_plan_label`` on
+    every returned row.
+- ``services/payments/stripe_charge.py``:
+  - ``customer.subscription.*`` webhook handlers now call
+    ``_extract_price_meta`` on the incoming event, falling back to
+    ``_enrich_price_from_id`` (with try/except) when ``product``
+    wasn't expanded on the payload.
+
+### Backfill migration
+- ``services/migrations/stripe_subscriptions_price_enrichment.py``
+  (sentinel ``stripe_subscriptions_price_enrichment_v1``). Scans
+  rows missing ``price_product_name``, calls
+  ``_enrich_price_from_id``, upserts the 5 fields. Rate-limited to
+  ~5 req/s. Kicked off on boot as a background asyncio task so
+  startup isn't blocked.
+
+### Frontend
+- ``pages/customers/SubscriptionsPanel.jsx`` — Plan column now
+  renders ``r.formatted_plan_label`` with a subtle
+  ``<price_id> · resolving…`` fallback for rows the backfill
+  hasn't caught yet. Two testids for driving:
+  ``subscriptions-row-<sid>-plan`` (enriched) vs
+  ``subscriptions-row-<sid>-plan-fallback`` (backfill pending).
+- Fixed an incidental import bug found in the process
+  (``import api from`` → ``import { api } from`` for the panel).
+
+### Tests
+- New ``tests/test_subscription_price_enrichment.py`` — 14 tests:
+  - 3× ``_extract_price_meta`` cases (expanded, partial, empty).
+  - 5× ``format_plan_label`` cases (monthly, yearly, every-N,
+    missing name, non-USD, missing amount).
+  - Service tests: create stamps enriched fields + label;
+    update refreshes on price change; list stamps label on every
+    row; fallback label when fields absent.
+  - Backfill tests: populates missing rows + sentinel prevents
+    second run.
+- ``test/SubscriptionList.test.jsx`` — extended to assert both
+  the enriched-label testid path and the ``resolving…`` fallback
+  testid path on the same render.
+
+**47 backend + 13 frontend tests pass** (14 new backend +
+regression sweep of the prior 33 + the 13 shipped frontend). All
+prior suites still green.
+
+### Empirical enriched sample row
+```json
+{
+  "tenant_id": "proof-en-9d1ee5",
+  "customer_id": "proof-en-cust-1d2389",
+  "stripe_subscription_id": "sub_1UAIU9FKIPLAH4AyA5EXwgx5",
+  "price_id": "price_1UAIU7FKIPLAH4AyiBHRY9W9",
+  "quantity": 1,
+  "status": "active",
+  "price_product_name": "Pool Pro (B4 enrich proof)",
+  "price_amount_cents": 2999,
+  "price_currency": "usd",
+  "price_interval": "month",
+  "price_interval_count": 1,
+  "formatted_plan_label": "Pool Pro (B4 enrich proof) — $29.99/month",
+  "webhook_source": "app_create"
+}
+```
+
+### Screenshot
+``/tmp/subscriptions-panel-enriched.png`` — Melissa McHenry's
+Subscriptions tab renders:
+- ``Landscape Essentials — $99/year`` · trialing · qty 3 · Apr 20 2026 · Auto-cancel Yes
+- ``Pool Pro — $29.99/month`` · active · qty 1 · Apr 15 2026 · Auto-cancel No
+
+### Files touched
+- Backend created: ``services/migrations/stripe_subscriptions_price_enrichment.py``,
+  ``tests/test_subscription_price_enrichment.py``.
+- Backend modified: ``services/payments/stripe_subscription.py``,
+  ``services/payments/stripe_charge.py``, ``server.py``.
+- Frontend modified: ``pages/customers/SubscriptionsPanel.jsx``,
+  ``test/SubscriptionList.test.jsx``.
+
+
+
 ## Phase B4 · Subscription CRUD from the App — SHIPPED
 
 Backend + web. Mobile parity will be dispatched to the Expo

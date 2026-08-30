@@ -1720,6 +1720,26 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
             "updated_at": now_iso,
             "webhook_source": etype,
         }
+        # Feb-2026 · price enrichment — pull enriched price/product
+        # fields off the incoming event when possible, otherwise
+        # fall back to a Stripe retrieve. Best-effort — a missing
+        # price shouldn't break the mirror upsert.
+        try:
+            from services.payments.stripe_subscription import (
+                _extract_price_meta, _enrich_price_from_id,
+            )
+            price_meta = _extract_price_meta(data)
+            if price_meta and not price_meta.get("price_product_name"):
+                # ``product`` wasn't expanded on the event — hydrate it.
+                extra = await _enrich_price_from_id(price_meta.get("price_id") or "")
+                # Merge without clobbering the fields already resolved.
+                for k, v in (extra or {}).items():
+                    if v is not None:
+                        price_meta[k] = v
+            if price_meta:
+                set_doc.update(price_meta)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[stripe.webhook] price enrich failed for sub %s: %s", sub_id, exc)
         if etype == "customer.subscription.deleted":
             set_doc["status"] = "canceled"
             set_doc["canceled_at"] = set_doc["canceled_at"] or now_iso

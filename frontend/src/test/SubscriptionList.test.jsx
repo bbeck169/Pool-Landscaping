@@ -47,9 +47,11 @@ describe("SubscriptionsPanel · list view", () => {
   it("renders rows with canonical testids", async () => {
     apiMod.__state.rowsResponse = { total: 2, rows: [
       { stripe_subscription_id: "sub_A", price_id: "price_pro",
+        formatted_plan_label: "Pool Pro — $29.99/month",
         status: "active", quantity: 1, current_period_end: "2026-03-15T00:00:00Z",
         cancel_at_period_end: false },
       { stripe_subscription_id: "sub_B", price_id: "price_lite",
+        // No formatted_plan_label — fallback path.
         status: "past_due", quantity: 3, current_period_end: "2026-03-20T00:00:00Z",
         cancel_at_period_end: true },
     ]};
@@ -57,6 +59,16 @@ describe("SubscriptionsPanel · list view", () => {
     await waitFor(() => expect(screen.getByTestId("subscriptions-list")).toBeTruthy());
     expect(screen.getByTestId("subscriptions-row-sub_A")).toBeTruthy();
     expect(screen.getByTestId("subscriptions-row-sub_B")).toBeTruthy();
+    // Enriched label renders on sub_A.
+    expect(screen.getByTestId("subscriptions-row-sub_A-plan").textContent)
+      .toBe("Pool Pro — $29.99/month");
+    expect(screen.queryByTestId("subscriptions-row-sub_A-plan-fallback")).toBeNull();
+    // Fallback (raw price_id + resolving hint) renders on sub_B.
+    expect(screen.getByTestId("subscriptions-row-sub_B-plan-fallback").textContent)
+      .toMatch(/price_lite/);
+    expect(screen.getByTestId("subscriptions-row-sub_B-plan-fallback").textContent)
+      .toMatch(/resolving/);
+    expect(screen.queryByTestId("subscriptions-row-sub_B-plan")).toBeNull();
     // Auto-cancel indicator only on sub_B.
     expect(screen.getByTestId("subscriptions-row-sub_B-autocancel")).toBeTruthy();
     expect(screen.queryByTestId("subscriptions-row-sub_A-autocancel")).toBeNull();

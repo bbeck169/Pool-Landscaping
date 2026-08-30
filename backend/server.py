@@ -2538,6 +2538,20 @@ async def startup():
     except Exception as e:
         logger.warning(f"stripe_webhook_hardening migration crashed: {e}")
 
+    # Phase B4 follow-up · Feb-2026 — enrich existing
+    # ``stripe_subscriptions`` rows with product name / amount /
+    # interval so the UI can render humanised plan labels.
+    # Runs in the background so app boot isn't blocked by the
+    # 5 req/s rate limiter.
+    try:
+        from services.migrations.stripe_subscriptions_price_enrichment import (
+            run_stripe_subscriptions_price_enrichment,
+        )
+        asyncio.create_task(run_stripe_subscriptions_price_enrichment())
+        logger.info("[stripe_subscriptions_price_enrichment] background backfill kicked off")
+    except Exception as e:
+        logger.warning(f"stripe_subscriptions_price_enrichment kickoff crashed: {e}")
+
     # Backlog #iv · R1 · Feb-2026 — Allowlist-hygiene sanity check.
     # Emits a WARN log per overlap between ``COMMS_TEST_ALLOWLIST_*``
     # and live workforce / tenant / from-number addresses.  Log-only

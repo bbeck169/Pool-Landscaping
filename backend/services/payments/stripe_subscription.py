@@ -68,6 +68,103 @@ def _sub_from_stripe(stripe_sub: Any) -> Dict[str, Any]:
     }
 
 
+# ── Price enrichment helpers ─────────────────────────────────────
+_PRICE_META_KEYS = (
+    "price_id",
+    "price_product_name",
+    "price_amount_cents",
+    "price_currency",
+    "price_interval",
+    "price_interval_count",
+)
+
+
+def _extract_price_meta(stripe_sub: Any) -> Dict[str, Any]:
+    """Pull enriched price fields from a Stripe.Subscription.
+
+    Expects the caller to have passed
+    ``expand=["items.data.price.product"]`` so ``product`` is a
+    dict, not a bare id. Falls back gracefully when the expand
+    wasn't set — leaves ``price_product_name=None`` and lets the
+    async backfill fill in the gap later.
+    """
+    d = _asdict(stripe_sub) if not isinstance(stripe_sub, dict) else stripe_sub
+    items = ((d.get("items") or {}).get("data") or [])
+    if not items:
+        return {}
+    price = items[0].get("price") if isinstance(items[0], dict) else None
+    if not price:
+        return {}
+    p = _asdict(price) if not isinstance(price, dict) else price
+    recurring = p.get("recurring") or {}
+    product = p.get("product")
+    prod_name = None
+    if isinstance(product, dict):
+        prod_name = product.get("name")
+    return {
+        "price_id": p.get("id"),
+        "price_product_name": prod_name,
+        "price_amount_cents": p.get("unit_amount"),
+        "price_currency": (p.get("currency") or "usd"),
+        "price_interval": (recurring.get("interval") if isinstance(recurring, dict) else None),
+        "price_interval_count": (
+            (recurring.get("interval_count") if isinstance(recurring, dict) else None) or 1
+        ),
+    }
+
+
+async def _enrich_price_from_id(price_id: str) -> Dict[str, Any]:
+    """Fetch a Stripe Price by id with product expanded — used by
+    the webhook handler + the backfill script when the incoming
+    payload didn't carry the expanded object."""
+    if not price_id:
+        return {}
+    try:
+        _init_api_key()
+        p = await _to_thread(_stripe.Price.retrieve, price_id, expand=["product"])
+        pd = _asdict(p)
+        product = pd.get("product") or {}
+        recurring = pd.get("recurring") or {}
+        return {
+            "price_id": pd.get("id"),
+            "price_product_name": product.get("name") if isinstance(product, dict) else None,
+            "price_amount_cents": pd.get("unit_amount"),
+            "price_currency": (pd.get("currency") or "usd"),
+            "price_interval": recurring.get("interval") if isinstance(recurring, dict) else None,
+            "price_interval_count": (recurring.get("interval_count") if isinstance(recurring, dict) else None) or 1,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[stripe_subscription] price enrich failed for %s: %s", price_id, exc)
+        return {"price_id": price_id}
+
+
+def format_plan_label(row: Dict[str, Any]) -> str:
+    """Render ``Pool Pro — $9.99/month`` (or fallbacks). Pure
+    string formatting — used by the router response layer + the
+    frontend as a fallback if the field is server-provided."""
+    if not isinstance(row, dict):
+        return ""
+    name = row.get("price_product_name") or "Custom plan"
+    amount_cents = row.get("price_amount_cents")
+    currency = (row.get("price_currency") or "usd").upper()
+    interval = row.get("price_interval")
+    interval_count = int(row.get("price_interval_count") or 1)
+    if amount_cents is None:
+        return name
+    dollars = float(amount_cents) / 100.0
+    # Format the money — drop trailing .00 for readability.
+    money = f"${dollars:,.2f}"
+    if money.endswith(".00"):
+        money = money[:-3]
+    if currency != "USD":
+        money = f"{money} {currency}"
+    if not interval:
+        return f"{name} — {money}"
+    if interval_count == 1:
+        return f"{name} — {money}/{interval}"
+    return f"{name} — {money} every {interval_count} {interval}s"
+
+
 async def _ensure_stripe_customer(
     *, tenant_id: str, customer_id: str,
 ) -> Dict[str, Any]:
@@ -150,6 +247,10 @@ async def create_subscription(
         "metadata": sub_meta,
         "cancel_at_period_end": bool(cancel_at_period_end),
         "idempotency_key": idem,
+        # Feb-2026 · price enrichment — expand so the response
+        # carries the product name + amount + interval and the
+        # mirror row can be populated without an extra API call.
+        "expand": ["items.data.price.product"],
     }
     if trial_days and int(trial_days) > 0:
         kwargs["trial_period_days"] = int(trial_days)
@@ -164,6 +265,9 @@ async def create_subscription(
     now = _now_iso()
     set_doc = _sub_from_stripe(stripe_sub)
     set_doc["webhook_source"] = "app_create"
+    # Feb-2026 · price enrichment — pull enriched price/product
+    # fields out of the expanded Stripe response.
+    price_meta = _extract_price_meta(stripe_sub)
     # ``created_at`` is `$setOnInsert`-only (first-write wins for
     # the creation timestamp). Pop from ``set_doc`` so we don't
     # write the same path under both ``$setOnInsert`` and ``$set``.
@@ -176,25 +280,33 @@ async def create_subscription(
         "stripe_customer_id": stripe_customer_id,
         "created_at": created_at_val,
     }
+    set_payload = {
+        **set_doc,
+        "price_id": price_id,
+        "quantity": int(quantity or 1),
+        **price_meta,
+    }
     await db.stripe_subscriptions.update_one(
         {"stripe_subscription_id": sub_id},
         {"$setOnInsert": insert_doc,
-         "$set": {**set_doc,
-                   "price_id": price_id,
-                   "quantity": int(quantity or 1)}},
+         "$set": set_payload},
         upsert=True,
     )
-    mirror = await db.stripe_subscriptions.find_one(
-        {"stripe_subscription_id": sub_id, "tenant_id": tenant_id}, {"_id": 0},
-    )
-    return mirror or {**insert_doc, **set_doc}
+    mirror = await _fetch_mirror(tenant_id=tenant_id, sub_id=sub_id)
+    return mirror or {**insert_doc, **set_doc,
+                       "formatted_plan_label": format_plan_label({**insert_doc, **set_payload})}
 
 
 async def _fetch_mirror(*, tenant_id: str, sub_id: str) -> Optional[Dict[str, Any]]:
-    return await db.stripe_subscriptions.find_one(
+    row = await db.stripe_subscriptions.find_one(
         {"tenant_id": tenant_id, "stripe_subscription_id": sub_id},
         {"_id": 0},
     )
+    if row is not None:
+        # Feb-2026 · price enrichment — stamp the humanised label
+        # so every response carries a display-ready plan string.
+        row["formatted_plan_label"] = format_plan_label(row)
+    return row
 
 
 async def update_subscription(
@@ -244,13 +356,25 @@ async def update_subscription(
         })
         kwargs["metadata"] = merged
 
+    # Feb-2026 · price enrichment — always expand so a price
+    # change surfaces the new product name / amount / interval in
+    # the response and we can refresh the mirror without another
+    # API round trip.
+    kwargs["expand"] = ["items.data.price.product"]
+
     stripe_sub = await _to_thread(_stripe.Subscription.modify, sub_id, **kwargs)
     set_doc = _sub_from_stripe(stripe_sub)
+    set_doc.pop("created_at", None)  # first-write wins
     set_doc["webhook_source"] = "app_update"
     if price_id:
         set_doc["price_id"] = price_id
     if quantity is not None:
         set_doc["quantity"] = int(quantity)
+    # Refresh enriched price fields when price changes (or on every
+    # modify — the payload is already expanded so it's free).
+    price_meta = _extract_price_meta(stripe_sub)
+    if price_meta:
+        set_doc.update(price_meta)
     await db.stripe_subscriptions.update_one(
         {"stripe_subscription_id": sub_id, "tenant_id": tenant_id},
         {"$set": set_doc},
@@ -279,6 +403,7 @@ async def cancel_subscription(
             cancel_at_period_end=True,
         )
     set_doc = _sub_from_stripe(stripe_sub)
+    set_doc.pop("created_at", None)  # first-write wins
     set_doc["webhook_source"] = "app_cancel_immediate" if immediate else "app_cancel_period_end"
     await db.stripe_subscriptions.update_one(
         {"stripe_subscription_id": sub_id, "tenant_id": tenant_id},
@@ -308,6 +433,12 @@ async def list_subscriptions(
         .skip(int(skip)).limit(int(limit))
     )
     rows = [r async for r in cursor]
+    # Feb-2026 · price enrichment — stamp the pre-computed label so
+    # the client renders the humanised copy without duplicating
+    # the formatter. Falls back gracefully for rows that haven't
+    # been backfilled yet (label uses whatever fields are present).
+    for r in rows:
+        r["formatted_plan_label"] = format_plan_label(r)
     return {"total": total, "rows": rows}
 
 

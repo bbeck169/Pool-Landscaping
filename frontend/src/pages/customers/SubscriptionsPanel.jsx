@@ -6,7 +6,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { Plus, Pencil, XCircle, RefreshCw } from "lucide-react";
-import api from "../../api";
+import { api } from "../../api";
 import { Button, Chip, Modal, Skeleton, EmptyState, Toast }
   from "../../components/ui-kit";
 
@@ -126,7 +126,22 @@ export default function SubscriptionsPanel({ customerId, canWrite = true }) {
                 <tr key={r.stripe_subscription_id}
                      className="border-t"
                      data-testid={`subscriptions-row-${r.stripe_subscription_id}`}>
-                  <td className="py-2 pr-4 font-mono text-xs">{r.price_id}</td>
+                  <td className="py-2 pr-4">
+                    {/* Feb-2026 follow-up · price enrichment — prefer
+                        the pre-computed humanised label; fall back to
+                        the raw price_id + a subtle resolver hint for
+                        rows the backfill hasn't caught yet. */}
+                    {r.formatted_plan_label ? (
+                      <span data-testid={`subscriptions-row-${r.stripe_subscription_id}-plan`}>
+                        {r.formatted_plan_label}
+                      </span>
+                    ) : (
+                      <span className="font-mono text-xs"
+                            data-testid={`subscriptions-row-${r.stripe_subscription_id}-plan-fallback`}>
+                        {r.price_id} <em className="text-muted-foreground not-italic">· resolving…</em>
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2 pr-4">
                     <Chip label={r.status || "unknown"}
                           tone={STATUS_TONE[r.status] || "neutral"} />
