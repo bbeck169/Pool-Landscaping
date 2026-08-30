@@ -9,7 +9,7 @@ import { Card, Loading, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
 
-type MentionDetail = {
+type MentionDetailData = {
   id: string;
   provider?: string;
   sentiment?: string;
@@ -24,7 +24,7 @@ type MentionDetail = {
 
 export default function MentionDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [row, setRow] = useState<MentionDetail | null>(null);
+  const [row, setRow] = useState<MentionDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 

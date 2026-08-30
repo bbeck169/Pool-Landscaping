@@ -897,3 +897,20 @@
 - **Files created**: offlineServiceLog.ts, photoWorker.ts, conflicts.ts, jobArrive.ts, 4 test files, empirical proof
 - **Files modified**: index.ts, queue.ts, _layout.tsx, [id].tsx, checklist.tsx, jest.config.js
 - **Component code changes**: queue.ts (conflict detection in catch block), [id].tsx (arrive → sync queue), checklist.tsx (submitOffline), _layout.tsx (wirePhotoAutoUpload)
+
+## Iteration 42 — Phase O6: Full Write Parity + Sync UI Polish
+- **Commit**: da3cb17b44df8c1298101effe25daf3681a9c1c2
+- **Date**: 2026-08-29
+- **Changes**:
+  - Created offlineWrite utility (src/services/offlineWrite.ts) — unified write wrapper with automatic offline fallback
+  - Created 6 sync UI components: OfflineBanner, PendingChangesChip, ConflictSheet, SyncToast, StoragePressureBanner, ManualSyncButton
+  - Created storageWatchdog service (src/services/storageWatchdog.ts)
+  - Wired 18 W-A write flows (silent offline queue) and 12 W-B flows (queue with warning) across 17 screen/component files
+  - Expanded cacheInvalidation.ts from ~7 to 30+ op_types
+  - Integrated all sync UI into root _layout.tsx, dashboard header, and More screen
+  - Fixed dashboard load() callback syntax error
+  - 12 Jest tests all passing (__tests__/o6-write-parity.test.ts)
+- **Files modified**: 34 files (10 new, 24 modified)
+  - New: src/services/offlineWrite.ts, src/services/storageWatchdog.ts, src/components/sync/{OfflineBanner,PendingChangesChip,ConflictSheet,SyncToast,StoragePressureBanner,ManualSyncButton,index}.tsx, __tests__/o6-write-parity.test.ts
+  - Modified: app/_layout.tsx, app/(app)/index.tsx, app/(app)/more.tsx, app/job/[id].tsx, app/job/new.tsx, app/job/[id]/checklist.tsx, app/customer/new.tsx, app/dispatch.tsx, app/time-clock.tsx, app/time-off.tsx, app/landscape-time-clock.tsx, app/settings/notifications.tsx, src/components/job/FieldReport.tsx, src/components/job/MaintenanceLog.tsx, src/components/job/ServiceIssues.tsx, src/components/schedule/CouldNotServiceButton.tsx, src/components/customers/ServiceNotes.tsx, src/components/customers/CustomerTagsSection.tsx, src/components/customers/MuteControlSheet.tsx, src/components/gps/GpsConsentModal.tsx, src/components/LandscapingClockWidget.tsx, src/components/NewLeadForm.tsx, src/services/cacheInvalidation.ts
+- **Web files referenced**: frontend/src/apiClient.js, frontend/src/App.js (for flow mapping)

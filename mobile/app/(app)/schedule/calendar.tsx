@@ -149,8 +149,6 @@ export default function ScheduleCalendar() {
   const isTech = role === "technician";
   const canWriteJobs = isAdmin || isTech;
 
-  if (role === "customer") return <Redirect href="/(app)/jobs" />;
-
   const [mode, setMode] = useState<Mode>("grid");
   const [modeLoaded, setModeLoaded] = useState(false);
   const [focus, setFocus] = useState(new Date());                // Grid: single day; Calendar: anchors the week
@@ -411,6 +409,7 @@ export default function ScheduleCalendar() {
     return m;
   }, [jobs]);
 
+  if (role === "customer") return <Redirect href="/(app)/jobs" />;
   if (!modeLoaded) return null;
 
   return (

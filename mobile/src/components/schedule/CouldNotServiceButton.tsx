@@ -110,10 +110,10 @@ export function CouldNotServiceModal({ visible, jobId, onClose, onDone }: ModalP
       }
       const sr = resp?.sms_result;
       const secondary = sr?.sent ? "Customer notified" : humanizeSmsReason(sr?.reason);
-      const body = secondary
+      const alertBody = secondary
         ? `Job marked 'Could Not Service'\n\n${secondary}`
         : "Job marked 'Could Not Service'";
-      Alert.alert("Marked", body);
+      Alert.alert("Marked", alertBody);
       onDone?.(resp);
       onClose();
     } catch (e: any) {

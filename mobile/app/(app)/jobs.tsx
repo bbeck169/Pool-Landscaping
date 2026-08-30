@@ -37,9 +37,6 @@ export default function Jobs() {
   const isCustomer = user?.role === "customer";
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const isTech = user?.role === "technician";
-  if (isAdmin) {
-    return <Redirect href="/(app)/schedule/calendar" />;
-  }
 
   const load = useCallback(async (f: string) => {
     const cacheKey = `${user?.role}_${user?.id}`;
@@ -120,6 +117,10 @@ export default function Jobs() {
     if (!viewed) return true;
     return String(last) > String(viewed);
   }, [isTech, user?.id, viewedMap]);
+
+  if (isAdmin) {
+    return <Redirect href="/(app)/schedule/calendar" />;
+  }
 
   return (
     <View style={styles.root}>
