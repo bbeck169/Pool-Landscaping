@@ -198,6 +198,19 @@ async def _do_publish_fanout(
         or ""
     )
 
+    # Phase S1.5 · Feb-2026 — media attachment for image-bearing
+    # platforms.  When the action row carries a ``media_url``, we
+    # pass it through to the adapter alongside the text.  Stub
+    # adapters accept the kwarg + no-op; live adapters will attach
+    # the image once wired.
+    media_url: Optional[str] = None
+    media_source: Optional[str] = None
+    brand_score: Optional[float] = None
+    if action:
+        media_url = action.get("media_url")
+        media_source = action.get("media_source")
+        brand_score = action.get("brand_score")
+
     # Moderation — regex-only for P1. Non-empty flags do NOT block
     # here (the block happens at approve-time); we surface the
     # flags on the response so the admin dashboard can badge them.
@@ -220,6 +233,9 @@ async def _do_publish_fanout(
                 link=body.link, title=title, status=body.status,
                 article_id=(action and (action.get("payload") or {})
                                           .get("article_id")),
+                media_url=media_url,
+                media_source=media_source,
+                brand_score=brand_score,
             )
             results.append({"platform": platform,
                               "status": "published", **res})
@@ -254,6 +270,14 @@ async def _do_publish_fanout(
         "action_id": body.action_id,
         "results": results,
         "moderation": mod,
+        # Phase S1.5 — surface media context on the response so the
+        # scheduler and admin dashboard can tell "this went out with
+        # a real photo" from "this went out with an AI image".
+        "media": {
+            "url": media_url,
+            "source": media_source,
+            "brand_score": brand_score,
+        },
     }
 
 
@@ -436,3 +460,65 @@ async def ingest_website_endpoint(
             tenant["id"], result, idem_body,
         )
     return result
+
+
+
+# ─── S1.5 · Autopilot config endpoints ───────────────────────────────────
+class AutopilotConfigPatch(BaseModel):
+    enabled: Optional[bool] = None
+    posts_per_day: Optional[int] = Field(None, ge=0, le=10)
+    posts_per_week: Optional[int] = Field(None, ge=0, le=50)
+    timezone: Optional[str] = Field(None, max_length=64)
+
+
+@router.get("/soshie/autopilot/config")
+async def list_autopilot_config(
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """List per-platform autopilot config for the tenant.  Seeds
+    the default rows on first read.  Powers the "Autopilot
+    Schedules" sub-tab in the S2 Publishing UI."""
+    from services.soshie.autopilot_config import list_for_tenant
+    rows = await list_for_tenant(tenant["id"])
+    return {"items": rows, "count": len(rows)}
+
+
+@router.patch("/soshie/autopilot/config/{platform}")
+async def patch_autopilot_config(
+    platform: str,
+    body: AutopilotConfigPatch,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Update the autopilot config for one platform.  Admin+ only."""
+    if (user or {}).get("role") not in {"admin", "super_admin", "manager"}:
+        raise HTTPException(403, "Admin only")
+    platform = (platform or "").strip().lower()
+    from services.soshie.autopilot_config import (
+        update_config, PLATFORMS,
+    )
+    if platform not in PLATFORMS:
+        raise HTTPException(422, f"unknown platform: {platform}")
+    if platform == "reddit" and body.enabled is True:
+        raise HTTPException(
+            409,
+            "Reddit autopilot is hard-blocked — subreddit rule "
+            "violation risk. Manual posting only.",
+        )
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    row = await update_config(tenant["id"], platform, patch)
+    return row
+
+
+@router.post("/soshie/autopilot/tick")
+async def trigger_autopilot_tick(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Manual tick trigger — admin-only, for debugging + tests.
+    Runs the same pipeline as the scheduled cron BUT only for the
+    current tenant."""
+    if (user or {}).get("role") not in {"admin", "super_admin"}:
+        raise HTTPException(403, "Super-admin only")
+    from services.soshie.autopilot_scheduler import _process_tenant
+    return await _process_tenant(tenant["id"])

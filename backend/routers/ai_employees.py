@@ -864,6 +864,10 @@ async def _create_action(*, tenant_id: str, user_id: str, employee_id: str,
                            draft: Dict[str, Any],
                            title: str, summary: str,
                            moderation_flags: Optional[List[Dict[str, Any]]] = None,
+                           requires_human_approval: bool = False,
+                           media_url: Optional[str] = None,
+                           media_source: Optional[str] = None,
+                           brand_score: Optional[float] = None,
                            ) -> Dict[str, Any]:
     doc = {
         "id": new_id(),
@@ -876,7 +880,7 @@ async def _create_action(*, tenant_id: str, user_id: str, employee_id: str,
         "draft": draft,          # human-readable text or structured data
         "title": title,
         "summary": summary,
-        "status": "pending",     # pending | approved | rejected | executed | failed | published
+        "status": "pending",     # pending | approved | rejected | executed | failed | published | deferred_no_credits
         "requested_by": user_id,
         "decided_by": None,
         "decision_note": None,
@@ -886,6 +890,16 @@ async def _create_action(*, tenant_id: str, user_id: str, employee_id: str,
         # draft time (Soshie).  Empty list on clean drafts.  Approve
         # endpoint requires ``?confirm_flags=1`` when this is non-empty.
         "moderation_flags": moderation_flags or [],
+        # Phase S1.5 · Feb-2026 — autopilot gates. When True, the
+        # autopilot scheduler MUST NOT auto-approve this row even
+        # after the 24hr window elapses.  Set by the brand-consistency
+        # scorer when an AI-generated image scores below threshold.
+        "requires_human_approval": bool(requires_human_approval),
+        # Phase S1.5 · media context (image-bearing platforms).
+        # ``media_source`` in {"job_photo", "ai_generated", "prior"}.
+        "media_url": media_url,
+        "media_source": media_source,
+        "brand_score": brand_score,
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }

@@ -1675,6 +1675,16 @@ async def _background_seed():
                 logger.warning(
                     "[walkie.live.cleanup.cron] register failed: %s", _walkie_live_exc,
                 )
+            # Phase S1.5 · Feb-2026 — 15-min Soshie autopilot tick.
+            try:
+                from services.soshie.autopilot_scheduler import (
+                    register_soshie_autopilot_cron,
+                )
+                register_soshie_autopilot_cron(scheduler)
+            except Exception as _ap_exc:  # pragma: no cover
+                logger.warning(
+                    "[soshie.autopilot.cron] register failed: %s", _ap_exc,
+                )
         except Exception as _ae:
             logger.warning(f"automation_engine registration crashed: {_ae}")
 
@@ -2610,6 +2620,17 @@ async def startup():
     except Exception as e:
         logger.warning(
             f"social_publish_log_indexes migration crashed: {e}",
+        )
+
+    # Phase S1.5 · Feb-2026 — Soshie Autopilot indexes.
+    try:
+        from services.migrations.soshie_autopilot_indexes import (
+            ensure_indexes as _sa_indexes,
+        )
+        await _sa_indexes()
+    except Exception as e:
+        logger.warning(
+            f"soshie_autopilot_indexes migration crashed: {e}",
         )
 
     # Phase O4 · Feb-2026 — idempotency_keys index hardening. Adds a
