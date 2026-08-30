@@ -78,8 +78,10 @@ export default function DeletionsAuditPage() {
 
   const runRestore = async () => {
     if (!restoreTarget) return;
-    const token = String(restoreTarget.resource_id || "").slice(0, 8);
-    if (restoreTypedText.trim() !== token) return;
+    // Feb-2026 · Type-to-confirm friction removed app-wide. The
+    // ``restoreTypedText`` state is kept for API back-compat but
+    // ignored — a click on Restore inside the modal is the sole
+    // gate (open modal → click Restore).
     setRestoreBusy(true);
     try {
       await api.post(
@@ -318,19 +320,10 @@ export default function DeletionsAuditPage() {
                   : "Clears deleted_at + deleted_by. Any cascade payments recorded on this entry are also restored."}
               </p>
               <p className="text-sm text-slate-500 mt-3">
-                Type <code data-testid="deletions-audit-restore-token">
-                  {String(restoreTarget.resource_id || "").slice(0, 8)}
-                </code> to confirm:
+                {/* Feb-2026 · Type-to-confirm removed — click Restore
+                    below to reverse the soft-delete. */}
+                Click <b>Restore</b> below to reverse the soft-delete.
               </p>
-              <input
-                type="text"
-                value={restoreTypedText}
-                onChange={(e) => setRestoreTypedText(e.target.value)}
-                placeholder={String(restoreTarget.resource_id || "").slice(0, 8)}
-                className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono"
-                data-testid="deletions-audit-restore-input"
-                autoFocus
-              />
             </div>
             <div className="px-5 py-3 flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50">
               <button
@@ -342,11 +335,7 @@ export default function DeletionsAuditPage() {
               <button
                 type="button"
                 onClick={runRestore}
-                disabled={
-                  restoreBusy ||
-                  restoreTypedText.trim() !==
-                    String(restoreTarget.resource_id || "").slice(0, 8)
-                }
+                disabled={restoreBusy}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60"
                 style={{ backgroundColor: "#0F172A" }}
                 data-testid="deletions-audit-restore-confirm"

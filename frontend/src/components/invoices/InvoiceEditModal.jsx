@@ -90,7 +90,6 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
   }));
 
   const [confirmSent, setConfirmSent] = useState(false);
-  const [paidNumberInput, setPaidNumberInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // Feb-2026 · Invoice inline edit sprint — per-row error state so
@@ -140,12 +139,17 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
   }));
 
   // ── Gate whether Save is allowed ─────────────────────────────
-  const paidNumberOk = !paid || paidNumberInput === (invoice?.invoice_number || "");
+  // Feb 2026 · Type-to-confirm removed — ``paidNumberOk`` used to
+  // gate Save until the user re-typed the invoice number for PAID
+  // invoices. That friction was retired app-wide. The warning
+  // banner above is the only remaining safety; the backend still
+  // receives ``confirm_edit_paid_invoice_number`` (auto-populated)
+  // for server-side re-verification.
   const sentOk = !sent || confirmSent;
   // Feb-2026 · Invoice inline edit sprint — save button stays
   // enabled even when a line lacks a category; the operator fixes
   // the row inline after the server error surfaces the issue.
-  const canSave = !terminal && sentOk && paidNumberOk && !busy;
+  const canSave = !terminal && sentOk && !busy;
 
   const submit = async () => {
     if (!canSave) return;
@@ -171,7 +175,7 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
         pricebook_writeback: !!li.pricebook_writeback,
       }));
       if (sent) payload.confirm_edit_sent = true;
-      if (paid) payload.confirm_edit_paid_invoice_number = paidNumberInput;
+      if (paid) payload.confirm_edit_paid_invoice_number = invoice?.invoice_number || "";
       const res = await api.patch(`/quotes/${invoice.id}`, payload);
       onSaved?.(res);
     } catch (e) {
@@ -281,7 +285,7 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
                         border: "1px solid #FCA5A5" }}
               data-testid="invoice-edit-banner-paid"
             >
-              <div className="flex items-start gap-2 mb-2">
+              <div className="flex items-start gap-2">
                 <AlertTriangle size={16} />
                 <span>
                   This invoice has been PAID. Editing it can break your
@@ -289,25 +293,15 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
                   you're doing.
                 </span>
               </div>
-              <div className="mt-2">
-                <label
-                  className="text-xs uppercase tracking-wide font-semibold block mb-1"
-                  style={{ color: "#7F1D1D" }}
-                >
-                  Type the invoice number to confirm:
-                  <span className="font-mono ml-1">{invoice?.invoice_number}</span>
-                </label>
-                <input
-                  type="text"
-                  className="w-full px-3 py-2 rounded-lg outline-none text-sm"
-                  style={{ background: "#fff", border: "1px solid #FCA5A5",
-                            color: colors.onSurface }}
-                  value={paidNumberInput}
-                  onChange={(e) => setPaidNumberInput(e.target.value)}
-                  data-testid="invoice-edit-paid-number-input"
-                  placeholder={invoice?.invoice_number || ""}
-                />
-              </div>
+              {/* Feb 2026 · Type-to-confirm removed — the "type the
+                  invoice number" input previously gating Save on
+                  paid invoices was retired app-wide. The two-click
+                  safety flow (open modal → click Save) is
+                  preserved; the warning banner above is the only
+                  friction that remains. The backend still receives
+                  ``confirm_edit_paid_invoice_number`` for
+                  server-side re-verification (auto-populated from
+                  the current invoice number). */}
             </div>
           ) : null}
 

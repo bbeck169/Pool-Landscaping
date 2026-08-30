@@ -14,8 +14,9 @@
  *   • Dry-run preview — every primary change (debounced 500ms) hits
  *     ``POST /api/customers/merge`` with ``dry_run: true`` and
  *     renders the returned reconciliation + rewire counts.
- *   • Type MERGE to confirm + confirm button — the button uses the
- *     rose-500 accent since this is destructive-ish.
+ *   • Confirm button — the button uses the
+ *     rose-500 accent since this is destructive-ish. Feb 2026 · the
+ *     original "Type MERGE" typed-input gate was retired app-wide.
  *
  * On success: fires ``onDone(result)`` so the parent can toast +
  * reload. On error: keeps the modal open, surfaces the error in an

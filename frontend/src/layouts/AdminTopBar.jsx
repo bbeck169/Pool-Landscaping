@@ -27,6 +27,8 @@ import { useAuth } from "@/auth";
 import { brandGradientCss } from "@/theme";
 import UniversalMenu from "@/layouts/UniversalMenu";
 import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
+// Feb-2026 · Consolidated Settings Hub — sprocket in header for admins.
+import { Settings as SettingsIcon } from "lucide-react";
 // Feb-2026 UI Polish Addendum — BrandLogo import was pulled after the
 // duplicate-logo dedupe: the top-nav no longer mounts the brand mark
 // (the side-rail crown in <AppLayout> is the single source of truth).
@@ -361,6 +363,7 @@ export default function AdminTopBar() {
           className="px-4 h-11 flex items-center justify-end gap-2"
           data-testid="admin-topbar-tech-wrap"
         >
+          <SettingsSprocket />
           <SignOutButton />
           <UniversalMenu variant="inline" />
         </div>
@@ -376,6 +379,7 @@ export default function AdminTopBar() {
           <div className="flex items-center gap-2">
             <AddCustomerButton />
             <CreditsBudgetChip />
+            <SettingsSprocket />
             <SignOutButton />
             <UniversalMenu variant="inline" />
           </div>
@@ -398,6 +402,7 @@ export default function AdminTopBar() {
           <div className="ml-auto shrink-0 flex items-center gap-2">
             <AddCustomerButton />
             <CreditsBudgetChip />
+            <SettingsSprocket />
             <SignOutButton />
             <UniversalMenu variant="inline" />
           </div>
@@ -436,6 +441,41 @@ function AddCustomerButton() {
 // handler that used to live in ``AppLayout``. Same visible role
 // scope as the rest of the topbar (any signed-in user reaches this
 // component because the sidebar mounts it for every role).
+// Feb-2026 · Consolidated Settings Hub — sprocket icon that sits
+// immediately left of the Sign Out button. Visible for admin +
+// super_admin only (tech / customer / manager do NOT see it —
+// their role has no access to the consolidated settings surface
+// gated by <AdminOnly> upstream). Click routes to /settings; hover
+// / focus-visible motion matches the app-shell polish.
+function SettingsSprocket() {
+  const auth = useAuth();
+  const { effectiveRole } = usePermissions();
+  const role = effectiveRole || auth?.user?.role;
+  if (role !== "admin" && role !== "super_admin") return null;
+  return (
+    <Link
+      to="/settings"
+      title="Settings"
+      aria-label="Settings"
+      data-testid="header-settings-sprocket"
+      className={[
+        "inline-flex items-center justify-center h-8 w-8 rounded-lg shadow-sm",
+        "transition-all duration-150 ease-out will-change-transform",
+        "hover:scale-[1.02] hover:text-sky-600",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:scale-[1.02]",
+      ].join(" ")}
+      style={{
+        backgroundColor: colors.surfaceSecondary,
+        color: colors.onSurface,
+        border: `1px solid ${colors.border}`,
+      }}
+    >
+      <SettingsIcon size={16} />
+    </Link>
+  );
+}
+
+
 function SignOutButton() {
   const auth = useAuth();
   const navigate = useNavigate();

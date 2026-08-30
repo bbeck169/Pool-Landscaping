@@ -99,7 +99,10 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   //     payment id short-hash).
   const [deleteInvoiceOpen, setDeleteInvoiceOpen] = useState(false);
   const [deletePaymentOpen, setDeletePaymentOpen] = useState(false);
-  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  // Feb 2026 · Type-to-confirm removed — the ``deleteConfirmText``
+  // state that gated Delete buttons on the invoice / payment
+  // modals has been retired. Kept the two boolean modal opens +
+  // the ``deleteBusy`` in-flight flag.
   const [deleteBusy, setDeleteBusy] = useState(false);
   // Feb 2026 · P0 — track the in-flight draft→sent PUT so we can
   // disable the "Send invoice" / "Email invoice" buttons + show a
@@ -256,21 +259,15 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
 
   // Feb-2026 · Item 3 — REST soft-delete handlers. Both use the new
   // ``DELETE /api/{invoices|payments}/{id}`` endpoints (admin+super
-  // only). The typed-confirm modal enforces the "type invoice number
-  // to confirm" UX per spec.
-  const _invoiceConfirmToken = (
-    doc?.invoice_number || String(id || "").slice(0, 8).toUpperCase() || ""
-  );
-  const _paymentConfirmToken = String(id || "").slice(0, 8).toLowerCase();
-
+  // only). Feb 2026 · Type-to-confirm removed app-wide — the modals
+  // now use a plain click-to-confirm flow; the two-click safety
+  // (open modal → click Delete) is preserved.
   const runDeleteInvoice = async () => {
-    if (deleteConfirmText.trim() !== _invoiceConfirmToken) return;
     setDeleteBusy(true);
     try {
       await api.del(`/invoices/${id}`);
       setToast({ tone: "success", message: "Invoice deleted" });
       setDeleteInvoiceOpen(false);
-      setDeleteConfirmText("");
       setTimeout(() => navigate("/invoices"), 400);
     } catch (e) {
       setToast({ tone: "error", message: e?.message || "Delete failed" });
@@ -278,7 +275,6 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   };
 
   const runDeletePayment = async () => {
-    if (deleteConfirmText.trim() !== _paymentConfirmToken) return;
     setDeleteBusy(true);
     try {
       const r = await api.del(`/payments/${id}`);
@@ -289,7 +285,6 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           : "Payment reverted to unpaid",
       });
       setDeletePaymentOpen(false);
-      setDeleteConfirmText("");
       await load();
     } catch (e) {
       setToast({ tone: "error", message: e?.message || "Delete failed" });
@@ -456,7 +451,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
             <>
               <Button
                 variant="danger"
-                onClick={() => { setDeleteConfirmText(""); setDeleteInvoiceOpen(true); }}
+                onClick={() => setDeleteInvoiceOpen(true)}
                 testid="id-delete-invoice-btn"
               >
                 <Trash2 size={14} /> Delete invoice
@@ -464,7 +459,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               {String(doc.payment_status || "unpaid").toLowerCase() !== "unpaid" ? (
                 <Button
                   variant="danger"
-                  onClick={() => { setDeleteConfirmText(""); setDeletePaymentOpen(true); }}
+                  onClick={() => setDeletePaymentOpen(true)}
                   testid="id-delete-payment-btn"
                 >
                   <Trash2 size={14} /> Delete payment
@@ -758,20 +753,22 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
       <SmsModal open={smsOpen} onClose={() => setSmsOpen(false)} invoice={doc} customer={customer}
         onDone={(m, t) => { setSmsOpen(false); setToast({ tone: t || "success", message: m }); }} />
 
-      {/* Feb-2026 · Item 3 — typed-confirm modals. The confirmation
-          token varies by action to prevent muscle-memory deletes. */}
+      {/* Feb-2026 · Item 3 — soft-delete confirmation modals.
+          Feb 2026 · Type-to-confirm friction removed app-wide: the
+          modals now use a single-click Delete inside the modal; the
+          two-click safety (open modal → click Delete) is preserved. */}
       <Modal
         open={deleteInvoiceOpen}
-        onClose={() => { setDeleteInvoiceOpen(false); setDeleteConfirmText(""); }}
+        onClose={() => setDeleteInvoiceOpen(false)}
         title="Delete this invoice?"
         footer={
           <div className="flex items-center gap-2">
             <Button variant="ghost"
-                     onClick={() => { setDeleteInvoiceOpen(false); setDeleteConfirmText(""); }}
+                     onClick={() => setDeleteInvoiceOpen(false)}
                      testid="id-delete-invoice-cancel">Cancel</Button>
             <Button variant="danger"
                      onClick={runDeleteInvoice}
-                     disabled={deleteBusy || deleteConfirmText.trim() !== _invoiceConfirmToken}
+                     disabled={deleteBusy}
                      testid="id-delete-invoice-confirm">
               {deleteBusy ? "Deleting…" : "Delete invoice"}
             </Button>
@@ -782,29 +779,20 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           This soft-deletes the invoice. It can be restored from{" "}
           <b>Admin → Audit → Deletions</b> (super_admin only).
         </p>
-        <p className="text-sm mt-2" style={{ color: colors.onSurfaceSecondary }}>
-          Type <code data-testid="id-delete-invoice-token">{_invoiceConfirmToken}</code> to confirm:
-        </p>
-        <TextInput
-          value={deleteConfirmText}
-          onChange={(e) => setDeleteConfirmText(e.target.value)}
-          placeholder={_invoiceConfirmToken}
-          testid="id-delete-invoice-input"
-        />
       </Modal>
 
       <Modal
         open={deletePaymentOpen}
-        onClose={() => { setDeletePaymentOpen(false); setDeleteConfirmText(""); }}
+        onClose={() => setDeletePaymentOpen(false)}
         title="Delete this payment?"
         footer={
           <div className="flex items-center gap-2">
             <Button variant="ghost"
-                     onClick={() => { setDeletePaymentOpen(false); setDeleteConfirmText(""); }}
+                     onClick={() => setDeletePaymentOpen(false)}
                      testid="id-delete-payment-cancel">Cancel</Button>
             <Button variant="danger"
                      onClick={runDeletePayment}
-                     disabled={deleteBusy || deleteConfirmText.trim() !== _paymentConfirmToken}
+                     disabled={deleteBusy}
                      testid="id-delete-payment-confirm">
               {deleteBusy ? "Deleting…" : "Delete payment"}
             </Button>
@@ -818,15 +806,6 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           note is recorded — no external refund is issued. Refund via
           the Stripe / Lumino dashboard separately if required.
         </p>
-        <p className="text-sm mt-2" style={{ color: colors.onSurfaceSecondary }}>
-          Type <code data-testid="id-delete-payment-token">{_paymentConfirmToken}</code> to confirm:
-        </p>
-        <TextInput
-          value={deleteConfirmText}
-          onChange={(e) => setDeleteConfirmText(e.target.value)}
-          placeholder={_paymentConfirmToken}
-          testid="id-delete-payment-input"
-        />
       </Modal>
 
       <RecordPaymentModal open={payOpen} onClose={() => setPayOpen(false)} invoice={doc}

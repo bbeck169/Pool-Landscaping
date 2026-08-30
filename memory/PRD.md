@@ -1,3 +1,68 @@
+## Consolidated Settings Hub + Sprocket + Type-to-Confirm Removal · Feb-2026 · SHIPPED
+
+Three-part shipped in one bundle:
+
+### Part 1 · Consolidated Settings Hub (`/settings`)
+- Nested router shape at ``App.js`` — ``<Route path="settings">`` mounts
+  ``<AdminOnly><SettingsHub /></AdminOnly>`` with **CHILD** routes for
+  ``index / general / branding / integrations / social``. Hub sidebar
+  stays visible when switching tabs (per user override of the default).
+- Legacy sibling routes for ``settings/branding`` +
+  ``settings/integrations`` deleted — those pages now render INSIDE
+  the hub shell. ``settings/integrations/supercool`` stays top-level
+  (its OAuth flow needs the full viewport).
+- Hub sidebar has **4 tabs only**: General, Branding, Integrations,
+  Social. Migration + Team entries dropped (no dead sidebar clutter).
+
+### Part 2 · Sprocket icon in header
+- ``SettingsSprocket`` in ``AdminTopBar.jsx`` — role-gated to
+  admin/super_admin, sits immediately LEFT of Sign Out in all three
+  responsive variants (tech-wrap / narrow-wrap / wide-wrap).
+- Test ID: ``header-settings-sprocket``.
+
+### Part 3 · Sitewide type-to-confirm removal
+- **Shared surfaces already sanitized (kept)**: ``ConfirmDeleteDialog``,
+  ``confirm-dialog.jsx``, ``useConfirmDelete`` — ``requireTypeConfirm``
+  props kept for backwards-compat, intentionally ignored.
+- **Removed inline typed inputs**:
+  - ``InvoiceEditModal.jsx`` — dropped ``paidNumberInput`` state +
+    render block; auto-populates ``confirm_edit_paid_invoice_number``
+    for the backend re-verify.
+  - ``QuoteInvoiceDetail.jsx`` — dropped ``deleteConfirmText`` state,
+    ``_invoiceConfirmToken`` / ``_paymentConfirmToken`` constants, and
+    both typed-input footers on the invoice-delete + payment-delete
+    modals; single-click Delete is now the whole gate.
+  - ``CustomersList.jsx`` — replaced the ≥500-row typed-number input
+    with a **2-click arm-and-execute** pattern (catastrophic only).
+    New testids: ``customers-bulk-delete-catastrophic-{modal,btn,cancel}``.
+    Button states: `Arm delete` → `Confirm again in {n}s` (disabled
+    3s countdown) → `Delete {n}` (enabled).
+- **Stale comments cleaned**: ``OpsHub.jsx``, ``MergeCustomersModal.jsx``.
+
+### Tests
+- New: ``settings-hub.test.jsx`` (9 tests), ``settings-sprocket-visibility.test.jsx``
+  (11), ``settings-nav-old-routes.test.jsx`` (10),
+  ``confirm-dialog-no-typed-input.test.jsx`` (17).
+- Rewritten: ``typed-confirm-delete-modal.test.jsx``, ``slice-p19-confirm-delete.test.jsx``
+  — assert new behaviour (no text input, single-click Confirm).
+- All **62 tests in the bundle pass**. Full-suite delta vs pre-change:
+  **18 → 17 failing files, 38 → 24 failing tests** (net improvement).
+
+### Files touched
+- Frontend (modified): ``App.js``, ``layouts/SettingsHub.jsx``,
+  ``layouts/AdminTopBar.jsx``, ``components/invoices/InvoiceEditModal.jsx``,
+  ``components/customers/MergeCustomersModal.jsx``,
+  ``pages/quotes/QuoteInvoiceDetail.jsx``, ``pages/ops/OpsHub.jsx``,
+  ``pages/customers/CustomersList.jsx``.
+- Frontend (tests, new): ``test/settings-hub.test.jsx``,
+  ``test/settings-sprocket-visibility.test.jsx``,
+  ``test/settings-nav-old-routes.test.jsx``,
+  ``test/confirm-dialog-no-typed-input.test.jsx``.
+- Frontend (tests, rewritten): ``test/typed-confirm-delete-modal.test.jsx``,
+  ``test/slice-p19-confirm-delete.test.jsx``.
+
+
+
 ## Backlog Item #iv · Feb-2026 — Notification cleanup (P0) · SHIPPED
 
 Fixed the 4× duplicate weekly-digest email (Bug 1) and closed the

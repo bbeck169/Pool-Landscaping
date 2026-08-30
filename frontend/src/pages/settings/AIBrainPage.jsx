@@ -268,8 +268,6 @@ export default function AIBrainPage() {
         open={!!deleteId}
         title="Delete knowledge entry?"
         body="This entry will be removed from the AI system prompt. This action can be recovered by an engineer if needed within 30 days."
-        requireTypeConfirm={true}
-        typeConfirmString="DELETE"
         onCancel={() => setDeleteId(null)}
         onConfirm={confirmDelete}
       />

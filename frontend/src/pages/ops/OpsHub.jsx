@@ -2269,8 +2269,10 @@ export function PriceBook() {
       setToast({ tone: "error", message: msg });
     }
   };
-  // BUG B fix (Feb-2026) — soft-delete a pricebook row with a
-  // HEAVY (type "DELETE") confirmation.
+  // BUG B fix (Feb-2026) — soft-delete a pricebook row through the
+  // shared confirm dialog. Feb 2026 · Type-to-confirm removed
+  // app-wide; the ``requireTypeConfirm`` flag below is a no-op the
+  // shared dialog intentionally ignores, kept for backwards-compat.
   const delRow = async (row) => {
     const ok = await mustConfirm({
       title: `Delete "${row.name}"?`,

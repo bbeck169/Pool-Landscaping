@@ -135,6 +135,9 @@ import GpsSettingsPage from "@/pages/admin/GpsSettingsPage";
 import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
 // Feb-2026 · TD-08 promoted — admin logo upload UI.
 import BrandLogoSettings from "@/pages/settings/BrandLogoSettings";
+// Feb-2026 · Consolidated Settings Hub — shared layout + Social tab.
+import SettingsHub, { SettingsGeneral } from "@/layouts/SettingsHub";
+import SettingsSocial from "@/pages/settings/SettingsSocial";
 import MyProfilePage from "@/pages/account/MyProfilePage";
 import GoogleReviewSettings from "@/pages/settings/GoogleReviewSettings";
 import VanitySlugsPage from "@/pages/settings/VanitySlugsPage";
@@ -748,7 +751,11 @@ export default function App() {
                 BEFORE the legacy ``/settings/legal/:slug`` route so the
                 literal path wins the match. */}
             <Route path="settings/legal/terms-of-service" element={<AdminOnly><TosAdminEditor /></AdminOnly>} />
-            <Route path="settings/integrations" element={<AdminOnly><IntegrationsHub /></AdminOnly>} />
+            {/* Feb-2026 · Consolidated Settings Hub — `/settings/integrations`
+                now nests inside <SettingsHub> above so the hub sidebar
+                stays visible. Sub-detail pages (supercool, homeworks)
+                remain top-level because they're specialised OAuth
+                flows that need the full viewport. */}
             {/* Phase 54b · Feb-2026 — Wholesale supplier settings. */}
             <Route path="settings/suppliers" element={<AdminOrManagerForSuppliers><SupplierSettings /></AdminOrManagerForSuppliers>} />
             {/* Phase 54g · Feb-2026 — supplier sync analytics dashboard. */}
@@ -1206,9 +1213,19 @@ export default function App() {
             {/* G0 · Feb-2026 — GPS driver-activity settings (admin-only). */}
             <Route path="admin/settings/gps" element={<AdminOnly><GpsSettingsPage /></AdminOnly>} />
             {/* Feb-2026 · Item 6 — Business Card admin editor. */}
+            {/* Feb-2026 · Consolidated Settings Hub — parent index +
+                nested tabs. Branding + Integrations + Social live
+                INSIDE the hub shell so the sidebar stays visible
+                while switching tabs. Everything else still resolves
+                to its historic path from the "General" quick-links. */}
+            <Route path="settings" element={<AdminOnly><SettingsHub /></AdminOnly>}>
+              <Route index element={<SettingsGeneral />} />
+              <Route path="general" element={<SettingsGeneral />} />
+              <Route path="branding" element={<BrandLogoSettings />} />
+              <Route path="integrations" element={<IntegrationsHub />} />
+              <Route path="social" element={<SettingsSocial />} />
+            </Route>
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
-            {/* Feb-2026 · TD-08 promoted — admin logo upload UI. */}
-            <Route path="settings/branding" element={<AdminOnly><BrandLogoSettings /></AdminOnly>} />
             <Route path="account/profile" element={<MyProfilePage />} />
             {/* Phase 34 · Task GG · Feb 2026 — Google Business Profile
                 review URL admin settings screen. Uses AdminOnly so

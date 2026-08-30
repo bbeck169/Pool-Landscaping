@@ -1,43 +1,27 @@
 /**
- * Feb-2026 · Item 3 · P0 fix — typed-confirm modal TextInput bug.
+ * Feb-2026 · Item 3 — REWRITTEN for the app-wide type-to-confirm removal.
  *
- * Original bug: ``<TextInput onChange={setDeleteConfirmText} />`` in
- * ``QuoteInvoiceDetail.jsx`` set state to the native Event object
- * instead of the string. The next render's ``deleteConfirmText.trim()``
- * threw ``TypeError`` and the Delete button stayed disabled forever.
+ * History: This suite originally verified the "type invoice-number
+ * to confirm" gate on ``QuoteInvoiceDetail.jsx`` (both invoice-delete
+ * and payment-delete modals). The typed-confirm UX was retired
+ * app-wide per user brief; single-click Confirm is now the standard,
+ * with a 2-click arm-and-execute reserved for CustomersList
+ * catastrophic bulk deletes (>=500 rows).
  *
- * Fix: ``<TextInput onChange={(e) => setDeleteConfirmText(e.target.value)} />``
- *
- * This test file combines three layers of regression coverage:
- *   1. **Source-regex guards** on ``QuoteInvoiceDetail.jsx`` that
- *      fail if the bug pattern reappears or the fix pattern
- *      disappears — cheap CI-level canary.
- *   2. **TextInput contract test** — mounts the shipped ``TextInput``
- *      component and verifies its ``onChange`` receives a native
- *      Event (not a string). If someone "helpfully" refactors it to
- *      pass a string, this test fires so we can audit callers.
- *   3. **Behavioural test** — mounts a tiny in-file harness that
- *      uses the EXACT same ``<TextInput value onChange={(e) =>
- *      setState(e.target.value)}>`` shape as the fixed
- *      QuoteInvoiceDetail modals + asserts:
- *        (a) no TypeError on keystroke,
- *        (b) button disabled on empty / wrong text,
- *        (c) button enabled once typed value matches token,
- *        for BOTH the invoice-delete and payment-delete flows.
- *
- * We don't mount ``<QuoteInvoiceDetail />`` directly — the repo
- * convention (see ``invoice-draft-send.test.jsx`` docstring) is that
- * it hangs under jsdom because of its Modal+Toast+fetch-on-mount
- * combo. The layer-1 source guard catches wire-up drift; the
- * layer-2/3 tests catch behavior.
+ * This file replaces the old assertions with regression guards that
+ * lock in the NEW behaviour:
+ *   1. Source-regex guards: no typed-confirm remnants on
+ *      QuoteInvoiceDetail — no `_invoiceConfirmToken`,
+ *      `_paymentConfirmToken`, `deleteConfirmText` state, and no
+ *      "Type … to confirm" copy.
+ *   2. Delete buttons enabled from open + fire on single click
+ *      (harness mirrors the shipped modal footer).
  */
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-
-import { TextInput } from "@/components/ui-kit";
 
 
 const QUOTE_DETAIL_SRC = readFileSync(
@@ -47,171 +31,121 @@ const QUOTE_DETAIL_SRC = readFileSync(
 
 
 // ══════════════════════════════════════════════════════════════════
-// Layer 1 — source guards on the two known-bad + known-good patterns.
+// Layer 1 — source guards. Fail if the typed-confirm gate returns.
 // ══════════════════════════════════════════════════════════════════
-describe("QuoteInvoiceDetail source · typed-confirm TextInput wiring", () => {
-  it("does NOT use `onChange={setDeleteConfirmText}` (the bug pattern)", () => {
-    // Either identifier bound directly as the handler is the shape
-    // that broke TEST 4 — the string ``setState(evt)`` fails when
-    // downstream code calls ``deleteConfirmText.trim()``.
+describe("QuoteInvoiceDetail source · type-to-confirm removed", () => {
+  it("no `deleteConfirmText` state variable remains", () => {
+    // The state hook + its setter should be gone. A stale JSDoc
+    // that mentions the identifier is allowed (Feb-2026 changelog
+    // comment), so we scope the assertion to real code lines by
+    // requiring a `[…, …] = useState` call site.
     expect(QUOTE_DETAIL_SRC).not.toMatch(
-      /onChange\s*=\s*\{\s*setDeleteConfirmText\s*\}/,
+      /const\s*\[\s*deleteConfirmText\s*,\s*setDeleteConfirmText\s*\]\s*=\s*useState/,
     );
   });
 
-  it("uses `onChange={(e) => setDeleteConfirmText(e.target.value)}` for BOTH modals", () => {
-    // Two call sites — one for the invoice-delete modal, one for
-    // the payment-delete modal. Both must carry the value-extract
-    // shape.
-    const matches = QUOTE_DETAIL_SRC.match(
-      /onChange\s*=\s*\{\s*\(e\)\s*=>\s*setDeleteConfirmText\(e\.target\.value\)\s*\}/g,
-    ) || [];
-    expect(matches.length).toBeGreaterThanOrEqual(2);
+  it("no `_invoiceConfirmToken` / `_paymentConfirmToken` token constants remain", () => {
+    expect(QUOTE_DETAIL_SRC).not.toMatch(/const\s+_invoiceConfirmToken\s*=/);
+    expect(QUOTE_DETAIL_SRC).not.toMatch(/const\s+_paymentConfirmToken\s*=/);
   });
 
-  it("both typed-confirm TextInputs still carry their testids", () => {
-    expect(QUOTE_DETAIL_SRC).toMatch(/testid="id-delete-invoice-input"/);
-    expect(QUOTE_DETAIL_SRC).toMatch(/testid="id-delete-payment-input"/);
+  it("no rendered `Type … to confirm` copy remains", () => {
+    // A JSDoc/comment mentioning the retired pattern is fine —
+    // the assertion targets the actual JSX text.
+    expect(QUOTE_DETAIL_SRC).not.toMatch(/Type\s+<code[^>]*>/);
   });
-});
 
+  it("no `deleteConfirmText.trim()` disabled-gate on either Delete button", () => {
+    expect(QUOTE_DETAIL_SRC).not.toMatch(
+      /deleteConfirmText\.trim\(\)\s*!==/,
+    );
+  });
 
-// ══════════════════════════════════════════════════════════════════
-// Layer 2 — TextInput contract lock. If someone changes the
-// component so ``onChange`` receives a bare string, we need to
-// audit every caller — this test alerts us to the semver break.
-// ══════════════════════════════════════════════════════════════════
-describe("TextInput · onChange contract (Feb-2026 · P0)", () => {
-  it("forwards the native Event to onChange (NOT a string value)", () => {
-    const spy = vi.fn();
-    render(<TextInput testid="ti-contract" onChange={spy} />);
-    const input = screen.getByTestId("ti-contract");
-    fireEvent.change(input, { target: { value: "hello" } });
-    expect(spy).toHaveBeenCalledTimes(1);
-    const arg = spy.mock.calls[0][0];
-    // Received arg is a SyntheticEvent, not a raw string. If this
-    // ever flips, every caller needs an audit — see approach (B) in
-    // the P0 dispatch.
-    expect(typeof arg).not.toBe("string");
-    expect(arg).toBeTruthy();
-    expect(arg.target).toBeTruthy();
-    expect(arg.target.value).toBe("hello");
+  it("delete-invoice + delete-payment Confirm buttons keep their testids", () => {
+    expect(QUOTE_DETAIL_SRC).toMatch(/testid="id-delete-invoice-confirm"/);
+    expect(QUOTE_DETAIL_SRC).toMatch(/testid="id-delete-payment-confirm"/);
   });
 });
 
 
 // ══════════════════════════════════════════════════════════════════
-// Layer 3 — behavioural harness that mirrors the EXACT shape from
-// the fixed QuoteInvoiceDetail modals. Verifies the three
-// spec-mandated behaviours for both invoice + payment flows.
+// Layer 2 — behavioural harness that mirrors the SHIPPED modal
+// footer (single-click Delete, no text input). Verifies:
+//   (a) no typed input renders,
+//   (b) Confirm button enabled from mount,
+//   (c) one click fires the mutation exactly once.
 // ══════════════════════════════════════════════════════════════════
-function DeleteConfirmHarness({ token, testidPrefix }) {
-  const [text, setText] = React.useState("");
-  const disabled = text.trim() !== token;
+function DeleteConfirmHarness({ testidPrefix, onConfirm, busy = false }) {
   return (
     <div>
-      <TextInput
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={token}
-        testid={`${testidPrefix}-input`}
-      />
+      {/* Historic testid kept off — the harness mirrors the shipped
+          modal which now renders zero text inputs inside the
+          confirmation footer. Any stale caller that queries the
+          pre-removal testid will fail loudly. */}
       <button
         type="button"
-        disabled={disabled}
+        onClick={onConfirm}
+        disabled={busy}
         data-testid={`${testidPrefix}-confirm`}
       >
-        Delete
+        {busy ? "Deleting…" : "Delete"}
       </button>
     </div>
   );
 }
 
 
-describe("Typed-confirm harness · invoice-delete flow", () => {
-  it("does NOT throw on keystroke (root-cause regression guard)", () => {
-    render(<DeleteConfirmHarness token="INV-2026-0001"
-                                   testidPrefix="id-delete-invoice" />);
-    // If the bug pattern (onChange={setState}) came back, this
-    // fireEvent would set state = Event, and the next render's
-    // ``text.trim()`` would throw. We simulate the exact keystroke
-    // + assert nothing throws.
-    expect(() => {
-      fireEvent.change(screen.getByTestId("id-delete-invoice-input"),
-        { target: { value: "I" } });
-    }).not.toThrow();
+describe("Single-click confirm · invoice-delete flow", () => {
+  it("no text input is rendered anywhere in the harness", () => {
+    render(<DeleteConfirmHarness testidPrefix="id-delete-invoice"
+                                   onConfirm={() => {}} />);
+    // Both the historic testid and any raw text input should be
+    // absent.
+    expect(screen.queryByTestId("id-delete-invoice-input")).toBeNull();
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(document.querySelector("input[type=\"text\"]")).toBeNull();
   });
 
-  it("Delete button disabled when input empty", () => {
-    render(<DeleteConfirmHarness token="INV-2026-0001"
-                                   testidPrefix="id-delete-invoice" />);
-    const btn = screen.getByTestId("id-delete-invoice-confirm");
-    expect(btn.disabled).toBe(true);
+  it("Delete button is enabled immediately (no typed-confirm gate)", () => {
+    render(<DeleteConfirmHarness testidPrefix="id-delete-invoice"
+                                   onConfirm={() => {}} />);
+    expect(screen.getByTestId("id-delete-invoice-confirm").disabled)
+      .toBe(false);
   });
 
-  it("Delete button disabled when typed text does NOT match invoice number", () => {
-    render(<DeleteConfirmHarness token="INV-2026-0001"
-                                   testidPrefix="id-delete-invoice" />);
-    fireEvent.change(screen.getByTestId("id-delete-invoice-input"),
-      { target: { value: "INV-WRONG" } });
+  it("a single click fires onConfirm exactly once", () => {
+    const spy = vi.fn();
+    render(<DeleteConfirmHarness testidPrefix="id-delete-invoice"
+                                   onConfirm={spy} />);
+    fireEvent.click(screen.getByTestId("id-delete-invoice-confirm"));
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("Delete button disables while the mutation is in-flight", () => {
+    render(<DeleteConfirmHarness testidPrefix="id-delete-invoice"
+                                   onConfirm={() => {}} busy />);
     expect(screen.getByTestId("id-delete-invoice-confirm").disabled)
       .toBe(true);
-  });
-
-  it("Delete button enabled ONLY once typed text matches invoice number", () => {
-    render(<DeleteConfirmHarness token="INV-2026-0001"
-                                   testidPrefix="id-delete-invoice" />);
-    const input = screen.getByTestId("id-delete-invoice-input");
-    const btn = screen.getByTestId("id-delete-invoice-confirm");
-    // Partial → disabled.
-    fireEvent.change(input, { target: { value: "INV-2026" } });
-    expect(btn.disabled).toBe(true);
-    // Full match → enabled.
-    fireEvent.change(input, { target: { value: "INV-2026-0001" } });
-    expect(btn.disabled).toBe(false);
-    // Trailing whitespace stripped by the trim() the fix uses.
-    fireEvent.change(input, { target: { value: "  INV-2026-0001  " } });
-    expect(btn.disabled).toBe(false);
   });
 });
 
 
-describe("Typed-confirm harness · payment-delete flow", () => {
-  const TOKEN = "abc12345"; // first-8 char short-hash pattern
-
-  it("does NOT throw on keystroke", () => {
-    render(<DeleteConfirmHarness token={TOKEN}
-                                   testidPrefix="id-delete-payment" />);
-    expect(() => {
-      fireEvent.change(screen.getByTestId("id-delete-payment-input"),
-        { target: { value: "a" } });
-    }).not.toThrow();
+describe("Single-click confirm · payment-delete flow", () => {
+  it("no text input is rendered", () => {
+    render(<DeleteConfirmHarness testidPrefix="id-delete-payment"
+                                   onConfirm={() => {}} />);
+    expect(screen.queryByTestId("id-delete-payment-input")).toBeNull();
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(document.querySelector("input[type=\"text\"]")).toBeNull();
   });
 
-  it("Delete button disabled when input empty", () => {
-    render(<DeleteConfirmHarness token={TOKEN}
-                                   testidPrefix="id-delete-payment" />);
-    expect(screen.getByTestId("id-delete-payment-confirm").disabled)
-      .toBe(true);
-  });
-
-  it("Delete button disabled when typed text does NOT match short-hash", () => {
-    render(<DeleteConfirmHarness token={TOKEN}
-                                   testidPrefix="id-delete-payment" />);
-    fireEvent.change(screen.getByTestId("id-delete-payment-input"),
-      { target: { value: "wrong123" } });
-    expect(screen.getByTestId("id-delete-payment-confirm").disabled)
-      .toBe(true);
-  });
-
-  it("Delete button enabled ONLY once typed text matches short-hash", () => {
-    render(<DeleteConfirmHarness token={TOKEN}
-                                   testidPrefix="id-delete-payment" />);
-    const input = screen.getByTestId("id-delete-payment-input");
+  it("Delete button enabled immediately + fires on single click", () => {
+    const spy = vi.fn();
+    render(<DeleteConfirmHarness testidPrefix="id-delete-payment"
+                                   onConfirm={spy} />);
     const btn = screen.getByTestId("id-delete-payment-confirm");
-    fireEvent.change(input, { target: { value: "abc" } });
-    expect(btn.disabled).toBe(true);
-    fireEvent.change(input, { target: { value: TOKEN } });
     expect(btn.disabled).toBe(false);
+    fireEvent.click(btn);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
