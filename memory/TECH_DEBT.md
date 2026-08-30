@@ -37,6 +37,12 @@ For the linter-noise-suppression rationale (why we're NOT chasing the reviewer's
 - **Why deferred:** Same file as TD-04, same reasoning. Both refactors are candidates for a coordinated cleanup when a natural touch reason surfaces.
 - **When to ship:** Bundle with TD-04.
 
+### TD-06 · Drop `recurring_templates_active_customer_idx_v1` — no consumers after Feb-2026 dashboard tile redefinition
+- **Current state:** Compound index `(tenant_id, active, customer_id)` on `db.recurring_job_templates`, created by `services/migrations/recurring_templates_active_customer_idx.py` (sentinel `recurring_templates_active_customer_idx_v1`). Was designed to cover the first-pass dashboard tile's `distinct("customer_id", {tenant_id, active: True})` aggregation.
+- **Why orphaned:** The Feb-2026 second-pass tile REDEFINITION moved the query off `recurring_job_templates` entirely — the dashboard now runs `db.customers.count_documents({...})` covered by the new `customers_dashboard_active_inactive_idx` (see the same-day sibling migration). The only other consumer, the cross-tenant recurring-job cron in `routers/recurring_jobs.py:641`, uses `find({"active": True})` without `tenant_id` — so it cannot leverage the compound index (MongoDB requires the prefix column to be filtered).
+- **Why deferred:** Indexes should be dropped in a dedicated cleanup phase — folding an index-drop into a semantic change makes rollback complicated. Keep the index in production until we bundle it with the next cross-collection index-audit.
+- **When to ship:** Next cross-collection Mongo index audit (or if the recurring-job cron ever grows a tenant-scoped variant that COULD use it, in which case reevaluate before dropping).
+
 ---
 
 ## Related — items explicitly REJECTED (do NOT resurrect these)

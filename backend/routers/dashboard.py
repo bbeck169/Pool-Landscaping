@@ -87,41 +87,48 @@ async def dashboard(user: dict = Depends(get_current_user),
     total_customers = await db.customers.count_documents(tenant_q)
     total_techs = await db.technicians.count_documents(tenant_q)
 
-    # ── Feb-2026 · Dashboard tile swap — Active vs Inactive Customers ──
-    # Active customer = has at least one active recurring service
-    # contract (``recurring_job_templates`` with ``active=True``) AND
-    # is not soft-deleted. Inactive = every other customer (folds
-    # soft-deleted rows in with never-had-a-contract accounts).
+    # ── Feb-2026 · Dashboard tile — Active vs Inactive Customers ──
+    # SECOND PASS (Feb-2026) — definition REDEFINED to match the
+    # customer-level activation TOGGLE, not the recurring-service
+    # contract signal used in the first pass.
     #
-    # Sum invariant: active + inactive == total_customers (the
-    # legacy count, includes soft-deleted rows). This mirrors what
-    # the KPI grid summed to before the swap.
+    # * Active   = ``is_active != False`` + not soft-deleted.
+    #              Matches True, missing, AND null so legacy rows
+    #              that never had ``is_active`` stamped still count
+    #              as active — same read semantics as ``models.py:96``
+    #              ("Missing/legacy docs read back as True (assumed
+    #              active)") and ``ActivationControl.jsx:33``
+    #              (``customer?.is_active !== false``).
+    # * Inactive = ``is_active == False`` + not muted + not
+    #              soft-deleted. Explicit deactivations only.
     #
-    # The distinct query uses the compound index
-    # ``(tenant_id, active, customer_id)`` shipped by
-    # ``services/migrations/recurring_templates_active_customer_idx.py``.
-    _active_customer_ids = await db.recurring_job_templates.distinct(
-        "customer_id",
-        {"tenant_id": tid, "active": True},
-    )
-    # Belt-and-suspenders: filter out any customer_id that points to
-    # a soft-deleted customer row. Zero live occurrences today, but
-    # a stale ``active=True`` template on a deleted customer would
-    # otherwise leak into the active bucket.
-    if _active_customer_ids:
-        _live_active_customer_ids = await db.customers.distinct(
-            "id",
-            {"tenant_id": tid,
-              "id": {"$in": _active_customer_ids},
-              "$or": [{"deleted_at": None},
-                        {"deleted_at": {"$exists": False}}]},
-        )
-        active_customers_count = len(_live_active_customer_ids)
-    else:
-        active_customers_count = 0
-    inactive_customers_count = max(
-        0, total_customers - active_customers_count,
-    )
+    # NO SUM INVARIANT — muted-inactive customers and soft-deleted
+    # customers are EXCLUDED from BOTH buckets. Callers must not
+    # assume ``active + inactive == total_customers``.
+    #
+    # Covering index: ``customers_dashboard_active_inactive_idx`` on
+    # ``(tenant_id, is_active, is_muted, deleted_at)`` shipped by
+    # ``services/migrations/customers_dashboard_active_inactive_idx.py``
+    # (sentinel ``customers_dashboard_active_inactive_idx_v1``).
+    _not_deleted = _nd()
+    _not_muted = {"$or": [{"is_muted": {"$ne": True}},
+                             {"is_muted": {"$exists": False}}]}
+    active_customers_count = await db.customers.count_documents({
+        **tenant_q,
+        # ``is_active != False`` matches True + missing + null in
+        # MongoDB's ``$ne`` semantics. Explicit for clarity.
+        "$and": [
+            {"$or": [{"is_active": True},
+                      {"is_active": None},
+                      {"is_active": {"$exists": False}}]},
+            _not_deleted,
+        ],
+    })
+    inactive_customers_count = await db.customers.count_documents({
+        **tenant_q,
+        "is_active": False,
+        "$and": [_not_deleted, _not_muted],
+    })
 
     recent = await db.jobs.find(tenant_q, {"_id": 0}).sort("created_at", -1).to_list(6)
 
@@ -227,13 +234,17 @@ async def dashboard(user: dict = Depends(get_current_user),
         "completed_jobs": completed,
         "requested_jobs": requested,
         "total_customers": total_customers,
-        # ── Feb-2026 · Active/Inactive Customers tile swap ──
-        # New authoritative fields consumed by the KPI grid after
-        # the 2026-02 tile swap. ``active_customers_count`` counts
-        # DISTINCT non-soft-deleted customers with at least one
-        # active recurring service contract; ``inactive_customers_count``
-        # is the complement so the pair always sums to
-        # ``total_customers`` for consistency with legacy dashboards.
+        # ── Feb-2026 · Active/Inactive Customers tile ──
+        # Authoritative fields consumed by the KPI grid. REDEFINED
+        # in the Feb-2026 second pass to reflect the customer-level
+        # ``is_active`` toggle (not the recurring-service contract
+        # signal used in the first pass):
+        #   * ``active_customers_count`` — ``is_active != False``
+        #     (matches True + missing + null) + not soft-deleted.
+        #   * ``inactive_customers_count`` — ``is_active == False`` +
+        #     not muted (P28 ``is_muted``) + not soft-deleted.
+        # These NO LONGER sum to ``total_customers`` — muted-inactive
+        # and soft-deleted rows are excluded from both buckets.
         "active_customers_count": active_customers_count,
         "inactive_customers_count": inactive_customers_count,
         # deprecated 2026-02, remove 2026-05-01 — replaced by the

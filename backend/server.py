@@ -2523,6 +2523,14 @@ async def startup():
     # compound index for the ``recurring_job_templates`` distinct
     # aggregation. Idempotent + sentinel-guarded. Cheap belt-and-
     # suspenders for the dashboard query as template counts grow.
+    #
+    # NOTE (Feb-2026 second pass): after the dashboard tile
+    # REDEFINITION (customer-level ``is_active`` toggle instead of
+    # recurring-template signal), this index has no active consumers
+    # on the dashboard path. Kept for now — the cross-tenant
+    # recurring-job cron might grow into a tenant-scoped variant
+    # later. See TD-06 in ``/app/memory/TECH_DEBT.md`` for the
+    # deferred drop.
     try:
         from services.migrations.recurring_templates_active_customer_idx import (
             run_recurring_templates_active_customer_idx_migration,
@@ -2543,6 +2551,33 @@ async def startup():
     except Exception as e:
         logger.warning(
             f"recurring_templates_active_customer_idx migration crashed: {e}",
+        )
+
+    # Feb-2026 · Active/Inactive Customers dashboard tile SECOND
+    # pass — compound index on ``db.customers`` covering the two
+    # ``count_documents`` queries the dashboard endpoint runs after
+    # the tile REDEFINITION (customer-level ``is_active`` toggle).
+    # Idempotent + sentinel-guarded.
+    try:
+        from services.migrations.customers_dashboard_active_inactive_idx import (
+            run_customers_dashboard_active_inactive_idx_migration,
+        )
+        _cdai_boot = await run_customers_dashboard_active_inactive_idx_migration()
+        if _cdai_boot.get("status") == "skipped":
+            logger.info(
+                "[customers_dashboard_active_inactive_idx] sentinel present · skipping",
+            )
+        else:
+            _s = _cdai_boot.get("summary") or {}
+            logger.info(
+                "[customers_dashboard_active_inactive_idx] created=%s "
+                "already_present=%s errors=%s",
+                _s.get("created"), _s.get("already_present"),
+                len(_s.get("errors") or []),
+            )
+    except Exception as e:
+        logger.warning(
+            f"customers_dashboard_active_inactive_idx migration crashed: {e}",
         )
 
     # Phase O4 · Feb-2026 — idempotency_keys index hardening. Adds a
