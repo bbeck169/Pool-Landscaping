@@ -477,6 +477,12 @@ api_router.include_router(_p19_integrations_admin.router)
 from routers import client_errors as _client_errors_router  # noqa: E402
 api_router.include_router(_client_errors_router.router)
 
+# Feb-2026 · Soshie AI-Agent Expansion P2 — social publishing router.
+# Mounts GET /soshie/platforms, POST /soshie/publish,
+# GET /soshie/publish/history, POST /soshie/ingest-website.
+from routers import soshie_publishing as _soshie_pub_router  # noqa: E402
+api_router.include_router(_soshie_pub_router.router)
+
 # Feb-2026 · Phase P2 · Live GPS positions for the Dispatch Board.
 from routers import gps_live_positions as _gps_live_positions_router  # noqa: E402
 api_router.include_router(_gps_live_positions_router.router, dependencies=[Depends(_rg)])
@@ -2578,6 +2584,32 @@ async def startup():
     except Exception as e:
         logger.warning(
             f"customers_dashboard_active_inactive_idx migration crashed: {e}",
+        )
+
+    # Feb-2026 · Soshie AI-Agent Expansion P2 — indexes for the
+    # social publishing collections (idempotency + audit).
+    # Idempotent + sentinel-guarded.
+    try:
+        from services.migrations.social_publish_log_indexes import (
+            run_social_publish_log_indexes_migration,
+        )
+        _spli_boot = await run_social_publish_log_indexes_migration()
+        if _spli_boot.get("status") == "skipped":
+            logger.info(
+                "[social_publish_log_indexes] sentinel present · skipping",
+            )
+        else:
+            _s = _spli_boot.get("summary") or {}
+            logger.info(
+                "[social_publish_log_indexes] created=%d "
+                "already_present=%d errors=%d",
+                len(_s.get("created") or []),
+                len(_s.get("already_present") or []),
+                len(_s.get("errors") or []),
+            )
+    except Exception as e:
+        logger.warning(
+            f"social_publish_log_indexes migration crashed: {e}",
         )
 
     # Phase O4 · Feb-2026 — idempotency_keys index hardening. Adds a

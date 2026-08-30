@@ -2280,6 +2280,23 @@ async def _dexter_chemical_profitability_report(*, tenant, params,
 
 async def _soshie_dispatch(*, tenant, user, employee, conversation_id,
                               action, params, system_prompt, user_text):
+    # Feb-2026 · Soshie AI-Agent Expansion P1 — SEO Suite grounding.
+    # Every Soshie action gets a compact <2 KB snapshot of the
+    # tenant's SEO state prepended to the system prompt: latest
+    # scan score, top open AEO gaps, rank movers, top mention
+    # domains, recent keyword ideations.  Empty on tenants that
+    # haven't run a scan yet — degrades cleanly.
+    try:
+        from services.soshie.seo_context import (
+            build_seo_context, format_seo_context_for_prompt,
+        )
+        seo_ctx = await build_seo_context(tenant["id"])
+        seo_block = format_seo_context_for_prompt(seo_ctx)
+        if seo_block:
+            system_prompt = f"{system_prompt}\n\n{seo_block}"
+    except Exception as e:                                        # noqa: BLE001
+        logger.warning("[soshie.dispatch] SEO context skipped: %s", e)
+
     if action == "soshie.draft_post":
         return await _soshie_draft_post(
             tenant=tenant, user=user, employee=employee,
