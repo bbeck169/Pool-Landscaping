@@ -10,6 +10,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { StatusChip } from "@/src/components/ui";
 import Breadcrumbs from "@/src/components/nav/Breadcrumbs";
+import BrandLogo from "@/src/components/BrandLogo";
 import { useBreadcrumbs } from "@/src/hooks/useBreadcrumbs";
 
 export function OfflineBanner({ testID }: { testID?: string }) {
@@ -76,8 +77,8 @@ export function Header({
               <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
             </Pressable>
           ) : null}
-          {left}
-          <View style={{ flex: 1 }}>
+          {left ? left : !back ? <BrandLogo size="sm" variant="icon" /> : null}
+          <View style={{ flex: 1, marginLeft: !back && !left ? spacing.sm : 0 }}>
             <Text style={styles.headerTitle} numberOfLines={1}>
               {title}
             </Text>

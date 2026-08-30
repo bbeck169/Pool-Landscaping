@@ -129,7 +129,7 @@ export default function Login() {
                 [logo] → [Welcome to] → [Pool & Landscaping ... LLC].
               Replaces the previous water-icon badge on the left. */}
           <View style={{ width: "80%", marginBottom: spacing.md }}>
-            <BrandLogo size="lg" testID="login-logo-full" />
+            <BrandLogo size="lg" testID="login-logo-full" onPress={null} />
           </View>
           <Text style={styles.brand}>
             <Text style={styles.brandLine1}>Welcome to{"\n"}</Text>
