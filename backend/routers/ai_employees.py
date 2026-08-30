@@ -209,6 +209,11 @@ AE3_APPROVE_GATED_ACTIONS = {
 # ─── AE4 · Soshie / Scouty / Commet ───────────────────────────────────
 SOSHIE_ACTIONS = {
     "soshie.draft_post",
+    # Phase S1 · Feb-2026 — Soshie AI Agent Expansion. Blog-post
+    # publishing action. Drafts land in the approval queue with any
+    # regex moderation flags attached, then approve → fires
+    # `execute_publish_for_action` targeting WordPress.
+    "soshie.publish_blog",
     "soshie.schedule_post",
     "soshie.suggest_content_calendar",
     "soshie.analyze_engagement",
@@ -230,6 +235,7 @@ COMMET_ACTIONS = {
 }
 AE4_APPROVE_GATED_ACTIONS = {
     "soshie.draft_post",
+    "soshie.publish_blog",
     "soshie.schedule_post",
     "scouty.draft_job_posting",
     "scouty.generate_offer_letter",
@@ -767,11 +773,28 @@ async def send_message(eid: str, cid: str, body: MessageIn,
 
     # 4) Route: action handler OR plain chat.
     action_doc: Optional[Dict[str, Any]] = None
-    if body.action:
+    # Phase S1 · Feb-2026 — Soshie intent detector.  When the caller
+    # asks in natural language to "publish this as a blog" (or
+    # equivalent), auto-emit ``soshie.publish_blog`` seeded with the
+    # last assistant draft as the topic.  Manual passes with an
+    # explicit ``body.action`` still win.
+    action_key = body.action
+    action_params = dict(body.action_params or {})
+    if emp["key"] == "soshie" and not action_key:
+        if _detect_soshie_publish_intent(body.text):
+            last_asst = await db.ai_employee_messages.find_one(
+                {"tenant_id": tenant["id"], "conversation_id": cid,
+                  "role": "assistant"},
+                sort=[("created_at", -1)],
+            )
+            prior_draft = ((last_asst or {}).get("text") or body.text)[:2000]
+            action_key = "soshie.publish_blog"
+            action_params = {"topic": prior_draft}
+    if action_key:
         assistant_text, action_doc = await _dispatch_action(
             tenant=tenant, user=user, employee=emp,
             conversation_id=cid,
-            action=body.action, params=body.action_params or {},
+            action=action_key, params=action_params,
             system_prompt=system_prompt, user_text=body.text,
         )
     else:
@@ -808,11 +831,40 @@ async def send_message(eid: str, cid: str, body: MessageIn,
 
 # ─── Actions queue ────────────────────────────────────────────────────
 
+# Phase S1 · Feb-2026 — cheap regex intent detector for Soshie's
+# "publish this as a blog" natural-language trigger.  Matches
+# common English variants; empty text or Soshie's own draft
+# markers return None.  Deliberately narrow so we don't false-
+# positive on Soshie's chat about publishing strategy.
+_SOSHIE_PUBLISH_INTENT_TRIGGERS = (
+    "publish this",
+    "publish as a blog",
+    "publish it as a blog",
+    "publish the blog",
+    "publish blog",
+    "post as a blog",
+    "post it as a blog",
+    "post this as a blog",
+    "turn this into a blog",
+    "make this a blog",
+    "make it a blog post",
+)
+
+
+def _detect_soshie_publish_intent(text: str) -> bool:
+    if not text:
+        return False
+    low = text.lower()
+    return any(t in low for t in _SOSHIE_PUBLISH_INTENT_TRIGGERS)
+
+
 async def _create_action(*, tenant_id: str, user_id: str, employee_id: str,
                            employee_key: str, conversation_id: Optional[str],
                            action: str, params: Dict[str, Any],
                            draft: Dict[str, Any],
-                           title: str, summary: str) -> Dict[str, Any]:
+                           title: str, summary: str,
+                           moderation_flags: Optional[List[Dict[str, Any]]] = None,
+                           ) -> Dict[str, Any]:
     doc = {
         "id": new_id(),
         "tenant_id": tenant_id,
@@ -824,12 +876,16 @@ async def _create_action(*, tenant_id: str, user_id: str, employee_id: str,
         "draft": draft,          # human-readable text or structured data
         "title": title,
         "summary": summary,
-        "status": "pending",     # pending | approved | rejected | executed | failed
+        "status": "pending",     # pending | approved | rejected | executed | failed | published
         "requested_by": user_id,
         "decided_by": None,
         "decision_note": None,
         "executed_at": None,
         "result": None,
+        # Phase S1 · Feb-2026 — regex moderation verdict populated at
+        # draft time (Soshie).  Empty list on clean drafts.  Approve
+        # endpoint requires ``?confirm_flags=1`` when this is non-empty.
+        "moderation_flags": moderation_flags or [],
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -850,12 +906,20 @@ async def get_action(aid: str, user: dict = Depends(require_admin),
 
 @router.post("/ai-employees/actions/{aid}/approve")
 async def approve_action(aid: str, body: Optional[ActionDecision] = None,
+                            confirm_flags: int = 0,
                             user: dict = Depends(require_admin),
                             tenant: dict = Depends(get_current_tenant)):
     """Approve a pending action + optionally execute it. Casey drafts
     are text-only so approval simply flips the status; no external
     call is made from within AE1. Future employees (Emmie/Soshie) will
-    execute here."""
+    execute here.
+
+    Phase S1 · Feb-2026 — for ``soshie.publish_blog`` this endpoint
+    acts as the WordPress-fan-out executor.  Any regex moderation
+    flags attached to the action row at draft time gate the approve
+    unless the caller passes ``?confirm_flags=1`` to explicitly
+    acknowledge the flags.
+    """
     doc = await db.ai_employee_actions.find_one(
         {"id": aid, "tenant_id": tenant["id"]}, {"_id": 0}
     )
@@ -895,6 +959,88 @@ async def approve_action(aid: str, body: Optional[ActionDecision] = None,
             "action": doc.get("action"),
             "note": "Recorded for audit trail — no writes performed.",
         }
+    # Phase S1 · Feb-2026 — Soshie's publish_blog is a real executor.
+    # Approval fires the WordPress publisher and flips the row to
+    # ``published`` (or ``failed`` on adapter error) instead of the
+    # audit-only ``executed`` state used by other AE4 drafts.
+    elif (doc["employee_key"] == "soshie"
+              and doc.get("action") == "soshie.publish_blog"):
+        flags = doc.get("moderation_flags") or []
+        if flags and int(confirm_flags or 0) != 1:
+            raise HTTPException(
+                409,
+                {
+                    "error": "moderation_flags_present",
+                    "detail": (
+                        "Draft has moderation flags. Review the flagged "
+                        "content and retry approve with "
+                        "?confirm_flags=1 to acknowledge."
+                    ),
+                    "flags": flags,
+                },
+            )
+        from routers.soshie_publishing import execute_publish_for_action
+        draft = doc.get("draft") or {}
+        params = doc.get("params") or {}
+        try:
+            result = await execute_publish_for_action(
+                action_id=aid,
+                tenant_id=tenant["id"],
+                user_id=user["id"],
+                platforms=["wordpress"],
+                text=draft.get("text") or "",
+                title=(draft.get("title")
+                        or params.get("title") or ""),
+                link=params.get("link") or None,
+                status=params.get("wp_status") or "draft",
+                idempotency_key=f"action-{aid}",
+            )
+        except HTTPException:
+            # Bubble up 4xx from the fan-out (e.g. content missing).
+            raise
+        except Exception as e:                                    # noqa: BLE001
+            logger.exception(
+                "[s1.publish_blog] executor crashed for action %s: %s",
+                aid, e)
+            upd["status"] = "failed"
+            upd["executed_at"] = now_iso()
+            upd["result"] = {
+                "kind": "soshie_blog_publish_failed",
+                "error": f"executor crash: {e}",
+            }
+        else:
+            wp_row = next(
+                (r for r in result.get("results", [])
+                 if r.get("platform") == "wordpress"),
+                None,
+            )
+            # Success signal: the adapter returned a
+            # ``platform_post_id`` AND did NOT set an error key.
+            # WordPress's own ``status`` field surfaces the WP post
+            # state ("draft" / "publish"), NOT a success indicator,
+            # so we can't compare against a fixed literal.
+            wp_ok = bool(
+                wp_row
+                and wp_row.get("platform_post_id")
+                and not wp_row.get("error")
+                and wp_row.get("status") not in ("failed", "not_configured")
+            )
+            if wp_ok:
+                upd["status"] = "published"
+                upd["executed_at"] = now_iso()
+                upd["result"] = {
+                    "kind": "soshie_blog_published",
+                    "publish": result,
+                }
+            else:
+                upd["status"] = "failed"
+                upd["executed_at"] = now_iso()
+                upd["result"] = {
+                    "kind": "soshie_blog_publish_failed",
+                    "publish": result,
+                    "error": (wp_row or {}).get("error")
+                                or "wordpress adapter did not publish",
+                }
     # AE4 · Soshie / Scouty / Commet — approval flips to executed
     # with a per-employee ``result.kind``. All AE4 approvals are
     # audit-trail only in this slice; downstream (M6 social sender,
@@ -2303,6 +2449,12 @@ async def _soshie_dispatch(*, tenant, user, employee, conversation_id,
             conversation_id=conversation_id, params=params or {},
             system_prompt=system_prompt, user_text=user_text,
         )
+    if action == "soshie.publish_blog":
+        return await _soshie_publish_blog(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
     if action == "soshie.schedule_post":
         return await _soshie_schedule_post(
             tenant=tenant, user=user, employee=employee,
@@ -2354,6 +2506,81 @@ async def _soshie_draft_post(*, tenant, user, employee, conversation_id,
         summary=text[:200],
     )
     return text, action
+
+
+# ─── Phase S1 · Feb-2026 — soshie.publish_blog (WordPress fan-out) ────
+
+async def _soshie_publish_blog(*, tenant, user, employee, conversation_id,
+                                    params, system_prompt, user_text):
+    """Draft a WordPress blog post + attach regex moderation flags.
+
+    Approve-gate flow (executed by ``approve_action``):
+      1. Admin approves the resulting ``ai_employee_actions`` row.
+      2. If ``moderation_flags`` is non-empty, admin must add
+         ``?confirm_flags=1`` to acknowledge.
+      3. The approve endpoint calls
+         :func:`routers.soshie_publishing.execute_publish_for_action`
+         with ``platforms=["wordpress"]`` and
+         ``X-Idempotency-Key = "action-{aid}"`` and flips the row
+         status to ``published`` or ``failed``.
+    """
+    topic = params.get("topic") or user_text or "Untitled"
+    title_hint = (params.get("title") or "").strip()
+    tone = params.get("tone") or ""
+    link = params.get("link") or None
+    prompt = (
+        f"Draft a WordPress blog post about: {topic}\n"
+        f"Tone: {tone or 'per brand brain default'}. Ground the copy "
+        "in the pool + landscaping brand voice. Target 250-450 words "
+        "with 2-4 short paragraphs.\n\n"
+        "Return in this exact shape (headers on their own lines):\n"
+        "Title: <headline ≤ 70 chars>\n"
+        "Body:\n<blog body — blank line between paragraphs>\n"
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    raw = r["text"] or ""
+    # Extract title (fall back to hint or trimmed topic).
+    ex_title = _emmie_extract_section(raw, "Title") or title_hint \
+        or (topic or "Untitled")[:70]
+    # Extract body — everything after the "Body:" marker, or full raw.
+    body_text = raw
+    if "Body:" in raw:
+        _, _, body_text = raw.partition("Body:")
+        body_text = body_text.strip() or raw
+    # Moderation — regex only.  LLM verdict layer lands in Phase S3.
+    from services.soshie.moderation import moderate as _moderate
+    bb = await db.brand_brain.find_one(
+        {"tenant_id": tenant["id"]}, {"_id": 0, "dont_say": 1},
+    ) or {}
+    mod = _moderate(body_text, dont_say=bb.get("dont_say") or [])
+    flags = mod.get("flags") or []
+
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="soshie",
+        conversation_id=conversation_id,
+        action="soshie.publish_blog",
+        params={"topic": topic, "title": ex_title,
+                  "tone": tone, "link": link,
+                  "wp_status": params.get("wp_status") or "draft"},
+        draft={"text": body_text, "title": ex_title,
+                "platform": "wordpress"},
+        title=f"Blog draft — {ex_title[:60]}",
+        summary=body_text[:200],
+        moderation_flags=flags,
+    )
+    flag_note = (
+        f"⚠️ {len(flags)} moderation flag(s) attached — review before "
+        f"approving (retry approve with `?confirm_flags=1` once cleared)."
+        if flags else "Draft is clean — no moderation flags."
+    )
+    assistant_text = (
+        f"Drafted a blog post titled **{ex_title}** for WordPress.\n"
+        f"{flag_note}\n"
+        "Approve to publish to WordPress (`status=draft`).\n\n"
+        f"---\n{body_text}"
+    )
+    return assistant_text, action
 
 
 async def _soshie_schedule_post(*, tenant, user, employee, conversation_id,

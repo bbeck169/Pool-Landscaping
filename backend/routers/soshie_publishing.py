@@ -45,7 +45,11 @@ from services.social import PLATFORMS, get_adapter
 from services.social.base import PublishError
 from services.soshie.moderation import moderate
 from utils import get_current_user, new_id, now_iso
-from utils_idempotency import replay_or_reserve, store_response
+from utils_idempotency import (
+    _fingerprint,
+    replay_or_reserve,
+    store_response,
+)
 
 
 router = APIRouter()
@@ -117,6 +121,35 @@ async def publish(body: PublishIn,
                      user: dict = Depends(get_current_user),
                      tenant: dict = Depends(get_current_tenant)) -> Dict[str, Any]:
     """Fan-out publish. See module docstring for the contract."""
+    # Idempotency — cached response wins full fan-out.
+    idem_body = body.dict()
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"], "POST /soshie/publish", idem_body,
+    )
+    if cached is not None:
+        return cached
+    resp = await _do_publish_fanout(
+        tenant_id=tenant["id"], user_id=user["id"], body=body,
+    )
+    if idem_key:
+        await store_response(
+            idem_key, "POST /soshie/publish",
+            tenant["id"], resp, idem_body,
+        )
+    return resp
+
+
+async def _do_publish_fanout(
+    *,
+    tenant_id: str,
+    user_id: str,
+    body: PublishIn,
+) -> Dict[str, Any]:
+    """Pure fan-out core.  Contains no HTTP or idempotency logic —
+    callers wrap this with idempotency at whichever seam they own
+    (``POST /soshie/publish`` uses the ``X-Idempotency-Key`` header;
+    :func:`execute_publish_for_action` uses the action row id).
+    """
     if not body.platforms:
         raise HTTPException(422, "platforms[] cannot be empty")
 
@@ -133,19 +166,11 @@ async def publish(body: PublishIn,
         raise HTTPException(
             422, f"unknown platforms: {unknown}")
 
-    # Idempotency — cached response wins full fan-out.
-    idem_body = body.dict()
-    idem_key, cached = await replay_or_reserve(
-        request, tenant["id"], "POST /soshie/publish", idem_body,
-    )
-    if cached is not None:
-        return cached
-
     # Resolve action row + content payload.
     action: Optional[Dict[str, Any]] = None
     if body.action_id:
         action = await db.ai_employee_actions.find_one(
-            {"id": body.action_id, "tenant_id": tenant["id"]},
+            {"id": body.action_id, "tenant_id": tenant_id},
             {"_id": 0})
         if not action:
             raise HTTPException(404, "action not found")
@@ -156,6 +181,11 @@ async def publish(body: PublishIn,
 
     text = body.text or (action and (action.get("payload") or {})
                                  .get("draft") or "")
+    # Feb-2026 · Phase S1 — for Soshie's publish_blog wiring, the
+    # draft body lives under ``draft.text`` (set by the drafter),
+    # not ``payload.draft``.  Fall through so both shapes work.
+    if not text and action:
+        text = ((action.get("draft") or {}).get("text") or "")
     if not text:
         raise HTTPException(
             422,
@@ -164,6 +194,7 @@ async def publish(body: PublishIn,
         )
     title = body.title or (
         (action and (action.get("payload") or {}).get("title"))
+        or (action and (action.get("draft") or {}).get("title"))
         or ""
     )
 
@@ -171,7 +202,7 @@ async def publish(body: PublishIn,
     # here (the block happens at approve-time); we surface the
     # flags on the response so the admin dashboard can badge them.
     brand_brain = await db.brand_brain.find_one(
-        {"tenant_id": tenant["id"]}, {"_id": 0, "dont_say": 1}) or {}
+        {"tenant_id": tenant_id}, {"_id": 0, "dont_say": 1}) or {}
     mod = moderate(text, dont_say=brand_brain.get("dont_say") or [])
 
     # Fan out.
@@ -185,7 +216,7 @@ async def publish(body: PublishIn,
             continue
         try:
             res = await adapter.publish_text(
-                tenant["id"], text,
+                tenant_id, text,
                 link=body.link, title=title, status=body.status,
                 article_id=(action and (action.get("payload") or {})
                                           .get("article_id")),
@@ -193,14 +224,14 @@ async def publish(body: PublishIn,
             results.append({"platform": platform,
                               "status": "published", **res})
             await _persist_post(
-                tenant["id"], user["id"], platform, action, res, text,
+                tenant_id, user_id, platform, action, res, text,
             )
         except NotImplementedError as e:
             results.append({"platform": platform,
                               "status": "not_configured",
                               "error": str(e)})
             await _persist_post_fail(
-                tenant["id"], user["id"], platform, action, str(e),
+                tenant_id, user_id, platform, action, str(e),
             )
         except PublishError as e:
             results.append({"platform": platform,
@@ -208,7 +239,7 @@ async def publish(body: PublishIn,
                               "error": e.detail,
                               "http_status": e.status})
             await _persist_post_fail(
-                tenant["id"], user["id"], platform, action, e.detail,
+                tenant_id, user_id, platform, action, e.detail,
             )
         except Exception as e:                                    # noqa: BLE001
             logger.exception("[soshie.publish] %s crash: %s", platform, e)
@@ -216,18 +247,68 @@ async def publish(body: PublishIn,
                               "status": "failed",
                               "error": f"unexpected: {e}"})
             await _persist_post_fail(
-                tenant["id"], user["id"], platform, action, str(e),
+                tenant_id, user_id, platform, action, str(e),
             )
 
-    resp = {
+    return {
         "action_id": body.action_id,
         "results": results,
         "moderation": mod,
     }
-    if idem_key:
+
+
+# ─── Internal executor helper (used by AI Employees approve queue) ──────
+async def execute_publish_for_action(
+    *,
+    action_id: str,
+    tenant_id: str,
+    user_id: str,
+    platforms: List[str],
+    text: str,
+    title: Optional[str] = None,
+    link: Optional[str] = None,
+    status: str = "draft",
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """In-process fan-out helper — called from the AI Employees
+    ``POST /ai-employees/actions/{aid}/approve`` executor to publish
+    an approved ``soshie.publish_blog`` action.  Bypasses HTTP but
+    shares the same persistence + idempotency semantics as
+    ``POST /soshie/publish``: when ``idempotency_key`` is supplied,
+    a prior cached response with a matching body fingerprint is
+    replayed instead of re-executing the fan-out.
+
+    Feb-2026 · Phase S1 — the AE approve endpoint calls this with
+    ``idempotency_key=f"action-{aid}"`` so a retry mid-publish
+    (network glitch to WP + retry) never double-posts.
+    """
+    endpoint = "POST /soshie/publish"
+    body = PublishIn(
+        action_id=action_id, platforms=platforms,
+        text=text, title=title, link=link, status=status,
+    )
+    idem_body = body.dict()
+
+    # Idem replay — inline (no ``Request`` object at this seam).
+    if idempotency_key:
+        row = await db.idempotency_keys.find_one(
+            {"tenant_id": tenant_id, "key": idempotency_key,
+             "endpoint": endpoint},
+            {"_id": 0},
+        )
+        if row:
+            fp = _fingerprint(idem_body)
+            if row.get("body_fingerprint") == fp:
+                cached_resp = row.get("response")
+                if cached_resp:
+                    return cached_resp
+
+    resp = await _do_publish_fanout(
+        tenant_id=tenant_id, user_id=user_id, body=body,
+    )
+    if idempotency_key:
         await store_response(
-            idem_key, "POST /soshie/publish",
-            tenant["id"], resp, idem_body,
+            idempotency_key, endpoint, tenant_id, resp, idem_body,
         )
     return resp
 
