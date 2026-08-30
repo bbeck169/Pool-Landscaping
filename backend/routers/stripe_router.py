@@ -19,7 +19,7 @@ envelope.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -94,6 +94,11 @@ async def _lookup_customer_from_pm(
 class SetupIntentBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     customer_id: Optional[str] = None  # required for admin-on-behalf; ignored for self-serve
+    # B1 · Feb-2026 — Admin ACH parity.  Callers pass
+    # ``["us_bank_account"]`` to drive the ACH flow through the same
+    # admin endpoint the card flow uses.  Default (``None``)
+    # preserves the historical card-only behaviour.
+    payment_method_types: Optional[List[str]] = None
 
 
 class AttachBody(BaseModel):
@@ -161,6 +166,11 @@ async def post_setup_intent(
             tenant_id=tenant["id"],
             customer_id=target_id,
             actor_user_id=user.get("id"),
+            # B1 · Feb-2026 — thread the caller's payment_method_types
+            # through so admins can start an ACH SetupIntent from the
+            # Customer Detail Payments tab.  ``None`` preserves the
+            # card-only default inside the service.
+            payment_method_types=body.payment_method_types,
         )
     except ValueError as exc:
         raise HTTPException(404 if "not found" in str(exc) else 400, str(exc))

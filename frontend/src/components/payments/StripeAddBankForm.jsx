@@ -42,7 +42,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { toast } from "sonner";
 
 
-function InnerAchForm({ apiBase, authToken, onSuccess, onCancel }) {
+function InnerAchForm({ apiBase, authToken, onSuccess, onCancel,
+                            attachPath, buildAttachBody, adaptAttachResponse }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
@@ -73,24 +74,21 @@ function InnerAchForm({ apiBase, authToken, onSuccess, onCancel }) {
         return;
       }
       // Persist into ``db.payment_methods`` via the shared attach path.
-      const res = await fetch(
-        `${apiBase}/customer-portal/payment-methods/ach/attach`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({ payment_method_id: paymentMethodId }),
+      const res = await fetch(`${apiBase}${attachPath}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
         },
-      );
+        body: JSON.stringify(buildAttachBody(paymentMethodId)),
+      });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setErrorMsg(json.detail || "Failed to save bank account.");
         setSubmitting(false);
         return;
       }
-      const pm = json.payment_method || {};
+      const pm = adaptAttachResponse(json);
       toast.success(
         `Bank account ending in ${pm.last4 || "••••"} saved.`,
       );
@@ -152,7 +150,35 @@ export default function StripeAddBankForm({
   // Feb-2026 · Backlog Item 6 — see the sibling
   // StripeAddCardForm for the ``pubKeyLoading`` contract.
   pubKeyLoading = undefined,
+  // B1 · Feb-2026 — Admin ACH parity dual-mode.  When ``customerId``
+  // is provided the form drives the *admin* endpoints
+  // (``/payments/stripe/setup-intent`` + ``/payments/stripe/attach``
+  // with ``payment_method_types=["us_bank_account"]``); when omitted
+  // it stays on the customer-portal endpoints unchanged.
+  customerId,
 }) {
+  const isAdminMode = !!customerId;
+  const linkSessionPath = isAdminMode
+    ? "/payments/stripe/setup-intent"
+    : "/customer-portal/payment-methods/ach/link-session";
+  const attachPath = isAdminMode
+    ? "/payments/stripe/attach"
+    : "/customer-portal/payment-methods/ach/attach";
+  const buildLinkSessionBody = () => (isAdminMode
+    ? { customer_id: customerId,
+        payment_method_types: ["us_bank_account"] }
+    : {}
+  );
+  const buildAttachBody = (paymentMethodId) => (isAdminMode
+    ? { customer_id: customerId,
+        payment_method_id: paymentMethodId,
+        set_default: false }
+    : { payment_method_id: paymentMethodId }
+  );
+  const adaptAttachResponse = (json) => (isAdminMode
+    ? json                       // admin attach returns the mirror row directly
+    : (json.payment_method || {}) // portal wraps under `.payment_method`
+  );
   const [clientSecret, setClientSecret] = useState("");
   const [loadingSecret, setLoadingSecret] = useState(true);
   const [bootError, setBootError] = useState("");
@@ -177,19 +203,22 @@ export default function StripeAddBankForm({
       setLoadingSecret(true);
       setBootError("");
       try {
-        const res = await fetch(
-          `${apiBase}/customer-portal/payment-methods/ach/link-session`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${authToken}`,
-            },
-            body: JSON.stringify({}),
+        const res = await fetch(`${apiBase}${linkSessionPath}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authToken}`,
           },
-        );
+          body: JSON.stringify(buildLinkSessionBody()),
+        });
         const json = await res.json().catch(() => ({}));
-        if (!res.ok || !json?.ok) {
+        // Admin endpoint doesn't wrap with an ``ok`` flag — it returns
+        // the SetupIntent envelope directly with ``client_secret``.
+        // Portal endpoint wraps with ``{ok, client_secret, ...}``.  We
+        // accept both: !res.ok OR (portal shape without ``ok``).
+        const portalWrapFailed =
+          !isAdminMode && json?.ok === false;
+        if (!res.ok || portalWrapFailed) {
           throw new Error(
             json.detail
             || (json?.reason === "stripe_not_configured"
@@ -206,7 +235,7 @@ export default function StripeAddBankForm({
     };
     run();
     return () => { cancelled = true; };
-  }, [apiBase, authToken]);
+  }, [apiBase, authToken, linkSessionPath, customerId]);
 
   if (!publishableKey) {
     if (_effectivePubKeyLoading) {
@@ -272,6 +301,9 @@ export default function StripeAddBankForm({
               authToken={authToken}
               onSuccess={onSuccess}
               onCancel={onCancel}
+              attachPath={attachPath}
+              buildAttachBody={buildAttachBody}
+              adaptAttachResponse={adaptAttachResponse}
             />
           </Elements>
         ) : null}

@@ -391,6 +391,30 @@ async def attach_payment_method(
     card = pm_dict.get("card") or {}
     if not isinstance(card, dict):
         card = _asdict(card)
+    # B1 · Feb-2026 — Admin ACH parity. Extract ``us_bank_account``
+    # fields when the PM is an ACH bank account so the mirror row
+    # carries ``type`` / ``bank_name`` / ``verification_status`` /
+    # ``account_holder_type`` alongside the card fields.  For card
+    # PMs these stay empty/None so the row shape is stable.
+    us_bank = pm_dict.get("us_bank_account") or {}
+    if not isinstance(us_bank, dict):
+        us_bank = _asdict(us_bank)
+    verifications = us_bank.get("verifications") or {}
+    if not isinstance(verifications, dict):
+        verifications = _asdict(verifications)
+    pm_type = (pm_dict.get("type") or "").strip() or (
+        "us_bank_account" if us_bank else "card"
+    )
+    ach_verification_status = None
+    if pm_type == "us_bank_account":
+        # Stripe returns ``verifications.status`` = "verified" |
+        # "pending" | "failed" when micro-deposits are in flight;
+        # for Financial Connections flows the PM lands already
+        # ``verified`` at attach time.  Absent field → "unverified"
+        # so the admin UI can prompt for the next step.
+        ach_verification_status = (
+            verifications.get("status") or "unverified"
+        )
 
     now = datetime.now(timezone.utc).isoformat()
     mirror = {
@@ -400,10 +424,19 @@ async def attach_payment_method(
         "provider": "stripe",
         "provider_customer_id": provider_customer_id,
         "provider_payment_method_id": payment_method_id,
+        # B1 · discriminator so the CRM UI can render card vs ACH
+        # rows without a second call to Stripe.
+        "type": pm_type,
         "brand": card.get("brand") or "",
-        "last4": card.get("last4") or "",
+        # last4 falls back to the ACH last4 when the PM is a bank
+        # account (Stripe puts it under ``us_bank_account.last4``).
+        "last4": card.get("last4") or us_bank.get("last4") or "",
         "exp_month": card.get("exp_month"),
         "exp_year": card.get("exp_year"),
+        # ACH-specific fields — safe empties when the PM is a card.
+        "bank_name": us_bank.get("bank_name") or "",
+        "account_holder_type": us_bank.get("account_holder_type") or "",
+        "verification_status": ach_verification_status,
         "is_default": bool(set_default),
         "stripe_mode": _mode(),
         "created_at": now,
