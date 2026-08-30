@@ -914,3 +914,13 @@
   - New: src/services/offlineWrite.ts, src/services/storageWatchdog.ts, src/components/sync/{OfflineBanner,PendingChangesChip,ConflictSheet,SyncToast,StoragePressureBanner,ManualSyncButton,index}.tsx, __tests__/o6-write-parity.test.ts
   - Modified: app/_layout.tsx, app/(app)/index.tsx, app/(app)/more.tsx, app/job/[id].tsx, app/job/new.tsx, app/job/[id]/checklist.tsx, app/customer/new.tsx, app/dispatch.tsx, app/time-clock.tsx, app/time-off.tsx, app/landscape-time-clock.tsx, app/settings/notifications.tsx, src/components/job/FieldReport.tsx, src/components/job/MaintenanceLog.tsx, src/components/job/ServiceIssues.tsx, src/components/schedule/CouldNotServiceButton.tsx, src/components/customers/ServiceNotes.tsx, src/components/customers/CustomerTagsSection.tsx, src/components/customers/MuteControlSheet.tsx, src/components/gps/GpsConsentModal.tsx, src/components/LandscapingClockWidget.tsx, src/components/NewLeadForm.tsx, src/services/cacheInvalidation.ts
 - **Web files referenced**: frontend/src/apiClient.js, frontend/src/App.js (for flow mapping)
+
+## Iteration 43 — Targeted lint fixes: no-redeclare + rules-of-hooks
+- **Commit**: 9bab96c
+- **Date**: 2026-08-29
+- **Changes**:
+  - Fix 1: Renamed type `MentionDetail` → `MentionDetailData` in `app/aeo/mention-detail.tsx` to resolve no-redeclare collision with the default-exported function of the same name.
+  - Fix 2: Hoisted all hooks in `app/(app)/schedule/calendar.tsx` above the `if (role === "customer") return <Redirect>` early return (moved to just before the JSX return). Eliminates ~30 rules-of-hooks errors.
+  - Fix 3: Hoisted all hooks in `app/(app)/jobs.tsx` above the `if (isAdmin) return <Redirect>` early return (moved to just before the JSX return). Eliminates ~7 rules-of-hooks errors.
+- **Files modified**: app/aeo/mention-detail.tsx, app/(app)/schedule/calendar.tsx, app/(app)/jobs.tsx
+- **Tests**: 17/17 schedule tests passing, Metro bundler clean
