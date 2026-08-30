@@ -386,12 +386,18 @@ export default function CustomerDetail() {
         ) : null}
 
         {isAdmin ? (
-          <View style={styles.pmCard} testID="customer-payment-method">
+          <Pressable
+            style={styles.pmCard}
+            testID="customer-payment-method"
+            onPress={() => router.push(`/customer/${id}/payment-methods` as any)}
+            accessibilityRole="button"
+            accessibilityLabel="Manage payment methods"
+          >
             <View style={styles.pmIcon}>
               <Ionicons name={c.has_card_on_file ? "card" : "card-outline"} size={18} color={colors.brand} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.pmLabel}>Card on file</Text>
+              <Text style={styles.pmLabel}>Payment method</Text>
               {c.has_card_on_file ? (
                 <Text style={[styles.pmValue, { color: "#166534" }]}>
                   {c.card_brand || c.pm_brand || "Card"} •••• {c.card_last4 || c.pm_last4 || "----"}
@@ -405,12 +411,32 @@ export default function CustomerDetail() {
             </View>
             {c.has_card_on_file ? (
               <Ionicons name="checkmark-circle" size={20} color={colors.success} />
-            ) : c.effective_require_card_on_file ? (
-              <Pressable style={styles.pmRequest} onPress={requestCard} disabled={requesting} testID="request-card-button">
-                <Text style={styles.pmRequestText}>{requesting ? "…" : "Send Link"}</Text>
+            ) : (
+              <Pressable
+                style={styles.pmRequest}
+                onPress={() => router.push(`/customer/${id}/payment-methods` as any)}
+                testID="add-payment-method-button"
+              >
+                <Text style={styles.pmRequestText}>Manage</Text>
               </Pressable>
-            ) : null}
-          </View>
+            )}
+            <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+          </Pressable>
+        ) : null}
+
+        {/* Secondary: Send add-card email link (still useful remotely) */}
+        {isAdmin && !c.has_card_on_file && c.effective_require_card_on_file ? (
+          <Pressable
+            style={styles.sendLinkRow}
+            onPress={requestCard}
+            disabled={requesting}
+            testID="send-card-link-button"
+          >
+            <Ionicons name="mail-outline" size={16} color={colors.brand} />
+            <Text style={styles.sendLinkText}>
+              {requesting ? "Sending…" : "Send add-card link to customer"}
+            </Text>
+          </Pressable>
         ) : null}
 
         {/* Card required override (Phase 12 tri-state) */}
@@ -807,6 +833,20 @@ const styles = StyleSheet.create({
   pmValue: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 1 },
   pmRequest: { backgroundColor: colors.brandTertiary, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill },
   pmRequestText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
+  sendLinkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    marginTop: spacing.xs,
+  },
+  sendLinkText: {
+    fontFamily: font.medium,
+    fontSize: fontSize.sm,
+    color: colors.brand,
+    textDecorationLine: "underline",
+  },
   cardRequiredCard: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm },
   resetDefaultBtn: { marginTop: 6 },
   resetDefaultText: { fontFamily: font.medium, fontSize: 11, color: colors.brand, textDecorationLine: "underline" },
