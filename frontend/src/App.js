@@ -133,6 +133,8 @@ import ProfitReportPage from "@/pages/admin/ProfitReportPage";
 import GpsSettingsPage from "@/pages/admin/GpsSettingsPage";
 // Feb-2026 · Item 6 — Business Card admin editor.
 import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
+// Feb-2026 · TD-08 promoted — admin logo upload UI.
+import BrandLogoSettings from "@/pages/settings/BrandLogoSettings";
 import MyProfilePage from "@/pages/account/MyProfilePage";
 import GoogleReviewSettings from "@/pages/settings/GoogleReviewSettings";
 import VanitySlugsPage from "@/pages/settings/VanitySlugsPage";
@@ -1205,6 +1207,8 @@ export default function App() {
             <Route path="admin/settings/gps" element={<AdminOnly><GpsSettingsPage /></AdminOnly>} />
             {/* Feb-2026 · Item 6 — Business Card admin editor. */}
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
+            {/* Feb-2026 · TD-08 promoted — admin logo upload UI. */}
+            <Route path="settings/branding" element={<AdminOnly><BrandLogoSettings /></AdminOnly>} />
             <Route path="account/profile" element={<MyProfilePage />} />
             {/* Phase 34 · Task GG · Feb 2026 — Google Business Profile
                 review URL admin settings screen. Uses AdminOnly so

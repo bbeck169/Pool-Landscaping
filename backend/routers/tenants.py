@@ -14,9 +14,10 @@ Stage 2 (this file, additive):
 """
 import os
 import time
+import uuid
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel, Field
 
 from config import db, logger
@@ -542,6 +543,232 @@ async def patch_own_brand(body: BrandUpdate, user: dict = Depends(get_current_us
     upd["updated_at"] = now_iso()
     await db.tenants.update_one({"id": tid}, {"$set": upd})
     return await db.tenants.find_one({"id": tid}, {"_id": 0})
+
+
+# ══════════════════════════════════════════════════════════════
+# Feb-2026 · TD-08 promoted — Admin logo upload UI.
+#
+# Two multipart endpoints that let admins swap the app-shell brand
+# logo without a manual file drop:
+#
+#   * POST   /api/tenants/branding/logo   — upload + stamp
+#     ``tenant.logo_url`` (top-level, matches the shape read by
+#     ``useTenantBrand`` and the ``GET /tenants/current`` response).
+#   * DELETE /api/tenants/branding/logo   — clear ``tenant.logo_url``
+#     back to null. Object-storage GC is best-effort — a storage
+#     failure never blocks the delete.
+#
+# Both endpoints are admin/super_admin gated (techs + customers see
+# 403). Uploads are validated for MIME (png/svg/webp/jpeg), max
+# size 2 MB. The stored path lives under Emergent Object Storage
+# scoped to the caller's tenant so cross-tenant reads never happen.
+# ══════════════════════════════════════════════════════════════
+_LOGO_MAX_BYTES = 2 * 1024 * 1024  # 2 MB — matches spec.
+_LOGO_ALLOWED_MIME = {
+    "image/png": "png",
+    "image/svg+xml": "svg",
+    "image/webp": "webp",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+}
+
+
+def _extension_for(content_type: str, filename: Optional[str]) -> Optional[str]:
+    """Resolve a canonical file extension from MIME first, name fallback."""
+    ct = (content_type or "").strip().lower().split(";")[0]
+    ext = _LOGO_ALLOWED_MIME.get(ct)
+    if ext:
+        return ext
+    if filename and "." in filename:
+        tail = filename.rsplit(".", 1)[-1].lower()
+        if tail in {"png", "svg", "webp", "jpg", "jpeg"}:
+            return "jpg" if tail == "jpeg" else tail
+    return None
+
+
+@router.post(
+    "/tenants/branding/logo",
+    tags=["tenants"],
+    operation_id="tenants.branding.uploadLogo",
+    summary="Upload a new brand logo for the caller's tenant.",
+    responses={
+        200: {"description": "Logo persisted and tenant record updated."},
+        403: {"description": "Not admin / super_admin."},
+        413: {"description": "File exceeds 2 MB."},
+        415: {"description": "Unsupported MIME type."},
+        503: {"description": "Object storage unavailable."},
+    },
+)
+async def upload_branding_logo(
+    logo: UploadFile = File(..., description="PNG / SVG / WEBP / JPEG under 2 MB"),
+    user: dict = Depends(get_current_user),
+):
+    """Persist ``logo`` to Emergent Object Storage under
+    ``poolcrm/<tenant_id>/branding/logo/<uuid>.<ext>`` and stamp
+    ``tenant.logo_url`` with the resolvable ``/api/objects/<path>``
+    URL so ``useTenantBrand`` picks it up on next fetch.
+    """
+    _admin_or_403(user)
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+
+    # ── Validate MIME + extension.
+    ext = _extension_for(logo.content_type or "", logo.filename)
+    if not ext:
+        raise HTTPException(415, {
+            "error": "unsupported_media_type",
+            "error_code": "unsupported_media_type",
+            "content_type": logo.content_type,
+            "message": "Logo must be PNG, SVG, WEBP, or JPEG.",
+        })
+
+    # ── Read + enforce max size.
+    data = await logo.read()
+    size = len(data or b"")
+    if size == 0:
+        raise HTTPException(400, {
+            "error": "empty_file",
+            "error_code": "empty_file",
+            "message": "Uploaded file is empty.",
+        })
+    if size > _LOGO_MAX_BYTES:
+        raise HTTPException(413, {
+            "error": "file_too_large",
+            "error_code": "file_too_large",
+            "size_bytes": size,
+            "max_bytes": _LOGO_MAX_BYTES,
+            "message": f"Logo file exceeds the {_LOGO_MAX_BYTES // (1024 * 1024)} MB limit.",
+        })
+
+    # ── Persist to Emergent Object Storage.
+    try:
+        from services import object_storage as _obj
+    except Exception as exc:                                        # noqa: BLE001
+        raise HTTPException(503, f"object_storage_import_failed: {exc}")
+    if not _obj.is_ready():
+        try:
+            _obj.init_storage()
+        except Exception:                                            # noqa: BLE001
+            pass
+    if not _obj.is_ready():
+        raise HTTPException(503, {
+            "error": "object_storage_not_initialised",
+            "error_code": "object_storage_unavailable",
+            "message": "Object storage is not available right now — retry in a minute.",
+        })
+
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    storage_path = _obj.build_path(
+        tenant_id=tid, entity_kind="branding",
+        entity_id="logo", filename=filename,
+    )
+    content_type = logo.content_type or f"image/{'svg+xml' if ext == 'svg' else ext}"
+    try:
+        _obj.put_object(storage_path, data, content_type)
+    except Exception as exc:                                        # noqa: BLE001
+        raise HTTPException(502, f"object_storage_put_failed: {exc}")
+
+    logo_url = f"/api/objects/{storage_path}"
+    updated_at = now_iso()
+
+    # ── Look up the prior logo path so we can attempt to GC it.
+    prior = await db.tenants.find_one(
+        {"id": tid}, {"_id": 0, "logo_url": 1, "logo_object_path": 1},
+    ) or {}
+    prior_path = prior.get("logo_object_path")
+
+    # ── Stamp the tenant. Store both the public URL (consumed by the
+    #    frontend) and the underlying object path (used by the DELETE
+    #    endpoint below to GC the blob).
+    await db.tenants.update_one(
+        {"id": tid},
+        {"$set": {
+            "logo_url": logo_url,
+            "logo_object_path": storage_path,
+            "logo_content_type": content_type,
+            "logo_size_bytes": size,
+            "logo_updated_at": updated_at,
+            "logo_updated_by_user_id": user.get("id"),
+            "updated_at": updated_at,
+        }},
+    )
+
+    # ── Best-effort GC of the previous blob so we don't accumulate
+    #    orphans. Never fail the request on a delete miss.
+    if prior_path and prior_path != storage_path:
+        try:
+            _obj.delete_object(prior_path)
+        except Exception as exc:                                    # noqa: BLE001
+            logger.warning(
+                "[branding.logo] prior blob GC failed for tenant=%s path=%s: %s",
+                tid, prior_path, exc,
+            )
+
+    logger.info(
+        "[branding.logo] tenant=%s uploaded logo (%d bytes, %s) by %s",
+        tid, size, content_type, user.get("email") or user.get("id"),
+    )
+    return {
+        "logo_url": logo_url,
+        "size_bytes": size,
+        "content_type": content_type,
+        "updated_at": updated_at,
+    }
+
+
+@router.delete(
+    "/tenants/branding/logo",
+    tags=["tenants"],
+    operation_id="tenants.branding.clearLogo",
+    summary="Clear the tenant brand logo (revert to placeholder).",
+)
+async def clear_branding_logo(user: dict = Depends(get_current_user)):
+    """Set ``tenant.logo_url`` to null. Object-storage cleanup is
+    best-effort — the tenant record clears regardless of GC success.
+    """
+    _admin_or_403(user)
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+
+    row = await db.tenants.find_one(
+        {"id": tid}, {"_id": 0, "logo_url": 1, "logo_object_path": 1},
+    ) or {}
+    prior_path = row.get("logo_object_path")
+    updated_at = now_iso()
+
+    await db.tenants.update_one(
+        {"id": tid},
+        {
+            "$set": {
+                "logo_url": None,
+                "logo_object_path": None,
+                "logo_content_type": None,
+                "logo_size_bytes": None,
+                "logo_updated_at": updated_at,
+                "logo_updated_by_user_id": user.get("id"),
+                "updated_at": updated_at,
+            },
+        },
+    )
+
+    if prior_path:
+        try:
+            from services import object_storage as _obj
+            if _obj.is_ready():
+                _obj.delete_object(prior_path)
+        except Exception as exc:                                    # noqa: BLE001
+            logger.warning(
+                "[branding.logo] delete: prior blob GC failed for tenant=%s "
+                "path=%s: %s", tid, prior_path, exc,
+            )
+
+    logger.info(
+        "[branding.logo] tenant=%s cleared logo by %s",
+        tid, user.get("email") or user.get("id"),
+    )
+    return {"cleared": True, "logo_url": None, "updated_at": updated_at}
 
 
 # ─── Phase 12 · Feb 2026 — Tenant Payment Defaults ─────────────────────

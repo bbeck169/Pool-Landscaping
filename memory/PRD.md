@@ -13238,3 +13238,35 @@ Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy 
 **Files touched:**
 - Backend: `models.py`, `routers/quotes.py`, `routers/invoice_edit.py`, `routers/income_categories.py`, **new** `services/pricebook/writeback.py`, **new** `tests/test_invoice_line_item_custom_price.py`, **new** `tests/test_invoice_category_validation.py`, **new** `tests/test_invoice_pricebook_writeback.py`, **new** `tests/test_invoice_writeback_tenant_isolation.py`.
 - Frontend: `pages/quotes/QuoteInvoiceNew.jsx` (rewrite), `components/income/CategoryPicker.jsx` (rewrite — `+ Add category` + `invalidReason`), `components/invoices/InvoiceEditModal.jsx` (writeback checkbox + inline row errors), **new** `test/invoice-line-item-price-editable.test.jsx`, **new** `test/invoice-category-picker-add.test.jsx`, **new** `test/invoice-pricebook-writeback.test.jsx`, **new** `test/invoice-save-errors-inline.test.jsx`.
+
+## Feb-2026 · TD-08 promoted · Admin logo upload UI — SHIPPED
+
+**Housekeeping (from prior tester report):**
+- Chlorine Tablets pricebook `unit_price` restored $222.22 → $89.
+- Test invoices `INV-2026-000087` + `INV-2026-000088` (writeback tester artefacts) marked `void`.
+- Tester-flagged `PATCH /api/pricebook/{id} → 405` was a **false alarm** — the pricebook edit UI uses `PATCH /api/items/{iid}` (items.py:318) and it works. `/pricebook/{id}` only exposes DELETE + bulk-delete by design (per operation_id `pricebook.delete` + `pricebook.bulkDelete`). No code change needed.
+
+**Backend (`routers/tenants.py`):**
+- New: `POST /api/tenants/branding/logo` — multipart, admin-only. Accepts `logo` UploadFile. Validates MIME (`image/png` / `svg+xml` / `webp` / `jpeg`), enforces 2 MB max (413 with `error_code=file_too_large`), rejects unsupported MIME with 415 (`error_code=unsupported_media_type`), persists to Emergent Object Storage under `poolcrm/<tenant_id>/branding/logo/<uuid>.<ext>`, stamps `tenant.logo_url` + `logo_object_path` + `logo_content_type` + `logo_size_bytes` + `logo_updated_at` + `logo_updated_by_user_id`. Best-effort GC of prior blob on replace.
+- New: `DELETE /api/tenants/branding/logo` — admin-only. Clears the row + best-effort blob GC. Returns `{cleared: true, logo_url: null, updated_at}`.
+- Tenant read (`GET /tenants/current`) already surfaced `branding.logo_url` from earlier polish sprint — no changes needed.
+
+**Frontend:**
+- New: `pages/settings/BrandLogoSettings.jsx` — mounted at `/settings/branding` (AdminOnly). Preview area on light/dark checker (spots transparency issues), Upload → pending preview → Save/Cancel, Remove with confirm modal, guidance text ("PNG, SVG, or WebP. Recommended: transparent background, at least 256×256, under 2 MB.").
+- Client-side validation mirrors backend (MIME + 2 MB) so the picker never fires a network call for an invalid file.
+- On successful upload OR remove: `invalidateTenantBrand()` + dispatches `tenant-brand:updated` window event.
+- Updated: `hooks/useTenantBrand.js` listens for `tenant-brand:updated` and re-fetches, so every mounted `<BrandLogo>` across the shell refreshes without a full page reload (verified end-to-end via screenshot: side-rail crown updated instantly after upload).
+- Routed in `App.js`: `<Route path="settings/branding" element={<AdminOnly><BrandLogoSettings /></AdminOnly>} />`.
+
+**Testing (42 total green: 7 backend + 8 frontend + 27 pre-existing polish sprint tests):**
+- Backend (`test_branding_logo_upload.py`): rejects missing file (422), unsupported MIME (415), oversized (413), non-admin (403 on POST + DELETE), valid PNG round-trip (200 + DB stamped + `/tenants/current` surfaces new URL + DELETE clears), replacing existing logo generates a new object path (best-effort GC of prior blob).
+- Frontend (`test/brand-logo-uploader.test.jsx`): empty-state placeholder, current-logo preview, client-side rejection of oversized files (no fetch fired), client-side rejection of unsupported MIME (no fetch fired), valid PNG shows pending preview + Save/Cancel, successful upload dispatches `tenant-brand:updated` + invalidates cache + refetches tenant, 413 surfaces "File too large" inline, Remove button only fires DELETE after explicit confirm.
+- End-to-end verified via live screenshot: uploaded → app-shell side-rail logo picked up the new `/api/objects/...` URL WITHOUT page reload → DELETE reverted to placeholder → toast confirmed.
+
+**Not touched (per non-scope):**
+- Tenant switcher on logo (pending user decision).
+- Email-header logo injection · PDF-header logo injection on invoices · Public portal logo change.
+
+**Files touched:**
+- Backend: `routers/tenants.py` (add UploadFile import + POST + DELETE endpoints), **new** `tests/test_branding_logo_upload.py`.
+- Frontend: `App.js` (route wire + import), `hooks/useTenantBrand.js` (event listener), **new** `pages/settings/BrandLogoSettings.jsx`, **new** `test/brand-logo-uploader.test.jsx`.

@@ -69,9 +69,8 @@ export function useTenantBrand() {
 
   useEffect(() => {
     // If we already have a cached value, skip the effect entirely.
-    if (cached) return;
     let alive = true;
-    loadOnce().then((t) => {
+    const applyFresh = (t) => {
       if (!alive) return;
       setState({
         logo_url: t?.branding?.logo_url || t?.logo_url || null,
@@ -80,8 +79,29 @@ export function useTenantBrand() {
         slug: t?.slug || null,
         loaded: true,
       });
-    });
-    return () => { alive = false; };
+    };
+    if (!cached) {
+      loadOnce().then(applyFresh);
+    }
+    // Feb-2026 · TD-08 promoted — refresh the mounted BrandLogo the
+    // instant the admin uploads / removes a logo. The BrandLogoSettings
+    // page dispatches ``tenant-brand:updated`` after a successful
+    // POST / DELETE round-trip. We invalidate the module-scope cache
+    // then re-load so every mounted <BrandLogo> across the shell
+    // updates without a full page reload.
+    const onBrandUpdate = () => {
+      cached = null;
+      loadOnce().then(applyFresh);
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("tenant-brand:updated", onBrandUpdate);
+    }
+    return () => {
+      alive = false;
+      if (typeof window !== "undefined") {
+        window.removeEventListener("tenant-brand:updated", onBrandUpdate);
+      }
+    };
   }, []);
 
   return state;
