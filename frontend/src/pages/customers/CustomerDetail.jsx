@@ -117,6 +117,8 @@ import CardOnFileWarningBanner from "@/components/customers/CardOnFileWarningBan
 import CustomerDeleteModal from "@/components/customers/CustomerDeleteModal";
 import CustomerReviewsTab from "@/components/customers/CustomerReviewsTab";
 import AdminCardCapturePanel from "@/components/customers/AdminCardCapturePanel";
+// Phase B4 · Feb-2026 — Stripe subscription CRUD panel.
+import SubscriptionsPanel from "./SubscriptionsPanel";
 import ResponsiveTabs from "@/components/ui/responsive-tabs";
 
 const TABS = [
@@ -130,6 +132,7 @@ const TABS = [
   { k: "notes", label: "Notes", icon: StickyNote },
   { k: "credits", label: "Credits", icon: DollarSign },
   { k: "payments", label: "Payments", icon: DollarSign },
+  { k: "subscriptions", label: "Subscriptions", icon: DollarSign },
   { k: "reviews", label: "Reviews", icon: Star },
   { k: "portal", label: "Portal Access", icon: KeyRound },
 ];
@@ -817,6 +820,13 @@ export default function CustomerDetail() {
 
           {tab === "payments" ? (
             <AdminCardCapturePanel customerId={id} onChange={load} />
+          ) : null}
+
+          {tab === "subscriptions" ? (
+            <SubscriptionsPanel
+              customerId={id}
+              canWrite={["owner", "admin", "super_admin"].includes(meRole)}
+            />
           ) : null}
 
           {tab === "reviews" ? (

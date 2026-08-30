@@ -976,3 +976,25 @@
 - **Deferred**: Mobile admin logo upload UI (Branding tab read-only), in-app OAuth flows (Integrations tab links to web)
 
 - **Conclusion**: All recently shipped features verified functional with no regressions
+
+## Iteration 47 — B2 Stripe Card + ACH Native Capture
+- **Commit**: 0f783f77b267944756a8213640c6783fa3ed412d
+- **Date**: 2026-08-30
+- **Changes**:
+  - Installed `@stripe/stripe-react-native@0.50.3` with Expo config plugin (merchant id: merchant.com.poolscape.crm)
+  - Created `app/customer/[id]/payment-methods.tsx` — full payment methods screen with list, add card, add ACH, remove, offline handling
+  - Created `src/api/stripe.ts` — typed API helpers (getStripeConfig, createSetupIntent, attachPaymentMethod, listPaymentMethods, removePaymentMethod)
+  - Created `src/components/stripe/PaymentMethodRow.tsx` — card/ACH row component with verification chips, default badge, remove button
+  - Created `src/lib/stripeSdk.tsx` + `src/lib/stripeSdk.web.tsx` — platform-safe Stripe SDK wrapper (native re-exports real SDK, web exports no-op stubs)
+  - Created `src/services/sync/db.web.ts` — web shim for expo-sqlite to fix pre-existing wasm resolution failure on Metro web bundling
+  - Modified `app/customer/[id].tsx` — replaced "Send Link" primary button with "Manage" → navigates to payment-methods screen; kept "Send add-card link" as secondary
+  - Created 4 test suites: stripe-payment-sheet-init, stripe-payment-methods-list, stripe-offline-banner, stripe-attach-round-trip
+  - 10 new tests, all passing
+  - Full regression: 726/747 (8 pre-existing failures, 0 new)
+  - Web bundle: 2273 modules, clean
+  - Lint clean on all files
+- **Files modified**: app/customer/[id].tsx, app.json
+- **Files created**: 10 new files (1,240 LOC total)
+- **Note**: Expo prebuild required for actual PaymentSheet native functionality. Web preview uses no-op stubs with graceful "native build required" alert.
+- **Note**: Fixed pre-existing expo-sqlite web wasm bundling issue with db.web.ts shim (was masked by cached Metro bundle)
+

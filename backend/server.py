@@ -328,6 +328,9 @@ api_router.include_router(_admin_migrations_router.router)
 # Phase B3 · Feb-2026 — Stripe webhook dead-letter surface (super_admin).
 from routers import admin_stripe as _admin_stripe_router  # noqa: E402
 api_router.include_router(_admin_stripe_router.router)
+# Phase B4 · Feb-2026 — Stripe subscription CRUD.
+from routers import subscriptions as _subscriptions_router  # noqa: E402
+api_router.include_router(_subscriptions_router.router)
 from routers import comms_admin as _comms_admin  # noqa: E402
 api_router.include_router(_comms_admin.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402

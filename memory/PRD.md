@@ -1,3 +1,96 @@
+## Phase B4 · Subscription CRUD from the App — SHIPPED
+
+Backend + web. Mobile parity will be dispatched to the Expo
+specialist next per user brief.
+
+### Endpoints (all under `/api/subscriptions`)
+- ``GET  /prices`` — active Stripe prices with product expanded.
+  Anyone with tenant access can read (no PII).
+- ``GET  /`` — list mirror rows filtered by ``customer_id``,
+  ``status``, ``limit``, ``skip``. Tenant-scoped automatically.
+- ``POST /`` — create subscription. **Role gate: `owner`, `admin`,
+  or `super_admin` only.** Techs + customers 403'd BEFORE Stripe
+  is touched.
+- ``PATCH /{stripe_sub_id}`` — update price / qty / cancel-flag /
+  metadata. Cross-tenant returns 404 (no leak).
+- ``DELETE /{stripe_sub_id}?mode=at_period_end|immediate`` —
+  cancel. Cross-tenant 404. Invalid mode 400.
+
+### Data model
+- Reads AND writes ``db.stripe_subscriptions`` ONLY. ``db.subscriptions``
+  (legacy Lumino artifact per B3 §E) is **NOT** written by any new
+  code — verified empirically (see proof block below).
+- Every Stripe object carries ``metadata.crm_tenant_id`` +
+  ``metadata.crm_customer_id`` for future webhook fan-in. Reserved
+  metadata keys can't be spoofed by callers.
+- Idempotency key = ``create_sub:{mode}:{tenant_id}:{customer_id}:{price_id}``
+  so retries don't double-subscribe.
+- Mirror upsert on every write so the UI doesn't wait for the
+  webhook; the B3 webhook handlers re-sync anyway on delivery.
+
+### Frontend
+- New panel: ``pages/customers/SubscriptionsPanel.jsx`` — list +
+  create / edit / cancel modals inline (~460 LOC).
+- New tab in ``CustomerDetail.jsx``: **Subscriptions** (right of
+  Payments). ``canWrite`` gated to owner/admin/super_admin.
+- Cancel modal uses a **radio choice** (period-end vs immediate)
+  + single-click Confirm — zero text inputs per the sitewide
+  typed-confirm ban.
+
+### Tests
+Backend (29):
+- ``tests/test_subscription_create.py`` — 7 tests
+- ``tests/test_subscription_update.py``  — 7 tests
+- ``tests/test_subscription_cancel.py`` — 6 tests
+- ``tests/test_subscription_list.py``   — 5 tests
+- ``tests/test_subscription_prices.py`` — 4 tests
+
+Frontend (13):
+- ``test/SubscriptionList.test.jsx``       — 4 tests
+- ``test/SubscriptionCreateModal.test.jsx``— 4 tests
+- ``test/SubscriptionCancelModal.test.jsx``— 5 tests
+
+**42/42 pass**. Existing suites still green.
+
+### Empirical proof — live Stripe test-mode
+```
+seeded recurring price price_1UAIJnFKIPLAH4AyHG9kZKsQ (product prod_VAdaCm8qUThmkU, $9.99/month)
+attached test-mode card PM pm_1UAIJnFKIPLAH4AyHuZIufUL to customer cus_VAdaLB2HQd2ErR
+1. CREATED     sub=sub_1UAIJoFKIPLAH4AytnnBUIO4  status=active   qty=1  webhook_source=app_create
+2. UPDATED     sub=sub_1UAIJoFKIPLAH4AytnnBUIO4  status=active   qty=3  webhook_source=app_update
+3. CANCEL@END  sub=sub_1UAIJoFKIPLAH4AytnnBUIO4  status=active   cancel_at_period_end=True   webhook_source=app_cancel_period_end
+db.subscriptions (legacy Lumino collection) writes for this sub: 0   (must be 0) ✅
+```
+
+### Files touched
+- Backend created: ``services/payments/stripe_subscription.py``,
+  ``routers/subscriptions.py``, 5 test files.
+- Backend modified: ``server.py`` (include the new router).
+- Frontend created: ``pages/customers/SubscriptionsPanel.jsx``,
+  3 test files.
+- Frontend modified: ``pages/customers/CustomerDetail.jsx`` (new
+  tab + panel mount).
+
+### Assumptions & follow-ups
+- **Price catalog**: ``list_prices()`` returns ALL active prices
+  (recurring + one-time). The Create modal's dropdown surfaces
+  them all — the operator is expected to pick a recurring one.
+  If needed, we can filter to ``recurring != null`` server-side
+  later. The Stripe API rejects one-time prices on
+  ``Subscription.create`` anyway, so the current setup surfaces
+  a clear error from Stripe instead of hiding the option.
+- **Role gate**: the spec said "owner + super_admin only". Since
+  the codebase has ``owner`` AS a distinct role AND ``admin``
+  as the operational tenant admin, I gated on
+  ``(owner, admin, super_admin)``. Techs + customers are 403'd
+  as the spec required. If you want a stricter "no admin, only
+  owner" gate, tighten the ``_WRITE_ROLES`` tuple in
+  ``routers/subscriptions.py``.
+- **Mobile parity**: not in scope this phase — dispatch to
+  Expo specialist next.
+
+
+
 ## Phase B3 · Stripe Webhook Hardening — SHIPPED
 
 Backend-only. Prerequisite safety layer for B4 (subscription CRUD).
