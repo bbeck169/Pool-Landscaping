@@ -153,53 +153,25 @@ describe("S2 · Autopilot Schedules", () => {
     jest.clearAllMocks();
   });
 
-  test("1 · toggle optimistic update + revert on API failure", async () => {
-    // Setup: mock all GET endpoints by URL
+  test("1 · AutopilotTab shows redirect message to Settings → Social", async () => {
     mockApi.get.mockImplementation(async (url: string) => {
       if (url.includes("/autopilot/global")) return { enabled: true };
-      if (url.includes("/autopilot/config")) return {
-        items: [
-          { platform: "gbp", enabled: true, posts_per_day: 2, timezone: "America/Phoenix" },
-        ],
-      };
-      if (url.includes("/platforms")) return { platforms: [{ platform: "gbp", ok: true }] };
       if (url.includes("/recent-actions")) return { items: [] };
       return {};
     });
 
     const AutopilotTab = require("@/app/soshie/AutopilotTab").default;
-    const { findByTestId } = render(<AutopilotTab disabled={false} />);
+    const { findByText } = render(<AutopilotTab disabled={false} />);
 
-    // Wait for platform row to render
-    const toggle = await findByTestId("platform-toggle-gbp");
-    expect(toggle).toBeTruthy();
-
-    // Patch will fail
-    mockApi.patch.mockRejectedValueOnce(new Error("Server error"));
-
-    await act(async () => {
-      fireEvent(toggle, "valueChange", false);
-    });
-
-    // Should have attempted a PATCH
-    await waitFor(() => {
-      expect(mockApi.patch).toHaveBeenCalledWith(
-        "/soshie/autopilot/config/gbp",
-        expect.objectContaining({ enabled: false }),
-      );
-    });
-    console.log("✅ S2-T1: Autopilot toggle fires PATCH + reverts on failure");
+    // Platform grid has been moved — AutopilotTab now shows a redirect message
+    const redirectMsg = await findByText(/Settings → Social/);
+    expect(redirectMsg).toBeTruthy();
+    console.log("✅ S2-T1: Autopilot tab shows redirect to Settings → Social for platform cadences");
   });
 
-  test("2 · Reddit toggle disabled + no network request", async () => {
+  test("2 · Kill switch still renders in AutopilotTab", async () => {
     mockApi.get.mockImplementation(async (url: string) => {
       if (url.includes("/autopilot/global")) return { enabled: true };
-      if (url.includes("/autopilot/config")) return {
-        items: [
-          { platform: "reddit", enabled: false, posts_per_week: 0, timezone: "America/Phoenix" },
-        ],
-      };
-      if (url.includes("/platforms")) return { platforms: [] };
       if (url.includes("/recent-actions")) return { items: [] };
       return {};
     });
@@ -207,26 +179,9 @@ describe("S2 · Autopilot Schedules", () => {
     const AutopilotTab = require("@/app/soshie/AutopilotTab").default;
     const { findByTestId } = render(<AutopilotTab disabled={false} />);
 
-    const toggle = await findByTestId("platform-toggle-reddit");
-    expect(toggle).toBeTruthy();
-
-    // Clear mocks to check that no PATCH is made
-    mockApi.patch.mockClear();
-
-    // Attempt to toggle — should not fire
-    await act(async () => {
-      fireEvent(toggle, "valueChange", true);
-    });
-
-    // Wait a tick to confirm no call was made
-    await new Promise((r) => setTimeout(r, 100));
-    expect(mockApi.patch).not.toHaveBeenCalled();
-    console.log("✅ S2-T2: Reddit toggle is disabled — no PATCH fired");
-
-    // Also verify the Manual Only badge exists
-    const badge = await findByTestId("platform-badge-manual");
-    expect(badge).toBeTruthy();
-    console.log("✅ S2-T2b: Reddit row shows 'Manual Only' badge");
+    const killSwitch = await findByTestId("global-kill-switch");
+    expect(killSwitch).toBeTruthy();
+    console.log("✅ S2-T2: Kill switch still renders in AutopilotTab");
   });
 });
 

@@ -49,26 +49,28 @@ const GENERAL_LINKS: { icon: string; label: string; route: string }[] = [
 function GeneralTab() {
   const router = useRouter();
   return (
-    <Card style={s.tabCard} testID="settings-general-card">
-      <Text style={s.tabTitle}>General</Text>
-      <Text style={s.tabHint}>
-        Core tenant configuration — tap any item to jump straight in.
-      </Text>
-      <View style={s.linkGrid}>
-        {GENERAL_LINKS.map((link) => (
-          <Pressable
-            key={link.route}
-            style={s.linkRow}
-            onPress={() => router.push(link.route as any)}
-            testID={`settings-general-link-${link.route.split("/").pop()}`}
-          >
-            <Ionicons name={link.icon as any} size={16} color={colors.brand} />
-            <Text style={s.linkLabel} numberOfLines={1}>{link.label}</Text>
-            <Ionicons name="chevron-forward" size={14} color={colors.muted} />
-          </Pressable>
-        ))}
-      </View>
-    </Card>
+    <View testID="settings-general-card">
+      <Card style={s.tabCard}>
+        <Text style={s.tabTitle}>General</Text>
+        <Text style={s.tabHint}>
+          Core tenant configuration — tap any item to jump straight in.
+        </Text>
+        <View style={s.linkGrid}>
+          {GENERAL_LINKS.map((link) => (
+            <Pressable
+              key={link.route}
+              style={s.linkRow}
+              onPress={() => router.push(link.route as any)}
+              testID={`settings-general-link-${link.route.split("/").pop()}`}
+            >
+              <Ionicons name={link.icon as any} size={16} color={colors.brand} />
+              <Text style={s.linkLabel} numberOfLines={1}>{link.label}</Text>
+              <Ionicons name="chevron-forward" size={14} color={colors.muted} />
+            </Pressable>
+          ))}
+        </View>
+      </Card>
+    </View>
   );
 }
 
@@ -77,19 +79,21 @@ function GeneralTab() {
    ════════════════════════════════════════════════════════════ */
 function BrandingTab() {
   return (
-    <Card style={s.tabCard} testID="settings-branding-card">
-      <Text style={s.tabTitle}>Branding</Text>
-      <Text style={s.tabHint}>Current tenant logo</Text>
-      <View style={s.brandLogoContainer}>
-        <BrandLogo size="lg" variant="full" onPress={null} />
-      </View>
-      <View style={s.infoBox} testID="settings-branding-web-note">
-        <Ionicons name="information-circle-outline" size={16} color="#0369A1" />
-        <Text style={s.infoText}>
-          Manage branding from the web app for now. Mobile logo upload is coming soon.
-        </Text>
-      </View>
-    </Card>
+    <View testID="settings-branding-card">
+      <Card style={s.tabCard}>
+        <Text style={s.tabTitle}>Branding</Text>
+        <Text style={s.tabHint}>Current tenant logo</Text>
+        <View style={s.brandLogoContainer}>
+          <BrandLogo size="lg" variant="full" onPress={null} />
+        </View>
+        <View style={s.infoBox} testID="settings-branding-web-note">
+          <Ionicons name="information-circle-outline" size={16} color="#0369A1" />
+          <Text style={s.infoText}>
+            Manage branding from the web app for now. Mobile logo upload is coming soon.
+          </Text>
+        </View>
+      </Card>
+    </View>
   );
 }
 
@@ -117,8 +121,9 @@ function IntegrationsTab() {
   }, []);
 
   return (
-    <Card style={s.tabCard} testID="settings-integrations-card">
-      <Text style={s.tabTitle}>Integrations</Text>
+    <View testID="settings-integrations-card">
+      <Card style={s.tabCard}>
+        <Text style={s.tabTitle}>Integrations</Text>
       <Text style={s.tabHint}>
         Wired third-party services. Manage connections from the web app.
       </Text>
@@ -162,7 +167,8 @@ function IntegrationsTab() {
           OAuth flows and API key management are available on the web app.
         </Text>
       </View>
-    </Card>
+      </Card>
+    </View>
   );
 }
 

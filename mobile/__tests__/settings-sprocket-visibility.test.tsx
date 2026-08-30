@@ -23,9 +23,9 @@ jest.mock("expo-router", () => ({
   },
 }));
 
-let _mockRole = "admin";
+let mockRole = "admin";
 jest.mock("@/src/auth", () => ({
-  useAuth: () => ({ user: { role: _mockRole, id: "u1" } }),
+  useAuth: () => ({ user: { role: mockRole, id: "u1" } }),
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -39,6 +39,7 @@ jest.mock("@/src/hooks/useBreadcrumbs", () => ({
 jest.mock("@/src/hooks/useTenantBrand", () => ({
   __esModule: true,
   default: () => ({ logoUri: null, loading: false, error: null }),
+  useTenantBrand: () => ({ logoUrl: null, loading: false, error: null }),
 }));
 
 jest.mock("@/src/api", () => ({
@@ -55,35 +56,35 @@ describe("Settings Sprocket Visibility", () => {
   });
 
   it("renders sprocket for admin role", () => {
-    _mockRole = "admin";
+    mockRole = "admin";
     const tree = render(<Header title="Dashboard" />);
     expect(tree.getByTestId("header-settings-sprocket")).toBeTruthy();
     console.log("✅ SP-T1: Sprocket visible for admin");
   });
 
   it("renders sprocket for super_admin role", () => {
-    _mockRole = "super_admin";
+    mockRole = "super_admin";
     const tree = render(<Header title="Dashboard" />);
     expect(tree.getByTestId("header-settings-sprocket")).toBeTruthy();
     console.log("✅ SP-T2: Sprocket visible for super_admin");
   });
 
   it("hides sprocket for technician role", () => {
-    _mockRole = "technician";
+    mockRole = "technician";
     const tree = render(<Header title="Schedule" />);
     expect(tree.queryByTestId("header-settings-sprocket")).toBeNull();
     console.log("✅ SP-T3: Sprocket hidden for technician");
   });
 
   it("hides sprocket for customer role", () => {
-    _mockRole = "customer";
+    mockRole = "customer";
     const tree = render(<Header title="Home" />);
     expect(tree.queryByTestId("header-settings-sprocket")).toBeNull();
     console.log("✅ SP-T4: Sprocket hidden for customer");
   });
 
   it("tap navigates to /settings", () => {
-    _mockRole = "admin";
+    mockRole = "admin";
     const tree = render(<Header title="Dashboard" />);
     fireEvent.press(tree.getByTestId("header-settings-sprocket"));
     expect(mockRouterPush).toHaveBeenCalledWith("/settings");

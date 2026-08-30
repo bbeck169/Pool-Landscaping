@@ -29,9 +29,9 @@ jest.mock("expo-router", () => ({
   },
 }));
 
-let _mockRole = "admin";
+let mockRole = "admin";
 jest.mock("@/src/auth", () => ({
-  useAuth: () => ({ user: { role: _mockRole, id: "u1" } }),
+  useAuth: () => ({ user: { role: mockRole, id: "u1" } }),
 }));
 
 jest.mock("@/src/offline", () => ({
@@ -71,6 +71,7 @@ jest.mock("@/src/components/BrandLogo", () => {
 jest.mock("@/src/hooks/useTenantBrand", () => ({
   __esModule: true,
   default: () => ({ logoUri: null, loading: false, error: null }),
+  useTenantBrand: () => ({ logoUrl: null, loading: false, error: null }),
 }));
 
 /* ── Import after mocks ──────────────────────────────── */
@@ -79,7 +80,7 @@ import SettingsHubScreen from "@/app/settings/index";
 describe("Settings Hub Mobile", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    _mockRole = "admin";
+    mockRole = "admin";
   });
 
   it("renders 4 tabs (general / branding / integrations / social)", () => {
