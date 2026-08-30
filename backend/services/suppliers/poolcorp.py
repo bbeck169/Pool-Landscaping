@@ -23,6 +23,13 @@ from typing import Any, AsyncIterator, Dict, Optional
 from config import logger
 from services.suppliers.connector import (
     BaseSupplierConnector, ExternalProduct, SupplierSession,
+    # Phase O4 · Feb-2026 — exception classes were moved to
+    # ``connector.py`` so every sibling connector can import them
+    # without reaching into this file. Re-exported below (via
+    # ``__all__`` + direct name binding) so existing call sites in
+    # ``sync.py``, ``_scraper_base.py``, ``ewing.py``, ``siteone.py``,
+    # and the supplier-cron tests keep working unchanged.
+    LoginFailedError, LayoutChangedError,
 )
 from services.suppliers.selectors import POOL360 as SEL
 
@@ -31,6 +38,15 @@ USER_AGENT = "AquaTerra-PriceBook/1.0"
 RATE_LIMIT_SECONDS = 1.0
 PAGE_TIMEOUT_MS = 30_000
 MAX_BACKOFF_SECONDS = 60
+
+# Explicit re-exports so ``from services.suppliers.poolcorp import
+# LoginFailedError`` continues to resolve for the many existing
+# call sites (see ``git grep -n LoginFailedError services/suppliers
+# tests/``). New code should import from ``connector.py`` directly.
+__all__ = [
+    "PoolCorpConnector", "LoginFailedError", "LayoutChangedError",
+    "_parse_price",
+]
 
 
 def _parse_price(txt: Optional[str]) -> Optional[float]:
@@ -43,16 +59,6 @@ def _parse_price(txt: Optional[str]) -> Optional[float]:
         return float(m.group(0).replace(",", ""))
     except ValueError:
         return None
-
-
-class LoginFailedError(Exception):
-    """Raised when Pool360 rejects the credentials."""
-
-
-class LayoutChangedError(Exception):
-    """Raised when zero product cards are found — likely a site
-    layout change or a credential expiry. NEVER treated as "delete
-    all items"; the sync aborts."""
 
 
 class PoolCorpConnector(BaseSupplierConnector):

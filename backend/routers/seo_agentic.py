@@ -771,8 +771,12 @@ async def _generate_heatmap(heatmap_id: str, tenant_id: str,
         # Currently no SERP provider configured — flag mocked=true & synthesize
         # deterministically-random ranks around a plausible mid-teen average
         # so the UI has data to render.
-        # random.Random(seed) — non-security use (deterministic mock SERP data)
-        rng = random.Random(f"{tenant_id}:{keyword}")
+        # random.Random(seed) — non-security use (deterministic mock SERP data).
+        # nosec B311: seeded random is intentional here — swapping to
+        # ``secrets`` would break the "same tenant+keyword → same mock" contract
+        # the UI regression tests rely on. See /app/backend/pyproject.toml
+        # (Phase O4 · Feb-2026 code-review triage) for the full rationale.
+        rng = random.Random(f"{tenant_id}:{keyword}")  # nosec B311
         results = []
         for p in pts:
             rank = int(rng.gauss(mu=14, sigma=6))

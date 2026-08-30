@@ -642,8 +642,11 @@ async def seed_extras():
     if await db.rank_grid.count_documents({}) == 0:
         def g(base):
             import random
-            # random.randint() — non-security use (seed data / demo rank grid)
-            return [[max(1, base + random.randint(-2, 3)) for _ in range(3)] for _ in range(3)]
+            # random.randint() — non-security use (seed data / demo rank grid).
+            # nosec B311: this fixture is preview-only demo data; nothing
+            # security-sensitive here. See /app/backend/pyproject.toml
+            # (Phase O4 · Feb-2026 code-review triage) for the full rationale.
+            return [[max(1, base + random.randint(-2, 3)) for _ in range(3)] for _ in range(3)]  # nosec B311
         rg = [
             {"id": new_id(), "keyword": "pool service near me", "grid": g(2), "created_at": now_iso()},
             {"id": new_id(), "keyword": "pool cleaning Peoria AZ", "grid": g(1), "created_at": now_iso()},

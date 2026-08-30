@@ -1,4 +1,8 @@
-# ruff: noqa: F403,F405
+# Phase O4 · Feb-2026 code-review — replaced the previous
+# ``from models import *`` (F403/F405 suppressed) with an explicit
+# import. Verified via AST scan that ``TechnicianIn`` is the only
+# ``models`` name referenced in this file; add more here if new
+# handlers land, do NOT go back to the wildcard.
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -6,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
-from models import *  # noqa: F403,F405
+from models import TechnicianIn
 
 from routers.tenants import get_current_tenant
 

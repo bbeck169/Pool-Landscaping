@@ -30,6 +30,35 @@ class ExternalProduct:
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Shared connector exception classes.
+#
+# Phase O4 · Feb-2026 — moved from ``services/suppliers/poolcorp.py``
+# so every sibling connector (SiteOne / Ewing / Heritage /
+# ePoolSupply) can raise + catch them without having to import from
+# ``poolcorp`` (which is what the pre-move code-review flagged as a
+# supplier-directory circular-import smell).  ``poolcorp.py``
+# still re-exports these names for backward compat so existing
+# ``from services.suppliers.poolcorp import LoginFailedError`` call
+# sites in ``sync.py``, ``_scraper_base.py``, ``ewing.py``,
+# ``siteone.py``, and the supplier-cron tests keep working
+# unchanged.
+# ═══════════════════════════════════════════════════════════════════
+class LoginFailedError(Exception):
+    """Raised when a supplier login flow rejects the credentials.
+    Every connector's ``authenticate`` raises this on bad-cred
+    outcomes; ``sync.py`` catches it and stamps the failure reason
+    on ``supplier_sync_runs.error_reason``."""
+
+
+class LayoutChangedError(Exception):
+    """Raised when a supplier's product-listing page returns zero
+    cards — likely a site layout change or a silent credential
+    expiry. NEVER treated as 'delete all items'; the sync aborts
+    with this error so ops can investigate before catalog drift
+    corrupts the price book."""
+
+
 @dataclass
 class SupplierSession:
     """Opaque handle a connector's ``authenticate`` returns and its
@@ -131,6 +160,20 @@ CONNECTORS: Dict[str, BaseSupplierConnector] = {
 # lands. Import guarded with try/except so ``connector.py`` remains
 # importable in a fresh checkout that hasn't installed Playwright
 # yet (the wired connector modules import ``playwright.async_api``).
+#
+# Phase O4 · Feb-2026 code-review note — the code review flagged
+# these ``try``/``except`` blocks as "in-function cycle-breaking
+# import hacks" and suggested deleting them. They are NEITHER:
+#   1. Module-level (not in-function) — they run once at boot.
+#   2. Optional-dependency guards, NOT cycle-breakers. Deleting
+#      them makes ``connector.py`` fail to import in any env that
+#      hasn't installed Playwright (CI unit test containers, docs
+#      generation, IDE indexers) — a real regression.
+#   3. The sibling-directory cycle they help mitigate as a bonus
+#      side-effect is separately addressed by moving
+#      ``LoginFailedError`` / ``LayoutChangedError`` to this file
+#      (Phase O4 · Feb-2026). Reviewers may re-open this once
+#      Playwright is a mandatory prod dep. Not now.
 # ═══════════════════════════════════════════════════════════════════
 try:  # Phase 54b — Pool360 wired
     from services.suppliers.poolcorp import (  # noqa: E402
