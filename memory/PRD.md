@@ -1,3 +1,135 @@
+## Phase B3 · Stripe Webhook Hardening — SHIPPED
+
+Backend-only. Prerequisite safety layer for B4 (subscription CRUD).
+
+### Part A — Event dedup ledger
+- New collection ``stripe_webhook_events`` with schema
+  ``{event_id, tenant_id_hint, event_type, received_at,
+     first_handled_at, status, raw_payload_ref, retry_count,
+     last_error, handler_result, last_duplicate_at}``.
+- Unique index on ``event_id``. Duplicate Stripe deliveries short-
+  circuit with ``status=skipped_duplicate`` + 200 response;
+  ``retry_count`` bumps.
+
+### Part B — Dead-letter table
+- New collection ``stripe_webhook_dead_letter`` with
+  ``{event_id, event_type, tenant_id_hint, error_class,
+     error_message, stack_trace, raw_payload, first_failed_at,
+     last_retry_at, retry_count, retry_count_after_first,
+     resolved, resolved_at}``.
+- Router wraps ``handle_webhook_event`` in try/except; crashes
+  land here + return 502 so Stripe retries.
+- Two super_admin endpoints under ``/api/admin/stripe``:
+  - ``GET /dead-letter?resolved=false&limit=50`` — list rows.
+  - ``POST /dead-letter/{event_id}/retry`` — replay the shipped
+    handler with the stashed ``raw_payload``. On success marks
+    the row resolved.
+
+### Part C — 8 new event handlers
+Inside ``services/payments/stripe_charge.py::handle_webhook_event``:
+- ``setup_intent.succeeded / setup_failed / requires_action`` →
+  flip ``verification_status`` on the matching ``payment_methods``
+  mirror row.
+- ``payment_intent.processing`` → upsert ``stripe_charges`` with
+  ``status=processing`` (invoice stays unpaid until ``.succeeded``).
+- ``invoice.finalized`` → stamp ``stripe_invoice_id`` on the
+  linked CRM invoice.
+- ``invoice.paid`` → flip local ``payment_status=paid``
+  (via ``_mark_invoice_paid``).
+- ``invoice.payment_failed`` → ``payment_status=payment_failed``
+  (via ``_mark_invoice_failed``).
+- ``customer.subscription.created / updated / deleted`` → upsert
+  into ``stripe_subscriptions`` mirror preserving the schema from
+  the audit. Tenant fallback: sub metadata → customer metadata.
+
+### Part D — Indexes
+New migration ``services/migrations/stripe_webhook_hardening.py``
+(sentinel ``stripe_webhook_hardening_v1``). Boot-run creates 9
+indexes across 4 collections:
+- ``stripe_webhook_events``: ``event_id`` unique;
+  ``(status, received_at)``.
+- ``stripe_webhook_dead_letter``: ``event_id`` unique;
+  ``(resolved, first_failed_at)``.
+- ``payment_methods``: ``(tenant_id, customer_id, is_default)``;
+  ``(tenant_id, provider_payment_method_id)`` unique.
+- ``stripe_charges``: ``(tenant_id, customer_id, created_at)``;
+  ``(tenant_id, invoice_id, status)``;
+  ``stripe_payment_intent_id`` unique sparse.
+Second boot logs ``sentinel present · skipping`` — verified.
+
+### Part E — Ambiguity resolution (`db.subscriptions` vs `db.stripe_subscriptions`)
+Findings from source audit:
+- ``db.subscriptions``: **read-only legacy Lumino artifact**. The
+  only remaining writer is
+  ``services/lumino_reconciler.py::_reconcile_subscriptions``
+  which polls Lumino for terminal-state transitions on
+  pre-migration subscription rows. No writer creates new rows;
+  the nightly poll only updates existing legacy rows to reflect
+  Lumino's terminal states.
+- ``db.stripe_subscriptions``: **canonical mirror for Stripe
+  subscriptions** going forward. Writers:
+  - ``services/stripe_billing_history_sync.py`` (backfill imports)
+  - ``services/payments/stripe_charge.py::handle_webhook_event``
+    (this phase — customer.subscription.* handlers).
+- **Recommendation for B4**: subscription CRUD sticks to
+  ``stripe_subscriptions`` as the single source of truth. Do NOT
+  consolidate ``db.subscriptions`` — leave it as read-only legacy
+  data. If/when the Lumino reconciler retires, we can drop the
+  collection entirely.
+
+### Tests
+- ``tests/test_stripe_webhook_event_dedup.py`` — 6 tests.
+- ``tests/test_stripe_webhook_dead_letter.py`` — 6 tests
+  (ledger direct + admin HTTP endpoints via ``requests`` against
+   localhost:8001 to sidestep the Motor-loop TestClient conflict
+   documented in ``test_stripe_webhook_thin_payload.py``).
+- ``tests/test_stripe_webhook_setup_intent_events.py`` — 4 tests.
+- ``tests/test_stripe_webhook_invoice_events.py`` — 4 tests.
+- ``tests/test_stripe_webhook_subscription_events.py`` — 4 tests.
+- ``tests/test_stripe_indexes_bootstrap.py`` — 6 tests.
+
+**30 / 30 new tests pass**. Existing Stripe / webhook suite
+regression check: **63 / 64 pass**; the one failing test
+(``test_phase47_direct_stripe_payment_link.py::
+test_create_invoice_checkout_session_happy_path``) is pre-
+existing and fails on ``main`` without any B3 changes.
+
+### Empirical dedup proof
+Same ``event.id`` posted to ``insert_or_skip`` three times:
+```
+1st insert_or_skip: {'status': 'received',           'event_id': 'evt_dedup_proof_9c1938d8'}
+2nd insert_or_skip: {'status': 'skipped_duplicate',  'event_id': 'evt_dedup_proof_9c1938d8'}
+3rd insert_or_skip: {'status': 'skipped_duplicate',  'event_id': 'evt_dedup_proof_9c1938d8'}
+ledger row: {'status': 'received', 'retry_count': 2, 'tenant_id_hint': 'proof-tenant'}
+```
+
+### Files touched
+- Created: ``services/payments/stripe_webhook_ledger.py``,
+  ``services/migrations/stripe_webhook_hardening.py``,
+  ``routers/admin_stripe.py``, 6 new test files.
+- Modified: ``services/payments/stripe_charge.py`` (added 4
+  event-type blocks with 8 handlers, ~190 LOC),
+  ``routers/stripe_router.py`` (dedup + dead-letter wrap around
+  ``handle_webhook_event``, ~40 LOC),
+  ``server.py`` (boot-wire migration + include admin router,
+  ~30 LOC).
+
+### Assumptions we couldn't verify from mock data
+- ``setup_intent.succeeded`` payload shape: the SDK sometimes
+  expands ``payment_method`` inline (dict) vs by-id (string).
+  Handler tolerates both.
+- ``invoice.paid`` uses ``amount_paid`` first, falling back to
+  ``total`` when Stripe omits the former (rare for zero-out
+  reconciliations).
+- ``customer.subscription.*`` tenant resolution — assumed the
+  metadata key is ``crm_tenant_id`` (consistent with every other
+  Stripe surface in this codebase). If a customer's Stripe
+  metadata lacks this key AND the sub metadata lacks it, the
+  mirror row lands with ``tenant_id=null`` (best-effort observability
+  per the audit brief).
+
+
+
 ## Shared `<ArmToDelete>` Primitive · Feb-2026 · SHIPPED
 
 Extracted the inline arm-and-execute state machine from

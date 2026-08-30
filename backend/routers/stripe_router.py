@@ -464,7 +464,39 @@ async def post_webhook(request: Request):
         raise HTTPException(400, str(exc))
     except Exception as exc:  # includes stripe.error.SignatureVerificationError
         raise HTTPException(400, f"invalid signature: {exc}")
-    result = await stripe_svc.handle_webhook_event(event)
+
+    # Phase B3 · Feb-2026 — dedup ledger. First insert of the
+    # ``event.id`` wins; a Stripe retry (same id) short-circuits.
+    from services.payments.stripe_webhook_ledger import (
+        insert_or_skip, mark_handled, mark_failed, record_dead_letter,
+    )
+    ledger = await insert_or_skip(event)
+    if ledger.get("status") == "skipped_duplicate":
+        return {"ok": True, "handled": False, "status": "skipped_duplicate",
+                "event_id": ledger.get("event_id")}
+
+    # Phase B3 · Feb-2026 — dead-letter wrap. Any handler crash lands
+    # the event in ``stripe_webhook_dead_letter`` + returns 502 so
+    # Stripe retries. Signature-verification errors above already
+    # short-circuit before we hit this block.
+    try:
+        result = await stripe_svc.handle_webhook_event(event)
+    except stripe_svc.ThinPayloadRetrieveError:
+        # Preserve the existing Thin-payload retry semantics — not a
+        # handler bug, so no dead-letter row.
+        raise
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        await record_dead_letter(
+            event,
+            error_class=type(exc).__name__,
+            error_message=str(exc),
+            stack_trace=traceback.format_exc(),
+            raw_payload=event,
+        )
+        await mark_failed(ledger.get("event_id") or "", error=str(exc))
+        raise HTTPException(502, f"handler failed: {exc}")
+    await mark_handled(ledger.get("event_id") or "", result=result)
     return {"ok": True, **result}
 
 

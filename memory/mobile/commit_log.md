@@ -955,4 +955,24 @@
   - Local service 200 OK on port 3001; backend responsive on public URL
   - Expo preview tunnel sleeping (platform CDN issue, documented)
 - **Files modified**: None (QA-only pass)
+
+## Iteration 46 — Settings Hub + Sprocket + Typed-Confirm Removal
+- **Commit**: 261f868a / f269ac0f
+- **Date**: 2026-08-30
+- **Changes**:
+  - Created `app/settings/index.tsx` — 4-tab Settings Hub (General, Branding, Integrations, Social) gated to admin/super_admin
+  - Created `src/components/settings/PlatformGrid.tsx` — extracted 8-platform connect grid from AutopilotTab
+  - Modified `src/components/widgets.tsx` — added SettingsSprocket gear icon in Header, testID=`header-settings-sprocket`, visible only for admin/super_admin
+  - Modified `app/soshie/AutopilotTab.tsx` — removed platform grid (now on Settings → Social), kept kill switch + recent actions + redirect message
+  - Modified `src/components/portal/DeleteAccountSection.tsx` — removed typed-confirm TextInput, confirm button is now immediately enabled
+  - Updated `__tests__/phase11b-delete-account-section.test.tsx` — updated to test new single-click confirm flow
+  - Updated `__tests__/soshie-hub.test.tsx` — updated Autopilot tests to match new architecture (grid moved to Settings → Social)
+  - Created 3 new test files: settings-hub-mobile, settings-sprocket-visibility, mobile-no-typed-confirm
+  - All 5 new/modified test suites pass (25/25 tests)
+  - Zero new regressions (8 pre-existing failures unchanged)
+  - Lint clean on all modified files
+- **Files modified**: app/settings/index.tsx, src/components/settings/PlatformGrid.tsx, src/components/widgets.tsx, app/soshie/AutopilotTab.tsx, src/components/portal/DeleteAccountSection.tsx
+- **Files referenced from web**: frontend/src/layouts/SettingsHub.jsx, frontend/src/layouts/AdminTopBar.jsx, frontend/src/pages/settings/IntegrationsPages.jsx, frontend/src/pages/settings/SettingsSocial.jsx, frontend/src/components/common/ConfirmDeleteDialog.jsx
+- **Deferred**: Mobile admin logo upload UI (Branding tab read-only), in-app OAuth flows (Integrations tab links to web)
+
 - **Conclusion**: All recently shipped features verified functional with no regressions

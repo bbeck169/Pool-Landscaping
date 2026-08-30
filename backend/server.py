@@ -325,6 +325,9 @@ api_router.include_router(_deletion_audit_router.router)
 # endpoints that run one-off backfills from the deployed app.
 from routers import admin_migrations as _admin_migrations_router  # noqa: E402
 api_router.include_router(_admin_migrations_router.router)
+# Phase B3 · Feb-2026 — Stripe webhook dead-letter surface (super_admin).
+from routers import admin_stripe as _admin_stripe_router  # noqa: E402
+api_router.include_router(_admin_stripe_router.router)
 from routers import comms_admin as _comms_admin  # noqa: E402
 api_router.include_router(_comms_admin.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402
@@ -2506,6 +2509,31 @@ async def startup():
             )
     except Exception as e:
         logger.warning(f"notification_dispatch_log migration crashed: {e}")
+
+    # Phase B3 · Feb-2026 — Stripe webhook hardening indexes.
+    # Sentinel: ``stripe_webhook_hardening_v1``. Creates the dedup
+    # ledger (``stripe_webhook_events``) + dead-letter (
+    # ``stripe_webhook_dead_letter``) indexes, plus the missing
+    # compound indexes on ``payment_methods`` and ``stripe_charges``.
+    try:
+        from services.migrations.stripe_webhook_hardening import (
+            run_stripe_webhook_hardening_migration,
+        )
+        _swh_boot = await run_stripe_webhook_hardening_migration()
+        if _swh_boot.get("status") == "skipped":
+            logger.info(
+                "[stripe_webhook_hardening] sentinel present · skipping",
+            )
+        else:
+            _s = _swh_boot.get("summary") or {}
+            logger.info(
+                f"[stripe_webhook_hardening] indexes_created="
+                f"{_s.get('indexes_created', 0)} "
+                f"already_present={_s.get('already_present', 0)} "
+                f"errors={len(_s.get('errors') or [])}",
+            )
+    except Exception as e:
+        logger.warning(f"stripe_webhook_hardening migration crashed: {e}")
 
     # Backlog #iv · R1 · Feb-2026 — Allowlist-hygiene sanity check.
     # Emits a WARN log per overlap between ``COMMS_TEST_ALLOWLIST_*``

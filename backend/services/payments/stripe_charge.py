@@ -1555,4 +1555,202 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
 
         result["handled"] = True
         return result
+
+    # ═══════════════════════════════════════════════════════════════
+    # Phase B3 · Feb-2026 — new event handlers.
+    # ═══════════════════════════════════════════════════════════════
+
+    # SetupIntent lifecycle for ACH bank-account verification.
+    # ``verification_status`` is the source-of-truth flag on
+    # ``payment_methods`` mirror rows for us_bank_account PMs.
+    if etype in (
+        "setup_intent.succeeded",
+        "setup_intent.setup_failed",
+        "setup_intent.requires_action",
+    ):
+        pm_id = data.get("payment_method")
+        # Some SetupIntent payloads carry a nested object; unpack if
+        # Stripe expanded ``payment_method`` inline.
+        if isinstance(pm_id, dict):
+            pm_id = pm_id.get("id")
+        if not pm_id:
+            return result
+        if etype == "setup_intent.succeeded":
+            new_status = "verified"
+            update: Dict[str, Any] = {
+                "verification_status": new_status,
+                "verified_at": datetime.now(timezone.utc).isoformat(),
+                "webhook_updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        elif etype == "setup_intent.setup_failed":
+            new_status = "failed"
+            err_obj = data.get("last_setup_error") or {}
+            update = {
+                "verification_status": new_status,
+                "verification_error": err_obj.get("message") or err_obj.get("code") or "failed",
+                "webhook_updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        else:  # setup_intent.requires_action
+            new_status = "pending"
+            update = {
+                "verification_status": new_status,
+                "webhook_updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        r = await db.payment_methods.update_many(
+            {"provider_payment_method_id": pm_id},
+            {"$set": update},
+        )
+        result["handled"] = True
+        result["matched"] = r.matched_count
+        result["new_status"] = new_status
+        return result
+
+    # PaymentIntent processing — ACH in-transit. Update the local
+    # charge mirror only; the invoice stays unpaid until
+    # ``payment_intent.succeeded`` fires (already handled above).
+    if etype == "payment_intent.processing":
+        pi_id = data.get("id")
+        if not pi_id:
+            return result
+        meta = (data.get("metadata") or {})
+        await db.stripe_charges.update_one(
+            {"stripe_payment_intent_id": pi_id},
+            {
+                "$setOnInsert": {
+                    "id": str(uuid.uuid4()),
+                    "tenant_id": meta.get("crm_tenant_id"),
+                    "customer_id": meta.get("crm_customer_id"),
+                    "provider_payment_method_id": data.get("payment_method"),
+                    "amount_cents": data.get("amount"),
+                    "currency": data.get("currency"),
+                    "invoice_id": meta.get("crm_invoice_id"),
+                    "stripe_mode": _mode(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+                "$set": {
+                    "stripe_payment_intent_id": pi_id,
+                    "status": "processing",
+                    "webhook_updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            },
+            upsert=True,
+        )
+        result["handled"] = True
+        return result
+
+    # Stripe-side invoice lifecycle. Only reconciles when the
+    # invoice is linked to a live ``db.quotes`` row via metadata.
+    # Unlinked Stripe invoices (Stripe-native billing, dashboard-
+    # created) are logged and no-op'd.
+    if etype in ("invoice.paid", "invoice.finalized", "invoice.payment_failed"):
+        inv_meta = (data.get("metadata") or {})
+        tenant_id = inv_meta.get("crm_tenant_id")
+        crm_invoice_id = inv_meta.get("crm_invoice_id")
+        if not tenant_id or not crm_invoice_id:
+            logger.info(
+                "[stripe.webhook] %s stripe_inv=%s no crm linkage — noop",
+                etype, data.get("id"),
+            )
+            return result
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if etype == "invoice.paid":
+            amount_cents = int(data.get("amount_paid") or data.get("total") or 0)
+            await _mark_invoice_paid(
+                tenant_id=tenant_id, invoice_id=crm_invoice_id,
+                amount_cents=amount_cents,
+                paid_at=now_iso,
+                payment_intent_id=data.get("payment_intent"),
+            )
+        elif etype == "invoice.payment_failed":
+            err_obj = data.get("last_finalization_error") or {}
+            reason = err_obj.get("message") or err_obj.get("code") or "payment_failed"
+            await _mark_invoice_failed(
+                tenant_id=tenant_id, invoice_id=crm_invoice_id,
+                failure_reason=reason,
+            )
+        else:  # invoice.finalized
+            # Store a minimal reference so operators can trace back
+            # to the Stripe invoice; no state change on the CRM row.
+            await db.quotes.update_one(
+                {"id": crm_invoice_id, "tenant_id": tenant_id},
+                {"$set": {
+                    "stripe_invoice_id": data.get("id"),
+                    "stripe_invoice_finalized_at": now_iso,
+                }},
+            )
+        result["handled"] = True
+        return result
+
+    # Subscription lifecycle — mirror into ``stripe_subscriptions``.
+    # This is the source-of-truth going forward; ``db.subscriptions``
+    # is a legacy Lumino-era collection kept read-only (see B3 audit
+    # note under §E).
+    if etype in (
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    ):
+        sub_id = data.get("id")
+        if not sub_id:
+            return result
+        meta = (data.get("metadata") or {})
+        tenant_hint = meta.get("crm_tenant_id")
+        # Fall back to the customer's metadata if it was expanded.
+        cust_obj = data.get("customer")
+        if not tenant_hint and isinstance(cust_obj, dict):
+            cust_meta = (cust_obj.get("metadata") or {})
+            tenant_hint = cust_meta.get("crm_tenant_id")
+        stripe_customer_id = cust_obj.get("id") if isinstance(cust_obj, dict) else cust_obj
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        def _epoch(v):
+            if not v:
+                return None
+            try:
+                return datetime.fromtimestamp(int(v), tz=timezone.utc).isoformat()
+            except Exception:  # noqa: BLE001
+                return None
+
+        set_doc: Dict[str, Any] = {
+            "status": data.get("status") or "unknown",
+            "current_period_start": _epoch(data.get("current_period_start")),
+            "current_period_end": _epoch(data.get("current_period_end")),
+            "cancel_at_period_end": bool(data.get("cancel_at_period_end")),
+            "canceled_at": _epoch(data.get("canceled_at")),
+            "updated_at": now_iso,
+            "webhook_source": etype,
+        }
+        if etype == "customer.subscription.deleted":
+            set_doc["status"] = "canceled"
+            set_doc["canceled_at"] = set_doc["canceled_at"] or now_iso
+
+        insert_doc: Dict[str, Any] = {
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_hint,
+            "customer_id": None,  # best-effort backfill below
+            "stripe_subscription_id": sub_id,
+            "stripe_customer_id": stripe_customer_id,
+            "created_at": _epoch(data.get("created")) or now_iso,
+        }
+        # Best-effort CRM customer resolution — same pattern as the
+        # PM.attached handler above.
+        if stripe_customer_id:
+            crm_cust = await db.customers.find_one(
+                {"stripe_customer_id": stripe_customer_id},
+                {"_id": 0, "id": 1, "tenant_id": 1},
+            )
+            if crm_cust:
+                insert_doc["customer_id"] = crm_cust["id"]
+                if not insert_doc["tenant_id"]:
+                    insert_doc["tenant_id"] = crm_cust["tenant_id"]
+
+        await db.stripe_subscriptions.update_one(
+            {"stripe_subscription_id": sub_id},
+            {"$setOnInsert": insert_doc, "$set": set_doc},
+            upsert=True,
+        )
+        result["handled"] = True
+        result["stripe_subscription_id"] = sub_id
+        return result
+
     return result
