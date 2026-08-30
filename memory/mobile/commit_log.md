@@ -924,3 +924,20 @@
   - Fix 3: Hoisted all hooks in `app/(app)/jobs.tsx` above the `if (isAdmin) return <Redirect>` early return (moved to just before the JSX return). Eliminates ~7 rules-of-hooks errors.
 - **Files modified**: app/aeo/mention-detail.tsx, app/(app)/schedule/calendar.tsx, app/(app)/jobs.tsx
 - **Tests**: 17/17 schedule tests passing, Metro bundler clean
+
+## Iteration 44 — Phase S2: Soshie Hub Mobile (3 tabs, full web parity)
+- **Commit**: e862c7a4e7831f6c7dc07903f2cae2a14d7f1170
+- **Date**: 2026-08-30
+- **Changes**:
+  - Created `app/soshie/index.tsx` — SoshieHub shell with 3 segment tabs (Brand Brain / Autopilot / Review Queue), admin guard, offline banner
+  - Created `app/soshie/BrandBrainTab.tsx` — brand memory read-only display + re-ingest modal with URL/paths inputs + empty state with CTA + loading skeletons
+  - Created `app/soshie/AutopilotTab.tsx` — global kill switch toggle, 8-platform grid with per-platform toggle + cadence stepper + connection/coming-soon badges, Reddit hard-blocked (disabled + Manual Only badge, no PATCH on tap), recent actions feed, optimistic toggles with revert on error
+  - Created `app/soshie/ReviewQueueTab.tsx` — pending/flagged/deferred action list, sort oldest-first, per-card preview + flag chips + media thumbnail + brand_score, Publish now (always confirm_flags=1), Reject, Edit draft modal (PATCH + re-moderate), pull-to-refresh, empty state
+  - Created `__tests__/soshie-hub.test.tsx` — 8 tests all passing
+  - Added Soshie nav entry to `src/nav/adminNav.ts` (AI Employees group)
+- **Files modified**: 6 files (5 new, 1 modified)
+  - New: app/soshie/{index,BrandBrainTab,AutopilotTab,ReviewQueueTab}.tsx, __tests__/soshie-hub.test.tsx
+  - Modified: src/nav/adminNav.ts
+- **Web files referenced**: frontend/src/pages/soshie/{SoshieHub,BrandBrainTab,AutopilotSchedulesTab,ReviewQueueTab}.jsx
+- **Tests**: 8/8 new tests passing + 12/12 O6 regression tests passing
+- **Metro**: Bundle compiled cleanly (2251 modules, 1967ms)
