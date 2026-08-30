@@ -154,13 +154,27 @@ export default function AdminSidebar() {
     const isPinned = pinned.includes(e.to);
     return (
       <div className="flex items-center group" data-testid={`nav-entry-${e.to.replaceAll("/", "-")}`}>
-        <NavLink to={e.to} className={({ _isActive }) => "flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm"} style={({ isActive }) => ({
-          background: isActive ? brandGradientCss : "transparent",
-          color: isActive ? "#fff" : colors.onSurface,
-          fontWeight: isActive ? 600 : 400,
-        })}>
-          <Icon size={15} />
-          <span className="truncate">{e.label}</span>
+        <NavLink
+          to={e.to}
+          className={({ isActive }) =>
+            [
+              "flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm",
+              "transition-all duration-200 ease-out will-change-transform",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:scale-[1.02]",
+              "hover:scale-[1.02]",
+              isActive
+                ? ""
+                : "hover:bg-sky-50/70 hover:text-sky-600",
+            ].join(" ")
+          }
+          style={({ isActive }) => ({
+            background: isActive ? brandGradientCss : undefined,
+            color: isActive ? "#fff" : colors.onSurface,
+            fontWeight: isActive ? 600 : 400,
+          })}
+        >
+          <Icon size={15} className="transition-colors duration-200 group-hover:text-sky-600" />
+          <span className="truncate transition-colors duration-200">{e.label}</span>
         </NavLink>
         {showStar && (
           <button onClick={() => togglePin(e.to)}

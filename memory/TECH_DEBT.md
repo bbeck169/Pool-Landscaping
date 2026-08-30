@@ -54,6 +54,13 @@ For the linter-noise-suppression rationale (why we're NOT chasing the reviewer's
 - **When to ship:** Pending operator action — logged as an operator ticket, not a dev refactor. Do NOT ship option (b) app-side until the operator confirms (a) and (c) are both off the table.
 - **Status:** Pending operator (Feb-2026).
 
+### TD-08 · Admin branding upload UI (BrandLogo tenant override)
+- **Current state:** The Feb-2026 UI Polish Addendum wired `BrandLogo` in the app shell to read `tenant.branding.logo_url` (with a fall-through to legacy `tenant.logo_url`) and to render `/brand/logo.png` (or `/brand/logo-icon.png` for the icon variant) as the local placeholder. The backend accepts the field via `PATCH /api/tenants/mine/brand` and `PATCH /api/tenants/business-card`, so branding is fully editable via API today.
+- **Why deferred:** A dedicated admin surface for **uploading** the logo (image validation, S3/asset URL persistence, live preview) was explicitly out-of-scope for the polish sprint. The existing `TenantsAdminPage` supports a URL input as a stop-gap.
+- **When to ship:** Bundle with the next admin-settings UI iteration — reuse `BrandLogo` for the live preview so the same fallback semantics apply. Also swap the placeholder PNGs in `/app/frontend/public/brand/` for the customer's real asset at that point.
+- **Priority:** P2.
+- **Status:** Deferred (Feb-2026 UI Polish sprint follow-up).
+
 ---
 
 ## Related — items explicitly REJECTED (do NOT resurrect these)

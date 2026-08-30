@@ -27,6 +27,11 @@ import { useAuth } from "@/auth";
 import { brandGradientCss } from "@/theme";
 import UniversalMenu from "@/layouts/UniversalMenu";
 import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
+// Feb-2026 UI Polish Addendum — BrandLogo import was pulled after the
+// duplicate-logo dedupe: the top-nav no longer mounts the brand mark
+// (the side-rail crown in <AppLayout> is the single source of truth).
+// Kept the plumbing (BrandLogo, useTenantBrand, backend logo_url) so
+// future surfaces can drop it in without wiring cost.
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -97,16 +102,21 @@ function CategoryDropdown({ group }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold whitespace-nowrap transition"
+        className="group inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold whitespace-nowrap transition-all duration-200 ease-out will-change-transform hover:scale-[1.02] hover:bg-sky-50 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:scale-[1.02]"
         style={{
-          color: active ? colors.brand : colors.onSurface,
-          backgroundColor: active ? colors.brandTertiary : "transparent",
+          // Feb-2026 UI Polish Addendum — active state still leans on
+          // the app-wide brand tokens, but idle-state colouring moved
+          // to className-driven Tailwind so hover / focus-visible
+          // transitions animate cleanly. When active, keep the
+          // inline overrides so the tint matches the sidebar.
+          color: active ? colors.brand : undefined,
+          backgroundColor: active ? colors.brandTertiary : undefined,
         }}
         data-testid={`admin-topbar-${group.key}`}
       >
-        <CatIcon size={16} />
-        <span>{group.label}</span>
-        <ChevronDown size={14} className="opacity-70" />
+        <CatIcon size={16} className="transition-colors duration-200 group-hover:text-sky-600" />
+        <span className="transition-colors duration-200 group-hover:text-sky-600">{group.label}</span>
+        <ChevronDown size={14} className="opacity-70 transition-transform duration-200 group-hover:translate-y-[1px]" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
@@ -321,9 +331,12 @@ export default function AdminTopBar() {
 
   return (
     <div
-      className="sticky top-0 z-30 w-full border-b"
+      className="sticky top-0 z-30 w-full border-b backdrop-blur-[2px]"
       style={{
-        backgroundColor: colors.surface,
+        // Feb-2026 UI Polish Addendum — subtle brand tint on the
+        // top-nav (matches the sidebar wash) so the shell reads as
+        // themed rather than flat white.
+        backgroundColor: "rgba(2, 132, 199, 0.045)",
         borderColor: colors.border,
       }}
       data-testid="admin-topbar"

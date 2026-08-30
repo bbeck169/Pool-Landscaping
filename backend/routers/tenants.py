@@ -149,6 +149,15 @@ async def current_tenant(request: Request,
     resolved_via = "user-record" if user.get("tenant_id") == tenant["id"] else \
                    ("header" if request.headers.get("x-tenant-slug") else "default")
     # Phase 16C add-on: pricing tiers removed — every tenant gets every feature.
+    # Feb-2026 UI Polish Addendum — surface tenant branding on this
+    # canonical GET so the web shell's `<BrandLogo>` can honour a
+    # per-tenant override without a second round-trip. The `branding`
+    # object is the forward-facing shape (matches spec
+    # ``tenant?.branding?.logo_url``); the top-level ``logo_url`` is
+    # kept for legacy callers that predate the object shape.
+    _logo_url = tenant.get("logo_url") or (
+        (tenant.get("settings") or {}).get("business_card", {}).get("logo_url")
+    )
     return {
         "id": tenant["id"],
         "slug": tenant["slug"],
@@ -157,6 +166,12 @@ async def current_tenant(request: Request,
         "brand_secondary": tenant.get("brand_secondary"),
         "custom_domain": tenant.get("custom_domain"),
         "plan_tier": tenant.get("plan_tier"),
+        "logo_url": _logo_url,
+        "branding": {
+            "logo_url": _logo_url,
+            "brand_primary": tenant.get("brand_primary"),
+            "brand_secondary": tenant.get("brand_secondary"),
+        },
         "resolved_via": resolved_via,
         # Phase 12 · Feb 2026 — expose the "require card on file"
         # tenant default so admin UI can render the toggle w/o an

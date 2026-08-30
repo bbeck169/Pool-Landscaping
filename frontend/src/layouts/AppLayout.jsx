@@ -7,6 +7,11 @@ import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import AdminSidebar from "@/layouts/AdminSidebar";
 import AdminTopBar from "@/layouts/AdminTopBar";
 import UniversalMenu from "@/layouts/UniversalMenu";
+// Feb-2026 UI Polish Addendum — brand logo (multi-tenant aware).
+// PLACEHOLDER — swap /app/frontend/public/brand/logo.png with the
+// real brand asset. See TD-08 in /app/memory/TECH_DEBT.md for the
+// pending admin-upload UI.
+import BrandLogo from "@/components/branding/BrandLogo";
 import LandscapingClockWidget from "@/components/LandscapingClockWidget";
 import AIDock from "@/components/AIDock/AIDock";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
@@ -222,6 +227,11 @@ const QUICK_NAV_RAIL = [
 function QuickNavRail({ role }) {
   const items = QUICK_NAV_RAIL.filter((n) => n.roles.includes(role));
   if (items.length === 0) return null;
+  // Feb-2026 UI Polish Addendum — motion polish. Each rail item is a
+  // Tailwind-only surface now so hover / focus-visible motion +
+  // color shift work without fighting a style-prop override. The
+  // ``group`` class scopes the icon's color transition so the SVG
+  // adopts the sky-600 tint on hover along with the label.
   return (
     <nav
       className="flex-1 flex flex-col items-stretch py-3 gap-1 overflow-y-auto"
@@ -234,11 +244,21 @@ function QuickNavRail({ role }) {
           to={to}
           end={end}
           className={({ isActive }) =>
-            `mx-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[10px] font-semibold transition ${
-              isActive ? "" : "hover:brightness-95"
-            }`
+            [
+              "group mx-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5",
+              "text-[10px] font-semibold",
+              "transition-all duration-200 ease-out will-change-transform",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500",
+              "hover:scale-[1.02] focus-visible:scale-[1.02]",
+              isActive
+                ? "shadow-[0_1px_2px_rgba(2,132,199,0.08)]"
+                : "hover:bg-sky-50/70 hover:text-sky-600",
+            ].join(" ")
           }
           style={({ isActive }) => ({
+            // Keep inline styles authoritative for active state so
+            // downstream tests (`rail-nav.test.jsx`) that assert the
+            // ``brandTertiary`` background attribute keep passing.
             backgroundColor: isActive ? colors.brandTertiary : "transparent",
             color: isActive ? colors.brand : colors.onSurfaceSecondary,
             border: `1px solid ${isActive ? colors.brand : "transparent"}`,
@@ -247,8 +267,8 @@ function QuickNavRail({ role }) {
           aria-label={label}
           title={label}
         >
-          <Icon size={20} />
-          <span className="leading-none text-center">{label}</span>
+          <Icon size={20} className="transition-colors duration-200 group-hover:text-sky-600" />
+          <span className="leading-none text-center transition-colors duration-200 group-hover:text-sky-600">{label}</span>
         </NavLink>
       ))}
     </nav>
@@ -418,11 +438,24 @@ function AppLayout() {
             : "hidden"
         }
         style={{
-          backgroundColor: colors.surface,
+          // Feb-2026 UI Polish Addendum — subtle brand tint on the
+          // desktop side-nav so the shell no longer reads as a flat
+          // white rail next to tinted content. Uses the sky-brand
+          // (colors.brand = #0284C7) at ~5% alpha, blended into a
+          // top-down wash for extra depth.
+          background:
+            "linear-gradient(180deg, rgba(2, 132, 199, 0.06) 0%, rgba(2, 132, 199, 0.02) 100%)",
           borderRight: `1px solid ${colors.border}`,
         }}
         data-testid="side-nav"
       >
+        {/* Feb-2026 · Brand mark crown — sits at the top of the rail
+            so the app shell has consistent brand recognition. Tenant
+            override wins via ``useTenantBrand``; falls back to the
+            placeholder /brand/logo-icon.png. */}
+        <div className="pt-3 pb-1 flex items-center justify-center" data-testid="side-nav-logo-slot">
+          <BrandLogo variant="icon" testId="side-nav-logo" height={40} />
+        </div>
         <QuickNavRail role={effectiveRole || user.role} />
       </aside>
 
@@ -444,7 +477,7 @@ function AppLayout() {
             {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") && (
               <button
                 onClick={() => setDrawerOpen(true)}
-                className="w-9 h-9 rounded-lg flex items-center justify-center"
+                className="w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-200 ease-out hover:scale-[1.02] hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:scale-[1.02]"
                 style={{
                   backgroundColor: colors.surfaceSecondary,
                   border: `1px solid ${colors.border}`,
@@ -456,13 +489,10 @@ function AppLayout() {
                 <MenuIcon size={18} />
               </button>
             )}
-            <img
-              src="/logo-icon.png"
-              alt="Pool & Landscaping"
-              className="w-8 h-8 rounded-lg object-contain"
-              style={{ background: "#0EA5E9" }}
-              data-testid="app-logo-icon-mobile"
-            />
+            {/* Feb-2026 UI Polish Addendum — logo wrapped in <Link to="/">
+                for one-tap dashboard return. Tenant override wins via
+                ``useTenantBrand``. */}
+            <BrandLogo variant="icon" testId="app-logo-icon-mobile" height={32} />
             <div>
               <div
                 className="text-sm font-semibold leading-none"

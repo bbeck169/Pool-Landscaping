@@ -13172,3 +13172,26 @@ Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy 
 1. Backlog #1 — Revenue-by-Category UUID + orphan + grammar fix + canonical "Chemicals" **Service Category** enforcement (NOT income-category per user correction).
 2. Notification cleanup phase — duplicate weekly digest root-cause + `notification_dispatch_log` idempotency + full outbound audit.
 3. Phase 3 mobile parity — handoff to `e1_expo_frontend_dev`.
+
+## Feb-2026 · UI Polish Addendum — Menu chrome + Brand Logo — SHIPPED
+
+**Scope:** Sub-phase of the Feb-2026 shell polish sprint. Non-blocking, cosmetic + brand-integration only. Ships alongside Phase B1 (Admin ACH Parity) and precedes Phase B3 (Stripe webhook hardening).
+
+**What landed:**
+- **Menu chrome tinting** — the `<aside data-testid="side-nav">` desktop rail now carries a `linear-gradient(180deg, rgba(2,132,199,0.06) 0%, rgba(2,132,199,0.02) 100%)` wash instead of flat white. The `AdminTopBar` sticky sticky bar picks up a matching `rgba(2,132,199,0.045)` fill so the shell reads as themed rather than blank.
+- **Hover / focus motion polish** — every `QuickNavRail` item, `AdminTopBar` category dropdown, mobile menu button, and `AdminSidebar` entry now transitions with `hover:scale-[1.02]` + sky-600 color-shift on icon + label. `focus-visible:` states mirror hover so keyboard users get the same feedback pill.
+- **BrandLogo component (`/src/components/branding/BrandLogo.jsx`)** — new component wrapped in `<Link to="/">`, multi-tenant aware. Resolution order: `tenant.branding.logo_url` → legacy `tenant.logo_url` → `/brand/logo.png` (or `/brand/logo-icon.png` for the `variant="icon"` slot). Renders in three shell slots: top-nav crown (wide, narrow, tech variants) and side-rail crown.
+- **useTenantBrand hook (`/src/hooks/useTenantBrand.js`)** — module-scope cache around `GET /api/tenants/current` so the logo doesn't refetch on every mount. Defensive `Promise.resolve()` chain so vitest mocks that stub `api.get` with a synchronous fn don't crash the shell.
+- **Backend surface** — `GET /api/tenants/current` now also returns `logo_url` at the top level AND a nested `branding: { logo_url, brand_primary, brand_secondary }` object, sourced from `tenant.logo_url` (existing `PATCH /api/tenants/mine/brand` field) with a fallback to `tenant.settings.business_card.logo_url`.
+- **Placeholder assets** — `/app/frontend/public/brand/logo.png` (960x240 wordmark) and `/app/frontend/public/brand/logo-icon.png` (512x512 square mark) generated with PIL. Green-blue palette, "Pool & Landscaping of Vistancia" wordmark + PLV monogram. Marked with a `PLACEHOLDER — swap ...` comment in `AppLayout.jsx`.
+
+**Testing:**
+- **91 tests green** across 16 test files covering the polished surfaces + adjacent shell (nav-hover-polish, brand-logo, rail-nav, sidebar tests, admin-topbar tests, header cleanup, portal signout, universal menu).
+- **New coverage:** `brand-logo.test.jsx` (6 tests · default fallback, tenant override, legacy top-level fallback, `<Link to="/">` wiring, icon variant, testId override) + `nav-hover-polish.test.jsx` (6 tests · source-level assertions on hover-scale motion, sidebar tint, top-bar tint, logo mount count).
+- **Backend curl** — `GET /api/tenants/current` returns `{logo_url: null, branding: {logo_url: null, brand_primary: "#0284C7", ...}}` — confirmed live.
+- **Screenshot verification** — desktop dashboard viewport rendered with sky-tinted rail + top-nav, placeholder wordmark at top-left, icon at rail crown, hover motion on rail items.
+
+**Deferred (logged in `/app/memory/TECH_DEBT.md`):**
+- **TD-08 · Admin branding upload UI** — dedicated settings surface for uploading the logo (image validation, S3 asset URL persistence, live preview). Backend already accepts `PATCH /api/tenants/mine/brand`; today the URL can be pasted via `TenantsAdminPage`. Bundle with the next admin-settings iteration and swap the placeholder PNGs at the same time.
+
+**Next up:** Phase B3 (Stripe webhook hardening — event dedup ledger + dead-letter table + missing handlers) then Phase B2 (mobile Stripe capture) and Phase B4 (Subscription CRUD).
