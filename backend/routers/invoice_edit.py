@@ -353,6 +353,32 @@ async def patch_invoice(
     # ── Persist the update ────────────────────────────────────────
     await _write_update(collection, invoice_id, tenant_id, upd)
 
+    # ── Feb-2026 · Pricebook writeback fan-out (post-save) ────────
+    if "line_items" in provided and any(
+        li.get("pricebook_writeback") for li in provided["line_items"]
+    ):
+        try:
+            from services.pricebook.writeback import process_pricebook_writebacks
+            wb_result = await process_pricebook_writebacks(
+                tenant_id=tenant_id or "",
+                invoice_id=invoice_id,
+                line_items=provided["line_items"],
+                actor=user,
+            )
+            if wb_result.get("processed") or wb_result.get("errors"):
+                logger.info(
+                    "[pricebook_writeback] invoice=%s (patch) processed=%d "
+                    "updated=%s created=%s warnings=%s errors=%s",
+                    invoice_id, wb_result["processed"],
+                    wb_result["updated"], wb_result["created"],
+                    wb_result["warnings"], wb_result["errors"],
+                )
+        except Exception:                                        # noqa: BLE001
+            logger.exception(
+                "[pricebook_writeback] fan-out failed for invoice=%s (patch)",
+                invoice_id,
+            )
+
     # ── Persist the audit log entry ───────────────────────────────
     audit_doc = {
         "id": str(uuid.uuid4()),

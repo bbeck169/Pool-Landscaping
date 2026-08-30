@@ -54,6 +54,7 @@ function moneyFieldsChanged(before, form) {
 
 const EMPTY_ITEM = () => ({
   description: "", quantity: 1, unit_price: 0, tax_rate: 0, category: "",
+  pricebook_writeback: false,
 });
 
 export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
@@ -70,6 +71,9 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
       unit_price: Number(li.unit_price || 0),
       tax_rate: Number(li.tax_rate || 0),
       category: li.category || "",  // Feb-2026 · income category enforcement
+      item_id: li.item_id || li.pricebook_item_id || null,
+      pricebook_item_id: li.pricebook_item_id || null,
+      pricebook_writeback: false,
     })),
     discount_amount: Number(invoice?.discount_amount || 0),
     discount_type: invoice?.discount_type || "fixed",
@@ -89,6 +93,9 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
   const [paidNumberInput, setPaidNumberInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Feb-2026 · Invoice inline edit sprint — per-row error state so
+  // backend category errors surface inline on the offending row.
+  const [rowErrors, setRowErrors] = useState({});
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -135,16 +142,16 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
   // ── Gate whether Save is allowed ─────────────────────────────
   const paidNumberOk = !paid || paidNumberInput === (invoice?.invoice_number || "");
   const sentOk = !sent || confirmSent;
-  // Feb-2026 · Income category enforcement — every line must have one.
-  const allLinesCategorised = (form.line_items || [])
-    .every((li) => (li.category || "").toString().trim().length > 0);
-  const canSave = !terminal && sentOk && paidNumberOk
-    && allLinesCategorised && !busy;
+  // Feb-2026 · Invoice inline edit sprint — save button stays
+  // enabled even when a line lacks a category; the operator fixes
+  // the row inline after the server error surfaces the issue.
+  const canSave = !terminal && sentOk && paidNumberOk && !busy;
 
   const submit = async () => {
     if (!canSave) return;
     setBusy(true);
     setError("");
+    setRowErrors({});
     try {
       const payload = { ...form };
       // Coerce numeric strings back to numbers for the backend.
@@ -156,20 +163,44 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
         unit_price: Number(li.unit_price) || 0,
         tax_rate: Number(li.tax_rate) || 0,
         category: li.category || "",
+        // Feb-2026 · Invoice inline edit sprint — carry the FK +
+        // writeback flag through to the backend so the writeback
+        // helper can either update or create the pricebook row.
+        item_id: li.item_id || undefined,
+        pricebook_item_id: li.pricebook_item_id || undefined,
+        pricebook_writeback: !!li.pricebook_writeback,
       }));
       if (sent) payload.confirm_edit_sent = true;
       if (paid) payload.confirm_edit_paid_invoice_number = paidNumberInput;
       const res = await api.patch(`/quotes/${invoice.id}`, payload);
       onSaved?.(res);
     } catch (e) {
-      // Best-effort human copy — server sends {error:"..."} sometimes.
-      const code = e?.data?.detail?.error || e?.data?.error;
-      const msg = code === "invoice_number_conflict"
-        ? "That invoice number is already in use. Pick a different one."
-        : code === "requires_confirmation"
-        ? "This invoice was sent — please tick the acknowledgement above."
-        : e?.message || "Save failed. Please try again.";
-      setError(msg);
+      // Feb-2026 · Invoice inline edit sprint — parse structured
+      // category error and surface INLINE on the offending row.
+      const detail = e?.data?.detail || {};
+      const code = detail?.error_code || detail?.error;
+      const idx = typeof detail?.line_index === "number" ? detail.line_index : null;
+      if (idx !== null && (code === "archived_category"
+                            || code === "category_invalid"
+                            || code === "category_required")) {
+        setRowErrors({
+          [idx]: {
+            reason: code === "category_required" ? "category_required" : "archived_category",
+            attempted: detail?.attempted_category || form.line_items[idx]?.category,
+          },
+        });
+        setError(code === "category_required"
+          ? "Category is required on every line. Fix the highlighted row."
+          : `Category '${detail?.attempted_category || ""}' is archived. Choose an active category on the highlighted row.`);
+      } else {
+        const legacyCode = e?.data?.detail?.error || e?.data?.error;
+        const msg = legacyCode === "invoice_number_conflict"
+          ? "That invoice number is already in use. Pick a different one."
+          : legacyCode === "requires_confirmation"
+          ? "This invoice was sent — please tick the acknowledgement above."
+          : e?.message || "Save failed. Please try again.";
+        setError(msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -339,9 +370,12 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
                   </tr>
                 </thead>
                 <tbody data-testid="invoice-edit-line-items">
-                  {(form.line_items || []).map((li, i) => (
+                  {(form.line_items || []).map((li, i) => {
+                    const rowErr = rowErrors[i];
+                    return (
                     <tr key={i} data-testid={`invoice-edit-line-${i}`}
-                        style={{ borderTop: `1px solid ${colors.border}` }}>
+                        style={{ borderTop: `1px solid ${colors.border}`,
+                                  background: rowErr ? "#FEF2F2" : undefined }}>
                       <td className="px-2 py-1">
                         <input
                           className="w-full px-2 py-1 text-sm rounded"
@@ -351,14 +385,50 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
                           onChange={(e) => patchItem(i, { description: e.target.value })}
                           data-testid={`invoice-edit-line-${i}-desc`}
                         />
+                        <label
+                          className="inline-flex items-center gap-1.5 mt-1 text-[11px] cursor-pointer select-none"
+                          style={{ color: colors.onSurfaceSecondary }}
+                          data-testid={`invoice-edit-line-${i}-writeback-label`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!li.pricebook_writeback}
+                            onChange={(e) => patchItem(i, { pricebook_writeback: e.target.checked })}
+                            data-testid={`invoice-edit-line-${i}-writeback`}
+                          />
+                          <span>
+                            {li.item_id || li.pricebook_item_id
+                              ? "Also save to pricebook"
+                              : "Also add to pricebook"}
+                          </span>
+                        </label>
+                        {rowErr ? (
+                          <div className="text-[11px] font-semibold mt-1"
+                                style={{ color: "#7F1D1D" }}
+                                data-testid={`invoice-edit-line-${i}-row-error`}>
+                            {rowErr.reason === "category_required"
+                              ? "Category required on this line."
+                              : `Category '${rowErr.attempted || ""}' is archived — pick an active one.`}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="px-2 py-1">
                         <CategoryPicker
                           value={li.category}
-                          onChange={(v) => patchItem(i, { category: v })}
+                          onChange={(v) => {
+                            patchItem(i, { category: v });
+                            setRowErrors((prev) => {
+                              if (!prev[i]) return prev;
+                              const next = { ...prev };
+                              delete next[i];
+                              return next;
+                            });
+                          }}
                           required
                           testid={`invoice-edit-line-${i}-cat`}
                           placeholder="Choose…"
+                          invalidReason={rowErr?.reason || null}
+                          autoFocus={!!rowErr}
                         />
                       </td>
                       <td className="px-2 py-1 text-right">
@@ -396,7 +466,8 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
                         ><Trash2 size={14} /></button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

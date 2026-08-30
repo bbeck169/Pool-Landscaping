@@ -45,6 +45,27 @@ def compute_totals(line_items: List[dict], tax_rate: float):
 # product" migration policy).
 async def _enforce_item_type_price_lock(tenant_id: str,
                                           line_items: List[dict]) -> None:
+    """Feb-2026 · Invoice inline edit + writeback — softened.
+
+    The prior hard-lock (rejecting product-price drift with a 400
+    ``product_price_locked``) blocked operators from creating
+    invoices with overridden prices. Post-Feb-2026 the app supports
+    per-line inline pricing overrides for BOTH products and
+    services; the pricebook value is only a default, never a wall.
+
+    This helper now:
+      * Preserves the ``overridden_price=True`` stamping so profit
+        reports can flag drift.
+      * NEVER raises 400 for a diverging product price.
+      * Still validates ``unit_price`` is numeric (fail-fast on
+        malformed payloads).
+
+    The strict lock is available via the ``STRICT_PRODUCT_PRICE_LOCK``
+    env flag for anyone who explicitly wants the pre-Feb-2026 rule
+    back. Default (missing / ``"0"``) keeps the softened behaviour.
+    """
+    import os as _os
+    strict = _os.environ.get("STRICT_PRODUCT_PRICE_LOCK", "0") == "1"
     ids = {li.get("item_id") or li.get("pricebook_item_id")
             for li in line_items}
     ids.discard(None)
@@ -59,9 +80,6 @@ async def _enforce_item_type_price_lock(tenant_id: str,
     for li in line_items:
         pid = li.get("item_id") or li.get("pricebook_item_id")
         if not pid or pid not in rows:
-            # Line has no pricebook link OR the pricebook item was
-            # deleted (soft-delete leaves the id valid on old lines).
-            # Neither case has a price-lock rule to enforce.
             li.setdefault("overridden_price", False)
             continue
         row = rows[pid]
@@ -72,7 +90,8 @@ async def _enforce_item_type_price_lock(tenant_id: str,
         except (TypeError, ValueError) as e:
             raise HTTPException(422, "unit_price must be numeric") from e
         differs = abs(line_up - pb_up) > 0.005
-        if pb_type == "product" and differs:
+        if strict and pb_type == "product" and differs:
+            # Explicit opt-in strict mode — keep the legacy 400.
             raise HTTPException(400, {
                 "error": "product_price_locked",
                 "message": ("product prices are locked; convert the "
@@ -83,8 +102,10 @@ async def _enforce_item_type_price_lock(tenant_id: str,
                 "pricebook_unit_price": pb_up,
                 "attempted_unit_price": line_up,
             })
-        # Service — record whether the operator overrode the price.
-        li["overridden_price"] = bool(differs and pb_type == "service")
+        # Softened path — record whether the operator overrode the
+        # price, regardless of product vs service. Downstream reports
+        # (Internal Margin, EBIT, Profit) still see the flag.
+        li["overridden_price"] = bool(differs)
 
 
 # ── PB1 · Feb-2026 · Line-item margin snapshot stamping.
@@ -391,6 +412,32 @@ async def create_quote(body: QuoteIn,
         await assign_invoice_number_if_missing(doc, tenant)
     await db.quotes.insert_one(doc)
     doc.pop("_id", None)
+    # Feb-2026 · Invoice inline edit + pricebook writeback fan-out.
+    # Runs AFTER the invoice save transaction has settled so a
+    # later invoice-save failure never mutates the pricebook.
+    if any(li.get("pricebook_writeback") for li in items):
+        try:
+            from services.pricebook.writeback import process_pricebook_writebacks
+            wb_result = await process_pricebook_writebacks(
+                tenant_id=tenant["id"],
+                invoice_id=doc["id"],
+                line_items=items,
+                actor=user,
+            )
+            if wb_result.get("processed") or wb_result.get("errors"):
+                doc["pricebook_writeback_result"] = wb_result
+                logger.info(
+                    "[pricebook_writeback] invoice=%s processed=%d "
+                    "updated=%s created=%s warnings=%s errors=%s",
+                    doc["id"], wb_result["processed"],
+                    wb_result["updated"], wb_result["created"],
+                    wb_result["warnings"], wb_result["errors"],
+                )
+        except Exception:                                        # noqa: BLE001
+            logger.exception(
+                "[pricebook_writeback] fan-out failed for invoice=%s",
+                doc["id"],
+            )
     # LZ2 · Feb 2026 — fire-and-forget request to Zapier to create a
     # Lumino payment link for this invoice. Fails open — never blocks
     # invoice creation. Zap will call back into
@@ -540,6 +587,31 @@ async def update_quote(qid: str, body: QuoteUpdate,
         })
     upd["updated_at"] = now_iso()
     await db.quotes.update_one({"id": qid, "tenant_id": tenant["id"]}, {"$set": upd})
+    # Feb-2026 · Invoice inline edit + pricebook writeback fan-out.
+    if "line_items" in upd and any(
+        li.get("pricebook_writeback") for li in upd["line_items"]
+    ):
+        try:
+            from services.pricebook.writeback import process_pricebook_writebacks
+            wb_result = await process_pricebook_writebacks(
+                tenant_id=tenant["id"],
+                invoice_id=qid,
+                line_items=upd["line_items"],
+                actor=user,
+            )
+            if wb_result.get("processed") or wb_result.get("errors"):
+                logger.info(
+                    "[pricebook_writeback] invoice=%s (put) processed=%d "
+                    "updated=%s created=%s warnings=%s errors=%s",
+                    qid, wb_result["processed"],
+                    wb_result["updated"], wb_result["created"],
+                    wb_result["warnings"], wb_result["errors"],
+                )
+        except Exception:                                        # noqa: BLE001
+            logger.exception(
+                "[pricebook_writeback] fan-out failed for invoice=%s (put)",
+                qid,
+            )
     return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 

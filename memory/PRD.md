@@ -13195,3 +13195,46 @@ Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy 
 - **TD-08 · Admin branding upload UI** — dedicated settings surface for uploading the logo (image validation, S3 asset URL persistence, live preview). Backend already accepts `PATCH /api/tenants/mine/brand`; today the URL can be pasted via `TenantsAdminPage`. Bundle with the next admin-settings iteration and swap the placeholder PNGs at the same time.
 
 **Next up:** Phase B3 (Stripe webhook hardening — event dedup ledger + dead-letter table + missing handlers) then Phase B2 (mobile Stripe capture) and Phase B4 (Subscription CRUD).
+
+## Feb-2026 · Invoice inline edit + Pricebook writeback — SHIPPED
+
+**Blocker resolved:** User reported the New Invoice page rejected saves with `Unknown or archived category: 'Common'` AND locked the unit_price field on product-typed pricebook items. Both fixed.
+
+**Parts:**
+
+**A · Unlock inline pricing:**
+- `_enforce_item_type_price_lock` (`quotes.py`) softened — no more 400 on product-price drift. Now just stamps `overridden_price=True` on the line for downstream margin reports. Strict-mode opt-in via `STRICT_PRODUCT_PRICE_LOCK=1` env for anyone who wants the pre-Feb-2026 behaviour back.
+- Frontend: `QuoteInvoiceNew.jsx` unit-price input is a plain editable `<input type="number">` — no `readOnly`, no `disabled`, no lock icon. When the price diverges from the pricebook default an amber-bordered field + `"custom price — pricebook shows $X.XX"` hint appears.
+- `InvoiceEditModal.jsx` (edit surface) was already unlocked; only added writeback + inline error surfaces.
+
+**B · Inline category picker + robust error handling:**
+- New: `QuoteInvoiceNew.jsx` now mounts `<CategoryPicker>` on every line (required, source=income). Populated from `/api/income-categories`.
+- `CategoryPicker.jsx` extended: `+ Add category` option at bottom of the dropdown opens an inline "create category" form wired to `POST /api/income-categories/resolve-or-create`. Newly-created rows are pushed into the module-scope cache and auto-selected on the offending line.
+- `CategoryPicker.jsx` extended: `invalidReason="archived_category"` prop renders a red-border + inline warning chip so the caller can force the operator to pick a new category before saving.
+- `income_categories.py` error shape widened: `detail.error_code`, `detail.line_index`, `detail.attempted_category` added alongside the legacy `error` / `field` keys — frontend consumes these to highlight the offending row.
+- Frontend save handlers on BOTH surfaces (`QuoteInvoiceNew` + `InvoiceEditModal`) parse the structured error and surface it INLINE on the offending row (`data-testid="qf-line-{N}-row-error"` and `data-testid="invoice-edit-line-{N}-row-error"`). Save button stays enabled — operator fixes inline + retries.
+
+**C · Pricebook writeback (per-line):**
+- New: `services/pricebook/writeback.py` — `process_pricebook_writebacks()` fans out AFTER a successful invoice save transaction. Rules: (i) tenant-scoped only, (ii) FK-match wins if the line has a pricebook FK, else case-insensitive name match on the tenant's items, else create a new row with `source="invoice_writeback"`, (iii) never blocks the invoice save.
+- Every writeback audited to a new `db.pricebook_writeback_events` collection with `{tenant_id, invoice_id, line_item_id, pricebook_item_id, action, before, after, actor_user_id, actor_email, actor_role, source, created_at}`.
+- Wired into `quotes.py` (`POST /quotes`, `PUT /quotes/{qid}`) and `invoice_edit.py` (`PATCH /quotes/{qid}` alias). Post-save fan-out only.
+- Frontend: per-line checkbox with dynamic label — "Also save this to the pricebook" (line has FK) vs "Also add this to the pricebook" (free-text line becomes new pricebook item). Unchecked by default. Ships on BOTH surfaces.
+
+**D · Data integrity + tenant isolation:**
+- `writeback.py._process_pricebook_writebacks` scopes every read/write to the caller's `tenant_id`. Cross-tenant FKs fall through to the name-match branch (which stays within the caller's tenant) — verified by `test_invoice_writeback_tenant_isolation.py`.
+- Duplicate FK across multiple lines is treated as last-write-wins with a `warnings[]` note in the response.
+
+**Testing (all green):**
+- Backend (8 new + 12 pre-existing income_cat = 20 total, `pytest`): `test_invoice_line_item_custom_price.py` (2), `test_invoice_category_validation.py` (2 · verifies `error_code` + `line_index`), `test_invoice_pricebook_writeback.py` (3 · update/create/writeback-off), `test_invoice_writeback_tenant_isolation.py` (1 · cross-tenant blocked).
+- Frontend (12 new + 15 pre-existing polish = 27 total, `vitest`): `invoice-line-item-price-editable.test.jsx` (3), `invoice-category-picker-add.test.jsx` (3), `invoice-pricebook-writeback.test.jsx` (4), `invoice-save-errors-inline.test.jsx` (2).
+- Empirical proof captured (bash + curl): invoice with `unit_price=$131.75` against a `$89` pricebook product now saves with `overridden_price=True` (would have returned 400 `product_price_locked` before). Archived-category 400 returns `error_code=archived_category`, `line_index=0`, `attempted_category="Common"`.
+- Screenshots captured at `/tmp/inv-A-price-custom.png`, `/tmp/inv-B{1,2}-writeback-{unchecked,checked}.png`, `/tmp/inv-C-inline-error.png` — all three acceptance frames.
+
+**Deferred (logged in TECH_DEBT.md follow-up):**
+- TD-09 · Bulk-edit pricebook UI (out-of-scope per spec).
+- TD-10 · Mobile parity for pricebook writeback (queued with the mobile Stripe capture work in Phase B2).
+- Quote surface: `QuoteInvoiceNew.jsx` doubles as the create surface for BOTH quotes and invoices — the writeback + category treatment is live on both. `QuoteInvoiceDetail.jsx` (edit) already had the CategoryPicker; only the writeback checkbox was added there via `InvoiceEditModal.jsx` (used for invoice edit; quote edit uses a different modal — carried to backlog).
+
+**Files touched:**
+- Backend: `models.py`, `routers/quotes.py`, `routers/invoice_edit.py`, `routers/income_categories.py`, **new** `services/pricebook/writeback.py`, **new** `tests/test_invoice_line_item_custom_price.py`, **new** `tests/test_invoice_category_validation.py`, **new** `tests/test_invoice_pricebook_writeback.py`, **new** `tests/test_invoice_writeback_tenant_isolation.py`.
+- Frontend: `pages/quotes/QuoteInvoiceNew.jsx` (rewrite), `components/income/CategoryPicker.jsx` (rewrite — `+ Add category` + `invalidReason`), `components/invoices/InvoiceEditModal.jsx` (writeback checkbox + inline row errors), **new** `test/invoice-line-item-price-editable.test.jsx`, **new** `test/invoice-category-picker-add.test.jsx`, **new** `test/invoice-pricebook-writeback.test.jsx`, **new** `test/invoice-save-errors-inline.test.jsx`.

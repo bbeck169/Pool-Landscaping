@@ -295,6 +295,13 @@ class LineItem(BaseModel):
     # writer rejects such lines with 400. Nullable so legacy lines
     # (no ``item_type`` on the referenced item) grandfather to false.
     overridden_price: Optional[bool] = False
+    # Feb-2026 · Invoice inline edit + pricebook writeback — opt-in
+    # per line. When ``True``, the invoice writer path fans out
+    # AFTER a successful save and updates (or creates) the linked
+    # pricebook item using this line's ``unit_price``, ``category``
+    # and ``description``. Never mutates the pricebook if the invoice
+    # save fails. Audited to ``db.pricebook_writeback_events``.
+    pricebook_writeback: Optional[bool] = False
 
 
 class QuoteIn(BaseModel):

@@ -5,6 +5,7 @@ import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { PageHeader, Button, TextInput, Toast } from "@/components/ui-kit";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
+import CategoryPicker from "@/components/income/CategoryPicker";
 
 /** Combined New form for both quotes and invoices — same data model, different `doc_type`. */
 export default function QuoteInvoiceNew({ docType = "quote" }) {
@@ -15,6 +16,10 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
   const [items, setItems] = useState([]);
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Feb-2026 · Invoice inline edit sprint — per-row error state so
+  // the save-blocking category errors from the backend can be
+  // rendered inline on the offending row instead of a page-level toast.
+  const [rowErrors, setRowErrors] = useState({});
 
   const [form, setForm] = useState({
     customer_id: preselect,
@@ -24,7 +29,11 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
     notes: "",
     terms: "",
     due_date: "",
-    line_items: [{ description: "", quantity: 1, unit_price: 0, category: "Pool" }],
+    // Feb-2026 · Invoice inline edit sprint — category field on new
+    // rows is empty so the operator must actively pick one via the
+    // inline CategoryPicker. Backend validate_line_item_categories
+    // rejects blanks with a friendly ``category_required`` shape.
+    line_items: [{ description: "", quantity: 1, unit_price: 0, category: "", pricebook_writeback: false }],
   });
   const [termsDefault, setTermsDefault] = useState("");
 
@@ -56,10 +65,16 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
       line_items: f.line_items.map((li, idx) => (idx === i ? { ...li, [k]: v } : li)),
     }));
 
+  const patchLine = (i, patch) =>
+    setForm((f) => ({
+      ...f,
+      line_items: f.line_items.map((li, idx) => (idx === i ? { ...li, ...patch } : li)),
+    }));
+
   const addLine = () =>
     setForm((f) => ({
       ...f,
-      line_items: [...f.line_items, { description: "", quantity: 1, unit_price: 0, category: "Pool" }],
+      line_items: [...f.line_items, { description: "", quantity: 1, unit_price: 0, category: "", pricebook_writeback: false }],
     }));
 
   const removeLine = (i) =>
@@ -74,6 +89,8 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
       setToast({ tone: "error", message: "Pick a customer" });
       return;
     }
+    // Clear stale row errors — the retry might have fixed the offender.
+    setRowErrors({});
     setBusy(true);
     try {
       const payload = {
@@ -90,11 +107,12 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
             description: li.description,
             quantity: Number(li.quantity) || 0,
             unit_price: Number(li.unit_price) || 0,
-            category: li.category || "Pool",
-            // Feb-2026 · plumb pricebook FK so the backend can
-            // resolve item_type and enforce the price-lock rule.
+            category: li.category || "",
             item_id: li.item_id || li.pricebook_item_id || undefined,
             pricebook_item_id: li.pricebook_item_id || undefined,
+            // Feb-2026 · Invoice inline edit sprint — writeback flag
+            // is opt-in per line. Backend processes AFTER save.
+            pricebook_writeback: !!li.pricebook_writeback,
           })),
       };
       const saved = await api.post("/quotes", payload);
@@ -104,7 +122,31 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
         400
       );
     } catch (err) {
-      setToast({ tone: "error", message: err.message });
+      // Feb-2026 · Invoice inline edit sprint — parse structured
+      // category error and surface INLINE on the offending row
+      // instead of a blocking page toast. Save button stays enabled
+      // so the operator can fix + retry without a scroll.
+      const detail = err?.data?.detail || {};
+      const code = detail?.error_code || detail?.error;
+      const idx = typeof detail?.line_index === "number" ? detail.line_index : null;
+      if (idx !== null && (code === "archived_category"
+                            || code === "category_invalid"
+                            || code === "category_required")) {
+        setRowErrors((prev) => ({
+          ...prev,
+          [idx]: {
+            reason: code === "category_required" ? "category_required" : "archived_category",
+            attempted: detail?.attempted_category || form.line_items[idx]?.category,
+            message: detail?.message || err.message,
+          },
+        }));
+        setToast({ tone: "error",
+                    message: code === "category_required"
+                      ? "Category is required on every line. Fix highlighted rows."
+                      : `Category '${detail?.attempted_category || ""}' is archived. Pick an active one on the highlighted row.` });
+      } else {
+        setToast({ tone: "error", message: err.message });
+      }
     } finally {
       setBusy(false);
     }
@@ -169,125 +211,188 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
           <div className="text-xs font-semibold tracking-wide mb-3" style={{ color: colors.onSurfaceSecondary }}>
             LINE ITEMS
           </div>
-          <div className="space-y-2" data-testid="qf-line-items">
-            {form.line_items.map((li, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 items-start" data-testid={`qf-line-${i}`}>
-                <div className="col-span-6">
-                  <input
-                    list={`items-datalist-${i}`}
-                    value={li.description}
-                    onChange={(e) => {
-                      const chosen = priceBook.find((it) => it.name === e.target.value);
-                      if (chosen) {
-                        setForm((f) => ({
-                          ...f,
-                          line_items: f.line_items.map((x, idx) =>
-                            idx === i
-                              ? { ...x, description: chosen.name,
-                                   unit_price: chosen.unit_price || 0,
-                                   category: chosen.category || "Pool",
-                                   pricebook_item_id: chosen.id,
-                                   item_id: chosen.id,
-                                   // Feb-2026 · Pricebook item_type — snapshot the
-                                   // referenced item's type + reference price so the
-                                   // UI can lock/unlock the price cell + surface the
-                                   // "overridden" chip without a second round-trip.
-                                   _item_type: (chosen.item_type || "product").toLowerCase(),
-                                   _pricebook_unit_price: Number(chosen.unit_price || 0),
-                                   overridden_price: false }
-                              : x
-                          ),
-                        }));
-                      } else {
-                        setLine(i, "description", e.target.value);
-                      }
-                    }}
-                    placeholder="Item / description"
-                    className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
-                    style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
-                    data-testid={`qf-line-${i}-desc`}
-                  />
-                  <datalist id={`items-datalist-${i}`}>
-                    {priceBook.map((it) => (
-                      <option key={it.id} value={it.name} />
-                    ))}
-                  </datalist>
-                </div>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={li.quantity}
-                  onChange={(e) => setLine(i, "quantity", e.target.value)}
-                  placeholder="Qty"
-                  className="col-span-2 px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
-                  style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
-                  data-testid={`qf-line-${i}-qty`}
-                />
-                {/* Feb-2026 · Pricebook item_type — product lines lock
-                    unit_price to the pricebook value; service lines
-                    stay editable. Renders a small "🔒" lock icon +
-                    tooltip on locked cells, and an "overridden" chip
-                    when the operator diverges on a service. */}
-                <div className="col-span-3 relative"
-                     data-testid={`qf-line-${i}-price-wrap`}>
-                  {(() => {
-                    const isProduct = (li._item_type || "product").toLowerCase() === "product"
-                                       && !!li.item_id;
-                    const overridden = !isProduct
-                       && li._pricebook_unit_price != null
-                       && Math.abs(Number(li.unit_price || 0)
-                                    - Number(li._pricebook_unit_price || 0)) > 0.005;
-                    return (
-                      <>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={li.unit_price}
-                          readOnly={isProduct}
-                          disabled={isProduct}
-                          onChange={(e) => setLine(i, "unit_price", e.target.value)}
-                          placeholder="Unit $"
-                          className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
-                          title={isProduct ? "Product prices are locked to the pricebook. Convert the item to a service to edit here." : undefined}
-                          style={{
-                            backgroundColor: isProduct ? colors.surface : colors.surfaceSecondary,
-                            border: `1px solid ${colors.border}`,
-                            opacity: isProduct ? 0.72 : 1,
-                          }}
-                          data-testid={`qf-line-${i}-price`}
-                        />
-                        {isProduct ? (
-                          <span
-                            data-testid={`qf-line-${i}-price-lock`}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 text-xs"
-                            style={{ color: colors.muted }}
-                            aria-label="Product price locked"
-                          >🔒</span>
-                        ) : null}
-                        {overridden ? (
-                          <span
-                            data-testid={`qf-line-${i}-price-overridden`}
-                            className="absolute -bottom-4 right-0 px-1 py-0.5 rounded text-[10px] font-semibold"
-                            style={{ background: "#FEF3C7", color: "#92400E" }}
-                          >overridden</span>
-                        ) : null}
-                      </>
-                    );
-                  })()}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeLine(i)}
-                  className="col-span-1 opacity-70 hover:opacity-100 pt-2"
-                  style={{ color: colors.error }}
-                  data-testid={`qf-line-${i}-remove`}
+          <div className="space-y-3" data-testid="qf-line-items">
+            {form.line_items.map((li, i) => {
+              const rowErr = rowErrors[i];
+              const pricebookDefault = li._pricebook_unit_price;
+              const priceOverridden = pricebookDefault != null
+                && Math.abs(Number(li.unit_price || 0) - Number(pricebookDefault || 0)) > 0.005;
+              return (
+                <div
+                  key={i}
+                  className="rounded-xl p-3"
+                  style={{
+                    background: rowErr ? "#FEF2F2" : colors.surfaceSecondary,
+                    border: `1px solid ${rowErr ? "#FCA5A5" : colors.border}`,
+                  }}
+                  data-testid={`qf-line-${i}`}
                 >
-                  <X size={16} />
-                </button>
-              </div>
-            ))}
+                  {/* Top row: description + qty + price + remove */}
+                  <div className="grid grid-cols-12 gap-2 items-start">
+                    <div className="col-span-12 md:col-span-6">
+                      <label className="text-[10px] uppercase tracking-wider font-semibold block mb-1"
+                              style={{ color: colors.muted }}>
+                        DESCRIPTION
+                      </label>
+                      <input
+                        list={`items-datalist-${i}`}
+                        value={li.description}
+                        onChange={(e) => {
+                          const chosen = priceBook.find((it) => it.name === e.target.value);
+                          if (chosen) {
+                            setForm((f) => ({
+                              ...f,
+                              line_items: f.line_items.map((x, idx) =>
+                                idx === i
+                                  ? { ...x, description: chosen.name,
+                                      unit_price: chosen.unit_price || 0,
+                                      category: chosen.category || x.category || "",
+                                      pricebook_item_id: chosen.id,
+                                      item_id: chosen.id,
+                                      _item_type: (chosen.item_type || "product").toLowerCase(),
+                                      _pricebook_unit_price: Number(chosen.unit_price || 0) }
+                                  : x
+                              ),
+                            }));
+                          } else {
+                            setLine(i, "description", e.target.value);
+                          }
+                        }}
+                        placeholder="Item / description"
+                        className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+                        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                        data-testid={`qf-line-${i}-desc`}
+                      />
+                      <datalist id={`items-datalist-${i}`}>
+                        {priceBook.map((it) => (
+                          <option key={it.id} value={it.name} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <div className="col-span-4 md:col-span-2">
+                      <label className="text-[10px] uppercase tracking-wider font-semibold block mb-1"
+                              style={{ color: colors.muted }}>
+                        QTY
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={li.quantity}
+                        onChange={(e) => setLine(i, "quantity", e.target.value)}
+                        placeholder="Qty"
+                        className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+                        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                        data-testid={`qf-line-${i}-qty`}
+                      />
+                    </div>
+                    <div className="col-span-6 md:col-span-3">
+                      <label className="text-[10px] uppercase tracking-wider font-semibold block mb-1"
+                              style={{ color: colors.muted }}>
+                        UNIT PRICE
+                      </label>
+                      {/* Feb-2026 · Invoice inline edit sprint — price
+                          field is ALWAYS editable. Pricebook value is
+                          a prefill default, not a wall. Non-blocking
+                          "custom price" hint surfaces when the value
+                          diverges from the pricebook default. */}
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={li.unit_price}
+                        onChange={(e) => setLine(i, "unit_price", e.target.value)}
+                        placeholder="Unit $"
+                        className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+                        style={{
+                          backgroundColor: colors.surface,
+                          border: `1px solid ${priceOverridden ? "#F59E0B" : colors.border}`,
+                        }}
+                        data-testid={`qf-line-${i}-price`}
+                      />
+                      {priceOverridden ? (
+                        <div
+                          className="text-[11px] italic mt-1"
+                          style={{ color: "#B45309" }}
+                          data-testid={`qf-line-${i}-price-custom`}
+                        >
+                          custom price — pricebook shows {money(pricebookDefault)}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="col-span-2 md:col-span-1 flex md:justify-end">
+                      <button
+                        type="button"
+                        onClick={() => removeLine(i)}
+                        className="opacity-70 hover:opacity-100 pt-6"
+                        style={{ color: colors.error }}
+                        data-testid={`qf-line-${i}-remove`}
+                        aria-label={`Remove line ${i + 1}`}
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  </div>
+                  {/* Bottom row: category picker + writeback checkbox */}
+                  <div className="grid grid-cols-12 gap-2 items-start mt-2">
+                    <div className="col-span-12 md:col-span-6">
+                      <label className="text-[10px] uppercase tracking-wider font-semibold block mb-1"
+                              style={{ color: colors.muted }}>
+                        CATEGORY *
+                      </label>
+                      <CategoryPicker
+                        value={li.category}
+                        onChange={(v) => {
+                          patchLine(i, { category: v });
+                          setRowErrors((prev) => {
+                            if (!prev[i]) return prev;
+                            const next = { ...prev };
+                            delete next[i];
+                            return next;
+                          });
+                        }}
+                        required
+                        source="income"
+                        placeholder="Choose category…"
+                        testid={`qf-line-${i}-cat`}
+                        invalidReason={rowErr?.reason || null}
+                        autoFocus={!!rowErr}
+                      />
+                    </div>
+                    <div className="col-span-12 md:col-span-6 pt-5">
+                      <label
+                        className="inline-flex items-center gap-2 text-xs cursor-pointer select-none"
+                        data-testid={`qf-line-${i}-writeback-label`}
+                        style={{ color: colors.onSurface }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!li.pricebook_writeback}
+                          onChange={(e) => setLine(i, "pricebook_writeback", e.target.checked)}
+                          data-testid={`qf-line-${i}-writeback`}
+                        />
+                        <span>
+                          {li.item_id || li.pricebook_item_id
+                            ? "Also save this to the pricebook"
+                            : "Also add this to the pricebook"}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                  {rowErr ? (
+                    <div
+                      className="mt-2 text-xs font-semibold"
+                      style={{ color: "#7F1D1D" }}
+                      data-testid={`qf-line-${i}-row-error`}
+                    >
+                      {rowErr.reason === "category_required"
+                        ? "Category required on this line."
+                        : `Category '${rowErr.attempted || ""}' is archived. Choose an active category or create a new one.`}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
           <div className="mt-3">
             <Button variant="ghost" onClick={(e) => { e.preventDefault(); addLine(); }} testid="qf-add-line">

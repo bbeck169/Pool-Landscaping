@@ -121,7 +121,9 @@ async def validate_line_item_categories(
                 status_code=400,
                 detail={
                     "error": "category_required",
+                    "error_code": "category_required",
                     "field": f"line_items[{idx}].category",
+                    "line_index": idx,
                     "message": ("Each income line item must have a "
                                  "category. Available categories: "
                                  f"{available}"),
@@ -135,7 +137,10 @@ async def validate_line_item_categories(
             status_code=400,
             detail={
                 "error": "category_invalid",
+                "error_code": "archived_category",
                 "field": f"line_items[{idx}].category",
+                "line_index": idx,
+                "attempted_category": cat_str,
                 "message": (f"Unknown or archived category: {cat_str!r}. "
                              f"Available categories: {available}"),
                 "available_categories": available,
