@@ -39,6 +39,19 @@ function _pill(state) {
   }
 }
 
+// F4 · Feb-2026 — Source discriminator badge (Auto = from job
+// completion auto-enqueue, Tech = tech-submitted via submit-public).
+// Uses the same inline-pill pattern as ``_pill`` above so the
+// moderation queue stays visually consistent. Blue (Auto) / green
+// (Tech) per user spec.
+function _sourcePill(source) {
+  const s = String(source || "tech").toLowerCase();
+  if (s === "auto") {
+    return { bg: "#DBEAFE", fg: "#1E40AF", label: "Auto" };
+  }
+  return { bg: "#DCFCE7", fg: "#065F46", label: "Tech" };
+}
+
 export default function ModerationCheckinsPage() {
   const [state, setState] = React.useState("pending_review");
   const [items, setItems] = React.useState([]);
@@ -391,12 +404,27 @@ export default function ModerationCheckinsPage() {
                           <div className="text-sm font-semibold truncate">
                             {it.service_name || "Untitled service"}
                           </div>
-                          <span
-                            className="text-[10px] px-1.5 py-0.5 rounded"
-                            style={{ backgroundColor: p.bg, color: p.fg }}
-                          >
-                            {p.label}
-                          </span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {(() => {
+                              const sp = _sourcePill(it.source);
+                              return (
+                                <span
+                                  className="text-[10px] px-1.5 py-0.5 rounded"
+                                  style={{ backgroundColor: sp.bg, color: sp.fg }}
+                                  data-testid={`moderation-item-source-${it.id}`}
+                                  title={`Source: ${sp.label === "Auto" ? "Auto-enqueued from job completion" : "Tech-submitted via check-in"}`}
+                                >
+                                  {sp.label}
+                                </span>
+                              );
+                            })()}
+                            <span
+                              className="text-[10px] px-1.5 py-0.5 rounded"
+                              style={{ backgroundColor: p.bg, color: p.fg }}
+                            >
+                              {p.label}
+                            </span>
+                          </div>
                         </div>
                         <div className="text-[11px] mt-0.5" style={{ color: colors.muted }}>
                           {(it.submitted_at || "").slice(0, 16).replace("T", " ")} · {(it.photos || []).length} photo{(it.photos || []).length === 1 ? "" : "s"}
@@ -433,7 +461,24 @@ export default function ModerationCheckinsPage() {
               }}
               data-testid={`moderation-detail-${selected.id}`}
             >
-              <StateBanner row={selected} />
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <StateBanner row={selected} />
+                </div>
+                {(() => {
+                  const sp = _sourcePill(selected.source);
+                  return (
+                    <span
+                      className="text-[11px] px-2 py-1 rounded shrink-0"
+                      style={{ backgroundColor: sp.bg, color: sp.fg, fontWeight: 600 }}
+                      data-testid="moderation-detail-source"
+                      title={sp.label === "Auto" ? "Auto-enqueued from job completion" : "Tech-submitted via check-in"}
+                    >
+                      Source · {sp.label}
+                    </span>
+                  );
+                })()}
+              </div>
 
               {/* Photos */}
               {(selected.photos || []).length > 0 ? (

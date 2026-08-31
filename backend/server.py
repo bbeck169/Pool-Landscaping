@@ -335,6 +335,10 @@ api_router.include_router(_subscriptions_router.router)
 # + apply endpoints with confirm_token workflow.
 from routers import data_repair as _f2_data_repair_router  # noqa: E402
 api_router.include_router(_f2_data_repair_router.router)
+# Feb-2026 · Widget-Embed Extension — Option A. Public map surface
+# + JSON-LD sitting alongside the MR0/MR1/MR2 stack.
+from routers import public_checkins_map as _pc_map_router  # noqa: E402
+api_router.include_router(_pc_map_router.router)
 from routers import comms_admin as _comms_admin  # noqa: E402
 api_router.include_router(_comms_admin.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402

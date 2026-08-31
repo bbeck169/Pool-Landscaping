@@ -38,6 +38,21 @@ def _matches(row: Dict[str, Any], query: Dict[str, Any]) -> bool:
                 if row.get(k) == v["$ne"]:
                     return False
                 continue
+            # Comparison operators — used by the map endpoint's
+            # 12-month window filter and other date-range queries.
+            if any(op in v for op in ("$gte", "$gt", "$lte", "$lt")):
+                cell = row.get(k)
+                if cell is None:
+                    return False
+                if "$gte" in v and not (cell >= v["$gte"]):
+                    return False
+                if "$gt" in v and not (cell > v["$gt"]):
+                    return False
+                if "$lte" in v and not (cell <= v["$lte"]):
+                    return False
+                if "$lt" in v and not (cell < v["$lt"]):
+                    return False
+                continue
             return False
         if row.get(k) != v:
             return False

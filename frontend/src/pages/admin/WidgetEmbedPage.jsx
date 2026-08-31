@@ -2,15 +2,17 @@ import React from "react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
-import { Copy, Check, RefreshCw, ExternalLink } from "lucide-react";
+import { Copy, Check, RefreshCw, ExternalLink, LayoutList, Map as MapIcon } from "lucide-react";
 import { useAuth } from "@/auth";
 
 /**
  * MR1+MR2 · Feb-2026 — Widget Embed preview + snippet copier.
  *
- * Admin surface for the public embeddable widget. Shows a live-preview
- * iframe (loading ``/api/widget/preview/{tenant_slug}``) plus an
- * "Embed snippet" panel with a copy-to-clipboard button.
+ * F4 (Feb-2026): dual-preview tabs — the original "Card List"
+ * preview (``/api/widget/preview/...``) AND the new "Map" preview
+ * (``/api/public/checkins/{slug}/map.html``). Each tab has its own
+ * copy-to-clipboard snippet so admins can grab either the script
+ * embed OR the map iframe.
  */
 export default function WidgetEmbedPage() {
   const { user } = useAuth();
@@ -18,8 +20,10 @@ export default function WidgetEmbedPage() {
   const [theme, setTheme] = React.useState("light");
   const [count, setCount] = React.useState(10);
   const [category, setCategory] = React.useState("");
-  const [copied, setCopied] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);         // card-list copy
+  const [copiedMap, setCopiedMap] = React.useState(false);   // map iframe copy
   const [reloadKey, setReloadKey] = React.useState(0);
+  const [previewMode, setPreviewMode] = React.useState("list"); // "list" | "map"
 
   React.useEffect(() => {
     let cancelled = false;
@@ -45,16 +49,23 @@ export default function WidgetEmbedPage() {
 
   const slug = tenant?.slug || (user?.tenant?.slug) || "";
 
+  // ── Card-list preview src ──────────────────────────────────────────
   const previewSrc = React.useMemo(() => {
     if (!slug) return null;
     const p = new URLSearchParams();
     p.set("theme", theme);
     p.set("count", String(count));
     if (category) p.set("category", category);
-    // Bump reloadKey to force iframe refresh.
     return `${backendOrigin}/api/widget/preview/${encodeURIComponent(slug)}?${p.toString()}#r=${reloadKey}`;
   }, [backendOrigin, slug, theme, count, category, reloadKey]);
 
+  // ── Map preview src (Feb-2026 F4) ──────────────────────────────────
+  const mapPreviewSrc = React.useMemo(() => {
+    if (!slug) return null;
+    return `${backendOrigin}/api/public/checkins/${encodeURIComponent(slug)}/map.html#r=${reloadKey}`;
+  }, [backendOrigin, slug, reloadKey]);
+
+  // ── Card-list embed snippet ────────────────────────────────────────
   const snippet = React.useMemo(() => {
     if (!slug) return "";
     const attrs = [
@@ -68,22 +79,66 @@ export default function WidgetEmbedPage() {
     return `<script ${attrs.join("\n        ")}></script>`;
   }, [backendOrigin, slug, count, theme, category]);
 
-  const doCopy = async () => {
+  // ── Map iframe embed snippet (Feb-2026 F4) ─────────────────────────
+  const mapSnippet = React.useMemo(() => {
+    if (!slug) return "";
+    const src = `${backendOrigin}/api/public/checkins/${slug}/map.html`;
+    return (
+`<iframe src="${src}"
+        width="100%"
+        height="480"
+        frameborder="0"
+        loading="lazy"
+        title="Recent service check-ins"
+        style="border:0;border-radius:12px;overflow:hidden"></iframe>`
+    );
+  }, [backendOrigin, slug]);
+
+  const _writeClipboard = async (text) => {
+    // Try the modern Clipboard API first, but fall back to the
+    // legacy textarea+execCommand path on rejection (headless
+    // browsers or hardened permission policies routinely reject
+    // ``writeText`` even when the object exists).
     try {
       if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(snippet);
-      } else {
-        const ta = document.createElement("textarea");
-        ta.value = snippet;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
+        await navigator.clipboard.writeText(text);
+        return true;
       }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch { /* swallow */ }
+    } catch {
+      // fall through to fallback
+    }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      return true;
+    } catch {
+      return false;
+    }
   };
+
+  const doCopy = async () => {
+    if (!(await _writeClipboard(snippet))) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const doCopyMap = async () => {
+    if (!(await _writeClipboard(mapSnippet))) return;
+    setCopiedMap(true);
+    setTimeout(() => setCopiedMap(false), 1500);
+  };
+
+  const isMap = previewMode === "map";
+  const activeSnippet = isMap ? mapSnippet : snippet;
+  const activeCopyHandler = isMap ? doCopyMap : doCopy;
+  const activeCopiedFlag = isMap ? copiedMap : copied;
 
   return (
     <SafeScrollContainer
@@ -119,66 +174,126 @@ export default function WidgetEmbedPage() {
         </button>
       </div>
 
-      {/* Controls */}
+      {/* Preview-mode tab toggle */}
       <div
-        className="rounded-xl p-3 grid grid-cols-1 md:grid-cols-3 gap-3"
-        style={{
-          backgroundColor: colors.surface,
-          border: `1px solid ${colors.border}`,
-        }}
+        className="inline-flex rounded-lg overflow-hidden"
+        style={{ border: `1px solid ${colors.border}` }}
+        role="tablist"
+        aria-label="Preview mode"
+        data-testid="widget-embed-preview-tabs"
       >
-        <label className="flex flex-col gap-1 text-xs font-semibold" style={{ color: colors.muted }}>
-          Theme
-          <select
-            value={theme}
-            onChange={(e) => setTheme(e.target.value)}
-            data-testid="widget-embed-theme"
-            className="h-9 px-2 rounded-lg text-sm"
-            style={{
-              backgroundColor: colors.surface,
-              color: colors.onSurface,
-              border: `1px solid ${colors.border}`,
-            }}
-          >
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-semibold" style={{ color: colors.muted }}>
-          Count
-          <select
-            value={count}
-            onChange={(e) => setCount(parseInt(e.target.value, 10))}
-            data-testid="widget-embed-count"
-            className="h-9 px-2 rounded-lg text-sm"
-            style={{
-              backgroundColor: colors.surface,
-              color: colors.onSurface,
-              border: `1px solid ${colors.border}`,
-            }}
-          >
-            <option value={5}>5</option>
-            <option value={10}>10</option>
-            <option value={20}>20</option>
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-semibold" style={{ color: colors.muted }}>
-          Category filter (optional)
-          <input
-            type="text"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            placeholder="e.g. pool_service"
-            data-testid="widget-embed-category"
-            className="h-9 px-2 rounded-lg text-sm"
-            style={{
-              backgroundColor: colors.surface,
-              color: colors.onSurface,
-              border: `1px solid ${colors.border}`,
-            }}
-          />
-        </label>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!isMap}
+          onClick={() => setPreviewMode("list")}
+          className="inline-flex items-center gap-1.5 h-9 px-3 text-sm font-semibold"
+          style={{
+            backgroundColor: !isMap ? "#2563EB" : colors.surface,
+            color: !isMap ? "#FFFFFF" : colors.onSurface,
+            border: 0,
+          }}
+          data-testid="widget-embed-tab-list"
+        >
+          <LayoutList size={14} /> Card List Preview
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={isMap}
+          onClick={() => setPreviewMode("map")}
+          className="inline-flex items-center gap-1.5 h-9 px-3 text-sm font-semibold"
+          style={{
+            backgroundColor: isMap ? "#2563EB" : colors.surface,
+            color: isMap ? "#FFFFFF" : colors.onSurface,
+            border: 0,
+            borderLeft: `1px solid ${colors.border}`,
+          }}
+          data-testid="widget-embed-tab-map"
+        >
+          <MapIcon size={14} /> Map Preview
+        </button>
       </div>
+
+      {/* Controls — hidden in map mode since the map endpoint doesn't
+          take these params (12-month window, unlimited pins). */}
+      {!isMap ? (
+        <div
+          className="rounded-xl p-3 grid grid-cols-1 md:grid-cols-3 gap-3"
+          style={{
+            backgroundColor: colors.surface,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="widget-embed-controls"
+        >
+          <label className="flex flex-col gap-1 text-xs font-semibold" style={{ color: colors.muted }}>
+            Theme
+            <select
+              value={theme}
+              onChange={(e) => setTheme(e.target.value)}
+              data-testid="widget-embed-theme"
+              className="h-9 px-2 rounded-lg text-sm"
+              style={{
+                backgroundColor: colors.surface,
+                color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+            >
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold" style={{ color: colors.muted }}>
+            Count
+            <select
+              value={count}
+              onChange={(e) => setCount(parseInt(e.target.value, 10))}
+              data-testid="widget-embed-count"
+              className="h-9 px-2 rounded-lg text-sm"
+              style={{
+                backgroundColor: colors.surface,
+                color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+            >
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold" style={{ color: colors.muted }}>
+            Category filter (optional)
+            <input
+              type="text"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="e.g. pool_service"
+              data-testid="widget-embed-category"
+              className="h-9 px-2 rounded-lg text-sm"
+              style={{
+                backgroundColor: colors.surface,
+                color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+            />
+          </label>
+        </div>
+      ) : (
+        <div
+          className="rounded-xl p-3 text-xs"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.muted,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="widget-embed-map-info"
+        >
+          Map shows every <strong>approved</strong> check-in in the last
+          12 months. Exact addresses are jittered by ±0.001° to protect
+          customer PII. Includes schema.org LocalBusiness JSON-LD for
+          local-SEO discoverability.
+        </div>
+      )}
 
       {/* Two-panel: preview + snippet */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -194,10 +309,10 @@ export default function WidgetEmbedPage() {
             className="text-xs font-semibold px-3 py-2 flex items-center justify-between"
             style={{ color: colors.muted, borderBottom: `1px solid ${colors.border}` }}
           >
-            <span>Live preview</span>
-            {previewSrc ? (
+            <span>{isMap ? "Map preview" : "Live preview"}</span>
+            {(isMap ? mapPreviewSrc : previewSrc) ? (
               <a
-                href={previewSrc}
+                href={isMap ? mapPreviewSrc : previewSrc}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-1"
@@ -208,9 +323,25 @@ export default function WidgetEmbedPage() {
               </a>
             ) : null}
           </div>
-          {previewSrc ? (
+          {isMap ? (
+            mapPreviewSrc ? (
+              <iframe
+                key={`map-${reloadKey}`}
+                src={mapPreviewSrc}
+                title="Widget map preview"
+                style={{ width: "100%", height: 480, border: 0,
+                          display: "block", backgroundColor: "#F8FAFC" }}
+                data-testid="widget-embed-map-iframe"
+              />
+            ) : (
+              <div className="p-6 text-sm text-center" style={{ color: colors.muted }}
+                    data-testid="widget-embed-noslug">
+                Loading tenant…
+              </div>
+            )
+          ) : previewSrc ? (
             <iframe
-              key={reloadKey}
+              key={`list-${reloadKey}`}
               src={previewSrc}
               title="Widget preview"
               style={{ width: "100%", height: 640, border: 0,
@@ -234,7 +365,7 @@ export default function WidgetEmbedPage() {
         >
           <div className="text-xs font-semibold px-3 py-2"
                 style={{ color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
-            Embed snippet
+            {isMap ? "Map iframe snippet" : "Embed snippet"}
           </div>
           <div className="p-3 space-y-3">
             <pre
@@ -245,31 +376,44 @@ export default function WidgetEmbedPage() {
                 border: `1px solid ${colors.border}`,
                 whiteSpace: "pre",
               }}
-              data-testid="widget-embed-snippet"
+              data-testid={isMap ? "widget-embed-map-snippet" : "widget-embed-snippet"}
             >
-              {snippet || "// waiting for tenant…"}
+              {activeSnippet || "// waiting for tenant…"}
             </pre>
             <button
               type="button"
-              onClick={doCopy}
-              disabled={!snippet}
+              onClick={activeCopyHandler}
+              disabled={!activeSnippet}
               className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-lg text-sm font-semibold text-white"
               style={{
-                backgroundColor: copied ? "#10B981" : "#2563EB",
+                backgroundColor: activeCopiedFlag ? "#10B981" : "#2563EB",
                 border: 0,
-                opacity: snippet ? 1 : 0.6,
-                cursor: snippet ? "pointer" : "not-allowed",
+                opacity: activeSnippet ? 1 : 0.6,
+                cursor: activeSnippet ? "pointer" : "not-allowed",
               }}
-              data-testid="widget-embed-copy"
+              data-testid={isMap ? "widget-embed-copy-map" : "widget-embed-copy"}
             >
-              {copied ? <Check size={14} /> : <Copy size={14} />}
-              {copied ? "Copied to clipboard" : "Copy snippet"}
+              {activeCopiedFlag ? <Check size={14} /> : <Copy size={14} />}
+              {activeCopiedFlag
+                ? "Copied to clipboard"
+                : (isMap ? "Copy map iframe" : "Copy snippet")}
             </button>
             <div className="text-[11px]" style={{ color: colors.muted }}>
-              The widget uses <strong>shadow DOM</strong>, so its styles
-              never leak into the host page. It also injects
-              <strong> schema.org LocalBusiness JSON-LD </strong>
-              into the host page for local-SEO discoverability.
+              {isMap ? (
+                <>
+                  The map iframe uses <strong>Leaflet + OpenStreetMap</strong>
+                  {" "}via CDN. Pins are clustered at low zoom. Coordinates are
+                  jittered by ±0.001° per job — same job renders at the same
+                  spot on every load, but exact addresses cannot be recovered.
+                </>
+              ) : (
+                <>
+                  The widget uses <strong>shadow DOM</strong>, so its styles
+                  never leak into the host page. It also injects
+                  <strong> schema.org LocalBusiness JSON-LD </strong>
+                  into the host page for local-SEO discoverability.
+                </>
+              )}
             </div>
           </div>
         </aside>

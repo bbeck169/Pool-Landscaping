@@ -1610,6 +1610,27 @@ async def update_job(jid: str, body: JobUpdate,
                     "correlation_id": f"{jid}:completed",
                 },
             )
+            # Feb-2026 · Widget-Embed Extension — auto-enqueue a
+            # public_checkins moderation row so the map surface
+            # picks up completed jobs without a tech having to
+            # tap "Submit to public" first. Tenant setting
+            # ``auto_enqueue_public_checkins`` (default True)
+            # gates the behaviour; idempotent by
+            # ``(tenant_id, source_job_id)``.
+            try:
+                from services.public_checkin_enqueue import (
+                    enqueue_public_checkin_for_completed_job,
+                )
+                await enqueue_public_checkin_for_completed_job(
+                    {**job, **update, "id": jid,
+                     "tenant_id": tenant["id"]},
+                    actor_user_id=user.get("id"),
+                )
+            except Exception as _enq_exc:  # noqa: BLE001
+                logger.warning(
+                    "public_checkin auto-enqueue failed: %s",
+                    _enq_exc,
+                )
         # job_cancelled — status flip to cancelled.
         if cur_status == "cancelled" and prev_status != "cancelled":
             await emit_event(

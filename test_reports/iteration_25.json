@@ -1,0 +1,37 @@
+{
+  "summary": "Frontend-only F4 verification (Playwright, 1920x1080, admin@aquaterra.com). All 6 requested flows PASS: (1) /admin/moderation/widget-embed renders widget-embed-title + both tabs; default tab = Card List with active styling (bg #2563EB / white text, aria-selected=true) vs inactive map tab. (2) Card List controls (theme/count/category) visible, widget-embed-iframe loads /api/widget/preview/aquaterra?theme=light&count=10, copy button flips to 'Copied to clipboard' and clipboard actually contains the <script ...> snippet (verified via navigator.clipboard.readText). (3) Map tab: all card-list controls unmount (count=0), widget-embed-map-info banner appears, widget-embed-map-iframe loads /api/public/checkins/aquaterra/map.html, network shows 7 unpkg.com/leaflet* requests + 18 tile.openstreetmap.org tiles, inside-frame checks: window.L=true, 1 .leaflet-container, 1 marker rendered; widget-embed-map-snippet shows the correct <iframe src=.../api/public/checkins/aquaterra/map.html...> and widget-embed-copy-map flips to 'Copied to clipboard'. (4) Toggle back to Card List: map-info removed, controls returned. (5) /admin/moderation/checkins shows exactly the 2 pending demo rows with source badges - Auto badge rgb(219,234,254)/rgb(30,64,175) = #DBEAFE/#1E40AF, Tech badge rgb(220,252,231)/rgb(6,95,70) = #DCFCE7/#065F46, both with Pending pill and data-testid=moderation-item-source-{id}. (6) Detail panel moderation-detail-source shows 'Source · Auto' and 'Source · Tech' respectively. Zero console errors, zero error elements on either page.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/public/checkins/aquaterra (widget feed) vs /api/public/checkins/aquaterra/map.html", "issue": "Data asymmetry: the only approved row ('Filter Cartridge Swap (F4 demo · approved)') has masked_address=None, so the card-list feed skips it (feed returns count=0 -> Card List preview renders 'No recent check-ins yet.') while map.html still renders 1 pin. Demo/seed gap makes the Card List tab look broken in screenshots; also worth aligning the masked_address safety guard between the two public endpoints. No PII leak observed in map.html (coords 33.7099 only, no street number)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "WidgetEmbedPage copy buttons", "issue": "Copy fails silently when navigator.clipboard.writeText is rejected (e.g. permission not granted): _writeClipboard returns false, no state change, no toast/error, and the DOM-textarea fallback is never reached because the clipboard API exists. Reproduced: without granted clipboard permission the label stays 'Copy snippet'/'Copy map iframe'; with permission granted both flip to 'Copied to clipboard'. Suggest falling back to execCommand on rejection and/or toast.error.", "selector": "[data-testid=widget-embed-copy], [data-testid=widget-embed-copy-map]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Widget Embed · Map preview iframe", "issues": ["The in-map header chip ('Pool & Landscaping of Vistancia · 1 recent visits') is clipped at the left edge and overlaps the Leaflet +/- zoom control - shift the chip right or add top padding so both are fully readable."]},
+      {"screen": "Widget Embed · Card List preview", "issues": ["Preview panel is 640px tall but body renders only 'No recent check-ins yet.' (see backend minor issue) - lots of dead whitespace in the demo view."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: backfill masked_address on the approved F4 demo row (or relax/align the feed guard) so the Card List preview tab isn't empty.",
+    "Optional: add an execCommand fallback / error toast when clipboard.writeText is rejected on WidgetEmbedPage.",
+    "Optional: fix map header-chip overlap with Leaflet zoom control inside map.html."
+  ],
+  "critical_code_review_comments": [
+    "ModerationCheckinsPage.jsx is 840 lines - consider extracting the bulk-modal and the Labelled* field components into separate files (>700-line guideline).",
+    "WidgetEmbedPage._writeClipboard swallows all exceptions and returns false; the caller silently no-ops, giving the user no feedback on copy failure."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend-only request)", "frontend": "100% (6/6 requested flows pass)"},
+  "seed_data_creation": "none - used existing F4 demo seed rows (demo-auto-59c68fa1, demo-tech-e176a553)",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@aquaterra.com / password123 (valid, login OK)",
+  "context_for_next_testing_agent": "F4 frontend fully verified. Playwright must call context.grant_permissions(['clipboard-read','clipboard-write'], origin=REACT_APP_BACKEND_URL) before asserting the 'Copied to clipboard' state, otherwise the copy button label never changes (headless clipboard denial, not an app bug per se). Demo row ids: auto=demo-auto-59c68fa1, tech=demo-tech-e176a553; the third approved row only appears under the 'Approved' state filter and has masked_address=None.",
+  "rca_of_the_issue": "Card List preview empty: routers/public_widget.py feed skips rows where masked_address is falsy (line ~159 safety guard); the seeded approved demo row has masked_address=None so count=0. map.html (routers/public_checkins_map.py) has no such guard, hence the 1-pin/0-card mismatch. Copy-state non-change in headless: navigator.clipboard.writeText rejects with NotAllowedError, caught by _writeClipboard which returns false and short-circuits setCopied."
+}

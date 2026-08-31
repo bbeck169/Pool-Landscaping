@@ -1,0 +1,63 @@
+{
+  "summary": "Phase F4 (Widget-Embed Check-ins Map) backend-only verification via curl+jq suite plus one seeded-row shape probe. All 5 requested checks PASS after unblocking the backend, which was hard-down (502 on every route) because the startup integrity check aborted boot on 9 dangling job refs left behind by a previous 'LL-*' test suite. Verified: /api/public/checkins/aquaterra/pins returns 200 with exactly the 5 top-level keys; pin dicts expose ONLY {lat,lng,service_type,completed_at_month_year,area_label} with obfuscated (not raw) coords and zero PII; map.html returns 200 text/html with Leaflet CDN css+js and a valid application/ld+json block with @type=LocalBusiness (areaServed/makesOffer populate correctly once a pin exists); unknown slug returns 404 {'error':'tenant_not_found'}; admin moderation list state=all returns 200 with both demo rows carrying source='auto' and source='tech'; MR0 regression /api/widget.js and /api/widget/preview/aquaterra both 200. Also uncovered a HIGH latent data bug in the auto-enqueue path (non-sparse unique index vs. always-null source_checkin_id) that unit tests cannot catch.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST job-completion -> services/public_checkin_enqueue.py:153",
+        "issue": "Auto-enqueue ALWAYS writes source_checkin_id=None, but public_checkins carries a NON-SPARSE unique index tenant_source_unique on (tenant_id, source_checkin_id) (created in routers/public_checkins.py:212-213). Therefore at most ONE auto-sourced row can ever exist per tenant. The 2nd and every later completed job raises E11000, which the broad except at line 186-192 swallows and reports as reason='duplicate_race' — so auto check-ins are silently dropped forever with no log line and no user-visible error. Reproduced directly against the live DB: inserting a 2nd row with source_checkin_id=None for tenant aquaterra raised DuplicateKeyError because demo row 'demo-auto-59c68fa1' already occupies the null slot. The 28 F4 unit tests miss this because each starts from an empty/mock collection with a single row. Fix: make the index partial/sparse (partialFilterExpression on source_checkin_id $type string) OR set source_checkin_id to the job id for auto rows; and stop classifying E11000 as a benign 'duplicate_race' without logging.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "backend startup (server.py:2933 -> services/startup/integrity_check.py:253)",
+        "issue": "Backend refused to boot (every route 502) because run_startup_integrity_check raises IntegrityCheckFailure with enforce=True on 9 dangling refs. All 9 were leftover TEST artifacts: jobs titled 'LL-reschedule-happy', 'LL-reject', 'LL-shift-*' with fake customer_id='c-x' and no cleanup. A hard fail-to-boot on data drift makes any stray test row a total outage; consider degrading to a CRITICAL log + health flag, or auto-quarantining orphans, instead of exiting. Separately, the 'LL-*' test suite must clean up after itself.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/public/checkins/aquaterra/pins",
+        "issue": "Returns count=0 with real seeded data because both F4 demo rows sit in state='pending_review' (approved_at=None), and _row_is_pinnable requires state=='approved'. The shipped demo data therefore never renders a pin, so the feature looks empty out of the box. Recommend seeding at least one APPROVED demo row so the map/JSON-LD demo is non-trivial."
+      },
+      {
+        "endpoint": "GET /api/public/checkins/{slug}/pins and /map.html",
+        "issue": "Shared 60/min per-IP bucket is consumed by both endpoints plus the existing widget feed. During testing a burst of legitimate curls tripped a non-JSON (rate-limited) response once. Not a defect per spec, but note that map.html itself fetches nothing yet inlines pins, so an iframe embed + a custom pins consumer on the same NAT IP will contend for one budget."
+      },
+      {
+        "endpoint": "GET /api/admin/moderation/public-checkins",
+        "issue": "List returns entire raw rows including lat_raw/lng_raw/raw_address/customer PII. Admin-only so acceptable, but consider an explicit projection rather than returning whole documents."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/f4_curl_checks.sh",
+    "/app/backend/tests/f4_pin_shape_check.py"
+  ],
+  "action_items": [
+    "HIGH: Fix source_checkin_id / tenant_source_unique collision so more than one auto-enqueued public check-in can exist per tenant (make index partial+sparse or set source_checkin_id=job_id for auto rows).",
+    "HIGH: Do not silently swallow E11000 as 'duplicate_race' in public_checkin_enqueue — log it, since it currently masks the bug above.",
+    "CRITICAL (env): Startup integrity check with enforce=True bricks the whole backend on any stray orphan job. Make it non-fatal or self-quarantining; and add cleanup to the 'LL-*' reschedule/shift test suite that created customer_id='c-x' jobs.",
+    "MINOR: Seed at least one state='approved' F4 demo row so /pins and /map.html render a real pin and non-empty JSON-LD areaServed/makesOffer."
+  ],
+  "critical_code_review_comments": [
+    "services/public_checkin_enqueue.py:153 hardcodes source_checkin_id=None while routers/public_checkins.py:212 declares a non-sparse unique index on (tenant_id, source_checkin_id) — mutually incompatible; caps auto rows at one per tenant.",
+    "services/public_checkin_enqueue.py:186-194 uses a bare `except Exception` and maps any duplicate to a success-ish no-op with no log, hiding a systemic write failure.",
+    "public_checkins_map.py correctly projects {'_id': 0} and builds pins via an explicit allow-list (_pin_from_row), which is the right pattern — PII invariants verified empirically, no leakage.",
+    "public_checkins_map.py:101-104 filters the 12-month window with an $or on ISO-string comparison; string comparison works for same-format UTC ISO but will mis-sort rows stored with an offset other than +00:00/Z. Consider normalising on write."
+  ],
+  "updated_files": [
+    "/app/backend/tests/f4_curl_checks.sh",
+    "/app/backend/tests/f4_pin_shape_check.py"
+  ],
+  "success_rate": {"backend": "100% of the 5 requested F4 checks (21/22 assertions; the 1 fail was 'pins array empty' with shipped demo data, then proven correct via a seeded approved row)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "Temporarily inserted one approved public_checkins row id='TEST_f4_pin_shape_row' (tenant aquaterra) laced with decoy PII (customer_name, customer_id, job_id, raw_address, raw lat/lng) to prove the pin allow-list and PII redaction, then deleted it. Verified 0 TEST_ rows remain and total public_checkins is back to 2. Also DELETED 9 pre-existing orphan test jobs (customer_id='c-x', titles 'LL-*') that were blocking backend boot — these were prior-iteration test garbage, not product data.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@aquaterra.com / password123 — login OK, returns access_token; role=admin passes _require_mod.",
+  "context_for_next_testing_agent": "Backend was 502 across all routes at the start of this iteration: startup integrity check (enforce=True) exits the process on dangling refs. If you hit blanket 502s, check `tail /var/log/supervisor/backend.err.log` for IntegrityCheckFailure and look for orphan jobs (e.g. customer_id='c-x'); supervisorctl reports backend RUNNING even though ASGI startup failed, so do not trust supervisor status alone. Backend takes ~60-100s to become healthy after restart due to a long boot seed/migration pipeline. Reusable suites: `bash /app/backend/tests/f4_curl_checks.sh` (5 F4 checks + MR0 widget regression) and `python3 /app/backend/tests/f4_pin_shape_check.py` (seeds an approved row, asserts pin allow-list + PII redaction + JSON-LD, self-cleans). Both /pins and /map.html share a 60 req/min per-IP bucket with the widget feed — space out reruns or you will get non-JSON 429s. The two F4 demo rows are pending_review, so /pins legitimately returns count=0 until something is approved. UNVERIFIED / left to unit tests per request: rate-limit behaviour and the end-to-end auto-enqueue-on-job-completion flow — but note the source_checkin_id unique-index bug reported here means that flow is broken beyond the first row per tenant, so an integration test there is now worth writing.",
+  "rca_of_the_issue": "Two distinct root causes. (1) Total outage: services/startup/integrity_check.py runs with enforce=True and raises IntegrityCheckFailure from the FastAPI lifespan startup hook, so Starlette aborts application startup and uvicorn exits — the ingress then returns 502 for every path including /api/health. The 9 offending rows were jobs with customer_id='c-x' and titles 'LL-reschedule-happy'/'LL-reject'/'LL-shift-*', i.e. fixtures from an earlier test iteration that never cleaned up. Mitigation applied: deleted those 9 test-only jobs and restarted backend; health returned 200 and all F4 endpoints then behaved correctly. (2) Auto-enqueue silent data loss: public_checkin_enqueue always sets source_checkin_id=None while the unique index tenant_source_unique on (tenant_id, source_checkin_id) is declared without sparse/partialFilterExpression. MongoDB indexes null as a real value, so the first auto row per tenant claims the (tenant_id, null) key and every subsequent insert raises E11000; the handler classifies that as reason='duplicate_race' and returns without logging, so completions appear to succeed while no check-in is queued. Reproduction: insert any public_checkins doc for tenant affdfbfa-88b9-4baa-ae45-2ef78531b6e4 omitting source_checkin_id -> DuplicateKeyError against existing demo-auto-59c68fa1. Not caught by the 28 unit tests because they exercise a single row against a fresh collection."
+}

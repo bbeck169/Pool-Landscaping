@@ -13718,3 +13718,31 @@ Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy 
 **Files touched:**
 - Backend: `routers/tenants.py` (add UploadFile import + POST + DELETE endpoints), **new** `tests/test_branding_logo_upload.py`.
 - Frontend: `App.js` (route wire + import), `hooks/useTenantBrand.js` (event listener), **new** `pages/settings/BrandLogoSettings.jsx`, **new** `test/brand-logo-uploader.test.jsx`.
+
+---
+
+## Phase F4 · Feb-2026 — Widget-Embed Check-ins MAP + Admin Moderation (Option A) · SHIPPED
+
+**Scope:** Extend the existing `public_checkins` collection + `/api/widget.js` stack (no duplicate stack) to add a map-based public embed AND surface the `source` discriminator (Auto vs Tech) in the admin moderation queue.
+
+**Backend delivered:**
+- `services/coord_obfuscator.py` — deterministic ±0.001° jitter seeded by job_id (7 unit tests).
+- `services/public_checkin_enqueue.py` — auto-enqueues a `pending_review` row on job completion (`source='auto'`). Hooked from `routers/jobs.py:1617-1625`. Fixed a HIGH latent bug where `source_checkin_id=None` collided with the non-sparse `tenant_source_unique` index (silently dropped every auto row past the first per tenant); now derives `source_checkin_id="auto:{job_id}"` and logs E11000 as WARN.
+- `routers/public_checkins_map.py` — `GET /api/public/checkins/{slug}/pins` (JSON, 60/min per-IP, allow-list projection, zero PII) and `GET /api/public/checkins/{slug}/map.html` (Leaflet + OSM CDN + `<script type="application/ld+json">` LocalBusiness).
+
+**Frontend delivered:**
+- `pages/admin/WidgetEmbedPage.jsx` — dual-preview tabs (Card List / Map) with separate copy-snippet buttons for the `<script>` embed and the `<iframe>` map embed. Testids: `widget-embed-tab-list`, `widget-embed-tab-map`, `widget-embed-copy`, `widget-embed-copy-map`, `widget-embed-map-iframe`, `widget-embed-map-snippet`.
+- `pages/admin/ModerationCheckinsPage.jsx` — source pill (Auto=blue #DBEAFE/#1E40AF, Tech=green #DCFCE7/#065F46) on every list row (`moderation-item-source-{id}`) and detail panel (`moderation-detail-source`).
+
+**Test verification:**
+- Backend F4 units: 31/31 pass (28 shipped + 3 new for the index collision regression).
+- Backend testing_agent (iteration_24): 5/5 curl checks pass; uncovered the HIGH index-collision bug + the CRITICAL startup integrity leftover — both fixed.
+- Frontend testing_agent (iteration_25): 6/6 Playwright flows pass on both pages.
+
+**Detail memory:** `/app/memory/PHASE_F4_WIDGET_MAP.md` (index-collision RCA + fix, screenshots inventory, new TD entries F4-1..F4-4).
+
+**Deferred (per user scope constraint · in queue behind F4):**
+- Schedule Navigate button (P1).
+- TD-13/14/15/19 (from prior phases).
+- New: TD-F4-1 (moderation list projection), TD-F4-2 (rate-limit budget contention), TD-F4-3 (startup integrity should soft-fail), TD-F4-4 (12-month cutoff ISO comparison normalisation).
+
