@@ -34,6 +34,7 @@ import JobTimerCard from "@/src/components/job/JobTimerCard";
 import { isWithinEditWindow, hoursSinceCompletion, EDIT_WINDOW_HOURS } from "@/src/lib/editWindow";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
+import LineItemsSection from "@/src/components/jobs/LineItemsSection";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 // Phase 49.0 — inline styles for the "Open Service Report" CTA. Kept
@@ -74,7 +75,7 @@ export default function JobDetail() {
   const [pendingPhotos, setPendingPhotos] = useState<any[]>([]);
   // Feb-2026 MP2 UI — property info displayed alongside customer.
   const [property, setProperty] = useState<any>(null);
-  const [lineItems, setLineItems] = useState<any[]>([]);
+  // lineItems state removed — LineItemsSection component manages its own data
   const [activeSection, setActiveSection] = useState("overview");
   const online = useOnline();
   // Feb-2026 · Slice 6 — 24h post-completion edit window (mobile).
@@ -115,11 +116,7 @@ export default function JobDetail() {
       } else {
         setProperty(null);
       }
-      // Fetch line items
-      try {
-        const li = await api.get(`/jobs/${id}/line-items`);
-        setLineItems(Array.isArray(li) ? li : []);
-      } catch { setLineItems([]); }
+      // Line items fetching moved to LineItemsSection component
       setPendingPhotos(await pendingForJob(id));
     } catch (e) {
       // Offline — use the single-job cache, then fall back to the cached schedule.
@@ -409,24 +406,9 @@ export default function JobDetail() {
           <Row icon="location-outline" label="Address" value={job.address || "—"} />
           {!isTech ? <Row icon="cash-outline" label="Price" value={money(job.price)} /> : null}
 
-          {/* Line Items section — tech pricing guardrail: techs see only qty + description + service line. NO price/subtotal/tax. */}
-          {lineItems.length > 0 ? (
-            <View style={liStyles.section} testID="job-line-items-section">
-              <Text style={liStyles.heading}>Line Items</Text>
-              {lineItems.map((li: any, i: number) => (
-                <View key={li.id || i} style={liStyles.row} testID={`job-line-item-${i}`}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={liStyles.desc}>{li.description || li.name || "Item"}</Text>
-                    <Text style={liStyles.meta}>
-                      Qty: {li.quantity || 1}{li.category ? ` · ${li.category}` : ""}
-                    </Text>
-                  </View>
-                  {!isTech && li.unit_price != null ? (
-                    <Text style={liStyles.price}>{money(li.unit_price * (li.quantity || 1))}</Text>
-                  ) : null}
-                </View>
-              ))}
-            </View>
+          {/* F7 Line Items CRUD — full editor (admin: price/category/writeback; tech: qty+desc) */}
+          {(isAdmin || isTech) ? (
+            <LineItemsSection jobId={id as string} jobStatus={job.status} />
           ) : null}
 
           <Pressable
@@ -788,13 +770,3 @@ export default function JobDetail() {
     </View>
   );
 }
-
-
-const liStyles = StyleSheet.create({
-  section: { marginVertical: spacing.md, padding: spacing.md, borderRadius: 12, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
-  heading: { fontFamily: themeFont.bold, fontSize: 13, color: colors.onSurfaceSecondary, textTransform: "uppercase", letterSpacing: 1, marginBottom: spacing.sm },
-  row: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
-  desc: { fontFamily: themeFont.medium, fontSize: 14, color: colors.onSurface },
-  meta: { fontFamily: themeFont.regular, fontSize: 12, color: colors.muted, marginTop: 2 },
-  price: { fontFamily: themeFont.semibold, fontSize: 14, color: colors.onSurface, marginLeft: 12 },
-});

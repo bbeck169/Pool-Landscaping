@@ -1,3 +1,16 @@
+## Iteration 50 — F7 Line Items Editor (Mobile Parity)
+- **Commit**: 3fc78ffb0ca3af63944469300b8f65dff2bac9a3
+- **Date**: 2026-08-31
+- **Changes**:
+  - Created LineItemsSection.tsx (1152 LOC) — full CRUD line-items editor with list, add/edit sheet, pricebook picker, category chips, writeback toggle, inline error highlighting, offline banner, totals footer
+  - Created lineItems.ts API layer (108 LOC) — 6 API helpers matching web endpoints
+  - Created 5 test files (536 LOC) — 16 tests covering list/add/edit/error/offline
+  - Modified app/job/[id].tsx — replaced inline read-only line items with new LineItemsSection component
+  - All 16 tests passing, 0 lint warnings, Metro bundled 2212 modules, no regressions
+- **Files modified**: `src/components/jobs/LineItemsSection.tsx` (new), `src/api/lineItems.ts` (new), `app/job/[id].tsx` (modified), 5 test files (new)
+- **Web files referenced**: `frontend/src/pages/jobs/LineItemsSection.jsx` (643 LOC)
+
+
 ## Iteration 49 — Subscriptions CRUD (B4) Validation & Test Fix
 - **Commit**: eca77790c19181a2a0559651d39d1a2b9b86e7fb
 - **Date**: 2026-08-31
