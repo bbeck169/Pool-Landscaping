@@ -56,6 +56,7 @@ import ScheduleJobEditSheet from "@/src/components/schedule/ScheduleJobEditSheet
 import { getStatusBorderColor } from "@/src/utils/scheduleStatus";
 import OnMyWayButton from "@/src/components/schedule/OnMyWayButton";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
+import NavigateJobButton from "@/src/components/schedule/NavigateJobButton";
 import ScheduleMap from "@/src/components/schedule/ScheduleMap";
 // Feb-2026 — Daily Route Map (@rnmapbox/maps). Collapsible per-tech
 // header, numbered pins by route_index, status-colored, tap for
@@ -1082,6 +1083,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             variant="compact"
           />
         ) : null}
+        <NavigateJobButton job={job} />
       </View>
       <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
         <Text style={[gStyles.statusText, { color: pill.fg }]}>{pill.label}</Text>
