@@ -1,0 +1,68 @@
+{
+  "summary": "Backend-only verification of the Feb-2026 notification bundle (24-hr service reminder cron + reschedule event). Ran the 24 pipeline unit tests (all pass) and the combined F1/F2/F3 + bundle regression sweep (81 passed / 1 skipped). Wrote 2 new live-API pytest files (16 tests) against the preview URL + real Mongo covering every scenario in the review request: reschedule audit row (template_key/transition_key/actor/channels), no-change + transition-key idempotency, sms hard opt-out, missing phone, non-scheduled_date PATCH no-op, cron registration via mock scheduler, reminder window pickup + stamp idempotency, and the unresolved-identity 200 path. All requested behaviours verified. Two HIGH-priority defects found outside the happy path: (1) the cron can never register when APP_ENV=production (true in this pod) so the reminder half is dead in prod, and (2) the reschedule hook has no job-status gate so completed/cancelled jobs still notify the customer.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "boot_flags.should_enable_scheduler / server.py:1461 register_service_reminder_cron",
+        "issue": "service_reminder_cron NEVER registers in this pod or in production. should_enable_scheduler() returns `(not is_production()) and _flag('ENABLE_SCHEDULER')`; this pod has APP_ENV=production, so enable_scheduler=False (verified in the live [boot_flags] snapshot log AND zero '[service_reminder_cron] registered' lines in backend logs). scripts/run_scheduler.py forces ENABLE_SCHEDULER=true and its own docstring says the override is 'REQUIRED — even in production', but the AND with `not is_production()` defeats it — verified: APP_ENV=production ENABLE_SCHEDULER=true -> should_enable_scheduler() is False. Net effect: the 24-hour reminder feature (and every other cron) is unreachable in prod. Documented as an xfail test in test_notif_pipeline_live_api.py::test_prod_scheduler_worker_can_enable_cron.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "PUT /api/jobs/{jid} (routers/jobs.py:1362 reschedule hook)",
+        "issue": "No job-status gate. PATCHing scheduled_date on a job with status='completed' or 'cancelled' fires the customer-facing 'your visit has been rescheduled' email + SMS and writes an audit row (verified: audit_rows=1, channels_sent=['sms'] for both statuses). The reminder cron correctly gates on _REMINDER_STATUSES={scheduled,confirmed,pending}; the reschedule path has no equivalent filter. Because APP_ENV=production the comms gate is in prod_bypass, so these are REAL sends.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "fire_reschedule_notification (past-date guard)",
+        "issue": "No past-date guard. Back-dating / data-cleanup of scheduled_date (verified 2020-01-01 -> 2020-02-01) notifies the customer AND silently stamps job.service_reminder_sent_at because hours_until < 24 — which permanently suppresses the legitimate 24-hr reminder if the job is later moved to a real future date."
+      },
+      {
+        "endpoint": "db.notifications_sent_log",
+        "issue": "Only the default _id index exists. The transition-key idempotency read {tenant_id, job_id, template_key, transition_key} is a full COLLSCAN and there is NO unique index, so two concurrent PATCHes of the same transition can both pass the find_one and double-insert/double-notify. Also no TTL/retention on an append-only audit collection."
+      },
+      {
+        "endpoint": "env / comms gate",
+        "issue": "APP_ENV=production is set in the PREVIEW pod, so services/comms/gate.py runs policy=prod_bypass and comms_email_adapter makes real Resend calls from preview (backend log: 'resend send failed: Invalid `to` field ... example.com'). A reschedule PATCH on any real customer in this pod emails them for real. SMS_MOCK_MODE is NOT set in backend/.env — mocking relies solely on the adapter's default '1', one env edit away from live texts out of preview."
+      },
+      {
+        "endpoint": "service_reminder_cron_tick",
+        "issue": "Iterates EVERY tenant document (this DB holds ~700, almost all test junk) each hour, doing a lease write + per-tenant db.jobs scan with the [24,27)h window computed in Python (no scheduled_date range prefilter). Fine at 57 jobs, needs bounding before scale. Also: lease acquisition fails OPEN (except -> continue without a lease), so a scheduler_lease outage leaves only the read-then-write service_reminder_sent_at stamp as duplicate protection."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_notif_pipeline_live_api.py",
+    "/app/backend/tests/test_notif_pipeline_edge_cases.py",
+    "/app/test_reports/pytest/notif_pipeline.xml",
+    "/app/test_reports/pytest/notif_combined.xml",
+    "/app/test_reports/pytest/notif_qa_suite.xml"
+  ],
+  "action_items": [
+    "Fix boot_flags.should_enable_scheduler() so the dedicated scheduler worker can enable crons in production (e.g. honour an explicit ENABLE_SCHEDULER=true override regardless of is_production()); otherwise the 24-hr reminder cron never runs.",
+    "Add a job-status gate to the reschedule hook (skip completed / cancelled / could_not_service) so finished jobs don't notify customers.",
+    "Add a past-date guard: don't notify (and don't stamp service_reminder_sent_at) when the new scheduled_date is already in the past.",
+    "Create a compound UNIQUE index on notifications_sent_log {tenant_id, job_id, template_key, transition_key} plus a retention/TTL policy; today the idempotency check is a COLLSCAN with a write race.",
+    "Decide the intended preview-pod comms posture: APP_ENV=production makes the comms whitelist gate a no-op in preview and real Resend mail leaves the box.",
+    "Optional cleanup: _fire() takes unused email_ctx/email_tpl_key/sms_tpl_key params, the TPL_* constants are dead (audit rows hardcode the template_key), and _fmt_local uses glibc-only %-d/%-I strftime specifiers."
+  ],
+  "critical_code_review_comments": [
+    "The F1 identity_drift branch in _fetch_customer_and_tenant is UNREACHABLE: the query is db.customers.find_one({'id': cid, 'tenant_id': tid}) so cust['id'] can never differ from cid. The 'identity_drift' log line can never be emitted — the guard is a comment, not a control. If defence-in-depth is wanted, resolve the customer by a non-id key (email/_id) and then compare, or drop the claim from the docstring.",
+    "routers/jobs.py reschedule hook AWAITS fire_reschedule_notification inside the request, so the request pays a live Resend round-trip (measured 0.29s here, unbounded on provider latency). The try/except keeps the PATCH at 200, but consider asyncio.create_task / a queue to make it genuinely fire-and-forget.",
+    "fire_reminder_for_job stamps service_reminder_sent_at even when BOTH channels were skipped for transient reasons (e.g. 'email:failed', 'sms:crash'), so a provider outage permanently drops that customer's reminder. Only stamp on terminal skips (opt-out / no address) or record a retry count.",
+    "service_notifications.py is 653 lines and mixes window math, templates, preference logic and dispatch — split templates + preference resolution into separate modules per the >700-line trajectory."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_notif_pipeline_live_api.py",
+    "/app/backend/tests/test_notif_pipeline_edge_cases.py"
+  ],
+  "success_rate": {"backend": "100% of executed assertions on the requested scope (24/24 unit, 81 passed + 1 skipped combined sweep, 15 passed + 1 xfail live-API); 2 HIGH defects found outside the requested happy paths", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "All fixtures TEST_NOTIF_ prefixed (customers TEST_NOTIF_cust_*, jobs TEST_NOTIF_job_*) and deleted in per-test finally blocks. Verified zero TEST_NOTIF residue in customers/jobs/notifications_sent_log after the run; notifications_sent_log is back to 0 documents. No production job's scheduled_date was PATCHed and service_reminder_cron_tick was never run against real tenants at a matching local hour.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@aquaterra.com / password123 (role=admin, used for PUT /api/jobs), mike@aquaterra.com / password123 (pool tech, actor-attribution test)",
+  "context_for_next_testing_agent": "New QA files: backend/tests/test_notif_pipeline_live_api.py (16 tests incl. 1 xfail for the prod scheduler gate) and test_notif_pipeline_edge_cases.py (4 characterisation tests that ASSERT the current — arguably wrong — notify-on-completed/cancelled and notify-on-past-date behaviour; if the developer adds the status/past-date gates these two tests MUST be inverted). Both import helpers from test_notif_pipeline_live_api. Notes: (a) the first HTTPS call to the preview URL cold-starts at ~21s, so login timeouts must be >=60s; (b) email to *@example.com always returns status='failed' (Resend rejects the domain) — use delivered@resend.dev to observe status='sent'; (c) the reminder cron path was exercised via _due_reminder_jobs_for_tenant + fire_reminder_for_job rather than service_reminder_cron_tick(), because a full tick at a matching tenant-local hour would stamp and notify real production jobs 24-27h out; the local-hour gate itself was verified separately (non-matching hour -> scanned_tenants=0).",
+  "rca_of_the_issue": "Issue 1 (cron never registers): boot_flags.should_enable_scheduler() = (not is_production()) and _flag('ENABLE_SCHEDULER'). This pod sets APP_ENV=production in backend/.env, so the term short-circuits to False and server.py's startup block — which contains register_service_reminder_cron(scheduler) — is skipped entirely. scripts/run_scheduler.py sets os.environ['ENABLE_SCHEDULER']='true' before importing server, but that only satisfies the second term. Reproduce: `APP_ENV=production ENABLE_SCHEDULER=true python -c 'import boot_flags; print(boot_flags.snapshot())'` -> enable_scheduler False. Mitigation: give the gate an explicit override (e.g. `if os.environ.get('SCHEDULER_WORKER')=='1': return True`) or drop the is_production() term and rely on ENABLE_SCHEDULER alone (web workers already pass ENABLE_SCHEDULER=false). Issue 2 (terminal-status notify): the hook at routers/jobs.py:1362 only checks that new_sd is non-empty and differs from old_sd; neither the hook nor fire_reschedule_notification inspects job['status'], unlike _due_reminder_jobs_for_tenant which filters on _REMINDER_STATUSES. Reproduce with tests/test_notif_pipeline_edge_cases.py::test_reschedule_on_terminal_status_job."
+}

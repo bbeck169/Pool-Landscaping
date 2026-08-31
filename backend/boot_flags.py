@@ -79,7 +79,17 @@ def should_enable_scheduler() -> bool:
     When ``False``, the ``scheduler`` singleton is still constructed
     (so any module that imports it doesn't crash) — no jobs are
     added and the scheduler is never started.
+
+    Feb-2026 · Notification-bundle audit fix — the dedicated
+    scheduler-worker process (``scripts/run_scheduler.py``) exports
+    ``SCHEDULER_WORKER=1`` so it can honour cron registration EVEN
+    when ``APP_ENV=production``. Web workers keep the flag unset
+    (or ``0``) so no duplicate cron work fires there. Without this
+    override, ``(not is_production())`` shorts the entire gate to
+    False in prod and every cron becomes dead code.
     """
+    if (os.environ.get("SCHEDULER_WORKER") or "").strip() == "1":
+        return _flag("ENABLE_SCHEDULER", "true")
     return (not is_production()) and _flag("ENABLE_SCHEDULER", "true")
 
 

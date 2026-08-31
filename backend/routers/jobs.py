@@ -1361,6 +1361,51 @@ async def update_job(jid: str, body: JobUpdate,
     if update:
         await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": update})
 
+    # Feb-2026 · Service Notifications Pipeline — reschedule event.
+    # Fires customer-facing dual-channel notification when the
+    # ``scheduled_date`` actually changed. Runs as a background
+    # task so the PATCH request doesn't wait on Resend's network
+    # round-trip (measured ~0.3s per send). Any failure inside the
+    # helper is logged but NEVER breaks the PATCH request.
+    try:
+        old_sd = job.get("scheduled_date")
+        new_sd = update.get("scheduled_date")
+        if new_sd and str(new_sd).strip() and str(new_sd).strip() != str(old_sd or "").strip():
+            import asyncio as _resched_asyncio
+            from services.notifications_pipeline.service_notifications import (
+                fire_reschedule_notification,
+            )
+            # Re-read the job so ``fire_reschedule_notification``
+            # sees the POST-update state (relevant for the
+            # short-window reminder-dedup branch, which reads
+            # ``service_reminder_sent_at``).
+            fresh = await db.jobs.find_one(
+                {"id": jid, "tenant_id": tenant["id"]}, {"_id": 0},
+            )
+            _resched_job = fresh or {**job, **update}
+            _resched_actor = user.get("id")
+
+            async def _resched_bg():
+                try:
+                    await fire_reschedule_notification(
+                        job=_resched_job,
+                        old_scheduled_date=old_sd,
+                        new_scheduled_date=new_sd,
+                        actor_user_id=_resched_actor,
+                    )
+                except Exception as _bg_exc:  # noqa: BLE001
+                    logger.warning(
+                        "reschedule notification bg task failed: %s",
+                        _bg_exc,
+                    )
+
+            _resched_asyncio.create_task(_resched_bg())
+    except Exception as _resched_exc:  # noqa: BLE001
+        logger.warning(
+            "reschedule notification scheduling failed: %s",
+            _resched_exc,
+        )
+
     # Feb 2026 · Auto-learn Job Title catalog on update. Bump only
     # when the title actually changed (and is non-empty) so a
     # save-without-change doesn't double-count. Fire-and-forget —

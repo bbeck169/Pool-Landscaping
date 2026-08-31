@@ -144,6 +144,10 @@ async def main() -> int:
         # module's ensure_indexes() also registers a TTL index on
         # data_integrity_scans.expires_at.
         ("data_repair",            "routers.data_repair",                  "ensure_indexes"),
+        # Feb 2026 · Notification Bundle — unique index on
+        # notifications_sent_log so a concurrent PATCH race cannot
+        # double-write the same transition + TTL is separate op.
+        ("notifications_pipeline", "services.notifications_pipeline.service_notifications", "ensure_indexes"),
     ]
     for label, module_path, attr_name in ROUTER_ENSURE_INDEXES:
         try:

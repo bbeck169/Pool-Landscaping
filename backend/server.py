@@ -1458,6 +1458,21 @@ async def _background_seed():
             "cron", hour=2, minute=0,
             id="recurring_job_generator", replace_existing=True)
 
+        # Feb-2026 · Service Notifications Pipeline · 24-hr reminder.
+        # Hourly cron; per-tenant local-hour gate dispatches at 08:00
+        # tenant-local. Duplicate-fire protected by scheduler_lease +
+        # ``jobs.service_reminder_sent_at`` idempotency stamp.
+        try:
+            from services.notifications_pipeline.service_notifications import (
+                register_service_reminder_cron,
+            )
+            register_service_reminder_cron(scheduler)
+        except Exception as _snp_exc:  # noqa: BLE001
+            logger.warning(
+                "[service_reminder_cron] registration failed: %s",
+                _snp_exc,
+            )
+
         # Phase 4B follow-up — Stripe live-key health cron slot,
         # intentionally left empty. The live probe now runs on
         # demand via ``GET /api/settings/integrations/health/stripe``

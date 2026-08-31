@@ -37,6 +37,10 @@ from pathlib import Path
 
 # Force scheduler ON for this process regardless of prod / dev defaults.
 os.environ["ENABLE_SCHEDULER"] = "true"
+# Feb-2026 — mark this process as the dedicated scheduler worker so
+# ``boot_flags.should_enable_scheduler()`` returns True even when
+# ``APP_ENV=production``. See ``boot_flags.py`` for the rationale.
+os.environ["SCHEDULER_WORKER"] = "1"
 
 # Allow ``python -m scripts.run_scheduler`` from /app/backend.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
