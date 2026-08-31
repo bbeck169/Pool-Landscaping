@@ -998,3 +998,22 @@
 - **Note**: Expo prebuild required for actual PaymentSheet native functionality. Web preview uses no-op stubs with graceful "native build required" alert.
 - **Note**: Fixed pre-existing expo-sqlite web wasm bundling issue with db.web.ts shim (was masked by cached Metro bundle)
 
+
+## Iteration 48 — Schedule NavigateJobButton (Mobile Parity)
+- **Commit**: 5a8ae43deb819fb99c211e716a024bd32553b808
+- **Date**: 2026-08-30
+- **Changes**:
+  - Created `src/services/navigation/mapsDeepLink.ts` (84 LOC) — resolveDestination, buildGoogleMapsUrl, openMaps with iOS/Android/Web platform routing
+  - Created `src/components/schedule/NavigateJobButton.tsx` (89 LOC) — Pressable with navigate-outline icon, animated press, disabled toast, testID mirror
+  - Mounted NavigateJobButton in `app/(app)/schedule/calendar.tsx` JobRow action cluster (after CouldNotServiceButton)
+  - Created `__tests__/navigate-job-button.test.tsx` (185 LOC) — 12 tests: helpers + component rendering/behavior
+  - Created `__tests__/mapsDeepLink.test.ts` (117 LOC) — 7 tests: per-platform URL scheme selection
+  - All 19 new tests pass
+  - Full regression: 745/766 (8 pre-existing failures, 0 new)
+  - Web bundle: 2272 modules, clean
+  - Lint clean on all files
+  - `expo-linking` already installed (no new dependencies)
+- **Files modified**: app/(app)/schedule/calendar.tsx (import + mount)
+- **Files created**: 4 new files (475 LOC total)
+- **Web reference**: frontend/src/components/schedule/NavigateJobButton.jsx, frontend/src/test/schedule-navigate-button.test.jsx
+
