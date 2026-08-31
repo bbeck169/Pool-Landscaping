@@ -590,3 +590,63 @@ async def reschedule_job(body: RescheduleRequest,
              "job_id": job["id"]}
 
 
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feb-2026 Enhancement — pending-unassigned-stale admin nudge.
+#
+# Counts jobs in the caller's tenant that are:
+#   * ``status="pending"``
+#   * missing both ``technician_id`` AND ``crew_id``
+#   * ``created_at`` older than ``days`` (default 7)
+#
+# The `/schedule` page renders a dismissible banner when the count
+# is > 0 so dispatchers see stale unassigned work before it rots.
+# Complements F2's ``unassigned_pending_jobs`` scan (which is a
+# super-admin data-repair tool) with an admin-visible nudge.
+# ═══════════════════════════════════════════════════════════════════
+_STALE_MIN_DAYS = 1
+_STALE_MAX_DAYS = 90
+
+
+@router.get("/schedule/unassigned-pending-stale",
+              operation_id="schedule.unassignedPendingStaleCount")
+async def get_unassigned_pending_stale_count(
+    days: int = 7,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return the count of pending jobs unassigned for > ``days`` days.
+
+    Admin / manager / super_admin only. Techs do not see the nudge
+    (dispatch is not their responsibility).
+    """
+    if user.get("role") not in ("admin", "manager", "super_admin"):
+        raise HTTPException(403, "Admin/manager access required")
+    if days < _STALE_MIN_DAYS or days > _STALE_MAX_DAYS:
+        raise HTTPException(400, {"code": "INVALID_DAYS",
+                                    "min": _STALE_MIN_DAYS,
+                                    "max": _STALE_MAX_DAYS})
+
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+    ).isoformat()
+    query = {
+        "tenant_id": tenant["id"],
+        "status": "pending",
+        "created_at": {"$lt": cutoff},
+        # Missing OR null on BOTH assignment fields — a job with a
+        # crew or a technician is not "unassigned" for this purpose.
+        "$and": [
+            {"$or": [{"technician_id": None},
+                        {"technician_id": {"$exists": False}}]},
+            {"$or": [{"crew_id": None},
+                        {"crew_id": {"$exists": False}}]},
+            # Skip soft-deleted jobs — those are already off the
+            # dispatch board.
+            {"$or": [{"deleted_at": None},
+                        {"deleted_at": {"$exists": False}}]},
+        ],
+    }
+    count = await db.jobs.count_documents(query)
+    return {"count": count, "days": days, "cutoff": cutoff}

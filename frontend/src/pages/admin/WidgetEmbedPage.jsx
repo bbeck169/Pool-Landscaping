@@ -2,7 +2,7 @@ import React from "react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
-import { Copy, Check, RefreshCw, ExternalLink, LayoutList, Map as MapIcon } from "lucide-react";
+import { Copy, Check, RefreshCw, ExternalLink, LayoutList, Map as MapIcon, Sparkles, X } from "lucide-react";
 import { useAuth } from "@/auth";
 
 /**
@@ -24,6 +24,54 @@ export default function WidgetEmbedPage() {
   const [copiedMap, setCopiedMap] = React.useState(false);   // map iframe copy
   const [reloadKey, setReloadKey] = React.useState(0);
   const [previewMode, setPreviewMode] = React.useState("list"); // "list" | "map"
+  // Feb-2026 enhancement — F4 SEO onboarding prompt.
+  const [widgetSettings, setWidgetSettings] = React.useState(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await api.get("/tenants/settings/widget-embed");
+        if (!cancelled) setWidgetSettings(s);
+      } catch {
+        if (!cancelled) setWidgetSettings(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const seoPromptVisible = !!widgetSettings?.should_show_seo_prompt;
+
+  const enableAutoEnqueue = async () => {
+    try {
+      const r = await api.patch("/tenants/settings/widget-embed", {
+        auto_enqueue_public_checkins: true,
+      });
+      setWidgetSettings((prev) => ({
+        ...(prev || {}),
+        ...r,
+        should_show_seo_prompt: false,
+      }));
+    } catch (_err) {
+      setWidgetSettings((prev) => ({
+        ...(prev || {}), should_show_seo_prompt: false,
+      }));
+    }
+  };
+
+  const dismissSeoPrompt = async () => {
+    const nowIso = new Date().toISOString();
+    try {
+      await api.patch("/tenants/settings/widget-embed", {
+        widget_embed_seo_prompt_dismissed_at: nowIso,
+      });
+    } catch { /* still hide locally */ }
+    setWidgetSettings((prev) => ({
+      ...(prev || {}),
+      widget_embed_seo_prompt_dismissed_at: nowIso,
+      should_show_seo_prompt: false,
+    }));
+  };
 
   React.useEffect(() => {
     let cancelled = false;
@@ -173,6 +221,55 @@ export default function WidgetEmbedPage() {
           <RefreshCw size={14} /> Reload preview
         </button>
       </div>
+
+      {/* Feb-2026 F4 SEO onboarding prompt — dismissible banner
+          nudging admins to turn on the public map for local-SEO. */}
+      {seoPromptVisible ? (
+        <div
+          className="rounded-xl p-3 flex items-start gap-3"
+          style={{
+            backgroundColor: "#EEF2FF",
+            border: "1px solid #C7D2FE",
+            color: "#3730A3",
+          }}
+          data-testid="widget-embed-seo-prompt"
+          role="region"
+          aria-label="Turn on public map for local SEO"
+        >
+          <Sparkles size={18} className="shrink-0 mt-0.5" />
+          <div className="flex-1 text-sm">
+            <div className="font-semibold mb-0.5">
+              Turn on the public check-ins map for local SEO
+            </div>
+            <div className="text-[13px]">
+              Approved check-ins render with schema.org structured data
+              that search engines can parse. You have recent completed
+              jobs — enabling this makes them work for you.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={enableAutoEnqueue}
+            className="text-xs font-semibold px-3 py-1.5 rounded-md text-white shrink-0"
+            style={{ backgroundColor: "#4338CA", border: 0 }}
+            data-testid="widget-embed-seo-prompt-cta"
+            aria-label="Turn on public map"
+          >
+            Turn on public map
+          </button>
+          <button
+            type="button"
+            onClick={dismissSeoPrompt}
+            className="shrink-0 rounded-md p-1"
+            style={{ background: "transparent", border: 0, color: "#3730A3" }}
+            data-testid="widget-embed-seo-prompt-dismiss"
+            aria-label="Dismiss SEO onboarding prompt"
+            title="Dismiss"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : null}
 
       {/* Preview-mode tab toggle */}
       <div

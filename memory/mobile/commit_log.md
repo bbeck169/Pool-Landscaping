@@ -1,3 +1,15 @@
+## Iteration 49 — Subscriptions CRUD (B4) Validation & Test Fix
+- **Commit**: eca77790c19181a2a0559651d39d1a2b9b86e7fb
+- **Date**: 2026-08-31
+- **Changes**:
+  - Validated fully implemented SubscriptionsSection (List, Create/Edit/Cancel modals, offline handling)
+  - Fixed failing test in subscriptions-mobile-create.test.tsx (timing: waited for price load before submit)
+  - Removed 2 unused imports (ActivityIndicator, api) from SubscriptionsSection.tsx
+  - All 15 subscription tests passing, 0 lint warnings
+- **Files modified**: `__tests__/subscriptions-mobile-create.test.tsx`, `src/components/subscriptions/SubscriptionsSection.tsx`
+- **Web files referenced**: `frontend/src/pages/customers/SubscriptionsPanel.jsx` (confirmed feature parity)
+
+
 ## Iteration 25 — Fix Batch: Header Layout + Next Service Day + Demo Logins
 - **Commit**: a7d0054d3588021bad40d57ca234cbe04e990268
 - **Date**: 2026-07-28

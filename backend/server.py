@@ -2029,6 +2029,32 @@ async def startup():
     except Exception as e:
         logger.warning(f"[phase17] geocode backfill schedule crashed: {e}")
 
+    # Phase F5 · Feb-2026 — one-shot Website-Visitor lead backfill.
+    # Sentinel-guarded (``migration_status.f5_leads_backfill_v1``);
+    # runs at most once per deploy.  Fire-and-forget so boot isn't
+    # blocked — see
+    # ``services/migrations/leads_backfill_from_form_submissions_v1.py``.
+    try:
+        from services.migrations import (
+            leads_backfill_from_form_submissions_v1 as _f5_leads_mig,
+        )
+
+        async def _f5_leads_backfill_task():
+            try:
+                res = await _f5_leads_mig.run_if_needed(db)
+                if res:
+                    logger.info(f"[phaseF5] leads backfill: {res}")
+                else:
+                    logger.info("[phaseF5] leads backfill sentinel already set — skipped")
+            except Exception as _mig_e:      # noqa: BLE001
+                logger.warning(f"[phaseF5] leads backfill crashed: {_mig_e}")
+
+        asyncio.create_task(_f5_leads_backfill_task())
+        logger.info("[phaseF5] leads backfill scheduled (fire-and-forget)")
+    except Exception as e:      # noqa: BLE001
+        logger.warning(f"[phaseF5] leads backfill schedule crashed: {e}")
+
+
     # Feb-2026 · Item 4 — seed the aquaterra AI company profile on
     # first boot so admins have something to edit rather than an empty
     # brain. Idempotent: skips if a company_profile row already exists.

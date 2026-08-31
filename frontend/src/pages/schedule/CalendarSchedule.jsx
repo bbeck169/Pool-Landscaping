@@ -40,6 +40,8 @@ import { useAuth } from "@/auth";
 import OnMyWayButton from "@/components/schedule/OnMyWayButton";
 // Feb-2026 · Schedule polish — per-job "Navigate" deep-link button.
 import NavigateJobButton from "@/components/schedule/NavigateJobButton";
+// Feb-2026 · Schedule enhancement — pending-no-crew admin nudge.
+import PendingNoCrewNudge from "@/components/schedule/PendingNoCrewNudge";
 // Feb-2026 · Phase 1 — Could-Not-Service modal.
 import CouldNotServiceModal from "@/components/schedule/CouldNotServiceModal";
 import { Gate, useCan } from "@/hooks/usePermissions";
@@ -815,6 +817,11 @@ export default function CalendarSchedule() {
           setParam("date", iso);
         }}
       />
+      {/* Feb-2026 enhancement — pending-no-crew admin nudge. Renders
+          for admin / manager / super_admin only; hides when the
+          endpoint reports 0 stale jobs or the user has dismissed
+          it for this session. */}
+      <PendingNoCrewNudge user={user} />
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: colors.onSurface }} data-testid="calendar-title">

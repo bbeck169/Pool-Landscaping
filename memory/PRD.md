@@ -13778,3 +13778,52 @@ Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy 
 3. Price-picker filter + sort.
 4. Mobile B4 subscription parity.
 5. Batched enhancement queue (including the "Turn on public map for local SEO" onboarding prompt from Phase F4).
+
+---
+
+## Phase F5 · Feb-2026 — Lead Extraction Consolidation + Backfill · SHIPPED
+
+**P1 fix:** webform submissions no longer land as empty "Website Visitor" leads. The extractor now covers `first_name`+`last_name` composition, `cell_phone` / `home_phone` / `work_phone` / `mobile_phone`, `description` / `description_of_service_needed` / `service_needed`, plus new lead-schema fields `city`, `state`, `zip`, `company_name`.
+
+**Files:**
+- **new** `backend/services/lead_extraction.py` (~150 LOC — single source of truth for `first_str`, `extract_contact_fields`, `compose_name`, `lead_row_from_form_values`, `WEBSITE_VISITOR_FALLBACK`).
+- **new** `backend/services/migrations/leads_backfill_from_form_submissions_v1.py` (~230 LOC — sentinel-guarded, ±60s window matcher, no-overwrite guard, rate limit 10/s).
+- `backend/routers/marketing.py` — deleted duplicate 26-line `_first_str`+`_lead_row` block, now imports the shared module (thin aliases retained for backwards-compat).
+- `backend/routers/marketing_forms.py` — inline extraction replaced by `extract_contact_fields`; local `_first_str` delegates to shared helper; `_upsert_lead_from_submission` expanded to accept the 6 new F5 fields.
+- `backend/routers/data_repair.py` — added `GET /admin/data-repair/leads/backfill/dry-run` + `POST .../apply` (super_admin, same F2 confirm_token pattern).
+- `backend/server.py` — boot-time fire-and-forget scheduler for `mig.run_if_needed()`.
+- `frontend/src/pages/leads/LeadsDashboardPage.jsx` — company_name subtitle beside lead name; city/state/zip second-line in address cell + drawer.
+
+**Tests (37 new + 5 regression = 42 pass):**
+- `test_lead_extraction_alias_coverage.py` — 15 cases (every alias, whitespace guard, numeric coercion, None-input safety).
+- `test_lead_extraction_single_source_of_truth.py` — 4 cases (import-identity + source-file grep + public API surface lock).
+- `test_lead_extraction_priority.py` — 7 cases (direct beats composed, first alias wins).
+- `test_lead_backfill_dry_run.py` — 5 cases (plan + apply + idempotent + no-match + ambiguous).
+- `test_lead_backfill_no_overwrite.py` — 4 cases (pre-typed email preserved, admin-renamed lead skipped entirely, whitespace-blank treated as empty, sentinel name replaced).
+- `test_lead_schema_new_fields_persisted.py` — 3 cases.
+- Regression: `test_widget_lead_intake_field_capture.py` 5/5 pass.
+
+**Empirical proof — dev DB backfill:**
+- Pre-backfill: lead `d761f65e` = `{name='Website Visitor', phone='', city=None, state=None, zip=None, first_name=None, last_name=None}`.
+- Boot-time migration fired automatically at 2026-08-31T04:33:23 UTC.
+- Post-backfill: `{name='Raw TestLead', first_name='Raw', last_name='TestLead', phone='6025550199', city='Peoria', state='AZ', zip='85383'}`.
+- Sentinel `f5_leads_backfill_v1` written to `migration_status`.
+- Audit event written to `lead_backfill_events` with full before/after snapshot.
+- 0 remaining `name='Website Visitor'` leads in dev DB.
+- Live `GET /admin/data-repair/leads/backfill/dry-run` returns `candidates_total: 0` — repeated runs are no-ops (idempotency confirmed).
+
+**Consolidation confirmation:**
+```python
+>>> from routers import marketing, marketing_forms
+>>> from services.lead_extraction import first_str, lead_row_from_form_values
+>>> marketing._first_str is first_str            # True
+>>> marketing._lead_row_from_form_values is lead_row_from_form_values  # True
+>>> # marketing_forms uses extract_contact_fields directly (identity-asserted by grep test).
+```
+
+**Non-scope:** per-tenant form-field mapping UI (deferred), form builder UI changes (not touched), P19 backfill script (left in-tree but effectively superseded).
+
+**Next in queue:**
+1. Re-capture enhancement-bundle screenshots 2 + 3.
+2. Medium enhancement queue: tenant switcher on logo, multi-stop routing, ArmToDelete retrofit sweep, pricebook drift tile, dead-letter dashboard tile.
+

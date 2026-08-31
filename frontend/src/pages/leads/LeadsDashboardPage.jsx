@@ -281,6 +281,17 @@ export default function LeadsDashboardPage() {
             </div>
             <div className="col-span-2 font-semibold" style={{ color: colors.onSurface }}>
               {l.name || "—"}
+              {/* Phase F5 · Feb-2026 — company_name subtitle when
+                  the form submission carried one. */}
+              {l.company_name ? (
+                <div
+                  className="text-[11px] font-normal"
+                  style={{ color: colors.muted }}
+                  data-testid={`lead-company-${l.id}`}
+                >
+                  {l.company_name}
+                </div>
+              ) : null}
             </div>
             <div className="col-span-2 text-xs" style={{ color: colors.muted }}>
               {l.email && <div>{l.email}</div>}
@@ -293,12 +304,29 @@ export default function LeadsDashboardPage() {
             <div
               className="col-span-2 text-xs truncate"
               style={{ color: colors.muted }}
-              title={l.address || l.service_address || ""}
+              title={[l.address || l.service_address,
+                       [l.city, l.state].filter(Boolean).join(", "),
+                       l.zip].filter(Boolean).join(" · ") || ""}
               data-testid={`lead-address-${l.id}`}
             >
-              {l.address || l.service_address || (
-                <span style={{ opacity: 0.5 }}>—</span>
-              )}
+              {(() => {
+                const line1 = l.address || l.service_address;
+                const csz = [l.city, l.state].filter(Boolean).join(", ");
+                const cszZip = [csz, l.zip].filter(Boolean).join(" ");
+                if (!line1 && !cszZip) {
+                  return <span style={{ opacity: 0.5 }}>—</span>;
+                }
+                return (
+                  <>
+                    {line1 ? <div className="truncate">{line1}</div> : null}
+                    {cszZip ? (
+                      <div className="truncate" style={{ opacity: 0.8 }}>
+                        {cszZip}
+                      </div>
+                    ) : null}
+                  </>
+                );
+              })()}
             </div>
             <div className="col-span-1">
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
@@ -574,6 +602,16 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
               <h2 className="text-xl font-bold" style={{ color: colors.onSurface }}>
                 {lead.name || "Lead"}
               </h2>
+              {/* Phase F5 · Feb-2026 — company_name subtitle. */}
+              {lead.company_name ? (
+                <div
+                  className="text-sm font-semibold"
+                  style={{ color: colors.muted }}
+                  data-testid="lead-company"
+                >
+                  {lead.company_name}
+                </div>
+              ) : null}
               <div className="text-xs" style={{ color: colors.muted }}>
                 {SOURCE_LABEL(lead.source)} · {(lead.created_at || "").slice(0, 10)}
               </div>
@@ -591,6 +629,24 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
                 <b>Service address:</b> {lead.service_address}
               </div>
             )}
+            {/* Phase F5 · Feb-2026 — City/State/Zip line when any
+                of them are populated.  Renders as the single
+                canonical address second line. */}
+            {(lead.city || lead.state || lead.zip) ? (
+              <div data-testid="lead-city-state-zip">
+                <b>{lead.city && lead.state
+                     ? "City / State / Zip:"
+                     : lead.zip
+                     ? "Zip:"
+                     : lead.city
+                     ? "City:"
+                     : "State:"}</b>{" "}
+                {[lead.city, lead.state].filter(Boolean).join(", ")}
+                {lead.zip
+                  ? (lead.city || lead.state ? " " : "") + lead.zip
+                  : ""}
+              </div>
+            ) : null}
             {lead.service_interest && (
               <div data-testid="lead-service-interest">
                 <b>Interested in:</b> {lead.service_interest}

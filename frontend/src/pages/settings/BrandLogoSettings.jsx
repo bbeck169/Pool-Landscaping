@@ -16,6 +16,7 @@
 import React from "react";
 import { toast } from "sonner";
 import { Upload, Trash2, ImageIcon, Loader2, AlertCircle } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 import { api, api_base } from "@/api";
 import { colors } from "@/theme";
 import { invalidateTenantBrand } from "@/hooks/useTenantBrand";
@@ -250,6 +251,42 @@ export default function BrandLogoSettings() {
             )}
           </div>
         </div>
+
+        {/* Feb-2026 enhancement — "Last changed <relative> by <name>"
+            audit line. Renders ONLY when the backend surfaces both
+            ``logo_updated_at`` AND a resolved ``logo_updated_by_name``.
+            Empty tenant / never-uploaded state renders nothing. */}
+        {tenant?.logo_updated_at && tenant?.logo_updated_by_name ? (
+          <div
+            className="text-[11px] flex items-center gap-1"
+            style={{ color: colors.muted }}
+            data-testid="brand-logo-last-changed"
+          >
+            <span>
+              Last changed{" "}
+              <span data-testid="brand-logo-last-changed-relative">
+                {(() => {
+                  try {
+                    return formatDistanceToNow(
+                      new Date(tenant.logo_updated_at),
+                      { addSuffix: true },
+                    );
+                  } catch {
+                    return "recently";
+                  }
+                })()}
+              </span>{" "}
+              by{" "}
+              <span
+                className="font-semibold"
+                style={{ color: colors.onSurface }}
+                data-testid="brand-logo-last-changed-actor"
+              >
+                {tenant.logo_updated_by_name}
+              </span>
+            </span>
+          </div>
+        ) : null}
 
         {/* Guidance */}
         <div className="text-xs" style={{ color: colors.muted }}

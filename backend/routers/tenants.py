@@ -15,6 +15,7 @@ Stage 2 (this file, additive):
 import os
 import time
 import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile, File
@@ -197,6 +198,15 @@ async def current_tenant(request: Request,
         "settings_updated_by": tenant.get("settings_updated_by"),
         "settings_updated_by_name": await _resolve_actor_name(
             tenant.get("settings_updated_by")),
+        # Feb-2026 enhancement — the same audit-stamp pair for the
+        # brand-logo file (populated on POST /tenants/branding/logo).
+        # BrandLogoSettings renders "Last changed <relative> by
+        # <actor>" beneath the preview when both fields are present;
+        # otherwise the line hides entirely.
+        "logo_updated_at": tenant.get("logo_updated_at"),
+        "logo_updated_by": tenant.get("logo_updated_by_user_id"),
+        "logo_updated_by_name": await _resolve_actor_name(
+            tenant.get("logo_updated_by_user_id")),
     }
 
 
@@ -862,6 +872,113 @@ async def patch_own_settings(body: TenantSettingsUpdate,
     await db.tenants.update_one({"id": tid}, {"$set": upd})
     doc = await db.tenants.find_one({"id": tid}, {"_id": 0})
     return doc
+
+
+# ─── Feb-2026 · F4 Enhancement — Widget-Embed tenant settings ─────
+class WidgetEmbedSettingsUpdate(BaseModel):
+    """Fields settable via ``PATCH /api/tenants/settings/widget-embed``.
+
+    Both fields land inside the ``tenant.settings`` sub-document
+    because ``services/public_checkin_enqueue.py`` reads the flag
+    from ``tenant.settings.auto_enqueue_public_checkins`` (see F4
+    ship).
+
+      * ``auto_enqueue_public_checkins`` — flip the F4 auto-enqueue.
+      * ``widget_embed_seo_prompt_dismissed_at`` — ISO timestamp
+        stamped when an admin dismisses the "Turn on public map for
+        local SEO" onboarding banner so it does not reappear.
+    """
+    auto_enqueue_public_checkins: Optional[bool] = None
+    widget_embed_seo_prompt_dismissed_at: Optional[str] = None
+
+
+@router.get("/tenants/settings/widget-embed", tags=["tenants"],
+              operation_id="tenants.readWidgetEmbedSettings")
+async def get_widget_embed_settings(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Read the F4 widget-embed tenant settings PLUS a
+    server-derived ``should_show_seo_prompt`` flag so the admin UI
+    doesn't have to run its own eligibility query.
+
+    ``should_show_seo_prompt`` is TRUE when:
+      * ``auto_enqueue_public_checkins`` is falsy (or unset), AND
+      * the tenant has ≥ 1 completed job in the last 90 days, AND
+      * ``widget_embed_seo_prompt_dismissed_at`` is null / missing.
+    """
+    if user.get("role") not in ("admin", "manager", "super_admin"):
+        raise HTTPException(403, "Admin/manager access required")
+    settings = (tenant.get("settings") or {})
+    auto_on = bool(settings.get("auto_enqueue_public_checkins"))
+    dismissed_at = settings.get("widget_embed_seo_prompt_dismissed_at")
+
+    # Only run the completed-jobs probe if we might actually show
+    # the prompt — otherwise the flag is definitely false and the
+    # query is a waste.
+    has_recent = False
+    if not auto_on and not dismissed_at:
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=90)
+        ).isoformat()
+        probe = await db.jobs.find_one({
+            "tenant_id": tenant["id"],
+            "status": "completed",
+            "completed_at": {"$gte": cutoff},
+        }, {"_id": 0, "id": 1})
+        has_recent = probe is not None
+
+    return {
+        "auto_enqueue_public_checkins": auto_on,
+        "widget_embed_seo_prompt_dismissed_at": dismissed_at,
+        "has_recent_completed_jobs": has_recent,
+        "should_show_seo_prompt": (
+            not auto_on and not dismissed_at and has_recent
+        ),
+    }
+
+
+
+@router.patch("/tenants/settings/widget-embed", tags=["tenants"],
+                operation_id="tenants.updateWidgetEmbedSettings")
+async def patch_widget_embed_settings(
+    body: WidgetEmbedSettingsUpdate,
+    user: dict = Depends(get_current_user),
+):
+    """Admin-only PATCH for the F4 widget-embed tenant settings.
+
+    Tenant-scoped: the target tenant is ALWAYS the caller's own
+    tenant id — the endpoint cannot be aimed at another tenant even
+    with a forged body.
+    """
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin access required")
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+    upd = body.dict(exclude_unset=True)
+    if not upd:
+        raise HTTPException(400, "Nothing to update")
+    # Nest under ``settings.*`` so the F4 enqueue helper sees the flag.
+    set_ops = {f"settings.{k}": v for k, v in upd.items()}
+    set_ops["settings_updated_at"] = now_iso()
+    set_ops["settings_updated_by"] = user.get("id")
+    await db.tenants.update_one({"id": tid}, {"$set": set_ops})
+    doc = await db.tenants.find_one(
+        {"id": tid}, {"_id": 0, "settings": 1,
+                       "settings_updated_at": 1,
+                       "settings_updated_by": 1},
+    )
+    settings = (doc or {}).get("settings") or {}
+    return {
+        "auto_enqueue_public_checkins":
+            settings.get("auto_enqueue_public_checkins"),
+        "widget_embed_seo_prompt_dismissed_at":
+            settings.get("widget_embed_seo_prompt_dismissed_at"),
+        "settings_updated_at": (doc or {}).get("settings_updated_at"),
+        "settings_updated_by": (doc or {}).get("settings_updated_by"),
+    }
+
 
 
 # ─── Feb-2026 — Tenant HQ geocode ─────────────────────────────────────────

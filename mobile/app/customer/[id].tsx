@@ -20,6 +20,7 @@ import DemoAccountToggle from "@/src/components/comms/DemoAccountToggle";
 // Feb-2026 · P29b — Mobile parity for the web mute picker.
 import MuteControlSheet from "@/src/components/customers/MuteControlSheet";
 import CustomerDeleteModal from "@/src/components/customers/CustomerDeleteModal";
+import SubscriptionsSection from "@/src/components/subscriptions/SubscriptionsSection";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function CustomerDetail() {
@@ -473,6 +474,13 @@ export default function CustomerDetail() {
                 <Text style={styles.resetDefaultText}>Reset to tenant default</Text>
               </Pressable>
             )}
+          </View>
+        ) : null}
+
+        {/* B4 — Subscriptions CRUD */}
+        {isAdmin ? (
+          <View style={{ marginTop: spacing.xl }}>
+            <SubscriptionsSection customerId={id} canWrite={isAdmin} />
           </View>
         ) : null}
 

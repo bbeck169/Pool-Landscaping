@@ -144,3 +144,43 @@ def test_list_prices_sorts_by_product_then_interval_then_amount(mixed_price_stub
         "price_alpha_yr",
         "price_zed_wk",
     ]
+
+
+# ── Enhancement · Feb-2026 — legacy Stripe interval fallback ────
+@pytest.fixture
+def price_with_null_interval_stub(monkeypatch):
+    """Regression against a legacy Stripe price whose ``recurring``
+    exists but carries ``interval: None`` (or an interval string the
+    picker doesn't know). ``_key`` must sort those to the end via
+    the ``.get(interval, 99)`` fallback, NOT raise KeyError."""
+    def _fake_price_list(**_kw):
+        return {"data": [
+            {"id": "price_normal", "type": "recurring",
+             "unit_amount": 1000, "currency": "usd",
+             "recurring": {"interval": "month"},
+             "product": {"id": "prod_A", "name": "Alpha", "active": True}},
+            {"id": "price_null_iv", "type": "recurring",
+             "unit_amount": 2000, "currency": "usd",
+             "recurring": {"interval": None},
+             "product": {"id": "prod_A", "name": "Alpha", "active": True}},
+            {"id": "price_weird_iv", "type": "recurring",
+             "unit_amount": 3000, "currency": "usd",
+             "recurring": {"interval": "quarter"},   # not in the rank map
+             "product": {"id": "prod_A", "name": "Alpha", "active": True}},
+        ]}
+    monkeypatch.setattr(sc._stripe.Price, "list", _fake_price_list)
+    monkeypatch.setattr(sc, "_init_api_key", lambda: None)
+    monkeypatch.setattr(sub_svc, "_init_api_key", lambda: None)
+
+
+def test_list_prices_null_interval_sorts_last_without_raising(
+    price_with_null_interval_stub,
+):
+    rows = asyncio.get_event_loop().run_until_complete(sub_svc.list_prices())
+    ids = [r["id"] for r in rows]
+    # normal (rank 0) first; null-interval and unknown-interval both
+    # get rank 99 and sort together at the end — ordered internally
+    # by unit_amount ascending (2000 before 3000).
+    assert ids[0] == "price_normal"
+    assert set(ids[1:]) == {"price_null_iv", "price_weird_iv"}
+    assert ids.index("price_null_iv") < ids.index("price_weird_iv")

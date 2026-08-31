@@ -467,19 +467,16 @@ async def submit_widget_form(fid: str, body: FormSubmit,
     }
     await db.form_submissions.insert_one(sub_doc)
 
-    # Contact extraction from submitted answers.
-    name = _first_str(payload, ["name", "full_name", "fullname"])
-    email = _first_str(payload, ["email", "email_address"])
-    phone = _first_str(payload, ["phone", "phone_number", "tel", "mobile"])
-    notes = _first_str(payload, ["message", "notes", "details", "comments"])
-    address = _first_str(payload, ["address", "street_address", "service_address"])
-    # Feb-2026 · Widget lead persistence — capture service interest too
-    # so the widget path lands the same field set the legacy public
-    # form path (routers/marketing.py) already persists.
-    service_interest = _first_str(
-        payload,
-        ["service_interest", "requested_service", "service", "interest"],
-    )
+    # Contact extraction from submitted answers — shared with the
+    # legacy public-form path via ``services/lead_extraction``.
+    from services.lead_extraction import extract_contact_fields
+    _extracted = extract_contact_fields(payload)
+    name = _extracted["name"]
+    email = _extracted["email"]
+    phone = _extracted["phone"]
+    notes = _extracted["message"]
+    address = _extracted["address"]
+    service_interest = _extracted["service_interest"]
 
     # ── Post-submit orchestration ────────────────────────────────────
     submit_cfg = form.get("submit_config") or {}
@@ -492,6 +489,12 @@ async def submit_widget_form(fid: str, body: FormSubmit,
             tenant_id=tenant["id"], form=form, submission_id=sub_id,
             name=name, email=email, phone=phone, notes=notes,
             address=address, service_interest=service_interest,
+            first_name=_extracted["first_name"],
+            last_name=_extracted["last_name"],
+            city=_extracted["city"],
+            state=_extracted["state"],
+            zip=_extracted["zip"],
+            company_name=_extracted["company_name"],
             page_url=body.page_url,
         )
         # Feb-2026 · P18 — dispatch tenant-configured lead alerts to
@@ -624,6 +627,14 @@ async def _upsert_lead_from_submission(
     notes: Optional[str], page_url: Optional[str],
     address: Optional[str] = None,
     service_interest: Optional[str] = None,
+    # ── Phase F5 · Feb-2026 — expanded schema fields.  All optional
+    #     so callers that pre-date F5 keep working.
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    city: Optional[str] = None,
+    state: Optional[str] = None,
+    zip: Optional[str] = None,        # noqa: A002 — matches lead-doc key
+    company_name: Optional[str] = None,
 ) -> Optional[str]:
     if not (email or phone):
         return None
@@ -653,6 +664,13 @@ async def _upsert_lead_from_submission(
         "address": address or "",
         "service_address": address or "",
         "service_interest": service_interest,
+        # ── Phase F5 fields ─────────────────────────────────────
+        "first_name": first_name or "",
+        "last_name": last_name or "",
+        "city": city or "",
+        "state": state or "",
+        "zip": zip or "",
+        "company_name": company_name or "",
         "source": f"form:{form.get('slug') or form.get('id')}",
         "status": "new",
         "notes": (notes or "")[:500],
@@ -841,11 +859,11 @@ async def _enrol_in_sequence(
 
 
 def _first_str(d: Dict[str, Any], keys: List[str]) -> Optional[str]:
-    for k in keys:
-        v = d.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    return None
+    # Phase F5 · Feb-2026 — kept for local uses (Slice L.b multipart
+    # path only). Delegates to the shared helper so alias + whitespace
+    # behaviour stays consistent across both intake paths.
+    from services.lead_extraction import first_str as _shared_first_str
+    return _shared_first_str(d, keys)
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -524,3 +524,75 @@ async def data_repair_history(
             "tenant_id": row.get("tenant_id"),
         })
     return {"runs": list(grouped.values()), "row_count": len(rows)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase F5 · Feb-2026 — Leads backfill (Website Visitor → real fields)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Companion to F2 above.  Scans ``db.leads`` for empty rows produced
+# by pre-F5 form submissions, matches them to their preserved
+# ``form_submissions`` row, and re-projects the raw ``values`` dict
+# through the shared ``services/lead_extraction`` module.
+#
+# Same confirm_token / scan_timestamp pattern as F2 above.
+# ═══════════════════════════════════════════════════════════════════
+
+
+@router.get("/admin/data-repair/leads/backfill/dry-run")
+async def leads_backfill_dry_run(
+    _user: dict = Depends(require_super_admin),
+):
+    """Read-only scan of ``Website Visitor`` / empty leads that
+    could be repaired from their linked ``form_submissions`` row."""
+    from services.migrations import leads_backfill_from_form_submissions_v1 as mig
+    plan = await mig.plan(db)
+
+    confirm_token = new_id()
+    scan_timestamp = now_iso()
+    await db.data_integrity_scans.insert_one({
+        "confirm_token": confirm_token,
+        "scan_timestamp": scan_timestamp,
+        "scope": "leads_backfill_v1",
+        "candidates_total": plan["candidates_total"],
+        "would_change": plan["would_change"],
+        "samples": plan["samples"],
+        "created_at": scan_timestamp,
+    })
+    return {
+        "scope": "leads_backfill_v1",
+        "confirm_token": confirm_token,
+        "scan_timestamp": scan_timestamp,
+        "candidates_total": plan["candidates_total"],
+        "would_change": plan["would_change"],
+        "samples": plan["samples"],
+    }
+
+
+class LeadsBackfillApplyRequest(BaseModel):
+    confirm_token: str = Field(..., min_length=8, max_length=100)
+    dry_run_scan_timestamp: str = Field(..., min_length=10)
+
+
+@router.post("/admin/data-repair/leads/backfill/apply")
+async def leads_backfill_apply(
+    body: LeadsBackfillApplyRequest = Body(...),
+    user: dict = Depends(require_super_admin),
+):
+    scan = await db.data_integrity_scans.find_one(
+        {"confirm_token": body.confirm_token,
+         "scope": "leads_backfill_v1"},
+        {"_id": 0},
+    )
+    if not scan:
+        raise HTTPException(400, "unknown or expired confirm_token")
+    if scan.get("scan_timestamp") != body.dry_run_scan_timestamp:
+        raise HTTPException(400, "scan_timestamp mismatch")
+
+    from services.migrations import leads_backfill_from_form_submissions_v1 as mig
+    result = await mig.apply_backfill(db, actor_id=user.get("id"))
+    return {
+        "scope": "leads_backfill_v1",
+        "run_id": body.confirm_token,
+        **result,
+    }
