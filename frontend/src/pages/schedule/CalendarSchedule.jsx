@@ -403,6 +403,13 @@ export default function CalendarSchedule() {
   const [techId, setTechId] = useState(params.get("technician_id") || "");
   const [status, setStatus] = useState(params.get("status") || "");
   const [service, setService] = useState(params.get("service") || "");
+  // Phase F6a · Feb-2026 — crew filter (WEB). Crew id → derives the
+  // effective set of techs whose jobs render on the schedule; when
+  // set, the tech dropdown becomes read-only (shows the crew's
+  // members as chips) so operators can't accidentally narrow past
+  // the crew scope.  Crew list is fetched once on mount.
+  const [crewId, setCrewId] = useState(params.get("crew") || "");
+  const [crews, setCrews] = useState([]);
 
   const setParam = (k, v) => {
     const next = new URLSearchParams(params);
@@ -443,12 +450,15 @@ export default function CalendarSchedule() {
       const focus = date;
       const start = format(addDays(focus, -30), "yyyy-MM-dd");
       const end   = format(addDays(focus,  60), "yyyy-MM-dd");
-      const [j, t] = await Promise.all([
-        api.get(`/jobs?start=${start}&end=${end}`),
+      const [j, t, cr] = await Promise.all([
+        api.get(`/jobs?start=${start}&end=${end}${crewId ? `&crew_id=${encodeURIComponent(crewId)}` : ""}`),
         api.get("/technicians").catch(() => []),
+        // Phase F6a · Feb-2026 — crew list for the "All crews" dropdown.
+        api.get("/crews").catch(() => []),
       ]);
       setRawJobs(Array.isArray(j) ? j : (j.items || j.data || []));
       setTechs(Array.isArray(t) ? t : (t.items || []));
+      setCrews(Array.isArray(cr) ? cr : (cr.items || []));
       // Feb 2026 · Task B — stamp the fetched window so subsequent
       // in-window date navigation can skip the refetch above.
       fetchedRangeRef.current = { startISO: start, endISO: end };
@@ -461,11 +471,37 @@ export default function CalendarSchedule() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load({ force: false }); }, [date]);
+  // Phase F6a · Feb-2026 — crew changes bypass the cache-window
+  // guard (server-side filter is different, so we must re-fetch).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load({ force: true }); }, [crewId]);
+
+  // Phase F6a · Feb-2026 — resolved tech-id set for the currently
+  // selected crew (empty when no crew filter is active).  Server
+  // already filters `crew_id == X OR technician_id IN crew.tech_ids`
+  // via the `?crew_id=` query; we still compute this on the client
+  // so the tech dropdown can display the crew's members as chips
+  // and the client-side tech filter respects the crew scope.
+  const crewMemberIds = useMemo(() => {
+    if (!crewId) return null;
+    const c = crews.find((x) => x.id === crewId);
+    return c ? (c.tech_ids || []) : [];
+  }, [crewId, crews]);
 
   const filteredJobs = useMemo(() => {
     const ql = q.trim().toLowerCase();
     return rawJobs.filter((j) => {
-      if (techId && j.technician_id !== techId) return false;
+      // Phase F6a · Crew filter overrides the tech dropdown when
+      // active — the server already scoped by crew, but a stale
+      // page (or a broadening race) shouldn't render extra rows.
+      if (crewId && crewMemberIds && crewMemberIds.length > 0) {
+        const jobBelongsToCrew =
+          j.crew_id === crewId ||
+          crewMemberIds.includes(j.technician_id);
+        if (!jobBelongsToCrew) return false;
+      } else if (techId && j.technician_id !== techId) {
+        return false;
+      }
       if (status && j.status !== status) return false;
       if (service && (j.service_type || "").toLowerCase() !== service.toLowerCase()) return false;
       if (ql) {
@@ -474,7 +510,7 @@ export default function CalendarSchedule() {
       }
       return true;
     });
-  }, [rawJobs, q, techId, status, service]);
+  }, [rawJobs, q, techId, status, service, crewId, crewMemberIds]);
 
   // Phase 21 · Feb 2026 · Addition B — build the tech-id → color map
   // from the techs list. Techs without a ``display_color_hex`` get
@@ -534,7 +570,12 @@ export default function CalendarSchedule() {
 
   const clearFilters = () => {
     setQ(""); setTechId(""); setStatus(""); setService("");
-    ["q", "technician_id", "status", "service"].forEach((k) => setParam(k, ""));
+    setCrewId("");
+    setParam("q", "");
+    setParam("technician_id", "");
+    setParam("status", "");
+    setParam("service", "");
+    setParam("crew", "");
   };
 
   const onSelectSlot = (slot) => {
@@ -1013,11 +1054,40 @@ export default function CalendarSchedule() {
           onChange={(e) => { setTechId(e.target.value); setParam("technician_id", e.target.value); }}
           data-testid="calendar-filter-tech"
           className="text-sm rounded-lg px-2 py-1.5"
-          style={{ background: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+          disabled={!!crewId}
+          style={{ background: colors.surface,
+                   border: `1px solid ${colors.border}`,
+                   color: crewId ? colors.muted : colors.onSurface,
+                   opacity: crewId ? 0.55 : 1,
+                   cursor: crewId ? "not-allowed" : "pointer" }}
+          title={crewId
+            ? "Techs are locked to the selected crew — clear the crew filter to change"
+            : undefined}
         >
-          <option value="">All techs</option>
+          <option value="">{crewId ? "Techs (from crew)" : "All techs"}</option>
           {techs.map((t) => (
             <option key={t.id} value={t.user_id || t.id}>{t.name || t.email}</option>
+          ))}
+        </select>
+
+        {/* Phase F6a · Feb-2026 — "All crews" filter (WEB only). Populates
+            from GET /api/crews and adds a `crew_id` param to the schedule
+            query. When set, the tech dropdown above is disabled and the
+            crew's members render as chips (see block below). */}
+        <select
+          value={crewId}
+          onChange={(e) => { setCrewId(e.target.value); setParam("crew", e.target.value); }}
+          data-testid="calendar-filter-crew"
+          className="text-sm rounded-lg px-2 py-1.5"
+          style={{ background: colors.surface,
+                   border: `1px solid ${colors.border}`,
+                   color: colors.onSurface }}
+        >
+          <option value="">All crews</option>
+          {crews.slice().sort((a, b) =>
+            (a.name || "").localeCompare(b.name || "")
+          ).map((c) => (
+            <option key={c.id} value={c.id}>{c.name || "Unnamed crew"}</option>
           ))}
         </select>
 
@@ -1045,7 +1115,7 @@ export default function CalendarSchedule() {
           ))}
         </select>
 
-        {(q || techId || status || service) ? (
+        {(q || techId || status || service || crewId) ? (
           <button
             onClick={clearFilters}
             data-testid="calendar-filter-clear"
@@ -1056,6 +1126,37 @@ export default function CalendarSchedule() {
           </button>
         ) : null}
       </div>
+
+      {/* Phase F6a · Feb-2026 — crew-member chips row.  Renders only
+          when a crew filter is active; shows the crew's members so
+          operators see WHY the tech dropdown just got locked. */}
+      {crewId && crewMemberIds && crewMemberIds.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 mb-3"
+             data-testid="calendar-crew-chips">
+          <span className="text-xs font-semibold uppercase tracking-wide"
+                style={{ color: colors.muted }}>
+            Techs (from crew)
+          </span>
+          {crewMemberIds.map((tid) => {
+            const t = techs.find(
+              (x) => (x.user_id || x.id) === tid || x.id === tid,
+            );
+            const name = t?.name || t?.email || tid;
+            return (
+              <span
+                key={tid}
+                className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold"
+                style={{ background: colors.surfaceSecondary,
+                         color: colors.onSurface,
+                         border: `1px solid ${colors.border}` }}
+                data-testid={`calendar-crew-chip-${tid}`}
+              >
+                {name}
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
 
       {/* Custom-range preset row */}
       <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="calendar-presets">

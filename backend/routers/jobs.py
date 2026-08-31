@@ -446,11 +446,47 @@ async def list_jobs(
     # a foreign crew's roster via this filter.
     if crew_id:
         crew_role = (user.get("role") or "").lower()
-        if crew_role not in {"admin", "super_admin", "owner", "manager"}:
+        # Phase F6a · Feb-2026 — customer role can never crew-filter.
+        if crew_role == "customer":
             raise HTTPException(
-                403, "Only admin-equivalent roles may filter by crew_id",
+                403, "customer role may not filter by crew_id",
             )
-        q["crew_id"] = crew_id
+        # Phase F6a · Feb-2026 — resolve the crew (tenant-scoped) so
+        # we can:
+        #   (a) fail fast with 404 on cross-tenant / missing crews,
+        #   (b) 403 a non-admin tech who isn't a member,
+        #   (c) expand the filter to ``crew_id == X OR technician_id
+        #       IN crew.tech_ids`` so ad-hoc individual assignments
+        #       to crew members are also captured.
+        crew_row = await db.crews.find_one(
+            {"id": crew_id, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "tech_ids": 1, "name": 1},
+        )
+        if not crew_row:
+            raise HTTPException(404, "Crew not found")
+        member_ids = list(crew_row.get("tech_ids") or [])
+        if crew_role not in {"admin", "super_admin", "owner", "manager"}:
+            # tech-level — must be a member of the crew.
+            tech_pk = user.get("id")
+            # Techs might identify by their ``technicians`` row id too.
+            tech_alt = user.get("technician_id")
+            if tech_pk not in member_ids and (
+                tech_alt is None or tech_alt not in member_ids
+            ):
+                raise HTTPException(
+                    403, "Only crew members may filter by this crew_id",
+                )
+        crew_or = [{"crew_id": crew_id}]
+        if member_ids:
+            crew_or.append({"technician_id": {"$in": member_ids}})
+        # Compose with any existing ``$or`` (soft-delete gate or the
+        # tech-in-crew widening from scope_jobs_query) via ``$and``.
+        if "$or" in q:
+            q.setdefault("$and", [])
+            q["$and"].append({"$or": q.pop("$or")})
+            q["$and"].append({"$or": crew_or})
+        else:
+            q["$or"] = crew_or
     # Feb-2026 · D2-hotfix — schedule reorder read-path.  The previous
     # ``.sort([("scheduled_date", 1), ("route_index", 1), ("created_at",
     # 1)])`` sorted by the FULL ``scheduled_date`` string as primary,
