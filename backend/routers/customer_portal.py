@@ -622,19 +622,39 @@ async def create_service_request(
 
     cust = await db.customers.find_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
-    ) or {}
-    customer_name = user.get("name") or cust.get("name") or "Customer"
+    )
+    # Feb-2026 · Phase F1 (P0-A) — SMS crosswire hardening.
+    # ``customer_name`` and ``customer_phone`` in the outgoing SMS
+    # MUST come from the customer row addressed by ``cid`` (which is
+    # ``_require_customer(user)`` → ``user['customer_id']``). Any
+    # drift between the session's ``customer_id`` and the actual
+    # customer row is an internal invariant violation (bad token,
+    # tenant leak, or seed corruption) — refuse to send instead of
+    # broadcasting a mislabelled SMS to the ops line. 500 (not 400)
+    # because the CLIENT did nothing wrong.
+    if not cust:
+        raise HTTPException(404, "Customer profile not found")
+    if user.get("customer_id") and user["customer_id"] != cust.get("id"):
+        logger.error(
+            "service_request identity_drift session_customer_id=%s "
+            "row_customer_id=%s tenant=%s",
+            user.get("customer_id"), cust.get("id"), tenant["id"],
+        )
+        raise HTTPException(500, "Customer identity mismatch")
+    # Strict single-source resolution — no fallbacks to ``user.*``.
+    # Historically ``customer_name`` fell back to ``user.get("name")``
+    # first, which meant a stale session paired with a fresh customer
+    # row would ship the SMS with the wrong name attached to the
+    # right phone (crosswire). Reading strictly from ``cust`` closes
+    # that gap and ties the SMS identity to the customer row of
+    # record for every request.
+    customer_name = cust.get("name") or "Customer"
     customer_phone = (
         cust.get("phone")
         or cust.get("primary_phone")
-        or user.get("phone")
         or ""
     )
-    customer_email = (
-        cust.get("email")
-        or user.get("email")
-        or ""
-    )
+    customer_email = cust.get("email") or ""
     address = (
         cust.get("address")
         or cust.get("street_address")

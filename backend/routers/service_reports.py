@@ -19,6 +19,8 @@ from pydantic import BaseModel
 from config import db, logger
 from utils import now_iso, new_id, get_current_user, require_admin
 from routers.tenants import get_current_tenant
+# Feb-2026 · Phase F1 — crew-aware tech authorization helper.
+from services.authz import is_tech_authorized_on_job
 from services.chemistry import classify_reading, classify_readings
 from services.water_bodies import (
     BODY_TYPE_LABELS,
@@ -321,16 +323,22 @@ async def _bootstrap_report(tenant_id: str, job: dict, tech_id: str) -> dict:
 
 
 async def _authorize_report(job: dict, user: dict) -> str:
-    """Returns the tech_id whose report should be scoped."""
+    """Returns the tech_id whose report should be scoped.
+
+    Feb-2026 · Phase F1 — technicians on the assigned crew (but not
+    the direct ``technician_id`` on the row) are now authorized via
+    ``is_tech_authorized_on_job``. Previously crew-only jobs
+    returned 403 for every crew member.
+    """
     role = user.get("role")
     if role == "customer":
         raise HTTPException(403, "Not allowed")
     if role == "technician":
-        # The `jobs.technician_id` field may point at either the user row (older
-        # seeds) or the technicians-table row (newer seeds). Match either.
-        assigned = job.get("technician_id")
-        if assigned not in (user.get("id"), user.get("technician_id")):
+        if not await is_tech_authorized_on_job(user, job, db, job.get("tenant_id")):
             raise HTTPException(403, "Not your job")
+        # ``jobs.technician_id`` may be null (crew-only job) or point at
+        # a teammate; scope the report to THIS tech in that case.
+        assigned = job.get("technician_id")
         return assigned or user.get("technician_id") or user["id"]
     # admin / super_admin — pick the job's assigned tech (falls back to admin's id)
     return job.get("technician_id") or user["id"]

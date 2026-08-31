@@ -13,6 +13,11 @@ from utils import (now_iso, new_id, hash_password, verify_password, create_token
                    send_sms, notify_customer, auth_response,
                    create_staff_notification)
 from routers.tenants import get_current_tenant
+# Feb-2026 · Phase F1 — shared crew-aware tech authorization helper.
+# Every "Not your job" gate below routes through this so crew-only
+# jobs (crew_id set, technician_id null OR pointing at a teammate)
+# open for every member of the assigned crew. See services/authz.py.
+from services.authz import is_tech_authorized_on_job
 from models import (
     FieldReportUpdate, JobArriveIn, JobIn, JobUpdate,
     PhotoIn, ServiceIssueIn, ServiceRequestIn,
@@ -992,8 +997,11 @@ async def work_order_pdf(jid: str,
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
-    # role scoping
-    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+    # role scoping — F1 · crew-aware tech gate (was
+    # ``technician_id != user.technician_id``, which dropped crew-only jobs).
+    if user.get("role") == "technician" and not await is_tech_authorized_on_job(
+        user, job, db, tenant["id"],
+    ):
         raise HTTPException(403, "Not your job")
     if user.get("role") == "customer" and job.get("customer_id") != user.get("customer_id"):
         raise HTTPException(403, "Not your job")
@@ -1102,7 +1110,10 @@ async def get_job(jid: str,
                         "message": "Job is soft-deleted; restore first."},
             )
         raise HTTPException(404, "Job not found")
-    if user.get("role") == "technician" and doc.get("technician_id") != user.get("technician_id"):
+    # F1 · crew-aware tech gate — see services/authz.py.
+    if user.get("role") == "technician" and not await is_tech_authorized_on_job(
+        user, doc, db, tenant["id"],
+    ):
         raise HTTPException(403, "Not your job")
     if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):
         raise HTTPException(403, "Not your job")
@@ -1145,7 +1156,9 @@ async def update_field_report(jid: str, body: FieldReportUpdate,
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
     if not job:
         raise HTTPException(404, "Job not found")
-    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+    if user.get("role") == "technician" and not await is_tech_authorized_on_job(
+        user, job, db, tenant["id"],
+    ):
         raise HTTPException(403, "Not your job")
     update = {k: v for k, v in body.dict().items() if v is not None}
     if update:
@@ -1234,7 +1247,8 @@ async def update_job(jid: str, body: JobUpdate,
     if role in ADMIN_ROLES:
         pass  # full write access
     elif role == "technician":
-        if job.get("technician_id") != user.get("technician_id"):
+        # F1 · crew-aware tech gate — see services/authz.py.
+        if not await is_tech_authorized_on_job(user, job, db, tenant["id"]):
             raise HTTPException(403, "Not your job")
     else:
         raise HTTPException(403, "Not permitted to edit jobs")
@@ -1641,14 +1655,19 @@ async def _authorize_edit(
 ) -> None:
     """Feb-2026 · edit-window auth cascade — technicians can edit
     only their own assigned jobs; admin roles have full write access.
-    Customers are always rejected."""
+    Customers are always rejected.
+
+    Feb-2026 · Phase F1 — technicians on the assigned crew (but not
+    the direct ``technician_id`` on the row) are now authorized via
+    ``is_tech_authorized_on_job``. Previously crew-only jobs
+    incorrectly returned 403 for every crew member.
+    """
     role = (user.get("role") or "").lower()
     ADMIN_ROLES = {"admin", "super_admin", "owner", "manager"}
     if role in ADMIN_ROLES:
         return
     if role == "technician":
-        assigned = job.get("technician_id")
-        if assigned not in (user.get("id"), user.get("technician_id")):
+        if not await is_tech_authorized_on_job(user, job, db, job.get("tenant_id")):
             raise HTTPException(403, "Not your job")
         return
     raise HTTPException(403, "Not permitted to edit jobs")
@@ -1814,7 +1833,12 @@ async def list_job_edits(
     the PATCH endpoint."""
     job = await db.jobs.find_one(
         {"id": jid, "tenant_id": tenant["id"]},
-        {"_id": 0, "id": 1, "technician_id": 1, "deleted_at": 1},
+        # Feb-2026 · F1 fix — must include ``crew_id`` (+ ``tenant_id``)
+        # so ``is_tech_authorized_on_job`` can see crew membership.
+        # Without ``crew_id`` the helper's crew-branch short-circuits
+        # to False and every crew-only job returns 403.
+        {"_id": 0, "id": 1, "technician_id": 1, "crew_id": 1,
+         "tenant_id": 1, "deleted_at": 1},
     )
     if not job or job.get("deleted_at"):
         # Same 404 mask as PATCH.
@@ -1822,8 +1846,8 @@ async def list_job_edits(
     role = (user.get("role") or "").lower()
     ADMIN_ROLES = {"admin", "super_admin", "owner", "manager"}
     if role == "technician":
-        assigned = job.get("technician_id")
-        if assigned not in (user.get("id"), user.get("technician_id")):
+        # F1 · crew-aware tech gate — see services/authz.py.
+        if not await is_tech_authorized_on_job(user, job, db, tenant["id"]):
             raise HTTPException(403, "Not your job")
     elif role not in ADMIN_ROLES:
         raise HTTPException(403, "Not permitted to read edit history")
@@ -2259,7 +2283,9 @@ async def on_my_way(jid: str,
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+    if user.get("role") == "technician" and not await is_tech_authorized_on_job(
+        user, job, db, tenant["id"],
+    ):
         raise HTTPException(403, "Not your job")
     tech_name = job.get("technician_name") or user.get("name", "Your technician")
     await notify_customer(
@@ -2366,7 +2392,9 @@ async def job_arrive(jid: str, body: JobArriveIn,
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+    if user.get("role") == "technician" and not await is_tech_authorized_on_job(
+        user, job, db, tenant["id"],
+    ):
         raise HTTPException(403, "Not your job")
 
     # P37a Gate 1 — tenant feature flag.
@@ -2479,8 +2507,9 @@ async def undo_job_timer_start(jid: str, body: JobTimerUndoIn,
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    if (user.get("role") == "technician"
-        and job.get("technician_id") != user.get("technician_id")):
+    if user.get("role") == "technician" and not await is_tech_authorized_on_job(
+        user, job, db, tenant["id"],
+    ):
         raise HTTPException(403, "Not your job")
     started_iso = job.get("timer_started_at")
     if not started_iso:
@@ -3029,8 +3058,8 @@ async def add_job_photo(jid: str, body: PhotoIn,
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
     if user.get("role") == "technician":
-        assigned = job.get("technician_id")
-        if assigned not in (user.get("id"), user.get("technician_id")):
+        # F1 · crew-aware tech gate — see services/authz.py.
+        if not await is_tech_authorized_on_job(user, job, db, tenant["id"]):
             raise HTTPException(403, "Not your job")
     # Phase O4 · Feb-2026 — Client-UUID lookup.  If the mobile app
     # minted an id and already synced this photo, return the existing
@@ -3105,7 +3134,9 @@ async def add_service_issue(jid: str, body: ServiceIssueIn,
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+    if user.get("role") == "technician" and not await is_tech_authorized_on_job(
+        user, job, db, tenant["id"],
+    ):
         raise HTTPException(403, "Not your job")
     # Phase O4 · Feb-2026 — Client-UUID lookup.  If the mobile app
     # minted an id and already synced this issue, return the existing

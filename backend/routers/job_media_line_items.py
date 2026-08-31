@@ -35,6 +35,10 @@ from pydantic import BaseModel, Field
 from config import db, logger
 from utils import get_current_user, new_id, now_iso
 from routers.tenants import get_current_tenant
+# Feb-2026 · Phase F1 — crew-aware tech authorization helper. Line
+# item mutations must accept crew-member techs, not just the direct
+# ``technician_id`` on the row.
+from services.authz import is_tech_authorized_on_job
 
 router = APIRouter()
 
@@ -63,14 +67,19 @@ async def _load_job(jid: str, tenant_id: str) -> Dict[str, Any]:
     return job
 
 
-def _tech_can_touch(job: Dict[str, Any], user: Dict[str, Any]) -> bool:
-    """Tech may only mutate a job they are assigned to."""
+async def _tech_can_touch(job: Dict[str, Any], user: Dict[str, Any],
+                          tenant_id: Optional[str] = None) -> bool:
+    """Tech may only mutate a job they are directly assigned to OR
+    are a member of the assigned crew (Phase F1 · crew-aware).
+    Async because the crew lookup requires a Motor call.
+    """
     if _is_admin(user):
         return True
     if not _is_tech(user):
         return False
-    assigned = job.get("technician_id")
-    return assigned in (user.get("id"), user.get("technician_id"))
+    return await is_tech_authorized_on_job(
+        user, job, db, tenant_id or job.get("tenant_id"),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -158,7 +167,7 @@ async def add_line_item(jid: str, body: LineItemIn,
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
     job = await _load_job(jid, tenant["id"])
-    if not _tech_can_touch(job, user):
+    if not await _tech_can_touch(job, user, tenant["id"]):
         raise HTTPException(403, "Not your job")
     pb = await _load_pricebook_item(body.pricebook_item_id, tenant["id"])
     unit_price = _num(pb.get("unit_price"))
@@ -213,7 +222,7 @@ async def patch_line_item(jid: str, lid: str, body: LineItemPatch,
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
     job = await _load_job(jid, tenant["id"])
-    if not _tech_can_touch(job, user):
+    if not await _tech_can_touch(job, user, tenant["id"]):
         raise HTTPException(403, "Not your job")
     items = job.get("line_items") or []
     li = next((x for x in items if x["id"] == lid), None)
@@ -251,7 +260,7 @@ async def delete_line_item(jid: str, lid: str,
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
     job = await _load_job(jid, tenant["id"])
-    if not _tech_can_touch(job, user):
+    if not await _tech_can_touch(job, user, tenant["id"]):
         raise HTTPException(403, "Not your job")
     items = job.get("line_items") or []
     li = next((x for x in items if x["id"] == lid), None)
@@ -275,7 +284,7 @@ async def list_line_items(jid: str,
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
     job = await _load_job(jid, tenant["id"])
-    if _is_tech(user) and not _tech_can_touch(job, user):
+    if _is_tech(user) and not await _tech_can_touch(job, user, tenant["id"]):
         raise HTTPException(403, "Not your job")
     items = job.get("line_items") or []
     if _is_tech(user):

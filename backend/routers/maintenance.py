@@ -6,6 +6,8 @@ from config import db, logger
 from utils import now_iso, new_id, get_current_user, require_admin, notify_customer
 from utils import not_deleted_filter as _nd
 from models import MaintScheduleIn, MaintSettingsIn, MaintLogIn, MaintBulkIn
+# Feb-2026 · Phase F1 — crew-aware tech authorization helper.
+from services.authz import is_tech_authorized_on_job
 
 router = APIRouter()
 
@@ -328,7 +330,9 @@ async def log_maintenance(jid: str, body: MaintLogIn, user: dict = Depends(get_c
     job = await db.jobs.find_one({"id": jid})
     if not job:
         raise HTTPException(404, "Job not found")
-    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+    if user.get("role") == "technician" and not await is_tech_authorized_on_job(
+        user, job, db, job.get("tenant_id"),
+    ):
         raise HTTPException(403, "Not your job")
     mtype = _infer_type(job)
     if not mtype:

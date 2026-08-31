@@ -40,6 +40,10 @@ from routers.workstream import (
     _photo_thumb,
     _video_url,
 )
+# Feb-2026 · Phase F1 — crew-aware tech authorization helper. Same
+# helper as ``routers/jobs.py`` so this endpoint (which powers the
+# JobDetail UI) matches the schedule/list authorization semantics.
+from services.authz import is_tech_authorized_on_job
 
 router = APIRouter()
 
@@ -308,10 +312,11 @@ async def get_job_detail(
     if not job:
         raise HTTPException(404, "Job not found")
 
-    # Tech isolation — can only view jobs assigned to them.
+    # Tech isolation — can act on jobs directly assigned OR on
+    # jobs bound only to a crew the tech belongs to. F1 · crew-aware
+    # gate; see ``services/authz.py``.
     if _is_tech(user):
-        assigned = job.get("technician_id")
-        if assigned not in (user.get("id"), user.get("technician_id")):
+        if not await is_tech_authorized_on_job(user, job, db, tenant["id"]):
             raise HTTPException(403, "Not your job")
 
     # Read-time enrichment (dept + checklist_kind).

@@ -1,0 +1,50 @@
+{
+  "summary": "Phase F1 backend-only verification (P0-B crew-tech authz + P0-A portal SMS identity). Re-ran the 4 F1 unit-test files (19/19 pass) and added a new LIVE-HTTP integration suite (/app/backend/tests/test_f1_crew_authz_integration.py, 30 tests) that seeds crew-only jobs in Mongo and drives the public preview URL with a real technician JWT (carlos@aquaterra.com, member of Blue Crew) plus negative cases against Green Crew. Combined run: 48 passed / 1 failed. P0-B is fixed on 10 of the 11 refactored gates; ONE residual 403 remains on GET /api/jobs/{jid}/edits due to an incomplete Mongo projection. P0-A verified end-to-end: message row persists customer_id + sender_name strictly from the customers row, hostile body customer_id ignored, admin/tech/anon still 403.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/jobs/{jid}/edits",
+        "issue": "Crew-member technician still gets 403 'Not your job' on crew-only jobs. list_job_edits (routers/jobs.py:1834-1837) reads the job with projection {\"_id\":0,\"id\":1,\"technician_id\":1,\"deleted_at\":1} — crew_id is NOT projected, so is_tech_authorized_on_job() sees job.get('crew_id') is None and fails closed. Fix: add \"crew_id\": 1 (and \"tenant_id\": 1 for safety) to the projection. This is the only remaining P0-B leak; a static audit of all 14 call sites confirms every other gate passes a full job doc.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/jobs/{jid}/line-items",
+        "issue": "Backend logs 'WARNING income category backfill skipped: The path \\'line_items\\' must exist in the document in order to apply array updates.' when the job doc has no pre-existing line_items array. Request still returns 201; the backfill silently no-ops. Guard with an $exists check or use an upsert-safe update."
+      },
+      {
+        "endpoint": "POST /api/customer-portal/service-requests",
+        "issue": "The new identity-drift HTTP 500 branch (customer_portal.py:637) is unreachable in production: cid comes from user['customer_id'] and cust is fetched by {id: cid}, so user['customer_id'] != cust['id'] can never be true. The unit test only passes because the DB call is mocked. Either drop the dead branch or make it compare against a fresh users-row re-read / tenant check if real drift detection is intended."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_f1_crew_authz_integration.py",
+    "/app/backend/tests/_f1_projection_audit.py",
+    "/app/test_reports/pytest/f1_results.xml"
+  ],
+  "action_items": [
+    "routers/jobs.py list_job_edits (~line 1834): add crew_id (+tenant_id) to the db.jobs.find_one projection so is_tech_authorized_on_job can see crew membership — currently 403 for all crew-only jobs.",
+    "Guard the income-category line_items backfill against jobs with no line_items array (log noise on every first line-item POST).",
+    "Decide the fate of the unreachable identity-drift 500 in customer_portal.create_service_request (dead code or make it meaningful)."
+  ],
+  "critical_code_review_comments": [
+    "The authz refactor is correct but callers must pass a COMPLETE job doc. Any db.jobs.find_one with a narrowed projection now silently changes authorization semantics — jobs.py:1834 is the live example. Recommend authz.is_tech_authorized_on_job re-read crew_id itself when the key is absent from the dict (distinguish missing vs null), or add a required-keys assertion.",
+    "services/authz.py swallows all exceptions from the crews lookup and returns False — a transient Mongo blip becomes a silent 403 instead of a 5xx. Consider logging at ERROR level so this is observable.",
+    "routers/jobs.py is very large (>3200 lines); the 11 tech gates are now one-liners but the module still warrants splitting per the >700-line guideline."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_f1_crew_authz_integration.py (new)",
+    "/app/backend/tests/_f1_projection_audit.py (new, static projection audit script)"
+  ],
+  "success_rate": {"backend": "98% (48/49 tests; 19/19 F1 unit + 29/30 new integration)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "Seeded 8 transient jobs prefixed TEST_F1_ directly in Mongo (crew-only on Blue Crew, crew job assigned to teammate Mike, non-member Green Crew job, direct-assignee job, completed-in-edit-window crew job, filter-maintenance crew job). All deleted in module teardown; verified 0 leftover jobs and 0 leftover messages after the run. One TEST_F1_ portal message row created and deleted per run.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@aquaterra.com / carlos@aquaterra.com (technician, Blue Crew) / customer@aquaterra.com — all password123, all verified working against the preview URL.",
+  "context_for_next_testing_agent": "Reusable live-HTTP suite: /app/backend/tests/test_f1_crew_authz_integration.py. It hard-codes demo ids (tenant affdfbfa-…, Blue Crew 10851a3d-… containing mike b8a68119-… + carlos cc683510-…, Green Crew 1c1ec59e-…, customer 8910bfde-… Jennifer Carson) — re-probe if the demo dataset is reseeded. Verified as 200/non-403 for a crew member: GET /jobs/{id}, GET /jobs/{id}/detail, GET /jobs (schedule incl. crew-only + no leak of non-member crew jobs) with full schedule↔detail parity, work-order.pdf, PUT field-report, POST on-my-way, POST arrive, POST timer/undo-start, POST photos, POST issues, PATCH /jobs/{id} edit-window, GET/POST/PATCH/DELETE line-items, POST maintenance-log, GET+PATCH service-report. Negative 403s confirmed for the Green Crew job on detail, /detail, line-items, maintenance-log, service-report, PATCH edit-window. Portal messages persist under the field name `text` (not `body`) with `sender_name`. NOTE: the preview ingress intermittently read-timeouts the very first TLS request of a fresh pytest process (~2/6 runs) — _login() now retries 3x; if you see mass ERRORs at fixture setup, it is this flake, just re-run. POST /jobs/{id}/service-report/submit was deliberately not exercised (state-mutating completion flow) — _authorize_report is shared so coverage is implied.",
+  "flaky_tests": ["Fixture-level login against the preview URL: ~33% first-request read-timeout rate on a cold pytest process; mitigated with a 3x retry in the test helper, not a product defect."],
+  "rca_of_the_issue": "P0-B residual: the F1 refactor replaced the inline `job.technician_id != user.technician_id` check with is_tech_authorized_on_job() at 14 call sites, but list_job_edits loads the job with a narrow projection that predates the refactor and omits crew_id. The helper's crew-membership branch short-circuits on `if not crew_id: return False`, so every crew-only job is denied. Repro: seed a job with crew_id=<Blue Crew> and technician_id=null, log in as carlos@aquaterra.com, GET /api/jobs/{jid}/edits → 403 {\"detail\":\"Not your job\"} while GET /api/jobs/{jid} on the same job → 200. Mitigation: widen the projection (one line)."
+}
