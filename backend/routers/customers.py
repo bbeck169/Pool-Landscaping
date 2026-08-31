@@ -1823,35 +1823,76 @@ class _ServiceNotesPatch(BaseModel):
     landscape: Optional[str] = None
 
 
+# ─── Feb-2026 · Service-notes classifier vocabulary ───────────────────
+# Widened Feb-2026 (F8 · schedule notes classifier ship) so techs
+# don't hit "why doesn't pool notes show on my Filter Clean job?" —
+# any service_type whose lowercase form contains one of these tokens
+# is treated as pool/landscape respectively.  Tokens are substrings,
+# NOT exact words, so "landscap" catches both "Landscape" and
+# "Landscaping"; "chemical" catches "Chemical Balance"; etc.
+#
+# Precedence: LANDSCAPE checked FIRST.  Rationale — the pool set
+# includes the generic "clean" token which appears verbatim in
+# common landscape service names ("Yard Cleanup", "Landscape
+# Cleanup").  Landscape tokens (yard/tree/hedge/mow/lawn) are all
+# strongly landscape-signal, so checking them first eliminates the
+# false-positive pool routing without ever masking a real pool job.
+# Pool tokens that would false-positive under landscape-first (e.g.
+# a "Pool Cleaning" that also contains a landscape word) are so rare
+# in real service_type strings that we tolerate the edge case in
+# favor of the common one.  See test_f8_service_type_classifier.py
+# for the locked semantics.
+_POOL_KEYWORDS = (
+    "pool", "chemical", "filter", "clean", "shock", "backwash", "algae",
+)
+_LANDSCAPE_KEYWORDS = (
+    "landscap", "lawn", "yard", "tree", "trim", "mow", "hedge", "irrigation",
+)
+
+
+def _classify_service_type(service_type: Optional[str]) -> Optional[str]:
+    """Return "pool" | "landscape" | None based on a substring match
+    against the widened keyword vocab.  Landscape checked first
+    (see module comment for rationale).  ``None`` when the input is
+    empty or matches neither group — caller must decide fallback."""
+    stype = (service_type or "").strip().lower()
+    if not stype:
+        return None
+    for kw in _LANDSCAPE_KEYWORDS:
+        if kw in stype:
+            return "landscape"
+    for kw in _POOL_KEYWORDS:
+        if kw in stype:
+            return "pool"
+    return None
+
+
 def _resolve_service_note(customer: dict, service_type: Optional[str],
                             user: Optional[dict] = None) -> Optional[str]:
     """Return the relevant note text for a schedule/job view.
 
-    ``service_type`` may be a bare string ("pool"/"landscape") or any
-    string containing those tokens (e.g. "Weekly Pool Service"). We
-    normalize + substring-match so the resolver survives legacy job
-    docs whose type field carries the full service name.
-
     Priority:
-      1. Substring match on ``service_type`` against a service_notes key.
-      2. Fallback to the tech's ``specialties[0]``.
-      3. Return ``None`` when neither resolves.
+      1. Widened substring classifier (``_classify_service_type``) →
+         return matching key's note if present.
+      2. Direct key hit (legacy path — ``service_type`` was literally
+         "pool" or "landscape").  Kept for backward-compat.
+      3. Fallback to the tech's ``specialties[0]``.
+      4. Return ``None`` when nothing resolves.
     """
     notes = (customer or {}).get("service_notes") or {}
     if not notes:
         return None
+    # 1) Widened classifier — the primary path (Feb-2026 F8).
+    group = _classify_service_type(service_type)
+    if group and notes.get(group):
+        return notes[group]
+    # 2) Legacy exact-key path — kept so callers that pass a literal
+    #    "pool" / "landscape" string still hit.  Redundant with the
+    #    classifier above but harmless.
     stype = (service_type or "").strip().lower()
-    if stype:
-        # Direct key hit (fast path).
-        if stype in notes and notes.get(stype):
-            return notes[stype]
-        # Substring match — covers "Weekly Pool Service" → "pool",
-        # "Landscape maintenance" → "landscape", etc.
-        for key, val in notes.items():
-            if not val:
-                continue
-            if key and key.lower() in stype:
-                return val
+    if stype and stype in notes and notes.get(stype):
+        return notes[stype]
+    # 3) Tech specialty fallback.
     specialties = ((user or {}).get("specialties") or [])
     for spec in specialties:
         key = (spec or "").strip().lower()
