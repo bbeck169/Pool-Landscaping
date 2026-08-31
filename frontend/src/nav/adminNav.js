@@ -150,6 +150,8 @@ export const ADMIN_NAV_V2 = [
     // Task RR/SS Phase 2 · Feb 2026 — AI Employee data-access controls.
     { to: "/admin/ai-personas-scope", label: "AI Access Scope",    icon: History,      subsection: "AI Operations" },
     { to: "/admin/ai-tool-audit",     label: "AI Tool Audit",      icon: History,      subsection: "AI Operations" },
+    // Phase F3 · Feb-2026 — Soshie moderation queue.
+    { to: "/admin/soshie/moderation", label: "Soshie Moderation",  icon: History,      subsection: "AI Operations" },
     { to: "/dispatch",               label: "Dispatch Board",     icon: Truck,        feature: "jobs", subsection: "Schedule & Dispatch" },
     { to: "/walkie",                 label: "Walkie-Talkie",      icon: Phone,        subsection: "Schedule & Dispatch" },
     { to: "/admin/dispatch",         label: "Auto-Dispatch",      icon: Zap,          feature: "jobs", subsection: "Schedule & Dispatch" },

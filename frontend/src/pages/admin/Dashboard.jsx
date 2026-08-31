@@ -40,6 +40,8 @@ import IncomeByServiceCategoryTile from "@/components/dashboard/IncomeByServiceC
 import EbitTile from "@/components/dashboard/EbitTile";
 import GlobalSearchBar from "@/components/dashboard/GlobalSearchBar";
 import DataIntegrityTile from "@/components/admin/DataIntegrityTile";
+// Phase F3 · Feb-2026 — Soshie Publishing Dashboard Tile.
+import SoshiePublishingTile from "@/components/admin/SoshiePublishingTile";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -477,6 +479,14 @@ export default function AdminDashboard() {
           boot check found dangling refs OR log-only mode is active. */}
       {user?.role === "super_admin" ? (
         <DataIntegrityTile userRole={user?.role} />
+      ) : null}
+
+      {/* Phase F3 · Feb-2026 — Soshie Publishing tile. Admin+ (super_admin
+          / admin / owner) since moderation queue is admin-gated. */}
+      {["super_admin", "admin", "owner"].includes(user?.role) ? (
+        <div className="mb-6">
+          <SoshiePublishingTile />
+        </div>
       ) : null}
 
       {/* Feb-2026 follow-up — 5-day forecast panel unmounted per user

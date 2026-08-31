@@ -294,6 +294,69 @@ async def _persist_media_on_action(
     )
 
 
+async def _run_moderation_gate(
+    *, tenant_id: str, action: Dict[str, Any],
+    media: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Phase F3 · Feb-2026 — LLM moderation gate.
+
+    Returns ``None`` when the post is cleared for publish (caller
+    proceeds).  Returns a small outcome dict when the post is diverted
+    (``awaiting_review`` / ``blocked``) and persists the moderation
+    fingerprint onto the action row.
+    """
+    from utils import now_iso
+    from services.soshie.llm_moderation import moderate_post
+
+    aid = action["id"]
+    draft = action.get("draft") or {}
+    text = draft.get("text") or ""
+    media_urls = [u for u in [media.get("media_url")] if u]
+    try:
+        result = await moderate_post(
+            post_id=aid, tenant_id=tenant_id,
+            text=text, media_urls=media_urls,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[autopilot] moderation crashed action=%s: %s", aid, e,
+        )
+        result = {"decision": "flag",
+                    "reasons": ["moderation_service_unavailable"],
+                    "risk_level": "medium",
+                    "model": "unknown",
+                    "cost_estimate_usd": 0.0,
+                    "error": str(e)}
+    decision = result.get("decision") or "flag"
+    upd = {
+        "moderation_decision": decision,
+        "moderation_reasons": list(result.get("reasons") or []),
+        "moderation_risk_level": result.get("risk_level") or "medium",
+        "moderation_model": result.get("model"),
+        "moderation_hash": result.get("hash"),
+        "moderation_cost_usd": float(result.get("cost_estimate_usd") or 0.0),
+        "moderation_checked_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    if decision == "approve":
+        await db.ai_employee_actions.update_one(
+            {"id": aid, "tenant_id": tenant_id}, {"$set": upd},
+        )
+        return None
+    if decision == "flag":
+        upd["status"] = "awaiting_review"
+    else:  # "block"
+        upd["status"] = "blocked"
+    await db.ai_employee_actions.update_one(
+        {"id": aid, "tenant_id": tenant_id}, {"$set": upd},
+    )
+    return {
+        "action_id": aid,
+        "outcome": f"moderation_{decision}",
+        "reasons": upd["moderation_reasons"],
+    }
+
+
 async def _dispatch_one(
     *, tenant_id: str, action: Dict[str, Any], platform: str,
 ) -> Dict[str, Any]:
@@ -444,6 +507,20 @@ async def _process_tenant(tenant_id: str) -> Dict[str, Any]:
                         "outcome": "blocked_human_review",
                         "brand_score": media.get("brand_score"),
                     })
+                    continue
+                # Phase F3 · Feb-2026 — LLM Moderation gate.  Runs
+                # AFTER media resolution (so image URLs are part of
+                # the moderation input) but BEFORE any adapter call.
+                # decision "approve" → publish; "flag" → queue for
+                # admin review; "block" → mark rejected.  Failures
+                # of the moderation call ALWAYS fall through to
+                # "flag" — we never auto-approve on error.
+                mod_outcome = await _run_moderation_gate(
+                    tenant_id=tenant_id, action=action,
+                    media=media,
+                )
+                if mod_outcome:
+                    results.append(mod_outcome)
                     continue
                 # Merge media context onto the action for the dispatch.
                 enriched = {**action, **{k: v for k, v in {

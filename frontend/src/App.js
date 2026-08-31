@@ -37,6 +37,8 @@ import AdminTimeEntriesList from "@/pages/admin/AdminTimeEntriesList";
 import ReflowHistoryPage from "@/pages/admin/ReflowHistoryPage";
 // Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD.
 import AdminChargeTemplatesPage from "@/pages/admin/AdminChargeTemplatesPage";
+// Phase F3 · Feb-2026 — Soshie moderation queue.
+import SoshieModerationQueuePage from "@/pages/admin/SoshieModerationQueue";
 // Task RR/SS Phase 2 · Feb 2026 — AI Employee scope toggle + tool audit.
 import AiPersonasScopePage from "@/pages/admin/AiPersonasScopePage";
 import AiToolAuditPage from "@/pages/admin/AiToolAuditPage";
@@ -691,6 +693,8 @@ export default function App() {
             <Route path="admin/reflow-history" element={<AdminOnly><ReflowHistoryPage /></AdminOnly>} />
             {/* Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD. */}
             <Route path="admin/charge-templates" element={<AdminOnly><AdminChargeTemplatesPage /></AdminOnly>} />
+            {/* Phase F3 · Feb-2026 — Soshie moderation queue. */}
+            <Route path="admin/soshie/moderation" element={<AdminOnly><SoshieModerationQueuePage /></AdminOnly>} />
             {/* Task RR/SS Phase 2 · Feb 2026 */}
             <Route path="admin/ai-personas-scope" element={<AdminOnly><AiPersonasScopePage /></AdminOnly>} />
             <Route path="admin/ai-tool-audit" element={<AdminOnly><AiToolAuditPage /></AdminOnly>} />

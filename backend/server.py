@@ -342,6 +342,9 @@ api_router.include_router(_phase_d_drift_alerts.router)
 # bundles admins can apply to a job in one click).
 from routers import charge_templates as _phase_f2_charge_templates  # noqa: E402
 api_router.include_router(_phase_f2_charge_templates.router)
+# Phase F3 · Feb-2026 — Soshie LLM Moderation queue + Publishing tile.
+from routers import soshie_moderation as _phase_f3_soshie_moderation  # noqa: E402
+api_router.include_router(_phase_f3_soshie_moderation.router)
 # Feb-2026 · Widget-Embed Extension — Option A. Public map surface
 # + JSON-LD sitting alongside the MR0/MR1/MR2 stack.
 from routers import public_checkins_map as _pc_map_router  # noqa: E402
