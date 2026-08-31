@@ -3,6 +3,9 @@ import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import { Plus, Check, Ban, Save } from 'lucide-react';
 import AddressAutocomplete from "@/components/AddressAutocomplete";
+// Phase F5 · Feb-2026 — ArmToDelete retrofit for the widget-key
+// rotate action (catastrophic — breaks every live external embed).
+import ArmToDelete from "@/components/ui/ArmToDelete";
 
 const Card = ({ children, className = "", testId }) => (
   <div className={"rounded-2xl " + className}
@@ -290,7 +293,11 @@ function WidgetConfigCard() {
   };
 
   const regenerate = async () => {
-    if (!window.confirm("Rotate the widget key? Existing widget embeds using the old key will stop working until you update them.")) return;
+    // Phase F5 · Feb-2026 — Catastrophic retrofit.  Rotating the
+    // public widget key IMMEDIATELY breaks every live external embed
+    // for the tenant. This is downstream-visible and unrecoverable
+    // without contacting each site owner to paste the new key. Guard
+    // with ArmToDelete (typed confirm of the tenant slug).
     setBusy(true); setError("");
     try {
       const r = await api.post(
@@ -354,14 +361,15 @@ function WidgetConfigCard() {
                   data-testid="tenant-widget-key-copy">
             Copy
           </button>
-          <button onClick={regenerate} disabled={busy}
-                  className="px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
-                  style={{ backgroundColor: colors.surfaceSecondary,
-                           color: colors.error,
-                           border: `1px solid ${colors.border}` }}
-                  data-testid="tenant-widget-key-regenerate-btn">
-            Regenerate
-          </button>
+          <ArmToDelete
+            count={1}
+            catastrophicThreshold={9999}
+            disabled={busy}
+            onConfirm={regenerate}
+            label="Regenerate"
+            testIdPrefix="tenant-widget-key-regenerate"
+            size="sm"
+          />
         </div>
       </div>
 
