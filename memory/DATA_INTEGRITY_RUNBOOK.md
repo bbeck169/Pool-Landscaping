@@ -184,3 +184,121 @@ Expected: **53 passed**.
 | `INTEGRITY_CHECK_ENFORCE=false` | non-prod default | Log CRITICAL, boot continues |
 | `APP_ENV=production` | pod default | Enforces above default = true |
 | Anything else for `INTEGRITY_CHECK_ENFORCE` | ignored | Falls back to APP_ENV default |
+
+---
+
+## Test Tenant Purge (`scripts/purge_test_tenants.py`) · Feb-2026
+
+### Purpose
+CI-generated test tenants (`TEST_gs_*`, `csv-*`, `jca-*` and other
+prefixes) accumulate over time in preview and prod. They inflate
+boot loops, integrity scans, and every `list_collection_names()`
+sweep. This script removes them + every downstream doc they own in
+one idempotent pass, without producing new F3 orphans.
+
+### Safety posture
+- **Default is dry-run.** `--apply` is required to actually delete.
+- **Refuses `--apply` on prod** unless `APP_ENV=production` AND
+  `--i-know-this-is-prod` are both set. Dry-run works anywhere.
+- **F3 pre + post scan** — a read-only `scan_dangling_refs` runs
+  before the first delete and after the last. Non-zero exit
+  (code 2) if the post-count exceeds the pre-count.
+- **Safety cap** — `--limit N` (default 1000) refuses `--apply` if
+  more tenants match. Pass `--limit 0` to disable.
+- **Audit trail** — every run writes one row to
+  `db.audit_events` with `event_type='test_tenant_purge'` (works
+  for both dry-run and apply so shared-preview usage is traceable).
+
+### Preview run (safe, always)
+```bash
+cd /app/backend
+# 1) Dry-run — no writes. Always safe.
+APP_ENV=preview python -m scripts.purge_test_tenants
+
+# 2) Apply — actually deletes.
+APP_ENV=preview python -m scripts.purge_test_tenants --apply
+
+# 3) Verify — re-run should be a no-op.
+APP_ENV=preview python -m scripts.purge_test_tenants --apply
+```
+
+Expected output on a fresh preview DB with 131 CI test tenants:
+```
+[APPLIED] Tenants matched: 131 | Children rows: 168295 | Tenants deleted: 131 | Duration: 3.42s
+F3 dangling_refs: before=0  after=0  delta=+0
+```
+
+### Prod run (LAST RESORT — prefer clean CI hygiene)
+```bash
+APP_ENV=production python -m scripts.purge_test_tenants  # dry-run first
+APP_ENV=production python -m scripts.purge_test_tenants --apply --i-know-this-is-prod
+```
+
+If `APP_ENV=production` is set and `--i-know-this-is-prod` is
+omitted, the script exits 1 with:
+```
+REFUSED: --apply on APP_ENV=production requires --i-know-this-is-prod.
+```
+
+### Custom prefixes
+The default prefix list is `TEST_gs_`, `csv-`, `jca-`. To cover
+additional CI cruft (e.g. `srec-`, `cra-`, `test-`, `TEST-`,
+`p22c-`, `TEST_tos2d_`) pass repeated `--prefix` flags:
+
+```bash
+python -m scripts.purge_test_tenants \
+  --prefix srec- --prefix cra- --prefix test- --prefix TEST- \
+  --prefix p22c- --prefix TEST_tos2d_ --apply
+```
+
+### Target a single tenant
+```bash
+python -m scripts.purge_test_tenants --apply \
+  --tenant-id TEST_gs_tenant_cbd1b81f0d5348baa55fdae34fdf585b
+```
+No prefix filter applied — the operator has already decided.
+
+### Rollback story
+- Transactions per tenant are **NOT** implemented — MongoDB
+  transactions require a replica set, which the preview cluster
+  does not run on. If the script dies mid-run:
+  - Children of already-touched tenants are gone but the tenant
+    doc itself may or may not be gone (children are deleted first,
+    tenants last, in a single loop; a crash between them leaves
+    the tenant doc but with no children).
+  - Re-running `--apply` picks up where it left off — any tenant
+    still present in the target set will be re-scanned + finished.
+  - A **manual mongorestore** from a pre-run backup is the only
+    way to restore deleted rows. Take one before running against
+    prod: `mongodump --uri "$MONGO_URL" --out /backup/pre_purge_$(date -u +%Y%m%dT%H%M%SZ)`.
+- The F3 pre/post scan is a paranoia check, not a rollback. If
+  it flags, the script exits 2 with the delta printed — investigate
+  before re-running.
+
+### What deleted, empirically (preview run 2026-08-31)
+| Collection                       | Rows removed |
+|----------------------------------|-------------:|
+| service_checklists               |      162,860 |
+| ai_employees                     |        1,310 |
+| marketing_templates              |          998 |
+| ai_prompts                       |          917 |
+| marketing_audience_segments      |          524 |
+| customer_categories              |          393 |
+| walkie_channels                  |          393 |
+| email_delivery_log               |          262 |
+| notification_dispatch_log        |          262 |
+| marketing_sequences              |          237 |
+| tos_documents                    |          131 |
+| notifications                    |            4 |
+| quotes                           |            4 |
+| **tenants**                      |      **131** |
+| **TOTAL**                        |  **168,426** |
+
+Tenant count: 486 → 355.
+
+### Follow-up (optional)
+Preview still carries `srec-*`, `cra-*`, `test-*`, `TEST-*`,
+`p22c-*`, `TEST_tos2d_*`, `TEST_pm_*`, `TEST_omw_*`, `TEST_cns_*`,
+`TEST_stripe_*`, `ptb-*`, `p18-*`, `p26-*`, `digest-*`, `csvB-*`,
+`ltcb-*` tenants — likely also CI cruft. Add them to the `--prefix`
+list when running the next sweep.
