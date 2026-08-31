@@ -347,3 +347,22 @@ Second run should return `{ok: True, skipped: True, reason: 'sentinel present'}`
 - Validation gate: duplicate ids → 422 · empty payload → 400 · set mismatch → 422 (all pre-existing).
 - Mobile parity shipping in Phase E — mobile clients continue to POST the same array-shape.
 - Rollback: revert `BulkReorderModal` re-export in `NumberedReorder.jsx` (2-line change).
+
+---
+
+## Phase D · Feb-2026 — Drift Alerting (daily digest)
+
+Reuses `services/scorecard_digest.py` infra: httpx Slack webhook POST + Resend transactional email (comms whitelist gate applied). Cron ticks every hour on the hour; `dispatch_for_tenant` filters to 08:00 in each tenant's `timezone` setting (default `America/Phoenix`). Same-day dedupe via `audit_events` lookup on `event_type='data_integrity_digest'` + `payload.date`. Both dispatch AND clean-skip write audit rows so ops has a heartbeat trail.
+
+### Endpoints
+- `GET  /api/admin/settings/drift-alerts` (admin+)
+- `PUT  /api/admin/settings/drift-alerts` (admin+)
+- `POST /api/admin/settings/drift-alerts/test-fire` (super_admin)
+- `GET  /api/admin/settings/drift-alerts/last-dispatch` (admin+)
+
+### Scheduler hook
+`backend/server.py::_background_seed` — `scheduler.add_job(daily_data_integrity_digest_tick, "cron", minute=0, id="daily_data_integrity_digest")`. Prod worker enables via `ENABLE_SCHEDULER=true` (existing D2 gate).
+
+### Rollback
+- Toggle `enabled: false` on `drift_alert_settings` for any noisy tenant.
+- Or drop the scheduler job by id: `scheduler.remove_job("daily_data_integrity_digest")`.

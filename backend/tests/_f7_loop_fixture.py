@@ -31,10 +31,12 @@ load_dotenv("/app/backend/.env")
 _REBOUND_MODULES = (
     "config",
     "routers.data_repair",
+    "routers.drift_alerts",
     "routers.job_media_line_items",
     "routers.income_categories",
     "routers.schedule_reorder",
     "services.auto_invoice",
+    "services.drift_alerting",
     "services.pricebook.writeback",
     "services.migrations.perf1_missing_tenant_indexes",
 )

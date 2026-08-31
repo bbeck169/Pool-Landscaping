@@ -335,6 +335,9 @@ api_router.include_router(_subscriptions_router.router)
 # + apply endpoints with confirm_token workflow.
 from routers import data_repair as _f2_data_repair_router  # noqa: E402
 api_router.include_router(_f2_data_repair_router.router)
+# Phase D · Feb-2026 — Drift alerting settings + test-fire.
+from routers import drift_alerts as _phase_d_drift_alerts  # noqa: E402
+api_router.include_router(_phase_d_drift_alerts.router)
 # Feb-2026 · Widget-Embed Extension — Option A. Public map surface
 # + JSON-LD sitting alongside the MR0/MR1/MR2 stack.
 from routers import public_checkins_map as _pc_map_router  # noqa: E402
@@ -1326,6 +1329,23 @@ async def _background_seed():
         scheduler.add_job(coverage.revert_expired_coverage, "interval",
                             hours=12, id="coverage_revert",
                             replace_existing=True)
+        # Phase D · Feb-2026 — Daily data-integrity drift digest.
+        # Ticks every hour on the hour; dispatch_for_tenant filters
+        # to 08:00 in each tenant's timezone. Same-date dedupe via
+        # audit_events prevents duplicate hourly-tick sends.
+        try:
+            from services.drift_alerting import (
+                daily_data_integrity_digest_tick,
+            )
+            scheduler.add_job(
+                daily_data_integrity_digest_tick, "cron",
+                minute=0, id="daily_data_integrity_digest",
+                replace_existing=True,
+            )
+        except Exception as _dae:                            # noqa: BLE001
+            logger.warning(
+                f"[drift-alerting] cron registration skipped: {_dae}",
+            )
         # Phase 54e · Feb-2026 — wholesale supplier sync cron (hourly
         # + daily at 03:00 UTC). Gated by SUPPLIER_SYNC_LIVE=1 —
         # default OFF everywhere, so the cron ticks fire but log-only.

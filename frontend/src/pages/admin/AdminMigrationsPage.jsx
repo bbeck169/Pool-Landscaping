@@ -18,6 +18,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { api } from "@/api";
 import { colors } from "../../theme";
 import DataIntegrityTile from "@/components/admin/DataIntegrityTile";
+import DriftAlertsCard from "@/components/admin/DriftAlertsCard";
 import { useAuth } from "@/auth";
 
 
@@ -617,6 +618,7 @@ export default function AdminMigrationsPage() {
           safe to render for anyone routed here (route already
           gates on super_admin). */}
       <DataIntegrityTile userRole={user?.role} />
+      <DriftAlertsCard userRole={user?.role} />
       <BackfillCard />
       <RosterCleanupCard />
       <StripeSyncCard />
