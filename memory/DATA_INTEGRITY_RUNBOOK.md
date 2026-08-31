@@ -366,3 +366,43 @@ Reuses `services/scorecard_digest.py` infra: httpx Slack webhook POST + Resend t
 ### Rollback
 - Toggle `enabled: false` on `drift_alert_settings` for any noisy tenant.
 - Or drop the scheduler job by id: `scheduler.remove_job("daily_data_integrity_digest")`.
+
+
+---
+
+## Phase F2 · Charge Template Bundles (Feb-2026)
+
+### Collection
+- **Name:** `charge_templates`
+- **Scope:** tenant-scoped via `tenant_id` (required on every doc).
+- **Soft-delete:** rows are archived by setting `archived: true` + `archived_at`
+  + `archived_by`. Hard delete is never performed by the API.
+- **Uniqueness:** template `name` is case-insensitive unique per tenant among
+  non-archived rows (409 on conflict).
+
+### Endpoints
+- `GET    /api/charge-templates` (admin+ / tech list-read)
+- `GET    /api/charge-templates/{id}`
+- `POST   /api/charge-templates` (admin+)
+- `PUT    /api/charge-templates/{id}` (admin+)
+- `DELETE /api/charge-templates/{id}` (admin+ soft-delete)
+- `POST   /api/charge-templates/{id}/apply-to-job/{job_id}` — appends the
+  template's `line_items` onto the job's existing `line_items` array
+  (never replaces). Stamps `applied_from_template_id` and
+  `applied_from_template_name` on each appended row for provenance.
+
+### Purging orphans when a tenant is deleted
+The Phase A test-tenant purge script (`scripts/purge_test_tenants.py`) walks
+every collection with a `tenant_id` field via its dynamic collection loop,
+so `charge_templates` is swept automatically once the tenant enters the
+purge target set. No script change was required for this phase — verify
+after any future collection rename by re-running the script in `--dry-run`
+mode and confirming `charge_templates` appears in the swept-collections
+list.
+
+### Rollback
+Templates carry a snapshot of `unit_price` at save time — they do NOT
+follow pricebook writeback. If a bundle drifts out of date, edit or archive
+it via `/admin/charge-templates`. To undo an accidental archive, flip
+`archived: false` directly on the `charge_templates` row (there is no
+un-archive API by design — recreating is cheap).

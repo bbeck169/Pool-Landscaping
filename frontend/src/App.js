@@ -35,6 +35,8 @@ import AdminCommsSuppressionLog from "@/pages/admin/AdminCommsSuppressionLog";
 import AdminServiceReportsList from "@/pages/admin/AdminServiceReportsList";
 import AdminTimeEntriesList from "@/pages/admin/AdminTimeEntriesList";
 import ReflowHistoryPage from "@/pages/admin/ReflowHistoryPage";
+// Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD.
+import AdminChargeTemplatesPage from "@/pages/admin/AdminChargeTemplatesPage";
 // Task RR/SS Phase 2 · Feb 2026 — AI Employee scope toggle + tool audit.
 import AiPersonasScopePage from "@/pages/admin/AiPersonasScopePage";
 import AiToolAuditPage from "@/pages/admin/AiToolAuditPage";
@@ -687,6 +689,8 @@ export default function App() {
             <Route path="admin/service-reports" element={<AdminOnly><AdminServiceReportsList /></AdminOnly>} />
             <Route path="admin/time-entries" element={<AdminOnly><AdminTimeEntriesList /></AdminOnly>} />
             <Route path="admin/reflow-history" element={<AdminOnly><ReflowHistoryPage /></AdminOnly>} />
+            {/* Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD. */}
+            <Route path="admin/charge-templates" element={<AdminOnly><AdminChargeTemplatesPage /></AdminOnly>} />
             {/* Task RR/SS Phase 2 · Feb 2026 */}
             <Route path="admin/ai-personas-scope" element={<AdminOnly><AiPersonasScopePage /></AdminOnly>} />
             <Route path="admin/ai-tool-audit" element={<AdminOnly><AiToolAuditPage /></AdminOnly>} />

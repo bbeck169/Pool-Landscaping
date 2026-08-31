@@ -338,6 +338,10 @@ api_router.include_router(_f2_data_repair_router.router)
 # Phase D · Feb-2026 — Drift alerting settings + test-fire.
 from routers import drift_alerts as _phase_d_drift_alerts  # noqa: E402
 api_router.include_router(_phase_d_drift_alerts.router)
+# Phase F2 · Feb-2026 — Charge Template Bundles (reusable line-item
+# bundles admins can apply to a job in one click).
+from routers import charge_templates as _phase_f2_charge_templates  # noqa: E402
+api_router.include_router(_phase_f2_charge_templates.router)
 # Feb-2026 · Widget-Embed Extension — Option A. Public map surface
 # + JSON-LD sitting alongside the MR0/MR1/MR2 stack.
 from routers import public_checkins_map as _pc_map_router  # noqa: E402

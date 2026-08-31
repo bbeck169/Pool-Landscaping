@@ -24,6 +24,9 @@ import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { Button, Toast } from "@/components/ui-kit";
 import CategoryPicker from "@/components/income/CategoryPicker";
+// Phase F2 · Feb-2026 — "Add from template" bulk-append dropdown that
+// sits next to the pricebook "Add line" affordance in this section.
+import ApplyChargeTemplateButton from "../../components/schedule/ApplyChargeTemplateButton";
 
 const FALLBACK_STATUSES = new Set(["completed", "cancelled"]);
 
@@ -347,12 +350,21 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
           )}
         </div>
         {!locked ? (
-          <Button
-            testid="li-add-btn"
-            onClick={() => setPicker(true)}
-          >
-            <Plus size={14} /> Add line
-          </Button>
+          <div className="flex items-center gap-2">
+            {isAdmin ? (
+              <ApplyChargeTemplateButton
+                jobId={jobId}
+                onApplied={() => { refresh(); }}
+                data-testid="li-apply-template"
+              />
+            ) : null}
+            <Button
+              testid="li-add-btn"
+              onClick={() => setPicker(true)}
+            >
+              <Plus size={14} /> Add line
+            </Button>
+          </div>
         ) : null}
       </div>
 

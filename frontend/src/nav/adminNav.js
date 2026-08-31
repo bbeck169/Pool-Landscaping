@@ -144,6 +144,8 @@ export const ADMIN_NAV_V2 = [
     // techs and portal customers never see it. Route target is the
     // existing OpsHub Price Book grid at ``/price-book``.
     { to: "/price-book",             label: "Pricebook",          icon: Tag,          feature: "jobs",       hard_rule: "manager_only", subsection: "Schedule & Dispatch" },
+    // Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD.
+    { to: "/admin/charge-templates", label: "Charge Templates",    icon: Tag,          feature: "jobs",       hard_rule: "admin_only", subsection: "Schedule & Dispatch" },
     { to: "/admin/reflow-history",   label: "Reflow History",     icon: History,      feature: "jobs", subsection: "Schedule & Dispatch" },
     // Task RR/SS Phase 2 · Feb 2026 — AI Employee data-access controls.
     { to: "/admin/ai-personas-scope", label: "AI Access Scope",    icon: History,      subsection: "AI Operations" },
