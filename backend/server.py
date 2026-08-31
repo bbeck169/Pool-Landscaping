@@ -1180,6 +1180,18 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"data_repair ensure_indexes crashed: {e}")
 
+    # Phase B Perf Triad · Feb-2026 — sentinel-gated ``(tenant_id, 1)``
+    # index sweep across every tenant-scoped collection. Idempotent;
+    # second boot after ship is a no-op via ``migration_status``.
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
+        from services.migrations.perf_triad_indexes import run as _perf_triad_run
+        _perf_res = await _perf_triad_run(db)
+        logger.info(f"[perf-triad-indexes] {_perf_res}")
+    except Exception as e:
+        logger.warning(f"perf_triad_indexes crashed: {e}")
+
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.
     try:

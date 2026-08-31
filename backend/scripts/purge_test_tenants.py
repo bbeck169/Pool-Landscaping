@@ -399,8 +399,10 @@ async def run_purge(
         print("  (none — nothing to do)")
     else:
         for t in tenants[:20]:
-            print(f"  id={t.get('id')}  slug={t.get('slug'):<26}  "
-                  f"name={t.get('name'):<30}  "
+            slug = t.get("slug") or "-"
+            name = t.get("name") or "-"
+            print(f"  id={t.get('id')}  slug={slug:<26}  "
+                  f"name={name:<30}  "
                   f"reason={t.get('_match_reason')}")
         if len(tenants) > 20:
             print(f"  … and {len(tenants) - 20} more")

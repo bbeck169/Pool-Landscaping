@@ -302,3 +302,38 @@ Preview still carries `srec-*`, `cra-*`, `test-*`, `TEST-*`,
 `TEST_stripe_*`, `ptb-*`, `p18-*`, `p26-*`, `digest-*`, `csvB-*`,
 `ltcb-*` tenants — likely also CI cruft. Add them to the `--prefix`
 list when running the next sweep.
+
+---
+
+## Perf Triad · Feb-2026 (Phase B)
+
+### Env vars
+- `SKIP_TEST_TENANT_PATTERNS` — comma-separated tenant prefixes to skip in F3 boot scan.
+  - **Unset** → uses `services/tenants/production_tenants.TEST_TENANT_PREFIXES` when `APP_ENV=production|preview`; empty set otherwise (CI/tests).
+  - **Empty string** → filter OFF regardless of env (use for repro).
+  - **Custom list** (e.g. `"TEST_,srec-,cra-"`) → uses only what's listed.
+- `INTEGRITY_CHECK_ENFORCE` — unchanged (F3).
+
+### Rollback
+- **Indexes:** drop by name prefix `perf_triad_*` — reversible, non-destructive.
+    ```python
+    for name in db.<coll>.list_indexes():
+        if name["name"].startswith("perf_triad_"):
+            db.<coll>.drop_index(name["name"])
+    ```
+    Then delete the sentinel: `db.migration_status.delete_many({"key": "perf_triad_indexes_v1"})`.
+- **Test-tenant filter:** set `SKIP_TEST_TENANT_PATTERNS=""` to force-disable in any env; the scan reverts to full-DB.
+
+### Ops verification
+```bash
+python3 -c "
+from services.migrations.perf_triad_indexes import run
+import asyncio; from motor.motor_asyncio import AsyncIOMotorClient
+import os
+async def _go():
+    c = AsyncIOMotorClient(os.environ['MONGO_URL'])
+    db = c[os.environ['DB_NAME']]
+    print(await run(db))
+asyncio.run(_go())"
+```
+Second run should return `{ok: True, skipped: True, reason: 'sentinel present'}`.

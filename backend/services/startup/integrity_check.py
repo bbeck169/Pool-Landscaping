@@ -164,9 +164,73 @@ async def _live_crew_ids(db: Any) -> set:
     return ids
 
 
+async def _test_tenant_ids_to_skip(db: Any) -> set:
+    """Phase B PERF-Triad · Feb-2026 — env-gated test-tenant filter.
+
+    Returns the set of ``tenants.id`` values that match any of the
+    CI-fixture prefixes in ``SKIP_TEST_TENANT_PATTERNS`` (comma-
+    separated env var).  When the env var is UNSET, we consult the
+    following default policy:
+      * ``APP_ENV=production`` → filter ON (defaults from
+        ``services.tenants.production_tenants.TEST_TENANT_PREFIXES``)
+      * ``APP_ENV=preview``    → filter ON (same defaults)
+      * everywhere else (``CI``/``test``/local dev) → filter OFF
+
+    Set ``SKIP_TEST_TENANT_PATTERNS=""`` to force-disable in prod;
+    set to ``"TEST_,csv-,jca-"`` etc. to override the defaults.
+
+    Empty set means "don't filter anything" — the caller should
+    behave identically to pre-filter code.
+    """
+    import os as _os
+    raw = _os.environ.get("SKIP_TEST_TENANT_PATTERNS")
+    if raw is None:
+        # CI / pytest → default OFF so the scan exercises the full
+        # seeded fixture set as pre-Triad.  Prod/preview → default ON.
+        if _os.environ.get("PYTEST_CURRENT_TEST"):
+            return set()
+        env = (_os.environ.get("APP_ENV") or "preview").lower()
+        if env not in ("production", "preview"):
+            return set()
+        from services.tenants.production_tenants import (
+            TEST_TENANT_PREFIXES,
+        )
+        prefixes = list(TEST_TENANT_PREFIXES)
+    else:
+        prefixes = [p.strip() for p in raw.split(",") if p.strip()]
+        if not prefixes:
+            return set()
+
+    or_clauses = []
+    for p in prefixes:
+        rx = f"^{p}"
+        or_clauses.append({"id":   {"$regex": rx}})
+        or_clauses.append({"slug": {"$regex": rx}})
+    skip: set = set()
+    async for t in db.tenants.find(
+        {"$or": or_clauses}, {"_id": 0, "id": 1},
+    ):
+        if t.get("id"):
+            skip.add(t["id"])
+    if skip:
+        logger.info(
+            "[integrity_check] skipping %d test tenants matching "
+            "patterns %s", len(skip), prefixes,
+        )
+    return skip
+
+
 async def scan_dangling_refs(db: Any) -> Dict[str, Any]:
     """Read-only scan. Returns a structured report with sample
-    dangling rows (capped at 20 per class) plus total counts."""
+    dangling rows (capped at 20 per class) plus total counts.
+
+    Phase B PERF-Triad · Feb-2026 — honors ``SKIP_TEST_TENANT_PATTERNS``
+    to short-circuit CI-fixture tenants from the ``jobs`` cursor.
+    Live-id sets are still built globally, so if a non-test job
+    references a test-tenant customer id, we still flag it (strict).
+    """
+    skip_ids = await _test_tenant_ids_to_skip(db)
+
     live_customers = await _live_customer_ids(db)
     live_techs = await _live_technician_ids(db)
     live_crews = await _live_crew_ids(db)
@@ -175,10 +239,12 @@ async def scan_dangling_refs(db: Any) -> Dict[str, Any]:
     orphan_technician: List[Dict[str, Any]] = []
     orphan_crew: List[Dict[str, Any]] = []
 
-    active_filter = {"$or": [
+    active_filter: Dict[str, Any] = {"$or": [
         {"deleted_at": None},
         {"deleted_at": {"$exists": False}},
     ]}
+    if skip_ids:
+        active_filter["tenant_id"] = {"$nin": list(skip_ids)}
     cursor = db.jobs.find(
         active_filter,
         {
