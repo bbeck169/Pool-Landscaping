@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 27 — F5 sentinel reset endpoint + DataIntegrityTile (Admin Observability Bundle final items). Backend: 13/13 tests pass (10 new live-API tests in test_f5_sentinel_reset_live.py + 3 pre-existing direct-coroutine tests). Verified POST /api/admin/migrations/f5-leads-backfill/reset shape, idempotency, audit_events row (actor_user_id matches /auth/me id, non-empty tenant_id, timestamp, sentinel_key, deleted_count=1 with seeded sentinel), role gate (admin/technician/customer -> 403 'Super admin access required', anonymous -> 403/401) and F9 GET /api/admin/data-repair/status regression shape. Frontend: super_admin login -> aquaterra workspace -> Dashboard tile renders with pill data-state='attention' (live dangling_refs_total=1, matches backend), 4-cell summary + last dry-run + last repair-run rows. /admin/migrations shows the tile ABOVE the P19 card (verified via bounding-rect ordering); all 5 legacy migration cards still render. Dialog opens with cancel+confirm; Cancel closes with 0 network calls; Confirm fires exactly 1 POST, shows sonner toast 'No F5 sentinel was present. Already re-armed.', closes the dialog and re-fetches status. Non-super_admin (admin@aquaterra.com): tile absent on Dashboard and /admin/migrations redirects to / (SuperAdminOnly guard holds).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "DataIntegrityTile · Snapshot cell", "issues": ["Snapshot timestamp renders visually cramped ('2026-08-31 06:23:40' looks like '2026-08-3106:23:40' at 14px in the narrow 4th grid cell) — consider splitting date/time or reducing font size"]},
+      {"screen": "Dashboard (all roles, pre-existing)", "issues": ["~65 React console warnings 'Encountered two children with the same key' fire during login/dashboard mount. Not originating from DataIntegrityTile (it renders no keyed lists), but noisy and pre-existing — worth tracking separately"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_f5_sentinel_reset_live.py",
+    "/app/backend/tests/test_f5_sentinel_reset.py",
+    "/app/test_reports/pytest/f5_reset.xml"
+  ],
+  "action_items": [
+    "Optional polish: tighten the Snapshot cell formatting in DataIntegrityTile (date/time on two lines)",
+    "Optional (pre-existing, out of this bundle's scope): trace and fix the duplicate-React-key warnings on the admin Dashboard"
+  ],
+  "critical_code_review_comments": [
+    "reset_f5_leads_backfill_sentinel wraps only the audit insert in try/except but the audit doc is built after the delete — if the process dies between delete and insert the reset is untraceable. Acceptable for an idempotent ops tool; noting only.",
+    "previous_state is projected with {_id: 0} so no ObjectId leaks into the JSON response — verified by test_no_mongo_object_id_leak."
+  ],
+  "updated_files": ["/app/backend/tests/test_f5_sentinel_reset_live.py"],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% (all 7 listed frontend scenarios + regression pass)"},
+  "seed_data_creation": "Test seeded and consumed a temporary db.migration_status row key='f5_leads_backfill_v1' to assert deleted_count=1/previous_state; the endpoint itself deletes it. audit_events rows for event_type='f5_sentinel_reset' remain (intentional audit trail).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "super@aquaterra.com / password123 (super_admin), admin@aquaterra.com / password123 (admin) — from /app/memory/test_credentials.md; login returns access_token",
+  "context_for_next_testing_agent": "F5 reset + DataIntegrityTile fully verified end-to-end (backend live API + Playwright on both mount surfaces). Live preview data currently has dangling_refs_total=1 so the pill is in 'attention' state — do not treat red as a bug. The reset endpoint is idempotent and safe to call repeatedly; use /app/backend/tests/test_f5_sentinel_reset_live.py as the regression suite. Reset the F9 dry-run/apply flow was NOT re-run (verified in iteration 26).",
+  "rca_of_the_issue": "No defects found. The single initial test failure was my own assertion bug (substring '_id' matched inside 'audit_event_id'); corrected to check for the '\"_id\"' JSON key and previous_state dict."
+}

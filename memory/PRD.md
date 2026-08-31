@@ -13867,3 +13867,50 @@ Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy 
 1. Re-capture enhancement-bundle screenshots 2 + 3.
 2. Medium enhancement queue: tenant switcher on logo, multi-stop routing, ArmToDelete retrofit sweep, pricebook drift tile, dead-letter dashboard tile.
 
+
+---
+
+## Feb-2026 · Admin Observability Bundle · Final items shipped (2026-02-XX)
+
+### What shipped
+1. **F5 sentinel reset endpoint** — `POST /api/admin/migrations/f5-leads-backfill/reset` (super_admin only).
+   - Deletes `f5_leads_backfill_v1` from `db.migration_status` so the boot-time migration re-arms.
+   - Idempotent (deleted_count=0 when sentinel absent, still 200).
+   - Audit-logged: every call writes an `audit_events` row `{id, event_type:"f5_sentinel_reset", actor_user_id, tenant_id, timestamp, sentinel_key, deleted_count, previous_state}`.
+   - Files: `/app/backend/routers/data_repair.py` (~line 800+, `reset_f5_leads_backfill_sentinel`).
+
+2. **DataIntegrityTile** — shared React component at `/app/frontend/src/components/admin/DataIntegrityTile.jsx`.
+   - Reads `GET /api/admin/data-repair/status`.
+   - Renders red **DATA INTEGRITY ATTENTION** pill when `dangling_refs_total > 0` OR `log_only_mode_active === true`, otherwise green **OK**.
+   - 4-cell summary (dangling refs / by-class breakdown / enforce mode / snapshot).
+   - Optional last-dry-run and last-repair-run rows.
+   - F5 reset button (super_admin only) with shadcn AlertDialog confirm + sonner toast.
+   - **No type-to-confirm** — matches the sitewide typed-confirm removal shipped earlier in Feb-2026.
+   - Testids: `admin-data-integrity-tile`, `admin-data-integrity-pill`, `admin-data-integrity-summary`, `admin-f5-reset-btn`, `admin-f5-reset-dialog`, `admin-f5-reset-cancel`, `admin-f5-reset-confirm`, `admin-data-integrity-refresh`.
+
+3. **Mounted on two surfaces**
+   - `/admin` (Dashboard, super_admin-only render block) — `/app/frontend/src/pages/admin/Dashboard.jsx`.
+   - `/admin/migrations` (top of page, above P19 backfill card) — `/app/frontend/src/pages/admin/AdminMigrationsPage.jsx`.
+
+### Tests
+- `/app/backend/tests/test_f5_sentinel_reset.py` — 3 direct-coroutine tests via the F7 loop fixture. All pass.
+- `/app/backend/tests/test_f5_sentinel_reset_live.py` — 10 live-API tests added by testing agent (regression suite). All pass.
+- Testing agent iteration 27 report: 100% (13/13 backend, 7/7 frontend + regression).
+
+### Empirical proof
+- Live curl on preview DB (super_admin) returned `{ok:true, sentinel_key:"f5_leads_backfill_v1", deleted_count:0, previous_state:null, audit_event_id:"..."}`.
+- pymongo lookup confirmed 2 audit_events rows with `event_type="f5_sentinel_reset"` after the curl calls, each carrying valid `actor_user_id` (matches super_admin's user id) and `tenant_id`.
+- Admin role → HTTP 403 `{detail: "Super admin access required"}`.
+- Playwright screenshots at `/tmp/f9_migrations_page.png` (real red-attention state, dangling_refs_total=1), `/tmp/f9_migrations_ok_mocked.png` (green OK state), `/tmp/f9_reset_dialog.png` (confirm dialog), `/tmp/f9_dashboard_tile.png` (dashboard tile).
+
+### Loop fixture change
+- `/app/backend/tests/_f7_loop_fixture.py` now also rebinds `routers.data_repair` in `_REBOUND_MODULES` so the F5 reset tests (and any future data_repair tests) run against a loop-consistent Motor client.
+
+### Next queue (unchanged from previous PRD entry)
+- PERF-1 Part B (batched existence checks) — deferred, re-evaluate on request.
+- TD-F7-1: Extract shared `<LineItemsEditor>` primitive between job + invoice modals.
+- Tenant switcher on logo (P1).
+- Multi-stop routing (P1).
+- ArmToDelete retrofit sweep (P1).
+- Mobile schedule-navigate parity + Mobile F7 line-items parity (P2, Expo specialist).
+

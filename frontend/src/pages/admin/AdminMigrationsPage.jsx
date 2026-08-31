@@ -17,6 +17,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { api } from "@/api";
 import { colors } from "../../theme";
+import DataIntegrityTile from "@/components/admin/DataIntegrityTile";
+import { useAuth } from "@/auth";
 
 
 function DiffTable({ enrichments }) {
@@ -592,6 +594,7 @@ function RosterCleanupCard() {
 
 
 export default function AdminMigrationsPage() {
+  const { user } = useAuth();
   return (
     <div
       className="max-w-4xl mx-auto p-6"
@@ -608,6 +611,12 @@ export default function AdminMigrationsPage() {
         user id + target tenant. Preview first — then explicitly
         confirm before writing.
       </p>
+      {/* Feb-2026 · Admin Observability Bundle — F9 data-integrity
+          rollup + F5 sentinel reset button. Guarded internally on
+          user.role for the reset button; the read-only summary is
+          safe to render for anyone routed here (route already
+          gates on super_admin). */}
+      <DataIntegrityTile userRole={user?.role} />
       <BackfillCard />
       <RosterCleanupCard />
       <StripeSyncCard />

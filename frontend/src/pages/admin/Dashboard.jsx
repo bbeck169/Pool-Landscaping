@@ -39,6 +39,7 @@ import RevenueForecastTile from "@/components/dashboard/RevenueForecastTile";
 import IncomeByServiceCategoryTile from "@/components/dashboard/IncomeByServiceCategoryTile";
 import EbitTile from "@/components/dashboard/EbitTile";
 import GlobalSearchBar from "@/components/dashboard/GlobalSearchBar";
+import DataIntegrityTile from "@/components/admin/DataIntegrityTile";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -469,6 +470,14 @@ export default function AdminDashboard() {
           role (admin / super_admin only). Renders above the weather
           widget so it's the first CTA an admin sees on the Dashboard. */}
       <MassMessagingCard />
+
+      {/* Feb-2026 · Admin Observability Bundle — data-integrity tile.
+          super_admin only. Reads GET /admin/data-repair/status and
+          surfaces a red pill + F5 sentinel reset button when the F3
+          boot check found dangling refs OR log-only mode is active. */}
+      {user?.role === "super_admin" ? (
+        <DataIntegrityTile userRole={user?.role} />
+      ) : null}
 
       {/* Feb-2026 follow-up — 5-day forecast panel unmounted per user
           request. The live now-condition widget stays; the 5-day panel

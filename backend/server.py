@@ -1036,9 +1036,17 @@ async def _background_seed():
             ensure_indexes as _tos_multi_indexes,
             seed_pool_tos_from_legacy as _tos_multi_seed,
         )
+        from services.tenants.production_tenants import (
+            production_tenants_query as _prod_tenants_q,
+        )
         await _tos_multi_indexes(db)
         seeded = 0
-        async for _t in db.tenants.find({}, {"_id": 0, "id": 1}):
+        scanned = 0
+        # PERF-1 · Feb-2026 — production_tenants filter skips CI
+        # fixtures (~66% of tenants).  F3 integrity check is
+        # UNAFFECTED; only this pre-serve seed loop narrows.
+        async for _t in db.tenants.find(_prod_tenants_q(), {"_id": 0, "id": 1}):
+            scanned += 1
             try:
                 r = await _tos_multi_seed(db, _t["id"])
                 if r:
@@ -1048,7 +1056,10 @@ async def _background_seed():
                     f"[slice-2a] pool ToS seed failed for tenant "
                     f"{_t.get('id')}: {_seed_exc}"
                 )
-        logger.info(f"[slice-2a] multi-tos seed: {seeded} tenant(s) seeded")
+        logger.info(
+            f"[slice-2a] multi-tos seed: {seeded} tenant(s) seeded · "
+            f"[perf-1] scanned={scanned} production tenants"
+        )
     except Exception as e:
         logger.warning(f"[slice-2a] multi-tos boot init crashed: {e}")
 
@@ -1897,12 +1908,21 @@ async def startup():
             except Exception as _live_idx_exc:  # pragma: no cover
                 logger.warning(f"[Phase52.1a] live-session index bootstrap: {_live_idx_exc}")
         # Bootstrap the standard channels for every existing tenant.
-        tenants = await db.tenants.find({}, {"_id": 0, "id": 1}).to_list(length=None)
+        # PERF-1 · Feb-2026 — filter out CI fixture tenants.
+        from services.tenants.production_tenants import (
+            production_tenants_query as _prod_tenants_q,
+        )
+        tenants = await db.tenants.find(
+            _prod_tenants_q(), {"_id": 0, "id": 1},
+        ).to_list(length=None)
         for t in tenants:
             tid = t.get("id")
             if tid:
                 await _walkie_bootstrap(db, tid)
-        logger.info(f"[Phase51a] walkie indexes + channels ready across {len(tenants)} tenants")
+        logger.info(
+            f"[Phase51a] walkie indexes + channels ready across "
+            f"{len(tenants)} tenants · [perf-1] production_tenants filter applied"
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[Phase51a] walkie bootstrap failed: {e}")
 
@@ -2124,7 +2144,13 @@ async def startup():
         logger.info(
             f"[phase16] customer_categories seeded {_p16_seeded} default row(s)"
         )
-        async for _t in db.tenants.find({}, {"_id": 0, "id": 1}):
+        # PERF-1 · Feb-2026 — narrow the denorm pass to production tenants.
+        from services.tenants.production_tenants import (
+            production_tenants_query as _prod_tenants_q,
+        )
+        _p16_scanned = 0
+        async for _t in db.tenants.find(_prod_tenants_q(), {"_id": 0, "id": 1}):
+            _p16_scanned += 1
             try:
                 _n = await recompute_customer_denorm(_t["id"])
                 if _n:
@@ -2135,6 +2161,9 @@ async def startup():
                 logger.warning(
                     f"[phase16] denorm crashed for tenant={_t.get('id')}: {_e}"
                 )
+        logger.info(
+            f"[phase16] denorm pass complete · [perf-1] scanned={_p16_scanned} production tenants"
+        )
     except Exception as e:
         logger.warning(f"[phase16] customer_categories boot crashed: {e}")
 
@@ -2764,6 +2793,34 @@ async def startup():
     except Exception as e:
         logger.warning(
             f"idempotency_keys_indexes migration crashed: {e}",
+        )
+
+    # PERF-1 · Feb-2026 — Missing tenant_id indexes on 6 hot
+    # collections.  Sentinel-guarded + idempotent.  Auditor found
+    # service_checklists at 553k docs with no tenant_id index,
+    # forcing full-scan on every per-tenant boot lookup.  See
+    # services/migrations/perf1_missing_tenant_indexes.py.
+    try:
+        from services.migrations.perf1_missing_tenant_indexes import (
+            run_perf1_missing_tenant_indexes_migration,
+        )
+        _perf1_boot = await run_perf1_missing_tenant_indexes_migration()
+        if _perf1_boot.get("status") == "skipped":
+            logger.info(
+                "[perf1_missing_tenant_indexes] sentinel present · skipping",
+            )
+        else:
+            _s = _perf1_boot.get("summary") or {}
+            logger.info(
+                "[perf1_missing_tenant_indexes] indexes_created=%s "
+                "already_present=%s errors=%s",
+                _s.get("indexes_created"),
+                _s.get("already_present"),
+                len(_s.get("errors") or []),
+            )
+    except Exception as e:
+        logger.warning(
+            f"perf1_missing_tenant_indexes migration crashed: {e}",
         )
 
     # Feb-2026 · P0 fix — Orphan-paid invoice audit. Report-only on

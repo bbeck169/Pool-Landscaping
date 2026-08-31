@@ -793,3 +793,79 @@ async def leads_backfill_apply(
         "run_id": body.confirm_token,
         **result,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase F5-reset · Feb-2026 — F5 sentinel reset endpoint
+# ═══════════════════════════════════════════════════════════════════
+#
+# Ops sometimes needs to re-arm the F5 leads-backfill migration
+# (e.g. a bad F5 seed pass shipped only partial data and needs a
+# rerun). The sentinel row in ``migration_status`` gates the boot
+# path — this endpoint removes it so the next backend restart /
+# scheduled sweep can pick it back up.
+#
+# Guardrails:
+#   * super_admin only (``require_super_admin``).
+#   * Idempotent — a second call with no sentinel present still
+#     returns 200 with ``deleted_count=0``.
+#   * Audit trail — every call writes a row to ``audit_events``
+#     with actor + timestamp + previous sentinel state so ops
+#     can trace who re-armed the migration and when.
+# ═══════════════════════════════════════════════════════════════════
+
+_F5_SENTINEL_KEY = "f5_leads_backfill_v1"
+
+
+@router.post("/admin/migrations/f5-leads-backfill/reset")
+async def reset_f5_leads_backfill_sentinel(
+    user: Dict[str, Any] = Depends(require_super_admin),
+) -> Dict[str, Any]:
+    """Delete the F5 leads-backfill sentinel so the migration
+    re-runs on the next boot / scheduled invocation.
+
+    Returns::
+
+        {
+          "ok": true,
+          "sentinel_key": "f5_leads_backfill_v1",
+          "deleted_count": <0|1>,
+          "previous_state": <sentinel doc or null>,
+          "audit_event_id": <uuid>,
+        }
+    """
+    previous_state = await db.migration_status.find_one(
+        {"key": _F5_SENTINEL_KEY}, {"_id": 0},
+    )
+    delete_result = await db.migration_status.delete_one(
+        {"key": _F5_SENTINEL_KEY},
+    )
+    deleted_count = int(getattr(delete_result, "deleted_count", 0) or 0)
+
+    audit_id = new_id()
+    audit_doc = {
+        "id": audit_id,
+        "event_type": "f5_sentinel_reset",
+        "actor_user_id": user.get("id"),
+        "tenant_id": user.get("tenant_id"),
+        "timestamp": now_iso(),
+        "sentinel_key": _F5_SENTINEL_KEY,
+        "deleted_count": deleted_count,
+        "previous_state": previous_state,
+    }
+    try:
+        await db.audit_events.insert_one(audit_doc)
+    except Exception as exc:  # pragma: no cover — audit is best-effort
+        logger.warning("[f5-reset] audit insert failed: %s", exc)
+
+    logger.info(
+        "[f5-reset] actor=%s deleted_count=%d had_previous=%s",
+        user.get("id"), deleted_count, bool(previous_state),
+    )
+    return {
+        "ok": True,
+        "sentinel_key": _F5_SENTINEL_KEY,
+        "deleted_count": deleted_count,
+        "previous_state": previous_state,
+        "audit_event_id": audit_id,
+    }
