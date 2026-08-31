@@ -331,6 +331,10 @@ api_router.include_router(_admin_stripe_router.router)
 # Phase B4 · Feb-2026 — Stripe subscription CRUD.
 from routers import subscriptions as _subscriptions_router  # noqa: E402
 api_router.include_router(_subscriptions_router.router)
+# Phase F2 · Feb-2026 — Data integrity repair (super_admin). Dry-run
+# + apply endpoints with confirm_token workflow.
+from routers import data_repair as _f2_data_repair_router  # noqa: E402
+api_router.include_router(_f2_data_repair_router.router)
 from routers import comms_admin as _comms_admin  # noqa: E402
 api_router.include_router(_comms_admin.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402
@@ -1149,6 +1153,17 @@ async def _background_seed():
         ], name="job_edits_by_user")
     except Exception as e:
         logger.warning(f"job_edits ensure_indexes crashed: {e}")
+
+    # Phase F2 · Feb-2026 — data-repair audit-log unique index +
+    # scans confirm-token index. Idempotent; skipped when startup
+    # indexes are disabled in prod (ops runs scripts.ensure_indexes).
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
+        from routers.data_repair import ensure_indexes as _f2_data_repair_indexes
+        await _f2_data_repair_indexes()
+    except Exception as e:
+        logger.warning(f"data_repair ensure_indexes crashed: {e}")
 
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.

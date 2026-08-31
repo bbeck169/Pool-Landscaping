@@ -1,0 +1,70 @@
+{
+  "summary": "Phase F2 Data Repair backend testing against the live preview API (https://poolscape-audit.preview.emergentagent.com). Built 2 new live-integration suites (18 tests) covering RBAC, dry-run shape/baseline/read-only proof, apply validation negatives, apply happy path (real mutation), idempotency, history, post-apply empirical proof, and direct MongoDB side-effect assertions. Found and fixed 1 CRITICAL blocker: the apply endpoint returned HTTP 500 on EVERY call in the live env (naive-vs-aware datetime comparison on the Mongo-read-back expires_at) — the 12 unit tests missed it because their in-memory Motor stubs preserve tz-aware datetimes. After the fix the full F2 flow works end-to-end: dry-run baseline matched spec exactly (10 orphan-cust / 0 orphan-tech / 3 unassigned-pending, all 10 names in the allowed test-fixture set), apply reported changes_applied=10 with 10 audit_log_ids, re-run returned no_op=true/0, history showed the run with 10 orphaned_customer_ref/soft_delete changes, and the post-apply dry-run returned orphaned_customer_refs=[] with total_would_change=0. One real defect remains open: the unique index on data_integrity_repairs(run_id,target_id) does NOT exist in the live DB. F1 regression suite: 49/49 pass. F2 unit suite: 12/12 pass.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/admin/data-repair/jobs/apply",
+        "issue": "FIXED BY TESTER (verify + own the fix): endpoint returned 500 on every live call. routers/data_repair.py::_load_scan compared datetime.now(timezone.utc) against scan['expires_at'] read back from MongoDB, which BSON returns offset-NAIVE -> TypeError: can't compare offset-naive and offset-aware datetimes. The entire apply path was dead in prod while all 12 unit tests passed (in-memory Motor stubs keep tzinfo). Applied minimal normalization (expires_at.replace(tzinfo=timezone.utc) when tzinfo is None). ACTION: review/keep the fix and add a unit test whose stub strips tzinfo so this class of bug can't recur.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "db.data_integrity_repairs / server.py boot hook",
+        "issue": "The documented idempotency guarantee is NOT enforced in the live DB. index_information() on data_integrity_repairs shows only ['_id_'] — the unique (run_id,target_id) index is absent. routers.data_repair.ensure_indexes() is gated behind _RUN_STARTUP_INDEXES (disabled here) and scripts/ensure_indexes.py does NOT include the data_repair collections, so the index is created nowhere. MongoDB does NOT create indexes lazily on first insert, so the handoff claim 'the unique index is created lazily on first insert instead' is incorrect. Idempotency currently relies only on the find_one pre-check in _apply_orphan_customer/_apply_orphan_technician, which is a TOCTOU race: two concurrent applies with the same run_id would double-write audit rows. FIX: add the two data_repair indexes to scripts/ensure_indexes.py (and/or ungate the boot hook).",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/admin/data-repair/jobs/dry-run",
+        "issue": "The 60s in-memory cache returns the cached payload verbatim, including the SAME confirm_token. The inline comment claims it 'stamps a NEW confirm_token so cached rehydrations don't accidentally satisfy the 15-minute freshness gate' — the code does not do that. Two dry-runs within 60s therefore share one run_id, so an apply keyed on the 2nd call silently reuses the 1st scan's captured (possibly stale) target list. Either implement the re-stamp or delete the misleading comment."
+      },
+      {
+        "endpoint": "db.data_integrity_scans",
+        "issue": "No TTL index on expires_at (index_information() = ['_id_'] only). The 15-min expiry is enforced in application code only, so scan documents accumulate forever. Also the unique index on confirm_token is missing (same ensure_indexes gating issue)."
+      },
+      {
+        "endpoint": "POST /api/admin/data-repair/jobs/apply — orphaned_technician_ref branch",
+        "issue": "COVERAGE GAP, not a defect: live DB has 0 orphan-tech jobs, so _apply_orphan_technician / action=null_technician_id was never exercised against real Mongo. Only stub-backed unit coverage exists — the same naive-datetime class of stub/reality drift could hide a bug here."
+      },
+      {
+        "endpoint": "GET /api/admin/data-repair/history",
+        "issue": "Unbounded to_list(100) over the whole collection with no tenant/run pagination params; grouping is done in Python so a run larger than 100 rows will be silently truncated mid-run (changes list would under-report). Consider paginating by run_id."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_f2_data_repair_live_api.py",
+    "/app/backend/tests/test_f2_data_repair_db_state.py",
+    "/app/test_reports/pytest/f2_data_repair_results.xml"
+  ],
+  "action_items": [
+    "Review/own the tester-applied naive-datetime fix in routers/data_repair.py::_load_scan and add a unit test whose Motor stub returns tz-NAIVE expires_at.",
+    "Create the data_integrity_repairs (run_id,target_id) unique index and the data_integrity_scans confirm_token unique index via scripts/ensure_indexes.py — they exist in NO environment today, so the stated idempotency guarantee is unenforced.",
+    "Add a TTL index on data_integrity_scans.expires_at so scan docs are actually reaped.",
+    "Fix or remove the dry-run cache comment about re-stamping confirm_token (current behaviour reuses the token for 60s).",
+    "Audit other Mongo-read-back datetime comparisons in the repo for the same naive/aware bug pattern."
+  ],
+  "critical_code_review_comments": [
+    "Unit tests backed by in-memory Motor stubs gave false confidence: they preserved tzinfo on round-trip while real BSON does not, so a 100%-green 12-test suite shipped a permanently-500 endpoint. Any new stub must mimic BSON's datetime truncation (naive UTC, millisecond precision).",
+    "Idempotency is documented as 'enforced by the unique index' but the index does not exist; the actual guard is a non-atomic find_one-then-insert. Under concurrency this double-applies audit rows. Either create the index or switch to an upsert with $setOnInsert.",
+    "_apply_orphan_customer soft-deletes but does not touch updated_at, while _apply_orphan_technician does. Inconsistent audit metadata across the two repair paths.",
+    "run_id == confirm_token couples the anti-CSRF/freshness token to the permanent audit key, so a leaked history response exposes a token that (within its 15-min window) is a valid apply credential."
+  ],
+  "updated_files": [
+    "/app/backend/routers/data_repair.py",
+    "/app/backend/tests/test_f2_data_repair_live_api.py",
+    "/app/backend/tests/test_f2_data_repair_db_state.py"
+  ],
+  "success_rate": {"backend": "94% (17/18 live tests pass; 1 genuine failure = missing unique index. Plus 12/12 F2 unit + 49/49 F1 regression)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "None. No test data created. The apply endpoint did mutate the live demo DB as intended by the spec: 10 orphan-customer jobs soft-deleted with status='deleted', deleted_reason='data_repair_orphaned_customer'. Safety pre-check passed — all 10 customer_name_denorm values were in {Confirm Case, Water Bodies Test, Lynn Merril}. 10 rows written to db.data_integrity_repairs under run_id 92359233-88fd-4b4c-8b43-9bf1abf00b2a.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "super@aquaterra.com / password123 (super_admin, verified working), admin@aquaterra.com / password123 (role=admin, correctly 403s on all three endpoints). /app/memory/test_credentials.md is accurate.",
+  "context_for_next_testing_agent": "The live DB is ALREADY REPAIRED: dry-run now returns orphaned_customer_refs=[], orphaned_technician_refs=[], total_would_change=0, total_flagged_no_action=3 (Regression Test Job / no crew test / Verification Sanity Check 2026-08-27). Consequently TestApplyHappyPath now legitimately returns no_op=true with changes_applied=0, and TestHistory self-skips (guarded on STATE['expected_changes']==0) because no new run is created. To re-test the mutating path you must seed a fresh orphan (insert a job with a customer_id that has no db.customers row) or assert against the existing run_id 92359233-88fd-4b4c-8b43-9bf1abf00b2a in db.data_integrity_repairs. test_f2_data_repair_db_state.py::test_unique_index_present is the one still-red test and is the open HIGH issue. The orphaned_technician_ref apply branch has never run against real Mongo. Note the 60s in-process dry-run cache: repeated dry-run GETs within 60s return an identical confirm_token, which can confuse freshness assertions; the cache is invalidated after any apply.",
+  "rca_of_the_issue": "PRIMARY (fixed): _load_scan read scan['expires_at'] back from MongoDB. BSON stores UTC datetimes without a timezone, so Motor deserializes an offset-naive datetime; comparing it to datetime.now(timezone.utc) raised TypeError, which escaped as an unhandled 500 for 100% of apply calls. Reproduced by POSTing a fresh confirm_token+scan_timestamp pair -> 500, with the traceback at routers/data_repair.py:309 in backend.err.log. Mitigation: coerce naive values to UTC before comparison. It was invisible locally because the unit suite's in-memory stub stores the Python object as-is, retaining tzinfo — a stub-vs-reality fidelity gap. SECONDARY (open): the unique index that the module docstring names as the idempotency mechanism is never created — the boot hook is gated off by _RUN_STARTUP_INDEXES and scripts/ensure_indexes.py omits both data_repair collections, and MongoDB has no lazy-index-on-insert behaviour."
+}

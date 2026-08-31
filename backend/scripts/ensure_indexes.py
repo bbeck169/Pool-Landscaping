@@ -139,6 +139,11 @@ async def main() -> int:
         ("tos_multi",              "services.tos_service",                 "ensure_indexes"),
         # Feb 2026 · Task B — schedule window compound index.
         ("jobs_schedule",          "routers.jobs",                         "ensure_indexes"),
+        # Feb 2026 · Phase F2 — data-repair audit-log unique index +
+        # scans confirm-token unique index + expires_at TTL. The
+        # module's ensure_indexes() also registers a TTL index on
+        # data_integrity_scans.expires_at.
+        ("data_repair",            "routers.data_repair",                  "ensure_indexes"),
     ]
     for label, module_path, attr_name in ROUTER_ENSURE_INDEXES:
         try:

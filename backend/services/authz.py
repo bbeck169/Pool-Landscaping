@@ -93,6 +93,17 @@ async def is_tech_authorized_on_job(
             {"id": crew_id, "tenant_id": tid, "tech_ids": tech_pk},
             {"_id": 0, "id": 1},
         )
-    except Exception:  # noqa: BLE001 — never block on membership lookup
+    except Exception as exc:  # noqa: BLE001 — never block on membership lookup
+        # Feb-2026 · F2 addendum — log the specific failure so ops
+        # sees transient Mongo blips instead of a silent 403 wave.
+        # Kept as ``False`` return (fail-closed) for authorization
+        # safety; visibility only.
+        import logging  # noqa: PLC0415 — local to avoid top-level cost
+
+        logging.getLogger("services.authz").error(
+            "is_tech_authorized_on_job crew lookup failed "
+            "user_id=%s tech_pk=%s crew_id=%s tenant_id=%s error=%s",
+            user_id, tech_pk, crew_id, tid, exc,
+        )
         return False
     return crew is not None
