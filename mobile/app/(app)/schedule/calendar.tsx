@@ -58,6 +58,7 @@ import OnMyWayButton from "@/src/components/schedule/OnMyWayButton";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
 import NavigateJobButton from "@/src/components/schedule/NavigateJobButton";
 import NavigateRouteButton from "@/src/components/schedule/NavigateRouteButton";
+import CrewFilterBar from "@/src/components/schedule/CrewFilterBar";
 import ScheduleMap from "@/src/components/schedule/ScheduleMap";
 // Feb-2026 — Daily Route Map (@rnmapbox/maps). Collapsible per-tech
 // header, numbered pins by route_index, status-colored, tap for
@@ -178,6 +179,13 @@ export default function ScheduleCalendar() {
   const [reassignTechId, setReassignTechId] = useState("");
   const [hourlyData, setHourlyData] = useState<HourlyEntry[]>([]);
 
+  // Phase F6b — Crew filter state. Selecting a crew passes crew_id to
+  // the schedule fetch; clearing resets to "All crews".
+  const [crews, setCrews] = useState<any[]>([]);
+  const [crewFilter, setCrewFilter] = useState("");
+  const [crewMembers, setCrewMembers] = useState<string[]>([]);
+  const [allTechs, setAllTechs] = useState<any[]>([]);
+
   // Phase P17 — OOM fix: cache the last-fetched date range so day-tap
   // navigation inside the already-loaded window skips the network.
   // Margin = 3 days → only re-fetch when the user navigates close to
@@ -193,10 +201,37 @@ export default function ScheduleCalendar() {
       } finally { setModeLoaded(true); }
     })();
   }, []);
+
+  // Phase F6b — Fetch crews + all techs on mount for crew filter.
+  useEffect(() => {
+    api.get("/crews")
+      .then((res: any) => setCrews(Array.isArray(res) ? res : res?.items || []))
+      .catch(() => setCrews([]));
+    api.get("/users?role=tech")
+      .then((res: any) => setAllTechs(res?.users || (Array.isArray(res) ? res : [])))
+      .catch(() => setAllTechs([]));
+  }, []);
   const setModePersist = (m: Mode) => {
     setMode(m);
     storage.setItem(MODE_KEY, m).catch(() => {/* incognito — in-memory only */});
   };
+
+  // Phase F6b — Handle crew selection. Resolves member names from
+  // crew.members or allTechs lookup.
+  const handleCrewSelect = useCallback((crewId: string) => {
+    setCrewFilter(crewId);
+    if (!crewId) { setCrewMembers([]); return; }
+    const crew = crews.find((c: any) => c.id === crewId);
+    if (!crew) { setCrewMembers([]); return; }
+    if (crew.members?.length) {
+      setCrewMembers(crew.members.map((m: any) => m.name || m.full_name || ""));
+    } else if (crew.tech_ids?.length && allTechs.length) {
+      const names = crew.tech_ids
+        .map((tid: string) => allTechs.find((t: any) => t.id === tid)?.name)
+        .filter(Boolean) as string[];
+      setCrewMembers(names);
+    } else { setCrewMembers([]); }
+  }, [crews, allTechs]);
 
   const load = useCallback(async (force = false) => {
     // Phase P17 — OOM fix: narrower window (±14d instead of -14/+60d)
@@ -221,8 +256,10 @@ export default function ScheduleCalendar() {
       // from the SQLite cache when the network throws.  Only cache
       // for the current tech (bulk-replace is scoped by user).
       const techUserId = user?.id || "";
-      const data = await cachedGet<any>(`/jobs?start=${start}&end=${end}`, {
-        writeThrough: async (d) => { await writeThroughJobs(techUserId, d); },
+      const crewFiltered = !!crewFilter;
+      const jobsUrl = `/jobs?start=${start}&end=${end}${crewFiltered ? `&crew_id=${crewFilter}` : ""}`;
+      const data = await cachedGet<any>(jobsUrl, {
+        writeThrough: crewFiltered ? undefined : async (d) => { await writeThroughJobs(techUserId, d); },
         readCache:    async ()  => { return techUserId ? await readCachedWeekJobs(techUserId) : []; },
       });
       const arr = Array.isArray(data) ? data : (data.items || data.data || []);
@@ -232,7 +269,7 @@ export default function ScheduleCalendar() {
       setErr(e.message || "Failed to load schedule");
     } finally { setLoading(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus, user?.id]);
+  }, [focus, user?.id, crewFilter]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -541,6 +578,10 @@ export default function ScheduleCalendar() {
           setGridSubMode={setGridSubMode}
           dayJobs={dayJobs}
           setReorderList={setReorderList}
+          crews={crews}
+          crewFilter={crewFilter}
+          crewMembers={crewMembers}
+          onCrewSelect={handleCrewSelect}
         />
       ) : (
         <CalendarView
@@ -652,6 +693,7 @@ function GridView(props: any) {
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData, userId,
     weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection, role,
     gridSubMode, setGridSubMode, dayJobs, setReorderList,
+    crews, crewFilter, crewMembers, onCrewSelect,
   } = props;
   const focusISO = iso(focus);
   const isToday = focusISO === iso(new Date());
@@ -680,7 +722,7 @@ function GridView(props: any) {
         <Text style={gStyles.dayLabel} testID="grid-day-label">{dayLabel(focus)}</Text>
       </View>
 
-      {/* Navigate Route + Reorder header */}
+      {/* Navigate Route + Crew filter + Reorder header */}
       {rearrangeMode ? (
         <View testID="reorder-route-header" style={gStyles.reorderHeader}>
           <Ionicons name="reorder-three-outline" size={18} color="#059669" />
@@ -690,8 +732,16 @@ function GridView(props: any) {
           </View>
         </View>
       ) : (
-        <View style={gStyles.navRouteRow}>
+        <View style={gStyles.filterRow}>
           <NavigateRouteButton jobs={jobs} />
+          {crews.length > 0 ? (
+            <CrewFilterBar
+              crews={crews}
+              selectedCrewId={crewFilter}
+              onSelect={onCrewSelect}
+              memberNames={crewMembers}
+            />
+          ) : null}
         </View>
       )}
 
@@ -1462,9 +1512,9 @@ const gStyles = StyleSheet.create({
     backgroundColor: "#059669",
   },
   reorderSaveText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" },
-  navRouteRow: {
-    flexDirection: "row", alignItems: "center", gap: spacing.xs,
-    marginBottom: spacing.sm,
+  filterRow: {
+    flexDirection: "row", alignItems: "flex-start", gap: spacing.sm,
+    marginBottom: spacing.sm, flexWrap: "wrap",
   },
   newBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,

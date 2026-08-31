@@ -97,12 +97,41 @@ export default function CustomersList() {
   // as an alias for ``?tab`` so the tile deep-link lands on the
   // right cohort. ``?tab`` still wins if both are present (existing
   // bookmarks / manual URL edits keep their meaning).
-  const initialTab = cohortParam === "inactive" ? "inactive"
-                    : cohortParam === "active" ? "active"
-                    : (searchParams.get("tab")
-                       || searchParams.get("status")
-                       || "active");
+  // Phase F6c · Feb-2026 — persist the active/inactive cohort tab under
+  // ``customerListFilter.status`` so a page refresh keeps the operator's
+  // last pick even without a bookmarked ?tab= param. Web parity with
+  // mobile (F6b) which uses the same key.
+  const _COHORT_STORAGE_KEY = "customerListFilter.status";
+  const initialTab = (() => {
+    if (cohortParam === "inactive") return "inactive";
+    if (cohortParam === "active") return "active";
+    const urlTab = searchParams.get("tab") || searchParams.get("status");
+    if (urlTab) return urlTab;
+    try {
+      const stored = localStorage.getItem(_COHORT_STORAGE_KEY);
+      if (stored === "active" || stored === "inactive" ||
+          stored === "muted" || stored === "all") return stored;
+    } catch { /* localStorage unavailable — best-effort */ }
+    return "active";
+  })();
   const [tab, setTab] = useState(initialTab);
+  // Guard so the mount-time useEffect below doesn't stomp on an
+  // initial ``?page=N`` query param — we only want to reset page
+  // when the operator ACTIVELY changes the tab.
+  const _tabInitRef = React.useRef(true);
+  // Persist tab changes for the next mount.
+  useEffect(() => {
+    try { localStorage.setItem(_COHORT_STORAGE_KEY, tab); }
+    catch { /* localStorage unavailable — best-effort */ }
+    if (_tabInitRef.current) {
+      _tabInitRef.current = false;
+      return;
+    }
+    // Filter change must reset pagination to page 1 — otherwise a user
+    // on page 3 of Active flips to Inactive and lands on an empty page.
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [counts, setCounts] = useState({ active: null, inactive: null });
 
   const [rows, setRows] = useState(null);

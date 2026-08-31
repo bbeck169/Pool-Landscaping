@@ -1,3 +1,16 @@
+## Iteration 52 — Phase F6b: Mobile Filter Bundle (Crew + Customer Status)
+- **Commit**: 7946eea26c01e474fe9aa357e91066ec53181d5c
+- **Date**: 2026-08-31
+- **Changes**:
+  - NEW: CrewFilterBar.tsx (222 LOC) — crew dropdown + member chips for schedule
+  - MODIFIED: calendar.tsx — crew state + fetch + load crew_id + mount CrewFilterBar in filter row
+  - MODIFIED: customers.tsx — Active/Inactive/All segmented control, AsyncStorage persistence, is_active param
+  - NEW: 2 test files (298 LOC) — crew filter (7), customer status (5)
+  - All 12 Phase F6b tests pass, 43 regression tests pass, Metro 2279 modules
+- **Files modified**: `CrewFilterBar.tsx` (new), `calendar.tsx` (mod), `customers.tsx` (mod), 2 test files (new)
+- **Web files referenced**: F6a crew filter spec (backend contracts)
+
+
 ## Iteration 51 — Phase E: Mobile Parity Sweep (Navigate + Line Items + Reorder)
 - **Commit**: 2219688798243acb0fbea61051fd2e7b28dd71fb
 - **Date**: 2026-08-31

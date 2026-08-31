@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, FlatList, TextInput, RefreshControl, Pressable, Platform, Alert, Modal } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -6,6 +6,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { writeCache, readCache } from "@/src/services/readCache";
+import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
@@ -41,6 +42,17 @@ export default function Customers() {
   const [inactiveModalOpen, setInactiveModalOpen] = useState(false);
   const [inactiveBusy, setInactiveBusy] = useState(false);
 
+  // Phase F6b — Active/Inactive/All segmented control.
+  const STATUS_KEY = "customerListFilter.status";
+  const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "all">("active");
+
+  // Load persisted status filter.
+  useEffect(() => {
+    storage.getItem<string>(STATUS_KEY, "active").then((v: any) => {
+      if (v === "active" || v === "inactive" || v === "all") setStatusFilter(v);
+    }).catch(() => {});
+  }, []);
+
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
   const bulk = useBulkSelect(visibleIds);
 
@@ -51,6 +63,8 @@ export default function Customers() {
       qp.set("page", String(targetPage));
       qp.set("page_size", String(_PAGE_SIZE));
       if (showDeleted && canManageDeleted) qp.set("include_deleted", "true");
+      // Phase F6b — Active/Inactive/All filter.
+      if (statusFilter !== "all") qp.set("is_active", String(statusFilter === "active"));
       const res: any = await api.get(`/customers?${qp.toString()}`);
       const rows = Array.isArray(res) ? res : (res?.items || []);
       const tp = Number.isFinite(res?.total_pages)
@@ -74,7 +88,7 @@ export default function Customers() {
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, []);
+  }, [statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMore = useCallback(() => {
     if (loadingMore) return;
@@ -161,6 +175,26 @@ export default function Customers() {
           )
         }
       />
+      {/* Phase F6b — Active / Inactive / All segmented control */}
+      <View style={cs.segmentRow} testID="customer-status-filter">
+        {(["active", "inactive", "all"] as const).map((seg) => (
+          <Pressable
+            key={seg}
+            onPress={() => {
+              setStatusFilter(seg);
+              storage.setItem(STATUS_KEY, seg).catch(() => {});
+              setPage(1);
+            }}
+            style={[cs.segment, statusFilter === seg && cs.segmentActive]}
+            testID={`customer-status-${seg}`}
+            accessibilityRole="button"
+          >
+            <Text style={[cs.segmentText, statusFilter === seg && cs.segmentTextActive]}>
+              {seg === "active" ? "Active" : seg === "inactive" ? "Inactive" : "All"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
       <View style={styles.searchWrap}>
         <View style={styles.searchBox}>
           {selectMode ? (
@@ -446,5 +480,36 @@ const cs = StyleSheet.create({
   },
   nameDeleted: {
     textDecorationLine: "line-through",
+  },
+  segmentRow: {
+    flexDirection: "row",
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceTertiary,
+    padding: 3,
+  },
+  segment: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 7,
+    borderRadius: radius.md - 2,
+  },
+  segmentActive: {
+    backgroundColor: colors.surface,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  segmentText: {
+    fontFamily: font.bold,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+  },
+  segmentTextActive: {
+    color: colors.onSurface,
   },
 });
