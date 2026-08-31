@@ -10,6 +10,14 @@ For the linter-noise-suppression rationale (why we're NOT chasing the reviewer's
 
 ## Extraction refactors (circular-import cleanup)
 
+### TD-F7-1 · Extract shared `<LineItemsEditor>` primitive
+- **Current state:** Two editors with converging feature sets:
+  - `frontend/src/pages/jobs/LineItemsSection.jsx` (job side, K2 + F7 additions — category picker, editable unit_price + custom-price hint, pricebook_writeback checkbox, row-level 4xx error surfacing).
+  - `frontend/src/components/invoices/InvoiceEditModal.jsx` (invoice side, same feature set + more — expressed inline inside a larger modal).
+- **Why deferred:** Feature-add now, dedupe later — the cost of divergence stays low as long as we track it. Slice K2 already shipped the job-side editor; F7 only extended it in-place. Extraction would double the effort of F7 without new capability.
+- **When to ship:** When a **third consumer** lands (e.g. Estimates line-items redesign), OR when a **fourth feature** diverges (e.g. a new pricing dimension the invoice side wants but the job side doesn't). At that point extract to `frontend/src/components/lineitems/LineItemsEditor.jsx` (or similar), have both existing consumers import it, and delete the duplication.
+- **Cross-refs:** The backend already extracted the writeback into `services/pricebook/writeback.py` and the category validator into `routers/income_categories.py::validate_line_item_categories`, so the two frontend editors already share both server-side hooks — only the presentation layer diverges.
+
 ### TD-01 · Extract `services/geocoding.py` from the tenants ↔ google cycle
 - **Current state:** `routers/google.py:21` imports `get_current_tenant` from `routers/tenants.py` (top-level); `routers/tenants.py:671` imports `_geocode_one` from `routers/google.py` (in-function, comment-annotated as intentional cycle-break).
 - **Why deferred:** Touches auth flow. The in-function import is idiomatic FastAPI, boots clean, and the cycle isn't causing runtime issues.

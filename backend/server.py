@@ -2955,8 +2955,24 @@ async def startup():
     try:
         from services.startup.integrity_check import (
             run_startup_integrity_check,
+            start_log_only_reminder_task,
+            _enforce_flag_from_env as _integrity_enforce_flag,
         )
-        await run_startup_integrity_check(db)
+        _integrity_report = await run_startup_integrity_check(db)
+        # Phase F6 · Feb-2026 — if boot survived a non-zero scan
+        # (only possible when enforce=False), schedule the recurring
+        # nag so ops can't quietly forget they're in the workaround
+        # mode.  In enforce=True mode with dangling refs the call
+        # above raised, so we never reach here.
+        try:
+            _total = (_integrity_report.get("summary") or {}).get(
+                "total_dangling_refs", 0)
+            if _total > 0 and not _integrity_enforce_flag():
+                start_log_only_reminder_task(db)
+        except Exception as _rem_e:      # noqa: BLE001
+            logger.warning(
+                "[integrity_check] reminder wiring failed: %s", _rem_e,
+            )
     except Exception as exc:
         # ``IntegrityCheckFailure`` — re-raise to abort boot. Any
         # other exception is a scan defect; log + continue so a

@@ -25,6 +25,13 @@ import JobTitleCombobox from "@/components/JobTitleCombobox";
 // Feb 2026 · Same color-coded toggle as ``JobNew`` — one component
 // keeps both surfaces consistent.
 import WorkClassToggle from "@/components/jobs/WorkClassToggle";
+// Phase F7 · Feb-2026 — "Add charge for visit". Embeds the shipped
+// K2 line-items table directly in the Edit Job modal so admins can
+// add pricebook-backed charges without leaving the schedule screen.
+// Uses the same granular endpoints wired to JobDetail; auto_invoice
+// inherits ``job.line_items[]`` verbatim on completion.
+// (See TD-F7-1 for the deferred shared-editor extraction.)
+import LineItemsSection from "@/pages/jobs/LineItemsSection";
 
 const SERVICE_TYPES = [
   "Pool Cleaning", "Repair", "Landscaping", "Inspection",
@@ -43,6 +50,7 @@ export default function ScheduleJobEditModal({
   onClose,
   onSaved,
   onDeleted,
+  user,
 }) {
   const [form, setForm] = useState(() => ({
     title:          job?.title || "",
@@ -396,6 +404,21 @@ export default function ScheduleJobEditModal({
           data-testid="schedule-job-edit-notes"
         />
       </div>
+
+      {/* Phase F7 · Feb-2026 — Line items editor (admin/tech only —
+          LineItemsSection handles the role gate internally and
+          returns null for customer/other roles). Rendered between
+          Notes and the confirm-delete block so it's visible without
+          scrolling past the footer. */}
+      {user ? (
+        <div className="mt-4" data-testid="schedule-job-edit-line-items-slot">
+          <LineItemsSection
+            jobId={job.id}
+            jobStatus={form.status}
+            user={user}
+          />
+        </div>
+      ) : null}
 
       {err ? (
         <div className="mt-3 text-sm font-semibold"

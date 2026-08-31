@@ -7,12 +7,23 @@
  * this component simply renders whatever the API sends.  Add / qty
  * edit / delete are wired for both admin and tech (tech can only
  * mutate lines they added — backend enforces).
+ *
+ * Phase F7 · Feb-2026 — "Add charge for visit" additions (admin-only):
+ *   * Category picker per line (uses shared income CategoryPicker).
+ *   * Editable unit_price with "Custom price · pricebook was $X"
+ *     hint when the admin overrides the pricebook default.
+ *   * "Also save to pricebook" checkbox per line — flips the row's
+ *     ``pricebook_writeback_flag`` and triggers a writeback fan-out
+ *     on save.
+ *   * Inline row error highlight when the backend returns a 4xx
+ *     with ``error_code`` + ``line_index`` (e.g. archived category).
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, X as XIcon, Search, Loader2, Package } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { Button, Toast } from "@/components/ui-kit";
+import CategoryPicker from "@/components/income/CategoryPicker";
 
 const FALLBACK_STATUSES = new Set(["completed", "cancelled"]);
 
@@ -175,6 +186,26 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
   const [busyId, setBusyId] = useState(null);
   const [toast, setToast] = useState(null);
   const [qtyEdits, setQtyEdits] = useState({}); // {liId: "3"}
+  const [priceEdits, setPriceEdits] = useState({});     // {liId: "12.50"}
+  // Inline row-error highlight surfaces the backend's 4xx contract
+  // ({error_code, line_index, attempted_category}) — matches the
+  // invoice-side error handling so operators aren't blindsided.
+  const [rowErrors, setRowErrors] = useState({}); // {liId: {error_code, attempted_category}}
+
+  const parseErr = (e) => {
+    // Backend returns FastAPI HTTPException detail; api wrapper often
+    // stringifies to "{"error_code":...}" or throws with a body.
+    const raw = e?.body || e?.detail || e?.message || "";
+    if (typeof raw === "object" && raw.error_code) return raw;
+    if (typeof raw === "string") {
+      try {
+        const j = JSON.parse(raw);
+        if (j?.detail?.error_code) return j.detail;
+        if (j?.error_code) return j;
+      } catch { /* not JSON */ }
+    }
+    return null;
+  };
 
   const add = async (pbItem) => {
     try {
@@ -186,7 +217,19 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
       await refresh();
       setToast({ tone: "success", message: `${pbItem.name} added` });
     } catch (e) {
-      setToast({ tone: "error", message: e.message });
+      const structured = parseErr(e);
+      if (structured?.error_code) {
+        setToast({
+          tone: "error",
+          message: `${structured.error_code}${
+            structured.attempted_category
+              ? ` · ${structured.attempted_category}`
+              : ""
+          }`,
+        });
+      } else {
+        setToast({ tone: "error", message: e.message || "Add failed" });
+      }
     }
   };
 
@@ -198,6 +241,35 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
       setToast({ tone: "success", message: "Line removed" });
     } catch (e) {
       setToast({ tone: "error", message: e.message });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const commitPatch = async (li, patch) => {
+    setBusyId(li.id);
+    setRowErrors((s) => { const c = { ...s }; delete c[li.id]; return c; });
+    try {
+      await api.patch(`/jobs/${jobId}/line-items/${li.id}`, patch);
+      await refresh();
+    } catch (e) {
+      const structured = parseErr(e);
+      if (structured?.error_code) {
+        setRowErrors((s) => ({
+          ...s,
+          [li.id]: {
+            error_code: structured.error_code,
+            attempted_category: structured.attempted_category,
+            available_categories: structured.available_categories,
+          },
+        }));
+        setToast({
+          tone: "error",
+          message: `Row error: ${structured.error_code}`,
+        });
+      } else {
+        setToast({ tone: "error", message: e.message || "Update failed" });
+      }
     } finally {
       setBusyId(null);
     }
@@ -215,21 +287,33 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
       setQtyEdits((e) => { const c = { ...e }; delete c[li.id]; return c; });
       return;
     }
-    setBusyId(li.id);
-    try {
-      await api.patch(`/jobs/${jobId}/line-items/${li.id}`, { quantity: n });
-      await refresh();
-      setQtyEdits((e) => { const c = { ...e }; delete c[li.id]; return c; });
-    } catch (e) {
-      setToast({ tone: "error", message: e.message });
-    } finally {
-      setBusyId(null);
-    }
+    await commitPatch(li, { quantity: n });
+    setQtyEdits((e) => { const c = { ...e }; delete c[li.id]; return c; });
   };
 
+  const commitPrice = async (li) => {
+    const raw = priceEdits[li.id];
+    if (raw == null || raw === "") return;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      setToast({ tone: "error", message: "Price must be ≥ 0" });
+      return;
+    }
+    if (n === Number(li.unit_price || 0)) {
+      setPriceEdits((e) => { const c = { ...e }; delete c[li.id]; return c; });
+      return;
+    }
+    await commitPatch(li, { unit_price: n });
+    setPriceEdits((e) => { const c = { ...e }; delete c[li.id]; return c; });
+  };
+
+  const setCategory = (li, cat) => commitPatch(li, { category: cat || "" });
+  const toggleWriteback = (li) =>
+    commitPatch(li, { pricebook_writeback: !li.pricebook_writeback_flag });
+
   const columns = useMemo(() => {
-    // Admin sees pricing columns; tech never.
-    if (isAdmin) return ["Item", "Qty", "Unit", "Subtotal", ""];
+    // Admin sees pricing + F7 columns; tech never.
+    if (isAdmin) return ["Item", "Category", "Qty", "Unit", "Subtotal", "Save to pricebook", ""];
     return ["Item", "Qty", "Notes", ""];
   }, [isAdmin]);
 
@@ -302,12 +386,17 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
             </thead>
             <tbody>
               {line_items.map((li) => {
-                const editing = qtyEdits[li.id] != null;
+                const qtyEditing = qtyEdits[li.id] != null;
+                const priceEditing = priceEdits[li.id] != null;
                 const editable = !locked;
+                const rowErr = rowErrors[li.id];
+                const rowBorder = rowErr
+                  ? `1px solid ${colors.error}`
+                  : `1px solid ${colors.border}`;
                 return (
                   <tr
                     key={li.id}
-                    style={{ borderBottom: `1px solid ${colors.border}` }}
+                    style={{ borderBottom: rowBorder }}
                     data-testid={`li-row-${li.id}`}
                   >
                     <td className="px-2 py-2 align-top">
@@ -323,17 +412,42 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
                         </div>
                       ) : null}
                     </td>
+                    {isAdmin ? (
+                      <td
+                        className="px-2 py-2 align-top"
+                        style={{ minWidth: 160 }}
+                        data-testid={`li-category-cell-${li.id}`}
+                      >
+                        {editable ? (
+                          <CategoryPicker
+                            value={li.category || ""}
+                            onChange={(cat) => setCategory(li, cat)}
+                            disabled={busyId === li.id}
+                            invalidReason={
+                              rowErr?.error_code === "archived_category"
+                                ? "archived_category"
+                                : undefined
+                            }
+                            testid={`li-category-${li.id}`}
+                          />
+                        ) : (
+                          <span style={{ color: colors.onSurface }}>
+                            {li.category || "—"}
+                          </span>
+                        )}
+                      </td>
+                    ) : null}
                     <td className="px-2 py-2 align-top">
                       {editable ? (
                         <input
                           type="number"
                           min="0.01"
                           step="0.5"
-                          value={editing ? qtyEdits[li.id] : li.quantity}
+                          value={qtyEditing ? qtyEdits[li.id] : li.quantity}
                           onChange={(e) =>
                             setQtyEdits((s) => ({ ...s, [li.id]: e.target.value }))
                           }
-                          onBlur={() => editing && commitQty(li)}
+                          onBlur={() => qtyEditing && commitQty(li)}
                           onKeyDown={(e) => e.key === "Enter" && commitQty(li)}
                           disabled={busyId === li.id}
                           className="w-16 px-1.5 py-0.5 rounded-md text-sm"
@@ -351,10 +465,48 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
                     {isAdmin ? (
                       <>
                         <td
-                          className="px-2 py-2 align-top text-right"
-                          style={{ color: colors.onSurface }}
+                          className="px-2 py-2 align-top"
+                          style={{ color: colors.onSurface, minWidth: 110 }}
                         >
-                          {li.unit_price != null ? money(li.unit_price) : "—"}
+                          {editable ? (
+                            <>
+                              <div className="flex items-center gap-1">
+                                <span style={{ color: colors.muted }}>$</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={priceEditing ? priceEdits[li.id] : (li.unit_price ?? 0)}
+                                  onChange={(e) =>
+                                    setPriceEdits((s) => ({ ...s, [li.id]: e.target.value }))
+                                  }
+                                  onBlur={() => priceEditing && commitPrice(li)}
+                                  onKeyDown={(e) => e.key === "Enter" && commitPrice(li)}
+                                  disabled={busyId === li.id}
+                                  className="w-24 px-1.5 py-0.5 rounded-md text-sm text-right"
+                                  style={{
+                                    border: `1px solid ${colors.border}`,
+                                    background: colors.surface,
+                                    color: colors.onSurface,
+                                  }}
+                                  data-testid={`li-unit-price-${li.id}`}
+                                />
+                              </div>
+                              {li.custom_price_override_flag ? (
+                                <div
+                                  className="text-[10px] mt-0.5"
+                                  style={{ color: colors.warning || colors.brand }}
+                                  data-testid={`li-custom-price-hint-${li.id}`}
+                                >
+                                  Custom price
+                                </div>
+                              ) : null}
+                            </>
+                          ) : (
+                            <span>
+                              {li.unit_price != null ? money(li.unit_price) : "—"}
+                            </span>
+                          )}
                         </td>
                         <td
                           className="px-2 py-2 align-top text-right font-semibold"
@@ -362,6 +514,24 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
                           data-testid={`li-subtotal-${li.id}`}
                         >
                           {li.subtotal != null ? money(li.subtotal) : "—"}
+                        </td>
+                        <td
+                          className="px-2 py-2 align-top text-center"
+                          data-testid={`li-writeback-cell-${li.id}`}
+                        >
+                          <label
+                            className="inline-flex items-center gap-1 text-[11px]"
+                            style={{ color: colors.muted, cursor: editable ? "pointer" : "default" }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={!!li.pricebook_writeback_flag}
+                              onChange={() => toggleWriteback(li)}
+                              disabled={!editable || busyId === li.id}
+                              data-testid={`li-writeback-${li.id}`}
+                            />
+                            <span>Save</span>
+                          </label>
                         </td>
                       </>
                     ) : (
@@ -402,7 +572,7 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
             {isAdmin && job_totals ? (
               <tfoot data-testid="li-totals">
                 <tr>
-                  <td colSpan={2}></td>
+                  <td colSpan={4}></td>
                   <td
                     className="px-2 py-1 text-right text-xs font-semibold"
                     style={{ color: colors.muted }}
@@ -420,7 +590,7 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
                 </tr>
                 {job_totals.tax ? (
                   <tr>
-                    <td colSpan={2}></td>
+                    <td colSpan={4}></td>
                     <td
                       className="px-2 py-1 text-right text-xs"
                       style={{ color: colors.muted }}
@@ -437,7 +607,7 @@ export default function LineItemsSection({ jobId, jobStatus, user }) {
                   </tr>
                 ) : null}
                 <tr>
-                  <td colSpan={2}></td>
+                  <td colSpan={4}></td>
                   <td
                     className="px-2 py-1 text-right text-xs font-bold uppercase"
                     style={{ color: colors.muted }}

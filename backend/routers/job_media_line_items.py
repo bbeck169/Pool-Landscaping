@@ -24,6 +24,18 @@ Projection rules — SERVER SIDE (client-side hiding is not sufficient):
   job_totals, cost.
 * Tech: unit_price, subtotal, tax_rate, cost, job_totals are all
   stripped from the payload.
+
+── Phase F7 · Feb-2026 — line items on jobs power the "Add charge for
+visit" flow.  auto_invoice.py inherits job.line_items[] verbatim when
+the job flips to completed.  New optional fields on POST/PATCH:
+* ``category``            — validated via ``validate_line_item_categories``
+                            (same 4xx contract the invoice side uses).
+* ``unit_price``          — admin override of pricebook default; stamps
+                            ``custom_price_override_flag`` on the row
+                            when divergent from pricebook.
+* ``pricebook_writeback`` — when True, writeback fan-out fires AFTER
+                            the row save via
+                            ``services/pricebook/writeback.py``.
 """
 from __future__ import annotations
 
@@ -97,11 +109,21 @@ class LineItemIn(BaseModel):
     pricebook_item_id: str = Field(..., min_length=1)
     quantity: float = Field(..., gt=0)
     notes: Optional[str] = Field(None, max_length=500)
+    # ─── Phase F7 · Feb-2026 additions ────────────────────────────────
+    # All optional so pre-F7 callers (e.g. existing K2 tests) keep
+    # working — they simply denorm from the pricebook item.
+    unit_price: Optional[float] = Field(None, ge=0)
+    category: Optional[str] = Field(None, max_length=100)
+    pricebook_writeback: Optional[bool] = Field(False)
 
 
 class LineItemPatch(BaseModel):
     quantity: Optional[float] = Field(None, gt=0)
     notes: Optional[str] = Field(None, max_length=500)
+    # ─── Phase F7 · Feb-2026 additions ────────────────────────────────
+    unit_price: Optional[float] = Field(None, ge=0)
+    category: Optional[str] = Field(None, max_length=100)
+    pricebook_writeback: Optional[bool] = None
 
 
 def _num(v) -> float:
@@ -170,7 +192,14 @@ async def add_line_item(jid: str, body: LineItemIn,
     if not await _tech_can_touch(job, user, tenant["id"]):
         raise HTTPException(403, "Not your job")
     pb = await _load_pricebook_item(body.pricebook_item_id, tenant["id"])
-    unit_price = _num(pb.get("unit_price"))
+    pb_unit_price = _num(pb.get("unit_price"))
+    # ─── F7 · unit_price override + custom-price flag ─────────────────
+    if body.unit_price is not None:
+        unit_price = _num(body.unit_price)
+        custom_price_override = (unit_price != pb_unit_price)
+    else:
+        unit_price = pb_unit_price
+        custom_price_override = False
     subtotal = round(unit_price * body.quantity, 2)
     tax_rate = pb.get("tax_rate")
     if tax_rate is None and pb.get("taxable"):
@@ -178,6 +207,21 @@ async def add_line_item(jid: str, body: LineItemIn,
         # taxable but has no explicit rate.
         t = await db.tenants.find_one({"id": tenant["id"]}, {"_id": 0, "tax_rate": 1})
         tax_rate = _num((t or {}).get("tax_rate")) or None
+    # ─── F7 · category resolution + validation ────────────────────────
+    # Prefer explicit body override; fall back to pricebook item's
+    # category.  Only validate when a category actually resolves —
+    # jobs may carry uncategorised lines (auto-invoice inheritance
+    # preserves whatever is there; the invoice-side validate hook
+    # will 400 later if the completed invoice is missing a category,
+    # which is the correct choke point).
+    category = body.category if body.category is not None else pb.get("category")
+    if category:
+        from routers.income_categories import validate_line_item_categories
+        # Reuse the invoice-side validator so the 4xx contract is
+        # bit-identical.  Wraps in a single-line-items list so
+        # ``line_index`` in the error surfaces as 0 — client maps
+        # to the just-submitted row.
+        await validate_line_item_categories(tenant["id"], [{"category": category}])
     li = {
         "id": new_id(),
         "pricebook_item_id": pb.get("id"),
@@ -191,6 +235,10 @@ async def add_line_item(jid: str, body: LineItemIn,
         "notes": body.notes or None,
         "added_by": user["id"],
         "added_at": now_iso(),
+        # ─── F7 · Feb-2026 additive fields ────────────────────────────
+        "category": category or None,
+        "custom_price_override_flag": bool(custom_price_override),
+        "pricebook_writeback_flag": bool(body.pricebook_writeback),
     }
     await db.jobs.update_one(
         {"id": jid, "tenant_id": tenant["id"]},
@@ -198,6 +246,30 @@ async def add_line_item(jid: str, body: LineItemIn,
          "$set": {"updated_at": now_iso()}},
     )
     await _refresh_job_totals(jid, tenant["id"])
+    # ─── F7 · pricebook writeback fan-out ─────────────────────────────
+    # Runs AFTER the row save settles so a writeback failure never
+    # rolls back the line item.  ``process_pricebook_writebacks``
+    # never raises; it returns a status dict we can log.
+    if body.pricebook_writeback:
+        try:
+            from services.pricebook.writeback import process_pricebook_writebacks
+            wb_result = await process_pricebook_writebacks(
+                tenant_id=tenant["id"],
+                invoice_id=jid,           # FK stamp on the audit event
+                line_items=[{**li, "pricebook_writeback": True,
+                              "item_id": pb.get("id")}],
+                actor=user,
+            )
+            if wb_result.get("errors"):
+                logger.info(
+                    "[pricebook_writeback] job=%s (add-line) errors=%s",
+                    jid, wb_result["errors"],
+                )
+        except Exception:                                        # noqa: BLE001
+            logger.exception(
+                "[pricebook_writeback] fan-out failed for job=%s (add-line)",
+                jid,
+            )
     if _is_tech(user):
         return {k: v for k, v in li.items() if k not in LINE_ITEM_PRICING_FIELDS}
     return li
@@ -233,7 +305,40 @@ async def patch_line_item(jid: str, lid: str, body: LineItemPatch,
     updates: Dict[str, Any] = {}
     if body.quantity is not None:
         updates["quantity"] = body.quantity
-        updates["subtotal"] = round(_num(li.get("unit_price")) * body.quantity, 2)
+    # ─── F7 · unit_price override + custom-price flag ─────────────────
+    if body.unit_price is not None and _is_admin(user):
+        # Tech is never allowed to change price server-side.  Silently
+        # dropped for tech role (matches the pricing-projection ethos
+        # — tech cannot READ price and cannot WRITE price).
+        updates["unit_price"] = _num(body.unit_price)
+        # Recompute custom_price_override_flag against the pricebook
+        # source-of-truth.  Uses the row's own pricebook_item_id
+        # (may be None for legacy rows).
+        pb_price = None
+        if li.get("pricebook_item_id"):
+            pb = await db.items.find_one(
+                {"id": li["pricebook_item_id"], "tenant_id": tenant["id"]},
+                {"_id": 0, "unit_price": 1},
+            ) or {}
+            pb_price = _num(pb.get("unit_price"))
+        updates["custom_price_override_flag"] = bool(
+            pb_price is not None and updates["unit_price"] != pb_price
+        )
+    # Recompute subtotal if either qty or unit_price changed.
+    if "quantity" in updates or "unit_price" in updates:
+        new_qty = updates.get("quantity", _num(li.get("quantity")))
+        new_price = updates.get("unit_price", _num(li.get("unit_price")))
+        updates["subtotal"] = round(new_price * new_qty, 2)
+    # ─── F7 · category update + validation ────────────────────────────
+    if body.category is not None:
+        if body.category:  # non-empty → validate
+            from routers.income_categories import validate_line_item_categories
+            await validate_line_item_categories(
+                tenant["id"], [{"category": body.category}],
+            )
+        updates["category"] = body.category or None
+    if body.pricebook_writeback is not None:
+        updates["pricebook_writeback_flag"] = bool(body.pricebook_writeback)
     if body.notes is not None:
         updates["notes"] = body.notes or None
     if not updates:
@@ -248,6 +353,30 @@ async def patch_line_item(jid: str, lid: str, body: LineItemPatch,
     await _refresh_job_totals(jid, tenant["id"])
     updated_job = await _load_job(jid, tenant["id"])
     updated_li = next((x for x in (updated_job.get("line_items") or []) if x["id"] == lid), None)
+    # ─── F7 · writeback fan-out on save (post-transaction) ────────────
+    # Fires when the row NOW carries pricebook_writeback_flag=True,
+    # regardless of whether this specific PATCH set it — matches the
+    # invoice PATCH semantics.  Never raises.
+    if updated_li and updated_li.get("pricebook_writeback_flag"):
+        try:
+            from services.pricebook.writeback import process_pricebook_writebacks
+            wb_result = await process_pricebook_writebacks(
+                tenant_id=tenant["id"],
+                invoice_id=jid,
+                line_items=[{**updated_li, "pricebook_writeback": True,
+                              "item_id": updated_li.get("pricebook_item_id")}],
+                actor=user,
+            )
+            if wb_result.get("errors"):
+                logger.info(
+                    "[pricebook_writeback] job=%s (patch-line) errors=%s",
+                    jid, wb_result["errors"],
+                )
+        except Exception:                                        # noqa: BLE001
+            logger.exception(
+                "[pricebook_writeback] fan-out failed for job=%s (patch-line)",
+                jid,
+            )
     if updated_li and _is_tech(user):
         return _strip_for_tech([updated_li])[0]
     return updated_li

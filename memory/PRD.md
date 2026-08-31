@@ -1,3 +1,43 @@
+## Phase F7 · Feb-2026 — "Add charge for visit" (job line-items + auto-invoice passthrough) — SHIPPED
+
+**Actual gap:** Slice K2 already shipped `db.jobs.line_items[]` + 4 granular endpoints (`POST/PATCH/DELETE/GET /api/jobs/{jid}/line-items[/{lid}]`) + a `LineItemsSection` component wired to `JobDetail`. What was missing:
+1. `auto_invoice.py` **ignored** `job.line_items[]` at completion — legacy path (job.price + chemical events) was the only source.
+2. Job line items had no category, no `custom_price_override_flag`, no `pricebook_writeback_flag`.
+3. The Edit Job modal on `/schedule` had no line-items UI.
+
+### Backend
+- `routers/job_media_line_items.py` — extended `LineItemIn` + `LineItemPatch` with `unit_price` (dollars, admin-only on PATCH), `category`, `pricebook_writeback`. Category validation reuses `routers/income_categories.py::validate_line_item_categories` — same `{error_code, line_index, attempted_category, available_categories, field}` 4xx contract as invoice-side. `custom_price_override_flag` derived server-side (unit_price ≠ pricebook default). Pricebook writeback fan-out on POST + PATCH via `services/pricebook/writeback.py::process_pricebook_writebacks` (never raises, post-transaction ordering).
+- `services/auto_invoice.py::_build_line_items` — new precedence: `job.line_items[]` (if non-empty) copied verbatim to invoice with dollars→cents conversion, preserving `pricebook_item_id`, `category`, `pricebook_writeback_flag`, `custom_price_override_flag`. Falls back to legacy path (job.price + chemical events) when empty — backwards-compat preserved.
+- `services/auto_invoice.py::create_invoice_from_job` — post-save writeback fan-out when ANY inherited job line carries `pricebook_writeback_flag=True`. Actor stamped as `system:auto_invoice`. Never blocks card charge or audit trail.
+
+### Frontend
+- `pages/jobs/LineItemsSection.jsx` — admin table extended to 7 columns: Item / Category / Qty / Unit / Subtotal / Save to pricebook / Remove. Category cell uses shared `@/components/income/CategoryPicker` with `invalidReason="archived_category"` wire-through. Editable `unit_price` input per row (admin only) with "Custom price" hint when `custom_price_override_flag` is true. Per-line "Save to pricebook" checkbox. Row-level 4xx error surfacing (red border + `invalidReason` on the picker) via `parseErr` helper.
+- `pages/schedule/ScheduleJobEditModal.jsx` — `LineItemsSection` embedded below Notes, above the footer. Passes `user` prop through from CalendarSchedule so LineItemsSection can gate admin/tech projections. Same granular endpoints (no new API surface).
+
+### Tests
+- Backend (14 new tests, all passing in 0.66s):
+  - `tests/test_f7_job_line_items_category_validation.py` — POST/PATCH with archived category returns structured 4xx (3 cases).
+  - `tests/test_f7_job_line_items_custom_price.py` — admin custom-price flips flag, tech drop, subtotal recompute (4 cases).
+  - `tests/test_f7_job_line_items_pricebook_writeback.py` — writeback event fires on POST + PATCH flip; no event when flag false (3 cases).
+  - `tests/test_f7_auto_invoice_inherits_line_items.py` — job LI → invoice mapping (dollars→cents, field preservation) + legacy fallback (2 cases).
+  - `tests/test_f7_auto_invoice_pricebook_writeback_from_job.py` — auto-invoice writeback fan-out (2 cases).
+  - Shared fixture `tests/_f7_loop_fixture.py::run_test(coro_factory)` — per-test loop rebinding for Motor collections, restores original bindings so downstream HTTP suites are not poisoned.
+- Frontend (3 new tests, all passing in 140ms):
+  - `test/f7-edit-job-line-items.test.jsx` — LineItemsSection renders category / custom-price hint / writeback checkbox; toggle writeback PATCHes with correct payload; structured 4xx doesn't crash the row.
+
+### Guardrails preserved
+- No changes to `InvoiceEditModal.jsx` (invoice-side editor left alone).
+- No new PATCH `/api/jobs/{id}` line_items path — K2 granular endpoints reused (1a).
+- Tech pricing projection unchanged: `unit_price`/`subtotal`/`tax_rate`/`cost`/`custom_price_override_flag` all stripped from tech responses; tech `unit_price` PATCH is silently dropped server-side.
+- Auto-invoice legacy path (job.price + chemical events) still works when `job.line_items[]` is empty — 5/5 phase22 auto_invoice tests still passing.
+- F6 integrity check + reminder loop untouched: `enforce=True` default preserved in production.
+
+### Tech Debt
+- **TD-F7-1** logged in `/app/memory/TECH_DEBT.md` — extract shared `<LineItemsEditor>` primitive between `LineItemsSection.jsx` (job) and `InvoiceEditModal.jsx` (invoice) when a third consumer lands or a fourth feature diverges.
+
+---
+
+
 ## B4 Follow-up · Price Enrichment on Subscription List — SHIPPED
 
 Replaces the raw ``price_1UAI...`` in the Plan column with the

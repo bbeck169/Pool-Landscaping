@@ -28,6 +28,24 @@ Env var precedence: if ``INTEGRITY_CHECK_ENFORCE`` is set to
 either ``true`` or ``false`` explicitly, that value wins. If unset
 or set to any other value, the APP_ENV default applies.
 
+── Phase F6 · Feb-2026 — diagnostic dump + log-only nag ──
+Even when ``enforce=False`` unblocks the deploy, the operator now
+gets:
+  * A machine-readable JSON blob on stderr (grep target
+    ``INTEGRITY_DUMP:``) — one line, log-shipper friendly.
+  * A durable dump file at
+    ``/app/backend/logs/integrity_dump_{utc_iso}.json`` with the
+    FULL orphan list per class (no 20-row cap) + a per-tenant
+    breakdown.
+  * A human-readable summary line pointing at the runbook and the
+    dump path.
+  * A recurring 60-min CRITICAL nag while log-only mode is active
+    with dangling refs > 0 (see ``start_log_only_reminder_task``).
+
+The dump path lives at the module boundary, so ``enforce=True``
+callers ALSO benefit — repair playbooks now have machine-readable
+input on any fail-fast boot, no scraping needed.
+
 Detection classes:
 
 1. ``customer_ref`` — ``jobs.customer_id`` points at a customer
@@ -46,11 +64,25 @@ orphans there deliberately.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
-from typing import Any, Dict, List
+import pathlib
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("services.startup.integrity_check")
+
+# Filesystem sink for the JSON diagnostic dump.  Overridable at
+# import time via ``INTEGRITY_DUMP_DIR`` if the pod's writable
+# volume differs from ``/app/backend/logs``.
+_DEFAULT_DUMP_DIR = pathlib.Path(
+    os.environ.get("INTEGRITY_DUMP_DIR", "/app/backend/logs"),
+)
+_LOG_ONLY_REMINDER_INTERVAL_SEC = int(
+    os.environ.get("INTEGRITY_LOG_ONLY_REMINDER_SEC", "3600"),
+)
 
 
 class IntegrityCheckFailure(RuntimeError):
@@ -182,13 +214,36 @@ async def scan_dangling_refs(db: Any) -> Dict[str, Any]:
 
     total = (len(orphan_customer) + len(orphan_technician)
              + len(orphan_crew))
+
+    # Phase F6 · Feb-2026 — per-tenant breakdown so operators can
+    # see WHICH tenant is corrupt at a glance instead of grepping
+    # the sample lines.  Sorted descending so the loudest tenant
+    # is first.
+    tenant_counts: Dict[str, int] = {}
+    for row in orphan_customer + orphan_technician + orphan_crew:
+        tid = row.get("tenant_id") or "(no tenant_id)"
+        tenant_counts[tid] = tenant_counts.get(tid, 0) + 1
+    tenant_breakdown = dict(
+        sorted(tenant_counts.items(), key=lambda kv: -kv[1])
+    )
+
     return {
+        # Backwards-compat: samples capped at 20 for the on-console
+        # sample lines.  Older test fixtures assert against these.
         "orphan_customer": orphan_customer[:20],
         "orphan_customer_total": len(orphan_customer),
         "orphan_technician": orphan_technician[:20],
         "orphan_technician_total": len(orphan_technician),
         "orphan_crew": orphan_crew[:20],
         "orphan_crew_total": len(orphan_crew),
+        # Phase F6 · Feb-2026 — FULL lists retained on the report
+        # so ``write_diagnostic_dump`` can emit every row.  Prefixed
+        # ``_all_*`` so callers grepping the older keys still get
+        # the sample-capped view.
+        "_all_orphans_customer": orphan_customer,
+        "_all_orphans_technician": orphan_technician,
+        "_all_orphans_crew": orphan_crew,
+        "tenant_breakdown": tenant_breakdown,
         "summary": {
             "total_dangling_refs": total,
             "customer_class": len(orphan_customer),
@@ -231,6 +286,11 @@ async def run_startup_integrity_check(db: Any) -> Dict[str, Any]:
         )
         return report
 
+    # ── Phase F6 · Feb-2026 — always write the diagnostic dump when
+    #    dangling refs are found, regardless of enforce mode.  The
+    #    dump is what the operator actually needs to fix state.
+    dump_path = write_diagnostic_dump(report, enforce_mode=enforce)
+
     # ── Log the samples so the operator has an actionable path.
     logger.critical(
         "[integrity_check] DANGLING REFS DETECTED — "
@@ -246,9 +306,202 @@ async def run_startup_integrity_check(db: Any) -> Dict[str, Any]:
             logger.critical("[integrity_check] %s sample: %s",
                              cls_name, sample)
 
+    # Phase F6 · human-readable per-tenant summary + dump-path
+    # pointer so on-call ops don't have to grep the sample lines.
+    _emit_operator_summary(report, dump_path)
+
+    # Phase F6 · loud reminder while log-only mode is active with
+    # dangling refs > 0 — operators forget to flip enforce back on.
+    if not enforce:
+        logger.critical(
+            "[integrity_check] [LOG-ONLY MODE ACTIVE] enforce=False "
+            "— %d dangling refs detected but not blocking startup. "
+            "This is a deployment workaround, NOT a stable operating "
+            "mode. Run F2 data-repair immediately and restore "
+            "INTEGRITY_CHECK_ENFORCE=true. Dump: %s",
+            total, dump_path,
+        )
+
     # Only ``customer`` and ``crew`` classes contribute to fail-fast
     # — see docstring for the rationale on softening
     # ``technician_ref``.
     if enforce and enforcing_total > 0:
         raise IntegrityCheckFailure(report)
     return report
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase F6 · Feb-2026 — diagnostic dump + log-only reminder task
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _dump_filename(now: Optional[datetime] = None) -> str:
+    """Colon-free UTC timestamp so the filename is Windows-safe
+    and shell-quoting-safe."""
+    now = now or datetime.now(timezone.utc)
+    return f"integrity_dump_{now.strftime('%Y-%m-%dT%H-%M-%SZ')}.json"
+
+
+def _build_dump_payload(report: Dict[str, Any],
+                          *, enforce_mode: bool,
+                          now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Assemble the machine-readable dump.  Kept pure so tests can
+    assert against the exact shape without touching disk."""
+    now = now or datetime.now(timezone.utc)
+    return {
+        "timestamp": now.isoformat().replace("+00:00", "Z"),
+        "enforce_mode": bool(enforce_mode),
+        "totals": {
+            "customer": report["summary"]["customer_class"],
+            "technician": report["summary"]["technician_class"],
+            "crew": report["summary"]["crew_class"],
+            "total": report["summary"]["total_dangling_refs"],
+        },
+        "tenant_breakdown": report.get("tenant_breakdown", {}),
+        "orphans": {
+            "customer_refs": report.get("_all_orphans_customer", []),
+            "technician_refs": report.get("_all_orphans_technician", []),
+            "crew_refs": report.get("_all_orphans_crew", []),
+        },
+    }
+
+
+def write_diagnostic_dump(report: Dict[str, Any],
+                             *, enforce_mode: bool,
+                             dump_dir: Optional[pathlib.Path] = None,
+                             now: Optional[datetime] = None,
+                             ) -> Optional[str]:
+    """Emit the F6 diagnostic dump — stderr line + JSON file.
+
+    Returns the file path (as str) on success, None on any failure
+    (never raises — a diagnostic emit MUST NOT itself brick boot).
+    Called ONLY when ``total_dangling_refs > 0`` — clean scans
+    write nothing.
+    """
+    payload = _build_dump_payload(report, enforce_mode=enforce_mode, now=now)
+    # ── stderr JSON line for log-shippers.  Compact so a single
+    #    grep on ``INTEGRITY_DUMP:`` yields a self-contained record.
+    try:
+        logger.critical(
+            "INTEGRITY_DUMP: %s",
+            json.dumps(payload, separators=(",", ":"), sort_keys=True,
+                        default=str),
+        )
+    except Exception as exc:      # noqa: BLE001 — never brick boot
+        logger.warning("[integrity_check] stderr dump failed: %s", exc)
+
+    # ── Durable file dump.  Uses the module-level default dir
+    #    unless the caller overrides (tests point at tmp).
+    target_dir = dump_dir or _DEFAULT_DUMP_DIR
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path = target_dir / _dump_filename(now)
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True, default=str),
+            encoding="utf-8",
+        )
+        return str(path)
+    except Exception as exc:      # noqa: BLE001
+        logger.warning(
+            "[integrity_check] file dump to %s failed: %s",
+            target_dir, exc,
+        )
+        return None
+
+
+def _emit_operator_summary(report: Dict[str, Any],
+                             dump_path: Optional[str]) -> None:
+    """Human-readable one-liner — total + per-tenant breakdown +
+    runbook pointer + dump file path.  On-call reads this line
+    ONLY and knows exactly which tenant to repair."""
+    breakdown = report.get("tenant_breakdown") or {}
+    top_lines: List[str] = []
+    for tid, count in list(breakdown.items())[:5]:
+        by_class = _tenant_class_breakdown(report, tid)
+        top_lines.append(
+            f"  Tenant {tid}: customer={by_class['customer']} "
+            f"technician={by_class['technician']} "
+            f"crew={by_class['crew']} (subtotal={count})"
+        )
+    logger.critical(
+        "[integrity_check] %d dangling refs across %d tenant(s):\n%s\n"
+        "Full dump: %s\n"
+        "See DATA_INTEGRITY_RUNBOOK.md for recovery: "
+        "run F2 dry-run+apply, then flip enforce back on.",
+        report["summary"]["total_dangling_refs"],
+        len(breakdown),
+        "\n".join(top_lines) if top_lines else "  (no tenant tag)",
+        dump_path or "(file dump unavailable)",
+    )
+
+
+def _tenant_class_breakdown(report: Dict[str, Any],
+                              tenant_id: str) -> Dict[str, int]:
+    def _count(rows: List[Dict[str, Any]]) -> int:
+        return sum(1 for r in rows if r.get("tenant_id") == tenant_id)
+
+    return {
+        "customer":  _count(report.get("_all_orphans_customer", [])),
+        "technician": _count(report.get("_all_orphans_technician", [])),
+        "crew":      _count(report.get("_all_orphans_crew", [])),
+    }
+
+
+async def _log_only_reminder_loop(db: Any,
+                                     interval_sec: int) -> None:
+    """Recurring CRITICAL nag while log-only mode is active AND
+    dangling refs remain.  Runs forever; operators kill it by
+    either running F2 apply (drives dangling → 0 so next tick is a
+    no-op) or restarting with ``INTEGRITY_CHECK_ENFORCE=true``
+    (next boot fails fast, this task never gets scheduled)."""
+    while True:
+        try:
+            await asyncio.sleep(interval_sec)
+            report = await scan_dangling_refs(db)
+            total = report["summary"]["total_dangling_refs"]
+            if total == 0:
+                logger.info(
+                    "[integrity_check] [LOG-ONLY REMINDER] state is "
+                    "now clean — 0 dangling refs. Consider setting "
+                    "INTEGRITY_CHECK_ENFORCE=true on next deploy.",
+                )
+                return    # exit loop; operator flipped back to clean state
+            logger.critical(
+                "[integrity_check] [LOG-ONLY REMINDER · every %ds] "
+                "%d dangling refs still present across %d tenant(s). "
+                "This is NOT a stable operating mode. Run F2 "
+                "data-repair and restore INTEGRITY_CHECK_ENFORCE=true.",
+                interval_sec, total,
+                len(report.get("tenant_breakdown") or {}),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:      # noqa: BLE001
+            logger.warning(
+                "[integrity_check] reminder tick crashed: %s", exc,
+            )
+
+
+def start_log_only_reminder_task(db: Any,
+                                    *,
+                                    interval_sec: Optional[int] = None,
+                                    ) -> Optional[asyncio.Task]:
+    """Schedule the log-only-mode reminder loop.  ONLY safe to call
+    when ``enforce=False`` AND the boot scan surfaced dangling
+    refs — server.py's startup wrapper enforces both.  Returns the
+    ``Task`` handle so callers can cancel it in tests or on
+    shutdown."""
+    interval = interval_sec or _LOG_ONLY_REMINDER_INTERVAL_SEC
+    try:
+        loop = asyncio.get_event_loop()
+        task = loop.create_task(_log_only_reminder_loop(db, interval))
+        logger.info(
+            "[integrity_check] log-only reminder scheduled — will "
+            "nag every %ds until dangling refs reach 0.", interval,
+        )
+        return task
+    except Exception as exc:      # noqa: BLE001
+        logger.warning(
+            "[integrity_check] failed to schedule reminder: %s", exc,
+        )
+        return None

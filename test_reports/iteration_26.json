@@ -1,0 +1,39 @@
+{
+  "summary": "Independent verification of Phase F6 (F3 log-only override + diagnostic dump). Added 8 NEW pytest cases in /app/backend/tests/test_f6_verification.py covering F6-A..F6-E. Result: 8/8 PASS. Also re-ran the 3 pre-existing F6/F3 suites together (36/36 pass). To prove the new assertions are non-vacuous, I ran two temporary mutation rounds on integrity_check.py (extra top-level dump key, colon-ified filename, indented stderr JSON; then fixed-interval sleep + ascending tenant sort) — the correct 3 and 4 tests failed respectively, and the file was restored byte-identical (verified: 8/8 pass again and git diff stat unchanged at 254 insertions). No production code, server.py, or existing test files were modified. VERDICT per feature: F6-A PASS, F6-B PASS, F6-C PASS, F6-D PASS, F6-E PASS.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "tests/test_startup_integrity_check.py (F3 baseline suite)", "issue": "Test-suite side effect: the baseline F3 tests call run_startup_integrity_check without monkeypatching ic._DEFAULT_DUMP_DIR, so every pytest run writes real dump files into /app/backend/logs/ (observed 3 stray integrity_dump_*.json containing fixture data job_id 'j1'/'GHOST'). Pollutes the operator dump dir and, over many CI runs, grows unbounded. Fix: monkeypatch _DEFAULT_DUMP_DIR to tmp_path in those tests (or pass dump_dir)."},
+      {"endpoint": "services/startup/integrity_check.py::write_diagnostic_dump", "issue": "No retention/rotation on the dump dir — one file per dirty boot, never pruned. With a crash-looping pod in log-only mode this can fill the writable volume. Consider keeping last N dumps."},
+      {"endpoint": "services/startup/integrity_check.py::start_log_only_reminder_task", "issue": "Uses asyncio.get_event_loop() (deprecated in 3.12+ outside a running loop). Works today under the FastAPI startup hook; prefer asyncio.get_running_loop()/asyncio.create_task()."},
+      {"endpoint": "tests/test_integrity_check_log_only_reminder.py::test_reminder_interval_defaults_to_env_or_3600", "issue": "Assertion is tautological (constant is import-time captured; `>=60 or ==3600` is always true for the default). Not a product bug — pre-existing weak test, left untouched per instructions."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_f6_verification.py",
+    "/app/test_reports/pytest/f6_verification.xml"
+  ],
+  "action_items": [
+    "Optional (test hygiene, not product): monkeypatch ic._DEFAULT_DUMP_DIR in tests/test_startup_integrity_check.py so pytest stops writing real dumps to /app/backend/logs/; delete the 3 stray fixture dumps currently there.",
+    "Optional: add retention/rotation for /app/backend/logs/integrity_dump_*.json.",
+    "Optional: replace asyncio.get_event_loop() with get_running_loop()/create_task in start_log_only_reminder_task."
+  ],
+  "critical_code_review_comments": [
+    "F6 dump payload shape is exactly {timestamp, enforce_mode, totals, tenant_breakdown, orphans} — verified strictly (extra key mutation caught). Log-shipper contract holds: exactly one CRITICAL 'INTEGRITY_DUMP: ' record, compact single-line JSON, no newlines.",
+    "Dump filename is colon-free (integrity_dump_YYYY-MM-DDTHH-MM-SSZ.json) and file contents are byte-identical to json.dumps(payload, indent=2, sort_keys=True) — pretty-print contract verified.",
+    "FULL orphan lists are dumped: seeded 26/27/28 orphans (>20 sample cap) and all rows appear in orphans.*_refs; totals matched 81.",
+    "Clean scan does NOT invoke write_diagnostic_dump (spy asserted zero calls, zero files) — diagnostic path is strictly gated on dangling refs > 0.",
+    "Reminder loop honours interval_sec (>=2 ticks within interval*2.5), self-terminates with an INFO 'state is now clean' when refs drop to 0 mid-flight, survives a raising tick (logs 'reminder tick crashed' then completes the next tick), and cancels without raising out of the task.",
+    "Tenant isolation verified: tenant_breakdown == {'tenant-a':5,'tenant-b':2,'tenant-c':1} sorted DESC; every dump orphan row carries tenant_id; grouping dump orphans by tenant_id equals the breakdown exactly with no cross-tenant misattribution; _tenant_class_breakdown('tenant-a') == {customer:3, technician:1, crew:1} summing to 5.",
+    "Guardrail intact: _enforce_flag_from_env still defaults to True on APP_ENV=production (covered by the passing baseline test test_enforce_flag_defaults_to_production_only); F6 tests pass enforce_mode as an explicit argument and never flip the prod default. enforce=True still raises IntegrityCheckFailure AFTER the dump is written."
+  ],
+  "updated_files": ["/app/backend/tests/test_f6_verification.py"],
+  "success_rate": {"backend": "100% (8/8 new F6 verification tests; 36/36 including pre-existing F6/F3 suites)", "frontend": "N/A - backend only"},
+  "seed_data_creation": "None persisted. All tests use in-memory fake Motor collections (_FakeColl/_FakeDb reused from test_integrity_check_diagnostic_dump.py); dumps written only to pytest tmp_path.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Not required — F6 has no HTTP surface; /app/memory/test_credentials.md not needed for this scope.",
+  "context_for_next_testing_agent": "F6 is independently verified (F6-A..F6-E all PASS) via /app/backend/tests/test_f6_verification.py — run with: cd /app/backend && python -m pytest tests/test_f6_verification.py -q. The tests are mutation-validated (they fail when the dump schema, filename, single-line stderr JSON, reminder interval, or tenant sort are broken). Known residue: /app/backend/logs contains stray fixture dumps written by tests/test_startup_integrity_check.py because it does not override _DEFAULT_DUMP_DIR. Backend startup log confirms live env is clean: '[integrity_check] clean — 0 dangling refs (enforce=True)'.",
+  "rca_of_the_issue": "Dump-dir pollution RCA: run_startup_integrity_check calls write_diagnostic_dump(report, enforce_mode=...) without a dump_dir, so it falls back to module-level _DEFAULT_DUMP_DIR (/app/backend/logs). Any test that drives run_startup_integrity_check with a dirty fake DB and does not monkeypatch that constant writes a real file. Reproduce: cd /app/backend && python -m pytest tests/test_startup_integrity_check.py -q && ls logs/. Mitigation: monkeypatch ic._DEFAULT_DUMP_DIR to tmp_path in those tests. No product defect found in F6 itself."
+}

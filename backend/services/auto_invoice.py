@@ -42,7 +42,62 @@ from utils import new_id, now_iso
 
 
 async def _build_line_items(job: Dict[str, Any]) -> tuple[List[Dict[str, Any]], int]:
-    """Return (line_items, total_cents)."""
+    """Return (line_items, total_cents).
+
+    Phase F7 · Feb-2026 — precedence:
+
+    1. If ``job.line_items[]`` is non-empty (Slice K2 · "Add charge for
+       visit" flow), copy those rows verbatim onto the invoice with
+       dollars→cents conversion at the boundary.  Every field is
+       preserved including ``category``, ``pricebook_item_id``, and
+       ``pricebook_writeback_flag`` so the post-save writeback fan-out
+       on the invoice side can inherit the flag.
+    2. Otherwise fall back to the legacy path — build from
+       ``job.price`` + ``chemical_usage_events`` — so pre-F7 jobs
+       still auto-invoice correctly.
+    """
+    # ─── F7 · Inherit job.line_items[] if present ─────────────────────
+    job_lines = job.get("line_items") or []
+    if job_lines:
+        items: List[Dict[str, Any]] = []
+        total_cents = 0
+        for src in job_lines:
+            qty = float(src.get("quantity") or 0)
+            unit_dollars = float(src.get("unit_price") or 0)
+            unit_cents = int(round(unit_dollars * 100))
+            line_cents = int(round(qty * unit_dollars * 100))
+            row = {
+                "id": new_id(),
+                "description": (src.get("name") or src.get("description")
+                                 or "Service"),
+                "quantity": qty,
+                "unit_price": unit_dollars,
+                "unit_price_cents": unit_cents,
+                "line_total_cents": line_cents,
+                "kind": "job_line_item",
+                # Preserve F7-side fields verbatim for downstream
+                # (finance reports, pricebook writeback fan-out).
+                "pricebook_item_id": src.get("pricebook_item_id"),
+                "category": src.get("category"),
+                "pricebook_writeback_flag": bool(
+                    src.get("pricebook_writeback_flag")
+                ),
+                # Invoice-side writeback service consumes the
+                # ``pricebook_writeback`` key (no ``_flag`` suffix)
+                # — mirror both so either consumer works.
+                "pricebook_writeback": bool(
+                    src.get("pricebook_writeback_flag")
+                ),
+                "custom_price_override_flag": bool(
+                    src.get("custom_price_override_flag")
+                ),
+                "notes": src.get("notes"),
+            }
+            items.append(row)
+            total_cents += line_cents
+        return items, total_cents
+
+    # ─── Legacy path (pre-F7 jobs — job.price + chemical events) ──────
     items: List[Dict[str, Any]] = []
     total_cents = 0
 
@@ -202,6 +257,40 @@ async def create_invoice_from_job(job_id: str, tenant_id: str
             {"$set": {"auto_invoice_id": invoice_id,
                        "auto_invoice_created_at": now_iso()}},
         )
+
+        # ─── F7 · Post-save pricebook writeback fan-out ──────────────
+        # When the job.line_items[] path was taken, any line carrying
+        # pricebook_writeback_flag=True triggers a writeback event.
+        # Runs AFTER the invoice save settles (same ordering the
+        # invoice-side inline-edit uses).  Never raises.
+        if any(li.get("pricebook_writeback_flag") for li in items):
+            try:
+                from services.pricebook.writeback import process_pricebook_writebacks
+                actor = {
+                    "id": "system:auto_invoice",
+                    "email": "system:auto_invoice",
+                    "role": "system",
+                }
+                wb_result = await process_pricebook_writebacks(
+                    tenant_id=tenant_id,
+                    invoice_id=invoice_id,
+                    line_items=[
+                        {**li, "item_id": li.get("pricebook_item_id")}
+                        for li in items
+                    ],
+                    actor=actor,
+                )
+                if wb_result.get("errors"):
+                    logger.info(
+                        "[pricebook_writeback] auto_invoice job=%s "
+                        "invoice=%s errors=%s",
+                        job_id, invoice_id, wb_result["errors"],
+                    )
+            except Exception:                                      # noqa: BLE001
+                logger.exception(
+                    "[pricebook_writeback] auto_invoice fan-out failed "
+                    "for job=%s invoice=%s", job_id, invoice_id,
+                )
 
         # Attempt card-on-file charge if the customer has one.
         cust_id = job.get("customer_id") or ""

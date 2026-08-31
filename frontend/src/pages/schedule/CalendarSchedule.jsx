@@ -1363,6 +1363,7 @@ export default function CalendarSchedule() {
       <ScheduleJobEditModal
         open={!!editingJob}
         job={editingJob}
+        user={user}
         onClose={() => setEditingJob(null)}
         onSaved={(updated) => {
           patchJobInPlace(updated);
