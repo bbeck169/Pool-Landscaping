@@ -527,6 +527,203 @@ async def data_repair_history(
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Phase F9 · Feb-2026 — Data-repair status endpoint
+# ═══════════════════════════════════════════════════════════════════
+#
+# Read-only rollup so super_admin can see F3/F6/F2 state at a glance
+# without grepping logs.  Consolidates four independent sources:
+#
+#   1. current_state        — freshest snapshot from the most recent
+#                              F6 diagnostic dump file on disk (F6
+#                              only writes when refs > 0, so an
+#                              absent file means "clean at last boot").
+#   2. last_dry_run         — newest doc in ``data_integrity_scans``.
+#   3. last_apply           — newest ``run_id`` in ``data_integrity_repairs``.
+#   4. last_dump_file       — path + ctime + row count of the most
+#                              recent integrity_dump JSON file.
+#
+# Every source is best-effort — missing data returns ``None`` in
+# place, never 500.  Endpoint is super_admin only.
+# ═══════════════════════════════════════════════════════════════════
+import os as _os
+import glob as _glob
+import json as _json
+
+
+def _integrity_dump_dir() -> str:
+    """Where F6 writes the diagnostic JSON dumps.  Mirrors
+    ``services/startup/integrity_check.py`` so a config change on
+    one side automatically shows up here."""
+    return _os.environ.get("INTEGRITY_DUMP_DIR", "/app/backend/logs")
+
+
+def _read_latest_integrity_dump() -> Optional[Dict[str, Any]]:
+    """Return the most-recent F6 diagnostic dump payload, or ``None``.
+    Never raises — a corrupt dump file logs and returns ``None`` so
+    the status endpoint stays green even if a dump is being written
+    concurrently.
+
+    "Most recent" is determined by **filename** — F6 dumps use ISO
+    timestamps in the filename (``integrity_dump_YYYY-MM-DDTHH-MM-SSZ.json``)
+    so lexicographic sort ≡ chronological sort.  Filename-based sort
+    is more robust than ``getctime`` across filesystems that don't
+    reliably distinguish sub-second file creations (docker overlays,
+    tmpfs) and is what F6 already commits to.
+    """
+    try:
+        pattern = _os.path.join(_integrity_dump_dir(), "integrity_dump_*.json")
+        matches = _glob.glob(pattern)
+        if not matches:
+            return None
+        latest = sorted(matches, key=_os.path.basename)[-1]
+        with open(latest, "r") as fh:
+            data = _json.load(fh)
+        data["_source_path"] = latest
+        data["_source_ctime"] = datetime.fromtimestamp(
+            _os.path.getmtime(latest), tz=timezone.utc,
+        ).isoformat().replace("+00:00", "Z")
+        return data
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[f9-status] failed to read latest dump: %s", exc)
+        return None
+
+
+def _current_enforce_mode() -> bool:
+    """True when INTEGRITY_CHECK_ENFORCE is unset or truthy.  Mirrors
+    ``services/startup/integrity_check.py::_enforce_flag_from_env``
+    minus the APP_ENV fallback logic — deliberately conservative so
+    the read is stable across restarts."""
+    raw = _os.environ.get("INTEGRITY_CHECK_ENFORCE")
+    if raw is None:
+        # Fall back to APP_ENV=production → enforce=True default.
+        return _os.environ.get("APP_ENV", "").lower() == "production"
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+@router.get("/admin/data-repair/status")
+async def data_repair_status(
+    user: Dict[str, Any] = Depends(require_super_admin),  # noqa: ARG001
+) -> Dict[str, Any]:
+    """Read-only rollup of F3/F6/F2 state.  Super_admin only.
+
+    See module docstring for source-of-truth mapping.  Every field
+    can be ``None`` on a fresh workspace with no scan/repair history.
+    """
+    # ── 1. current_state (from latest F6 diagnostic dump) ─────────
+    dump = _read_latest_integrity_dump()
+    enforce_mode = _current_enforce_mode()
+    if dump:
+        totals = dump.get("totals") or {}
+        current_state = {
+            "dangling_refs_total": int(totals.get("total") or 0),
+            "dangling_refs_by_class": {
+                "customer":   int(totals.get("customer") or 0),
+                "technician": int(totals.get("technician") or 0),
+                "crew":       int(totals.get("crew") or 0),
+            },
+            "enforce_mode": enforce_mode,
+            "log_only_mode_active": (
+                not enforce_mode and int(totals.get("total") or 0) > 0
+            ),
+            "snapshot_source": "integrity_dump_file",
+            "snapshot_at": dump.get("timestamp") or dump.get("_source_ctime"),
+        }
+    else:
+        # No dump on disk → boot was clean OR no boot has run yet
+        # under log-only mode.  Report zeros with a source hint so
+        # the UI can distinguish "clean" from "unknown".
+        current_state = {
+            "dangling_refs_total": 0,
+            "dangling_refs_by_class": {"customer": 0, "technician": 0,
+                                        "crew": 0},
+            "enforce_mode": enforce_mode,
+            "log_only_mode_active": False,
+            "snapshot_source": "no_dump_on_disk",
+            "snapshot_at": None,
+        }
+
+    # ── 2. last_dry_run (newest data_integrity_scans doc) ─────────
+    last_dry_run: Optional[Dict[str, Any]] = None
+    try:
+        scan = await db.data_integrity_scans.find_one(
+            {}, {"_id": 0}, sort=[("scan_timestamp", -1)],
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[f9-status] scan read failed: %s", exc)
+        scan = None
+    if scan:
+        expires_at = scan.get("expires_at")
+        if isinstance(expires_at, datetime):
+            confirm_expires_iso = expires_at.replace(
+                tzinfo=expires_at.tzinfo or timezone.utc,
+            ).isoformat()
+            expired = expires_at < datetime.now(timezone.utc).replace(
+                tzinfo=expires_at.tzinfo or timezone.utc,
+            )
+        else:
+            confirm_expires_iso = None
+            expired = True
+        summary = scan.get("summary") or {}
+        last_dry_run = {
+            "scan_timestamp": scan.get("scan_timestamp"),
+            "actor_user_id": scan.get("actor_user_id"),
+            "total_would_change": int(summary.get("total_would_change") or 0),
+            "total_flagged_no_action": int(
+                summary.get("total_flagged_no_action") or 0
+            ),
+            "confirm_token_expires_at": None if expired else confirm_expires_iso,
+        }
+
+    # ── 3. last_apply (newest run_id in data_integrity_repairs) ────
+    last_apply: Optional[Dict[str, Any]] = None
+    try:
+        newest_repair = await db.data_integrity_repairs.find_one(
+            {}, {"_id": 0}, sort=[("run_timestamp", -1)],
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[f9-status] repair read failed: %s", exc)
+        newest_repair = None
+    if newest_repair and newest_repair.get("run_id"):
+        run_id = newest_repair["run_id"]
+        try:
+            changes_count = await db.data_integrity_repairs.count_documents(
+                {"run_id": run_id},
+            )
+        except Exception:  # noqa: BLE001
+            changes_count = None
+        last_apply = {
+            "run_id": run_id,
+            "run_timestamp": newest_repair.get("run_timestamp"),
+            "actor_user_id": newest_repair.get("actor_user_id"),
+            "changes_applied": changes_count,
+        }
+
+    # ── 4. last_dump_file (path + ctime + row count) ──────────────
+    last_dump_file: Optional[Dict[str, Any]] = None
+    if dump:
+        # Derive row count from the dump's orphans arrays (F6 dumps
+        # the FULL orphan list, not the 20-row sample cap).
+        orphans = dump.get("orphans") or {}
+        row_count = (
+            len(orphans.get("customer_refs") or [])
+            + len(orphans.get("technician_refs") or [])
+            + len(orphans.get("crew_refs") or [])
+        )
+        last_dump_file = {
+            "path": dump.get("_source_path"),
+            "created_at": dump.get("_source_ctime"),
+            "row_count": row_count,
+        }
+
+    return {
+        "current_state": current_state,
+        "last_dry_run": last_dry_run,
+        "last_apply": last_apply,
+        "last_dump_file": last_dump_file,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Phase F5 · Feb-2026 — Leads backfill (Website Visitor → real fields)
 # ═══════════════════════════════════════════════════════════════════
 #
