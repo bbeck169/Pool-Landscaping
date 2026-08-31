@@ -39,6 +39,7 @@ _REBOUND_MODULES = (
     "routers.jobs",
     "routers.schedule_reorder",
     "routers.soshie_moderation",
+    "server",
     "services.auto_invoice",
     "services.drift_alerting",
     "services.pricebook.writeback",

@@ -6,6 +6,7 @@ from utils import require_gps_read as _rg
 from utils import new_id as _utils_new_id, now_iso as _utils_now_iso
 from starlette.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import asyncio
 import os
 import logging
 
@@ -203,9 +204,128 @@ app = FastAPI(
 #
 # ``/api/health`` mirror below is for frontend proxy paths that
 # always inject ``/api`` — cheap defensive copy of the same handler.
+#
+# Phase F4 · Feb-2026 — probe split.  ``/health/live`` (liveness) is
+# always fast + always 200 as long as the process is running.
+# ``/health/ready`` (readiness) checks Mongo + F3 integrity state +
+# migration state, and returns 503 with per-check detail when any
+# gate fails.  Legacy ``/health`` stays as an alias for liveness with
+# a once-per-process deprecation log.
+import time as _f4_time
+
+_F4_BOOT_TS = _f4_time.time()
+_F4_HEALTH_DEPRECATION_WARNED = False
+# Set by the F3 boot-check block near end-of-file. Until F3 finishes
+# scanning, ``/health/ready`` returns 503 with reason ``boot_integrity_pending``.
+_F4_BOOT_INTEGRITY_STATE = {"complete": False, "dangling_refs_total": None,
+                              "error": None}
+
+
+def _f4_uptime_seconds() -> int:
+    return int(_f4_time.time() - _F4_BOOT_TS)
+
+
+def _f4_ready_integrity_enabled() -> bool:
+    v = (os.environ.get("HEALTH_READY_INTEGRITY_CHECK") or "").strip().lower()
+    return v not in ("false", "0", "off", "no")
+
+
 @app.get("/health", include_in_schema=False)
 async def _k8s_health_probe():
-    return {"status": "ok"}
+    global _F4_HEALTH_DEPRECATION_WARNED
+    if not _F4_HEALTH_DEPRECATION_WARNED:
+        _F4_HEALTH_DEPRECATION_WARNED = True
+        logger.warning(
+            "[health] DEPRECATED — /health is a liveness alias. "
+            "Point k8s livenessProbe at /health/live and readinessProbe "
+            "at /health/ready instead. See /app/memory/K8S_PROBES.md.",
+        )
+    return {"status": "ok", "alias_of": "/health/live"}
+
+
+@app.get("/health/live", include_in_schema=False)
+async def _k8s_health_live():
+    # Liveness — no dependencies, no DB. Answers "is the process alive".
+    return {"status": "alive",
+            "uptime_seconds": _f4_uptime_seconds(),
+            "version": os.environ.get("APP_VERSION") or "dev"}
+
+
+@app.get("/health/ready", include_in_schema=False)
+async def _k8s_health_ready():
+    """Readiness — Mongo ping + F3 integrity state + critical migrations.
+
+    Returns 503 with a ``failures`` list on ANY failing gate so ops can
+    see exactly which check kept the pod out of the load balancer.
+    """
+    from fastapi.responses import JSONResponse
+    checks = {"mongo": "unknown", "integrity": "unknown",
+                "migrations": "unknown"}
+    failures = []
+
+    # 1. Mongo ping (short timeout).
+    try:
+        await asyncio.wait_for(db.command("ping"), timeout=0.5)
+        checks["mongo"] = "ok"
+    except Exception as e:  # noqa: BLE001
+        checks["mongo"] = "fail"
+        failures.append({"check": "mongo", "error": str(e)[:200]})
+
+    # 2. F3 boot integrity state.
+    if not _F4_BOOT_INTEGRITY_STATE["complete"]:
+        checks["integrity"] = "pending"
+        failures.append({"check": "integrity",
+                            "reason": "boot_integrity_pending"})
+    elif _F4_BOOT_INTEGRITY_STATE.get("error"):
+        checks["integrity"] = "fail"
+        failures.append({"check": "integrity",
+                            "reason": "scan_error",
+                            "error": _F4_BOOT_INTEGRITY_STATE["error"][:200]})
+    else:
+        drt = int(_F4_BOOT_INTEGRITY_STATE.get("dangling_refs_total") or 0)
+        _integ_enforce = (os.environ.get("INTEGRITY_CHECK_ENFORCE")
+                              or "").strip().lower() not in ("false", "0", "off", "no")
+        _ready_enforce = _f4_ready_integrity_enabled()
+        if drt > 0 and _integ_enforce and _ready_enforce:
+            checks["integrity"] = "fail"
+            failures.append({"check": "integrity",
+                                "reason": "dangling_refs_present",
+                                "dangling_refs_total": drt})
+        else:
+            checks["integrity"] = "ok"
+
+    # 3. Critical migrations — perf_customers_v1 must be applied.
+    _REQUIRED_MIGRATIONS = ["perf_customers_v1"]
+    try:
+        missing = []
+        for key in _REQUIRED_MIGRATIONS:
+            row = await db.migration_status.find_one(
+                {"key": key}, {"_id": 0, "completed_at": 1},
+            )
+            if not row or not row.get("completed_at"):
+                missing.append(key)
+        if missing:
+            checks["migrations"] = "fail"
+            failures.append({"check": "migrations",
+                                "reason": "pending",
+                                "missing": missing})
+        else:
+            checks["migrations"] = "ok"
+    except Exception as e:  # noqa: BLE001
+        checks["migrations"] = "fail"
+        failures.append({"check": "migrations", "error": str(e)[:200]})
+
+    body = {
+        "status": "ready" if not failures else "not_ready",
+        "checks": checks,
+        "uptime_seconds": _f4_uptime_seconds(),
+        "dangling_refs_total":
+            _F4_BOOT_INTEGRITY_STATE.get("dangling_refs_total"),
+    }
+    if failures:
+        body["failures"] = failures
+        return JSONResponse(status_code=503, content=body)
+    return body
 
 
 api_router = APIRouter(prefix="/api")
@@ -217,6 +337,18 @@ async def _api_health_probe():
     # frontend fetch wrappers always prefix ``/api`` regardless of
     # target. Same guarantees as ``/health``: no DB, no auth, < 5ms.
     return {"status": "ok"}
+
+
+@api_router.get("/health/live", include_in_schema=False)
+async def _api_health_live():
+    # ``/api`` mirror of the liveness probe.
+    return await _k8s_health_live()
+
+
+@api_router.get("/health/ready", include_in_schema=False)
+async def _api_health_ready():
+    # ``/api`` mirror of the readiness probe.
+    return await _k8s_health_ready()
 
 # Marketing M2 registered BEFORE the generic loop so its
 # ``/marketing/campaigns/*`` routes win over the legacy
@@ -3068,6 +3200,22 @@ async def startup():
             _enforce_flag_from_env as _integrity_enforce_flag,
         )
         _integrity_report = await run_startup_integrity_check(db)
+        # Phase F4 · Feb-2026 — stamp the readiness gate so
+        # ``/health/ready`` can flip from ``boot_integrity_pending``
+        # to ``ok`` / ``dangling_refs_present`` per state.
+        try:
+            _drt = int(
+                (_integrity_report.get("summary") or {}).get(
+                    "total_dangling_refs", 0,
+                )
+            )
+            _F4_BOOT_INTEGRITY_STATE["complete"] = True
+            _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = _drt
+            _F4_BOOT_INTEGRITY_STATE["error"] = None
+        except Exception:  # noqa: BLE001
+            _F4_BOOT_INTEGRITY_STATE["complete"] = True
+            _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = 0
+            _F4_BOOT_INTEGRITY_STATE["error"] = None
         # Phase F6 · Feb-2026 — if boot survived a non-zero scan
         # (only possible when enforce=False), schedule the recurring
         # nag so ops can't quietly forget they're in the workaround
@@ -3088,7 +3236,20 @@ async def startup():
         # scanner bug never bricks production.
         from services.startup.integrity_check import IntegrityCheckFailure
         if isinstance(exc, IntegrityCheckFailure):
+            # F4 — stamp state before re-raising so a fast /health/ready
+            # probe still gets a coherent 503 with the real dangling
+            # refs count (rather than a stale ``pending``).
+            try:
+                _F4_BOOT_INTEGRITY_STATE["complete"] = True
+                _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = int(
+                    getattr(exc, "dangling_refs_total", 0) or 0
+                )
+                _F4_BOOT_INTEGRITY_STATE["error"] = None
+            except Exception:  # noqa: BLE001
+                pass
             raise
+        _F4_BOOT_INTEGRITY_STATE["complete"] = True
+        _F4_BOOT_INTEGRITY_STATE["error"] = str(exc)[:500]
         logger.warning(
             "integrity_check scan crashed (continuing): %s", exc,
         )
