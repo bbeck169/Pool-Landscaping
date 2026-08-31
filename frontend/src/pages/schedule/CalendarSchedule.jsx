@@ -38,6 +38,8 @@ import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import { useAuth } from "@/auth";
 // Feb-2026 · Phase 1 — Tech "On my way" SMS CTA.
 import OnMyWayButton from "@/components/schedule/OnMyWayButton";
+// Feb-2026 · Schedule polish — per-job "Navigate" deep-link button.
+import NavigateJobButton from "@/components/schedule/NavigateJobButton";
 // Feb-2026 · Phase 1 — Could-Not-Service modal.
 import CouldNotServiceModal from "@/components/schedule/CouldNotServiceModal";
 import { Gate, useCan } from "@/hooks/usePermissions";
@@ -1888,6 +1890,12 @@ function GridPanel({
                 >
                   {pill.label}
                 </div>
+                {/* Feb-2026 · Schedule polish — per-job Navigate
+                    button. Opens Google Maps in a new tab; prefers
+                    lat/lng, falls back to the address string, and
+                    disables itself with a tooltip when neither is
+                    present. */}
+                <NavigateJobButton job={j} />
                 <button
                   onClick={(e) => { e.stopPropagation(); onOpenJob(j.id); }}
                   style={{ background: "transparent", border: 0, cursor: "pointer", color: colors.muted }}

@@ -13746,3 +13746,35 @@ Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy 
 - TD-13/14/15/19 (from prior phases).
 - New: TD-F4-1 (moderation list projection), TD-F4-2 (rate-limit budget contention), TD-F4-3 (startup integrity should soft-fail), TD-F4-4 (12-month cutoff ISO comparison normalisation).
 
+
+
+---
+
+## Schedule Navigate Button (Web) · Feb-2026 · SHIPPED
+
+**Scope:** per-job "Navigate" deep-link on `/schedule` that opens Google Maps in a new tab pre-filled with the customer's destination. Web only; mobile parity queued separately for the Expo specialist.
+
+**Files:**
+- **new** `/app/frontend/src/components/schedule/NavigateJobButton.jsx` (~90 LOC).
+- **new** `/app/frontend/src/test/schedule-navigate-button.test.jsx` (12 tests, all pass).
+- `/app/frontend/src/pages/schedule/CalendarSchedule.jsx` — 2 hunk diff (import + 1-line placement in the row action cluster).
+
+**Behavior:**
+- Destination preference: (1) `latitude,longitude` when both are finite AND not (0,0), (2) `address` string, (3) disabled with tooltip `"No address on file"` when neither.
+- Opens `https://www.google.com/maps/dir/?api=1&destination=<URL-encoded>` in a new tab with `noopener,noreferrer`.
+- Origin omitted intentionally so Google Maps uses the tech's current location.
+- Testid: `schedule-job-nav-{job_id}` per row.
+- Accessible: `aria-label="Navigate to {customer_name}"`, `title`, Tab-reachable, Enter/Space activates.
+
+**Production data note:** the schedule feed (`GET /api/jobs?start=…&end=…`) DOES include `latitude`/`longitude` fields, but they're populated ONLY for jobs whose customer has been geocoded. In sample data checked (Sep 1 slate, tenant `aquaterra`): the two "Aimee Baram" jobs on that day fell back to the address string (all coord fields null), while other jobs (e.g. Jennifer Carson) had valid lat/lng and used the coord path. So both branches of the resolver are exercised in production without any dead code.
+
+**Tests:** 12/12 vitest cases pass — coord vs address preference, (0,0) fallback, URL encoding, `window.open` invocation, `stopPropagation` on click (so it doesn't open the job detail), keyboard reachability, disabled state, null-job guard.
+
+**Live verification:** screenshot at `/tmp/schedule_nav_v3.jpg` shows two navigate icons rendered on the Sep 1 job cluster. Playwright then clicked the first button and confirmed a new tab opened at `https://www.google.com/maps/dir/?api=1&destination=13333+West+Jesse+Red+Drive%2C+Peoria%2C+AZ%2C+85383`.
+
+**Next in queue** (per user's ordering):
+1. Run F2 dry-run + apply on the 9 `LL-*` orphan jobs (customer_id='c-x') so F3 boot-check stops bricking future iterations. Tiny — one dry-run + one apply endpoint call.
+2. Mobile schedule-navigate parity via Expo specialist.
+3. Price-picker filter + sort.
+4. Mobile B4 subscription parity.
+5. Batched enhancement queue (including the "Turn on public map for local SEO" onboarding prompt from Phase F4).
