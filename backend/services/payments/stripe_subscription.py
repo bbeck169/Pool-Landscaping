@@ -443,9 +443,22 @@ async def list_subscriptions(
 
 
 async def list_prices() -> List[Dict[str, Any]]:
-    """Return active Stripe prices (with product expanded).
+    """Return active recurring Stripe prices (product expanded).
 
-    Cached in-process for 5 minutes per Stripe mode.
+    Cached in-process for 5 minutes per Stripe mode. The cache
+    stores the (nearly) raw flattened rows; the filter + sort pass
+    below runs on every call so a Stripe dashboard edit picks up
+    without a cache flush.
+
+    Filters:
+      * one-time prices (``type == "one_time"``) — Stripe rejects
+        them on ``Subscription.create``, no reason to surface.
+      * prices whose product is archived (``product.active == False``).
+
+    Sort:
+      1. product_name (alphabetical, case-insensitive; empty last)
+      2. interval order (month < year < week < day)
+      3. unit_amount ascending
     """
     _init_api_key()
     mode = _mode()
@@ -455,31 +468,57 @@ async def list_prices() -> List[Dict[str, Any]]:
         and _prices_cache["mode"] == mode
         and (now - _prices_cache["ts"]) < _PRICES_CACHE_TTL_SEC
     ):
-        return _prices_cache["rows"]
+        cached = _prices_cache["rows"]
+    else:
+        stripe_prices = await _to_thread(
+            _stripe.Price.list,
+            active=True, limit=100, expand=["data.product"],
+        )
+        data = _asdict(stripe_prices).get("data") or []
+        cached = []
+        for p in data:
+            pd = _asdict(p) if hasattr(p, "get") is False else p
+            product = pd.get("product") or {}
+            prod_name = (
+                product.get("name") if isinstance(product, dict) else None
+            ) or ""
+            prod_active = (
+                product.get("active") if isinstance(product, dict) else None
+            )
+            cached.append({
+                "id": pd.get("id"),
+                "type": pd.get("type"),
+                "unit_amount": pd.get("unit_amount"),
+                "currency": pd.get("currency"),
+                "recurring": pd.get("recurring"),
+                "nickname": pd.get("nickname"),
+                "product_id": (product.get("id") if isinstance(product, dict) else product),
+                "product_name": prod_name,
+                "product_active": bool(prod_active) if prod_active is not None else True,
+            })
+        _prices_cache.update({"rows": cached, "ts": now, "mode": mode})
 
-    stripe_prices = await _to_thread(
-        _stripe.Price.list,
-        active=True, limit=100, expand=["data.product"],
-    )
-    data = _asdict(stripe_prices).get("data") or []
-    rows: List[Dict[str, Any]] = []
-    for p in data:
-        pd = _asdict(p) if hasattr(p, "get") is False else p
-        product = pd.get("product") or {}
-        prod_name = (
-            product.get("name") if isinstance(product, dict) else None
-        ) or ""
-        rows.append({
-            "id": pd.get("id"),
-            "unit_amount": pd.get("unit_amount"),
-            "currency": pd.get("currency"),
-            "recurring": pd.get("recurring"),
-            "nickname": pd.get("nickname"),
-            "product_id": (product.get("id") if isinstance(product, dict) else product),
-            "product_name": prod_name,
-        })
-    _prices_cache.update({"rows": rows, "ts": now, "mode": mode})
-    return rows
+    # Post-cache filter — recurring + active-product only.
+    filtered = [
+        r for r in cached
+        if r.get("type") != "one_time"
+        and r.get("recurring")
+        and r.get("product_active", True)
+    ]
+
+    # Sort key: (name lower, interval rank, unit_amount).
+    _INTERVAL_RANK = {"month": 0, "year": 1, "week": 2, "day": 3}
+    def _key(r):
+        name = (r.get("product_name") or "").strip().lower()
+        # Empty names sort last.
+        name_bucket = (1 if not name else 0, name)
+        recurring = r.get("recurring") or {}
+        interval = (recurring.get("interval") if isinstance(recurring, dict) else None) or ""
+        interval_rank = _INTERVAL_RANK.get(interval, 99)
+        amount = r.get("unit_amount") if r.get("unit_amount") is not None else 0
+        return (name_bucket, interval_rank, amount)
+
+    return sorted(filtered, key=_key)
 
 
 def invalidate_prices_cache() -> None:

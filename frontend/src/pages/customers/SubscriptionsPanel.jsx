@@ -284,17 +284,27 @@ export function SubscriptionCreateModal({ customerId, onClose, onDone }) {
       <div className="space-y-3">
         <label className="block text-sm">
           <div className="mb-1 font-semibold">Plan</div>
-          <select
-            value={priceId}
-            onChange={(e) => setPriceId(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border text-sm"
-            data-testid="subscriptions-create-price"
-          >
-            <option value="">Select a plan…</option>
-            {prices.map((p) => (
-              <option key={p.id} value={p.id}>{_priceLabel(p)}</option>
-            ))}
-          </select>
+          {prices.length === 0 ? (
+            <div
+              className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground"
+              data-testid="subscriptions-create-empty-plans"
+            >
+              No recurring plans configured in Stripe. Add a recurring price in
+              your Stripe Dashboard to enable subscriptions.
+            </div>
+          ) : (
+            <select
+              value={priceId}
+              onChange={(e) => setPriceId(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border text-sm"
+              data-testid="subscriptions-create-price"
+            >
+              <option value="">Select a plan…</option>
+              {prices.map((p) => (
+                <option key={p.id} value={p.id}>{_priceLabel(p)}</option>
+              ))}
+            </select>
+          )}
         </label>
         <label className="block text-sm">
           <div className="mb-1 font-semibold">Quantity</div>

@@ -119,8 +119,20 @@ describe("SubscriptionCreateModal", () => {
     render(<SubscriptionCreateModal customerId="cust-1"
                                        onClose={() => {}} onDone={() => {}} />);
     await waitFor(() =>
-      expect(screen.getByTestId("subscriptions-create-price")).toBeTruthy(),
+      expect(screen.getByTestId("subscriptions-create-empty-plans")).toBeTruthy(),
     );
     expect(screen.getByTestId("subscriptions-create-submit")).toBeDisabled();
+  });
+
+  it("renders empty-plan state (not the dropdown) when Stripe has "
+      + "no recurring prices", async () => {
+    apiMod.__responses["/subscriptions/prices"] = { count: 0, rows: [] };
+    render(<SubscriptionCreateModal customerId="cust-1"
+                                       onClose={() => {}} onDone={() => {}} />);
+    const empty = await screen.findByTestId("subscriptions-create-empty-plans");
+    expect(empty.textContent).toMatch(/No recurring plans configured in Stripe/);
+    expect(empty.textContent).toMatch(/Stripe Dashboard/);
+    // The dropdown must NOT render alongside the empty state.
+    expect(screen.queryByTestId("subscriptions-create-price")).toBeNull();
   });
 });
