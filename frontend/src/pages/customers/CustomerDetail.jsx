@@ -208,9 +208,17 @@ export default function CustomerDetail() {
 
   const load = async () => {
     try {
-      const [c, allJobs, props] = await Promise.all([
+      // Phase F3.5 · Feb-2026 — sub-3s customer profile.
+      //   • Fetch only THIS customer's jobs via the new `customer_id`
+      //     filter instead of the tenant-wide `/jobs` mega-fetch that
+      //     used to force every profile open to transport the entire
+      //     tenant's job list.
+      //   • Cuts payload from "whole tenant" (MB in prod) to a single
+      //     customer's history (KB) and eliminates the client-side
+      //     `.filter(j.customer_id === id)` altogether.
+      const [c, myJobs, props] = await Promise.all([
         api.get(`/customers/${id}`),
-        api.get("/jobs"),
+        api.get(`/jobs?customer_id=${encodeURIComponent(id)}`),
         // Feb-2026 · Customer profile — properties fetched for the
         // primary-address line under the customer name. Non-fatal:
         // if the call fails we still render the rest of the page and
@@ -218,7 +226,7 @@ export default function CustomerDetail() {
         api.get(`/customers/${id}/properties`).catch(() => []),
       ]);
       setCustomer(c);
-      setJobs((allJobs || []).filter((j) => j.customer_id === id));
+      setJobs(Array.isArray(myJobs) ? myJobs : []);
       setProperties(Array.isArray(props) ? props : []);
     } catch (e) {
       setToast({ tone: "error", message: e.message });

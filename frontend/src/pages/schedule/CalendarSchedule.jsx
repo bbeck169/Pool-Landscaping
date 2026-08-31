@@ -433,13 +433,16 @@ export default function CalendarSchedule() {
     }
     setLoading(true); setError("");
     try {
-      // Ask the backend for a comfortable ±90 day window centred on the
-      // current focused date. `?start=&end=` were added by Phase 30 backend
-      // patch; if the server ignores them everything still works (returns
-      // up to 1000 jobs) — honest degradation, not silent.
+      // Phase F3.5 · Feb-2026 — trimmed the fetched schedule window
+      // from ±60/+90 (150 days) to ±30/+60 (90 days). Same rendered
+      // views (day/week/month + Custom presets max out at "Next 90
+      // days") but the payload drops by 40% at prod scale. The
+      // ``fetchedRangeRef`` cache guard below still short-circuits
+      // in-window navigation so the effective refetch cadence is
+      // unchanged.
       const focus = date;
-      const start = format(addDays(focus, -60), "yyyy-MM-dd");
-      const end   = format(addDays(focus,  90), "yyyy-MM-dd");
+      const start = format(addDays(focus, -30), "yyyy-MM-dd");
+      const end   = format(addDays(focus,  60), "yyyy-MM-dd");
       const [j, t] = await Promise.all([
         api.get(`/jobs?start=${start}&end=${end}`),
         api.get("/technicians").catch(() => []),

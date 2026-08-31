@@ -1202,6 +1202,19 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"perf_triad_indexes crashed: {e}")
 
+    # Phase F3.5 · Feb-2026 — customer-scoped compound indexes.  Adds
+    # (tenant_id, customer_id, created_at) on jobs/invoices/payments/
+    # customer_notes and (tenant_id, customer_id) on properties so the
+    # detail-page tabs + list N+1 hydrations stay fast at prod scale.
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
+        from services.migrations.perf_customers_indexes import run as _perf_customers_run
+        _pcv1_res = await _perf_customers_run(db)
+        logger.info(f"[perf-customers-v1] {_pcv1_res}")
+    except Exception as e:
+        logger.warning(f"perf_customers_indexes crashed: {e}")
+
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.
     try:

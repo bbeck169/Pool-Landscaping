@@ -382,6 +382,7 @@ async def list_jobs(
     tenant: dict = Depends(get_current_tenant),
     status: Optional[str] = None,
     technician_id: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None, description="Phase F3.5 · Feb-2026 — filter to a single customer's jobs; drops CustomerDetail's tenant-wide job fetch."),
     crew_id: Optional[str] = Query(None, description="Feb-2026 · Crew Phase A · filter by crew_id (admin-equivalent only; techs remain scoped to their own jobs by scope_jobs_query)"),
     start: Optional[str] = Query(None, description="Phase 30: inclusive lower bound on scheduled_date (YYYY-MM-DD)"),
     end: Optional[str] = Query(None, description="Phase 30: inclusive upper bound on scheduled_date (YYYY-MM-DD)"),
@@ -391,6 +392,14 @@ async def list_jobs(
     include_deleted: bool = Query(False, description="Feb-2026 · super_admin only — include soft-deleted jobs"),
 ):
     q = await scope_jobs_query(user, tenant, status, technician_id)
+    # Phase F3.5 · Feb-2026 — customer_id filter. Applied AFTER scope_jobs_query
+    # so a customer role (which forces its own customer_id) can never widen
+    # the query, and so a tech's crew scope is preserved.
+    if customer_id:
+        role_lc = (user.get("role") or "").lower()
+        if role_lc == "customer" and user.get("customer_id") != customer_id:
+            raise HTTPException(403, "Not your customer")
+        q["customer_id"] = customer_id
     # Feb-2026 · Schedule multi-select soft-delete — hide rows with
     # ``deleted_at`` set by default. Only a ``super_admin`` may pass
     # ``?include_deleted=true`` to view (and later undelete) previously-
