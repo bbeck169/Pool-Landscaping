@@ -276,7 +276,7 @@ describe("Numbered-order inline inputs", () => {
 
 /* ── Bulk modal behavior ──────────────────────────────────── */
 
-describe("Bulk Reorder modal", () => {
+describe.skip("Bulk Reorder modal (Phase C · retired — see reorder-route-modal.test.jsx)", () => {
   it("opens with a row per job, all prefilled from route_index+1", () => {
     render(<BulkReorderModal jobs={JOBS}
                               techUserId="tech-1" date="2026-03-15"

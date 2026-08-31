@@ -33,6 +33,7 @@ _REBOUND_MODULES = (
     "routers.data_repair",
     "routers.job_media_line_items",
     "routers.income_categories",
+    "routers.schedule_reorder",
     "services.auto_invoice",
     "services.pricebook.writeback",
     "services.migrations.perf1_missing_tenant_indexes",

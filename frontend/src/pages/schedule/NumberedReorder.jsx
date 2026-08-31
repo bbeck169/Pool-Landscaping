@@ -36,6 +36,11 @@ import { X, Save as SaveIcon } from "lucide-react";
 
 import { api } from "@/api";
 import { colors } from "@/theme";
+// Feb-2026 · Phase C — Drag-and-drop replaces the numeric-input
+// bulk modal. Re-exported via `BulkReorderModal` below so the two
+// existing call sites (CalendarSchedule + TodaySchedule) pick it
+// up without changing their import lines.
+import { ReorderRouteModal as _ReorderRouteModal } from "@/pages/schedule/ReorderRouteModal";
 
 
 /**
@@ -294,7 +299,18 @@ export function ReorderBanner({ controller }) {
 }
 
 
-export function BulkReorderModal({
+export function BulkReorderModal(props) {
+  // Feb-2026 · Phase C — the historical "type a unique number" modal
+  // is retired in favor of drag-and-drop. Keep the export name so
+  // both CalendarSchedule + TodaySchedule pick up the new UX without
+  // touching their import lists. See ReorderRouteModal.jsx.
+  return <_ReorderRouteModal {...props} />;
+}
+
+
+// Feb-2026 · Phase C · pre-drag-drop implementation preserved below
+// only as reference — no longer wired into the app.
+function _RetiredNumberedBulkReorderModal({
   jobs, techUserId, date, onClose, onSaved,
   // Feb-2026 · Optimize Route — parent passes:
   //   * ``initialOrder`` (list of job IDs in the new order)

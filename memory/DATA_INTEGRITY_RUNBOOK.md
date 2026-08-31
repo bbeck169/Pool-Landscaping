@@ -337,3 +337,13 @@ async def _go():
 asyncio.run(_go())"
 ```
 Second run should return `{ok: True, skipped: True, reason: 'sentinel present'}`.
+
+---
+
+## Phase C · Feb-2026 — Reorder Route drag-and-drop (WEB)
+
+- New component: `frontend/src/pages/schedule/ReorderRouteModal.jsx` (dnd-kit).
+- Endpoint unchanged: `POST /api/jobs/reorder` with `{tech_user_id, date, ordered_job_ids}`. Backend derives `route_index` from array order → contiguous 0..N-1 always.
+- Validation gate: duplicate ids → 422 · empty payload → 400 · set mismatch → 422 (all pre-existing).
+- Mobile parity shipping in Phase E — mobile clients continue to POST the same array-shape.
+- Rollback: revert `BulkReorderModal` re-export in `NumberedReorder.jsx` (2-line change).
