@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
+import LineItemsSection from "@/src/components/jobs/LineItemsSection";
 
 const SERVICE_TYPES = [
   "Pool Cleaning", "Repair", "Landscaping", "Inspection",
@@ -199,6 +200,9 @@ export default function ScheduleJobEditSheet({ open, job, onClose, onSaved, onDe
             testID="schedule-job-edit-notes"
           />
         </View>
+
+        {/* F7 — Line Items CRUD (self-contained; uses K2 endpoints). */}
+        <LineItemsSection jobId={job.id} jobStatus={job.status} />
 
         {err ? (
           <Text style={{ color: colors.error, fontFamily: font.semibold }}

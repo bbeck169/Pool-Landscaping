@@ -1,3 +1,16 @@
+## Iteration 51 — Phase E: Mobile Parity Sweep (Navigate + Line Items + Reorder)
+- **Commit**: 2219688798243acb0fbea61051fd2e7b28dd71fb
+- **Date**: 2026-08-31
+- **Changes**:
+  - NEW: NavigateRouteButton.tsx (135 LOC) — multi-stop Google Maps deep-link from schedule day header
+  - MODIFIED: ScheduleJobEditSheet.tsx — mounted LineItemsSection for F7 line items in schedule edit
+  - MODIFIED: calendar.tsx — drag handle moved right, green position badge, reorder header/save/cancel bar, fixed payload (ordered_job_ids + tech_user_id + date)
+  - NEW: 3 test files (269 LOC) — navigate route (7), schedule line items (2), reorder route (5)
+  - All 30 Phase E tests pass, 15 regression tests pass, Metro bundled 2226 modules
+- **Files modified**: `NavigateRouteButton.tsx` (new), `ScheduleJobEditSheet.tsx` (mod), `calendar.tsx` (mod), 3 test files (new)
+- **Web files referenced**: `ReorderRouteModal.jsx`, `LineItemsSection.jsx`, schedule navigate logic
+
+
 ## Iteration 50 — F7 Line Items Editor (Mobile Parity)
 - **Commit**: 3fc78ffb0ca3af63944469300b8f65dff2bac9a3
 - **Date**: 2026-08-31

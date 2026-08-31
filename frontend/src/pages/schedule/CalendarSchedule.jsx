@@ -30,7 +30,9 @@ import JobNotesCallout from "@/components/schedule/JobNotesCallout";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
          CheckCircle2, Move as MoveIcon, ArrowUp, ArrowDown, FileText,
          Save as SaveIcon, Star, Check, Trash2, Loader2, UsersRound,
-         Pencil, Key, StickyNote } from "lucide-react";
+         Pencil, Key, StickyNote, Navigation2 } from "lucide-react";
+// Phase F1 · Feb-2026 — Bulk multi-stop "Navigate route" URL builder.
+import { runBulkNavigateRoute } from "../../lib/googleMapsRoute";
 
 import { api } from "@/api";
 import { colors, font } from "@/theme";
@@ -374,6 +376,20 @@ export default function CalendarSchedule() {
     } catch (e) {
       setToast({ text: e?.message || "Bulk reassign failed", kind: "err" });
     } finally { setAssignBusy(false); }
+  };
+
+  // Phase F1 · Feb-2026 — Multi-stop "Navigate route" bulk action.
+  // Builds a single Google Maps directions URL from the currently
+  // selected jobs (cross-day / cross-tech safe — sorted by date,
+  // route position, tech). Google Maps caps consumer routes at 10
+  // stops (1 destination + 9 waypoints); the utility surfaces
+  // warning / skipped toasts so the operator knows what landed.
+  const doBulkNavigateRoute = () => {
+    runBulkNavigateRoute({
+      jobs: filteredJobs,
+      selectedIds: selectedJobIds,
+      onToast: setToast,
+    });
   };
 
   const [view, setView] = useState(params.get("view") || "month");   // Phase 30X · month default
@@ -1189,6 +1205,7 @@ export default function CalendarSchedule() {
           onOpenBulkDelete={() => setDeleteConfirmOpen(true)}
           onClearSelection={clearSelection}
           onSelectAllInView={selectAllInView}
+          onBulkNavigateRoute={doBulkNavigateRoute}
           canMultiSelectAssign={canMultiSelectAssign}
           onOpenBulkAssign={(techId) => {
             setAssignPickedTechId(techId);
@@ -1402,6 +1419,8 @@ function GridPanel({
   // Feb-2026 · Schedule multi-select soft-delete —
   selectedJobIds, onToggleSelect, canMultiSelectDelete,
   onOpenBulkDelete, onClearSelection, onSelectAllInView,
+  // Phase F1 · Feb-2026 · multi-stop "Navigate route" bulk action —
+  onBulkNavigateRoute,
   // Phase 28 · Feb-2026 · Schedule multi-select bulk reassign —
   canMultiSelectAssign, onOpenBulkAssign, techs,
   // Feb-2026 · Schedule-screen inline edit — admin+ Pencil affordance.
@@ -1619,6 +1638,34 @@ function GridPanel({
             Deselect all
           </button>
           <div className="flex-1" />
+          {/* Phase F1 · Feb-2026 · Multi-stop "Navigate route" —
+              disabled at 1 selection (single-stop navigation is
+              already covered by the per-card <NavigateJobButton>);
+              live at 2+.  Cross-day / cross-tech selections are
+              sorted schedule-first by the URL builder. */}
+          {onBulkNavigateRoute ? (() => {
+            const single = selectedJobIds.size < 2;
+            return (
+              <button
+                type="button"
+                onClick={single ? undefined : onBulkNavigateRoute}
+                disabled={single}
+                title={single
+                  ? "Select 2+ jobs to build a multi-stop route"
+                  : `Open Google Maps route for ${selectedJobIds.size} stops`}
+                className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-bold"
+                style={{
+                  background: single ? "#F5F5F4" : "#1D4ED8",
+                  color: single ? "#A8A29E" : "#FFFFFF",
+                  border: single ? "1px solid #E7E5E4" : "1px solid #1D4ED8",
+                  cursor: single ? "not-allowed" : "pointer",
+                }}
+                data-testid="grid-selection-navigate-route"
+              >
+                <Navigation2 size={13} /> Navigate route
+              </button>
+            );
+          })() : null}
           <button
             type="button"
             onClick={onOpenBulkDelete}

@@ -57,6 +57,7 @@ import { getStatusBorderColor } from "@/src/utils/scheduleStatus";
 import OnMyWayButton from "@/src/components/schedule/OnMyWayButton";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
 import NavigateJobButton from "@/src/components/schedule/NavigateJobButton";
+import NavigateRouteButton from "@/src/components/schedule/NavigateRouteButton";
 import ScheduleMap from "@/src/components/schedule/ScheduleMap";
 // Feb-2026 — Daily Route Map (@rnmapbox/maps). Collapsible per-tech
 // header, numbered pins by route_index, status-colored, tap for
@@ -363,7 +364,11 @@ export default function ScheduleCalendar() {
     }
     setBusy(true);
     try {
-      await api.post("/jobs/reorder", { job_ids: reorderList.map((j) => j.id) });
+      await api.post("/jobs/reorder", {
+        ordered_job_ids: reorderList.map((j) => j.id),
+        tech_user_id: user?.id || "",
+        date: iso(focus),
+      });
       Alert.alert("Route saved", `New order saved for ${reorderList.length} jobs.`);
       await load(true);
     } catch (e: any) {
@@ -675,6 +680,43 @@ function GridView(props: any) {
         <Text style={gStyles.dayLabel} testID="grid-day-label">{dayLabel(focus)}</Text>
       </View>
 
+      {/* Navigate Route + Reorder header */}
+      {rearrangeMode ? (
+        <View testID="reorder-route-header" style={gStyles.reorderHeader}>
+          <Ionicons name="reorder-three-outline" size={18} color="#059669" />
+          <View style={{ flex: 1 }}>
+            <Text style={gStyles.reorderHeaderTitle}>Reorder route</Text>
+            <Text style={gStyles.reorderHeaderSub}>Drag jobs to reorder. Position updates automatically.</Text>
+          </View>
+        </View>
+      ) : (
+        <View style={gStyles.navRouteRow}>
+          <NavigateRouteButton jobs={jobs} />
+        </View>
+      )}
+
+      {/* Rearrange save / cancel bar */}
+      {rearrangeMode ? (
+        <View style={gStyles.reorderBar} testID="reorder-route-bar">
+          <Pressable
+            onPress={onToggleRearrange}
+            style={gStyles.reorderCancelBtn}
+            testID="reorder-route-cancel"
+          >
+            <Text style={gStyles.reorderCancelText}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            onPress={onSaveReorder}
+            disabled={busy}
+            style={[gStyles.reorderSaveBtn, busy && { opacity: 0.5 }]}
+            testID="reorder-route-save"
+          >
+            <Ionicons name="save-outline" size={14} color="#fff" />
+            <Text style={gStyles.reorderSaveText}>{busy ? "Saving…" : "Save order"}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {/* Phase P18 — Consolidated bulk-action dropdown (was 3-row pill cluster).
           Single "Actions" button → dropdown list with all 6 options. */}
       {canWrite ? (
@@ -843,7 +885,7 @@ function GridView(props: any) {
             setReorderList(data);
             // Auto-save reorder on drop (admin only)
             if (isAdmin) {
-              api.post("/jobs/reorder", { job_ids: data.map((j: Job) => j.id) })
+              api.post("/jobs/reorder", { ordered_job_ids: data.map((j: Job) => j.id), tech_user_id: userId, date: focusISO })
                 .then(() => {})
                 .catch((e: any) => {
                   // Snap back to original order
@@ -944,28 +986,9 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
       testID={`grid-job-${job.id}`}
       hitSlop={4}
     >
-      {showDragHandle ? (
-        <Pressable
-          onPressIn={onDrag}
-          style={gStyles.dragHandle}
-          testID={`grid-drag-handle-${job.id}`}
-        >
-          <Ionicons name="reorder-three" size={18} color={colors.muted} />
-        </Pressable>
-      ) : null}
       {rearrangeMode ? (
-        <View style={gStyles.reorderCol}>
-          <Pressable onPress={() => onShift(job.id, -1)} disabled={first}
-                     style={[gStyles.reorderBtn, first && { opacity: 0.3 }]}
-                     testID={`grid-reorder-up-${job.id}`}>
-            <Ionicons name="chevron-up" size={14} color={colors.brand} />
-          </Pressable>
-          <Text style={gStyles.reorderIdx}>{idx + 1}</Text>
-          <Pressable onPress={() => onShift(job.id, 1)} disabled={last}
-                     style={[gStyles.reorderBtn, last && { opacity: 0.3 }]}
-                     testID={`grid-reorder-down-${job.id}`}>
-            <Ionicons name="chevron-down" size={14} color={colors.brand} />
-          </Pressable>
+        <View style={gStyles.reorderBadge} testID={`grid-reorder-badge-${job.id}`}>
+          <Text style={gStyles.reorderBadgeText}>{idx + 1}</Text>
         </View>
       ) : (
         <Pressable
@@ -1085,25 +1108,51 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
         ) : null}
         <NavigateJobButton job={job} />
       </View>
-      <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
-        <Text style={[gStyles.statusText, { color: pill.fg }]}>{pill.label}</Text>
-      </View>
-      <View testID={`grid-open-${job.id}`}>
-        <Ionicons name="chevron-forward" size={20} color={colors.muted} />
-      </View>
-      {/* Feb-2026 · Schedule inline edit affordance — admin+ only.
-          Backend PUT /api/jobs/{id} enforces the same role gate. */}
-      {isAdminForCard && onEdit ? (
-        <Pressable
-          onPress={() => onEdit(job)}
-          hitSlop={8}
-          testID={`grid-edit-${job.id}`}
-          accessibilityLabel="Edit job"
-          style={gStyles.editBtn}
-        >
-          <Ionicons name="pencil-outline" size={16} color={colors.muted} />
-        </Pressable>
-      ) : null}
+      {rearrangeMode ? (
+        <View style={gStyles.reorderActions}>
+          <View style={gStyles.arrowCol}>
+            <Pressable onPress={() => onShift(job.id, -1)} disabled={first}
+                       style={[gStyles.reorderBtn, first && { opacity: 0.3 }]}
+                       testID={`grid-reorder-up-${job.id}`}>
+              <Ionicons name="chevron-up" size={16} color={colors.brand} />
+            </Pressable>
+            <Pressable onPress={() => onShift(job.id, 1)} disabled={last}
+                       style={[gStyles.reorderBtn, last && { opacity: 0.3 }]}
+                       testID={`grid-reorder-down-${job.id}`}>
+              <Ionicons name="chevron-down" size={16} color={colors.brand} />
+            </Pressable>
+          </View>
+          {showDragHandle ? (
+            <Pressable
+              onPressIn={onDrag}
+              style={gStyles.dragHandleRight}
+              testID={`grid-drag-handle-${job.id}`}
+            >
+              <Ionicons name="reorder-three" size={20} color={colors.muted} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : (
+        <>
+          <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
+            <Text style={[gStyles.statusText, { color: pill.fg }]}>{pill.label}</Text>
+          </View>
+          <View testID={`grid-open-${job.id}`}>
+            <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+          </View>
+          {isAdminForCard && onEdit ? (
+            <Pressable
+              onPress={() => onEdit(job)}
+              hitSlop={8}
+              testID={`grid-edit-${job.id}`}
+              accessibilityLabel="Edit job"
+              style={gStyles.editBtn}
+            >
+              <Ionicons name="pencil-outline" size={16} color={colors.muted} />
+            </Pressable>
+          ) : null}
+        </>
+      )}
     </Pressable>
   );
 }
@@ -1363,6 +1412,59 @@ const gStyles = StyleSheet.create({
   dragHandle: {
     justifyContent: "center", alignItems: "center",
     width: 28, marginRight: 2,
+  },
+  dragHandleRight: {
+    justifyContent: "center", alignItems: "center",
+    width: 32, height: 44,
+  },
+  reorderBadge: {
+    width: 26, height: 26, borderRadius: 13,
+    backgroundColor: "#059669",
+    alignItems: "center", justifyContent: "center",
+  },
+  reorderBadgeText: {
+    fontFamily: font.bold, fontSize: 11, color: "#fff",
+  },
+  reorderActions: {
+    flexDirection: "row", alignItems: "center", gap: 4, marginLeft: 4,
+  },
+  arrowCol: {
+    alignItems: "center", justifyContent: "center", gap: 2,
+  },
+  reorderHeader: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    marginBottom: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1, borderColor: "#A7F3D0",
+  },
+  reorderHeaderTitle: {
+    fontFamily: font.bold, fontSize: fontSize.base, color: "#059669",
+  },
+  reorderHeaderSub: {
+    fontFamily: font.regular, fontSize: fontSize.sm, color: "#065F46",
+    marginTop: 1,
+  },
+  reorderBar: {
+    flexDirection: "row", alignItems: "center", justifyContent: "flex-end",
+    gap: spacing.sm, marginBottom: spacing.sm,
+  },
+  reorderCancelBtn: {
+    paddingHorizontal: spacing.md, height: 36, borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,
+    alignItems: "center", justifyContent: "center",
+  },
+  reorderCancelText: { fontFamily: font.bold, fontSize: fontSize.sm, color: colors.onSurface },
+  reorderSaveBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: spacing.lg, height: 36, borderRadius: radius.md,
+    backgroundColor: "#059669",
+  },
+  reorderSaveText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" },
+  navRouteRow: {
+    flexDirection: "row", alignItems: "center", gap: spacing.xs,
+    marginBottom: spacing.sm,
   },
   newBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
