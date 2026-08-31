@@ -1,0 +1,32 @@
+{
+  "summary": "Phase F3 (Prophylactic Guardrails) backend-only verification. (A) Startup integrity boot-check verified live: backend.err.log shows 'INFO:services.startup.integrity_check:[integrity_check] clean — 0 dangling refs (enforce=True)' on the current pod boot, and INTEGRITY_CHECK_ENFORCE resolves to True (backend/.env has APP_ENV=production and no explicit override → prod default). (B) All three hard-delete surfaces verified against the LIVE preview API with TEST_F3_ throwaway data: DELETE /api/crews/{cid} (200 clean / 409 has_referencing_jobs+job_count / 200 when only soft-deleted jobs reference), DELETE /api/customers/{cid}?mode=hard (409 with active job, 200 with none, 200 after job soft-deleted, customer confirmed 404 after delete), POST /api/customers/bulk action=delete (409 with error_code=has_referencing_jobs and ZERO customers deleted when any id has an active job; 200 {deleted:2, deprecated:true} when none do). Auth gate confirmed orthogonal — all hard-delete calls were made as admin@aquaterra.com (role=admin, not super_admin) and passed require_admin. (C) F2 regression GET /api/admin/data-repair/jobs/dry-run → 200 with summary.total_would_change=0, summary.total_flagged_no_action=3, orphan lists empty; 403 for non-super_admin. Full pytest regression: 90 passed / 1 skipped (F3 19 unit + F1/F2 suites + 10 new live-API contract tests). DB probe confirmed 0 leftover TEST_F3 rows after the run.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/admin/data-repair/jobs/dry-run", "issue": "Response nests the counters under `summary` ({summary:{total_would_change, total_flagged_no_action}}) not at the top level as stated in the review request. Not a bug, but callers/docs asserting top-level keys will read None."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_f3_guardrails_live_api.py",
+    "/app/backend/tests/test_startup_integrity_check.py",
+    "/app/backend/tests/test_hard_delete_blocks_referencing_jobs.py",
+    "/app/test_reports/pytest/f3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Boot-brick risk (technician_ref class): _live_technician_ids() derives the live tech id-space from db.technicians plus db.users where role=='technician'. There is no hard-delete path for technicians (verified: no db.technicians.delete_* in routers/services), BUT an admin ROLE CHANGE (e.g. /api/admin/users promote/demote technician→admin) silently removes that id from the live space, making every existing jobs.technician_id ref dangle. With enforcement ON in production, the next pod boot would then REFUSE to start. Recommend either (a) treating a role change as a guarded operation with the same has_referencing_jobs 409, or (b) softening the technician class at boot to CRITICAL-log-only while keeping customer/crew classes fail-fast.",
+    "_live_technician_ids() intentionally ignores deleted_at on db.users (only db.technicians is filtered) — soft-deleted technician users still count as live. Lenient by design, but worth a code comment so a future 'tighten this' change doesn't unexpectedly turn into a boot failure.",
+    "The integrity classes are not tenant-scoped (an id from tenant A satisfies a ref in tenant B). Low practical risk, but it weakens the check as a cross-tenant corruption detector.",
+    "Cross-surface consistency: the customers hard-delete 409 detail carries both `error_code` and a legacy `detail: customer_has_referencing_jobs` key, while crews/bulk carry only `error_code`. Fine for clients keying on error_code; flagging the asymmetry.",
+    "DELETE /api/jobs/{jid} is still a raw hard delete (db.jobs.delete_one) with no audit trail — outside F3 scope but it is the other half of the same data-integrity story."
+  ],
+  "updated_files": ["/app/backend/tests/test_f3_guardrails_live_api.py"],
+  "success_rate": {"backend": "100%", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "TEST_F3_<rand> crews, customers and jobs created and fully cleaned up per-test by a function-scoped teardown fixture. Verified via direct DB probe: 0 TEST_F3 jobs/customers/crews remain; unassigned-pending baseline back to 3.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@aquaterra.com / password123 (admin), super@aquaterra.com / password123 (super_admin) — both worked",
+  "context_for_next_testing_agent": "New live-API contract suite: /app/backend/tests/test_f3_guardrails_live_api.py (10 tests). Two gotchas baked in: (1) the `created` fixture is FUNCTION-scoped on purpose — the dry-run regression asserts total_flagged_no_action==3, which any live unassigned-pending TEST job inflates; (2) the dry-run endpoint has a 60-s in-memory cache, so the test polls up to 150 s for a fresh scan. Also note editing any file under /app/backend triggers uvicorn hot reload → transient 502s for ~60-90 s; sleep before running live tests right after a file write. Command used: python -m pytest tests/test_f3_guardrails_live_api.py -q -p no:randomly.",
+  "rca_of_the_issue": "No product defect found. Two test-side issues were self-inflicted and fixed in-scope: (a) the dry-run counters live under `summary`, not top-level; (b) my own TEST_F3 unassigned-pending jobs inflated total_flagged_no_action from 3→5 while alive — resolved by making the cleanup fixture function-scoped and ordering the F2 regression class last."
+}

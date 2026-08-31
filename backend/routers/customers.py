@@ -651,6 +651,32 @@ async def customers_bulk(body: CustomerBulkAction,
             "use_instead=POST /customers/bulk-delete",
             user.get("id"), user.get("email"), len(body.ids),
         )
+        # Feb-2026 · Phase F3 — even the deprecated path must NOT
+        # create orphan-customer refs. Block if ANY selected id is
+        # referenced by an active job.
+        referencing_count = await db.jobs.count_documents({
+            "customer_id": {"$in": body.ids},
+            "tenant_id": tenant["id"],
+            "status": {"$nin": ["deleted"]},
+            "$or": [{"deleted_at": None},
+                    {"deleted_at": {"$exists": False}}],
+        })
+        if referencing_count > 0:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error_code": "has_referencing_jobs",
+                    "message": (
+                        f"{referencing_count} active job(s) reference "
+                        "one or more of the selected customers — "
+                        "soft-delete or reassign those jobs first."
+                    ),
+                    "job_count": referencing_count,
+                    "resolution": (
+                        "soft-delete or reassign the affected jobs first"
+                    ),
+                },
+            )
         res = await db.customers.delete_many(q)
         return {
             "ok": True,
@@ -1639,6 +1665,37 @@ async def delete_customer(
                      "payment_status": i.get("payment_status")}
                     for i in unpaid[:20]
                 ],
+            },
+        )
+
+    # Feb-2026 · Phase F3 — cascade/block on referencing jobs. F2
+    # shipped the manual repair path; F3 closes the barn door at
+    # the source so new orphan-customer refs never accumulate.
+    # Matches the same "$or deleted_at null/absent" shape used by
+    # the unpaid-invoice guardrail above. Only ACTIVE jobs block;
+    # already-soft-deleted jobs are fine (they carry a snapshot).
+    referencing_jobs_count = await db.jobs.count_documents({
+        "customer_id": cid,
+        "tenant_id": tenant["id"],
+        "status": {"$nin": ["deleted"]},
+        "$or": [{"deleted_at": None},
+                {"deleted_at": {"$exists": False}}],
+    })
+    if referencing_jobs_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "has_referencing_jobs",
+                "detail": "customer_has_referencing_jobs",
+                "message": (
+                    f"Customer is referenced by {referencing_jobs_count} "
+                    "active job(s) — soft-delete or reassign those jobs "
+                    "first."
+                ),
+                "job_count": referencing_jobs_count,
+                "resolution": (
+                    "soft-delete or reassign the affected jobs first"
+                ),
             },
         )
 

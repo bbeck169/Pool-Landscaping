@@ -106,6 +106,31 @@ async def update_crew(cid: str, body: dict, user: dict = Depends(require_admin),
 @router.delete("/crews/{cid}")
 async def delete_crew(cid: str, user: dict = Depends(require_admin),
                        tenant: dict = Depends(get_current_tenant)):
+    # Feb-2026 · Phase F3 — block hard-delete when any active job
+    # references this crew. Prevents orphan-crew refs at the
+    # source (mirror of the customer path in customers.py).
+    referencing_jobs_count = await db.jobs.count_documents({
+        "crew_id": cid,
+        "tenant_id": tenant["id"],
+        "status": {"$nin": ["deleted"]},
+        "$or": [{"deleted_at": None},
+                {"deleted_at": {"$exists": False}}],
+    })
+    if referencing_jobs_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "has_referencing_jobs",
+                "message": (
+                    f"Crew is referenced by {referencing_jobs_count} "
+                    "active job(s) — reassign those jobs first."
+                ),
+                "job_count": referencing_jobs_count,
+                "resolution": (
+                    "reassign the affected jobs before deleting the crew"
+                ),
+            },
+        )
     r = await db.crews.delete_one({"id": cid, "tenant_id": tenant["id"]})
     if r.deleted_count == 0:
         raise HTTPException(404, "Crew not found")

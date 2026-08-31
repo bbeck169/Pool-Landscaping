@@ -2901,6 +2901,28 @@ async def startup():
             logger.warning(f"background seed task crashed: {e}")
 
     asyncio.create_task(_defer())
+
+    # Phase F3 · Feb-2026 — data-integrity boot-check. Fails fast
+    # (raises) when dangling refs exist AND
+    # ``INTEGRITY_CHECK_ENFORCE`` resolves to True (default: on in
+    # production, off elsewhere). Runs LAST so migrations that
+    # heal drift have already executed.
+    try:
+        from services.startup.integrity_check import (
+            run_startup_integrity_check,
+        )
+        await run_startup_integrity_check(db)
+    except Exception as exc:
+        # ``IntegrityCheckFailure`` — re-raise to abort boot. Any
+        # other exception is a scan defect; log + continue so a
+        # scanner bug never bricks production.
+        from services.startup.integrity_check import IntegrityCheckFailure
+        if isinstance(exc, IntegrityCheckFailure):
+            raise
+        logger.warning(
+            "integrity_check scan crashed (continuing): %s", exc,
+        )
+
     logger.info("Boot path complete — API is now accepting requests.")
 
 
