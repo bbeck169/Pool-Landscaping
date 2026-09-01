@@ -103,13 +103,21 @@ async def _mk_completed_job(tid: str, *, hours_ago: float = 48.0,
 
 
 async def _mk_invoice(tid: str, *, job_id: str, status: str,
-                             subtotal: float = 100.00) -> str:
+                             subtotal: float = 100.00,
+                             payment_status: str = "unpaid") -> str:
+    """Seed an invoice mirror with BOTH the legacy dollar fields
+    AND the auto-invoice integer-cents fields so K6c recalc lands
+    on the cents columns (matches services/auto_invoice.py schema)."""
     from utils import now_iso
     iid = f"k6-inv-{uuid.uuid4().hex[:10]}"
+    subtotal_cents = int(round(subtotal * 100))
     await _db().quotes.insert_one({
         "id": iid, "tenant_id": tid, "doc_type": "invoice",
-        "status": status, "customer_id": "cust-k6",
+        "status": status, "payment_status": payment_status,
+        "customer_id": "cust-k6",
         "scheduled_job_id": job_id,
+        "subtotal_cents": subtotal_cents,
+        "total_cents":    subtotal_cents,
         "subtotal": subtotal, "total_amount": subtotal, "total": subtotal,
         "created_at": now_iso(),
     })
@@ -225,7 +233,8 @@ def test_k6_priced_field_draft_invoice_recalculates_total():
         tid = await _tenant_id()
         jid = await _mk_completed_job(tid, hours_ago=48.0, price_cents=10000)
         iid = await _mk_invoice(tid, job_id=jid, status="draft",
-                                     subtotal=100.00)
+                                     subtotal=100.00,
+                                     payment_status="unpaid")
         try:
             from routers.jobs import patch_job_edit_window
             # Bump job price by +$50.00 (5000 cents delta).
@@ -235,8 +244,11 @@ def test_k6_priced_field_draft_invoice_recalculates_total():
                 tenant=await _tenant_dep(tid),
             )
             inv = await _db().quotes.find_one({"id": iid})
-            assert abs(inv["subtotal"] - 150.00) < 0.001, inv
-            assert abs(inv["total_amount"] - 150.00) < 0.001, inv
+            # K6c writes integer-cents fields; legacy dollar mirrors
+            # are left untouched (services/auto_invoice.py doesn't
+            # populate them either).
+            assert inv["subtotal_cents"] == 15000, inv
+            assert inv["total_cents"]    == 15000, inv
             assert inv["k6_last_recalc_delta_cents"] == 5000
             audit = await _db().audit_events.find_one(
                 {"event_type": "job_edited_after_completion",
@@ -255,8 +267,9 @@ def test_k6_priced_field_paid_invoice_blocks_409():
     async def _go():
         tid = await _tenant_id()
         jid = await _mk_completed_job(tid, hours_ago=48.0, price_cents=10000)
-        iid = await _mk_invoice(tid, job_id=jid, status="paid",
-                                     subtotal=100.00)
+        iid = await _mk_invoice(tid, job_id=jid, status="issued",
+                                     subtotal=100.00,
+                                     payment_status="paid")
         try:
             from routers.jobs import patch_job_edit_window
             with pytest.raises(HTTPException) as ei:

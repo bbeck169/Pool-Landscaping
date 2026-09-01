@@ -1875,40 +1875,54 @@ async def patch_job_edit_window(
             },
         )
 
-    # Phase K6 · Feb-2026 — Invoice-linkage safety.  Job → invoice
-    # link uses the ``db.quotes.scheduled_job_id`` back-pointer (the
-    # only clean join the current schema exposes).  If a priced
-    # field is in the incoming payload:
-    #   • linked invoice paid / partially_paid → HTTP 409, whole
-    #     request fails so the operator can't accidentally desync
-    #     the invoice from a settled payment.
-    #   • linked invoice draft / sent / pending → allow AND
-    #     recalculate the invoice total server-side; the
-    #     ``invoice_recalculated`` flag is stamped on the audit row.
+    # Phase K6 · Feb-2026 — Invoice-linkage safety.  The current
+    # schema exposes TWO joins from a completed job to its invoice
+    # and we must try both:
+    #   1. ``job.auto_invoice_id`` — the DIRECT back-pointer written
+    #      by ``services/auto_invoice.py`` at completion time.  This
+    #      is the path the tester's landscape-job scenario hits;
+    #      the K6 shipping cut missed it.
+    #   2. ``db.quotes.scheduled_job_id == job.id`` — the fallback
+    #      for quote-converted invoices where the auto-invoice
+    #      pipeline didn't run.
+    # Whichever resolves first wins.  Neither → treat as no linked
+    # invoice and allow the priced edit with no recalc.
     priced_fields_in_patch = {"price_cents"} & set(incoming.keys())
     invoice_recalculated = False
     linked_invoice: Optional[Dict[str, Any]] = None
     if priced_fields_in_patch:
-        linked_invoice = await db.quotes.find_one(
-            {"tenant_id": tenant["id"], "doc_type": "invoice",
-             "scheduled_job_id": jid},
-            {"_id": 0},
-        )
+        auto_iid = job.get("auto_invoice_id")
+        if auto_iid:
+            linked_invoice = await db.quotes.find_one(
+                {"tenant_id": tenant["id"], "id": auto_iid,
+                 "doc_type": "invoice"},
+                {"_id": 0},
+            )
+        if not linked_invoice:
+            linked_invoice = await db.quotes.find_one(
+                {"tenant_id": tenant["id"], "doc_type": "invoice",
+                 "scheduled_job_id": jid},
+                {"_id": 0},
+            )
         if linked_invoice:
-            inv_status = (linked_invoice.get("status") or "").lower()
-            if inv_status in ("paid", "partially_paid"):
+            # Auto-invoice pipeline stamps ``payment_status`` at
+            # record-payment time; the invoice ``status`` stays
+            # ``issued`` even after payment lands.  We key off the
+            # payment column, NOT the doc status.
+            pay_status = (linked_invoice.get("payment_status") or "").lower()
+            if pay_status in ("paid", "partial", "partially_paid"):
                 raise HTTPException(
                     status_code=409,
                     detail={
                         "detail": "invoice_locked",
                         "message": (
                             f"Invoice {linked_invoice.get('id')} is "
-                            f"{inv_status} — void or refund the invoice "
+                            f"paid — void or refund the invoice "
                             f"before editing priced fields on this "
                             f"completed job."
                         ),
                         "invoice_id": linked_invoice.get("id"),
-                        "invoice_status": inv_status,
+                        "invoice_status": pay_status,
                     },
                 )
 
@@ -1978,11 +1992,14 @@ async def patch_job_edit_window(
     # imports the PUT handler, the door-hanger ledger key
     # ``door_hanger_auto:{job_id}`` still prevents a duplicate email.
 
-    # Phase K6 · Feb-2026 — Invoice recalc for editable statuses
-    # (draft / sent / pending).  Bumps ``subtotal`` + ``total_amount``
-    # by the price-cents delta so the invoice stays consistent with
-    # the job's new price.  Uses the existing ``db.quotes`` shape;
-    # unaltered fields (line items, tax, discount) stay put.
+    # Phase K6 · Feb-2026 — Invoice recalc for unpaid, editable
+    # invoices (payment_status == "unpaid").  Auto-invoice pipeline
+    # stores integer cents on the invoice (``subtotal_cents`` +
+    # ``total_cents``); the pricing engine's tax/discount are
+    # already baked into ``total_cents`` at issue time, so we bump
+    # BOTH fields by the same delta (job price change) without
+    # re-running the tax/discount pass — preserves whatever line-
+    # item math the invoice already carries.
     if linked_invoice and "price_cents" in incoming:
         try:
             delta_cents = int(incoming.get("price_cents") or 0) \
@@ -1990,18 +2007,15 @@ async def patch_job_edit_window(
         except (TypeError, ValueError):
             delta_cents = 0
         if delta_cents:
-            delta_dollars = round(delta_cents / 100.0, 2)
-            new_subtotal = round(
-                float(linked_invoice.get("subtotal") or 0) + delta_dollars, 2)
-            new_total = round(
-                float(linked_invoice.get("total_amount")
-                      or linked_invoice.get("total") or 0) + delta_dollars, 2)
+            new_subtotal_cents = int(
+                linked_invoice.get("subtotal_cents") or 0) + delta_cents
+            new_total_cents = int(
+                linked_invoice.get("total_cents") or 0) + delta_cents
             await db.quotes.update_one(
                 {"id": linked_invoice["id"], "doc_type": "invoice"},
                 {"$set": {
-                    "subtotal": new_subtotal,
-                    "total_amount": new_total,
-                    "total": new_total,
+                    "subtotal_cents": new_subtotal_cents,
+                    "total_cents": new_total_cents,
                     "updated_at": now_iso(),
                     "k6_last_recalc_delta_cents": delta_cents,
                 }},
