@@ -46,6 +46,19 @@ export default function JobDetail() {
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const isCustomer = user?.role === "customer";
   const techLocked = isTech && !attendance.clockedIn;
+  // Phase K6 · Feb-2026 — Completed Job Unlock.  These four roles
+  // (plus super_admin above) can edit already-completed jobs +
+  // upload media + attach notes past the 24h edit window; every
+  // mutation writes a Communication-Timeline audit row so the
+  // change is discoverable on the customer page.  Non-K6 roles
+  // (customer, viewer, marketer, sales …) remain locked out.
+  const K6_UNLOCK_ROLES = new Set([
+    "super_admin", "admin", "manager", "tech", "technician", "owner",
+  ]);
+  const canEditCompleted =
+    !isCustomer
+    && K6_UNLOCK_ROLES.has(user?.role || "")
+    && (job?.status === "completed");
 
   const load = async () => {
     try {
@@ -291,6 +304,40 @@ export default function JobDetail() {
             </div>
           ) : null}
         </div>
+
+        {/* Phase K6 · Feb-2026 — Editing-after-completion banner.
+            Renders whenever the job is ``completed`` and the current
+            user belongs to the K6 unlock set.  The banner sits
+            directly above the meta strip + tabs so it's the FIRST
+            thing an operator sees when they scroll into the edit
+            controls.  Every subsequent PATCH is server-side logged
+            to the Communication Timeline via
+            ``audit_events.job_edited_after_completion``. */}
+        {canEditCompleted ? (
+          <div
+            className="flex items-start gap-3 rounded-2xl p-3 mt-5"
+            style={{ background: "#FEF3C7",
+                        border: "1px solid #FCD34D",
+                        color: "#78350F" }}
+            role="status"
+            data-testid="jd-k6-edit-after-completion-banner"
+          >
+            <span aria-hidden className="text-xl leading-none">🕒</span>
+            <div className="text-sm">
+              <div className="font-bold mb-0.5">
+                Editing after completion — this will be logged
+              </div>
+              <div style={{ color: "#92400E" }}>
+                This job is marked <b>completed</b>. Changes you make
+                here (notes, media, price) are recorded on the
+                customer's Communication Timeline with your name and
+                the fields you touched. If a paid invoice is linked
+                to this job, priced fields are blocked until the
+                invoice is voided.
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* Meta strip — Price hidden for technicians (Phase 16C add-on). */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">

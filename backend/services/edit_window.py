@@ -24,6 +24,29 @@ from fastapi import HTTPException
 
 EDIT_WINDOW_HOURS = 24
 
+# Phase K6 · Feb-2026 — Completed Job Unlock.  These roles can PATCH
+# a completed job WITHOUT the 24h edit-window gate.  Every mutation
+# still writes:
+#   1. The pre-existing ``db.job_edits`` audit doc (job-detail
+#      history).
+#   2. A ``db.audit_events`` row with ``event_type
+#      = "job_edited_after_completion"`` so the Communication
+#      Timeline on the customer page surfaces the edit.
+# Portal + dispatcher-only + viewer roles remain blocked by
+# ``_authorize_edit`` — K6 loosens the WINDOW, not the role gate.
+K6_UNLOCK_ROLES = frozenset({
+    "super_admin", "admin", "manager",
+    "tech", "technician", "owner",
+})
+
+
+def role_bypasses_edit_window(role: Optional[str]) -> bool:
+    """K6 · Feb-2026 — True iff the role can PATCH a completed job
+    past the 24h window.  Case-insensitive on the role string so
+    "Tech" / "TECHNICIAN" / "super_admin" all normalize correctly."""
+    return (role or "").strip().lower() in K6_UNLOCK_ROLES
+
+
 # Fields a technician / admin cannot mutate via the edit path.  The
 # original status-flow endpoints (PUT status transition, admin
 # customer-move, etc.) remain the ONLY way to change these post-

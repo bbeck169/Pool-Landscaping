@@ -193,22 +193,46 @@ def test_edit_within_window_as_admin_records_admin_role():
 # 3. Edit outside window → 403 edit_window_expired.
 # ═════════════════════════════════════════════════════════════════════
 def test_edit_outside_window_raises_403():
+    """Phase K6 · Feb-2026 — SEMANTIC CHANGE.
+
+    Previously (Feb-2026 · 24h edit window) technicians got a stock
+    403 ``edit_window_expired`` past 24h post-completion.  K6 unlocks
+    the four core roles (super_admin / admin / manager / tech) so
+    late fixes on invoiced or already-paid jobs remain possible; the
+    ``edit_window_expired`` path now fires ONLY for roles OUTSIDE the
+    K6 unlock set (portal, viewer, dispatcher-only, marketer …).  A
+    role that WOULD have hit ``edit_window_expired`` here is now
+    stopped one gate earlier by ``_authorize_edit`` (403 "Not
+    permitted to edit jobs") because those roles don't have write
+    access at all.
+
+    The gate is still defensively wired — locked-in via
+    ``test_k6_completed_unlock.py::test_edit_window_still_blocks_
+    non_k6_roles_outside_window`` — but the tech role no longer
+    triggers it.  This test now asserts the K6 happy path: a
+    technician CAN edit their own completed job past the window
+    and the K6 audit trail fires.
+    """
     async def _go():
         tid = await _tenant_id()
         jid = await _mk_completed_pool_job(tid, completed_hours_ago=25.0)
         try:
             from routers.jobs import patch_job_edit_window
-            body = _patch(notes="too late")
+            body = _patch(notes="K6 late fix")
             tenant = await _tenant_dep(tid)
-            with pytest.raises(HTTPException) as ei:
-                await patch_job_edit_window(
-                    jid, body, user=_mk_tech_user(tid), tenant=tenant,
-                )
-            assert ei.value.status_code == 403
-            d = ei.value.detail
-            assert d["detail"] == "edit_window_expired"
-            assert d["edit_window_hours"] == 24
-            assert d["hours_since_completion"] >= 24
+            fresh = await patch_job_edit_window(
+                jid, body, user=_mk_tech_user(tid), tenant=tenant,
+            )
+            assert fresh["notes"] == "K6 late fix"
+            # K6 timeline audit stamps the row on audit_events.
+            audit = await _db().audit_events.find_one(
+                {"tenant_id": tid,
+                 "event_type": "job_edited_after_completion",
+                 "payload.job_id": jid},
+            )
+            assert audit is not None
+            assert "notes" in (audit["payload"]["fields_changed"] or [])
+            assert audit["payload"]["user_role"] == "technician"
         finally:
             await _drain(tid)
 

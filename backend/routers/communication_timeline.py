@@ -46,7 +46,11 @@ _MAX_PER_COLLECTION = 200
 _DEFAULT_LIMIT = 50
 _MAX_LIMIT = 200
 
-_AUDIT_EVENT_TYPES = ("portal_invite_bulk",)
+# Phase K6 · Feb-2026 — ``job_edited_after_completion`` joined the
+# ``portal_invite_bulk`` surface so late-edit history shows up on
+# the customer timeline alongside emails, SMS, and portal
+# invites.  See ``_audit_to_item`` for the item shape.
+_AUDIT_EVENT_TYPES = ("portal_invite_bulk", "job_edited_after_completion")
 
 
 def _preview(text: Optional[str], n: int = 500) -> str:
@@ -133,6 +137,41 @@ def _audit_to_item(row: Dict[str, Any]) -> Dict[str, Any]:
     actor_user_id = row.get("actor_id")
     label = actor_email or ("User" if actor_user_id else "System / Automation")
     kind = "user" if (actor_email or actor_user_id) else "system"
+    event_type = row.get("event_type") or ""
+
+    # Phase K6 · Feb-2026 — job_edited_after_completion branch.
+    # Renders a compact "Job edited after completion" timeline card
+    # listing the fields the operator touched.  Never leaks
+    # before/after values (K6 privacy constraint).
+    if event_type == "job_edited_after_completion":
+        fields = payload.get("fields_changed") or []
+        subject = "Job edited after completion"
+        body = (
+            f"{label} edited {len(fields)} field"
+            f"{'' if len(fields) == 1 else 's'} on a completed job"
+            f"{': ' + ', '.join(fields) if fields else '.'}"
+        )
+        if payload.get("invoice_recalculated"):
+            body += " (invoice total recalculated)"
+        return {
+            "id": row.get("id"),
+            "type": "job_edited",
+            "occurred_at": row.get("timestamp") or "",
+            "actor_label": label,
+            "actor_kind": kind,
+            "actor_user_id": actor_user_id,
+            "direction": "internal",
+            "channel_id": row.get("id"),
+            "subject": subject,
+            "body_preview": _preview(body),
+            "recipient": "",
+            "delivery_status": "logged",
+            "delivery_error": None,
+            "job_id": payload.get("job_id"),
+            "fields_changed": fields,
+            "invoice_recalculated": bool(payload.get("invoice_recalculated")),
+        }
+    # Default (portal_invite_bulk) — unchanged.
     return {
         "id": row.get("id"),
         "type": "email",  # portal invites are emails
@@ -221,9 +260,13 @@ async def communication_timeline(
     ).sort([("sent_at", -1), ("reserved_at", -1)]).limit(_MAX_PER_COLLECTION):
         dispatch_rows.append(r)
 
-    # ── audit_events (portal_invite_bulk) ─────────────────────────
+    # ── audit_events (portal_invite_bulk + K6 job_edited) ────────
     audit_rows: List[Dict[str, Any]] = []
-    include_audit = (wanted_types is None) or ("email" in wanted_types)
+    # Phase K6 · Feb-2026 — the timeline surfaces audit rows when
+    # the caller either doesn't filter by type OR asks for "email"
+    # (portal invites) or "job_edited" (K6 completion edits).
+    include_audit = (wanted_types is None) or bool(
+        set(wanted_types) & {"email", "job_edited"})
     if include_audit:
         audit_filter: Dict[str, Any] = {
             "tenant_id": tenant["id"],

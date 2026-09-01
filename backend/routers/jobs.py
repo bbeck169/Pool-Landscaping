@@ -1753,6 +1753,10 @@ class JobEditPatch(BaseModel):
     photos:            Optional[List[Dict[str, Any]]] = None
     title:             Optional[str] = None
     service_notes:     Optional[str] = None
+    # Phase K6 · Feb-2026 — priced field on the job doc.  Gated
+    # server-side against the linked invoice's paid/partial-paid
+    # status before the write lands.
+    price_cents:       Optional[int] = None
     # Free-text reason surfaced in the audit doc.  Never mutates the
     # job itself.
     edit_reason:       Optional[str] = None
@@ -1808,6 +1812,7 @@ async def patch_job_edit_window(
         EDIT_WINDOW_HOURS, IMMUTABLE_FIELDS,
         assert_immutable_fields_untouched, diff_fields,
         hours_since_completion, is_within_edit_window,
+        role_bypasses_edit_window,
     )
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
     role = (user.get("role") or "").lower()
@@ -1850,7 +1855,13 @@ async def patch_job_edit_window(
         )
 
     # Gate 5 · edit window.
-    if not is_within_edit_window(job):
+    # Phase K6 · Feb-2026 — the four K6-unlocked roles bypass the
+    # 24h window entirely so late fixes on completed / invoiced /
+    # paid jobs remain possible.  The audit trail below fires
+    # unconditionally, so every post-completion edit is discoverable
+    # on the Communication Timeline.
+    _k6_bypass = role_bypasses_edit_window(role)
+    if not _k6_bypass and not is_within_edit_window(job):
         raise HTTPException(
             status_code=403,
             detail={
@@ -1863,6 +1874,43 @@ async def patch_job_edit_window(
                 "edit_window_hours": EDIT_WINDOW_HOURS,
             },
         )
+
+    # Phase K6 · Feb-2026 — Invoice-linkage safety.  Job → invoice
+    # link uses the ``db.quotes.scheduled_job_id`` back-pointer (the
+    # only clean join the current schema exposes).  If a priced
+    # field is in the incoming payload:
+    #   • linked invoice paid / partially_paid → HTTP 409, whole
+    #     request fails so the operator can't accidentally desync
+    #     the invoice from a settled payment.
+    #   • linked invoice draft / sent / pending → allow AND
+    #     recalculate the invoice total server-side; the
+    #     ``invoice_recalculated`` flag is stamped on the audit row.
+    priced_fields_in_patch = {"price_cents"} & set(incoming.keys())
+    invoice_recalculated = False
+    linked_invoice: Optional[Dict[str, Any]] = None
+    if priced_fields_in_patch:
+        linked_invoice = await db.quotes.find_one(
+            {"tenant_id": tenant["id"], "doc_type": "invoice",
+             "scheduled_job_id": jid},
+            {"_id": 0},
+        )
+        if linked_invoice:
+            inv_status = (linked_invoice.get("status") or "").lower()
+            if inv_status in ("paid", "partially_paid"):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "detail": "invoice_locked",
+                        "message": (
+                            f"Invoice {linked_invoice.get('id')} is "
+                            f"{inv_status} — void or refund the invoice "
+                            f"before editing priced fields on this "
+                            f"completed job."
+                        ),
+                        "invoice_id": linked_invoice.get("id"),
+                        "invoice_status": inv_status,
+                    },
+                )
 
     # Gate 6 · chemistry re-check.  If the edit touches any of the
     # 5 core readings, the resulting state must still satisfy the
@@ -1929,6 +1977,74 @@ async def patch_job_edit_window(
     # Belt-and-suspenders: even if a future refactor accidentally
     # imports the PUT handler, the door-hanger ledger key
     # ``door_hanger_auto:{job_id}`` still prevents a duplicate email.
+
+    # Phase K6 · Feb-2026 — Invoice recalc for editable statuses
+    # (draft / sent / pending).  Bumps ``subtotal`` + ``total_amount``
+    # by the price-cents delta so the invoice stays consistent with
+    # the job's new price.  Uses the existing ``db.quotes`` shape;
+    # unaltered fields (line items, tax, discount) stay put.
+    if linked_invoice and "price_cents" in incoming:
+        try:
+            delta_cents = int(incoming.get("price_cents") or 0) \
+                - int(job.get("price_cents") or 0)
+        except (TypeError, ValueError):
+            delta_cents = 0
+        if delta_cents:
+            delta_dollars = round(delta_cents / 100.0, 2)
+            new_subtotal = round(
+                float(linked_invoice.get("subtotal") or 0) + delta_dollars, 2)
+            new_total = round(
+                float(linked_invoice.get("total_amount")
+                      or linked_invoice.get("total") or 0) + delta_dollars, 2)
+            await db.quotes.update_one(
+                {"id": linked_invoice["id"], "doc_type": "invoice"},
+                {"$set": {
+                    "subtotal": new_subtotal,
+                    "total_amount": new_total,
+                    "total": new_total,
+                    "updated_at": now_iso(),
+                    "k6_last_recalc_delta_cents": delta_cents,
+                }},
+            )
+            invoice_recalculated = True
+
+    # Phase K6 · Feb-2026 — Communication-timeline audit entry.
+    # Written to ``db.audit_events`` with the new
+    # ``job_edited_after_completion`` event_type; the timeline
+    # router surfaces it under the job's customer.  Compact by
+    # design — records field NAMES only, never before/after values.
+    if (job.get("status") or "").lower() == "completed" \
+            or job.get("completed_at"):
+        try:
+            fields_changed = sorted(list(changes.keys()))
+            await db.audit_events.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "event_type": "job_edited_after_completion",
+                "actor_id": user.get("id"),
+                "actor_email": user.get("email") or user.get("name") or "",
+                "timestamp": now_iso(),
+                "payload": {
+                    "job_id": jid,
+                    "customer_id": job.get("customer_id"),
+                    "user_id": user.get("id"),
+                    "user_name": user.get("name") or user.get("email") or "",
+                    "user_role": role,
+                    "fields_changed": fields_changed,
+                    "invoice_recalculated": invoice_recalculated,
+                    "invoice_id": (linked_invoice or {}).get("id"),
+                },
+            })
+        except Exception:
+            # Never let an audit-write failure roll back the job
+            # edit — the ``db.job_edits`` history above is the
+            # primary source of truth; audit_events is the
+            # timeline mirror.
+            logger.warning(
+                "[k6] audit_events insert failed for job %s",
+                jid, exc_info=True,
+            )
+
     return fresh
 
 
