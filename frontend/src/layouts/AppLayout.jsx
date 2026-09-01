@@ -26,6 +26,7 @@ import { DynamicCrumbProvider }
   from "@/components/nav/dynamicCrumbContext";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
+import PaymentMethodPromptBanner from "@/components/portal/PaymentMethodPromptBanner";
 import {
   LayoutDashboard,
   Briefcase,
@@ -441,6 +442,14 @@ function AppLayout() {
       ) : null}
       <div id="impersonation-banner-slot" style={{ height: showImpersonationBanner ? 40 : 0 }} />
       <div id="preview-banner-slot" style={{ height: isPreviewing ? 40 : 0 }} />
+
+      {/* Phase K11 · Feb-2026 — Payment-method persistent banner.
+          Portal-scoped; renders when the customer has no card or a
+          card expiring within 30 days.  Distinct blue tint so it
+          never collides visually with the K13 impersonation banner. */}
+      {(location.pathname || "").startsWith("/portal") ? (
+        <PaymentMethodPromptBanner />
+      ) : null}
 
       {/* Feb-2026 · Pivot — the 7 quick-access items move from the
           header row to a slim vertical rail in the same slot the

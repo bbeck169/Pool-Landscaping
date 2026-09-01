@@ -20,6 +20,7 @@ import PersonaAvatar from "@/components/personas/PersonaAvatar";
 // AIAvatar now.
 import AIAvatar from "@/components/ai/AIAvatar";
 import TechAvatar from "@/components/common/TechAvatar";
+import PaymentMethodPromptModal from "@/components/portal/PaymentMethodPromptModal";
 
 const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
@@ -112,6 +113,10 @@ export default function PortalHome() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-home">
+      {/* Phase K11 · Feb-2026 — Payment-method prompt modal.  Renders
+          once per browser session when the customer has no card or a
+          card expiring within 30 days.  Hidden during impersonation. */}
+      <PaymentMethodPromptModal />
       {/* Feb-2026 · Item 9 — first thing the customer sees.
           Phase 34 · Feb 2026 · surgical removal — the "Good evening,
           {name}!" greeting tile (blue→green gradient + Contact us /

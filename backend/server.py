@@ -943,6 +943,11 @@ api_router.include_router(public_social.router)
 # these routes are unauthenticated.
 api_router.include_router(marketing_campaigns_router.public_router)
 
+# Phase K11 · Feb-2026 — Portal payment-method prompt evaluator +
+# 24-hour modal snooze.  Portal-only surface; admin routes untouched.
+from routers import portal_payment_prompt  # noqa: E402
+api_router.include_router(portal_payment_prompt.router)
+
 # Phase 34 · Feb 2026 — Endpoint Path Normalization compat alias.
 # Mobile clients call the 5 public review-request endpoints at
 # ``/api/public/r/*``; the canonical path is ``/api/reviews/public/r/*``.
