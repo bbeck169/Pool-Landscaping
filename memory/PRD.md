@@ -13914,3 +13914,50 @@ Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy 
 - ArmToDelete retrofit sweep (P1).
 - Mobile schedule-navigate parity + Mobile F7 line-items parity (P2, Expo specialist).
 
+
+---
+
+## Phase I2 — Small UX Additions Bundle (Feb 2026) — SHIPPED
+
+### What shipped
+1. **MoM badge on Revenue Forecast tile** (`RevenueForecastTile.jsx`)
+   - Renders only on `this_month` / `next_month` quick-view tabs.
+   - Prior-period fetch: this_month vs previous month; next_month vs this month.
+   - Delta tone: green (>+$50) / red (<-$50) / gray (flat, |Δ|<$50).
+   - Silent failure — `.catch` sets `momPrior` to null so badge hides.
+   - Testid: `revenue-forecast-mom-badge`.
+
+2. **YoY drop badge on Analytics → Charge Templates card** (`AnalyticsMonthlyPage.jsx`)
+   - Fires only when cur > 0 AND prior > 0 AND cur < prior AND dropPct > 20%.
+   - Sources `prior_year_revenue_usd` from the H6 backend rollup.
+   - Testid pattern: `templates-yoy-<template_id>`.
+
+3. **Waitlist bulk portal-invite button** (`CustomersList.jsx`)
+   - Renders only on Waitlist tab (H4), admin+ only, when `counts.waitlist > 0`.
+   - Re-fetches waitlist ids at click time (no stale-tab-count corruption).
+   - >20 rows: type "WAITLIST" via `window.prompt`. ≤20: `window.confirm`.
+   - Reuses H1 endpoint `POST /admin/customers/portal-invite/bulk`.
+   - Bug fix during I2: undefined `toast` identifier replaced with `sonnerToast` (was ReferenceError in original draft).
+   - Testid: `waitlist-bulk-invite-btn`.
+
+4. **Top blocked phrases table on Analytics → Soshie card** (`AnalyticsMonthlyPage.jsx`)
+   - Renders inside `total > 0` branch (quiet months skip it).
+   - Reads `d.top_blocked_phrases` array from H7 backend aggregation.
+   - Testid: `soshie-blocked-phrases`, per-row `soshie-blocked-phrase-<slug>`, empty `soshie-blocked-phrases-empty`.
+
+### Tests added (all green — 39 new I2 tests + 34 regression)
+- `/app/frontend/src/test/revenue-forecast-mom-badge.test.jsx` (10)
+- `/app/frontend/src/test/analytics-yoy-badge.test.jsx` (9)
+- `/app/frontend/src/test/waitlist-bulk-invite.test.jsx` (11)
+- `/app/frontend/src/test/analytics-blocked-phrases.test.jsx` (9)
+- Updated `/app/frontend/src/test/revenue-forecast-h10.test.jsx` — tolerates extra MoM prior-period fetch on monthly tabs.
+
+### Empirical proof
+- Playwright screenshots at `/tmp/i2_A_revenue_forecast_mom.png` (MoM badge live — "−$2,140.00 VS LAST MONTH" red pill against $11,060 This Month), `/tmp/i2_B_analytics_monthly.png` (Analytics 4-card grid loads clean), `/tmp/i2_C_waitlist_bulk_invite.png` (Waitlist tab, empty cohort → button correctly hidden by `counts.waitlist > 0` gate).
+
+### Next queue
+- Phase G4b: Expo/Mobile parity for Portal Activation Customer Filter (P1).
+- Expo/Mobile parity for Waitlist tab (P1).
+- Phase F6b: Expo/Mobile parity for crew filter + Active/Inactive filter (P1).
+- Phase E: Reorder Route mobile parity for Expo (P1).
+- Tenant switcher on logo (P2).

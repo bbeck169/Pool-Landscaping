@@ -70,7 +70,11 @@ describe("H10 · RevenueForecastTile toggles + recurring_jobs", () => {
       "revenue-forecast-tab-this_month")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId(
       "revenue-forecast-tab-this_month"));
-    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+    // I2 (Feb-2026) — MoM badge fires an extra prior-period fetch
+    // on monthly tabs, so total calls is >= 2 (initial + tab range,
+    // + optional MoM prior-period). ``calls[1]`` is still the tab
+    // fetch because it fires synchronously ahead of the prior fetch.
+    await waitFor(() => expect(getMock.mock.calls.length).toBeGreaterThanOrEqual(2));
     const url = getMock.mock.calls[1][0];
     expect(url).toMatch(/start=\d{4}-\d{2}-01/);
     expect(url).toMatch(/end=\d{4}-\d{2}-\d{2}/);
@@ -83,7 +87,9 @@ describe("H10 · RevenueForecastTile toggles + recurring_jobs", () => {
       "revenue-forecast-tab-next_month")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId(
       "revenue-forecast-tab-next_month"));
-    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+    // I2 (Feb-2026) — see note above; MoM prior-period fetch fires
+    // after the tab fetch on monthly tabs.
+    await waitFor(() => expect(getMock.mock.calls.length).toBeGreaterThanOrEqual(2));
     const url = getMock.mock.calls[1][0];
     expect(url).toMatch(/start=\d{4}-\d{2}-01/);
     const now = new Date();

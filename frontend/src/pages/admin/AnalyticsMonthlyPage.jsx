@@ -167,6 +167,38 @@ function SoshieCard({ data }) {
                 data-testid="soshie-cache-pill">
             Cache hit rate {_fmtPct(d.cache_hit_rate)}
           </div>
+          {/* Phase I2 · Feb-2026 — Top blocked phrases (H7 audit
+              → I2 coaching signal). Empty state matches the H6
+              pattern used across the page. */}
+          <div className="mt-4"
+                  data-testid="soshie-blocked-phrases">
+            <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
+                    style={{ color: colors.muted }}>
+              Top blocked phrases this month
+            </div>
+            {(d.top_blocked_phrases || []).length ? (
+              <div>
+                {(d.top_blocked_phrases || []).map((p) => (
+                  <div key={p.phrase}
+                          className="flex items-center justify-between text-xs py-1 border-t"
+                          style={{ borderColor: colors.border,
+                                      color: colors.onSurface }}
+                          data-testid={`soshie-blocked-phrase-${p.phrase.replace(/\s+/g, "-")}`}>
+                    <span className="truncate flex-1">{p.phrase}</span>
+                    <span className="tabular-nums font-semibold ml-2">
+                      {p.count}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs mt-1"
+                      style={{ color: colors.muted }}
+                      data-testid="soshie-blocked-phrases-empty">
+                No blocked phrases this month.
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <EmptyCell testid="soshie-empty" />
@@ -199,13 +231,29 @@ function ChargeTemplatesCard({ data }) {
                 style={{ color: colors.muted }}>
             Top 3 (by revenue)
           </div>
-          {top.map((t) => (
+          {top.map((t) => {
+            const cur = Number(t.revenue_contribution_usd || 0);
+            const prior = Number(t.prior_year_revenue_usd || 0);
+            const dropPct = (cur > 0 && prior > 0 && cur < prior)
+              ? Math.round(((prior - cur) / prior) * 100) : 0;
+            const showYoy = dropPct > 20;
+            return (
             <div key={t.template_id}
                     className="flex items-center justify-between text-sm py-1 border-t"
                     style={{ borderColor: colors.border,
                                 color: colors.onSurface }}
                     data-testid={`templates-top-${t.template_id}`}>
-              <span className="truncate flex-1">{t.name}</span>
+              <span className="truncate flex-1 flex items-center gap-2">
+                {t.name}
+                {showYoy ? (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                           style={{ background: "#FEE2E2",
+                                       color: "#991B1B" }}
+                           data-testid={`templates-yoy-${t.template_id}`}>
+                    ↓ {dropPct}% YoY
+                  </span>
+                ) : null}
+              </span>
               <span className="tabular-nums text-xs"
                        style={{ color: colors.muted }}>
                 {t.apply_count}×
@@ -214,7 +262,8 @@ function ChargeTemplatesCard({ data }) {
                 {_fmtUsd(t.revenue_contribution_usd)}
               </span>
             </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <EmptyCell msg="No templates applied this month"

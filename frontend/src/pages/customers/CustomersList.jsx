@@ -956,6 +956,63 @@ export default function CustomersList() {
         ))}
       </div>
 
+      {/* Phase I2 · Feb-2026 — "Send portal invite to entire
+          Waitlist" cohort action. Only visible on the Waitlist
+          tab, admin+ only. Reuses the H1 bulk-invite endpoint;
+          fetches the full waitlisted-cohort id list at click-time
+          so stale-tab counts can't corrupt the payload. */}
+      {tab === "waitlist" && isAdmin && counts.waitlist > 0 ? (
+        <div className="mb-3 flex justify-end">
+          <Button
+            variant="secondary"
+            data-testid="waitlist-bulk-invite-btn"
+            onClick={async () => {
+              try {
+                // Re-fetch waitlist ids at click time (no stale
+                // state; page_size cap = 500 matches H1 batch cap).
+                const listRes = await api.get(
+                  "/customers?waitlisted=true&page=1&page_size=500",
+                );
+                const ids = (listRes?.items || [])
+                  .map((c) => c.id).filter(Boolean);
+                if (!ids.length) {
+                  sonnerToast.info?.("No waitlisted customers to invite.");
+                  return;
+                }
+                const confirmMsg = ids.length > 20
+                  ? `Send portal invite to ${ids.length} waitlisted customers? Type WAITLIST to confirm.`
+                  : `Send portal invite to ${ids.length} waitlisted customer(s)?`;
+                if (ids.length > 20) {
+                  // eslint-disable-next-line no-alert
+                  const typed = window.prompt(confirmMsg);
+                  if (typed !== "WAITLIST") return;
+                } else if (!window.confirm(confirmMsg)) {
+                  return;
+                }
+                const res = await api.post(
+                  "/admin/customers/portal-invite/bulk",
+                  { customer_ids: ids },
+                );
+                const invited = res?.sent ?? res?.invited_count ?? 0;
+                const skipped = (res?.skipped_already_activated ?? 0)
+                  + (res?.skipped_no_contact ?? 0)
+                  + (res?.skipped_wrong_tenant ?? 0);
+                sonnerToast.success(
+                  `Invited ${invited}, skipped ${skipped} (already active or no email).`,
+                );
+              } catch (e) {
+                sonnerToast.error(
+                  e?.message
+                  || "Bulk invite failed — hourly cap may be reached.",
+                );
+              }
+            }}
+          >
+            Send portal invite to entire Waitlist ({counts.waitlist})
+          </Button>
+        </div>
+      ) : null}
+
       {/* Filter row */}
       <div
         className="rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center"

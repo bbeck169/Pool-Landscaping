@@ -100,6 +100,9 @@ export default function RevenueForecastTile({ range }) {
   const [tabData, setTabData] = useState(null);
   const [tabBusy, setTabBusy] = useState(false);
   const [tabErr, setTabErr] = useState("");
+  // Phase I2 · Feb-2026 — MoM prior-period total. ``null`` hides
+  // the badge (either not a monthly tab or prior fetch failed).
+  const [momPrior, setMomPrior] = useState(null);
 
   const activeRange = useMemo(() => {
     if (!activeTab) return null;
@@ -123,7 +126,27 @@ export default function RevenueForecastTile({ range }) {
       .then((r) => setTabData(r))
       .catch((e) => setTabErr(e?.message || "Failed to load."))
       .finally(() => setTabBusy(false));
-  }, [activeRange?.start, activeRange?.end]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'activeRange' intentionally omitted (mount-only or stable-ref)
+    // Phase I2 · Feb-2026 — Month-over-month growth comparison.
+    // For ``this_month``, compare vs previous calendar month.
+    // For ``next_month``, compare vs ``this_month``. Any other tab
+    // clears the MoM state (badge hides).
+    if (activeTab === "this_month" || activeTab === "next_month") {
+      const now = new Date();
+      const offset = activeTab === "this_month" ? -1 : 0;
+      const first = new Date(now.getFullYear(),
+                                 now.getMonth() + offset, 1);
+      const last = new Date(now.getFullYear(),
+                                now.getMonth() + offset + 1, 0);
+      api
+        .get(
+          `/admin/dashboard/revenue-forecast?start=${isoDay(first)}&end=${isoDay(last)}`,
+        )
+        .then((r) => setMomPrior(r?.combined_total ?? null))
+        .catch(() => setMomPrior(null));
+    } else {
+      setMomPrior(null);
+    }
+  }, [activeRange?.start, activeRange?.end, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onTabClick = (key) => {
     setActiveTab((cur) => (cur === key ? null : key));
@@ -194,6 +217,34 @@ export default function RevenueForecastTile({ range }) {
                 projected in range
               </div>
             </div>
+            {/* Phase I2 · Feb-2026 — Month-over-month growth badge.
+                Rendered only when a monthly tab is active AND the
+                prior-period fetch succeeded. Hidden silently on
+                other tabs or on prior-fetch failure. */}
+            {(activeTab === "this_month" || activeTab === "next_month")
+              && tabData && momPrior != null ? (
+              (() => {
+                const cur = Number(tabData.combined_total || 0);
+                const prev = Number(momPrior || 0);
+                const delta = cur - prev;
+                const flat = Math.abs(delta) < 50;
+                const tone = flat ? "gray"
+                  : delta > 0 ? "green" : "red";
+                const bg = tone === "green" ? "#DCFCE7"
+                  : tone === "red" ? "#FEE2E2" : "#F1F5F9";
+                const fg = tone === "green" ? "#166534"
+                  : tone === "red" ? "#991B1B" : "#475569";
+                const label = flat ? "Flat vs Last Month"
+                  : `${delta > 0 ? "+" : "-"}${money(Math.abs(delta))} vs Last Month`;
+                return (
+                  <div className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full"
+                          style={{ background: bg, color: fg }}
+                          data-testid="revenue-forecast-mom-badge">
+                    {label}
+                  </div>
+                );
+              })()
+            ) : null}
           </div>
           <div className="flex flex-col sm:flex-row gap-2 mb-3">
             {chip(

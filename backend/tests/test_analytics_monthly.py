@@ -187,6 +187,10 @@ def test_h6_happy_path_aggregates_all_four_streams():
             assert tid_top[f"{prefix}t1"]["revenue_contribution_usd"] == 250.0
             assert any(u["template_id"] == f"{prefix}t2"
                        for u in t["unused_templates"])
+            # Phase I2 · Feb-2026 — YoY prior-year revenue field
+            # is present (may be 0 when no jobs a year ago; the
+            # field itself must be there so the UI can decide).
+            assert "prior_year_revenue_usd" in tid_top[f"{prefix}t1"]
             # Drift: 3 dispatched, 3 days with drift, worst = 42.
             d = r["drift_alerts"]
             assert d["dispatches_total"] == 3
@@ -306,6 +310,68 @@ def test_h6_rbac_tech_role_blocked():
     with pytest.raises(HTTPException) as ei:
         require_admin(user=tech)
     assert ei.value.status_code == 403
+
+
+def test_i2_top_blocked_phrases_aggregation():
+    from routers.analytics_monthly import analytics_monthly
+
+    async def _go(db):
+        tid, admin = await _admin_ctx(db)
+        prefix = f"TEST_I2_BP_{uuid.uuid4().hex[:6]}_"
+        in_month = _in_month_iso()
+        try:
+            docs = []
+            # ``guaranteed`` × 5 short-circuit rows in-window.
+            for i in range(5):
+                docs.append({
+                    "id": f"{prefix}g{i}", "tenant_id": tid,
+                    "regex_short_circuit": True,
+                    "regex_high_flags": [
+                        {"source": "banned_phrases",
+                         "match": "guaranteed"},
+                    ],
+                    "created_at": in_month,
+                    "decision": "block", "cost_estimate_usd": 0,
+                })
+            for i in range(2):
+                docs.append({
+                    "id": f"{prefix}r{i}", "tenant_id": tid,
+                    "regex_short_circuit": True,
+                    "regex_high_flags": [
+                        {"source": "banned_phrases",
+                         "match": "risk-free"},
+                    ],
+                    "created_at": in_month,
+                    "decision": "block", "cost_estimate_usd": 0,
+                })
+            # regex-low PII (short_circuit=False) must NOT appear.
+            docs.append({
+                "id": f"{prefix}noise", "tenant_id": tid,
+                "regex_short_circuit": False,
+                "regex_high_flags": [],
+                "regex_low_flags": [
+                    {"source": "phone", "match": "555-1212"},
+                ],
+                "created_at": in_month,
+                "decision": "flag", "cost_estimate_usd": 0.01,
+            })
+            await db.soshie_moderation_results.insert_many(docs)
+            r = await analytics_monthly(
+                month="2026-02", user=admin,
+                tenant={"id": tid, "timezone": "UTC"},
+            )
+            tops = r["soshie_moderation"]["top_blocked_phrases"]
+            by = {row["phrase"]: row["count"] for row in tops}
+            assert by.get("guaranteed") == 5, by
+            assert by.get("risk-free") == 2, by
+            assert "555-1212" not in by
+        finally:
+            await db.soshie_moderation_results.delete_many(
+                {"tenant_id": tid, "id": {"$regex": f"^{prefix}"}},
+            )
+
+    run_test(_go)
+
 
 
 def test_h6_empty_tenant_returns_zeros_without_error():

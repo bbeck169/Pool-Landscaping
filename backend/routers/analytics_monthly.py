@@ -153,9 +153,31 @@ async def _soshie_moderation_rollup(
     }
 
 
+async def _top_blocked_phrases(tid: str, start_iso: str, end_iso: str,
+                                    ) -> List[Dict[str, Any]]:
+    """Phase I2 · Feb-2026 — top 10 phrases that tripped the H7
+    high-confidence regex short-circuit in the window."""
+    pipe = [
+        {"$match": {"tenant_id": tid,
+                      "regex_short_circuit": True,
+                      "created_at": {"$gte": start_iso, "$lt": end_iso}}},
+        {"$unwind": "$regex_high_flags"},
+        {"$group": {"_id": "$regex_high_flags.match",
+                       "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 10},
+    ]
+    rows = await db.soshie_moderation_results.aggregate(pipe).to_list(10)
+    return [{"phrase": (r.get("_id") or "")[:80],
+                "count": int(r.get("count") or 0)}
+              for r in rows if r.get("_id")]
+
+
 # ─── Charge templates rollup ──────────────────────────────────────
 async def _charge_templates_rollup(
     tid: str, start_iso: str, end_iso: str,
+    prior_year_start_iso: Optional[str] = None,
+    prior_year_end_iso: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Templates: ``apply_count`` is a persistent counter, so we
     can't slice it by month. We use ``last_used_at`` as the
@@ -206,11 +228,31 @@ async def _charge_templates_rollup(
         ]
         rows = await db.jobs.aggregate(pipe).to_list(1)
         rev = float(rows[0]["revenue"]) if rows else 0.0
+        # Phase I2 · Feb-2026 — prior-year revenue for the same
+        # template, same calendar month. Powers the YoY drop
+        # badge; silently 0 when the caller doesn't request it
+        # or when nothing was applied a year ago.
+        prior_rev = 0.0
+        if prior_year_start_iso and prior_year_end_iso:
+            pipe_py = [
+                {"$match": {"tenant_id": tid,
+                              "updated_at": {"$gte": prior_year_start_iso,
+                                                 "$lt": prior_year_end_iso}}},
+                {"$unwind": "$line_items"},
+                {"$match": {
+                    "line_items.applied_from_template_id": t["id"],
+                }},
+                {"$group": {"_id": None, "revenue": {"$sum":
+                    {"$ifNull": ["$line_items.subtotal", 0]}}}},
+            ]
+            py_rows = await db.jobs.aggregate(pipe_py).to_list(1)
+            prior_rev = float(py_rows[0]["revenue"]) if py_rows else 0.0
         top_rows.append({
             "template_id": t["id"],
             "name": t.get("name") or "Unnamed",
             "apply_count": int(t.get("apply_count") or 0),
             "revenue_contribution_usd": round(rev, 2),
+            "prior_year_revenue_usd": round(prior_rev, 2),
         })
     # Unused: templates whose ``last_used_at`` is missing OR older
     # than the window's start. Includes days_since_created.
@@ -384,9 +426,27 @@ async def analytics_monthly(
     start, end = _month_bounds(month, tenant)
     start_iso = _iso(start)
     end_iso = _iso(end)
+    # Phase I2 · Feb-2026 — prior-year bounds for the H6 YoY badge.
+    try:
+        py_year, py_mo = month.split("-", 1)
+        py_month = f"{int(py_year) - 1:04d}-{py_mo}"
+        py_start, py_end = _month_bounds(py_month, tenant)
+        py_start_iso = _iso(py_start)
+        py_end_iso = _iso(py_end)
+    except Exception:  # noqa: BLE001
+        py_start_iso = None
+        py_end_iso = None
     tid = tenant["id"]
     soshie = await _soshie_moderation_rollup(tid, start_iso, end_iso)
-    templates = await _charge_templates_rollup(tid, start_iso, end_iso)
+    # Attach the Phase I2 top-blocked-phrases table.
+    soshie["top_blocked_phrases"] = await _top_blocked_phrases(
+        tid, start_iso, end_iso,
+    )
+    templates = await _charge_templates_rollup(
+        tid, start_iso, end_iso,
+        prior_year_start_iso=py_start_iso,
+        prior_year_end_iso=py_end_iso,
+    )
     drift = await _drift_alerts_rollup(tid, start_iso, end_iso)
     manual = await _manual_conversion_rollup(tid, start_iso, end_iso)
     return {
