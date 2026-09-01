@@ -18,30 +18,61 @@ class of bug that F1 → F3 addressed. It tells the operator:
 
 ## When the boot-check trips
 
-**Symptom**: pod fails to start. `backend.err.log` shows:
+### G3b · Feb-2026 — F3 now runs off the sync boot path
 
+**Pre-G3b behavior (retired):** the F3 boot-integrity scan ran inline in `startup()`. When `INTEGRITY_CHECK_ENFORCE=true` AND at least one enforced class (`customer` / `crew`) had dangling refs, `run_startup_integrity_check` raised `IntegrityCheckFailure`, the FastAPI startup event aborted, uvicorn didn't open port 8001, and k8s eventually crash-looped the pod.
+
+**Post-G3b behavior (current):** F3 runs in `asyncio.create_task(_bg_f3_integrity_check())` post-bind. On the enforce-fail path it **state-stamps** `_F4_BOOT_INTEGRITY_STATE` and returns — no raise, no boot abort. The consequences for ops:
+
+- **Port 8001 opens in ~2s.** `/health/live` returns 200 immediately.
+- **`/health/ready` returns 503** with `reason=boot_integrity_pending` while the scan runs, then transitions to either `reason=dangling_refs_present` (with the real count in `dangling_refs_total`) or `ok`.
+- **k8s keeps the pod alive but out of the load balancer** — the correct behavior for a partially-healthy service.
+- **No more crash-loops on integrity failures.** Ops runs data-repair on the running pod (see steps below).
+
+### New symptom to expect (no more `RuntimeError`)
+
+**Symptom**: pod IS alive, `/health/live` returns 200, but `/health/ready` returns 503:
+
+```
+GET /health/ready → 503
+{
+  "status": "not_ready",
+  "checks": {"mongo": "ok", "integrity": "fail", "migrations": "ok"},
+  "uptime_seconds": 12,
+  "dangling_refs_total": 5215,
+  "failures": [
+    {"check": "integrity",
+     "reason": "dangling_refs_present",
+     "dangling_refs_total": 5215}
+  ]
+}
+```
+
+`backend.err.log` shows:
 ```
 CRITICAL services.startup.integrity_check: [integrity_check] DANGLING REFS DETECTED — customer=N technician=N crew=N total=N enforce=True. Run POST /api/admin/data-repair/jobs/apply with a fresh dry-run scan to repair.
-CRITICAL services.startup.integrity_check: [integrity_check] orphan_customer sample: {'job_id': '...', 'tenant_id': '...', 'customer_id': '<dangling>', 'customer_name_denorm': '...'}
+CRITICAL pool_crm: [integrity_check] enforce=True with 5215 dangling refs — pod remains alive; /health/ready = 503 dangling_refs_present until data-repair completes.
 ```
-
-followed by a `RuntimeError: data integrity check failed: N dangling refs` and the FastAPI startup event aborts.
 
 ### Recovery steps
 
-1. **Temporarily disable enforcement** so the pod boots and you can hit the admin API:
+**Note:** unlike pre-G3b, the pod is already alive. You do NOT need to disable enforcement to get the API running — you only need to hit the admin API on the running pod. The old "flip enforce=false and restart" dance is obsolete.
+
+1. **(Optional) Confirm the pod is serving the admin API on live traffic:**
 
    ```bash
-   export INTEGRITY_CHECK_ENFORCE=false
-   sudo supervisorctl restart backend
+   API=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d '=' -f2)
+   curl -s "$API/health/ready" | python3 -m json.tool
+   # Expect: status=not_ready, integrity=fail, dangling_refs_total=<n>
+   curl -s "$API/health/live"
+   # Expect: {"status": "alive", ...}
    ```
 
-   The pod will boot and log CRITICAL but not raise.
+   The pod is answering `/health/ready` with 503, which means k8s is holding it out of the load balancer — but the pod IS running and admin endpoints ARE reachable via the internal cluster IP. If your ingress requires ready pods, use `kubectl port-forward` or the emergency `HEALTH_READY_INTEGRITY_CHECK=false` kill-switch (see `/app/memory/K8S_PROBES.md`) to route to the pod temporarily.
 
 2. **Log in as super_admin** and run the dry-run:
 
    ```bash
-   API=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d '=' -f2)
    TOK=$(curl -s -X POST "$API/api/auth/login" \
      -H "Content-Type: application/json" \
      -d '{"email":"super@aquaterra.com","password":"password123"}' \
@@ -76,14 +107,17 @@ followed by a `RuntimeError: data integrity check failed: N dangling refs` and t
 
    Expect `{'total_would_change': 0, ...}`.
 
-5. **Re-enable enforcement**:
+5. **Restart the pod so the F3 BG task re-scans with clean data**:
 
    ```bash
-   unset INTEGRITY_CHECK_ENFORCE   # or set to true
    sudo supervisorctl restart backend
    ```
 
-   The check now runs at boot and passes silently.
+   The re-scan finds 0 refs, state-stamps `dangling_refs_total=0` + `error=None`, `/health/ready` flips to 200, k8s puts the pod back into rotation. No env-var toggling needed.
+
+### Legacy recovery (retired pre-G3b, for reference only)
+
+The old "flip `INTEGRITY_CHECK_ENFORCE=false` then restart" dance is unnecessary post-G3b because the pod is already alive. If you're on an older deploy that still has the sync-boot `raise`, follow the historical steps: `export INTEGRITY_CHECK_ENFORCE=false; sudo supervisorctl restart backend`, run steps 2-4 above, then `unset INTEGRITY_CHECK_ENFORCE; sudo supervisorctl restart backend`.
 
 ### Audit trail
 

@@ -28,18 +28,29 @@ containers:
     httpGet:
       path: /health/ready
       port: 8001
-    initialDelaySeconds: 10
-    periodSeconds: 15
+    initialDelaySeconds: 5    # port opens ~2s post-restart post-G3b
+    periodSeconds: 10
     timeoutSeconds: 5
-    failureThreshold: 6      # ~90s grace for F3 scan
+    failureThreshold: 30      # ~5 min grace for Wave 1 indexes + F3 scan on prod-size DBs
   startupProbe:
     httpGet:
       path: /health/ready
       port: 8001
-    initialDelaySeconds: 10
+    initialDelaySeconds: 5
     periodSeconds: 10
-    failureThreshold: 30     # 5-minute cold-start grace on big prod DBs
+    failureThreshold: 60      # 10-minute cold-start grace on very large prod DBs
 ```
+
+### G3b · Feb-2026 — probe-timing update after startup refactor
+
+Every non-critical migration, backfill, and index has been moved off the sync boot path (see `/tmp/g3a_startup_audit.md` + `/tmp/g3b_ship_log.md`).  What that means for probes:
+
+- **Port 8001 opens in ~2s** (was 10+ minutes on the hung deploy). `/health/live` returns 200 basically immediately.
+- **F3 integrity now runs in BG** (`_bg_f3_integrity_check` in `server.py`). `/health/ready` will report `boot_integrity_pending` for the duration of the scan — ~2-90s on prod, depending on `dangling_refs` volume.
+- **Wave-1 race-safety indexes** (`perf1_missing_tenant_indexes`, `idempotency_keys_indexes`, `notification_dispatch_log`, `stripe_webhook_hardening`) run in BG post-bind. Any hot-path handler that tries to write during the ~1-3s window is safe: the affected collections tolerate `E11000` as "already deduped". `/health/ready`'s 503 during this window keeps LB traffic out.
+- **The historic `raise IntegrityCheckFailure`-aborts-boot code path is gone.** Enforce=True + refs>0 now stamps the readiness state to 503 `dangling_refs_present` and returns cleanly. Pods stay alive-but-503 until ops runs data-repair.
+
+Bump `readinessProbe.failureThreshold` to **30** (5 min) and `startupProbe.failureThreshold` to **60** (10 min) to accommodate the F3 scan on very large prod DBs. The old `failureThreshold: 6` (~90s) was tight when F3 was in the sync path; with F3 in BG we recommend the larger window so a slow scan on cold-cache Mongo doesn't get the pod evicted before the state stamps.
 
 ## Response shapes
 

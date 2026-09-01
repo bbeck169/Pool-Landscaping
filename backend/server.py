@@ -2078,37 +2078,40 @@ async def startup():
     # ``ensure_live_session_indexes`` sub-calls are skipped in prod
     # (RUN_STARTUP_INDEXES=false); the tenant channel bootstrap
     # below runs unconditionally because it's not an index.
-    try:
-        from services.walkie.channels import (
-            ensure_indexes as _walkie_ensure_indexes,
-            bootstrap_standard_channels as _walkie_bootstrap,
-        )
-        if _RUN_STARTUP_INDEXES:
-            await _walkie_ensure_indexes(db)
-            # Phase 52.1a · Feb-2026 — live-session indexes.
-            try:
-                from routers.walkie_signaling import ensure_live_session_indexes as _live_indexes
-                await _live_indexes()
-            except Exception as _live_idx_exc:  # pragma: no cover
-                logger.warning(f"[Phase52.1a] live-session index bootstrap: {_live_idx_exc}")
-        # Bootstrap the standard channels for every existing tenant.
-        # PERF-1 · Feb-2026 — filter out CI fixture tenants.
-        from services.tenants.production_tenants import (
-            production_tenants_query as _prod_tenants_q,
-        )
-        tenants = await db.tenants.find(
-            _prod_tenants_q(), {"_id": 0, "id": 1},
-        ).to_list(length=None)
-        for t in tenants:
-            tid = t.get("id")
-            if tid:
-                await _walkie_bootstrap(db, tid)
-        logger.info(
-            f"[Phase51a] walkie indexes + channels ready across "
-            f"{len(tenants)} tenants · [perf-1] production_tenants filter applied"
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"[Phase51a] walkie bootstrap failed: {e}")
+    # G3b Batch B · Feb-2026 — moved to BG (per-tenant fanout).
+    async def _bg_phase51a_walkie_bootstrap():
+        try:
+            from services.walkie.channels import (
+                ensure_indexes as _walkie_ensure_indexes,
+                bootstrap_standard_channels as _walkie_bootstrap,
+            )
+            if _RUN_STARTUP_INDEXES:
+                await _walkie_ensure_indexes(db)
+                # Phase 52.1a · Feb-2026 — live-session indexes.
+                try:
+                    from routers.walkie_signaling import ensure_live_session_indexes as _live_indexes
+                    await _live_indexes()
+                except Exception as _live_idx_exc:  # pragma: no cover
+                    logger.warning(f"[Phase52.1a] live-session index bootstrap: {_live_idx_exc}")
+            # Bootstrap the standard channels for every existing tenant.
+            # PERF-1 · Feb-2026 — filter out CI fixture tenants.
+            from services.tenants.production_tenants import (
+                production_tenants_query as _prod_tenants_q,
+            )
+            tenants = await db.tenants.find(
+                _prod_tenants_q(), {"_id": 0, "id": 1},
+            ).to_list(length=None)
+            for t in tenants:
+                tid = t.get("id")
+                if tid:
+                    await _walkie_bootstrap(db, tid)
+            logger.info(
+                f"[Phase51a] walkie indexes + channels ready across "
+                f"{len(tenants)} tenants · [perf-1] production_tenants filter applied"
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[Phase51a] walkie bootstrap failed: {e}")
+    asyncio.create_task(_bg_phase51a_walkie_bootstrap())
 
     # Feb-2026 · Task A · idempotent partial-unique-index migration on
     # ``db.jobs.(recurring_template_id, scheduled_date)``. Lazy-fires
@@ -2201,11 +2204,14 @@ async def startup():
     # Phase 5A · Feb 2026 — seed daily service-line checklists per
     # tenant. Idempotent, non-destructive; tenants that have already
     # customised their checklist keep their edits.
-    try:
-        from routers.checklists import seed_service_checklists_for_all_tenants
-        await seed_service_checklists_for_all_tenants()
-    except Exception as e:
-        logger.warning(f"[phase5a] service_checklists seed crashed: {e}")
+    # G3b Batch B · Feb-2026 — moved to BG (per-tenant fanout).
+    async def _bg_phase5a_service_checklists():
+        try:
+            from routers.checklists import seed_service_checklists_for_all_tenants
+            await seed_service_checklists_for_all_tenants()
+        except Exception as e:
+            logger.warning(f"[phase5a] service_checklists seed crashed: {e}")
+    asyncio.create_task(_bg_phase5a_service_checklists())
 
     # Phase 17 · Feb 2026 — 2dsphere index on customer service_location
     # + kick off a fire-and-forget geocode backfill so /dispatch has
@@ -2319,58 +2325,64 @@ async def startup():
     # backfill customer.category_ids / service_days / assigned_tech_ids
     # so mass-messaging filters work on an existing dataset. Both
     # calls are idempotent — safe to run on every restart.
-    try:
-        from routers.customer_categories import (
-            seed_default_categories_for_all_tenants,
-            recompute_customer_denorm,
-        )
-        _p16_seeded = await seed_default_categories_for_all_tenants()
-        logger.info(
-            f"[phase16] customer_categories seeded {_p16_seeded} default row(s)"
-        )
-        # PERF-1 · Feb-2026 — narrow the denorm pass to production tenants.
-        from services.tenants.production_tenants import (
-            production_tenants_query as _prod_tenants_q,
-        )
-        _p16_scanned = 0
-        async for _t in db.tenants.find(_prod_tenants_q(), {"_id": 0, "id": 1}):
-            _p16_scanned += 1
-            try:
-                _n = await recompute_customer_denorm(_t["id"])
-                if _n:
-                    logger.info(
-                        f"[phase16] customer denorm updated {_n} for tenant={_t['id']}"
+    # G3b Batch B · Feb-2026 — moved to BG (per-tenant denorm can be heavy).
+    async def _bg_phase16_customer_categories_and_denorm():
+        try:
+            from routers.customer_categories import (
+                seed_default_categories_for_all_tenants,
+                recompute_customer_denorm,
+            )
+            _p16_seeded = await seed_default_categories_for_all_tenants()
+            logger.info(
+                f"[phase16] customer_categories seeded {_p16_seeded} default row(s)"
+            )
+            # PERF-1 · Feb-2026 — narrow the denorm pass to production tenants.
+            from services.tenants.production_tenants import (
+                production_tenants_query as _prod_tenants_q,
+            )
+            _p16_scanned = 0
+            async for _t in db.tenants.find(_prod_tenants_q(), {"_id": 0, "id": 1}):
+                _p16_scanned += 1
+                try:
+                    _n = await recompute_customer_denorm(_t["id"])
+                    if _n:
+                        logger.info(
+                            f"[phase16] customer denorm updated {_n} for tenant={_t['id']}"
+                        )
+                except Exception as _e:  # pragma: no cover
+                    logger.warning(
+                        f"[phase16] denorm crashed for tenant={_t.get('id')}: {_e}"
                     )
-            except Exception as _e:  # pragma: no cover
-                logger.warning(
-                    f"[phase16] denorm crashed for tenant={_t.get('id')}: {_e}"
-                )
-        logger.info(
-            f"[phase16] denorm pass complete · [perf-1] scanned={_p16_scanned} production tenants"
-        )
-    except Exception as e:
-        logger.warning(f"[phase16] customer_categories boot crashed: {e}")
+            logger.info(
+                f"[phase16] denorm pass complete · [perf-1] scanned={_p16_scanned} production tenants"
+            )
+        except Exception as e:
+            logger.warning(f"[phase16] customer_categories boot crashed: {e}")
+    asyncio.create_task(_bg_phase16_customer_categories_and_denorm())
 
     # Phase 12 · Feb 2026 — "Require card on file" tenant default +
     # idempotent template seed for the ``add_card_request_*`` bodies.
-    try:
-        from services.add_card_links import (
-            ensure_require_card_default_on_tenants,
-            ensure_tenants_timezone_backfill,
-            seed_add_card_templates_all_tenants,
-        )
-        _p12_n = await ensure_require_card_default_on_tenants()
-        logger.info(
-            f"[phase12] require_card_on_file_default set on {_p12_n} tenant(s)"
-        )
-        _p12_seeded = await seed_add_card_templates_all_tenants()
-        logger.info(
-            f"[phase12] add_card_request_* templates seed — {_p12_seeded}"
-        )
-        # Batch 12C · Feb 2026 — timezone audit + backfill.
-        await ensure_tenants_timezone_backfill()
-    except Exception as e:
-        logger.warning(f"[phase12] boot migration crashed: {e}")
+    # G3b Batch B · Feb-2026 — moved to BG (3 tenant-wide sweeps).
+    async def _bg_phase12_add_card_boot():
+        try:
+            from services.add_card_links import (
+                ensure_require_card_default_on_tenants,
+                ensure_tenants_timezone_backfill,
+                seed_add_card_templates_all_tenants,
+            )
+            _p12_n = await ensure_require_card_default_on_tenants()
+            logger.info(
+                f"[phase12] require_card_on_file_default set on {_p12_n} tenant(s)"
+            )
+            _p12_seeded = await seed_add_card_templates_all_tenants()
+            logger.info(
+                f"[phase12] add_card_request_* templates seed — {_p12_seeded}"
+            )
+            # Batch 12C · Feb 2026 — timezone audit + backfill.
+            await ensure_tenants_timezone_backfill()
+        except Exception as e:
+            logger.warning(f"[phase12] boot migration crashed: {e}")
+    asyncio.create_task(_bg_phase12_add_card_boot())
 
     # Phase 4B — Stripe live-payments boot inspection.
     # Not run at boot; the on-demand health probe at
@@ -2378,17 +2390,16 @@ async def startup():
     # cheaply and reflects the current STRIPE_MODE + key state.
 
     # Phase 6 · Feb 2026 — RingCentral banner + subscription index.
+    # G3b Batch A · Feb-2026 — inner QB cleanup migration REMOVED from
+    # the boot path (one-shot; already ran everywhere). Run via
+    # ``python -m routers.quickbooks_cleanup`` if needed. RC banner
+    # stays inline for the ops audit trail.
+    # See /tmp/g3a_startup_audit.md #19b.
     try:
         from services.ringcentral.rc_client import log_startup_banner
         log_startup_banner()
-        # Phase 9C · Feb 2026 — one-shot idempotent QuickBooks cleanup.
-        try:
-            from routers.quickbooks_cleanup import run_migration as _qb_migrate
-            await _qb_migrate()
-        except Exception as _qb_exc:
-            logger.warning(f"[startup] qb-cleanup migration failed: {_qb_exc}")
     except Exception as e:
-        logger.warning(f"[phase6] rc boot banner/migration crashed: {e}")
+        logger.warning(f"[phase6] rc boot banner crashed: {e}")
 
     # Feb-2026 · D2 — split off the inline call_logs / voicemails /
     # rc_subscriptions indexes so they can be gated independently
@@ -2421,23 +2432,29 @@ async def startup():
 
     # Phase 56.3.A — idempotent one-shot: back-fill first_name / last_name
     # on any legacy customer doc that only has the combined `name` field.
-    try:
-        from routers.customers import migrate_customer_names_split
-        migrated_n = await migrate_customer_names_split()
-        logger.info(f"[phase56.3.A] customer name-split migration: {migrated_n} row(s)")
-    except Exception as e:
-        logger.warning(f"customer name-split migration crashed: {e}")
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded no-op after first run).
+    async def _bg_phase56_3a_name_split():
+        try:
+            from routers.customers import migrate_customer_names_split
+            migrated_n = await migrate_customer_names_split()
+            logger.info(f"[phase56.3.A] customer name-split migration: {migrated_n} row(s)")
+        except Exception as e:
+            logger.warning(f"customer name-split migration crashed: {e}")
+    asyncio.create_task(_bg_phase56_3a_name_split())
 
     # Feb 2026 · Job Titles auto-learn catalog — idempotent backfill
     # from existing ``db.jobs.title`` distincts per tenant. Guarded
     # by a ``db.migrations`` sentinel so second-and-later boots are
     # ~10ms no-ops. See ``routers/job_titles.py`` for the shape.
-    try:
-        from routers.job_titles import backfill_from_existing_jobs
-        _jt_report = await backfill_from_existing_jobs()
-        logger.info(f"[job_titles] backfill: {_jt_report}")
-    except Exception as e:
-        logger.warning(f"job_titles backfill crashed: {e}")
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_job_titles_backfill():
+        try:
+            from routers.job_titles import backfill_from_existing_jobs
+            _jt_report = await backfill_from_existing_jobs()
+            logger.info(f"[job_titles] backfill: {_jt_report}")
+        except Exception as e:
+            logger.warning(f"job_titles backfill crashed: {e}")
+    asyncio.create_task(_bg_job_titles_backfill())
 
     # Feb 2026 · Technician-name backfill — stamps ``technician_name``
     # on every job that has a ``technician_id`` but no
@@ -2445,14 +2462,17 @@ async def startup():
     # fix landed). Idempotent — guarded by a ``db.migrations``
     # sentinel. See
     # ``services/migrations/backfill_technician_names.py``.
-    try:
-        from services.migrations.backfill_technician_names import (
-            backfill_technician_names_on_jobs,
-        )
-        _tb_report = await backfill_technician_names_on_jobs()
-        logger.info(f"[tech-backfill] {_tb_report}")
-    except Exception as e:
-        logger.warning(f"technician_name backfill crashed: {e}")
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_technician_name_backfill():
+        try:
+            from services.migrations.backfill_technician_names import (
+                backfill_technician_names_on_jobs,
+            )
+            _tb_report = await backfill_technician_names_on_jobs()
+            logger.info(f"[tech-backfill] {_tb_report}")
+        except Exception as e:
+            logger.warning(f"technician_name backfill crashed: {e}")
+    asyncio.create_task(_bg_technician_name_backfill())
 
     # Feb 2026 · Marketing Phase 1 · Custom Trigger Builder — one-shot
     # (idempotent) schema-v2 trigger migration. Rewrites every legacy
@@ -2462,14 +2482,17 @@ async def startup():
     # fanout keeps functioning during the migration window. Second-
     # and-later boots are ~O(N) reads with zero writes (per-doc
     # ``schema_version`` gate).
-    try:
-        from services.migrations.migrate_sequences_to_v2 import (
-            migrate_marketing_sequences_to_v2,
-        )
-        _v2_report = await migrate_marketing_sequences_to_v2()
-        logger.info(f"[marketing.v2] {_v2_report}")
-    except Exception as e:
-        logger.warning(f"marketing_sequences v2 migration crashed: {e}")
+    # G3b Batch A · Feb-2026 — moved to BG (every-boot full-scan).
+    async def _bg_marketing_v2_migration():
+        try:
+            from services.migrations.migrate_sequences_to_v2 import (
+                migrate_marketing_sequences_to_v2,
+            )
+            _v2_report = await migrate_marketing_sequences_to_v2()
+            logger.info(f"[marketing.v2] {_v2_report}")
+        except Exception as e:
+            logger.warning(f"marketing_sequences v2 migration crashed: {e}")
+    asyncio.create_task(_bg_marketing_v2_migration())
 
     # Feb 2026 · Object-Storage URL migration — idempotent, sentinel-
     # guarded rewrite of any DB record still pointing at pod-local
@@ -2478,14 +2501,17 @@ async def startup():
     # URL to the canonical ``/api/objects/{path}`` shape served by
     # ``routers/objects.py``. See
     # ``services/migrations/object_storage_url_migration.py``.
-    try:
-        from services.migrations.object_storage_url_migration import (
-            migrate_object_storage_urls,
-        )
-        _obj_report = await migrate_object_storage_urls()
-        logger.info(f"[url_migration] {_obj_report}")
-    except Exception as e:
-        logger.warning(f"object_storage url migration crashed: {e}")
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_object_storage_url_migration():
+        try:
+            from services.migrations.object_storage_url_migration import (
+                migrate_object_storage_urls,
+            )
+            _obj_report = await migrate_object_storage_urls()
+            logger.info(f"[url_migration] {_obj_report}")
+        except Exception as e:
+            logger.warning(f"object_storage url migration crashed: {e}")
+    asyncio.create_task(_bg_object_storage_url_migration())
 
     # Feb 2026 · Persona avatar_url backfill — idempotent, sentinel-
     # guarded stamp of ``/avatars/personas/{key}.jpg`` on every
@@ -2494,14 +2520,17 @@ async def startup():
     # frontend assets). Ensures a fresh prod redeploy renders every
     # persona's portrait without an admin touching the database.
     # See ``services/migrations/persona_avatar_backfill.py``.
-    try:
-        from services.migrations.persona_avatar_backfill import (
-            backfill_persona_avatar_urls,
-        )
-        _pa_report = await backfill_persona_avatar_urls()
-        logger.info(f"[persona-avatar] {_pa_report}")
-    except Exception as e:
-        logger.warning(f"persona avatar backfill crashed: {e}")
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_persona_avatar_backfill():
+        try:
+            from services.migrations.persona_avatar_backfill import (
+                backfill_persona_avatar_urls,
+            )
+            _pa_report = await backfill_persona_avatar_urls()
+            logger.info(f"[persona-avatar] {_pa_report}")
+        except Exception as e:
+            logger.warning(f"persona avatar backfill crashed: {e}")
+    asyncio.create_task(_bg_persona_avatar_backfill())
 
     # Feb 2026 · Task B — seed 3 canonical system-template sequences
     # (invoice past-due, review request, birthday promo) on every
@@ -2510,50 +2539,59 @@ async def startup():
     # this fires get their templates via the ``routers/tenants.py``
     # provisioning hook. See
     # ``services/migrations/seed_system_templates.py``.
-    try:
-        from services.migrations.seed_system_templates import (
-            seed_system_templates_all_tenants,
-        )
-        _stpl_report = await seed_system_templates_all_tenants()
-        logger.info(f"[seed_system_templates] {_stpl_report}")
-    except Exception as e:
-        logger.warning(f"seed_system_templates migration crashed: {e}")
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_seed_system_templates():
+        try:
+            from services.migrations.seed_system_templates import (
+                seed_system_templates_all_tenants,
+            )
+            _stpl_report = await seed_system_templates_all_tenants()
+            logger.info(f"[seed_system_templates] {_stpl_report}")
+        except Exception as e:
+            logger.warning(f"seed_system_templates migration crashed: {e}")
+    asyncio.create_task(_bg_seed_system_templates())
 
     # Feb-2026 Customer Detail Additions — idempotent one-shot back-fill
     # of the ``mobiles`` / ``emails`` arrays from the legacy scalar
     # ``phone`` / ``email`` fields. Skipped for docs that already have
     # the arrays.
-    try:
-        from services.customer_multi_contact import migrate_customer_multi_contact
-        n = await migrate_customer_multi_contact()
-        logger.info(f"[multi-contact] migration: {n} row(s)")
-    except Exception as e:
-        logger.warning(f"multi-contact migration crashed: {e}")
+    # G3b Batch C · Feb-2026 — moved to BG.
+    async def _bg_customer_multi_contact():
+        try:
+            from services.customer_multi_contact import migrate_customer_multi_contact
+            n = await migrate_customer_multi_contact()
+            logger.info(f"[multi-contact] migration: {n} row(s)")
+        except Exception as e:
+            logger.warning(f"multi-contact migration crashed: {e}")
+    asyncio.create_task(_bg_customer_multi_contact())
 
     # Feb 2026 · Customer Merge Phase 3 — one-time boot cleanup of any
     # pre-existing high-confidence duplicate clusters (exact email OR
     # exact phone). Idempotent via ``migrations`` sentinel
     # ``feb2026_customer_merge_boot_cleanup_v1``. Second boot = no-op.
     # See ``services/migrations/customer_merge_boot_cleanup.py``.
-    try:
-        from services.migrations.customer_merge_boot_cleanup import (
-            run_customer_merge_boot_cleanup,
-        )
-        _cm_boot = await run_customer_merge_boot_cleanup()
-        if _cm_boot.get("already_ran"):
-            logger.info(
-                f"[customer_merge_boot] sentinel present · ran_at="
-                f"{_cm_boot.get('ran_at')} · skipping",
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_customer_merge_boot_cleanup():
+        try:
+            from services.migrations.customer_merge_boot_cleanup import (
+                run_customer_merge_boot_cleanup,
             )
-        else:
-            _s = _cm_boot.get("summary") or {}
-            logger.info(
-                f"[customer_merge_boot] scanned {_s.get('tenants_scanned', 0)} "
-                f"tenants, auto-merged {_s.get('groups_auto_merged', 0)} "
-                f"groups, affected {_s.get('records_affected', 0)} records",
-            )
-    except Exception as e:
-        logger.warning(f"customer_merge_boot cleanup crashed: {e}")
+            _cm_boot = await run_customer_merge_boot_cleanup()
+            if _cm_boot.get("already_ran"):
+                logger.info(
+                    f"[customer_merge_boot] sentinel present · ran_at="
+                    f"{_cm_boot.get('ran_at')} · skipping",
+                )
+            else:
+                _s = _cm_boot.get("summary") or {}
+                logger.info(
+                    f"[customer_merge_boot] scanned {_s.get('tenants_scanned', 0)} "
+                    f"tenants, auto-merged {_s.get('groups_auto_merged', 0)} "
+                    f"groups, affected {_s.get('records_affected', 0)} records",
+                )
+        except Exception as e:
+            logger.warning(f"customer_merge_boot cleanup crashed: {e}")
+    asyncio.create_task(_bg_customer_merge_boot_cleanup())
 
     # Feb 2026 · Invoice/Quote line cost snapshot backfill. Rehydrates
     # ``wholesale_price_snapshot`` + ``labor_cost_snapshot`` on
@@ -2563,28 +2601,31 @@ async def startup():
     # lines missing ``item_id`` by exact name match against the
     # pricebook. Fixes the Internal Margin / EBIT / Profit report
     # panels reading $0 costs on legacy invoices.
-    try:
-        from services.migrations.invoice_line_cost_backfill import (
-            run_invoice_line_cost_backfill,
-        )
-        _lc_boot = await run_invoice_line_cost_backfill()
-        if _lc_boot.get("already_ran"):
-            logger.info(
-                f"[invoice_line_cost_backfill] sentinel present · ran_at="
-                f"{_lc_boot.get('ran_at')} · skipping",
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_invoice_line_cost_backfill():
+        try:
+            from services.migrations.invoice_line_cost_backfill import (
+                run_invoice_line_cost_backfill,
             )
-        else:
-            _s = _lc_boot.get("summary") or {}
-            logger.info(
-                f"[invoice_line_cost_backfill] tenants={_s.get('tenants_scanned', 0)} "
-                f"docs_scanned={_s.get('docs_scanned', 0)} "
-                f"docs_updated={_s.get('docs_updated', 0)} "
-                f"ws_hydrated={_s.get('lines_hydrated_ws', 0)} "
-                f"lc_hydrated={_s.get('lines_hydrated_lc', 0)} "
-                f"linked_by_name={_s.get('lines_linked_by_name', 0)}",
-            )
-    except Exception as e:
-        logger.warning(f"invoice_line_cost_backfill crashed: {e}")
+            _lc_boot = await run_invoice_line_cost_backfill()
+            if _lc_boot.get("already_ran"):
+                logger.info(
+                    f"[invoice_line_cost_backfill] sentinel present · ran_at="
+                    f"{_lc_boot.get('ran_at')} · skipping",
+                )
+            else:
+                _s = _lc_boot.get("summary") or {}
+                logger.info(
+                    f"[invoice_line_cost_backfill] tenants={_s.get('tenants_scanned', 0)} "
+                    f"docs_scanned={_s.get('docs_scanned', 0)} "
+                    f"docs_updated={_s.get('docs_updated', 0)} "
+                    f"ws_hydrated={_s.get('lines_hydrated_ws', 0)} "
+                    f"lc_hydrated={_s.get('lines_hydrated_lc', 0)} "
+                    f"linked_by_name={_s.get('lines_linked_by_name', 0)}",
+                )
+        except Exception as e:
+            logger.warning(f"invoice_line_cost_backfill crashed: {e}")
+    asyncio.create_task(_bg_invoice_line_cost_backfill())
 
     # Feb-2026 · P0 fix — Invoice number backfill. Heals invoice
     # docs persisted with a null / missing / empty
@@ -2594,141 +2635,136 @@ async def startup():
     # is a no-op unless the sentinel is cleared. Ships alongside
     # the canonical ``insert_invoice`` helper that plugged the
     # three write paths feeding the bug.
-    try:
-        from services.migrations.invoice_number_backfill import (
-            run_invoice_number_backfill,
-        )
-        _inv_num_boot = await run_invoice_number_backfill()
-        if _inv_num_boot.get("status") == "skipped":
-            logger.info(
-                "[invoice_number_backfill] sentinel present · skipping",
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_invoice_number_backfill():
+        try:
+            from services.migrations.invoice_number_backfill import (
+                run_invoice_number_backfill,
             )
-        else:
-            _s = _inv_num_boot.get("summary") or {}
-            logger.info(
-                f"[invoice_number_backfill] scanned={_s.get('scanned', 0)} "
-                f"updated={_s.get('updated', 0)} "
-                f"skipped={_s.get('skipped', 0)} "
-                f"errors={_s.get('errors_count', 0)}",
-            )
-    except Exception as e:
-        logger.warning(f"invoice_number_backfill crashed: {e}")
+            _inv_num_boot = await run_invoice_number_backfill()
+            if _inv_num_boot.get("status") == "skipped":
+                logger.info(
+                    "[invoice_number_backfill] sentinel present · skipping",
+                )
+            else:
+                _s = _inv_num_boot.get("summary") or {}
+                logger.info(
+                    f"[invoice_number_backfill] scanned={_s.get('scanned', 0)} "
+                    f"updated={_s.get('updated', 0)} "
+                    f"skipped={_s.get('skipped', 0)} "
+                    f"errors={_s.get('errors_count', 0)}",
+                )
+        except Exception as e:
+            logger.warning(f"invoice_number_backfill crashed: {e}")
+    asyncio.create_task(_bg_invoice_number_backfill())
 
-    # Feb-2026 · Multi-body service reports — Phase 1 migration.
-    # Populates ``water_bodies[0]`` on legacy service_report docs from
-    # the top-level ``chemical_readings`` / ``chemicals_added`` /
-    # ``photos`` / ``notes`` fields. Idempotent + sentinel-guarded
-    # (``feb2026_service_reports_water_bodies_v1``). Runs after the
-    # invoice-number backfill so all service reports are body-shaped
-    # before the first request lands.
-    try:
-        from services.migrations.service_reports_water_bodies import (
-            run_water_bodies_migration,
-        )
-        _wb_boot = await run_water_bodies_migration()
-        if _wb_boot.get("status") == "skipped":
-            logger.info(
-                "[service_reports.water_bodies] sentinel present · skipping",
+    # G3b Batch C · Feb-2026 — CHAIN #32 → #33.
+    # Multi-body service reports (#32) MUST run before chemical usage
+    # events water-body backfill (#33). Serialized inside a single
+    # BG task so ordering is preserved.
+    async def _bg_water_bodies_chain():
+        # Feb-2026 · Multi-body service reports — Phase 1 migration.
+        # Populates ``water_bodies[0]`` on legacy service_report docs from
+        # the top-level ``chemical_readings`` / ``chemicals_added`` /
+        # ``photos`` / ``notes`` fields. Idempotent + sentinel-guarded.
+        try:
+            from services.migrations.service_reports_water_bodies import (
+                run_water_bodies_migration,
             )
-        else:
-            _s = _wb_boot.get("summary") or {}
-            logger.info(
-                f"[service_reports.water_bodies] scanned={_s.get('scanned', 0)} "
-                f"migrated={_s.get('migrated', 0)} "
-                f"skipped_already_multi={_s.get('skipped_already_multi', 0)} "
-                f"errors={_s.get('errors_count', 0)}",
-            )
-    except Exception as e:
-        logger.warning(f"service_reports water_bodies migration crashed: {e}")
+            _wb_boot = await run_water_bodies_migration()
+            if _wb_boot.get("status") == "skipped":
+                logger.info(
+                    "[service_reports.water_bodies] sentinel present · skipping",
+                )
+            else:
+                _s = _wb_boot.get("summary") or {}
+                logger.info(
+                    f"[service_reports.water_bodies] scanned={_s.get('scanned', 0)} "
+                    f"migrated={_s.get('migrated', 0)} "
+                    f"skipped_already_multi={_s.get('skipped_already_multi', 0)} "
+                    f"errors={_s.get('errors_count', 0)}",
+                )
+        except Exception as e:
+            logger.warning(f"service_reports water_bodies migration crashed: {e}")
 
-    # Feb-2026 · Multi-body Phase 1 · Option 2 — chemical_usage_events
-    # water-body backfill. Adds ``water_body_id`` (nullable) to every
-    # legacy usage event. MUST run AFTER the
-    # ``service_reports_water_bodies`` migration above so per-body
-    # linking can consult the bodies array. Idempotent + sentinel
-    # (``chemical_usage_events_water_body_v1``).
-    try:
-        from services.migrations.chemical_usage_events_water_body import (
-            run_chemical_usage_events_water_body_migration,
-        )
-        _cue_boot = await run_chemical_usage_events_water_body_migration()
-        if _cue_boot.get("status") == "skipped":
-            logger.info(
-                "[chemical_usage_events.water_body] sentinel present · skipping",
+        # Feb-2026 · Multi-body Phase 1 · Option 2 — chemical_usage_events
+        # water-body backfill. Adds ``water_body_id`` (nullable) to every
+        # legacy usage event. MUST run AFTER the water_bodies migration.
+        try:
+            from services.migrations.chemical_usage_events_water_body import (
+                run_chemical_usage_events_water_body_migration,
             )
-        else:
-            _s = _cue_boot.get("summary") or {}
-            logger.info(
-                f"[chemical_usage_events.water_body] scanned={_s.get('scanned', 0)} "
-                f"linked_to_body={_s.get('linked_to_body', 0)} "
-                f"stamped_null={_s.get('stamped_null', 0)} "
-                f"errors={_s.get('errors_count', 0)}",
+            _cue_boot = await run_chemical_usage_events_water_body_migration()
+            if _cue_boot.get("status") == "skipped":
+                logger.info(
+                    "[chemical_usage_events.water_body] sentinel present · skipping",
+                )
+            else:
+                _s = _cue_boot.get("summary") or {}
+                logger.info(
+                    f"[chemical_usage_events.water_body] scanned={_s.get('scanned', 0)} "
+                    f"linked_to_body={_s.get('linked_to_body', 0)} "
+                    f"stamped_null={_s.get('stamped_null', 0)} "
+                    f"errors={_s.get('errors_count', 0)}",
+                )
+        except Exception as e:
+            logger.warning(
+                f"chemical_usage_events water_body migration crashed: {e}",
             )
-    except Exception as e:
-        logger.warning(
-            f"chemical_usage_events water_body migration crashed: {e}",
-        )
+    asyncio.create_task(_bg_water_bodies_chain())
 
-    # Feb-2026 · Backlog #1 Part 2 — Canonical "Chemicals" service
-    # category. Idempotent + sentinel (``service_category_chemicals_v1``).
-    # Ensures every onboarded tenant has a "Chemicals"
-    # ``service_categories`` row and backfills every chemical
-    # pricebook item (``items.category ~ /^chemical/i``) whose
-    # ``service_category_id`` is null → linked to the tenant's
-    # Chemicals category. Auto-invoice line-items inherit
-    # ``service_category_id`` from the source pricebook item so the
-    # "Income by Service Category" tile can aggregate correctly.
-    try:
-        from services.migrations.service_category_chemicals import (
-            run_service_category_chemicals_migration,
-        )
-        _sc_boot = await run_service_category_chemicals_migration()
-        if _sc_boot.get("status") == "skipped":
-            logger.info(
-                "[service_category_chemicals] sentinel present · skipping",
+    # G3b Batch C · Feb-2026 — CHAIN #34 → #35.
+    # Service category chemicals (#34) MUST seed the income_categories
+    # collection before the UUID-shaped category rewrite (#35) can
+    # resolve ids → names. Serialized inside a single BG task.
+    async def _bg_service_category_chain():
+        # Feb-2026 · Backlog #1 Part 2 — Canonical "Chemicals" service category.
+        try:
+            from services.migrations.service_category_chemicals import (
+                run_service_category_chemicals_migration,
             )
-        else:
-            _s = _sc_boot.get("summary") or {}
-            logger.info(
-                f"[service_category_chemicals] tenants={_s.get('scanned_tenants', 0)} "
-                f"created={_s.get('created_categories', 0)} "
-                f"linked={_s.get('linked_items', 0)} "
-                f"errors={_s.get('errors_count', 0)}",
+            _sc_boot = await run_service_category_chemicals_migration()
+            if _sc_boot.get("status") == "skipped":
+                logger.info(
+                    "[service_category_chemicals] sentinel present · skipping",
+                )
+            else:
+                _s = _sc_boot.get("summary") or {}
+                logger.info(
+                    f"[service_category_chemicals] tenants={_s.get('scanned_tenants', 0)} "
+                    f"created={_s.get('created_categories', 0)} "
+                    f"linked={_s.get('linked_items', 0)} "
+                    f"errors={_s.get('errors_count', 0)}",
+                )
+        except Exception as e:
+            logger.warning(
+                f"service_category_chemicals migration crashed: {e}",
             )
-    except Exception as e:
-        logger.warning(
-            f"service_category_chemicals migration crashed: {e}",
-        )
 
-    # Feb-2026 · Backlog #1 Tightening T1 — historical invoice
-    # line_items with a UUID-shaped ``category`` string get rewritten
-    # in-place: resolvable id → name (+ stamp
-    # ``income_category_id``); unresolvable → clear to ``""`` so the
-    # tile's Uncategorized fallback picks them up. Idempotent +
-    # sentinel (``revenue_line_items_uuid_category_v1``). MUST run
-    # AFTER ``service_category_chemicals`` above so the income
-    # categories collection is fully seeded before resolution.
-    try:
-        from services.migrations.revenue_line_items_uuid_category import (
-            run_revenue_line_items_uuid_category_migration,
-        )
-        _rl_boot = await run_revenue_line_items_uuid_category_migration()
-        if _rl_boot.get("status") == "skipped":
-            logger.info(
-                "[revenue_line_items_uuid_category] sentinel present · skipping",
+        # Feb-2026 · Backlog #1 Tightening T1 — revenue line-items UUID
+        # category rewrite. MUST run AFTER service_category_chemicals.
+        try:
+            from services.migrations.revenue_line_items_uuid_category import (
+                run_revenue_line_items_uuid_category_migration,
             )
-        else:
-            _s = _rl_boot.get("summary") or {}
-            logger.info(
-                f"[revenue_line_items_uuid_category] scanned={_s.get('scanned', 0)} "
-                f"rewritten_to_name={_s.get('rewritten_to_name', 0)} "
-                f"cleared_orphan={_s.get('cleared_orphan', 0)} "
-                f"errors={_s.get('errors_count', 0)}",
+            _rl_boot = await run_revenue_line_items_uuid_category_migration()
+            if _rl_boot.get("status") == "skipped":
+                logger.info(
+                    "[revenue_line_items_uuid_category] sentinel present · skipping",
+                )
+            else:
+                _s = _rl_boot.get("summary") or {}
+                logger.info(
+                    f"[revenue_line_items_uuid_category] scanned={_s.get('scanned', 0)} "
+                    f"rewritten_to_name={_s.get('rewritten_to_name', 0)} "
+                    f"cleared_orphan={_s.get('cleared_orphan', 0)} "
+                    f"errors={_s.get('errors_count', 0)}",
+                )
+        except Exception as e:
+            logger.warning(
+                f"revenue_line_items_uuid_category migration crashed: {e}",
             )
-    except Exception as e:
-        logger.warning(
-            f"revenue_line_items_uuid_category migration crashed: {e}",
-        )
+    asyncio.create_task(_bg_service_category_chain())
 
     # Backlog #iii · Feb-2026 — Pricebook multi-supplier fold-up.
     # Sentinel: ``pricebook_suppliers_v1``. Folds legacy scalar
@@ -2738,26 +2774,29 @@ async def startup():
     # mirrors. Runs after the two Backlog-#1 migrations so income /
     # service categories are fully seeded before the fold-up needs
     # to resolve supplier display names. Idempotent + sentinel-guarded.
-    try:
-        from services.migrations.pricebook_suppliers import (
-            run_pricebook_suppliers_migration,
-        )
-        _ps_boot = await run_pricebook_suppliers_migration()
-        if _ps_boot.get("status") == "skipped":
-            logger.info(
-                "[pricebook_suppliers] sentinel present · skipping",
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_pricebook_suppliers():
+        try:
+            from services.migrations.pricebook_suppliers import (
+                run_pricebook_suppliers_migration,
             )
-        else:
-            _s = _ps_boot.get("summary") or {}
-            logger.info(
-                f"[pricebook_suppliers] tenants={_s.get('tenants_scanned', 0)} "
-                f"scanned={_s.get('scanned_items', 0)} "
-                f"updated={_s.get('updated_items', 0)} "
-                f"skipped={_s.get('skipped_no_change', 0)} "
-                f"errors={_s.get('errors_count', 0)}",
-            )
-    except Exception as e:
-        logger.warning(f"pricebook_suppliers migration crashed: {e}")
+            _ps_boot = await run_pricebook_suppliers_migration()
+            if _ps_boot.get("status") == "skipped":
+                logger.info(
+                    "[pricebook_suppliers] sentinel present · skipping",
+                )
+            else:
+                _s = _ps_boot.get("summary") or {}
+                logger.info(
+                    f"[pricebook_suppliers] tenants={_s.get('tenants_scanned', 0)} "
+                    f"scanned={_s.get('scanned_items', 0)} "
+                    f"updated={_s.get('updated_items', 0)} "
+                    f"skipped={_s.get('skipped_no_change', 0)} "
+                    f"errors={_s.get('errors_count', 0)}",
+                )
+        except Exception as e:
+            logger.warning(f"pricebook_suppliers migration crashed: {e}")
+    asyncio.create_task(_bg_pricebook_suppliers())
 
     # Backlog #iv · Feb-2026 — Notification dispatch log + scheduler
     # leases.  Creates ``notification_dispatch_log`` with the compound
@@ -2831,27 +2870,30 @@ async def startup():
     # — never blocks startup.  This surfaces the exact config smell
     # documented in the audit for Bug 2 (``+16028874400`` is both a
     # tenant from-number AND in the DRY-RUN allowlist).
-    try:
-        from services.comms_hardening.deny_list import (
-            allowlist_overlap_check,
-        )
-        _ah_res = await allowlist_overlap_check()
-        if _ah_res.get("overlaps"):
-            logger.warning(
-                "[notifications] allowlist_overlap_check surfaced %s "
-                "overlap(s) between COMMS_TEST_ALLOWLIST_* and live "
-                "workforce/tenant addresses — see WARN lines above.",
-                _ah_res["overlaps"],
+    # G3b Batch A · Feb-2026 — moved to BG (log-only sanity, non-critical).
+    async def _bg_allowlist_overlap_check():
+        try:
+            from services.comms_hardening.deny_list import (
+                allowlist_overlap_check,
             )
-        else:
-            logger.info(
-                "[notifications] allowlist_overlap_check clean · "
-                "checked_phones=%s checked_emails=%s",
-                _ah_res.get("checked_phones", 0),
-                _ah_res.get("checked_emails", 0),
-            )
-    except Exception as e:
-        logger.warning(f"allowlist_overlap_check crashed: {e}")
+            _ah_res = await allowlist_overlap_check()
+            if _ah_res.get("overlaps"):
+                logger.warning(
+                    "[notifications] allowlist_overlap_check surfaced %s "
+                    "overlap(s) between COMMS_TEST_ALLOWLIST_* and live "
+                    "workforce/tenant addresses — see WARN lines above.",
+                    _ah_res["overlaps"],
+                )
+            else:
+                logger.info(
+                    "[notifications] allowlist_overlap_check clean · "
+                    "checked_phones=%s checked_emails=%s",
+                    _ah_res.get("checked_phones", 0),
+                    _ah_res.get("checked_emails", 0),
+                )
+        except Exception as e:
+            logger.warning(f"allowlist_overlap_check crashed: {e}")
+    asyncio.create_task(_bg_allowlist_overlap_check())
 
     # Feb-2026 · Active/Inactive Customers dashboard tile swap —
     # compound index for the ``recurring_job_templates`` distinct
@@ -2865,184 +2907,184 @@ async def startup():
     # recurring-job cron might grow into a tenant-scoped variant
     # later. See TD-06 in ``/app/memory/TECH_DEBT.md`` for the
     # deferred drop.
-    try:
-        from services.migrations.recurring_templates_active_customer_idx import (
-            run_recurring_templates_active_customer_idx_migration,
-        )
-        _rjti_boot = await run_recurring_templates_active_customer_idx_migration()
-        if _rjti_boot.get("status") == "skipped":
-            logger.info(
-                "[recurring_templates_active_customer_idx] sentinel present · skipping",
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_recurring_templates_active_customer_idx():
+        try:
+            from services.migrations.recurring_templates_active_customer_idx import (
+                run_recurring_templates_active_customer_idx_migration,
             )
-        else:
-            _s = _rjti_boot.get("summary") or {}
-            logger.info(
-                "[recurring_templates_active_customer_idx] created=%s "
-                "already_present=%s errors=%s",
-                _s.get("created"), _s.get("already_present"),
-                len(_s.get("errors") or []),
+            _rjti_boot = await run_recurring_templates_active_customer_idx_migration()
+            if _rjti_boot.get("status") == "skipped":
+                logger.info(
+                    "[recurring_templates_active_customer_idx] sentinel present · skipping",
+                )
+            else:
+                _s = _rjti_boot.get("summary") or {}
+                logger.info(
+                    "[recurring_templates_active_customer_idx] created=%s "
+                    "already_present=%s errors=%s",
+                    _s.get("created"), _s.get("already_present"),
+                    len(_s.get("errors") or []),
+                )
+        except Exception as e:
+            logger.warning(
+                f"recurring_templates_active_customer_idx migration crashed: {e}",
             )
-    except Exception as e:
-        logger.warning(
-            f"recurring_templates_active_customer_idx migration crashed: {e}",
-        )
+    asyncio.create_task(_bg_recurring_templates_active_customer_idx())
 
     # Feb-2026 · Active/Inactive Customers dashboard tile SECOND
     # pass — compound index on ``db.customers`` covering the two
     # ``count_documents`` queries the dashboard endpoint runs after
     # the tile REDEFINITION (customer-level ``is_active`` toggle).
     # Idempotent + sentinel-guarded.
-    try:
-        from services.migrations.customers_dashboard_active_inactive_idx import (
-            run_customers_dashboard_active_inactive_idx_migration,
-        )
-        _cdai_boot = await run_customers_dashboard_active_inactive_idx_migration()
-        if _cdai_boot.get("status") == "skipped":
-            logger.info(
-                "[customers_dashboard_active_inactive_idx] sentinel present · skipping",
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_customers_dashboard_active_inactive_idx():
+        try:
+            from services.migrations.customers_dashboard_active_inactive_idx import (
+                run_customers_dashboard_active_inactive_idx_migration,
             )
-        else:
-            _s = _cdai_boot.get("summary") or {}
-            logger.info(
-                "[customers_dashboard_active_inactive_idx] created=%s "
-                "already_present=%s errors=%s",
-                _s.get("created"), _s.get("already_present"),
-                len(_s.get("errors") or []),
+            _cdai_boot = await run_customers_dashboard_active_inactive_idx_migration()
+            if _cdai_boot.get("status") == "skipped":
+                logger.info(
+                    "[customers_dashboard_active_inactive_idx] sentinel present · skipping",
+                )
+            else:
+                _s = _cdai_boot.get("summary") or {}
+                logger.info(
+                    "[customers_dashboard_active_inactive_idx] created=%s "
+                    "already_present=%s errors=%s",
+                    _s.get("created"), _s.get("already_present"),
+                    len(_s.get("errors") or []),
+                )
+        except Exception as e:
+            logger.warning(
+                f"customers_dashboard_active_inactive_idx migration crashed: {e}",
             )
-    except Exception as e:
-        logger.warning(
-            f"customers_dashboard_active_inactive_idx migration crashed: {e}",
-        )
+    asyncio.create_task(_bg_customers_dashboard_active_inactive_idx())
 
     # Feb-2026 · Soshie AI-Agent Expansion P2 — indexes for the
     # social publishing collections (idempotency + audit).
     # Idempotent + sentinel-guarded.
-    try:
-        from services.migrations.social_publish_log_indexes import (
-            run_social_publish_log_indexes_migration,
-        )
-        _spli_boot = await run_social_publish_log_indexes_migration()
-        if _spli_boot.get("status") == "skipped":
-            logger.info(
-                "[social_publish_log_indexes] sentinel present · skipping",
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_social_publish_log_indexes():
+        try:
+            from services.migrations.social_publish_log_indexes import (
+                run_social_publish_log_indexes_migration,
             )
-        else:
-            _s = _spli_boot.get("summary") or {}
-            logger.info(
-                "[social_publish_log_indexes] created=%d "
-                "already_present=%d errors=%d",
-                len(_s.get("created") or []),
-                len(_s.get("already_present") or []),
-                len(_s.get("errors") or []),
+            _spli_boot = await run_social_publish_log_indexes_migration()
+            if _spli_boot.get("status") == "skipped":
+                logger.info(
+                    "[social_publish_log_indexes] sentinel present · skipping",
+                )
+            else:
+                _s = _spli_boot.get("summary") or {}
+                logger.info(
+                    "[social_publish_log_indexes] created=%d "
+                    "already_present=%d errors=%d",
+                    len(_s.get("created") or []),
+                    len(_s.get("already_present") or []),
+                    len(_s.get("errors") or []),
+                )
+        except Exception as e:
+            logger.warning(
+                f"social_publish_log_indexes migration crashed: {e}",
             )
-    except Exception as e:
-        logger.warning(
-            f"social_publish_log_indexes migration crashed: {e}",
-        )
+    asyncio.create_task(_bg_social_publish_log_indexes())
 
     # Phase S1.5 · Feb-2026 — Soshie Autopilot indexes.
-    try:
-        from services.migrations.soshie_autopilot_indexes import (
-            ensure_indexes as _sa_indexes,
-        )
-        await _sa_indexes()
-    except Exception as e:
-        logger.warning(
-            f"soshie_autopilot_indexes migration crashed: {e}",
-        )
+    # G3b Batch C · Feb-2026 — moved to BG. Sentinel added in Batch E.
+    async def _bg_soshie_autopilot_indexes():
+        try:
+            from services.migrations.soshie_autopilot_indexes import (
+                ensure_indexes as _sa_indexes,
+            )
+            await _sa_indexes()
+        except Exception as e:
+            logger.warning(
+                f"soshie_autopilot_indexes migration crashed: {e}",
+            )
+    asyncio.create_task(_bg_soshie_autopilot_indexes())
 
     # Phase O4 · Feb-2026 — idempotency_keys index hardening. Adds a
     # unique compound on (tenant_id, key, endpoint) + TTL on
     # ``expires_at`` so Phase 40's idempotency helper is race-safe
     # AND self-GCs. Also purges any legacy string-typed ``expires_at``
     # rows the pre-Phase-O4 helper wrote. Idempotent + sentinel-guarded.
-    try:
-        from services.migrations.idempotency_keys_indexes import (
-            run_idempotency_keys_indexes_migration,
-        )
-        _idem_boot = await run_idempotency_keys_indexes_migration()
-        if _idem_boot.get("status") == "skipped":
-            logger.info(
-                "[idempotency_keys_indexes] sentinel present · skipping",
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_idempotency_keys_indexes():
+        try:
+            from services.migrations.idempotency_keys_indexes import (
+                run_idempotency_keys_indexes_migration,
             )
-        else:
-            _s = _idem_boot.get("summary") or {}
-            logger.info(
-                "[idempotency_keys_indexes] indexes_created=%s "
-                "already_present=%s legacy_purged=%s errors=%s",
-                _s.get("indexes_created"), _s.get("already_present"),
-                _s.get("legacy_strings_purged"),
-                len(_s.get("errors") or []),
+            _idem_boot = await run_idempotency_keys_indexes_migration()
+            if _idem_boot.get("status") == "skipped":
+                logger.info(
+                    "[idempotency_keys_indexes] sentinel present · skipping",
+                )
+            else:
+                _s = _idem_boot.get("summary") or {}
+                logger.info(
+                    "[idempotency_keys_indexes] indexes_created=%s "
+                    "already_present=%s legacy_purged=%s errors=%s",
+                    _s.get("indexes_created"), _s.get("already_present"),
+                    _s.get("legacy_strings_purged"),
+                    len(_s.get("errors") or []),
+                )
+        except Exception as e:
+            logger.warning(
+                f"idempotency_keys_indexes migration crashed: {e}",
             )
-    except Exception as e:
-        logger.warning(
-            f"idempotency_keys_indexes migration crashed: {e}",
-        )
+    asyncio.create_task(_bg_idempotency_keys_indexes())
 
     # PERF-1 · Feb-2026 — Missing tenant_id indexes on 6 hot
     # collections.  Sentinel-guarded + idempotent.  Auditor found
     # service_checklists at 553k docs with no tenant_id index,
     # forcing full-scan on every per-tenant boot lookup.  See
     # services/migrations/perf1_missing_tenant_indexes.py.
-    try:
-        from services.migrations.perf1_missing_tenant_indexes import (
-            run_perf1_missing_tenant_indexes_migration,
-        )
-        _perf1_boot = await run_perf1_missing_tenant_indexes_migration()
-        if _perf1_boot.get("status") == "skipped":
-            logger.info(
-                "[perf1_missing_tenant_indexes] sentinel present · skipping",
+    # G3b Batch C · Feb-2026 — moved to BG (sentinel-guarded).
+    async def _bg_perf1_missing_tenant_indexes():
+        try:
+            from services.migrations.perf1_missing_tenant_indexes import (
+                run_perf1_missing_tenant_indexes_migration,
             )
-        else:
-            _s = _perf1_boot.get("summary") or {}
-            logger.info(
-                "[perf1_missing_tenant_indexes] indexes_created=%s "
-                "already_present=%s errors=%s",
-                _s.get("indexes_created"),
-                _s.get("already_present"),
-                len(_s.get("errors") or []),
-            )
-    except Exception as e:
-        logger.warning(
-            f"perf1_missing_tenant_indexes migration crashed: {e}",
-        )
-
-    # Feb-2026 · P0 fix — Orphan-paid invoice audit. Report-only on
-    # boot so operators see the count in logs without silently
-    # flipping seed / demo fixtures. Real flips happen through the
-    # super_admin admin endpoint
-    # (``POST /api/admin/migrations/audit-orphan-paid-invoices``)
-    # after the operator reviews the dry-run diff.
-    try:
-        from services.migrations.invoice_status_audit import (
-            run_orphan_paid_audit,
-        )
-        _op_boot = await run_orphan_paid_audit(force=True, dry_run=True)
-        _s = _op_boot.get("summary") or {}
-        if _s.get("corrected", 0) > 0:
+            _perf1_boot = await run_perf1_missing_tenant_indexes_migration()
+            if _perf1_boot.get("status") == "skipped":
+                logger.info(
+                    "[perf1_missing_tenant_indexes] sentinel present · skipping",
+                )
+            else:
+                _s = _perf1_boot.get("summary") or {}
+                logger.info(
+                    "[perf1_missing_tenant_indexes] indexes_created=%s "
+                    "already_present=%s errors=%s",
+                    _s.get("indexes_created"),
+                    _s.get("already_present"),
+                    len(_s.get("errors") or []),
+                )
+        except Exception as e:
             logger.warning(
-                f"[orphan_paid_audit] boot report · "
-                f"{_s.get('corrected', 0)} invoices flagged as "
-                f"paid without a payment_record. Trigger "
-                f"POST /api/admin/migrations/audit-orphan-paid-invoices"
-                f"?dry_run=false to flip them to pending_reconciliation.",
+                f"perf1_missing_tenant_indexes migration crashed: {e}",
             )
-        else:
-            logger.info("[orphan_paid_audit] boot report · 0 orphans")
-    except Exception as e:
-        logger.warning(f"orphan_paid_audit boot report crashed: {e}")
+    asyncio.create_task(_bg_perf1_missing_tenant_indexes())
+
+    # G3b Batch A · Feb-2026 — REMOVED from boot path.
+    # The orphan-paid audit is now on-demand only via
+    # ``POST /api/admin/migrations/audit-orphan-paid-invoices?dry_run=true``.
+    # See /tmp/g3a_startup_audit.md #47 for the rationale.
 
     # Feb-2026 M2 fix — idempotent single-brace → double-brace migration
     # on stored campaign templates. The render engine now accepts both
     # shapes; this migration just normalises DB snapshots so admins
     # editing an M2 template see the canonical form.
-    # reading the raw doc see the canonical form.
-    try:
-        from services.marketing_campaigns import migrate_campaign_templates_to_double_brace
-        n = await migrate_campaign_templates_to_double_brace()
-        logger.info(f"[m2] template brace migration: {n} campaign(s)")
-    except Exception as e:
-        logger.warning(f"m2 brace migration crashed: {e}")
+    # G3b Batch A · Feb-2026 — moved to BG (every-boot scan).
+    async def _bg_m2_brace_migration():
+        try:
+            from services.marketing_campaigns import migrate_campaign_templates_to_double_brace
+            n = await migrate_campaign_templates_to_double_brace()
+            logger.info(f"[m2] template brace migration: {n} campaign(s)")
+        except Exception as e:
+            logger.warning(f"m2 brace migration crashed: {e}")
+    asyncio.create_task(_bg_m2_brace_migration())
 
     # Feb-2026 MP1 — Multi-property seed. Idempotent per-customer:
     # inserts a single "Main" property for every legacy customer that
@@ -3075,23 +3117,21 @@ async def startup():
     # Dexter, Soshie, Scouty, Commet) on any tenant that doesn't have
     # them yet. Admin edits (rename, custom system prompt, disable)
     # survive re-runs.
-    try:
-        from routers.ai_employees import seed_ai_employees_all_tenants
-        counts = await seed_ai_employees_all_tenants()
-        logger.info(f"[ae1] ai_employees seed — {counts}")
-    except Exception as e:
-        logger.warning(f"ae1 ai_employees seed crashed: {e}")
+    # G3b Batch B · Feb-2026 — moved to BG (per-tenant fanout).
+    async def _bg_ae1_ai_employees_seed():
+        try:
+            from routers.ai_employees import seed_ai_employees_all_tenants
+            counts = await seed_ai_employees_all_tenants()
+            logger.info(f"[ae1] ai_employees seed — {counts}")
+        except Exception as e:
+            logger.warning(f"ae1 ai_employees seed crashed: {e}")
+    asyncio.create_task(_bg_ae1_ai_employees_seed())
 
-    # Phase 34 · Task JJ · Feb 2026 — AI Employees dedupe + unique
-    # index. Removes legacy null-tenant rows that leaked into every
-    # tenant's admin AI Hub via ``GET /ai-ops/employees`` (see
-    # ``migrations/task_jj_dedupe_ai_employees.py`` for full RCA).
-    try:
-        from migrations.task_jj_dedupe_ai_employees import dedupe_ai_employees
-        _jj = await dedupe_ai_employees()
-        logger.info(f"[phase34-task-jj] {_jj}")
-    except Exception as e:
-        logger.warning(f"[phase34-task-jj] dedupe migration crashed: {e}")
+    # G3b Batch A · Feb-2026 — REMOVED from boot path.
+    # Task JJ dedupe is a one-shot cleanup that already ran on every
+    # environment. Run manually via ``python -m
+    # migrations.task_jj_dedupe_ai_employees`` if a fresh env needs it.
+    # See /tmp/g3a_startup_audit.md #52.
 
     # Phase 34 · Task CC · Feb 2026 — Leads status enum migration.
     # Idempotent boot-time sweep that normalises every ``leads.status``
@@ -3099,12 +3139,15 @@ async def startup():
     # (new, contacted, quoted, closed_won, closed_lost). Unrecognised
     # legacy values are mapped to ``"new"`` and each occurrence is
     # logged so an admin can audit them from the boot log.
-    try:
-        from routers.leads import migrate_lead_statuses as _mig_lead_status
-        _lead_status_result = await _mig_lead_status()
-        logger.info(f"[phase34-task-cc] lead status migration — {_lead_status_result['per_bucket']}")
-    except Exception as e:
-        logger.warning(f"[phase34-task-cc] lead status migration crashed: {e}")
+    # G3b Batch A · Feb-2026 — moved to BG (every-boot full-scan of leads).
+    async def _bg_task_cc_lead_statuses():
+        try:
+            from routers.leads import migrate_lead_statuses as _mig_lead_status
+            _lead_status_result = await _mig_lead_status()
+            logger.info(f"[phase34-task-cc] lead status migration — {_lead_status_result['per_bucket']}")
+        except Exception as e:
+            logger.warning(f"[phase34-task-cc] lead status migration crashed: {e}")
+    asyncio.create_task(_bg_task_cc_lead_statuses())
 
 
     # Feb-2026 · Slice L.c — ensure the widget_denied_requests TTL +
@@ -3120,29 +3163,38 @@ async def startup():
     # templates for any tenant that has zero templates today. Admin
     # edits + custom templates survive re-runs (seed only fires when
     # the tenant is empty).
-    try:
-        from routers.marketing_templates import seed_marketing_templates_all_tenants
-        counts = await seed_marketing_templates_all_tenants()
-        logger.info(f"[m3] marketing_templates seed — {counts}")
-    except Exception as e:
-        logger.warning(f"m3 marketing_templates seed crashed: {e}")
+    # G3b Batch B · Feb-2026 — moved to BG (per-tenant fanout).
+    async def _bg_m3_marketing_templates_seed():
+        try:
+            from routers.marketing_templates import seed_marketing_templates_all_tenants
+            counts = await seed_marketing_templates_all_tenants()
+            logger.info(f"[m3] marketing_templates seed — {counts}")
+        except Exception as e:
+            logger.warning(f"m3 marketing_templates seed crashed: {e}")
+    asyncio.create_task(_bg_m3_marketing_templates_seed())
 
     # Feb-2026 · Marketing Slice M4 — seed 4 default segments per tenant.
-    try:
-        from routers.marketing_segments import seed_segments_all_tenants
-        counts = await seed_segments_all_tenants()
-        logger.info(f"[m4] marketing_segments seed — {counts}")
-    except Exception as e:
-        logger.warning(f"m4 marketing_segments seed crashed: {e}")
+    # G3b Batch B · Feb-2026 — moved to BG (per-tenant fanout).
+    async def _bg_m4_marketing_segments_seed():
+        try:
+            from routers.marketing_segments import seed_segments_all_tenants
+            counts = await seed_segments_all_tenants()
+            logger.info(f"[m4] marketing_segments seed — {counts}")
+        except Exception as e:
+            logger.warning(f"m4 marketing_segments seed crashed: {e}")
+    asyncio.create_task(_bg_m4_marketing_segments_seed())
 
     # Feb-2026 · Marketing Slice M5a — seed system drip sequences that
     # reference the M3-seeded system templates. Idempotent per tenant.
-    try:
-        from routers.marketing_sequences import seed_sequences_all_tenants
-        counts = await seed_sequences_all_tenants()
-        logger.info(f"[m5] marketing_sequences seed — {counts}")
-    except Exception as e:
-        logger.warning(f"m5 marketing_sequences seed crashed: {e}")
+    # G3b Batch B · Feb-2026 — moved to BG (per-tenant fanout).
+    async def _bg_m5_marketing_sequences_seed():
+        try:
+            from routers.marketing_sequences import seed_sequences_all_tenants
+            counts = await seed_sequences_all_tenants()
+            logger.info(f"[m5] marketing_sequences seed — {counts}")
+        except Exception as e:
+            logger.warning(f"m5 marketing_sequences seed crashed: {e}")
+    asyncio.create_task(_bg_m5_marketing_sequences_seed())
 
     # Feb-2026 · Slice GH0 post-fix — seed the dev preview host onto the
     # aquaterra tenant's widget_allowed_domains so the widget bundle
@@ -3151,12 +3203,16 @@ async def startup():
     # GH-Fix v2: unified in routers.widget_config.seed_dev_widget_domains_for_aquaterra
     # so the sync-boot, background-seed, and scheduler-tick hooks all
     # apply the SAME multi-host seed and can be re-run at any time.
-    try:
-        from routers.widget_config import seed_dev_widget_domains_for_aquaterra
-        result = await seed_dev_widget_domains_for_aquaterra()
-        logger.info(f"[gh0-seed] sync-boot: {result}")
-    except Exception as e:
-        logger.warning(f"gh0 dev-domain sync seed crashed: {e}")
+    # G3b Batch B · Feb-2026 — moved to BG (also runs from _background_seed
+    # + scheduler tick, so no need to block boot).
+    async def _bg_gh0_dev_widget_domain_seed():
+        try:
+            from routers.widget_config import seed_dev_widget_domains_for_aquaterra
+            result = await seed_dev_widget_domains_for_aquaterra()
+            logger.info(f"[gh0-seed] sync-boot: {result}")
+        except Exception as e:
+            logger.warning(f"gh0 dev-domain sync seed crashed: {e}")
+    asyncio.create_task(_bg_gh0_dev_widget_domain_seed())
 
     # Feb-2026 · Slice H1 — Turnstile status log (single WARN when the
     # TURNSTILE_SECRET env var is missing so ops know form submissions
@@ -3188,71 +3244,87 @@ async def startup():
 
     asyncio.create_task(_defer())
 
-    # Phase F3 · Feb-2026 — data-integrity boot-check. Fails fast
-    # (raises) when dangling refs exist AND
-    # ``INTEGRITY_CHECK_ENFORCE`` resolves to True (default: on in
-    # production, off elsewhere). Runs LAST so migrations that
-    # heal drift have already executed.
-    try:
-        from services.startup.integrity_check import (
-            run_startup_integrity_check,
-            start_log_only_reminder_task,
-            _enforce_flag_from_env as _integrity_enforce_flag,
-        )
-        _integrity_report = await run_startup_integrity_check(db)
-        # Phase F4 · Feb-2026 — stamp the readiness gate so
-        # ``/health/ready`` can flip from ``boot_integrity_pending``
-        # to ``ok`` / ``dangling_refs_present`` per state.
+    # Phase F3 · Feb-2026 — data-integrity boot-check.
+    # G3b Batch D · Feb-2026 — moved to BG. F4 readiness gate
+    # (``/health/ready``) already reports 503 with
+    # ``reason=boot_integrity_pending`` while this task runs, then
+    # transitions to ``ok`` (refs=0) OR 503 ``reason=dangling_refs_present``
+    # (refs>0 + enforce=True). The historical ``raise IntegrityCheckFailure``
+    # that aborted boot has been replaced with a state-stamp so the
+    # pod stays alive-but-503; k8s keeps it out of the load balancer
+    # (correct behavior) while ops runs F2 data-repair. See audit
+    # /tmp/g3a_startup_audit.md §5.
+    async def _bg_f3_integrity_check():
         try:
-            _drt = int(
-                (_integrity_report.get("summary") or {}).get(
-                    "total_dangling_refs", 0,
-                )
+            from services.startup.integrity_check import (
+                run_startup_integrity_check,
+                start_log_only_reminder_task,
+                _enforce_flag_from_env as _integrity_enforce_flag,
+                IntegrityCheckFailure,
             )
-            _F4_BOOT_INTEGRITY_STATE["complete"] = True
-            _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = _drt
-            _F4_BOOT_INTEGRITY_STATE["error"] = None
-        except Exception:  # noqa: BLE001
-            _F4_BOOT_INTEGRITY_STATE["complete"] = True
-            _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = 0
-            _F4_BOOT_INTEGRITY_STATE["error"] = None
-        # Phase F6 · Feb-2026 — if boot survived a non-zero scan
-        # (only possible when enforce=False), schedule the recurring
-        # nag so ops can't quietly forget they're in the workaround
-        # mode.  In enforce=True mode with dangling refs the call
-        # above raised, so we never reach here.
-        try:
-            _total = (_integrity_report.get("summary") or {}).get(
-                "total_dangling_refs", 0)
-            if _total > 0 and not _integrity_enforce_flag():
-                start_log_only_reminder_task(db)
-        except Exception as _rem_e:      # noqa: BLE001
-            logger.warning(
-                "[integrity_check] reminder wiring failed: %s", _rem_e,
-            )
-    except Exception as exc:
-        # ``IntegrityCheckFailure`` — re-raise to abort boot. Any
-        # other exception is a scan defect; log + continue so a
-        # scanner bug never bricks production.
-        from services.startup.integrity_check import IntegrityCheckFailure
-        if isinstance(exc, IntegrityCheckFailure):
-            # F4 — stamp state before re-raising so a fast /health/ready
-            # probe still gets a coherent 503 with the real dangling
-            # refs count (rather than a stale ``pending``).
             try:
+                _integrity_report = await run_startup_integrity_check(db)
+            except IntegrityCheckFailure as _icf:
+                # G3b Batch D — no longer raise. State-stamp so
+                # /health/ready surfaces 503 with the correct reason.
+                # The existing readiness handler branch
+                # ``drt > 0 and _integ_enforce and _ready_enforce`` will
+                # emit ``reason=dangling_refs_present, dangling_refs_total=<n>``.
+                _drt_icf = 0
+                try:
+                    _drt_icf = int(getattr(_icf, "dangling_refs_total", 0) or 0)
+                    if not _drt_icf:
+                        _drt_icf = int(
+                            ((getattr(_icf, "report", {}) or {}).get("summary")
+                                or {}).get("total_dangling_refs", 0) or 0
+                        )
+                except Exception:  # noqa: BLE001
+                    _drt_icf = 0
                 _F4_BOOT_INTEGRITY_STATE["complete"] = True
-                _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = int(
-                    getattr(exc, "dangling_refs_total", 0) or 0
+                _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = _drt_icf
+                _F4_BOOT_INTEGRITY_STATE["error"] = None
+                logger.critical(
+                    "[integrity_check] enforce=True with %s dangling refs "
+                    "— pod remains alive; /health/ready = 503 "
+                    "dangling_refs_present until data-repair completes.",
+                    _drt_icf,
                 )
+                return
+            # Success path — stamp state, then maybe wire log-only reminder.
+            try:
+                _drt = int(
+                    (_integrity_report.get("summary") or {}).get(
+                        "total_dangling_refs", 0,
+                    )
+                )
+                _F4_BOOT_INTEGRITY_STATE["complete"] = True
+                _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = _drt
                 _F4_BOOT_INTEGRITY_STATE["error"] = None
             except Exception:  # noqa: BLE001
-                pass
-            raise
-        _F4_BOOT_INTEGRITY_STATE["complete"] = True
-        _F4_BOOT_INTEGRITY_STATE["error"] = str(exc)[:500]
-        logger.warning(
-            "integrity_check scan crashed (continuing): %s", exc,
-        )
+                _F4_BOOT_INTEGRITY_STATE["complete"] = True
+                _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = 0
+                _F4_BOOT_INTEGRITY_STATE["error"] = None
+            # Phase F6 — if the scan surfaced refs but enforce=False,
+            # wire the recurring nag so ops don't forget the workaround.
+            try:
+                _total = (_integrity_report.get("summary") or {}).get(
+                    "total_dangling_refs", 0)
+                if _total > 0 and not _integrity_enforce_flag():
+                    start_log_only_reminder_task(db)
+            except Exception as _rem_e:      # noqa: BLE001
+                logger.warning(
+                    "[integrity_check] reminder wiring failed: %s", _rem_e,
+                )
+        except Exception as exc:
+            # Scan defect (import error, unexpected shape, etc.). Never
+            # bricks the pod; /health/ready will surface 503 with
+            # reason=scan_error.
+            _F4_BOOT_INTEGRITY_STATE["complete"] = True
+            _F4_BOOT_INTEGRITY_STATE["error"] = str(exc)[:500]
+            logger.warning(
+                "integrity_check scan crashed (continuing): %s", exc,
+            )
+    asyncio.create_task(_bg_f3_integrity_check())
 
     logger.info("Boot path complete — API is now accepting requests.")
 
