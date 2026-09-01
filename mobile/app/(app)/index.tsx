@@ -19,6 +19,7 @@ import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import CreditsBudgetChip from "@/src/components/ai/CreditsBudgetChip";
 import EbitTile from "@/src/components/dashboard/EbitTile";
+import RevenueForecastTile from "@/src/components/dashboard/RevenueForecastTile";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -137,6 +138,13 @@ export default function Dashboard() {
           <View testID="dashboard-ebit-tile-slot">
             <EbitTile />
           </View>
+        ) : null}
+
+        {/* Phase J2 / H10 — Revenue Forecast tile with quick-view
+            tabs: Today · Tomorrow · This Week · This Month · Next Month.
+            Admin/super_admin only. */}
+        {(user?.role === "super_admin" || user?.role === "admin" || user?.role === "manager") ? (
+          <RevenueForecastTile />
         ) : null}
 
         {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}

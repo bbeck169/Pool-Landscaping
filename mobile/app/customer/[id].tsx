@@ -16,6 +16,8 @@ import CustomerTasks from "@/src/components/customers/CustomerTasks";
 import ServiceNotes from "@/src/components/customers/ServiceNotes";
 import SendCreateSheet from "@/src/components/customers/SendCreateSheet";
 import CustomerTagsSection from "@/src/components/customers/CustomerTagsSection";
+import PaymentMethodTiles from "@/src/components/customers/PaymentMethodTiles";
+import CommunicationTimeline from "@/src/components/customers/CommunicationTimeline";
 import DemoAccountToggle from "@/src/components/comms/DemoAccountToggle";
 // Feb-2026 · P29b — Mobile parity for the web mute picker.
 import MuteControlSheet from "@/src/components/customers/MuteControlSheet";
@@ -440,6 +442,18 @@ export default function CustomerDetail() {
           </Pressable>
         ) : null}
 
+        {/* Phase J2 / I5 — Payment Method Tiles (green on-file, red empty).
+            Placed between header/contact info and the card-required toggle. */}
+        {isAdmin ? (
+          <View style={{ marginTop: spacing.md }} testID="customer-payment-tiles-slot">
+            <PaymentMethodTiles
+              customerId={id as string}
+              variant="admin"
+              onChange={load}
+            />
+          </View>
+        ) : null}
+
         {/* Card required override (Phase 12 tri-state) */}
         {isAdmin ? (
           <View style={styles.cardRequiredCard} testID="card-required-override">
@@ -725,6 +739,10 @@ export default function CustomerDetail() {
         ) : (
           <Text style={styles.empty}>No jobs yet for this customer.</Text>
         )}
+
+        {/* Phase J2 / I7 — Communication Timeline. Always visible (not tab-gated). */}
+        <Text style={styles.sectionTitle}>Communication Timeline</Text>
+        <CommunicationTimeline customerId={id as string} variant="admin" />
       </ScrollView>
 
       <Sheet visible={confirmImp} onClose={() => setConfirmImp(false)} title="View as customer" testID="impersonate-confirm-sheet">

@@ -43,8 +43,9 @@ export default function Customers() {
   const [inactiveBusy, setInactiveBusy] = useState(false);
 
   // Phase F6b — Active/Inactive/All segmented control.
+  // Phase J2 / H4 — Waitlist 4th segment.
   const STATUS_KEY = "customerListFilter.status";
-  const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "all">("active");
+  const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "all" | "waitlist">("active");
 
   // Phase G4b — Portal activation filter.
   const PORTAL_KEY = "customerListFilter.portalStatus";
@@ -53,7 +54,7 @@ export default function Customers() {
   // Load persisted filters on mount.
   useEffect(() => {
     storage.getItem<string>(STATUS_KEY, "active").then((v: any) => {
-      if (v === "active" || v === "inactive" || v === "all") setStatusFilter(v);
+      if (v === "active" || v === "inactive" || v === "all" || v === "waitlist") setStatusFilter(v);
     }).catch(() => {});
     storage.getItem<string>(PORTAL_KEY, "all").then((v: any) => {
       if (v === "all" || v === "activated" || v === "not_activated") setPortalFilter(v);
@@ -70,8 +71,12 @@ export default function Customers() {
       qp.set("page", String(targetPage));
       qp.set("page_size", String(_PAGE_SIZE));
       if (showDeleted && canManageDeleted) qp.set("include_deleted", "true");
-      // Phase F6b — Active/Inactive/All filter.
-      if (statusFilter !== "all") qp.set("is_active", String(statusFilter === "active"));
+      // Phase F6b — Active/Inactive/All filter + H4 Waitlist.
+      if (statusFilter === "waitlist") {
+        qp.set("waitlisted", "true");
+      } else if (statusFilter !== "all") {
+        qp.set("is_active", String(statusFilter === "active"));
+      }
       // Phase G4b — Portal activation filter.
       if (portalFilter !== "all") qp.set("portal_status", portalFilter);
       const res: any = await api.get(`/customers?${qp.toString()}`);
@@ -184,9 +189,9 @@ export default function Customers() {
           )
         }
       />
-      {/* Phase F6b — Active / Inactive / All segmented control */}
+      {/* Phase F6b — Active / Inactive / All + H4 Waitlist segmented control */}
       <View style={cs.segmentRow} testID="customer-status-filter">
-        {(["active", "inactive", "all"] as const).map((seg) => (
+        {(["active", "inactive", "waitlist", "all"] as const).map((seg) => (
           <Pressable
             key={seg}
             onPress={() => {
@@ -199,7 +204,7 @@ export default function Customers() {
             accessibilityRole="button"
           >
             <Text style={[cs.segmentText, statusFilter === seg && cs.segmentTextActive]}>
-              {seg === "active" ? "Active" : seg === "inactive" ? "Inactive" : "All"}
+              {seg === "active" ? "Active" : seg === "inactive" ? "Inactive" : seg === "waitlist" ? "Waitlist" : "All"}
             </Text>
           </Pressable>
         ))}

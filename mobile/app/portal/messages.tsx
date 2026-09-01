@@ -5,11 +5,14 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading } from "@/src/components/ui";
+import CommunicationTimeline from "@/src/components/customers/CommunicationTimeline";
 
 export default function PortalMessages() {
+  const { user } = useAuth();
   const [msgs, setMsgs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
@@ -123,6 +126,14 @@ export default function PortalMessages() {
               <View style={[styles.bubble, styles.theirs]}>
                 <Text style={styles.typing}>Marina is typing…</Text>
               </View>
+            </View>
+          ) : null}
+
+          {/* Phase J2 / I7 — Communication Timeline (portal mount). */}
+          {user?.customer_id ? (
+            <View style={{ marginTop: spacing.lg, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }}>
+              <Text style={{ fontFamily: font.bold, fontSize: fontSize.sm, color: colors.onSurface, marginBottom: spacing.sm }}>Communication History</Text>
+              <CommunicationTimeline customerId={user.customer_id} variant="portal" limit={20} />
             </View>
           ) : null}
         </KeyboardAwareScrollView>
