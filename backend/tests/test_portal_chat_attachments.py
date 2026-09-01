@@ -103,11 +103,18 @@ def fake_db():
     ])
     messages = _FakeCollection([])
     users = _FakeCollection([])
+    # Phase K8 · Feb-2026 — resolver now reads db.customers to derive
+    # the canonical bubble sender_name.  Seed a customer row for A so
+    # the existing attachment tests keep exercising the write path.
+    customers = _FakeCollection([
+        {"id": CUSTOMER_A, "tenant_id": TENANT, "name": "Customer A"},
+        {"id": CUSTOMER_B, "tenant_id": TENANT, "name": "Customer B"},
+    ])
 
     return SimpleNamespace(
         files=files, jobs=jobs,
         portal_chats=chats, portal_chat_messages=messages,
-        users=users,
+        users=users, customers=customers,
         _consts={
             "TENANT": TENANT, "CUSTOMER_A": CUSTOMER_A,
             "CUSTOMER_B": CUSTOMER_B, "USER_A": USER_A,

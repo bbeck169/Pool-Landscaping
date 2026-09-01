@@ -43,6 +43,64 @@ def _require_customer(user: dict) -> str:
     return user["customer_id"]
 
 
+async def _resolve_sender_name(user: dict, tenant_id: str) -> str:
+    """Phase K8 · Feb-2026 — canonical sender-name resolution.
+
+    Customer bubbles must carry the CUSTOMER record's name — not the
+    linked User row's ``name`` field, which can go stale (activation
+    flows, portal-account re-links, admin seed drift, or simply an
+    empty string on the user doc).  The bug that motivated this
+    helper: Brian Beckman's outgoing bubbles rendered "Jennifer
+    Carson" because his portal ``users.name`` happened to carry that
+    string; the customer record ``customers.name`` had the correct
+    "Brian Beckman".
+
+    Resolution order (customer role):
+      1. ``customers.name`` for the linked customer_id.
+      2. Concatenated ``first_name last_name`` on the customer.
+      3. ``customers.full_name`` on the customer.
+      4. Email local-part on the user record.
+      5. Literal ``"Customer"``.
+
+    Admin / super_admin / manager pass through ``users.name`` because
+    those user rows ARE the source of truth for staff identity
+    (portal customers can't rename them, and admins may not have a
+    customer_id at all).  Fallback to ``"Support"`` if the admin
+    user row is missing a name.
+
+    Never trusts a client-provided sender_name; callers must not
+    pass one through.
+    """
+    role = (user.get("role") or "").lower()
+    if role == "customer":
+        cid = user.get("customer_id")
+        if cid:
+            cust = await db.customers.find_one(
+                {"id": cid, "tenant_id": tenant_id},
+                {"_id": 0, "name": 1, "first_name": 1, "last_name": 1,
+                 "full_name": 1},
+            ) or {}
+            name = (cust.get("name") or "").strip()
+            if name:
+                return name
+            first = (cust.get("first_name") or "").strip()
+            last = (cust.get("last_name") or "").strip()
+            joined = f"{first} {last}".strip()
+            if joined:
+                return joined
+            full = (cust.get("full_name") or "").strip()
+            if full:
+                return full
+        email = (user.get("email") or "").strip()
+        if "@" in email:
+            local = email.split("@", 1)[0]
+            if local:
+                return local
+        return "Customer"
+    # Admin / super_admin / manager: users.name IS the source of truth.
+    return (user.get("name") or "").strip() or "Support"
+
+
 def _require_customer_or_admin(user: dict):
     if user.get("role") == "tech":
         raise HTTPException(403, "Not allowed")
@@ -162,13 +220,17 @@ async def create_chat(body: ChatCreateIn,
     }
     await db.portal_chats.insert_one(dict(chat))
     if (body.first_message and body.first_message.strip()) or first_att_ids:
+        # Phase K8 · Feb-2026 — always derive sender_name server-side
+        # from the CUSTOMER record.  Never trust the client and never
+        # fall through to the (possibly stale) users.name.
+        sender_name = await _resolve_sender_name(user, tenant["id"])
         msg = {
             "id": new_id(),
             "tenant_id": tenant["id"],
             "chat_id": chat["id"],
             "sender_role": "customer",
             "sender_id": user["id"],
-            "sender_name": user.get("name", "Customer"),
+            "sender_name": sender_name,
             "body": (body.first_message or "").strip(),
             "attachment_ids": first_att_ids,
             "attachments": [],  # legacy field retained for backward compat
@@ -247,13 +309,15 @@ async def post_message(chat_id: str, body: MessagePostIn,
     text = (body.body or "").strip()
     if not text and not att_ids:
         raise HTTPException(400, "Empty message")
+    # Phase K8 · Feb-2026 — canonical sender-name resolution.
+    sender_name = await _resolve_sender_name(user, tenant["id"])
     msg = {
         "id": new_id(),
         "tenant_id": tenant["id"],
         "chat_id": chat_id,
         "sender_role": role,
         "sender_id": user["id"],
-        "sender_name": user.get("name") or "Support",
+        "sender_name": sender_name,
         "body": text,
         "attachment_ids": att_ids,
         "attachments": [],  # legacy field retained
