@@ -386,8 +386,17 @@ export default function WorkstreamPage() {
   const [err, setErr] = useState("");
 
   // Filter state — status intentionally omitted (Workstream = completed).
-  const [since, setSince] = useState("");
-  const [until, setUntil] = useState("");
+  // Phase K7 · Feb-2026 — default the date filter to TODAY on mount
+  // so the initial fetch returns only today's completed jobs for
+  // every role.  Users can still widen the range after mount.  The
+  // ISO date is computed via ``toISOString().slice(0, 10)`` which
+  // returns a stable UTC YYYY-MM-DD string; the backend endpoint
+  // (``routers/workstream.py``) already interprets ``since``/
+  // ``until`` as tenant-local calendar dates so this matches the
+  // existing DispatchBoard "Today" convention.
+  const _K7_TODAY_ISO = new Date().toISOString().slice(0, 10);
+  const [since, setSince] = useState(_K7_TODAY_ISO);
+  const [until, setUntil] = useState(_K7_TODAY_ISO);
   const [techId, setTechId] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [sort, setSort] = useState("newest");
