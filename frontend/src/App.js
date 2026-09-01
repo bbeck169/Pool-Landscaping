@@ -231,6 +231,8 @@ import DeletionsAuditPage from "@/pages/admin/audit/DeletionsAuditPage";
 // Feb-2026 · Admin migrations dashboard (super_admin only) — driver
 // for one-off backfills (P19 empty-lead enrichment initially).
 import AdminMigrationsPage from "@/pages/admin/AdminMigrationsPage";
+// Phase H6 · Feb-2026 — Monthly analytics rollup dashboard.
+import AnalyticsMonthlyPage from "@/pages/admin/AnalyticsMonthlyPage";
 import PortalTerms from "@/pages/portal/PortalTerms";
 import {
   MarketingHub, BrandMemory,
@@ -817,6 +819,8 @@ export default function App() {
             <Route path="admin/marketing/sequences" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
             <Route path="admin/marketing/review-requests" element={<AdminOnly><MarketingReviewRequestsPage /></AdminOnly>} />
             <Route path="admin/marketing/analytics" element={<AdminOnly><MarketingAnalyticsPage /></AdminOnly>} />
+            {/* Phase H6 · Feb-2026 — Monthly analytics dashboard (Soshie moderation, charge-template usage, drift alerts, manual-post conversion). */}
+            <Route path="admin/analytics-monthly" element={<AdminOnly><AnalyticsMonthlyPage /></AdminOnly>} />
             <Route path="admin/marketing/suppressions" element={<AdminOnly><MarketingSuppressionsPage /></AdminOnly>} />
             <Route path="admin/marketing/forms" element={<AdminOnly><MarketingFormsPage /></AdminOnly>} />
             <Route path="admin/leads" element={<AdminOnly><LeadsDashboardPage /></AdminOnly>} />

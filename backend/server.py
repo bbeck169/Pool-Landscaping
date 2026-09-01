@@ -530,6 +530,11 @@ api_router.include_router(_invoice_edit.router)
 # technician_id ∈ crew.tech_ids).
 from routers import crew_productivity as _h5_crew_productivity  # noqa: E402
 api_router.include_router(_h5_crew_productivity.router)
+# Phase H6 · Feb-2026 — Monthly analytics rollup for the admin
+# analytics dashboard (Soshie moderation cost, charge-template
+# usage, drift alerts, manual-post conversion).
+from routers import analytics_monthly as _h6_analytics_monthly  # noqa: E402
+api_router.include_router(_h6_analytics_monthly.router)
 # Feb 2026 — Portal quick-action media aggregation (photos/videos/unread).
 from routers import portal_media as _portal_media  # noqa: E402
 api_router.include_router(_portal_media.router)
