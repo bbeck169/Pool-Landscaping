@@ -2019,19 +2019,26 @@ async def patch_job_edit_window(
     #      the audit assertions.
     if linked_invoice and "price_cents" in incoming:
         try:
-            delta_cents = int(incoming.get("price_cents") or 0) \
+            price_delta_cents = int(incoming.get("price_cents") or 0) \
                 - int(job.get("price_cents") or 0)
         except (TypeError, ValueError):
-            delta_cents = 0
-        if delta_cents:
-            old_subtotal_cents = int(
+            price_delta_cents = 0
+        if price_delta_cents:
+            # Capture the invoice's PRE-edit subtotal so
+            # ``k6_last_recalc_delta_cents`` reflects the actual
+            # invoice-side change (subtotal delta) — not just the
+            # job-price delta.  These coincide for single-service-line
+            # invoices but the subtotal formulation is authoritative
+            # on the invoice side and survives edge cases where
+            # ``job.price_cents`` drifts from ``sum(line_total_cents)``.
+            prev_subtotal_cents = int(
                 linked_invoice.get("subtotal_cents") or 0)
             old_total_cents = int(
                 linked_invoice.get("total_cents") or 0)
             # Preserve tax / discount envelope: whatever the pricing
             # engine added between subtotal and total at issue time
             # stays untouched across the K6 recalc.
-            envelope_cents = old_total_cents - old_subtotal_cents
+            envelope_cents = old_total_cents - prev_subtotal_cents
 
             existing_items = list(linked_invoice.get("line_items") or [])
             updated_items: List[Dict[str, Any]] = []
@@ -2072,9 +2079,14 @@ async def patch_job_edit_window(
                 # No job-priced line item to mutate (legacy fixture or
                 # invoice built from chemical events only).  Fall back
                 # to additive so subtotal still tracks the job edit.
-                new_subtotal_cents = old_subtotal_cents + delta_cents
+                new_subtotal_cents = prev_subtotal_cents + price_delta_cents
 
             new_total_cents = new_subtotal_cents + envelope_cents
+            # THE fix (round-2 follow-up · Feb-2026): compute the
+            # persisted delta from the subtotal change so the audit
+            # field always reflects the invoice-side movement,
+            # including negative deltas on price decreases.
+            delta_cents = new_subtotal_cents - prev_subtotal_cents
 
             update_set: Dict[str, Any] = {
                 "subtotal_cents": new_subtotal_cents,
