@@ -17,6 +17,8 @@ import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel"
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
+import { useSetDynamicCrumb }
+  from "@/components/nav/dynamicCrumbContext";
 import PropertiesTab from "./PropertiesTab";
 import MasterBillingCard from "./MasterBillingCard";
 import { CustomerCreditsPanel } from "./CustomerCreditsPage";
@@ -206,6 +208,19 @@ export default function CustomerDetail() {
   // card-on-file admin controls. Techs never see the toggle at all.
   const [meRole, setMeRole] = useState("");
   const [tenantDefault, setTenantDefault] = useState(true);
+
+  // Phase K2 · Feb-2026 — publish the customer's display name to
+  // the breadcrumbs shell so the current-page crumb reads the
+  // person's actual name instead of the generic "Customer".  The
+  // hook returns nothing but registers/deregisters on mount +
+  // unmount so navigating between customers doesn't leak names.
+  const _crumbLabel = customer
+    ? (customer.display_name
+        || [customer.first_name, customer.last_name].filter(Boolean).join(" ")
+        || customer.email
+        || "Customer")
+    : null;
+  useSetDynamicCrumb("customer", _crumbLabel);
 
   useEffect(() => {
     (async () => {

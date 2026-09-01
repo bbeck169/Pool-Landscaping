@@ -21,7 +21,9 @@ import TosGate from "@/components/legal/TosGate";
 // on ``role === "customer"`` so predicates don't overlap.
 import OnboardingGate from "@/components/legal/OnboardingGate";
 import ProfileCompletionGate from "@/components/portal/ProfileCompletionGate";
-import Breadcrumbs from "@/components/breadcrumbs/Breadcrumbs";
+import AppBreadcrumbs from "@/components/nav/AppBreadcrumbs";
+import { DynamicCrumbProvider }
+  from "@/components/nav/dynamicCrumbContext";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
@@ -611,16 +613,26 @@ function AppLayout() {
         )}
 
         {/* Slice P · Breadcrumb navigation — auto-derives from route
-            metadata. Component hides itself on landing/auth pages. */}
-        <Breadcrumbs />
+            metadata. Component hides itself on landing/auth pages.
+            Phase K2 · Feb-2026 — replaced the raw Slice-P shell with
+            the shadcn-primitive-backed ``<AppBreadcrumbs>`` and
+            wrapped both the breadcrumbs AND the outlet in
+            ``<DynamicCrumbProvider>`` so pages can register live
+            entity names via ``useSetDynamicCrumb`` and the crumbs
+            re-render with the resolved name. */}
+        <DynamicCrumbProvider>
+          <AppBreadcrumbs
+            variant={location.pathname.startsWith("/portal") ? "portal" : "admin"}
+          />
 
-        {/* Feb-2026 · Slice 2C — customer per-service ToS gate. Wraps
-            the outlet so pending pool + landscaping ToS acceptances
-            block route interaction. Self-gates on role === "customer";
-            no-op for admin / super_admin / technician / manager. */}
-        <OnboardingGate>
-          <Outlet />
-        </OnboardingGate>
+          {/* Feb-2026 · Slice 2C — customer per-service ToS gate. Wraps
+              the outlet so pending pool + landscaping ToS acceptances
+              block route interaction. Self-gates on role === "customer";
+              no-op for admin / super_admin / technician / manager. */}
+          <OnboardingGate>
+            <Outlet />
+          </OnboardingGate>
+        </DynamicCrumbProvider>
 
         {/* Feb-2026 · Item 10 — Portal tour engine. Self-gates on
             role="customer" + has_seen_customer_tour so it renders
