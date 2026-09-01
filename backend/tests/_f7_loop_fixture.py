@@ -46,6 +46,7 @@ _REBOUND_MODULES = (
     "services.drift_alerting",
     "services.pricebook.writeback",
     "services.migrations.perf1_missing_tenant_indexes",
+    "services.soshie.autopilot_config",
     "services.soshie.autopilot_scheduler",
     "services.soshie.llm_moderation",
 )

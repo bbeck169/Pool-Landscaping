@@ -432,6 +432,64 @@ async def _dispatch_one(
             "outcome": "published" if ok else "failed"}
 
 
+async def _mark_manual_ready(
+    *, tenant_id: str, action: Dict[str, Any], platform: str,
+) -> Dict[str, Any]:
+    """Phase H5.5 · Feb-2026 — manual-only publish path.
+
+    Called instead of :func:`_dispatch_one` when a platform is
+    flipped to manual-only mode. The draft, media, and moderation
+    verdict have all already been resolved by the caller; this
+    function just stamps the terminal ``awaiting_manual`` status so
+    operators pick it up in the review queue and hand-paste into
+    the target platform.
+
+    No wire call to Meta / TikTok / LinkedIn / YouTube / GBP is
+    made here or downstream — the stub adapters continue to raise
+    :class:`NotImplementedError` on any ``publish_*`` call so an
+    accidental future wiring change fails loud instead of silently
+    posting.
+    """
+    from utils import now_iso
+
+    aid = action["id"]
+    draft = action.get("draft") or {}
+    text = draft.get("text") or ""
+    if not text:
+        return {"action_id": aid, "outcome": "skipped_empty_draft"}
+    upd = {
+        "status": "awaiting_manual",
+        "manual_only_platform": platform,
+        "manual_ready_at": now_iso(),
+        "updated_at": now_iso(),
+        "result": {"kind": "soshie_autopilot_manual_ready",
+                     "platform": platform},
+    }
+    await db.ai_employee_actions.update_one(
+        {"id": aid, "tenant_id": tenant_id}, {"$set": upd},
+    )
+    # Phase H5.5 · Feb-2026 — write a ``social_publish_log`` row
+    # so the cadence gate treats manual-only publishes as
+    # consuming a slot. Without this, the scheduler would fire a
+    # new draft every tick since there's no wire dispatch to
+    # write the log entry naturally.
+    try:
+        await db.social_publish_log.insert_one({
+            "tenant_id": tenant_id,
+            "platform": platform,
+            "action_id": aid,
+            "dispatched_at": now_iso(),
+            "manual_only": True,
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[autopilot] manual social_publish_log insert failed "
+            "for action=%s platform=%s: %s", aid, platform, e,
+        )
+    return {"action_id": aid, "platform": platform,
+            "outcome": "awaiting_manual"}
+
+
 async def _process_tenant(tenant_id: str) -> Dict[str, Any]:
     """Full per-tenant tick pipeline. Returns a summary the caller
     can log."""
@@ -472,8 +530,12 @@ async def _process_tenant(tenant_id: str) -> Dict[str, Any]:
                     tenant_id,
                 )
                 continue
-            if cfg.get("manual_only"):
-                continue
+            # Phase H5.5 · Feb-2026 — resolve manual_only via the
+            # single source of truth (persisted flag + DEFAULT_CADENCE
+            # fallback) so tenants whose rows predate the flip still
+            # route through the manual-only path.
+            from services.soshie.autopilot_config import is_manual_only
+            manual_only = is_manual_only(platform, cfg)
             if not await _cadence_ok(tenant_id, platform, cfg):
                 results.append({"platform": platform,
                                   "outcome": "cadence_hit"})
@@ -528,6 +590,20 @@ async def _process_tenant(tenant_id: str) -> Dict[str, Any]:
                     "media_source": media.get("media_source"),
                     "brand_score": media.get("brand_score"),
                 }.items() if v is not None}}
+                # Phase H5.5 · Feb-2026 — manual-only platforms
+                # bypass the wire dispatch and land in the review
+                # queue with ``status=awaiting_manual``. The
+                # NotImplementedError guards on Meta / TikTok /
+                # LinkedIn / YouTube / GBP stub adapters remain in
+                # place so any accidental attempt to call the
+                # wire path fails loud.
+                if manual_only:
+                    results.append(await _mark_manual_ready(
+                        tenant_id=tenant_id, action=enriched,
+                        platform=platform,
+                    ))
+                    # Same one-per-tick guard as the wire path.
+                    break
                 results.append(await _dispatch_one(
                     tenant_id=tenant_id, action=enriched,
                     platform=platform,

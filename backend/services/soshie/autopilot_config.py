@@ -24,14 +24,31 @@ Seed defaults
 -------------
 Seeded on tenant first-boot AND lazily on first read.  Values:
 
-    gbp        posts_per_day=1                     enabled=False
-    wordpress  posts_per_week=3                    enabled=False
-    facebook   posts_per_week=3                    enabled=False
-    instagram  posts_per_week=3                    enabled=False
-    linkedin   posts_per_week=2                    enabled=False
-    youtube    posts_per_week=1                    enabled=False
-    tiktok     posts_per_week=0  (stubbed off)     enabled=False
-    reddit     posts_per_week=0  manual_only=True  enabled=False
+    gbp        posts_per_day=1    manual_only=True   enabled=False
+    wordpress  posts_per_week=3                      enabled=False
+    facebook   posts_per_week=3   manual_only=True   enabled=False
+    instagram  posts_per_week=3   manual_only=True   enabled=False
+    linkedin   posts_per_week=2   manual_only=True   enabled=False
+    youtube    posts_per_week=1   manual_only=True   enabled=False
+    tiktok     posts_per_week=0   manual_only=True   enabled=False
+    reddit     posts_per_week=0   manual_only=True   enabled=False
+
+Phase H5.5 · Feb-2026 — six new platforms are flipped to
+``manual_only=True`` (Facebook, Instagram, LinkedIn, YouTube,
+TikTok, Google Business Profile). This is a product decision to
+ship value NOW without waiting on Meta / TikTok / LinkedIn /
+YouTube / GBP OAuth + App Review (weeks of turnaround). Autopilot
+still generates drafts + runs moderation for these platforms;
+approved drafts land in the review queue with a "Copy to
+clipboard" + "Mark as posted" affordance so operators hand-paste.
+
+Note on GBP: previously carried ``manual_only=False`` because a
+real GBP OAuth wiring was in scope. H5.5 explicitly downgrades
+GBP to manual-only. If GBP OAuth is later provisioned, a future
+phase can promote it back to fully-automated mode by flipping
+this flag back to False; the review-queue affordance code path
+naturally becomes dormant when nothing is stamped
+``awaiting_manual``.
 
 Default enabled=False is deliberate: turning on autopilot is an
 explicit admin decision, never a boot-side default.  The scheduler
@@ -45,15 +62,27 @@ from config import db, logger
 from utils import new_id, now_iso
 
 
-# ─── Default cadence table (Phase S1.5 amendment 1) ───────────────
+# ─── Default cadence table (Phase S1.5 amendment 1 → H5.5 flip) ───
 DEFAULT_CADENCE: Dict[str, Dict[str, Any]] = {
-    "gbp":       {"posts_per_day": 1,  "posts_per_week": None},
+    # Phase H5.5 · GBP downgraded from "Not Connected / awaiting
+    # OAuth" to "Manual Only" until real GBP API wiring is scoped.
+    "gbp":       {"posts_per_day": 1,  "posts_per_week": None,
+                    "manual_only": True},
     "wordpress": {"posts_per_day": None, "posts_per_week": 3},
-    "facebook":  {"posts_per_day": None, "posts_per_week": 3},
-    "instagram": {"posts_per_day": None, "posts_per_week": 3},
-    "linkedin":  {"posts_per_day": None, "posts_per_week": 2},
-    "youtube":   {"posts_per_day": None, "posts_per_week": 1},
-    "tiktok":    {"posts_per_day": None, "posts_per_week": 0},
+    # Phase H5.5 · Meta App Review path deferred — ship manual mode now.
+    "facebook":  {"posts_per_day": None, "posts_per_week": 3,
+                    "manual_only": True},
+    "instagram": {"posts_per_day": None, "posts_per_week": 3,
+                    "manual_only": True},
+    # Phase H5.5 · LinkedIn Marketing Developer Program deferred.
+    "linkedin":  {"posts_per_day": None, "posts_per_week": 2,
+                    "manual_only": True},
+    # Phase H5.5 · GCP + YT Data API v3 setup deferred.
+    "youtube":   {"posts_per_day": None, "posts_per_week": 1,
+                    "manual_only": True},
+    # Phase H5.5 · TikTok Content Posting API partner path deferred.
+    "tiktok":    {"posts_per_day": None, "posts_per_week": 0,
+                    "manual_only": True},
     "reddit":    {"posts_per_day": None, "posts_per_week": 0,
                     "manual_only": True},
 }
@@ -98,7 +127,16 @@ async def seed_defaults(tenant_id: str,
 
 async def list_for_tenant(tenant_id: str) -> List[Dict[str, Any]]:
     """Return every autopilot config row for the tenant, seeding
-    the defaults first when the tenant has no rows at all."""
+    the defaults first when the tenant has no rows at all.
+
+    Phase H5.5 · Feb-2026 — overlay the canonical ``manual_only``
+    flag from ``DEFAULT_CADENCE`` on top of persisted rows. This
+    lets us flip a platform to manual-only in code without a
+    per-tenant migration: existing rows that were seeded before
+    the flip keep their persisted cadence + enabled state but
+    surface the current ``manual_only`` truth to the API caller
+    (frontend pill + scheduler both consume this).
+    """
     rows = await db.soshie_autopilot_config.find(
         {"tenant_id": tenant_id}, {"_id": 0},
     ).sort("platform", 1).to_list(50)
@@ -107,7 +145,23 @@ async def list_for_tenant(tenant_id: str) -> List[Dict[str, Any]]:
         rows = await db.soshie_autopilot_config.find(
             {"tenant_id": tenant_id}, {"_id": 0},
         ).sort("platform", 1).to_list(50)
+    for r in rows:
+        canonical = DEFAULT_CADENCE.get(r.get("platform") or "", {})
+        if canonical.get("manual_only"):
+            r["manual_only"] = True
     return rows
+
+
+def is_manual_only(platform: str, cfg: Optional[Dict[str, Any]] = None) -> bool:
+    """Single source of truth used by both the scheduler and the
+    review-queue endpoints. Prefers the persisted flag but falls
+    back to ``DEFAULT_CADENCE`` so freshly-flipped platforms behave
+    correctly on tenants whose rows predate the flip.
+    """
+    if cfg and cfg.get("manual_only"):
+        return True
+    return bool(DEFAULT_CADENCE.get((platform or "").lower(), {})
+                    .get("manual_only", False))
 
 
 async def get_config(tenant_id: str, platform: str) -> Optional[Dict[str, Any]]:

@@ -99,6 +99,11 @@ def _cleanup(tid: str) -> None:
 # 1 · At most 1 GBP dispatch per calendar day
 # ═════════════════════════════════════════════════════════════════════
 def test_gbp_at_most_one_per_day(monkeypatch):
+    """Phase H5.5 · Feb-2026 — GBP flipped to manual_only. The
+    cadence guard still applies (still one GBP action per calendar
+    day) but the winner lands in ``awaiting_manual`` instead of
+    going through the wire dispatch. The wire adapter must NEVER
+    be called for GBP."""
     from services.soshie import autopilot_scheduler as aps
 
     tid = f"TEST-t-{uuid.uuid4().hex[:8]}"
@@ -109,34 +114,36 @@ def test_gbp_at_most_one_per_day(monkeypatch):
 
     async def _fake_exec(**kw):
         call_count["n"] += 1
-        # Simulate ``social_publish_log`` write that the real executor
-        # would have done (adapter path is mocked so we do it here).
-        _db.social_publish_log.insert_one({
-            "tenant_id": kw["tenant_id"], "platform": "gbp",
-            "action_id": kw["action_id"],
-            "dispatched_at": datetime.now(timezone.utc).isoformat(),
-        })
-        return {"results": [{"platform": "gbp",
-                              "status": "published",
-                              "platform_post_id": f"gbp-{call_count['n']}",
-                              "url": ""}]}
+        return {"results": []}
     monkeypatch.setattr(
         "routers.soshie_publishing.execute_publish_for_action",
         _fake_exec,
     )
     try:
-        # Tick 1 → first dispatch; second action skipped by cadence.
+        # Tick 1 → first action → awaiting_manual; second is
+        # deferred by the cadence gate.
         _run(aps._process_tenant(tid))
-        assert call_count["n"] == 1
+        assert call_count["n"] == 0, (
+            "manual-only GBP must not invoke the wire executor"
+        )
         row1 = _db.ai_employee_actions.find_one({"id": aid1})
         row2 = _db.ai_employee_actions.find_one({"id": aid2})
-        published = [r for r in (row1, row2) if r["status"] == "published"]
+        awaiting = [r for r in (row1, row2)
+                    if r["status"] == "awaiting_manual"]
         pending = [r for r in (row1, row2) if r["status"] == "pending"]
-        assert len(published) == 1, (row1, row2)
+        assert len(awaiting) == 1, (row1, row2)
         assert len(pending) == 1, (row1, row2)
-        # Tick 2 same-day → cadence still full, no new dispatch.
+        # Tick 2 same-day → cadence still full, no new manual-ready.
         _run(aps._process_tenant(tid))
-        assert call_count["n"] == 1, "cadence must not re-fire same day"
+        assert call_count["n"] == 0, (
+            "wire executor still never called on the second tick"
+        )
+        row1b = _db.ai_employee_actions.find_one({"id": aid1})
+        row2b = _db.ai_employee_actions.find_one({"id": aid2})
+        awaiting2 = [r for r in (row1b, row2b)
+                     if r["status"] == "awaiting_manual"]
+        # Still exactly one manual-ready row after tick 2.
+        assert len(awaiting2) == 1
     finally:
         _cleanup(tid)
 

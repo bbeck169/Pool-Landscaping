@@ -16,7 +16,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, Bot, Camera, Check, Edit3, Loader2,
-           Trash2 } from "lucide-react";
+           ClipboardCopy, Send, Trash2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button, Skeleton, Chip, EmptyState, Modal, TextInput }
@@ -116,8 +116,19 @@ function EditModal({ open, onClose, action, onDone }) {
 
 
 function ActionRow({ action, onDone }) {
-  const [busy, setBusy] = useState(null);   // "publish"|"reject"|"edit"
+  const [busy, setBusy] = useState(null);   // "publish"|"reject"|"edit"|"copy"|"posted"
   const [editOpen, setEditOpen] = useState(false);
+  // Phase H5.5 · Feb-2026 — manual-only affordance. A row is
+  // "manual-only" when the autopilot scheduler stamped it
+  // ``awaiting_manual`` (the scheduler skips the wire dispatch
+  // for platforms whose autopilot_config carries ``manual_only``:
+  // Facebook, Instagram, LinkedIn, YouTube, TikTok, GBP, Reddit).
+  // Copy + Mark Posted replace the "Publish now" button so
+  // operators can hand-paste into the target platform.
+  const isManualOnly = action.status === "awaiting_manual"
+                          || !!action.manual_only_platform;
+  const alreadyPosted = action.status === "published_manual"
+                             || action.manual_posted_at;
   const flags = action.moderation_flags || [];
   const humanReq = !!action.requires_human_approval;
   const created = action.created_at
@@ -148,6 +159,54 @@ function ActionRow({ action, onDone }) {
     }
   };
 
+  const copyToClipboard = async () => {
+    setBusy("copy");
+    try {
+      const text = action.draft?.text
+                       || action.draft_text
+                       || action.summary
+                       || "";
+      const mediaUrl = action.media_url
+                            || action.draft?.media_url
+                            || "";
+      const payload = mediaUrl ? `${text}\n\n${mediaUrl}` : text;
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(payload);
+      } else {
+        // Legacy fallback for jsdom / older browsers.
+        const ta = document.createElement("textarea");
+        ta.value = payload;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      toast.success("Copied to clipboard");
+    } catch (e) {
+      toast.error(e?.message || "Copy failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const markPosted = async () => {
+    setBusy("posted");
+    try {
+      const r = await api.post(
+        `/soshie/moderation/${action.id}/mark-posted`, {});
+      if (r?.already_posted) {
+        toast.info?.("Already marked as posted");
+      } else {
+        toast.success("Marked as posted");
+      }
+      onDone();
+    } catch (e) {
+      toast.error(e?.message || "Mark posted failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const reject = async () => {
     setBusy("reject");
     try {
@@ -165,6 +224,7 @@ function ActionRow({ action, onDone }) {
 
   const platform = (action.params?.platform)
                       || (action.draft?.platform)
+                      || action.manual_only_platform
                       || (action.action?.startsWith("soshie.publish_blog")
                             ? "wordpress" : "—");
   const previewText = (action.draft?.text || action.summary || "")
@@ -249,13 +309,38 @@ function ActionRow({ action, onDone }) {
         ) : null}
       </div>
       <div className="mt-3 flex gap-2 flex-wrap">
-        <Button variant="primary" onClick={publishNow}
-                   disabled={busy != null}
-                   testid={`review-publish-${action.id}`}>
-          {busy === "publish"
-            ? <><Loader2 className="animate-spin mr-1.5" size={14} />Publishing…</>
-            : <><Check size={14} className="mr-1.5" />Publish now</>}
-        </Button>
+        {isManualOnly ? (
+          <>
+            {/* Phase H5.5 · Feb-2026 — Manual-only affordance
+                for platforms whose autopilot_config carries
+                ``manual_only``. Copy + Mark Posted replace the
+                "Publish now" wire path. */}
+            <Button variant="primary" onClick={copyToClipboard}
+                       disabled={busy != null}
+                       testid={`review-copy-${action.id}`}>
+              {busy === "copy"
+                ? <><Loader2 className="animate-spin mr-1.5" size={14} />Copying…</>
+                : <><ClipboardCopy size={14} className="mr-1.5" />Copy post to clipboard</>}
+            </Button>
+            <Button variant="ghost" onClick={markPosted}
+                       disabled={busy != null || !!alreadyPosted}
+                       testid={`review-mark-posted-${action.id}`}>
+              {busy === "posted"
+                ? <><Loader2 className="animate-spin mr-1.5" size={14} />Marking…</>
+                : (alreadyPosted
+                    ? <><Check size={14} className="mr-1.5" />Posted</>
+                    : <><Send size={14} className="mr-1.5" />Mark as posted</>)}
+            </Button>
+          </>
+        ) : (
+          <Button variant="primary" onClick={publishNow}
+                     disabled={busy != null}
+                     testid={`review-publish-${action.id}`}>
+            {busy === "publish"
+              ? <><Loader2 className="animate-spin mr-1.5" size={14} />Publishing…</>
+              : <><Check size={14} className="mr-1.5" />Publish now</>}
+          </Button>
+        )}
         <Button variant="ghost" onClick={() => setEditOpen(true)}
                    disabled={busy != null}
                    testid={`review-edit-${action.id}`}>
@@ -304,7 +389,14 @@ export default function ReviewQueueTab() {
       const r2 = await api.get(
         "/ai-employees/actions?employee_key=soshie&status=deferred_no_credits&limit=100");
       const deferred = r2?.items || r2 || [];
-      const merged = [...filtered, ...deferred];
+      // Phase H5.5 · Feb-2026 — pull ``awaiting_manual`` rows so the
+      // manual-only draft flow lands in the same review queue as the
+      // wire-path items. Copy + Mark Posted affordances are gated
+      // in ActionRow by the row's status.
+      const r3 = await api.get(
+        "/ai-employees/actions?employee_key=soshie&status=awaiting_manual&limit=100");
+      const manualReady = r3?.items || r3 || [];
+      const merged = [...filtered, ...deferred, ...manualReady];
       merged.sort((a, b) =>
         (a.created_at || "").localeCompare(b.created_at || ""));
       setRows(merged);

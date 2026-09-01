@@ -28,7 +28,14 @@ router = APIRouter()
 
 AUDIT_EVENT_TYPE_APPROVE = "soshie_moderation_approve"
 AUDIT_EVENT_TYPE_REJECT = "soshie_moderation_reject"
-_QUEUE_STATUSES = {"awaiting_review", "blocked", "rejected"}
+# Phase H5.5 · Feb-2026 — manual-post audit event. Emitted when
+# the operator flips a manual-only draft from ``awaiting_manual``
+# to ``published_manual`` via the Review Queue "Mark as posted"
+# button. Distinct from the moderation approve/reject stream so
+# reporting can filter cleanly.
+AUDIT_EVENT_TYPE_MARK_POSTED = "soshie_manual_mark_posted"
+_QUEUE_STATUSES = {"awaiting_review", "awaiting_manual",
+                     "blocked", "rejected"}
 
 
 class RejectBody(BaseModel):
@@ -62,6 +69,7 @@ def _serialize_post(row: Dict[str, Any]) -> Dict[str, Any]:
         "id": row.get("id"),
         "tenant_id": row.get("tenant_id"),
         "platform": row.get("platform")
+                       or row.get("manual_only_platform")
                        or params.get("platform")
                        or (params.get("platforms") or [None])[0],
         "status": row.get("status"),
@@ -69,7 +77,18 @@ def _serialize_post(row: Dict[str, Any]) -> Dict[str, Any]:
                             or row.get("execute_at")
                             or row.get("created_at"),
         "preview": (draft.get("text") or "")[:180],
+        # Phase H5.5 · Feb-2026 — full draft body for the review
+        # queue's "Copy to clipboard" affordance. The 180-char
+        # preview is a display truncation; clipboard copy needs
+        # the un-truncated text so operators paste the real post
+        # verbatim into the target platform.
+        "draft_text": draft.get("text") or "",
+        "draft_title": draft.get("title") or "",
         "media_url": row.get("media_url") or draft.get("media_url"),
+        "manual_only_platform": row.get("manual_only_platform"),
+        "manual_ready_at": row.get("manual_ready_at"),
+        "manual_posted_at": row.get("manual_posted_at"),
+        "manual_posted_by": row.get("manual_posted_by"),
         "moderation_decision": row.get("moderation_decision"),
         "moderation_reasons": row.get("moderation_reasons") or [],
         "moderation_risk_level": row.get("moderation_risk_level"),
@@ -175,6 +194,54 @@ async def reject_post(
                   "reason": reason,
                   "moderation_decision": row.get("moderation_decision")})
     return {"ok": True, "post_id": post_id, "new_status": "rejected"}
+
+
+# ─── Phase H5.5 · Manual-only mark-posted endpoint ────────────────────
+@router.post("/soshie/moderation/{post_id}/mark-posted")
+async def mark_manual_posted(
+    post_id: str,
+    user: Dict[str, Any] = Depends(require_admin),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Phase H5.5 · Feb-2026 — operator confirms they have hand-
+    pasted the draft into the target platform. Flips the row from
+    ``awaiting_manual`` → ``published_manual`` with actor +
+    timestamp. **Idempotent**: calling twice returns 200 the second
+    time with ``already_posted=True`` so the button can be safely
+    hidden client-side but a double-click can't 500.
+
+    Non-``awaiting_manual`` states (already published_manual,
+    rejected, blocked, …) return 409 so the UI can't silently
+    corrupt an unrelated row.
+    """
+    row = await _load_post(post_id, tenant["id"])
+    cur = row.get("status")
+    if cur == "published_manual":
+        return {"ok": True, "post_id": post_id,
+                "new_status": "published_manual",
+                "already_posted": True}
+    if cur != "awaiting_manual":
+        raise HTTPException(
+            409,
+            f"post must be awaiting_manual to mark posted "
+            f"(currently {cur!r})",
+        )
+    await db.ai_employee_actions.update_one(
+        {"id": post_id, "tenant_id": tenant["id"]},
+        {"$set": {
+            "status": "published_manual",
+            "manual_posted_by": user.get("id"),
+            "manual_posted_at": now_iso(),
+            "updated_at": now_iso(),
+        }},
+    )
+    await _audit(tenant["id"], AUDIT_EVENT_TYPE_MARK_POSTED,
+                 user, post_id,
+                 {"platform": row.get("manual_only_platform")
+                                 or row.get("platform")})
+    return {"ok": True, "post_id": post_id,
+            "new_status": "published_manual",
+            "already_posted": False}
 
 
 # ─── Publishing summary (dashboard tile) ──────────────────────────────

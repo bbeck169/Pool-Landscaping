@@ -11,11 +11,11 @@
  */
 import React, { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { AlertCircle, CheckCircle2, Circle, Clock, XCircle,
+import { CheckCircle2, Clock, XCircle,
            Info } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
-import { Button, Skeleton, Chip } from "@/components/ui-kit";
+import { Skeleton, Chip } from "@/components/ui-kit";
 
 
 const PLATFORM_LABELS = {
@@ -43,8 +43,14 @@ function Card({ children, className = "", testId }) {
 
 
 function StatusBadge({ status }) {
-  // status: {ok: bool, detail: str, reddit: bool}
-  if (status?.reddit) {
+  // status: {ok: bool, detail: str, manual_only: bool}
+  // Phase H5.5 · Feb-2026 — ``manual_only`` is now a first-class
+  // status derived from the platform's autopilot_config row.
+  // Previously this only fired for Reddit; the H5.5 flip put 5
+  // more platforms (Facebook, Instagram, LinkedIn, YouTube,
+  // TikTok, GBP) on the same rail so operators can enable a
+  // draft-only autopilot flow without waiting on OAuth wiring.
+  if (status?.manual_only) {
     return <Chip label="Manual Only" tone="warning"
                     testid="platform-badge-manual" />;
   }
@@ -161,8 +167,16 @@ function CadenceInput({ value, onSubmit, testid, disabled }) {
 
 function PlatformRow({ cfg, status, onPatch }) {
   const platform = cfg.platform;
+  // Phase H5.5 · Feb-2026 — Reddit remains hard-blocked at the UI
+  // layer (S2 defence-in-depth + product decision not to automate
+  // Reddit). The other 5 manual-only platforms (Facebook,
+  // Instagram, LinkedIn, YouTube, TikTok, GBP) got their toggles
+  // + cadence fields ENABLED so operators can queue drafts into
+  // the manual review flow. Only the Reddit ``disabled`` guard
+  // survives.
   const isReddit = platform === "reddit";
   const isDaily = platform === "gbp";
+  const isManualOnly = !!cfg.manual_only;
   const [busy, setBusy] = useState(false);
 
   const patch = async (delta, revertKey, revertValue) => {
@@ -180,7 +194,7 @@ function PlatformRow({ cfg, status, onPatch }) {
   };
 
   const toggleEnabled = () => {
-    if (isReddit) return;   // hard-blocked
+    if (isReddit) return;   // hard-blocked (S2)
     const prev = cfg.enabled;
     onPatch({ ...cfg, enabled: !prev });                    // optimistic
     patch({ enabled: !prev }, "enabled", prev);
@@ -202,7 +216,7 @@ function PlatformRow({ cfg, status, onPatch }) {
           </span>
           <StatusBadge status={{
             ...status,
-            reddit: isReddit,
+            manual_only: isManualOnly,
           }} />
         </div>
         <div className="text-xs mt-1"
@@ -237,7 +251,9 @@ function PlatformRow({ cfg, status, onPatch }) {
           aria-label={`Toggle ${platform} autopilot`}
           title={isReddit
             ? "Manual only — Reddit does not allow autopilot publishing"
-            : ""}
+            : (isManualOnly
+                ? "Manual Only — drafts land in the review queue for hand-paste"
+                : "")}
           className="relative inline-flex h-6 w-11 items-center rounded-full"
           style={{
             backgroundColor: cfg.enabled ? colors.brand : "#94a3b8",
