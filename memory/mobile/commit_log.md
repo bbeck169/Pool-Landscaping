@@ -1,3 +1,21 @@
+## Iteration 54 — Phase H8: Charge Templates + Soshie Moderation Queue (Mobile Parity)
+- **Commit**: 433c9373277841f1388d1567462b34e3b7e03dc0
+- **Date**: 2026-09-01
+- **Changes**:
+  - NEW: chargeTemplates.ts API layer (27 LOC) — getChargeTemplates + applyChargeTemplate
+  - NEW: ChargeTemplatePickerModal.tsx (280 LOC) — searchable bottom-sheet modal for picking templates
+  - MODIFIED: LineItemsSection.tsx — added "Template" button (admin-only), opened picker, refreshes on apply
+  - NEW: soshieModeration.ts API layer (43 LOC) — getModerationQueue + approve/reject/markPosted
+  - NEW: soshie-moderation.tsx screen (480 LOC) — full admin moderation queue with 3 tabs, actions (Approve/Reject/Copy/Mark posted), expo-clipboard, pull-to-refresh
+  - MODIFIED: _layout.tsx — registered soshie-moderation hidden tab
+  - MODIFIED: sections.ts — added Soshie Moderation tile to admin Marketing section
+  - Metro 2159 modules clean, 0 lint issues
+- **Files modified**: `LineItemsSection.tsx` (mod), `_layout.tsx` (mod), `sections.ts` (mod)
+- **Files created**: `chargeTemplates.ts`, `ChargeTemplatePickerModal.tsx`, `soshieModeration.ts`, `soshie-moderation.tsx`
+- **Web files referenced**: `ApplyChargeTemplateButton.jsx`, `SoshieModerationQueue.jsx`, `ReviewQueueTab.jsx`
+
+
+
 ## Iteration 53 — Phase G4b: Portal Activation Filter (Expo Mobile)
 - **Commit**: 6b29c626468c1e1107525b6d3b2071bee738eb28
 - **Date**: 2026-08-31
