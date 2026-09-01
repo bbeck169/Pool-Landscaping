@@ -468,34 +468,34 @@ export default function AdminDashboard() {
         </div>
       ) : null}
 
+      {/* Phase K5 · Feb-2026 — Dashboard tile reorder.  Revenue
+          Forecast + EBIT are now the two topmost tiles, sitting
+          directly above the Mass Messaging card so an operator
+          landing on the dashboard sees the forward-looking money
+          numbers first.  RevenueForecast still binds to the shared
+          ``revenueRange`` state that the Revenue-insights filter
+          controls below — changing the filter still refetches the
+          top tile in place. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6"
+              data-testid="dashboard-topline-tiles">
+        <RevenueForecastTile range={revenueRange} />
+        {(user?.role === "super_admin" || user?.role === "admin") && (
+          <div data-testid="dashboard-ebit-tile-slot">
+            <EbitTile />
+          </div>
+        )}
+      </div>
+
       {/* Phase 15 · Feb-2026 — Mass Messaging top card. Self-guards on
           role (admin / super_admin only). Renders above the weather
           widget so it's the first CTA an admin sees on the Dashboard. */}
       <MassMessagingCard />
-
-      {/* Feb-2026 · Admin Observability Bundle — data-integrity tile.
-          super_admin only. Reads GET /admin/data-repair/status and
-          surfaces a red pill + F5 sentinel reset button when the F3
-          boot check found dangling refs OR log-only mode is active. */}
-      {user?.role === "super_admin" ? (
-        <DataIntegrityTile userRole={user?.role} />
-      ) : null}
 
       {/* Phase F3 · Feb-2026 — Soshie Publishing tile. Admin+ (super_admin
           / admin / owner) since moderation queue is admin-gated. */}
       {["super_admin", "admin", "owner"].includes(user?.role) ? (
         <div className="mb-6">
           <SoshiePublishingTile />
-        </div>
-      ) : null}
-
-      {/* Phase H5 · Feb-2026 — Crew Productivity tile. Admin+ only
-          (endpoint gate is ``require_admin`` which allows admin /
-          super_admin / owner). Weekly-default revenue-per-crew
-          rollup driven by the F6a job-attribution semantic. */}
-      {["super_admin", "admin", "owner"].includes(user?.role) ? (
-        <div className="mb-6">
-          <CrewProductivityTile />
         </div>
       ) : null}
 
@@ -547,17 +547,12 @@ export default function AdminDashboard() {
         </button>
       ) : null}
 
-      {/* Phase 53e · Feb-2026 — EBIT exec-summary tile. Restricted
-          to super_admin + admin (manager sees the full report page
-          but NOT this dashboard tile, per Phase 53e scope). */}
-      {(user?.role === "super_admin" || user?.role === "admin") && (
-        <div className="mb-6" data-testid="dashboard-ebit-tile-slot">
-          <EbitTile />
-        </div>
-      )}
-
       {/* Feb-2026 · Revenue tiles — donut + forecast with a shared
-          date-range filter.  Both tiles refetch when the range changes. */}
+          date-range filter.  Both tiles refetch when the range changes.
+          Phase K5 · Feb-2026 — RevenueForecastTile was pulled OUT of
+          this section and promoted to the topline row above.  The
+          shared ``revenueRange`` state still drives the top tile so
+          the filter here controls both surfaces. */}
       <div className="mb-6" data-testid="revenue-tiles-section">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-bold"
@@ -589,10 +584,24 @@ export default function AdminDashboard() {
           <RevenueByCategoryTile range={revenueRange} />
           <IncomeByServiceCategoryTile range={revenueRange} />
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-          <RevenueForecastTile range={revenueRange} />
-        </div>
       </div>
+
+      {/* Phase K5 · Feb-2026 — Data Integrity + Crew Productivity
+          were previously stacked above the Mass Messaging card.
+          Both are now rendered directly below the Revenue-insights
+          (a.k.a. Revenue Trend) section so the topline stays focused
+          on money forecasts and the operational-health tiles sit
+          adjacent to the KPI grid.  Role gates are unchanged
+          (DataIntegrity → super_admin only; CrewProductivity →
+          admin+). */}
+      {user?.role === "super_admin" ? (
+        <DataIntegrityTile userRole={user?.role} />
+      ) : null}
+      {["super_admin", "admin", "owner"].includes(user?.role) ? (
+        <div className="mb-6">
+          <CrewProductivityTile />
+        </div>
+      ) : null}
 
       {/* KPI grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
