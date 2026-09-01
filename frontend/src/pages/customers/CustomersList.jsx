@@ -79,7 +79,7 @@ export default function CustomersList() {
   // the anonymized-warning affordance in the RestoreCustomerButton
   // modal (P11b) but the chip + inline Restore button are open to
   // every admin-tier role.
-  const isSuperAdmin =
+  const _isSuperAdmin =
     role === "super_admin" || effectiveRole === "super_admin";
   const canManageDeleted =
     isAdmin ||
@@ -109,8 +109,12 @@ export default function CustomersList() {
     if (urlTab) return urlTab;
     try {
       const stored = localStorage.getItem(_COHORT_STORAGE_KEY);
+      // Phase H4 · Feb-2026 — accept "waitlist" as a persisted cohort
+      // value alongside the F6c set. Keeps the localStorage key
+      // singular across all five segmented tabs.
       if (stored === "active" || stored === "inactive" ||
-          stored === "muted" || stored === "all") return stored;
+          stored === "muted" || stored === "waitlist" ||
+          stored === "all") return stored;
     } catch { /* localStorage unavailable — best-effort */ }
     return "active";
   })();
@@ -132,7 +136,7 @@ export default function CustomersList() {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
-  const [counts, setCounts] = useState({ active: null, inactive: null });
+  const [counts, setCounts] = useState({ active: null, inactive: null, waitlist: null });
 
   const [rows, setRows] = useState(null);
   // Feb-2026 · P35 — server-side pagination. Page is URL-synced so
@@ -277,9 +281,11 @@ export default function CustomersList() {
   });
   const searchDeb = useDebounced(q);
 
-  // Non-admin users cannot land on the inactive or muted cohort — redirect to active.
+  // Non-admin users cannot land on the inactive, muted, or waitlist
+  // cohort — redirect to active. Phase H4 · Feb-2026 folds ``waitlist``
+  // into the same admin gate as inactive/muted.
   useEffect(() => {
-    if (!isAdmin && (tab === "inactive" || tab === "muted")) setTab("active");
+    if (!isAdmin && (tab === "inactive" || tab === "muted" || tab === "waitlist")) setTab("active");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
@@ -333,6 +339,13 @@ export default function CustomersList() {
     if (tab === "active") params.set("is_active", "true");
     else if (tab === "inactive") params.set("is_active", "false");
     else if (tab === "muted") params.set("is_muted", "true");
+    // Phase H4 · Feb-2026 — Waitlist cohort tab. Sends the backend
+    // ``?waitlisted=true`` predicate (canonical ``customers.waitlisted``
+    // field toggled by the Add/Remove-from-waitlist bulk actions).
+    // Waitlist is orthogonal to active/inactive/muted — those filters
+    // are intentionally omitted so a waitlisted-and-muted row still
+    // shows here. Stacks as intersection with the G4a portal filter.
+    else if (tab === "waitlist") params.set("waitlisted", "true");
     if (missingCardOnly) params.set("missing_card", "true");
     // Phase G4a · Feb-2026 — Portal-activation filter. Only send the
     // param when the operator has selected a non-default value so
@@ -407,15 +420,21 @@ export default function CustomersList() {
       // Feb-2026 · P28 — muted-count endpoint is admin/manager/
       // super_admin only; tech role 403s. Skip the call for tech to
       // avoid a noisy request that will always fail.
+      // Phase H4 · Feb-2026 — the Waitlist tab is also admin-only
+      // (same gate as inactive/muted); tag its count call onto the
+      // admin batch so tech never hits an unnecessary request.
       if (isAdmin) {
         promises.push(api.get(
           `/customers?is_muted=true&count_only=true${p43Suffix}`));
+        promises.push(api.get(
+          `/customers?waitlisted=true&count_only=true${p43Suffix}`));
       }
       const results = await Promise.all(promises);
       setCounts({
         active: results[0]?.count ?? 0,
         inactive: results[1]?.count ?? 0,
         muted: isAdmin ? (results[2]?.count ?? 0) : null,
+        waitlist: isAdmin ? (results[3]?.count ?? 0) : null,
       });
     } catch { /* silent — counts are advisory */ }
   };
@@ -860,6 +879,11 @@ export default function CustomersList() {
     { k: "active", label: "Active", count: counts.active, testid: "tab-active" },
     { k: "inactive", label: "Inactive", count: counts.inactive, testid: "tab-inactive", adminOnly: true },
     { k: "muted", label: "Muted", count: counts.muted, testid: "tab-muted", adminOnly: true },
+    // Phase H4 · Feb-2026 — Waitlist cohort tab. Fifth segment,
+    // admin-only (same gate as inactive/muted). Count sourced from
+    // ``GET /customers?waitlisted=true&count_only=true`` and stacks
+    // as intersection with the G4a portal-activation filter.
+    { k: "waitlist", label: "Waitlist", count: counts.waitlist, testid: "tab-waitlist", adminOnly: true },
     { k: "all", label: "All", count: null, testid: "tab-all", adminOnly: true },
   ];
 
