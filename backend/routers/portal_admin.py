@@ -367,3 +367,184 @@ async def portal_history(cid: str,
         "count": len(rows),
         "events": rows,
     }
+
+
+# ─── Phase H1 · Feb-2026 — Bulk portal invite ──────────────────────────
+class _H1BulkInviteBody(BaseModel):
+    customer_ids: list[str]
+    reason: Optional[str] = None
+
+
+_H1_BULK_MAX = 200
+_H1_RATE_WINDOW_SECS = 60 * 60
+_H1_RATE_MAX_PER_WINDOW = 500
+
+
+@router.post("/admin/customers/portal-invite/bulk")
+async def portal_invite_bulk(
+    body: _H1BulkInviteBody,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase H1 · Feb-2026 — bulk portal invite / password rotate.
+
+    Reuses the single-invite pipeline (``_do_portal_provision``) verbatim
+    so send behaviour, audit trail, and idempotency stay in lockstep
+    with the ``POST /customers/{cid}/portal-invite`` endpoint that
+    already ships. Never parallel — 100ms delay between invites to
+    respect RC / Resend upstream throttling.
+
+    Rate-limit: 500 invites per tenant per 60-min window, tracked in
+    ``db.portal_invite_rate_limit`` (created lazily). Exceeding
+    returns 429.  Batch cap: ``_H1_BULK_MAX`` (200); exceeding
+    returns 400 forcing the client to page.
+    """
+    import asyncio
+    from datetime import datetime, timezone, timedelta
+
+    tid = tenant["id"]
+    ids = [i for i in (body.customer_ids or []) if isinstance(i, str)]
+    if not ids:
+        raise HTTPException(400, "customer_ids required (non-empty list)")
+    if len(ids) > _H1_BULK_MAX:
+        raise HTTPException(
+            400,
+            f"Batch too large ({len(ids)} > {_H1_BULK_MAX}). "
+            f"Page the client into batches of {_H1_BULK_MAX} or smaller.",
+        )
+
+    # Rate-limit sliding window
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(seconds=_H1_RATE_WINDOW_SECS)
+    already_sent = await db.portal_invite_rate_limit.count_documents({
+        "tenant_id": tid,
+        "sent_at": {"$gte": window_start.isoformat()},
+    })
+    remaining = max(0, _H1_RATE_MAX_PER_WINDOW - already_sent)
+    if remaining <= 0:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "detail": "portal_invite_rate_limited",
+                "message": (
+                    f"Tenant limit of {_H1_RATE_MAX_PER_WINDOW} portal "
+                    f"invites per {_H1_RATE_WINDOW_SECS // 60} minutes "
+                    f"reached. Try again shortly."
+                ),
+                "window_seconds": _H1_RATE_WINDOW_SECS,
+                "limit": _H1_RATE_MAX_PER_WINDOW,
+            },
+        )
+
+    batch_id = new_id()
+    counts = {
+        "requested": len(ids),
+        "sent": 0,
+        "skipped_already_activated": 0,
+        "skipped_no_contact": 0,
+        "skipped_wrong_tenant": 0,
+        "failed_send": 0,
+    }
+    failures: list[dict] = []
+
+    # De-dupe within a single batch (case A calls a→b, b already ran)
+    seen: set = set()
+
+    for cid in ids:
+        if cid in seen:
+            counts["skipped_already_activated"] += 1
+            continue
+        seen.add(cid)
+
+        # Stop if rate window budget exhausted mid-batch
+        if counts["sent"] >= remaining:
+            failures.append({
+                "customer_id": cid,
+                "reason": "rate_limit_mid_batch",
+            })
+            counts["failed_send"] += 1
+            continue
+
+        cust = await db.customers.find_one(
+            {"id": cid}, {"_id": 0, "id": 1, "tenant_id": 1,
+                          "email": 1, "phone": 1, "has_login": 1},
+        )
+        if not cust or cust.get("tenant_id") != tid:
+            counts["skipped_wrong_tenant"] += 1
+            failures.append({
+                "customer_id": cid,
+                "reason": "wrong_tenant_or_missing",
+            })
+            continue
+        if cust.get("has_login") is True:
+            counts["skipped_already_activated"] += 1
+            failures.append({
+                "customer_id": cid,
+                "reason": "already_activated",
+            })
+            continue
+        if not (cust.get("email") or "").strip() and \
+                not (cust.get("phone") or "").strip():
+            counts["skipped_no_contact"] += 1
+            failures.append({
+                "customer_id": cid,
+                "reason": "no_email_or_phone",
+            })
+            continue
+
+        try:
+            # Reuse the single-invite pipeline verbatim.
+            await _do_portal_provision(
+                cid, tid, user, explicit_password=None,
+            )
+            counts["sent"] += 1
+            # Stamp rate-limit ledger AFTER a successful send.
+            await db.portal_invite_rate_limit.insert_one({
+                "id": new_id(),
+                "tenant_id": tid,
+                "customer_id": cid,
+                "batch_id": batch_id,
+                "actor_id": (user or {}).get("id"),
+                "sent_at": now_iso(),
+            })
+        except HTTPException as exc:
+            counts["failed_send"] += 1
+            failures.append({
+                "customer_id": cid,
+                "reason": "http_error",
+                "error": str(exc.detail)[:200],
+            })
+        except Exception as exc:  # noqa: BLE001
+            counts["failed_send"] += 1
+            failures.append({
+                "customer_id": cid,
+                "reason": "exception",
+                "error": str(exc)[:200],
+            })
+
+        # 100ms polite spacing so we don't spike RC/Resend upstream
+        # rate-limits — only applied between invites, not after the
+        # last one.
+        await asyncio.sleep(0.1)
+
+    payload = {
+        **counts,
+        "batch_id": batch_id,
+        "failures": failures,
+    }
+    try:
+        await db.audit_events.insert_one({
+            "id": new_id(),
+            "event_type": "portal_invite_bulk",
+            "tenant_id": tid,
+            "actor_id": (user or {}).get("id"),
+            "actor_email": (user or {}).get("email"),
+            "reason": (body.reason or "")[:200] or None,
+            "timestamp": now_iso(),
+            "payload": {k: v for k, v in payload.items() if k != "failures"},
+            "failure_count": len(failures),
+        })
+    except Exception as _ae:  # noqa: BLE001
+        logger.warning(f"[phase-h1] audit_events insert failed: {_ae}")
+
+    return payload

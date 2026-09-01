@@ -1,3 +1,13 @@
+## Iteration 53 — Phase G4b: Portal Activation Filter (Expo Mobile)
+- **Commit**: 6b29c626468c1e1107525b6d3b2071bee738eb28
+- **Date**: 2026-08-31
+- **Changes**:
+  - MODIFIED: customers.tsx — portal filter state + AsyncStorage persistence + portal_status URL param + chip UI
+  - NEW: mobile-portal-filter.test.tsx (178 LOC, 7 tests)
+  - All 7 tests pass, 43 regression tests pass, Metro 2134 modules clean
+- **Files modified**: `customers.tsx` (mod), 1 test file (new)
+
+
 ## Iteration 52 — Phase F6b: Mobile Filter Bundle (Crew + Customer Status)
 - **Commit**: 7946eea26c01e474fe9aa357e91066ec53181d5c
 - **Date**: 2026-08-31

@@ -46,10 +46,17 @@ export default function Customers() {
   const STATUS_KEY = "customerListFilter.status";
   const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "all">("active");
 
-  // Load persisted status filter.
+  // Phase G4b — Portal activation filter.
+  const PORTAL_KEY = "customerListFilter.portalStatus";
+  const [portalFilter, setPortalFilter] = useState<"all" | "activated" | "not_activated">("all");
+
+  // Load persisted filters on mount.
   useEffect(() => {
     storage.getItem<string>(STATUS_KEY, "active").then((v: any) => {
       if (v === "active" || v === "inactive" || v === "all") setStatusFilter(v);
+    }).catch(() => {});
+    storage.getItem<string>(PORTAL_KEY, "all").then((v: any) => {
+      if (v === "all" || v === "activated" || v === "not_activated") setPortalFilter(v);
     }).catch(() => {});
   }, []);
 
@@ -65,6 +72,8 @@ export default function Customers() {
       if (showDeleted && canManageDeleted) qp.set("include_deleted", "true");
       // Phase F6b — Active/Inactive/All filter.
       if (statusFilter !== "all") qp.set("is_active", String(statusFilter === "active"));
+      // Phase G4b — Portal activation filter.
+      if (portalFilter !== "all") qp.set("portal_status", portalFilter);
       const res: any = await api.get(`/customers?${qp.toString()}`);
       const rows = Array.isArray(res) ? res : (res?.items || []);
       const tp = Number.isFinite(res?.total_pages)
@@ -88,7 +97,7 @@ export default function Customers() {
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, [statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [statusFilter, portalFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMore = useCallback(() => {
     if (loadingMore) return;
@@ -191,6 +200,27 @@ export default function Customers() {
           >
             <Text style={[cs.segmentText, statusFilter === seg && cs.segmentTextActive]}>
               {seg === "active" ? "Active" : seg === "inactive" ? "Inactive" : "All"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {/* Phase G4b — Portal activation filter chips */}
+      <View style={cs.portalRow} testID="customer-portal-filter">
+        <Ionicons name="key-outline" size={13} color={colors.muted} style={{ marginRight: 4 }} />
+        {(["all", "activated", "not_activated"] as const).map((opt) => (
+          <Pressable
+            key={opt}
+            onPress={() => {
+              setPortalFilter(opt);
+              storage.setItem(PORTAL_KEY, opt).catch(() => {});
+              setPage(1);
+            }}
+            style={[cs.portalChip, portalFilter === opt && cs.portalChipActive]}
+            testID={`customer-portal-${opt}`}
+            accessibilityRole="button"
+          >
+            <Text style={[cs.portalChipText, portalFilter === opt && cs.portalChipTextActive]}>
+              {opt === "all" ? "All" : opt === "activated" ? "Activated" : "Not activated"}
             </Text>
           </Pressable>
         ))}
@@ -511,5 +541,29 @@ const cs = StyleSheet.create({
   },
   segmentTextActive: {
     color: colors.onSurface,
+  },
+  portalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    gap: 4,
+  },
+  portalChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceTertiary,
+  },
+  portalChipActive: {
+    backgroundColor: "#0D9488",
+  },
+  portalChipText: {
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: colors.muted,
+  },
+  portalChipTextActive: {
+    color: "#fff",
   },
 });

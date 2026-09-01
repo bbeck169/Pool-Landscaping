@@ -37,6 +37,7 @@ _REBOUND_MODULES = (
     "routers.job_media_line_items",
     "routers.income_categories",
     "routers.jobs",
+    "routers.portal_admin",
     "routers.schedule_reorder",
     "routers.soshie_moderation",
     "server",

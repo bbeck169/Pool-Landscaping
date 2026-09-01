@@ -759,6 +759,50 @@ export default function CustomersList() {
     }
   };
 
+  // ─── Phase H1 · Feb-2026 — Bulk portal invite ───────────────────────
+  const [h1ConfirmOpen, setH1ConfirmOpen] = useState(false);
+  const [h1Busy, setH1Busy] = useState(false);
+  const [h1Result, setH1Result] = useState(null); // {counts, failures}
+  const _h1SelectedRows = () =>
+    (rows || []).filter((r) => selected.has(r.id));
+  const _h1AlreadyActivatedCount = () =>
+    _h1SelectedRows().filter((r) => r.has_login === true).length;
+  const doBulkPortalInvite = async () => {
+    if (!selected.size) return;
+    const ids = Array.from(selected);
+    setH1Busy(true);
+    try {
+      const res = await api.post(
+        "/admin/customers/portal-invite/bulk",
+        { customer_ids: ids },
+      );
+      setH1Result(res);
+      const parts = [];
+      parts.push(`Sent ${res.sent}`);
+      const skipTotal = (res.skipped_already_activated || 0)
+        + (res.skipped_no_contact || 0)
+        + (res.skipped_wrong_tenant || 0);
+      if (skipTotal) {
+        parts.push(
+          `Skipped ${skipTotal} (${res.skipped_already_activated} already `
+          + `activated, ${res.skipped_no_contact} no contact)`,
+        );
+      }
+      if (res.failed_send) parts.push(`Failed ${res.failed_send}`);
+      setToast({ tone: res.failed_send ? "warning" : "success",
+                    message: parts.join(". ") + "." });
+      setSelected(new Set());
+      setH1ConfirmOpen(false);
+      load();
+    } catch (e) {
+      const msg = e?.data?.detail?.message || e?.message
+        || "Bulk portal invite failed";
+      setToast({ tone: "error", message: msg });
+    } finally {
+      setH1Busy(false);
+    }
+  };
+
   // Feb-2026 · P45 — "Next visit" formatter.
   // • null / empty / unparseable  → "—"
   // • current year                → "Aug 23"
@@ -1196,6 +1240,20 @@ export default function CustomersList() {
           <Button variant="ghost" onClick={() => bulk("remove_waitlist")}>
             Remove from waitlist
           </Button>
+          {/* Phase H1 · Feb-2026 — Bulk portal invite (admin+ only).
+              Opens a confirm modal that surfaces current filter
+              state + a warning about any pre-activated rows in the
+              selection so ops don't accidentally re-invite a
+              customer that already has portal access. */}
+          {isAdmin ? (
+            <Button
+              variant="ghost"
+              onClick={() => setH1ConfirmOpen(true)}
+              testid="bulk-portal-invite"
+            >
+              Send portal invite ({selected.size})
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -1920,6 +1978,147 @@ export default function CustomersList() {
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {/* ─── Phase H1 · Feb-2026 — Bulk portal invite confirm modal ────
+          Surfaces the current filter state and any pre-activated
+          rows in the selection so admins don't accidentally chase
+          the wrong cohort or re-invite already-activated customers. */}
+      {h1ConfirmOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setH1ConfirmOpen(false);
+          }}
+          data-testid="h1-bulk-portal-invite-modal"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+            style={{ backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold"
+                style={{ color: colors.onSurface }}
+                data-testid="h1-modal-title">
+              Send portal invite to {selected.size} customer
+              {selected.size === 1 ? "" : "s"}?
+            </h2>
+            <div
+              className="text-xs mt-2 rounded-lg px-3 py-2"
+              style={{ backgroundColor: colors.surfaceSecondary,
+                        color: colors.onSurfaceSecondary || colors.muted }}
+              data-testid="h1-modal-filter-state"
+            >
+              Currently filtered: Portal =
+              {" "}
+              <span className="font-semibold">
+                {portalStatus === "all" ? "All"
+                  : portalStatus === "activated" ? "Activated"
+                  : "Not activated"}
+              </span>
+              {" · "}Cohort =
+              {" "}
+              <span className="font-semibold">
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </span>
+              {" · "}
+              <span className="font-semibold">
+                {selected.size} customer{selected.size === 1 ? "" : "s"} selected
+              </span>
+            </div>
+
+            {_h1AlreadyActivatedCount() > 0 ? (
+              <div
+                className="mt-3 text-sm rounded-lg px-3 py-2"
+                style={{ backgroundColor: "#FEF3C7", color: "#78350F" }}
+                data-testid="h1-modal-already-warning"
+              >
+                {_h1AlreadyActivatedCount()} of your selected customers already
+                have portal access — they'll be skipped.
+              </div>
+            ) : null}
+
+            <p className="text-sm mt-3"
+               style={{ color: colors.onSurfaceSecondary || colors.muted }}>
+              Each recipient will receive an invite via email (if
+              present) or SMS. Customers with no email AND no phone
+              will be skipped. This action is throttled at 500
+              invites per hour per tenant.
+            </p>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setH1ConfirmOpen(false)}
+                className="px-4 py-2 rounded-xl text-sm font-semibold"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                          color: colors.onSurface }}
+                data-testid="h1-modal-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={h1Busy}
+                onClick={doBulkPortalInvite}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-40"
+                style={{ backgroundColor: colors.brandPrimary || "#2563EB" }}
+                data-testid="h1-modal-confirm"
+              >
+                {h1Busy ? "Sending…" :
+                  `Send ${selected.size} invite${selected.size === 1 ? "" : "s"}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Phase H1 · Feb-2026 — Failure details side-panel. Rendered
+          in-place off the summary toast so ops can see per-row
+          reasons + error strings for any bulk-invite send that
+          didn't succeed. */}
+      {h1Result && (h1Result.failures || []).length > 0 ? (
+        <div
+          className="fixed bottom-6 right-6 z-40 rounded-2xl p-4 shadow-2xl w-full max-w-sm"
+          style={{ backgroundColor: colors.surface,
+                    border: `1px solid ${colors.border}` }}
+          data-testid="h1-failure-details"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-bold"
+                style={{ color: colors.onSurface }}>
+              Bulk invite details
+              ({(h1Result.failures || []).length})
+            </h3>
+            <button
+              type="button"
+              onClick={() => setH1Result(null)}
+              className="text-xs px-2 py-0.5 rounded"
+              style={{ backgroundColor: colors.surfaceSecondary,
+                        color: colors.onSurface }}
+              data-testid="h1-failure-close"
+            >
+              Close
+            </button>
+          </div>
+          <ul className="text-xs space-y-1 max-h-64 overflow-auto"
+              style={{ color: colors.onSurfaceSecondary || colors.muted }}>
+            {(h1Result.failures || []).slice(0, 25).map((f, i) => (
+              <li key={i} className="truncate">
+                · <span className="font-mono">{(f.customer_id || "").slice(0, 8)}</span>
+                {" · "}{f.reason}
+                {f.error ? ` — ${f.error}` : ""}
+              </li>
+            ))}
+            {(h1Result.failures || []).length > 25 ? (
+              <li className="italic">
+                … and {(h1Result.failures || []).length - 25} more.
+              </li>
+            ) : null}
+          </ul>
         </div>
       ) : null}
     </div>
