@@ -35,6 +35,7 @@ _REBOUND_MODULES = (
     "routers.charge_templates",
     "routers.crew_productivity",
     "routers.customers",
+    "routers.communication_timeline",
     "routers.dashboard_revenue",
     "routers.data_repair",
     "routers.drift_alerts",

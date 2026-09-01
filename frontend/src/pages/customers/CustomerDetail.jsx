@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
-import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign } from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock } from "lucide-react";
 import { api } from "@/api";
 import { colors } from '@/theme';
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
@@ -15,6 +15,7 @@ import CustomerCommunicationsTimeline from "@/components/customers/CustomerCommu
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
+import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
 import PropertiesTab from "./PropertiesTab";
 import MasterBillingCard from "./MasterBillingCard";
@@ -830,6 +831,11 @@ export default function CustomerDetail() {
             <Info label="Notes" value={customer.notes} preserveNewlines />
           ) : null}
 
+          {/* Phase I7 · Wave A · Feb-2026 — Communication Timeline
+              tab. Merges SMS + email dispatch rows and portal-invite
+              audit events into a single per-customer stream. */}
+          {null}
+
           {tab === "credits" ? (
             <CustomerCreditsPanel customerId={id} />
           ) : null}
@@ -861,6 +867,23 @@ export default function CustomerDetail() {
             />
           ) : null}
         </div>
+
+        {/* Phase I7 · Wave A · Feb-2026 (revised) — Communication
+            Timeline mounted OUTSIDE the tab-panel switch so it stays
+            visible regardless of which tab is active. Sits at the
+            bottom of the page above modal region. */}
+        <section
+          className="mt-6"
+          data-testid="customer-detail-comm-timeline-section"
+        >
+          <h2
+            className="text-base font-bold mb-3 flex items-center gap-2"
+            style={{ color: colors.onSurface }}
+          >
+            <Clock size={16} /> Communication Timeline
+          </h2>
+          <CommunicationTimeline customerId={id} variant="admin" />
+        </section>
       </div>
 
       <PortalLoginModal

@@ -479,6 +479,12 @@ api_router.include_router(_i3_admin_health_check.router)
 # is shimmed to the same job flow so bookmarks keep working.
 from routers import soshie_brand_ingest as _i4_soshie_brand_ingest  # noqa: E402
 api_router.include_router(_i4_soshie_brand_ingest.router)
+# Phase I7 · Feb-2026 — Communication timeline per customer
+# (admin+ + customer own-record). Merges notification_dispatch_log
+# + audit_events (portal_invite_bulk) into a single time-sorted
+# stream with cursor pagination + portal field-stripping.
+from routers import communication_timeline as _i7_comm_timeline  # noqa: E402
+api_router.include_router(_i7_comm_timeline.router)
 # Phase D · Feb-2026 — Drift alerting settings + test-fire.
 from routers import drift_alerts as _phase_d_drift_alerts  # noqa: E402
 api_router.include_router(_phase_d_drift_alerts.router)

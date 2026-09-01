@@ -22,6 +22,8 @@ import PortalBookingPhotos from "@/components/portal/PortalBookingPhotos";
 import PaymentForm from "@/components/PaymentForm";
 // Phase I5 · Wave B · Feb-2026 — shared payment-method tiles.
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
+// Phase I7 · Wave B · Feb-2026 — shared per-customer comms timeline.
+import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
 // Phase 30 · Feb-2026 — shared TechAvatar for tech identity chips.
 import TechAvatar from "@/components/common/TechAvatar";
 import { PageHeader, Button, Skeleton, Chip, StatusPill, TextInput, EmptyState, Toast } from "@/components/ui-kit";
@@ -452,6 +454,14 @@ export function PortalMessages() {
   // here (data-testid="msg-ai-toggle"). It has been removed from the
   // customer portal per product guardrail: no AI-adjacent UI on
   // customer-facing surfaces. Message text is now sent verbatim.
+  //
+  // Phase I7 · Wave B · Feb-2026 — the shared
+  // ``CommunicationTimeline`` is appended below the chat thread so
+  // the customer can see every outbound SMS + email the business
+  // has sent them alongside the live 2-way conversation. Server
+  // strips admin-only fields (``actor_user_id`` +
+  // ``delivery_error``) for the portal caller.
+  const { user } = useAuth();
   const [threads, setThreads] = useState(null);
   const [_active, _setActive] = useState(null);
   const [text, setText] = useState("");
@@ -508,6 +518,25 @@ export function PortalMessages() {
           data-testid="msg-input" />
         <Button onClick={send} disabled={busy || !text.trim()} testid="msg-send"><Send size={14} /></Button>
       </div>
+
+      {/* Phase I7 · Wave B · Feb-2026 — historical outbound comms
+          (SMS + email dispatch log) appended below the live thread. */}
+      <section
+        className="mt-6"
+        data-testid="portal-messages-comm-timeline-section"
+      >
+        <h2
+          className="text-base font-bold mb-3 flex items-center gap-2"
+          style={{ color: colors.onSurface }}
+        >
+          Recent SMS &amp; Email Communications
+        </h2>
+        <CommunicationTimeline
+          customerId={user?.customer_id}
+          variant="portal"
+        />
+      </section>
+
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );

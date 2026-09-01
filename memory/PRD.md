@@ -14245,3 +14245,130 @@ Small cleanup. Zero behavior change.
 ### Non-goals honored
 - Routing, `PaymentMethodTiles` delegation, and every Wave A/B/C behavior — untouched.
 - Shared component `PaymentMethodTiles.jsx` — untouched.
+
+---
+
+## Phase I7 · Wave A — Communication Timeline (Admin, Feb 2026) — SHIPPED
+
+### Endpoint spec
+`GET /api/customers/{customer_id}/communication-timeline?limit=50&before=<iso>&types=sms,email`
+
+- RBAC: admin/manager/super_admin see any tenant customer; role=customer sees only their own (`user.customer_id == customer_id`); tech 403; unauth 401/403.
+- Query params: `limit` (1-200, default 50) · `before` (iso timestamp cursor) · `types` (csv: `sms,email` — filter both server-side).
+- Response:
+  ```json
+  {
+    "customer_id": "...",
+    "items": [
+      {
+        "id": "...", "type": "sms" | "email",
+        "occurred_at": "iso",
+        "actor_label": "admin@aquaterra.com" | "System / Automation",
+        "actor_kind": "user" | "system",
+        "actor_user_id": "u_...",        // admin only
+        "direction": "outbound",
+        "channel_id": "...",
+        "subject": "..." | null,
+        "body_preview": "first 500 chars",
+        "recipient": "phone or email",
+        "delivery_status": "sent" | "delivered" | "queued" | "failed" | "reserved",
+        "delivery_error": "..." | null   // admin only
+      }
+    ],
+    "has_more": bool,
+    "next_before": "iso" | null
+  }
+  ```
+- Portal filtering: when `user.role == "customer"`, server strips `actor_user_id` + `delivery_error` from every item before returning. The wire response never carries admin-only fields for portal callers — a frontend regression cannot leak them.
+
+### Data sources (audit surprises)
+- **`notification_dispatch_log`** — the primary source. Per-message row for every SMS + email dispatch flowing through the F7 idempotent notifier + F5 marketing sequences. Fields consumed: `channel` (`sms` | `email`), `recipient_id` (== customer_id when the sender wired it), `resolved_address` (fallback match against customer's `email`/`phone`), `subject`, `status`, `sent_at` / `reserved_at`, `error`, `metadata.body`, `metadata.actor_email`, `metadata.actor_user_id`.
+- **`audit_events`** — supplementary, one event type included: `portal_invite_bulk`. Merged in via `payload.customer_ids` array (or `payload.customer_id` fallback) matching the requested customer. Emitted as a synthesized email row with subject `"Portal invite"` and a bullet-style body preview.
+- **`email_delivery_log`** — **INTENTIONALLY EXCLUDED**. Preview audit revealed this is a **weekly digest batch log** (`week_start`, `week_end`, `total_completed`, `total_skipped`, `recipients` list) — not a per-message log. A per-customer view would require denormalizing the recipients list, and the same underlying per-email rows already land on `notification_dispatch_log`. Excluding it prevents double-counting and keeps the query surface honest. Documented at the top of `routers/communication_timeline.py`.
+- **`audit_events` event_types in preview**: only 3 distinct types exist (`data_integrity_digest`, `portal_invite_bulk`, `test_tenant_purge`). Of those, only `portal_invite_bulk` carries per-customer semantics via `payload.customer_ids`; the other two are tenant-wide operational events with no customer linkage. Constant `_AUDIT_EVENT_TYPES = ("portal_invite_bulk",)` is extensible when new event types with customer_id land.
+
+### Files
+- `/app/backend/routers/communication_timeline.py` (261 LOC, new)
+- `/app/backend/tests/test_communication_timeline.py` (394 LOC, new — 10 tests)
+- `/app/backend/server.py` (+7 LOC — router registration + wire comment)
+- `/app/backend/tests/_f7_loop_fixture.py` (+1 rebind entry — `routers.communication_timeline`)
+- `/app/frontend/src/components/customers/CommunicationTimeline.jsx` (289 LOC, new)
+- `/app/frontend/src/pages/customers/CustomerDetail.jsx` (+13 LOC — Clock icon import, tab entry, tab body, component import)
+- `/app/frontend/src/test/communication-timeline.test.jsx` (244 LOC, new — 13 tests)
+
+### Tests
+- **Backend (10 passing)**: merge + sort desc, `types=sms` filter, `before` cursor pagination (no page overlap), customer-own-record + portal field stripping, admin sees `actor_user_id` + `delivery_error`, customer-can't-view-other 403, tech 403, empty customer returns empty list, cross-tenant isolation, `portal_invite_bulk` audit event surfaces with correct actor.
+- **Frontend (13 passing)**: loading skeleton, empty state, red SMS pill + green Email pill copy, bolded actor next to "by", admin variant status pill + error line, portal variant hides both admin-only fields (defense-in-depth on top of server stripping), load-more fires with `next_before` cursor + appends items, skips fetch when `customerId` is null, error banner, admin placement (import present, tab between Notes and Credits, single mount inside `tab === "timeline"` with `variant="admin"` + `customerId={id}`).
+
+### Live curl proof
+```
+GET /api/customers/8910bfde-…/communication-timeline?limit=3
+→ items=3 · has_more=True · next_before=2026-09-01T00:57:09+00:00
+  [0] sms   · sent      · by admin@aquaterra.com  · sub=None
+  [1] email · delivered · by System / Automation  · sub=Invoice #INV-2025-042 is ready
+  [2] sms   · delivered · by admin@aquaterra.com  · sub=None
+```
+User-vs-system actor distinction working; subject preserved for email; cursor + has_more populated correctly.
+
+### Screenshot
+`/tmp/phase_i7_admin_timeline.png` — Jennifer Carson customer detail Timeline tab: vertical dashed rail, red SMS dots / green Email dots, MESSAGE (red) / EMAIL (green) type pills, relative timestamps ("just now", "3h ago", "17h ago"), bolded actor labels (`admin@aquaterra.com` vs `System / Automation`), admin delivery-status pills (SENT / DELIVERED / FAILED), bold "Subject:" lines on email rows, red error banner on the failed email showing `bounce: mailbox_full`, `to <recipient>` mono footer, and the `portal_invite_bulk` audit event surfaced as an email row.
+
+### Non-goals honored
+- No payment events (deferred).
+- No notes-per-entry (deferred — read-only this phase).
+- No changes to `notification_dispatch_log` / `audit_events` schemas.
+- No changes to how SMS or email is sent.
+- No mobile changes.
+
+### Wave B (queued)
+- Mount `CommunicationTimeline` in customer portal as a Communication tab
+- Portal placement test asserting `variant="portal"` + admin-only field-stripping propagates
+- Screenshot `/tmp/phase_i7_portal_timeline.png`
+
+---
+
+## Phase I7 — Placement Update (Wave A revised + Wave B, Feb 2026) — SHIPPED
+
+### Wave A revision (admin)
+Removed the Timeline tab (was between Notes & Credits). Mounted `<CommunicationTimeline customerId={id} variant="admin" />` at the bottom of `CustomerDetail.jsx`, inside a `<section data-testid="customer-detail-comm-timeline-section">` with a `<h2>Communication Timeline` header + Clock icon. The section sits AFTER the tab-panel switch's closing `</div>` but BEFORE the outer main container closes — always visible regardless of which tab is active.
+
+**LOC delta**: 
+- `CustomerDetail.jsx` net −5 LOC (tab entry −1, tab-body ternary −3, new bottom section +18, cleanup −19).
+- `communication-timeline.test.jsx` refreshed 3 admin-placement tests to reflect the new contract: assert no `{k: "timeline"…}` tab entry exists, mount is preceded by the section testid (NOT by a `tab === "timeline"` conditional), section header renders with `<Clock size={16}/>` + "Communication Timeline" copy + `variant="admin"` + `customerId={id}`, single mount in the file.
+
+### Wave B (portal)
+Portal Messages is a **full-page route** (`/portal/messages`) exported as `PortalMessages` from `PortalPages.jsx` — live 2-way chat thread with meaningful content. Per the brief's guidance, I appended the timeline BELOW the compose row rather than replacing.
+
+Added:
+- `import CommunicationTimeline from "@/components/customers/CommunicationTimeline";` in `PortalPages.jsx`.
+- `useAuth` hoisted into `PortalMessages` (was already present in sibling exports; hoisted here too).
+- `<section data-testid="portal-messages-comm-timeline-section">` with header "Recent SMS & Email Communications" and `<CommunicationTimeline customerId={user?.customer_id} variant="portal" />` inside, mounted directly after the `msg-send` compose row.
+
+### Files (LOC)
+- `frontend/src/pages/customers/CustomerDetail.jsx` — net −5 LOC (revision)
+- `frontend/src/pages/portal/PortalPages.jsx` — +23 LOC (Wave B mount)
+- `frontend/src/test/communication-timeline.test.jsx` — 244 → 253 LOC (admin placement tests refreshed, +1 net test → 14 tests)
+- `frontend/src/test/communication-timeline-portal-placement.test.jsx` — 140 LOC · new · 5 tests
+
+### Tests
+- **Component + admin placement**: `communication-timeline.test.jsx` — **14 passing** (8 runtime unchanged from Wave A, 6 revised admin placement).
+- **Portal placement**: `communication-timeline-portal-placement.test.jsx` — **5 passing** (all source-body contract: import present, mount inside `PortalMessages`, mount BELOW the `msg-send` compose row, portal-messages testid + tour hook preserved, section wrapper testid).
+- **Backend** unchanged from Wave A — 10 passing.
+- Total: **29 across the I7 surface** (10 backend + 14 admin/component + 5 portal placement).
+
+### Portal Messages surprise
+The section is a **full-page route**, not an inline tab. Its `useAuth`-scoped chat thread + AI escalation feed are the primary content; the new comms-history section sits below both. No existing simpler list existed to replace — append was the right call. The portal correctly received the server-stripped payload (no `delivery_error` on the failed email, no `actor_user_id` field) verified visually in the screenshot: admin surface renders SENT / DELIVERED / FAILED status pills + red bounce banner; portal surface has neither.
+
+### Live curl proof (unchanged from Wave A)
+```
+GET /api/customers/8910bfde-…/communication-timeline?limit=3
+→ items=3 · has_more=True · admin token sees actor + status + error
+```
+
+### Screenshots
+- `/tmp/phase_i7a_admin_timeline_bottom.png` — admin CustomerDetail on Jobs tab (proves timeline is NOT tab-gated), Notes visible above, "Communication Timeline" section at the bottom with all 6 events (5 dispatch + 1 portal_invite audit).
+- `/tmp/phase_i7b_portal_messages_timeline.png` — portal /portal/messages: chat thread above, compose row middle, "Recent SMS & Email Communications" section below rendering identical 6 events in portal variant (no status pills, no error banner — server-stripped as designed).
+
+### Non-goals honored
+- Shared component + backend endpoint unchanged.
+- No mobile changes.
