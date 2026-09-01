@@ -1992,14 +1992,31 @@ async def patch_job_edit_window(
     # imports the PUT handler, the door-hanger ledger key
     # ``door_hanger_auto:{job_id}`` still prevents a duplicate email.
 
-    # Phase K6 · Feb-2026 — Invoice recalc for unpaid, editable
-    # invoices (payment_status == "unpaid").  Auto-invoice pipeline
-    # stores integer cents on the invoice (``subtotal_cents`` +
-    # ``total_cents``); the pricing engine's tax/discount are
-    # already baked into ``total_cents`` at issue time, so we bump
-    # BOTH fields by the same delta (job price change) without
-    # re-running the tax/discount pass — preserves whatever line-
-    # item math the invoice already carries.
+    # Phase K6 (round 2) · Feb-2026 — Invoice recalc for unpaid,
+    # editable invoices (payment_status == "unpaid").  Round-1 shipped
+    # an additive-only fix on ``subtotal_cents`` + ``total_cents`` and
+    # left the invoice's ``line_items[]`` + legacy dollar mirrors
+    # (``subtotal`` / ``total``) stale — so downstream PDFs / list
+    # endpoints kept rendering the pre-edit price.
+    #
+    # Round-2 rules:
+    #   1. Compute ``delta_cents = new_price_cents - old_price_cents``.
+    #   2. Update the invoice's job-priced line item's
+    #      ``unit_price_cents`` + ``line_total_cents`` (quantity is
+    #      preserved) so ``sum(line_total_cents) == new subtotal``.
+    #      The "job-priced" line is the first row whose ``kind`` is
+    #      ``service`` OR ``job_line_item`` — that's what the
+    #      auto-invoice pipeline emits from ``job.price`` /
+    #      ``job.line_items[]``.  Chemical rows are left alone.
+    #   3. Recompute ``subtotal_cents = sum(li.line_total_cents)``.
+    #      When the invoice has no line_items (legacy fixture / early
+    #      auto-invoice runs), fall back to the additive delta.
+    #   4. Preserve the existing tax + discount envelope by keeping
+    #      ``total_cents - subtotal_cents`` constant across the edit.
+    #   5. Refresh legacy float mirrors (``subtotal`` / ``total``)
+    #      from the new cents fields.
+    #   6. Store ``k6_last_recalc_delta_cents = delta_cents`` for
+    #      the audit assertions.
     if linked_invoice and "price_cents" in incoming:
         try:
             delta_cents = int(incoming.get("price_cents") or 0) \
@@ -2007,18 +2024,75 @@ async def patch_job_edit_window(
         except (TypeError, ValueError):
             delta_cents = 0
         if delta_cents:
-            new_subtotal_cents = int(
-                linked_invoice.get("subtotal_cents") or 0) + delta_cents
-            new_total_cents = int(
-                linked_invoice.get("total_cents") or 0) + delta_cents
+            old_subtotal_cents = int(
+                linked_invoice.get("subtotal_cents") or 0)
+            old_total_cents = int(
+                linked_invoice.get("total_cents") or 0)
+            # Preserve tax / discount envelope: whatever the pricing
+            # engine added between subtotal and total at issue time
+            # stays untouched across the K6 recalc.
+            envelope_cents = old_total_cents - old_subtotal_cents
+
+            existing_items = list(linked_invoice.get("line_items") or [])
+            updated_items: List[Dict[str, Any]] = []
+            job_priced_hit = False
+            new_price_cents = int(incoming.get("price_cents") or 0)
+            for row in existing_items:
+                kind = (row.get("kind") or "").lower()
+                if not job_priced_hit and kind in ("service", "job_line_item"):
+                    qty = row.get("quantity")
+                    try:
+                        qty_num = float(qty) if qty is not None else 1.0
+                    except (TypeError, ValueError):
+                        qty_num = 1.0
+                    # ``price_cents`` on the job represents the priced
+                    # service total for that job — mirror it as the
+                    # LINE TOTAL and derive per-unit from quantity so
+                    # dividing prices (qty > 1) still reconciles.
+                    if qty_num and qty_num != 1.0:
+                        unit_cents = int(round(new_price_cents / qty_num))
+                    else:
+                        unit_cents = new_price_cents
+                    new_row = dict(row)
+                    new_row["unit_price_cents"] = unit_cents
+                    new_row["line_total_cents"] = new_price_cents
+                    # Legacy dollar mirror on the line (F7 path writes
+                    # both).  Keep it consistent.
+                    if "unit_price" in new_row:
+                        new_row["unit_price"] = unit_cents / 100.0
+                    updated_items.append(new_row)
+                    job_priced_hit = True
+                else:
+                    updated_items.append(row)
+
+            if job_priced_hit:
+                new_subtotal_cents = sum(
+                    int(r.get("line_total_cents") or 0) for r in updated_items)
+            else:
+                # No job-priced line item to mutate (legacy fixture or
+                # invoice built from chemical events only).  Fall back
+                # to additive so subtotal still tracks the job edit.
+                new_subtotal_cents = old_subtotal_cents + delta_cents
+
+            new_total_cents = new_subtotal_cents + envelope_cents
+
+            update_set: Dict[str, Any] = {
+                "subtotal_cents": new_subtotal_cents,
+                "total_cents": new_total_cents,
+                # Legacy float mirrors — some list / PDF paths still
+                # render off these (see auto_invoice.py which stamps
+                # ``total`` on issue).
+                "subtotal": new_subtotal_cents / 100.0,
+                "total": new_total_cents / 100.0,
+                "updated_at": now_iso(),
+                "k6_last_recalc_delta_cents": delta_cents,
+            }
+            if job_priced_hit:
+                update_set["line_items"] = updated_items
+
             await db.quotes.update_one(
                 {"id": linked_invoice["id"], "doc_type": "invoice"},
-                {"$set": {
-                    "subtotal_cents": new_subtotal_cents,
-                    "total_cents": new_total_cents,
-                    "updated_at": now_iso(),
-                    "k6_last_recalc_delta_cents": delta_cents,
-                }},
+                {"$set": update_set},
             )
             invoice_recalculated = True
 

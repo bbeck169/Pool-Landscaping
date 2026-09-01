@@ -68,10 +68,22 @@ def _iso(dt: datetime) -> str:
 
 
 async def _seed_case(tid: str, *, payment_status: str,
-                             subtotal_cents: int = 10000) -> tuple[str, str]:
+                             subtotal_cents: int = 10000,
+                             with_line_items: bool = False,
+                             envelope_cents: int = 0) -> tuple[str, str]:
     """Seed a completed job + auto_invoice_id-linked invoice mirror
     of the tester's scenario.  ``payment_status`` = ``paid`` |
-    ``unpaid`` | ``partial``."""
+    ``unpaid`` | ``partial``.
+
+    When ``with_line_items`` is set the invoice carries a
+    ``kind: service`` job-priced line so the K6 round-2 recalc path
+    exercises line-item mutation (unit_price_cents +
+    line_total_cents) instead of the additive fallback.
+
+    ``envelope_cents`` seeds a non-zero (total - subtotal) gap to
+    simulate an invoice that carries tax / discount; the recalc must
+    preserve the envelope across the edit.
+    """
     from utils import now_iso
     two_days_ago = _iso(datetime.now(timezone.utc) - timedelta(hours=48))
     jid = f"k6c-{payment_status}-{uuid.uuid4().hex[:8]}"
@@ -94,16 +106,33 @@ async def _seed_case(tid: str, *, payment_status: str,
         "auto_invoice_id": iid,   # THE join the tester exercised
         "created_at": two_days_ago,
     })
-    await _db().quotes.insert_one({
+    total_cents = subtotal_cents + envelope_cents
+    invoice_doc: Dict[str, Any] = {
         "id": iid, "tenant_id": tid, "doc_type": "invoice",
         "customer_id": "cust-k6c",
         "status": "issued",                       # auto-invoice sets issued
         "payment_status": payment_status,         # tester's payment column
         "subtotal_cents": subtotal_cents,
-        "total_cents": subtotal_cents,
+        "total_cents": total_cents,
+        # Legacy float mirrors — auto_invoice.py stamps these too.
+        "subtotal": subtotal_cents / 100.0,
+        "total": total_cents / 100.0,
         "invoice_number": "INV-K6C-1",
         "created_at": two_days_ago,
-    })
+    }
+    if with_line_items:
+        invoice_doc["line_items"] = [
+            {
+                "id": f"li-{iid}-svc",
+                "description": "Landscape · K6C",
+                "quantity": 1,
+                "unit_price": subtotal_cents / 100.0,
+                "unit_price_cents": subtotal_cents,
+                "line_total_cents": subtotal_cents,
+                "kind": "service",
+            },
+        ]
+    await _db().quotes.insert_one(invoice_doc)
     return jid, iid
 
 
@@ -196,14 +225,21 @@ def test_k6c_partial_paid_also_locks():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 3. UNPAID auto-invoice → 200 AND subtotal_cents + total_cents
-#    updated on the invoice
+# 3. UNPAID auto-invoice — PRICE INCREASE (10000 → 25000).
+#    Round-2 requirements:
+#      • job.price_cents replaced (not additive).
+#      • invoice.line_items[] · job-priced line updated
+#        (unit_price_cents + line_total_cents).
+#      • subtotal_cents == sum(line_total_cents).
+#      • Legacy float mirrors (subtotal / total) refreshed.
+#      • k6_last_recalc_delta_cents == +15000.
 # ═══════════════════════════════════════════════════════════════════
 def test_k6c_unpaid_auto_invoice_recalculates_cents_fields():
     async def _go():
         tid = await _tenant_id()
         jid, iid = await _seed_case(tid, payment_status="unpaid",
-                                              subtotal_cents=10000)
+                                              subtotal_cents=10000,
+                                              with_line_items=True)
         try:
             from routers.jobs import patch_job_edit_window
             fresh = await patch_job_edit_window(
@@ -217,6 +253,19 @@ def test_k6c_unpaid_auto_invoice_recalculates_cents_fields():
             # +$150 delta = 15000 cents.
             assert inv["subtotal_cents"] == 25000
             assert inv["total_cents"] == 25000
+            # Round-2 additions — legacy dollar mirrors.
+            assert inv["subtotal"] == 250.0
+            assert inv["total"] == 250.0
+            # Line-item mutation (round-2 core fix).
+            lines = inv.get("line_items") or []
+            assert len(lines) == 1
+            svc = lines[0]
+            assert svc["kind"] == "service"
+            assert svc["unit_price_cents"] == 25000
+            assert svc["line_total_cents"] == 25000
+            assert svc["unit_price"] == 250.0
+            # Subtotal must reconcile with sum(line_total_cents).
+            assert sum(int(li["line_total_cents"]) for li in lines) == 25000
             assert inv["k6_last_recalc_delta_cents"] == 15000
             audit = await _db().audit_events.find_one(
                 {"event_type": "job_edited_after_completion",
@@ -224,6 +273,77 @@ def test_k6c_unpaid_auto_invoice_recalculates_cents_fields():
             assert audit is not None
             assert audit["payload"]["invoice_recalculated"] is True
             assert audit["payload"]["invoice_id"] == iid
+        finally:
+            await _drain(tid)
+    _run(_go())
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 3b. UNPAID auto-invoice — PRICE DECREASE (25000 → 5000).
+#     Verifies the round-2 recalc is a REPLACEMENT (not additive) —
+#     round-1 would happily produce 45000 (25000 + delta of -(-20000))
+#     if the sign is inverted anywhere.  Also asserts the legacy
+#     dollar mirrors decrease correctly.
+# ═══════════════════════════════════════════════════════════════════
+def test_k6c_unpaid_auto_invoice_price_decrease_recalculates():
+    async def _go():
+        tid = await _tenant_id()
+        jid, iid = await _seed_case(tid, payment_status="unpaid",
+                                              subtotal_cents=25000,
+                                              with_line_items=True)
+        try:
+            from routers.jobs import patch_job_edit_window
+            fresh = await patch_job_edit_window(
+                jid, _patch(price_cents=5000,
+                                edit_reason="test", edit_source="test"),
+                user=_admin(tid),
+                tenant=await _tenant_dep(tid),
+            )
+            assert fresh["price_cents"] == 5000
+            inv = await _db().quotes.find_one({"id": iid})
+            assert inv["subtotal_cents"] == 5000
+            assert inv["total_cents"] == 5000
+            assert inv["subtotal"] == 50.0
+            assert inv["total"] == 50.0
+            lines = inv.get("line_items") or []
+            assert len(lines) == 1
+            svc = lines[0]
+            assert svc["unit_price_cents"] == 5000
+            assert svc["line_total_cents"] == 5000
+            assert sum(int(li["line_total_cents"]) for li in lines) == 5000
+            # 25000 → 5000 = -20000 delta.
+            assert inv["k6_last_recalc_delta_cents"] == -20000
+        finally:
+            await _drain(tid)
+    _run(_go())
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 3c. UNPAID auto-invoice — PRESERVES TAX / DISCOUNT ENVELOPE.
+#     Invoice arrives at 10000 subtotal + 800 cents tax → 10800 total.
+#     Edit bumps subtotal to 25000.  Total must land at 25800 —
+#     preserving the 800-cent envelope.
+# ═══════════════════════════════════════════════════════════════════
+def test_k6c_unpaid_auto_invoice_preserves_tax_envelope():
+    async def _go():
+        tid = await _tenant_id()
+        jid, iid = await _seed_case(tid, payment_status="unpaid",
+                                              subtotal_cents=10000,
+                                              with_line_items=True,
+                                              envelope_cents=800)
+        try:
+            from routers.jobs import patch_job_edit_window
+            await patch_job_edit_window(
+                jid, _patch(price_cents=25000),
+                user=_admin(tid),
+                tenant=await _tenant_dep(tid),
+            )
+            inv = await _db().quotes.find_one({"id": iid})
+            assert inv["subtotal_cents"] == 25000
+            assert inv["total_cents"] == 25800     # 25000 + 800 tax
+            assert inv["subtotal"] == 250.0
+            assert inv["total"] == 258.0
+            assert inv["k6_last_recalc_delta_cents"] == 15000
         finally:
             await _drain(tid)
     _run(_go())
