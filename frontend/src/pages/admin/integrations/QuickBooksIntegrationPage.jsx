@@ -13,6 +13,10 @@ import { Cloud, RefreshCw, History, Database, Link as LinkIcon, ExternalLink, Al
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
+// Phase H2 · Feb-2026 (F5 Wave 2) — typed-keyword confirm for the
+// catastrophic Force-Full-Sync path (consumes QB API budget, can
+// double-invoice on re-run).
+import TypedConfirmModal from "../../../components/ui/TypedConfirmModal";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -206,6 +210,8 @@ function SyncTab({ connection, onRefresh }) {
   const [syncing, setSyncing] = useState(false);
   const [forceFull, setForceFull] = useState(false);
   const [lastRun, setLastRun] = useState(null);
+  // Phase H2 · Feb-2026 (F5 Wave 2) — force-full-sync typed confirm.
+  const [h2ForceOpen, setH2ForceOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -220,7 +226,15 @@ function SyncTab({ connection, onRefresh }) {
   }
 
   const run = async () => {
-    if (forceFull && !window.confirm("Force full sync? This ignores the delta cursor and re-pulls everything.")) return;
+    // Phase H2 · Feb-2026 (F5 Wave 2) — force-full-sync gate.
+    // A delta sync is safe; a full sync burns real QB API budget
+    // and can double-invoice on re-run. Gate it behind a typed
+    // "FORCE SYNC" confirm.
+    if (forceFull && !h2ForceOpen) {
+      setH2ForceOpen(true);
+      return;
+    }
+    setH2ForceOpen(false);
     setSyncing(true);
     try {
       const r = await fetch(`${API}/qbo/sync/run-now`, {
@@ -274,6 +288,22 @@ function SyncTab({ connection, onRefresh }) {
           </CardContent>
         </Card>
       ) : null}
+
+      {/* Phase H2 · Feb-2026 (F5 Wave 2) — Force-Full-Sync confirm. */}
+      <TypedConfirmModal
+        open={h2ForceOpen}
+        title="Force full QuickBooks sync"
+        description={
+          "This runs a full QuickBooks sync and consumes API budget. It may "
+          + "take 10-60 minutes. Type FORCE SYNC to confirm."
+        }
+        keyword="FORCE SYNC"
+        confirmLabel="Run full sync"
+        onConfirm={run}
+        onCancel={() => setH2ForceOpen(false)}
+        busy={syncing}
+        testIdPrefix="h2-qb-force-sync"
+      />
     </div>
   );
 }

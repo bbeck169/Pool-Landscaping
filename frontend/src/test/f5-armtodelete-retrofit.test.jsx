@@ -36,8 +36,11 @@ describe("TenantsAdminPage · F5 widget-key rotate retrofit", () => {
 });
 
 describe("F5 · destructive-copy sweep (regression guard)", () => {
+  // Files that must be totally free of ``window.confirm(``.
   const forbidden = [
     "src/pages/tenants/TenantsAdminPage.jsx",
+    // Phase H2 · Feb-2026 (F5 Wave 2) — two more catastrophic sites.
+    "src/pages/marketing/M2Campaigns.jsx",
   ];
 
   it("catastrophic files no longer contain window.confirm", () => {
@@ -49,4 +52,86 @@ describe("F5 · destructive-copy sweep (regression guard)", () => {
         .not.toMatch(/window\.confirm\(/);
     }
   });
+
+  // Phase H2 · QuickBooksIntegrationPage still has an unrelated
+  // ``window.confirm`` on the Revoke Connection action — that
+  // retrofit is deferred to H3. The Wave-2 retrofit locks only the
+  // force-full-sync path.
+  it("QB force-full path no longer routes through window.confirm", () => {
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(),
+          "src/pages/admin/integrations/QuickBooksIntegrationPage.jsx"),
+      "utf-8",
+    );
+    // The ``run = async () => {`` closure inside SyncTab is where the
+    // force-full guard used to live.
+    const runIdx = src.indexOf("const run = async () => {");
+    expect(runIdx).toBeGreaterThan(-1);
+    const runBody = src.slice(runIdx, runIdx + 900);
+    expect(runBody).not.toMatch(/window\.confirm\(/);
+  });
 });
+
+
+// ─── Phase H2 · Feb-2026 (F5 Wave 2) — per-file retrofit contracts ─────
+describe("H2 · Deactivate tenant retrofit (TenantsAdminPage)", () => {
+  const src = fs.readFileSync(
+    path.resolve(process.cwd(), "src/pages/tenants/TenantsAdminPage.jsx"),
+    "utf-8",
+  );
+  it("imports TypedConfirmModal", () => {
+    expect(src).toMatch(/import TypedConfirmModal from "@\/components\/ui\/TypedConfirmModal"/);
+  });
+  it("gates deactivate through requestToggleActive → typed slug confirm", () => {
+    expect(src).toMatch(/requestToggleActive/);
+    expect(src).toMatch(/setH2DeactivateTarget/);
+    expect(src).toMatch(/testIdPrefix="h2-tenant-deactivate"/);
+    expect(src).toMatch(/keyword=\{h2DeactivateTarget\?\.slug \|\| ""\}/);
+  });
+  it("copy calls out the tenant slug", () => {
+    expect(src).toMatch(/tenant slug \(\$\{h2DeactivateTarget\.slug\}\)/);
+  });
+});
+
+describe("H2 · QB force-sync retrofit (QuickBooksIntegrationPage)", () => {
+  const src = fs.readFileSync(
+    path.resolve(process.cwd(),
+        "src/pages/admin/integrations/QuickBooksIntegrationPage.jsx"),
+    "utf-8",
+  );
+  it("imports TypedConfirmModal", () => {
+    expect(src).toMatch(/import TypedConfirmModal from ".*TypedConfirmModal"/);
+  });
+  it("gates the force-full path behind h2ForceOpen state", () => {
+    expect(src).toMatch(/setH2ForceOpen\(true\)/);
+    expect(src).toMatch(/testIdPrefix="h2-qb-force-sync"/);
+  });
+  it("keyword is exactly 'FORCE SYNC' and copy warns about API budget", () => {
+    expect(src).toMatch(/keyword="FORCE SYNC"/);
+    expect(src).toMatch(/consumes API budget/);
+  });
+});
+
+describe("H2 · Campaign cancel retrofit (M2Campaigns)", () => {
+  const src = fs.readFileSync(
+    path.resolve(process.cwd(), "src/pages/marketing/M2Campaigns.jsx"),
+    "utf-8",
+  );
+  it("imports TypedConfirmModal", () => {
+    expect(src).toMatch(/import TypedConfirmModal from "@\/components\/ui\/TypedConfirmModal"/);
+  });
+  it("gates the cancel POST behind h2CancelTarget state", () => {
+    expect(src).toMatch(/setH2CancelTarget/);
+    expect(src).toMatch(/testIdPrefix="h2-campaign-cancel"/);
+    expect(src).toMatch(/keyword=\{h2CancelTarget\?\.name \|\| ""\}/);
+  });
+  it("cancel POST hits the campaign cancel endpoint only from _doCancel", () => {
+    // The old ``cancel(cid)`` no longer posts directly; it opens the
+    // modal.  The POST lives inside ``_doCancel`` which the modal's
+    // onConfirm fires.
+    expect(src).toMatch(
+      /_doCancel[\s\S]{0,400}api\.post\(`\/marketing\/campaigns\/\$\{h2CancelTarget\.id\}\/cancel`/,
+    );
+  });
+});
+

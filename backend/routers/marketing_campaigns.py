@@ -386,6 +386,23 @@ async def cancel_campaign(cid: str,
         {"$set": {"status": "cancelled",
                     "cancelled_at": now_iso(),
                     "updated_at": now_iso()}})
+    # Phase H2 · Feb-2026 (F5 Wave 2) — audit campaign cancel.
+    try:
+        await db.audit_events.insert_one({
+            "id": str(__import__("uuid").uuid4()),
+            "event_type": "marketing_campaign_cancel",
+            "tenant_id": tenant["id"],
+            "campaign_id": cid,
+            "campaign_name": doc.get("name"),
+            "previous_status": doc.get("status"),
+            "actor_user_id": (user or {}).get("id"),
+            "actor_email": (user or {}).get("email"),
+            "timestamp": now_iso(),
+        })
+    except Exception as _ae:
+        logger.warning(
+            f"[h2] marketing_campaign_cancel audit failed: {_ae}"
+        )
     return {"ok": True}
 
 

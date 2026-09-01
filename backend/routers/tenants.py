@@ -527,9 +527,32 @@ async def patch_tenant(tid: str, body: TenantUpdate,
         if clash:
             raise HTTPException(400, "custom_domain already assigned to another tenant")
     upd["updated_at"] = now_iso()
+    # Phase H2 · Feb-2026 (F5 Wave 2) — audit tenant deactivations so
+    # ops has a trail of who turned a tenant offline. Only fires on
+    # the active=True → False transition; reactivations are logged
+    # by the pre-existing update timestamp and are non-destructive.
+    _pre_active = None
+    if "active" in upd and upd["active"] is False:
+        _pre = await db.tenants.find_one(
+            {"id": tid}, {"_id": 0, "active": 1, "slug": 1},
+        )
+        _pre_active = (_pre or {}).get("active")
     r = await db.tenants.update_one({"id": tid}, {"$set": upd})
     if not r.matched_count:
         raise HTTPException(404, "Tenant not found")
+    if _pre_active is True and upd.get("active") is False:
+        try:
+            await db.audit_events.insert_one({
+                "id": new_id(),
+                "event_type": "tenant_deactivate",
+                "tenant_id": tid,
+                "tenant_slug": (_pre or {}).get("slug"),
+                "actor_user_id": (admin or {}).get("id"),
+                "actor_email": (admin or {}).get("email"),
+                "timestamp": now_iso(),
+            })
+        except Exception as _ae:
+            logger.warning(f"[h2] tenant_deactivate audit failed: {_ae}")
     return await db.tenants.find_one({"id": tid}, {"_id": 0})
 
 

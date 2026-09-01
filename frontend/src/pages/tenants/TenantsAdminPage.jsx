@@ -6,6 +6,9 @@ import AddressAutocomplete from "@/components/AddressAutocomplete";
 // Phase F5 · Feb-2026 — ArmToDelete retrofit for the widget-key
 // rotate action (catastrophic — breaks every live external embed).
 import ArmToDelete from "@/components/ui/ArmToDelete";
+// Phase H2 · Feb-2026 (F5 Wave 2) — typed-keyword confirm for
+// deactivating a whole tenant.
+import TypedConfirmModal from "@/components/ui/TypedConfirmModal";
 
 const Card = ({ children, className = "", testId }) => (
   <div className={"rounded-2xl " + className}
@@ -64,6 +67,29 @@ export default function TenantsAdminPage() {
     });
     showToast(t.active ? "Deactivated" : "Reactivated");
     load();
+  };
+
+  // Phase H2 · Feb-2026 (F5 Wave 2) — Deactivate-tenant gate.
+  // Reactivate is safe (idempotent, restores access) → no confirm.
+  // Deactivate blocks every user on that tenant → typed-slug confirm.
+  const [h2DeactivateTarget, setH2DeactivateTarget] = useState(null);
+  const [h2Busy, setH2Busy] = useState(false);
+  const requestToggleActive = (t) => {
+    if (t.active) {
+      setH2DeactivateTarget(t);
+    } else {
+      toggleActive(t);
+    }
+  };
+  const confirmDeactivate = async () => {
+    if (!h2DeactivateTarget) return;
+    setH2Busy(true);
+    try {
+      await toggleActive(h2DeactivateTarget);
+      setH2DeactivateTarget(null);
+    } finally {
+      setH2Busy(false);
+    }
   };
 
   return (
@@ -146,7 +172,7 @@ export default function TenantsAdminPage() {
                       style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}>
                 Edit
               </button>
-              <button onClick={() => toggleActive(t)} data-testid={`tenant-toggle-${t.id}`}
+              <button onClick={() => requestToggleActive(t)} data-testid={`tenant-toggle-${t.id}`}
                       className="px-2 py-1 rounded text-xs font-semibold"
                       style={{ backgroundColor: t.active ? "#FEE2E2" : "#DCFCE7",
                                color: t.active ? "#991B1B" : "#166534" }}>
@@ -163,6 +189,25 @@ export default function TenantsAdminPage() {
              style={{ backgroundColor: colors.onSurface }}
              data-testid="tenants-toast">{toast}</div>
       )}
+
+      {/* Phase H2 · Feb-2026 (F5 Wave 2) — Deactivate-tenant typed
+          confirm. Requires the operator to type the tenant slug so
+          they never nuke the wrong tenant by muscle memory. */}
+      <TypedConfirmModal
+        open={!!h2DeactivateTarget}
+        title="Deactivate tenant"
+        description={
+          h2DeactivateTarget
+            ? `This will disable access for the entire tenant. Type the tenant slug (${h2DeactivateTarget.slug}) to confirm.`
+            : ""
+        }
+        keyword={h2DeactivateTarget?.slug || ""}
+        confirmLabel="Deactivate tenant"
+        onConfirm={confirmDeactivate}
+        onCancel={() => setH2DeactivateTarget(null)}
+        busy={h2Busy}
+        testIdPrefix="h2-tenant-deactivate"
+      />
     </div>
   );
 }

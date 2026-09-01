@@ -4,6 +4,9 @@ import { Plus, Pause, Play, Copy, X, ChevronLeft, ChevronRight, BarChart3, Users
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { PageHeader, Button, Chip, StatusPill, EmptyState, Skeleton, Toast, TextInput } from "@/components/ui-kit";
+// Phase H2 · Feb-2026 (F5 Wave 2) — typed-name confirm for cancelling
+// an active campaign (in-flight mass sends can partially complete).
+import TypedConfirmModal from "@/components/ui/TypedConfirmModal";
 
 /**
  * Marketing M2 UI — Campaigns list / detail / wizard (Feb-2026 ship).
@@ -50,6 +53,9 @@ export function CampaignsList() {
   const [status, setStatus] = useState("");
   const [channel, setChannel] = useState("");
   const [toast, setToast] = useState(null);
+  // Phase H2 · Feb-2026 (F5 Wave 2) — cancel-campaign typed confirm.
+  const [h2CancelTarget, setH2CancelTarget] = useState(null);
+  const [h2CancelBusy, setH2CancelBusy] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -83,13 +89,26 @@ export function CampaignsList() {
   };
 
   const cancel = async (cid) => {
-    if (!window.confirm("Cancel this campaign? Sending will stop.")) return;
+    // Phase H2 · Feb-2026 (F5 Wave 2) — typed-name gate before the
+    // cancel POST. Look up the campaign object so the modal can
+    // surface the exact name the operator must type.
+    const target = (rows || []).find((r) => r.id === cid);
+    if (target) {
+      setH2CancelTarget(target);
+    }
+  };
+  const _doCancel = async () => {
+    if (!h2CancelTarget) return;
+    setH2CancelBusy(true);
     try {
-      await api.post(`/marketing/campaigns/${cid}/cancel`, {});
+      await api.post(`/marketing/campaigns/${h2CancelTarget.id}/cancel`, {});
       setToast({ tone: "success", message: "Campaign cancelled" });
+      setH2CancelTarget(null);
       await load();
     } catch (e) {
       setToast({ tone: "error", message: e.message });
+    } finally {
+      setH2CancelBusy(false);
     }
   };
 
@@ -261,6 +280,23 @@ export function CampaignsList() {
       )}
 
       <Toast toast={toast} onClose={() => setToast(null)} />
+
+      {/* Phase H2 · Feb-2026 (F5 Wave 2) — Cancel-campaign confirm. */}
+      <TypedConfirmModal
+        open={!!h2CancelTarget}
+        title="Cancel campaign"
+        description={
+          h2CancelTarget
+            ? `Cancelling an active campaign will stop future sends but may not recall messages already in flight. Type the campaign name (${h2CancelTarget.name || ""}) to confirm.`
+            : ""
+        }
+        keyword={h2CancelTarget?.name || ""}
+        confirmLabel="Cancel campaign"
+        onConfirm={_doCancel}
+        onCancel={() => setH2CancelTarget(null)}
+        busy={h2CancelBusy}
+        testIdPrefix="h2-campaign-cancel"
+      />
     </div>
   );
 }

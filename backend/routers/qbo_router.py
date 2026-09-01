@@ -149,6 +149,26 @@ async def sync_run_now(
             logger.warning("[qbo.sync] background task crashed: %s", exc)
 
     bg.add_task(_go)
+    # Phase H2 · Feb-2026 (F5 Wave 2) — audit every manual sync
+    # kickoff, distinguishing force_full from delta. force_full is
+    # catastrophic (API-budget burn + double-invoice risk); delta is
+    # cheap and boring, but we log both so ops has full coverage.
+    try:
+        await db.audit_events.insert_one({
+            "id": str(__import__("uuid").uuid4()),
+            "event_type": ("qb_force_sync" if body.force_full
+                            else "qb_delta_sync"),
+            "tenant_id": tenant["id"],
+            "qbo_connection_id": body.qbo_connection_id,
+            "actor_user_id": (user or {}).get("id"),
+            "actor_email": (user or {}).get("email"),
+            "force_full": bool(body.force_full),
+            "timestamp": __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc,
+            ).isoformat(),
+        })
+    except Exception as _ae:
+        logger.warning(f"[h2] qb_force_sync audit failed: {_ae}")
     return {"status": "started", "connection_id": body.qbo_connection_id}
 
 
