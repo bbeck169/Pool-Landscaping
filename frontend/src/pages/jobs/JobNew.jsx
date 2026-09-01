@@ -291,9 +291,87 @@ export default function JobNew({
       if (form.crew_id) payload.crew_id = form.crew_id;
       const first = await api.post("/jobs", payload);
       // If recurring, create the follow-up visits from the preview.
-      if (preview && preview.dates?.length > 1) {
+      const cadenceIsRecurring = preview && Array.isArray(preview.dates)
+        && preview.dates.length > 1
+        && form.cadence !== "one_time";
+      let lastMaterialisedDate = form.scheduled_date;
+      if (cadenceIsRecurring) {
         for (const d of preview.dates.slice(1)) {
           await api.post("/jobs", { ...payload, scheduled_date: d });
+          lastMaterialisedDate = d;
+        }
+      }
+      // Phase K4 · Feb-2026 — Bug fix: recurring jobs created from
+      // the Schedule (`/jobs/new` reached from the Schedule page)
+      // were never appearing on the Recurring Jobs page.  The
+      // weekly / biweekly / same-day-monthly cadences historically
+      // only pre-materialized N one-off `db.jobs` rows and never
+      // wrote a template to `db.recurring_job_templates`, so the
+      // `GET /recurring-jobs` listing was blind to them.  We now
+      // also POST /recurring-jobs alongside the pre-materialized
+      // jobs.  ``last_generated_through`` is stamped to the last
+      // preview date so the H10 daily generator won't double-book
+      // any occurrence the frontend has already created; it will
+      // pick up cleanly from ``lastMaterialisedDate + 1`` on the
+      // next nightly run.  Best-effort — a template-side failure
+      // does NOT roll back the Jobs inserts (they're the source
+      // of truth for scheduling).
+      if (cadenceIsRecurring) {
+        const cadenceToFreq = {
+          weekly:   "weekly",
+          biweekly: "biweekly",
+          monthly:  "monthly",
+        };
+        const freq = cadenceToFreq[form.cadence] || null;
+        if (freq) {
+          const tplPayload = {
+            customer_id: form.customer_id,
+            service_type: form.service_type || "Pool Cleaning",
+            frequency: freq,
+            start_date: form.scheduled_date,
+            price_cents: Math.round((Number(form.price) || 0) * 100),
+            notes: form.notes || "",
+            active: true,
+            work_class: form.work_class || "service",
+            recurrence_never_ends: true,
+            end_date: null,
+          };
+          // Anchor day-of-week for weekly/biweekly cadences so the
+          // generator advances on the correct weekday. day_of_month
+          // for monthly same-day-of-month.
+          if (freq === "weekly" || freq === "biweekly") {
+            const d = new Date(form.scheduled_date);
+            if (!Number.isNaN(d.getTime())) {
+              // ISO weekday: Mon=0 … Sun=6 per RecurringJobIn.
+              const jsDow = d.getUTCDay(); // 0=Sun … 6=Sat
+              tplPayload.day_of_week = (jsDow + 6) % 7;
+            }
+          } else if (freq === "monthly") {
+            const d = new Date(form.scheduled_date);
+            if (!Number.isNaN(d.getTime())) {
+              tplPayload.day_of_month = d.getUTCDate();
+            }
+          }
+          if (form.property_id) tplPayload.property_id = form.property_id;
+          if (form.technician_id) tplPayload.assigned_tech_id = form.technician_id;
+          if (form.crew_id) tplPayload.crew_id = form.crew_id;
+          // Phase K4 · Feb-2026 — seed the generator cursor to the
+          // last pre-materialized date so H10 doesn't double-book.
+          if (lastMaterialisedDate) {
+            tplPayload.last_generated_through = lastMaterialisedDate;
+          }
+          try {
+            await api.post("/recurring-jobs", tplPayload);
+          } catch (_te) {
+            // Template creation is a best-effort mirror — never
+            // rolls back the pre-materialized jobs.  Surface a
+            // soft warning so the operator can retry the template
+            // side manually from the Recurring Jobs page.
+            setToast({
+              tone: "warn",
+              message: "Series created — Recurring Jobs entry may need manual creation.",
+            });
+          }
         }
       }
       setToast({ tone: "success", message: "Job created" });

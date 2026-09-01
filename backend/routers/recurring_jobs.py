@@ -78,6 +78,17 @@ class RecurringJobIn(BaseModel):
     # tag. Optional at the schema level; validation in the create/
     # update handlers via ``services.work_class.normalize_work_class``.
     work_class: Optional[str] = "service"
+    # Phase K4 · Feb-2026 — optional generator cursor at create time.
+    # The Schedule flow uses this to seed the template with a cursor
+    # equal to the last date it pre-materialized so the H10 daily
+    # generator won't double-book any of those occurrences. Callers
+    # that omit it default to None (generator starts from
+    # ``start_date``).
+    last_generated_through: Optional[str] = None
+    # Phase K4 · Feb-2026 — property_id passthrough so Schedule-side
+    # multi-property customers keep their pick when the template is
+    # created alongside the pre-materialized jobs.
+    property_id: Optional[str] = None
 
 
 class RecurringJobPatch(BaseModel):
@@ -441,7 +452,10 @@ async def create_recurring(body: RecurringJobIn,
         # Phase H9 · denorm crew name at write-time so the UI
         # can render assignment without a separate crew fetch.
         "crew_name": (crew or {}).get("name"),
-        "last_generated_through": None,
+        # Phase K4 · Feb-2026 — respect a caller-supplied cursor.
+        # Callers that omit ``last_generated_through`` keep the
+        # historical None so the generator starts at ``start_date``.
+        "last_generated_through": doc.get("last_generated_through"),
         "created_at": now_iso(),
         "updated_at": now_iso(),
         "created_by": user["id"],
