@@ -34,6 +34,7 @@ vi.mock("@/theme", () => ({
     surface: "#fff", surfaceSecondary: "#fafafa", border: "#eee",
     borderStrong: "#ddd", onSurface: "#000", muted: "#666",
     error: "#DC2626", onError: "#fff",
+    success: "#16A34A",
     landscape: { 50: "#F0FDF4", 100: "#DCFCE7", 300: "#86EFAC",
                     500: "#22C55E", 600: "#16A34A", 700: "#15803D" },
   },
@@ -282,6 +283,58 @@ describe("PaymentMethodTiles · I5", () => {
       render(<PaymentMethodTiles customerId={null} />);
     });
     expect(getMock).not.toHaveBeenCalled();
+  });
+
+  // ── Wave C · Feb-2026 — solid-green fill + white bold contract ──
+  it("on-file card tile uses colors.success as the solid fill", async () => {
+    getMock.mockResolvedValue({payment_methods: [CARD_ROW]});
+    await act(async () => {
+      render(<PaymentMethodTiles customerId="cust_1" />);
+    });
+    const tile = await screen.findByTestId(
+      `payment-tile-card-${CARD_ROW.id}`);
+    // ``colors.success`` in the mocked theme = ``#16A34A`` — same
+    // hex as ``colors.landscape[600]`` and the green endpoint of
+    // the brand gradient the Create button ships with.
+    // We assert on the RGB rendering because JSDOM normalizes.
+    const bg = tile.style.background || tile.style.backgroundColor;
+    expect(bg.toLowerCase()).toMatch(/#16a34a|rgb\(22,\s*163,\s*74\)/);
+  });
+
+  it("on-file card tile fields render with white text", async () => {
+    getMock.mockResolvedValue({payment_methods: [CARD_ROW]});
+    await act(async () => {
+      render(<PaymentMethodTiles customerId="cust_1" />);
+    });
+    // Every LockedField label + value renders with color:#FFFFFF.
+    // Check on the value box (masked card number).
+    const numberField = await screen.findByTestId(
+      `payment-tile-card-number-${CARD_ROW.id}`);
+    // The label element is the first child; the value box is the
+    // second child. Both must be white.
+    const [label, box] = numberField.children;
+    expect(label.style.color.toLowerCase()).toMatch(
+      /#ffffff|rgb\(255,\s*255,\s*255\)/);
+    expect(box.style.color.toLowerCase()).toMatch(
+      /#ffffff|rgb\(255,\s*255,\s*255\)/);
+  });
+
+  it("on-file bank tile uses the same solid-green + white bold treatment", async () => {
+    getMock.mockResolvedValue({payment_methods: [BANK_ROW]});
+    await act(async () => {
+      render(<PaymentMethodTiles customerId="cust_1" />);
+    });
+    const tile = await screen.findByTestId(
+      `payment-tile-bank-${BANK_ROW.id}`);
+    const bg = tile.style.background || tile.style.backgroundColor;
+    expect(bg.toLowerCase()).toMatch(/#16a34a|rgb\(22,\s*163,\s*74\)/);
+    const bankField = screen.getByTestId(
+      `payment-tile-bank-name-${BANK_ROW.id}`);
+    const [label, box] = bankField.children;
+    expect(label.style.color.toLowerCase()).toMatch(
+      /#ffffff|rgb\(255,\s*255,\s*255\)/);
+    expect(box.style.color.toLowerCase()).toMatch(
+      /#ffffff|rgb\(255,\s*255,\s*255\)/);
   });
 });
 

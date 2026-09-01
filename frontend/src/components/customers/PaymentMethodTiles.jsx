@@ -50,22 +50,38 @@ import { colors } from "@/theme";
 // Small primitives — colocated so the file can be dropped anywhere
 // without importing internal styling that a future refactor might
 // reshape. Each primitive is <15 LOC and doesn't leak state.
+//
+// Wave C · Feb-2026 — solid-green on-file tile.  Fill uses
+// ``colors.success`` (identical hex to ``colors.landscape[600]`` and
+// to the green endpoint of the ``brandGradient`` that the Create
+// button ships with — theme.js line 24) so we stay on the same
+// palette without hardcoding a hex.  All labels, values, and
+// padlock glyphs turn white + bold; ghost boxes gain a translucent
+// dark surface so the masked digits remain legible on the solid
+// green fill.
 // ═══════════════════════════════════════════════════════════════════
+const _TILE_BG = colors.success;
+const _TILE_BORDER = colors.landscape[700];
+const _TILE_PILL_BG = colors.landscape[700];
+const _TILE_FIELD_BG = "rgba(0,0,0,0.18)";
+const _TILE_FIELD_BORDER = "rgba(255,255,255,0.35)";
+
+
 function LockedField({ label, value, testid }) {
   return (
     <div className="flex-1 min-w-0"
              data-testid={testid}>
       <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
-                style={{ color: colors.landscape[700] }}>
+                style={{ color: "#FFFFFF" }}>
         {label}
       </div>
-      <div className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-mono truncate"
+      <div className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-mono font-bold truncate"
                 style={{
-                  background: colors.surface,
-                  border: `1px solid ${colors.landscape[300]}`,
-                  color: colors.onSurface,
+                  background: _TILE_FIELD_BG,
+                  border: `1px solid ${_TILE_FIELD_BORDER}`,
+                  color: "#FFFFFF",
                 }}>
-        <Lock size={12} style={{ color: colors.landscape[700] }} />
+        <Lock size={12} style={{ color: "#FFFFFF" }} />
         <span className="truncate">{value}</span>
       </div>
     </div>
@@ -110,15 +126,17 @@ function CardTile({ row, onEdit, onDelete }) {
     <div
       className="rounded-2xl p-4"
       style={{
-        background: colors.landscape[50],
-        border: `2px solid ${colors.landscape[300]}`,
+        background: _TILE_BG,
+        border: `2px solid ${_TILE_BORDER}`,
       }}
       data-testid={`payment-tile-card-${row.id}`}
     >
-      <div className="flex items-center gap-2 mb-3">
-        <CreditCard size={16} style={{ color: colors.landscape[700] }} />
-        <span className="text-xs font-bold uppercase tracking-wider"
-                  style={{ color: colors.landscape[700] }}>
+      <div className="mb-3">
+        <span
+          className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider"
+          style={{ background: _TILE_PILL_BG, color: "#FFFFFF" }}
+        >
+          <CreditCard size={12} />
           {brand} on file{row.is_default ? " · default" : ""}
         </span>
       </div>
@@ -162,15 +180,17 @@ function BankTile({ row, onEdit, onDelete }) {
     <div
       className="rounded-2xl p-4"
       style={{
-        background: colors.landscape[50],
-        border: `2px solid ${colors.landscape[300]}`,
+        background: _TILE_BG,
+        border: `2px solid ${_TILE_BORDER}`,
       }}
       data-testid={`payment-tile-bank-${row.id}`}
     >
-      <div className="flex items-center gap-2 mb-3">
-        <Landmark size={16} style={{ color: colors.landscape[700] }} />
-        <span className="text-xs font-bold uppercase tracking-wider"
-                  style={{ color: colors.landscape[700] }}>
+      <div className="mb-3">
+        <span
+          className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider"
+          style={{ background: _TILE_PILL_BG, color: "#FFFFFF" }}
+        >
+          <Landmark size={12} />
           Bank account on file{row.is_default ? " · default" : ""}
         </span>
       </div>

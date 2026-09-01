@@ -14189,3 +14189,39 @@ Portal used a **different endpoint**: `GET /api/customer-portal/payment-methods`
 - No new backend endpoints.
 - Admin surface untouched.
 - Mobile untouched.
+
+---
+
+## Phase I5 · Wave C — Solid Green + White Bold Tile (Feb 2026) — SHIPPED
+
+### Token reused
+**`colors.success`** (`/app/frontend/src/theme.js:24` — `#16A34A`). Identical hex to `colors.landscape[600]` and to the green endpoint of `brandGradient = ["#0284C7", "#16A34A"]` at `theme.js:92` which the default `<Button variant="primary">` (the "Create" button) ships with (`ui-kit.jsx:190`). Chose `colors.success` for readability — the semantic label matches intent better than `landscape[600]` alone.
+
+### Files touched
+- `/app/frontend/src/components/customers/PaymentMethodTiles.jsx` (~40 LOC changed) — added 5 named `_TILE_*` constants at top of the primitives block, updated `LockedField` / `CardTile` / `BankTile` to consume them. `EmptyState`, `ActionButton`, the delete gate, and the loading skeleton stayed untouched.
+- `/app/frontend/src/test/payment-method-tiles.test.jsx` (+3 new tests · theme mock got `success: "#16A34A"` added).
+- `/app/frontend/src/test/payment-method-tiles-portal-placement.test.jsx` (theme mock refreshed to include the same `success` token — no new tests, contract inherited via the shared component).
+
+### Visual changes
+- On-file card + bank tiles: background `#16A34A` solid, border `#15803D` (landscape[700]).
+- Header pill: `#15803D` bg + white bold text; icon inline in the pill.
+- `LockedField` label: `#FFFFFF` bold.
+- `LockedField` value box: translucent dark surface `rgba(0,0,0,0.18)` + `1px solid rgba(255,255,255,0.35)` border + white bold mono digits + white padlock icon.
+- Edit button: white bg + dark text + strong-gray border (unchanged, still readable against the green).
+- Delete button: light-red bg + dark-red text (unchanged).
+- Empty state (bank): unchanged dark-red container.
+- Loading skeleton: unchanged.
+
+### Tests
+- **22 passing** across `payment-method-tiles.test.jsx` (14 — 3 new visual-contract) + `payment-method-tiles-portal-placement.test.jsx` (8). Both surfaces inherit the new styling.
+- New assertions lock: tile background === `#16A34A`, LockedField label + value color === `#FFFFFF`, applied to both card and bank tile variants.
+
+### Screenshots
+- `/tmp/phase_i5c_admin_tiles.png` — Jennifer Carson customer detail Overview: VISA · 2589 (exp 12/2030) + MASTERCARD · 1234 (exp 03/2029) both rendering with solid green fill, white bold values, darker-green header pills, Edit + Delete buttons legible.
+- `/tmp/phase_i5c_portal_tiles.png` — portal `/portal/payment-method` for `customer@aquaterra.com`: identical treatment on both cards + unchanged red empty state for Bank Accounts.
+
+### Non-goals honored
+- Component API + backend surface unchanged.
+- Empty-state color unchanged.
+- Layout + spacing unchanged.
+- Mobile untouched.
