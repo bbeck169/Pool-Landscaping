@@ -156,6 +156,27 @@ describe("PortalPaymentMethod · I5 Wave B source contract", () => {
     expect(slice).toMatch(/data-tour-id="payment-method-panel"/);
     expect(slice).toMatch(/PageHeader[\s\S]*?title="Payment Methods"/);
   });
+
+  // ── Wave D · Feb-2026 — legacy export removed ────────────────
+  it("does NOT re-introduce PortalPaymentMethodLegacy (ripped in Wave D)", () => {
+    // Regression guard: the pre-I5 SetupIntent-inline body was
+    // preserved as ``PortalPaymentMethodLegacy`` in Wave B and
+    // ripped in Wave D once every route + test consumer had
+    // migrated to the shared component.  A future maintainer
+    // must not re-add the ~280 LOC dead export.
+    expect(SRC).not.toMatch(/export\s+function\s+PortalPaymentMethodLegacy\b/);
+    // The three imports that were legacy-only should also stay
+    // out — they had no other callers in this file.
+    expect(SRC).not.toMatch(
+      /import\s+\{\s*getStripeConfig\s*\}\s+from\s+"@\/lib\/stripeConfig"/,
+    );
+    expect(SRC).not.toMatch(
+      /import\s+StripeAddCardForm\s+from\s+"@\/components\/payments\/StripeAddCardForm"/,
+    );
+    expect(SRC).not.toMatch(
+      /import\s+StripeAddBankForm\s+from\s+"@\/components\/payments\/StripeAddBankForm"/,
+    );
+  });
 });
 
 

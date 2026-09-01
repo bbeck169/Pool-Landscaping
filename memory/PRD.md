@@ -14225,3 +14225,23 @@ Portal used a **different endpoint**: `GET /api/customer-portal/payment-methods`
 - Empty-state color unchanged.
 - Layout + spacing unchanged.
 - Mobile untouched.
+
+---
+
+## Phase I5 · Wave D — Rip PortalPaymentMethodLegacy (Feb 2026) — SHIPPED
+
+Small cleanup. Zero behavior change.
+
+### LOC reclaimed
+`PortalPages.jsx` **1330 → 1022 LOC (308 removed)** — 292-line legacy function body + 5 legacy-only import lines (`getStripeConfig`, `StripeAddCardForm`, `StripeAddBankForm`, `Landmark`, `Lock`) + adjacent legacy comment blocks.
+
+### Grep proof
+`grep -rn "PortalPaymentMethodLegacy" frontend/src/` returned only the definition itself before the rip; **zero external consumers**. Post-rip: zero hits total.
+
+### Tests
+- **34 passing** across the three payment-method test files (14 tiles · 9 portal placement · 11 quick-actions).
+- Wave D added **1 new regression guard** inside `payment-method-tiles-portal-placement.test.jsx`: asserts `PortalPaymentMethodLegacy` export is gone AND the three legacy-only imports (`getStripeConfig`, `StripeAddCardForm`, `StripeAddBankForm`) are not re-introduced. A future maintainer can't accidentally re-add the dead body without tripping the guard.
+
+### Non-goals honored
+- Routing, `PaymentMethodTiles` delegation, and every Wave A/B/C behavior — untouched.
+- Shared component `PaymentMethodTiles.jsx` — untouched.
