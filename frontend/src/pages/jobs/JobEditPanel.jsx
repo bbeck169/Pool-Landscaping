@@ -25,6 +25,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button, Modal, Toast } from "@/components/ui-kit";
 import { Pencil, History, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
+import { formatCompletedAt } from "@/lib/dateTimeFormat";
 
 
 // Client-side mirror of ``services.edit_window.EDIT_WINDOW_HOURS``.
@@ -64,10 +65,8 @@ function _formatDiff(v) {
 
 
 function _formatWhen(iso) {
-  if (!iso) return "";
-  const dt = new Date(iso);
-  if (Number.isNaN(dt.getTime())) return iso;
-  return dt.toLocaleString();
+  // Phase K16 · Feb-2026 — canonical formatter (see top-level import).
+  return formatCompletedAt(iso);
 }
 
 

@@ -67,30 +67,13 @@ function humanDate(iso) {
   return bare;
 }
 
-// Phase K12 · Feb-2026 — Absolute "Mon D, YYYY · h:mm AM" render of
-// the job's completion timestamp.  Fallback order per K12 spec:
-//   1. ``job.completed_at``
-//   2. ``job.updated_at`` when ``status === "completed"`` (legacy row)
-//   3. em-dash ``—`` otherwise
-// Uses ``Intl.DateTimeFormat`` because no shared tenant-local helper
-// exists on the frontend today.
-export function formatCompletedAt(job) {
-  if (!job) return "—";
-  let iso = job.completed_at;
-  if (!iso && (job.status || "").toLowerCase() === "completed") {
-    iso = job.updated_at;
-  }
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const datePart = new Intl.DateTimeFormat("en-US", {
-    month: "short", day: "numeric", year: "numeric",
-  }).format(d);
-  const timePart = new Intl.DateTimeFormat("en-US", {
-    hour: "numeric", minute: "2-digit", hour12: true,
-  }).format(d);
-  return `${datePart} · ${timePart}`;
-}
+// Phase K16 · Feb-2026 — canonical formatter now lives in
+// ``src/lib/dateTimeFormat.js`` so every worklog / service-report /
+// portal-service-history / job-edit-panel surface renders the same
+// exact "Mon D, YYYY · h:mm AM/PM" string.  Re-exported here as a
+// named alias so existing K12 imports keep working.
+import { formatCompletedAt } from "@/lib/dateTimeFormat";
+export { formatCompletedAt };
 
 // ── Sub-components ─────────────────────────────────────────────────
 function MediaStrip({ jid, media }) {

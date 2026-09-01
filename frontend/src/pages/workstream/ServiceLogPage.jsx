@@ -36,20 +36,12 @@ import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const BLUE = "#2563EB";
 
-function formatDateTime(iso) {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return String(iso);
-    const date = d.toLocaleDateString("en-US", {
-      month: "short", day: "numeric", year: "numeric",
-    });
-    const time = d.toLocaleTimeString("en-US", {
-      hour: "numeric", minute: "2-digit",
-    });
-    return `${date} --> ${time.toLowerCase()}`;
-  } catch { return String(iso); }
-}
+import { formatCompletedAt } from "@/lib/dateTimeFormat";
+
+// Phase K16 · Feb-2026 — thin alias so existing call sites keep
+// their ``formatDateTime(x)`` signature.  Canonical implementation
+// lives in ``src/lib/dateTimeFormat.js`` per the K16 sweep spec.
+const formatDateTime = (iso) => formatCompletedAt(iso);
 
 function Avatar({ name, size = 32 }) {
   const initials = (name || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
