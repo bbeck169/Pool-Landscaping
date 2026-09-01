@@ -55,7 +55,23 @@ function _clearSessionAndRedirect() {
 }
 
 function authHeaders() {
-  const token = localStorage.getItem(TOKEN_KEY) || "";
+  // Phase K13 · Feb-2026 — when this tab is running an admin
+  // impersonation session (opened via ``window.open("/portal/home?
+  // impersonation_token=…")``), prefer the per-tab sessionStorage
+  // token over the admin's localStorage token so the admin's own
+  // session (in another tab) is not touched.  Only applies while the
+  // active route is a portal route.
+  let token = "";
+  try {
+    const path = (typeof window !== "undefined" && window.location)
+      ? window.location.pathname || "" : "";
+    const portalToken = (typeof sessionStorage !== "undefined")
+      ? (sessionStorage.getItem("portal_token") || "") : "";
+    if (portalToken && path.startsWith("/portal")) {
+      token = portalToken;
+    }
+  } catch { /* sessionStorage may be unavailable (SSR / test env) */ }
+  if (!token) token = localStorage.getItem(TOKEN_KEY) || "";
   const tenantSlug = localStorage.getItem("tenant_slug") || "";
   const headers = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;

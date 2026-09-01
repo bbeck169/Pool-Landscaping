@@ -304,6 +304,16 @@ async def attach_ach_result(
         _logging.getLogger("phase47d").warning(
             "[phase47d] ACH attach failed for customer=%s: %s", cid, exc)
         raise HTTPException(502, "attach_failed")
+    # Phase K13 · Feb-2026 — stamp the mirrored payment_methods row
+    # with the impersonating admin's id so audit trails can attribute
+    # the write.  Non-impersonated flows are unchanged.
+    if user.get("is_impersonated"):
+        await db.payment_methods.update_one(
+            {"provider_payment_method_id": body.payment_method_id,
+             "tenant_id": tenant["id"]},
+            {"$set": {"via_impersonation": True,
+                       "acting_admin_id": user.get("impersonator_id")}},
+        )
     return {
         "ok": True,
         "payment_method": {

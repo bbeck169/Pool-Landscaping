@@ -37,6 +37,18 @@ from services.chat_attachment_hydration import (
 router = APIRouter()
 
 
+def _apply_impersonation_stamp(doc: dict, user: dict) -> None:
+    """Phase K13 · Feb-2026 — mutate ``doc`` in place to record the
+    admin who is currently impersonating the target customer.  No-op
+    when ``user`` is a real customer login.  Used on write paths
+    (portal chat message insert + payment method mirror) so operators
+    inspecting a suspicious row can see who actually did it.
+    """
+    if user and user.get("is_impersonated"):
+        doc["via_impersonation"] = True
+        doc["acting_admin_id"] = user.get("impersonator_id")
+
+
 def _require_customer(user: dict) -> str:
     if user.get("role") != "customer" or not user.get("customer_id"):
         raise HTTPException(403, "Customers only")
@@ -236,6 +248,7 @@ async def create_chat(body: ChatCreateIn,
             "attachments": [],  # legacy field retained for backward compat
             "created_at": now_iso(),
         }
+        _apply_impersonation_stamp(msg, user)
         await db.portal_chat_messages.insert_one(dict(msg))
         await db.portal_chats.update_one(
             {"id": chat["id"]},
@@ -332,6 +345,7 @@ async def post_message(chat_id: str, body: MessagePostIn,
         "attachments": [],  # legacy field retained
         "created_at": now_iso(),
     }
+    _apply_impersonation_stamp(msg, user)
     await db.portal_chat_messages.insert_one(dict(msg))
     inc: dict = {}
     if role == "customer":

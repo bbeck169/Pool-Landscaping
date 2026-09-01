@@ -321,17 +321,33 @@ function AppLayout() {
   // Close drawer on route change
   React.useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
 
+  // Phase K13 · Feb-2026 — the portal impersonation-token URL
+  // strip + sessionStorage pin runs synchronously in
+  // ``src/index.js`` BEFORE React mounts (so AuthProvider's initial
+  // ``/auth/me`` fetch already sees the impersonation token).  No
+  // per-route bootstrap is needed here.
+
   // Detect impersonation: the JWT carries an `act` claim (RFC 8693) when admin
   // acts as a customer. We decode the payload client-side (no verification —
   // display only; the backend re-verifies every request).
   const impersonating = React.useMemo(() => {
     try {
-      const token = localStorage.getItem("token");
+      // Phase K13 — prefer the portal-tab token on portal routes so the
+      // banner renders inside the impersonation tab (not the admin tab).
+      const onPortal = (location.pathname || "").startsWith("/portal");
+      const token = onPortal
+        ? (window.sessionStorage.getItem("portal_token") || localStorage.getItem("token"))
+        : localStorage.getItem("token");
       if (!token) return null;
       const payload = JSON.parse(atob(token.split(".")[1] || ""));
       return payload?.act ? { adminName: payload.act.name || "admin" } : null;
     } catch { return null; }
-  }, []);
+  }, [location.pathname]);
+
+  // Phase K13 · Feb-2026 — banner is portal-scoped.  Admin routes
+  // never render it even when ``user.is_impersonated === true``.
+  const showImpersonationBanner = impersonating
+    && (location.pathname || "").startsWith("/portal");
 
   const revertImpersonation = async () => {
     try {
@@ -390,7 +406,7 @@ function AppLayout() {
       {/* Impersonation banner (Phase 4 partial fold-in) */}
       {/* Phase 15B — first-login onboarding modal (admin only, sessionStorage-guarded) */}
       {(effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin" ? <OnboardingLoginModal /> : null}
-      {impersonating ? (
+      {showImpersonationBanner ? (
         <div
           className="fixed top-0 left-0 right-0 z-50 px-4 py-2 flex items-center justify-between text-sm font-semibold"
           style={{ backgroundColor: "#FEF3C7", color: "#92400E", borderBottom: "1px solid #FDE68A" }}
@@ -423,7 +439,7 @@ function AppLayout() {
           >Exit preview</button>
         </div>
       ) : null}
-      <div id="impersonation-banner-slot" style={{ height: impersonating ? 40 : 0 }} />
+      <div id="impersonation-banner-slot" style={{ height: showImpersonationBanner ? 40 : 0 }} />
       <div id="preview-banner-slot" style={{ height: isPreviewing ? 40 : 0 }} />
 
       {/* Feb-2026 · Pivot — the 7 quick-access items move from the

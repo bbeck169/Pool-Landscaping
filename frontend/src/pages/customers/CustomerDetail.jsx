@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock } from "lucide-react";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 import { colors } from '@/theme';
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import { Button, Modal, TextInput, Skeleton, Chip, StatusPill, EmptyState, Toast } from "@/components/ui-kit";
@@ -1025,6 +1026,8 @@ function Info({ label, value, preserveNewlines }) {
 
 
 function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
+  const { user: authUser } = useAuth();
+  const canImpersonate = authUser?.role === "super_admin" || authUser?.role === "admin";
   const [busy, setBusy] = React.useState("");
   const [inviteLink, setInviteLink] = React.useState(null);
   const [tempPassword, setTempPassword] = React.useState(null);
@@ -1073,13 +1076,39 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
     setBusy("impersonate");
     try {
       const r = await api.post(`/admin/impersonate/${customer.id}`);
-      if (r?.access_token) {
-        localStorage.setItem("token", r.access_token);
-        if (r.user) localStorage.setItem("user", JSON.stringify(r.user));
-        window.location.href = "/portal/home";
+      const token = r?.access_token;
+      if (!token) {
+        onToast({ tone: "error",
+                   message: r?.detail || r?.message
+                     || "Impersonation failed — the server did not return a token." });
+        return;
       }
-    } catch (e) { onToast({ tone: "error", message: e.message }); }
-    finally { setBusy(""); }
+      // Phase K13 · Feb-2026 — open the portal in a new tab with the
+      // impersonation token in the query string.  The bootstrap on
+      // the portal side pins it to sessionStorage + strips the URL.
+      // Admin tab is NOT re-tokened, so the admin's session survives.
+      const portalUrl = `/portal/home?impersonation_token=${encodeURIComponent(token)}`;
+      const opened = window.open(portalUrl, "_blank");
+      if (!opened) {
+        onToast({ tone: "error",
+                   message: "Enable popups to impersonate. URL copied to clipboard.",
+                   action: { label: "Copy portal URL",
+                             onClick: () => navigator?.clipboard?.writeText(
+                               window.location.origin + portalUrl) } });
+        try {
+          await navigator?.clipboard?.writeText(window.location.origin + portalUrl);
+        } catch { /* clipboard may fail in test env */ }
+        return;
+      }
+      onToast({ tone: "success",
+                 message: `Opened portal as ${customer.name || "customer"} in a new tab.` });
+    } catch (e) {
+      // Every failure path surfaces a toast — no more silent "nothing
+      // happened" on missing portal-user rows (400) or 5xx errors.
+      const detail = e?.detail || e?.message
+        || (typeof e === "string" ? e : "Impersonation failed.");
+      onToast({ tone: "error", message: detail });
+    } finally { setBusy(""); }
   };
 
   const hasLogin = (status && status.has_login) ?? customer.has_login;
@@ -1151,8 +1180,9 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
             <Button
               variant="ghost"
               onClick={impersonate}
-              disabled={busy === "impersonate" || !active}
+              disabled={busy === "impersonate" || !active || !canImpersonate}
               testid="cd-impersonate"
+              style={{ display: canImpersonate ? undefined : "none" }}
             >
               View as customer
             </Button>
