@@ -35,7 +35,7 @@
  *     customer's ``has_card_on_file`` badge in the admin header).
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { CreditCard, Landmark, Lock, Plus, Pencil, Trash2 }
+import { CreditCard, Landmark, Lock, Plus, Pencil, Trash2, Star }
   from "lucide-react";
 import { toast } from "sonner";
 
@@ -116,7 +116,7 @@ function ActionButton({ label, tone = "neutral", onClick, testid, disabled }) {
 // ═══════════════════════════════════════════════════════════════════
 // Filled tile (on-file) + empty-state container
 // ═══════════════════════════════════════════════════════════════════
-function CardTile({ row, onEdit, onDelete }) {
+function CardTile({ row, onEdit, onDelete, onSetDefault, setDefaultBusy }) {
   const brand = (row.brand || "card").toUpperCase();
   const last4 = row.last4 || "••••";
   const exp = (row.exp_month && row.exp_year)
@@ -185,6 +185,19 @@ function CardTile({ row, onEdit, onDelete }) {
           onClick={() => onEdit(row)}
           testid={`payment-tile-card-edit-${row.id}`}
         />
+        {!row.is_default ? (
+          <ActionButton
+            label={
+              <>
+                <Star size={12} />
+                {setDefaultBusy ? "Setting default…" : "Set default"}
+              </>
+            }
+            onClick={() => onSetDefault(row)}
+            disabled={setDefaultBusy}
+            testid={`payment-tile-card-set-default-${row.id}`}
+          />
+        ) : null}
         <ActionButton
           label={<><Trash2 size={12} /> Delete Credit Card</>}
           tone="danger"
@@ -197,7 +210,7 @@ function CardTile({ row, onEdit, onDelete }) {
 }
 
 
-function BankTile({ row, onEdit, onDelete }) {
+function BankTile({ row, onEdit, onDelete, onSetDefault, setDefaultBusy }) {
   const last4 = row.last4 || "••••";
   const bank = row.bank_name || "Bank";
   const acct = row.account_holder_type
@@ -244,6 +257,19 @@ function BankTile({ row, onEdit, onDelete }) {
           onClick={() => onEdit(row)}
           testid={`payment-tile-bank-edit-${row.id}`}
         />
+        {!row.is_default ? (
+          <ActionButton
+            label={
+              <>
+                <Star size={12} />
+                {setDefaultBusy ? "Setting default…" : "Set default"}
+              </>
+            }
+            onClick={() => onSetDefault(row)}
+            disabled={setDefaultBusy}
+            testid={`payment-tile-bank-set-default-${row.id}`}
+          />
+        ) : null}
         <ActionButton
           label={<><Trash2 size={12} /> Delete Bank Account</>}
           tone="danger"
@@ -311,6 +337,9 @@ export default function PaymentMethodTiles({
   const [addOpen, setAddOpen] = useState(null);   // null | "card" | "bank"
   const [pending, setPending] = useState(null);   // row targeted for delete
   const [busy, setBusy] = useState(false);
+  // Phase J1 · Feb-2026 — set-default in-flight target (row.id) so
+  // the tile can render a scoped "Setting default…" state.
+  const [defaultBusyId, setDefaultBusyId] = useState(null);
 
   const load = useCallback(async () => {
     if (!customerId) return;
@@ -360,6 +389,31 @@ export default function PaymentMethodTiles({
   const closeDelete = () => {
     if (busy) return;
     setPending(null);
+  };
+
+  // Phase J1 · Feb-2026 — set-default handler.  Fires
+  // ``POST /payments/stripe/payment-methods/{pm_id}/set-default``;
+  // reloads on success so the ``is_default`` flag flips across every
+  // tile (the freshly-defaulted one loses its Set-default button and
+  // gains the ``· default`` pill).
+  const onSetDefault = async (row) => {
+    if (!row?.provider_payment_method_id) return;
+    setDefaultBusyId(row.id);
+    try {
+      await api.post(
+        `/payments/stripe/payment-methods/${row.provider_payment_method_id}/set-default`,
+        {},
+      );
+      const kind = row.type === "us_bank_account"
+        ? "Bank account" : "Card";
+      toast.success(`${kind} ending in ${row.last4} set as default.`);
+      await load();
+      onChange?.();
+    } catch (e) {
+      toast.error(e?.message || "Set-default failed");
+    } finally {
+      setDefaultBusyId(null);
+    }
   };
 
   const confirmDelete = async () => {
@@ -441,6 +495,8 @@ export default function PaymentMethodTiles({
                 row={row}
                 onEdit={openEdit}
                 onDelete={openDelete}
+                onSetDefault={onSetDefault}
+                setDefaultBusy={defaultBusyId === row.id}
               />
             ))}
           </div>
@@ -488,6 +544,8 @@ export default function PaymentMethodTiles({
                 row={row}
                 onEdit={openEdit}
                 onDelete={openDelete}
+                onSetDefault={onSetDefault}
+                setDefaultBusy={defaultBusyId === row.id}
               />
             ))}
           </div>

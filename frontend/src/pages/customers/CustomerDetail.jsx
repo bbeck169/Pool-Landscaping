@@ -665,6 +665,9 @@ export default function CustomerDetail() {
           testidPrefix="cd-tab"
           ariaLabel="Customer sections"
           forceDropdown
+          recentStorageKey={
+            customer?.id ? `cd-tabs-recent-3-${customer.id}` : null
+          }
         />
       </div>
       <div

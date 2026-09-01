@@ -496,6 +496,74 @@ async def list_payment_methods(
     return [row async for row in cursor]
 
 
+async def set_default_payment_method(
+    *, tenant_id: str, payment_method_id: str
+) -> Dict[str, Any]:
+    """Phase J1 · Feb-2026 — flip an existing PM to the customer's
+    default. Calls Stripe ``Customer.modify(invoice_settings.
+    default_payment_method=…)`` and mirrors the flag into
+    ``db.payment_methods`` + ``db.customers.stripe_default_payment_
+    method_id``.  Idempotent — flipping the already-default PM is a
+    no-op (only the ``updated_at`` timestamp bumps)."""
+    _init_api_key()
+
+    row = await db.payment_methods.find_one(
+        {"provider_payment_method_id": payment_method_id, "tenant_id": tenant_id},
+        {"_id": 0},
+    )
+    if not row:
+        raise ValueError("payment method not found")
+    customer_id = row.get("customer_id")
+    if not customer_id:
+        raise ValueError("payment method has no customer_id")
+
+    customer = await db.customers.find_one(
+        {"id": customer_id, "tenant_id": tenant_id},
+        {"_id": 0, "stripe_customer_id": 1},
+    ) or {}
+    provider_customer_id = customer.get("stripe_customer_id")
+    if provider_customer_id:
+        # Best-effort Stripe sync; the mirror update below is the
+        # local source of truth for autobilling + reporting.
+        try:
+            await _to_thread(
+                _stripe.Customer.modify,
+                provider_customer_id,
+                invoice_settings={
+                    "default_payment_method": payment_method_id,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[stripe] set_default sync error: %s", exc)
+
+    now = datetime.now(timezone.utc).isoformat()
+    # Flip the target PM to is_default=True and every sibling to False
+    # in a single roundtrip. update_many is atomic at the mirror-row
+    # level so a concurrent set_default race resolves to whichever
+    # write commits last (Mongo semantics).
+    await db.payment_methods.update_many(
+        {"tenant_id": tenant_id, "customer_id": customer_id},
+        {"$set": {"is_default": False, "updated_at": now}},
+    )
+    await db.payment_methods.update_one(
+        {"provider_payment_method_id": payment_method_id,
+         "tenant_id": tenant_id},
+        {"$set": {"is_default": True, "updated_at": now}},
+    )
+    await db.customers.update_one(
+        {"id": customer_id, "tenant_id": tenant_id},
+        {"$set": {"stripe_default_payment_method_id": payment_method_id}},
+    )
+    return {
+        "ok": True,
+        "provider_payment_method_id": payment_method_id,
+        "customer_id": customer_id,
+        "last4": row.get("last4") or "",
+        "type": row.get("type") or "card",
+        "brand": row.get("brand") or "",
+    }
+
+
 async def detach_payment_method(
     *, tenant_id: str, payment_method_id: str
 ) -> Dict[str, Any]:

@@ -45,6 +45,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { colors } from "@/theme";
@@ -65,6 +67,39 @@ function _safeTestid(prefix, k) {
   return `${prefix}-${slug}`;
 }
 
+// Phase J1 · Feb-2026 — LRU-3 recent-tabs helper.  Persists to
+// ``localStorage[recentStorageKey]`` when the parent passes the
+// prop.  Reading is fault-tolerant (private-mode / quota-exceeded /
+// non-JSON payload all short-circuit to an empty list) so the
+// dropdown never blocks rendering because of storage weirdness.
+function _readRecent(storageKey) {
+  if (!storageKey || typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((k) => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function _writeRecent(storageKey, keys) {
+  if (!storageKey || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(keys));
+  } catch {
+    /* private-mode / quota — best-effort */
+  }
+}
+
+function _pushRecent(storageKey, nextKey) {
+  const prev = _readRecent(storageKey);
+  const dedup = [nextKey, ...prev.filter((k) => k !== nextKey)].slice(0, 3);
+  _writeRecent(storageKey, dedup);
+  return dedup;
+}
+
 export function ResponsiveTabs({
   tabs,
   active,
@@ -72,10 +107,33 @@ export function ResponsiveTabs({
   testidPrefix = "rt-tab",
   ariaLabel = "Sections",
   forceDropdown = false,
+  recentStorageKey = null,
 }) {
   const items = _normalize(tabs);
   const activeItem = items.find((t) => t.k === active) || items[0] || null;
   const ActiveIcon = activeItem?.icon || null;
+
+  // Phase J1 · Feb-2026 — recent-tabs subheader.  Only rendered
+  // when ``recentStorageKey`` is provided AND at least one recent
+  // key still resolves to a valid tab entry in the current tabs
+  // list (belt-and-suspenders against stale localStorage after a
+  // tab rename or removal).
+  const [recentKeys, setRecentKeys] = React.useState(
+    () => _readRecent(recentStorageKey),
+  );
+  React.useEffect(() => {
+    setRecentKeys(_readRecent(recentStorageKey));
+  }, [recentStorageKey]);
+  const recentItems = recentKeys
+    .map((k) => items.find((t) => t.k === k))
+    .filter(Boolean);
+
+  const handleSelect = (k) => {
+    if (recentStorageKey) {
+      setRecentKeys(_pushRecent(recentStorageKey, k));
+    }
+    onChange(k);
+  };
 
   // Phase I6 · Feb-2026 — ``forceDropdown`` collapses the ≥md
   // horizontal strip into the same dropdown variant used on small
@@ -118,13 +176,47 @@ export function ResponsiveTabs({
             className="w-[calc(100vw-2rem)] max-w-sm"
             data-testid={`${testidPrefix}-dropdown-content`}
           >
+            {recentItems.length ? (
+              <>
+                <DropdownMenuLabel
+                  className="text-[10px] font-bold uppercase tracking-wider"
+                  style={{ color: colors.muted }}
+                  data-testid={`${testidPrefix}-recent-header`}
+                >
+                  Recent
+                </DropdownMenuLabel>
+                {recentItems.map((t) => {
+                  const Icon = t.icon;
+                  const isActive = t.k === active;
+                  return (
+                    <DropdownMenuItem
+                      key={`recent-${t.k}`}
+                      onSelect={() => handleSelect(t.k)}
+                      data-testid={_safeTestid(
+                        `${testidPrefix}-recent`, t.k)}
+                      data-active={isActive ? "true" : undefined}
+                      style={{
+                        color: isActive ? colors.brand : colors.onSurface,
+                        fontWeight: isActive ? 600 : 500,
+                      }}
+                    >
+                      {Icon ? <Icon size={14} className="mr-2" /> : null}
+                      {t.label}
+                    </DropdownMenuItem>
+                  );
+                })}
+                <DropdownMenuSeparator
+                  data-testid={`${testidPrefix}-recent-divider`}
+                />
+              </>
+            ) : null}
             {items.map((t) => {
               const Icon = t.icon;
               const isActive = t.k === active;
               return (
                 <DropdownMenuItem
                   key={t.k}
-                  onSelect={() => onChange(t.k)}
+                  onSelect={() => handleSelect(t.k)}
                   data-testid={_safeTestid(testidPrefix, t.k)}
                   data-active={isActive ? "true" : undefined}
                   style={{
@@ -154,7 +246,7 @@ export function ResponsiveTabs({
             <button
               key={t.k}
               type="button"
-              onClick={() => onChange(t.k)}
+              onClick={() => handleSelect(t.k)}
               className="flex items-center gap-2 px-4 py-3 text-sm font-semibold whitespace-nowrap transition"
               style={{
                 color: isActive ? colors.brand : colors.muted,

@@ -1,3 +1,167 @@
+## Phase J1 · Close-Out · Feb-2026 — Deferred #3 + #4 — SHIPPED
+
+Ships the two items left on the J1 board after the first pass. Both
+were self-contained; the whole slice landed in one commit.
+
+### #3 — Set-default affordance on non-default cards (P1)
+**Backend (new)** — `POST /api/payments/stripe/payment-methods/{pm_id}/set-default`:
+- `services/payments/stripe_charge.py::set_default_payment_method`
+  (+68 LOC). Best-effort `Stripe.Customer.modify(invoice_settings.
+  default_payment_method=…)` sync followed by an atomic mirror
+  flip: every sibling on the customer becomes
+  `is_default=False`, target becomes `is_default=True`,
+  `customers.stripe_default_payment_method_id` stamped. Stripe
+  SDK failure logs a warning but never blocks the mirror update
+  (mirror is the source of truth for autobilling + reporting).
+- `routers/stripe_router.py` (+40 LOC). Auth surface mirrors
+  `delete-typed`: admin/manager/super_admin can flip any tenant
+  PM, customer role can flip their own PM only, tech is
+  outright 403'd. Cross-tenant → 404 (no leak).
+
+**Frontend** — `components/customers/PaymentMethodTiles.jsx` (+61 / −3):
+- New `Star` icon import (`lucide-react`).
+- `CardTile` + `BankTile` now accept `onSetDefault` +
+  `setDefaultBusy` props; render an inline "Set default"
+  `ActionButton` between Edit and Delete, gated behind
+  `!row.is_default`. Button label flips to "Setting default…"
+  while the POST is in flight; the button itself dims via the
+  existing `ActionButton` `disabled` styling.
+- New parent state `defaultBusyId` (scoped by `row.id` so only
+  the clicked tile shows the busy state).
+- `onSetDefault` handler fires
+  `POST /payments/stripe/payment-methods/{pm_id}/set-default`,
+  reloads on success (which flips `is_default` across every
+  tile and removes the button from the freshly-defaulted one),
+  and toasts `"{Card|Bank account} ending in {last4} set as
+  default."`. Errors surface via `sonner.error` with the
+  original message.
+- Testid contract: `payment-tile-card-set-default-{row.id}` +
+  `payment-tile-bank-set-default-{row.id}`.
+
+**Screenshot**: `/tmp/phase_j1_set_default.png` +
+  `/app/artifacts/phase_j1/phase_j1_set_default.png` — the
+  Jennifer Carson customer with a **VISA · default** tile (no
+  button) and a **MASTERCARD · non-default** tile carrying the
+  new Set-default button alongside the "Expires soon" chip.
+
+**Tests** — `backend/tests/test_j1_set_default_payment_method.py`
+(new, 8 tests, all passing in ~5.2s):
+- Happy path — flip + sibling flip + customer pointer stamp +
+  Stripe.Customer.modify called once with the right invoice
+  settings.
+- Stripe SDK failure — mirror still flips (best-effort).
+- Unknown PM id → 404.
+- RBAC: tech 403, customer-own ✓, customer-other 403.
+- Cross-tenant → 404.
+- Idempotent — flipping the already-default PM keeps it default.
+
+`frontend/src/test/payment-method-tiles.test.jsx` (+72 / 0, three
+new assertions):
+- `Set-default button renders ONLY on non-default cards` —
+  default card has no button; non-default sibling does, with
+  "Set default" label.
+- `clicking Set default posts to /set-default and toasts
+  success` — POST body is empty, path uses
+  `provider_payment_method_id`, toast copy locked, button
+  disappears after the mirror refresh.
+- `Set default failure surfaces via sonner error toast` —
+  rejection preserves the tile + button so the operator can
+  retry.
+
+### #4 — Recent-3 preview on the tabs dropdown (P1)
+**Frontend** — `components/ui/responsive-tabs.jsx` (+94 / −2):
+- New `recentStorageKey` prop. When present AND the browser
+  has a non-empty JSON array at `localStorage[key]`, the
+  dropdown renders a `DropdownMenuLabel` "Recent" subheader +
+  those recent items + a `DropdownMenuSeparator` above the
+  full tabs list.
+- Read helper (`_readRecent`) is fault-tolerant — private-mode
+  / quota-exceeded / non-JSON payload all short-circuit to an
+  empty list so the dropdown never fails to render.
+- Write helper (`_pushRecent`) implements LRU semantics: the
+  newly-selected key moves to the front, duplicates are
+  filtered out, and the list is capped at 3.
+- Selection helper (`handleSelect`) is used by BOTH the
+  dropdown-item `onSelect` AND the horizontal-strip
+  `onClick`, so clicks from either surface update the LRU.
+- Stale-key guard: `recentItems` is derived via
+  `recentKeys.map(...).filter(Boolean)` so a rename or removal
+  in the tabs list can never crash the render.
+- Testids: `${prefix}-recent-header`, `${prefix}-recent-divider`,
+  `${prefix}-recent-{key}` for each recent entry.
+
+**Consumer** — `pages/customers/CustomerDetail.jsx` (+3 / 0):
+- Passes `recentStorageKey={customer?.id ? \`cd-tabs-recent-3-${customer.id}\` : null}`
+  so each customer has its own LRU bucket — switching between
+  Jennifer's and John's detail pages doesn't leak recents.
+
+**Screenshot**: `/tmp/phase_j1_recent_tabs.png` +
+  `/app/artifacts/phase_j1/phase_j1_recent_tabs.png` — the
+  open dropdown with the seeded `["jobs","invoices","payments"]`
+  recent list, separator, and the full 13-item tabs list
+  below.
+
+**Tests** — `frontend/src/test/responsive-tabs-recent-3.test.jsx`
+(new, 3 tests, all passing in 70ms):
+- `does NOT render the Recent subheader when localStorage is
+  empty` — belt-and-suspenders that first-time customers see
+  the pre-J1 dropdown shape.
+- `updates localStorage[cd-tabs-recent-3-*] on selection
+  change` — drives four selections and asserts the LRU list
+  ends as `["jobs","properties","invoices"]` (uniques,
+  cap-3, newest-first).
+- `renders the Recent subheader + items when localStorage has
+  entries` — source-body contract (Radix portals the menu
+  under `document.body`, which jsdom + pointer-event guards
+  make flaky to open reliably in a test env — the
+  responsive-tabs suite already uses source-body checks for
+  the horizontal-strip branch for the same reason).
+
+`frontend/src/test/responsive-tabs.test.jsx` (+6 / −2):
+- The pre-existing "no internal state fork" assertion was
+  narrowed from `React.useState(` to `React.useState(active)`
+  / `[tab, setTab]` — J1's `recentKeys` state is orthogonal to
+  the tab state, so a blanket `useState` ban would incorrectly
+  fire.
+
+### Vitest — full-suite regression check
+- **Pre-J1 close-out baseline**: `23 failing test files / 33
+  failing tests / 407 total files / 3178 passing tests`.
+- **Post-J1 close-out**: `23 failing test files / 33 failing
+  tests / 408 total files / 3184 passing tests`.
+- Net delta: **+1 test file, +6 passing tests, 0 new
+  failures**. The remaining 33 failures are all pre-existing
+  (proven by re-running the same set with the working tree
+  stashed).
+- Direct-target suite: `payment-method-tiles.test.jsx`
+  **14 → 17 tests**, all green.
+- New suite: `responsive-tabs-recent-3.test.jsx` **3 / 3**.
+- Backend: `test_j1_set_default_payment_method.py` **8 / 8**.
+  Regression check on `test_payment_methods_delete.py` **11
+  / 11** — the shared `stripe_charge.py` edit was purely
+  additive.
+
+### Files touched
+- Backend (new): `tests/test_j1_set_default_payment_method.py` (+383 LOC).
+- Backend (modified): `services/payments/stripe_charge.py` (+68),
+  `routers/stripe_router.py` (+40).
+- Frontend (new): `test/responsive-tabs-recent-3.test.jsx` (+134).
+- Frontend (modified): `components/customers/PaymentMethodTiles.jsx`
+  (+61 / −3), `components/ui/responsive-tabs.jsx` (+94 / −2),
+  `pages/customers/CustomerDetail.jsx` (+3),
+  `test/payment-method-tiles.test.jsx` (+72),
+  `test/responsive-tabs.test.jsx` (+6 / −2).
+- Artifacts: `artifacts/phase_j1/phase_j1_set_default.png`,
+  `artifacts/phase_j1/phase_j1_recent_tabs.png`.
+
+### Known deferred work
+- None outstanding for the J1 board — the entire Smart
+  Enhancement Follow-Ups bundle (#1 through #6) is now
+  shipped.
+
+---
+
+
 ## Phase J1 · Feb-2026 — Smart Enhancement Follow-Ups — SHIPPED (items 1, 2, 5, 6)
 
 Bundle of six small web enhancements tied off in one commit.

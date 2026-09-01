@@ -312,6 +312,46 @@ async def delete_payment_method_typed(
                 "brand": row.get("brand") or ""}
 
 
+@router.post("/payment-methods/{payment_method_id}/set-default")
+async def set_default_payment_method_endpoint(
+    payment_method_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase J1 · Feb-2026 — flip an on-file PM to the customer's
+    default.  Same auth surface as delete-typed: customer role can
+    only touch their own PMs, admin/manager/super_admin can touch
+    any PM inside the tenant, techs are 403'd outright."""
+    if _is_tech(user):
+        raise HTTPException(403, "Technicians cannot access payment methods")
+    row = await db.payment_methods.find_one(
+        {
+            "provider_payment_method_id": payment_method_id,
+            "tenant_id": tenant["id"],
+            "provider": "stripe",
+        },
+        {"_id": 0, "customer_id": 1},
+    )
+    if not row:
+        raise HTTPException(404, "payment method not found")
+    owner = row.get("customer_id")
+    if _is_customer(user) and user.get("customer_id") != owner:
+        raise HTTPException(403, "Not allowed")
+    if not (_is_admin(user) or _is_customer(user)):
+        raise HTTPException(403, "Not allowed")
+    try:
+        result = await stripe_svc.set_default_payment_method(
+            tenant_id=tenant["id"],
+            payment_method_id=payment_method_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[stripe] set-default error: %s", exc)
+        raise HTTPException(502, f"stripe error: {exc}")
+    return result
+
+
 @router.post("/charge")
 async def post_charge(
     body: ChargeBody,

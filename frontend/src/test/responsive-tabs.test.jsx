@@ -71,9 +71,13 @@ describe("ResponsiveTabs — responsive contract", () => {
 
   it("preserves parent-owned active/onChange wiring", () => {
     // The signature must expose ``active`` + ``onChange`` so parents
-    // keep owning URL/state sync — no internal state fork.
+    // keep owning URL/state sync — no internal state fork on the
+    // *active tab*.  Phase J1 adds an internal ``recentKeys`` state
+    // for the LRU-3 dropdown subheader — orthogonal to the tab
+    // state itself, so the assertion narrows to the tab wire.
     expect(SRC).toMatch(/active,\s*\n\s*onChange/);
-    expect(SRC).not.toMatch(/React\.useState\(/);
+    expect(SRC).not.toMatch(/React\.useState\(active\)/);
+    expect(SRC).not.toMatch(/const\s+\[tab,\s*setTab\]\s*=\s*React\.useState/);
   });
 });
 

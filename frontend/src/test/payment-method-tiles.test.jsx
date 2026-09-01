@@ -278,6 +278,78 @@ describe("PaymentMethodTiles · I5", () => {
       "Bank account ending in 6789 removed."));
   });
 
+  // ── Phase J1 · Feb-2026 — Set-default affordance ──────────────
+  it("Set-default button renders ONLY on non-default cards", async () => {
+    const nonDefaultCard = { ...CARD_ROW, id: "row_card_2",
+                                        is_default: false };
+    getMock.mockResolvedValue({
+      payment_methods: [CARD_ROW, nonDefaultCard],
+    });
+    await act(async () => {
+      render(<PaymentMethodTiles customerId="cust_1" />);
+    });
+    // Default card → NO set-default button.
+    await waitFor(() => expect(screen.getByTestId(
+      `payment-tile-card-${CARD_ROW.id}`)).toBeInTheDocument());
+    expect(screen.queryByTestId(
+      `payment-tile-card-set-default-${CARD_ROW.id}`)).toBeNull();
+    // Non-default card → button IS present with the "Set default"
+    // label.
+    const btn = screen.getByTestId(
+      `payment-tile-card-set-default-${nonDefaultCard.id}`);
+    expect(btn).toBeInTheDocument();
+    expect(btn).toHaveTextContent(/Set default/);
+  });
+
+  it("clicking Set default posts to /set-default and toasts success", async () => {
+    const nonDefaultCard = { ...CARD_ROW, id: "row_card_2",
+                                        is_default: false };
+    getMock.mockResolvedValue({payment_methods: [nonDefaultCard]});
+    await act(async () => {
+      render(<PaymentMethodTiles customerId="cust_1" />);
+    });
+    postMock.mockResolvedValue({ok: true, last4: "4242"});
+    // The refetch after set-default flips is_default → true, so the
+    // button disappears from the DOM on the second render.
+    getMock.mockResolvedValueOnce({
+      payment_methods: [{...nonDefaultCard, is_default: true}],
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId(
+        `payment-tile-card-set-default-${nonDefaultCard.id}`));
+    });
+    await waitFor(() => expect(postMock).toHaveBeenCalledWith(
+      `/payments/stripe/payment-methods/${
+        nonDefaultCard.provider_payment_method_id}/set-default`,
+      {},
+    ));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(
+      "Card ending in 4242 set as default."));
+    // Button gone after the flip.
+    await waitFor(() => expect(screen.queryByTestId(
+      `payment-tile-card-set-default-${nonDefaultCard.id}`)).toBeNull());
+  });
+
+  it("Set default failure surfaces via sonner error toast", async () => {
+    const nonDefaultCard = { ...CARD_ROW, id: "row_card_2",
+                                        is_default: false };
+    getMock.mockResolvedValue({payment_methods: [nonDefaultCard]});
+    await act(async () => {
+      render(<PaymentMethodTiles customerId="cust_1" />);
+    });
+    postMock.mockRejectedValue(new Error("stripe unavailable"));
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId(
+        `payment-tile-card-set-default-${nonDefaultCard.id}`));
+    });
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith(
+      "stripe unavailable"));
+    // Card + button still on-screen for the operator to retry.
+    expect(screen.getByTestId(
+      `payment-tile-card-set-default-${nonDefaultCard.id}`),
+    ).toBeInTheDocument();
+  });
+
   it("skips fetch when customerId prop is missing", async () => {
     await act(async () => {
       render(<PaymentMethodTiles customerId={null} />);
