@@ -472,6 +472,13 @@ api_router.include_router(_f2_data_repair_router.router)
 # the anonymous k8s probes at /health/live and /health/ready.
 from routers import admin_health_check as _i3_admin_health_check  # noqa: E402
 api_router.include_router(_i3_admin_health_check.router)
+# Phase I4 · Feb-2026 — Soshie brand-brain async ingest endpoints.
+# 202-Accepted job pattern replacing the sync ingest that was
+# timing out on cold crawls (frontend fetch cap 30s vs 60-180s
+# real-world ingest budget). Legacy /soshie/ingest-website below
+# is shimmed to the same job flow so bookmarks keep working.
+from routers import soshie_brand_ingest as _i4_soshie_brand_ingest  # noqa: E402
+api_router.include_router(_i4_soshie_brand_ingest.router)
 # Phase D · Feb-2026 — Drift alerting settings + test-fire.
 from routers import drift_alerts as _phase_d_drift_alerts  # noqa: E402
 api_router.include_router(_phase_d_drift_alerts.router)
@@ -1501,6 +1508,24 @@ async def _background_seed():
         scheduler.add_job(coverage.revert_expired_coverage, "interval",
                             hours=12, id="coverage_revert",
                             replace_existing=True)
+        # Phase I4 · Feb-2026 — Soshie brand-ingest stale-job sweep.
+        # Marks any job stuck in ``running`` for >15 minutes as
+        # ``failed, error=timeout_stale``. Belt-and-suspenders for
+        # the pod-died-mid-job case; the worker itself also enforces
+        # a 5-min asyncio.wait_for ceiling.
+        try:
+            from services.soshie.brand_ingest_jobs import (
+                cleanup_stale_ingest_jobs,
+            )
+            scheduler.add_job(
+                cleanup_stale_ingest_jobs, "interval", minutes=5,
+                id="soshie_ingest_stale_sweep",
+                replace_existing=True,
+            )
+        except Exception as _bce:  # noqa: BLE001
+            logger.warning(
+                f"[soshie-ingest] stale-sweep registration skipped: {_bce}",
+            )
         # Phase D · Feb-2026 — Daily data-integrity drift digest.
         # Ticks every hour on the hour; dispatch_for_tenant filters
         # to 08:00 in each tenant's timezone. Same-date dedupe via

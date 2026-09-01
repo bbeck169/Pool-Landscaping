@@ -1,14 +1,23 @@
 /**
  * Phase S2 · Feb-2026 — Brand Brain tab.
  *
- * Read-only display of the tenant's ingested brand memory plus a
- * "Re-ingest from website" modal that calls
- * ``POST /api/soshie/ingest-website``.  Reads:
+ * Feb 2026 · Phase I4 — Async ingest job.  The "Re-ingest from
+ * website" modal used to await the sync ``POST /soshie/ingest-website``
+ * response, which timed out at 30s on cold crawls of large sites.
+ * The endpoint is now fire-and-forget (returns 202 with a job_id);
+ * this component polls ``GET /soshie/brand-brain/ingest/latest``
+ * every 5s while the modal is open, and renders a top-of-page
+ * banner on mount if a prior job is still running.
+ *
+ * Reads:
  *
  *   * ``GET /api/soshie/brand-brain`` — combined brand_brain +
  *     latest ingest metadata.
+ *   * ``GET /api/soshie/brand-brain/ingest/latest`` — latest job
+ *     row (any status) for the current tenant. Drives the
+ *     resume-banner + modal poll.
  */
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
 import { RefreshCw, Globe, Loader2, Palette, MapPin,
            MessageSquare } from "lucide-react";
@@ -46,46 +55,113 @@ function Section({ title, icon: Icon, children, testId }) {
 }
 
 
+// Phase I4 · Feb-2026 — poll interval for the async ingest job.
+const INGEST_POLL_MS = 5000;
+const _isTerminal = (s) => s === "succeeded" || s === "failed";
+
+
 function IngestModal({ open, onClose, onDone }) {
   const [url, setUrl] = useState("");
   const [extra, setExtra] = useState("");
+  const [job, setJob] = useState(null);
   const [busy, setBusy] = useState(false);
+  const pollTimer = useRef(null);
+
+  const clearPoll = () => {
+    if (pollTimer.current) {
+      clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (!open) {
+      clearPoll();
+      return;
+    }
+    return clearPoll;
+  }, [open]);
+
+  const pollOnce = useCallback(async () => {
+    try {
+      const r = await api.get("/soshie/brand-brain/ingest/latest");
+      const latest = r?.job || null;
+      if (!latest) return;
+      setJob(latest);
+      if (_isTerminal(latest.status)) {
+        clearPoll();
+        if (latest.status === "succeeded") {
+          toast.success("Brand memory ingest complete.");
+          onDone?.();
+          onClose?.();
+        }
+        // On failure keep the modal open so the operator can Retry.
+      }
+    } catch { /* silent — poll retries */ }
+  }, [onClose, onDone]);
+
   const submit = async () => {
     if (!url.trim()) {
       toast.error("Enter a website URL first");
       return;
     }
+    const extraPaths = extra.split("\n").map((s) => s.trim()).filter(Boolean);
     setBusy(true);
     try {
-      const idem = `bb-${Date.now()}`;
-      await api.post("/soshie/ingest-website",
-        { website_url: url.trim() },
-        { headers: { "X-Idempotency-Key": idem } });
-      toast.success("Website ingested — brand memory refreshed");
-      onDone();
-      onClose();
+      const posted = await api.post(
+        "/soshie/brand-brain/ingest",
+        { website_url: url.trim(), extra_paths: extraPaths },
+      );
+      setJob(posted);
+      // Kick a poll cycle immediately + on interval so the operator
+      // sees status transition without waiting a full 5s.
+      clearPoll();
+      pollTimer.current = setInterval(pollOnce, INGEST_POLL_MS);
+      pollOnce();
     } catch (e) {
-      toast.error(e?.message || "Ingest failed");
+      toast.error(e?.message || "Ingest failed to start");
     } finally {
       setBusy(false);
     }
   };
+
+  const retry = () => {
+    setJob(null);
+    submit();
+  };
+
+  const inFlight = job && !_isTerminal(job.status);
+  const failed = job && job.status === "failed";
+
   return (
     <Modal open={open} onClose={onClose}
              title="Re-ingest brand memory"
              testid="brand-brain-ingest-modal"
              footer={
-               <div className="flex gap-2 justify-end">
+               <div className="flex gap-2 justify-end"
+                     data-testid="ingest-modal-footer">
                  <Button variant="ghost" onClick={onClose}
                             testid="ingest-cancel"
-                            disabled={busy}>Cancel</Button>
-                 <Button onClick={submit}
-                            testid="ingest-submit"
                             disabled={busy}>
-                   {busy ? <><Loader2 className="animate-spin mr-1.5"
-                                        size={14} />Ingesting…</>
-                             : "Ingest website"}
+                   {inFlight ? "Close (keeps running)" : "Cancel"}
                  </Button>
+                 {failed ? (
+                   <Button onClick={retry} testid="ingest-retry"
+                              disabled={busy}>
+                     Retry
+                   </Button>
+                 ) : inFlight ? (
+                   <Button disabled testid="ingest-in-flight">
+                     <Loader2 className="animate-spin mr-1.5"
+                                 size={14} />
+                     Ingesting…
+                   </Button>
+                 ) : (
+                   <Button onClick={submit} testid="ingest-submit"
+                              disabled={busy}>
+                     {busy ? "Starting…" : "Ingest website"}
+                   </Button>
+                 )}
                </div>
              }>
       <div className="space-y-3">
@@ -93,6 +169,7 @@ function IngestModal({ open, onClose, onDone }) {
                         placeholder="https://your-company.com"
                         value={url}
                         onChange={(e) => setUrl(e.target.value)}
+                        disabled={inFlight}
                         testid="ingest-url-input" />
         <div>
           <label className="block text-xs font-semibold mb-1"
@@ -109,12 +186,64 @@ function IngestModal({ open, onClose, onDone }) {
                         placeholder={"/services\n/about"}
                         value={extra}
                         onChange={(e) => setExtra(e.target.value)}
+                        disabled={inFlight}
                         data-testid="ingest-extra-input" />
           <p className="text-xs mt-1" style={{ color: colors.muted }}>
             Home page ingest is enough for most brands. Extra paths
-            will be crawled if provided.
+            will be crawled if provided. Up to 4 extras (5 pages total).
           </p>
         </div>
+
+        {/* Phase I4 · Feb-2026 — progress indicator while a job is
+             in flight. Persists across modal-close via the
+             GET /ingest/latest poll on next open. */}
+        {job ? (
+          <div className="rounded-lg p-3 mt-3"
+                   style={{
+                     background: failed ? "#FEE2E2"
+                                : job.status === "succeeded"
+                                  ? "#DCFCE7"
+                                  : "#DBEAFE",
+                     color: failed ? "#991B1B"
+                             : job.status === "succeeded"
+                               ? "#166534"
+                               : "#1E3A8A",
+                     border: `1px solid ${failed ? "#FCA5A5"
+                                    : job.status === "succeeded"
+                                       ? "#86EFAC" : "#93C5FD"}`,
+                   }}
+                   data-testid="ingest-progress">
+            <div className="text-xs font-bold uppercase tracking-wider mb-1"
+                     data-testid="ingest-progress-status">
+              {job.status}
+            </div>
+            {inFlight ? (
+              <div className="text-sm"
+                       data-testid="ingest-progress-body">
+                Ingest in progress — this can take 1–3 minutes. You can close
+                this modal and check back.
+                <div className="mt-1 font-mono text-xs"
+                         data-testid="ingest-progress-counter">
+                  Step: {job.progress?.current_step || "…"} · Pages{" "}
+                  {job.progress?.paths_crawled ?? 0}/
+                  {job.progress?.paths_total ?? 0}
+                </div>
+              </div>
+            ) : failed ? (
+              <div className="text-sm"
+                       data-testid="ingest-progress-error">
+                Ingest failed: {job.error || "unknown error"}
+              </div>
+            ) : (
+              <div className="text-sm">
+                Ingest complete — {job.result_summary?.pages_fetched ?? 0}{" "}
+                page{(job.result_summary?.pages_fetched ?? 0) === 1
+                     ? "" : "s"} · {job.result_summary?.bullets_added ?? 0}{" "}
+                new talking point(s).
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
     </Modal>
   );
@@ -127,6 +256,10 @@ export default function BrandBrainTab() {
   const [data, setData] = useState({ brand_brain: null,
                                           latest_ingest: null });
   const [ingestOpen, setIngestOpen] = useState(false);
+  // Phase I4 · Feb-2026 — resume-banner state. Populated on mount
+  // via GET /ingest/latest so a page reload after leaving the
+  // modal open surfaces the "still running" hint.
+  const [runningJob, setRunningJob] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -141,6 +274,20 @@ export default function BrandBrainTab() {
     }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Phase I4 — check for a still-running ingest on mount.
+  const loadRunningJob = useCallback(async () => {
+    try {
+      const r = await api.get("/soshie/brand-brain/ingest/latest");
+      const latest = r?.job || null;
+      if (latest && !_isTerminal(latest.status)) {
+        setRunningJob(latest);
+      } else {
+        setRunningJob(null);
+      }
+    } catch { /* silent */ }
+  }, []);
+  useEffect(() => { loadRunningJob(); }, [loadRunningJob]);
 
   if (loading) {
     return (
@@ -188,6 +335,29 @@ export default function BrandBrainTab() {
 
   return (
     <div className="space-y-4" data-testid="brand-brain-content">
+      {runningJob ? (
+        <div className="rounded-lg px-4 py-2 flex items-center gap-2 text-sm"
+             style={{
+               background: "#DBEAFE", color: "#1E3A8A",
+               border: "1px solid #93C5FD",
+             }}
+             data-testid="brand-brain-resume-banner">
+          <Loader2 className="animate-spin" size={14} />
+          <span>
+            Ingest in progress —
+            {" "}
+            {runningJob.progress?.current_step || "starting"}
+            {" · "}
+            {runningJob.progress?.paths_crawled ?? 0}/
+            {runningJob.progress?.paths_total ?? 0} pages.
+          </span>
+          <Button variant="ghost"
+                     onClick={() => setIngestOpen(true)}
+                     testid="brand-brain-resume-open">
+            Open modal
+          </Button>
+        </div>
+      ) : null}
       <Card testId="brand-brain-header">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>

@@ -443,23 +443,48 @@ async def ingest_website_endpoint(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
-    """Kick off the P1 brand-brain website ingest. Idempotent per
-    (tenant, X-Idempotency-Key).  Returns the crawl summary."""
-    from services.soshie.brand_ingest import ingest_website
+    """Legacy shim · Feb-2026 (Phase I4).
+
+    Preserved for backward compatibility with mobile + admin
+    bookmarks. Rather than run the ingest synchronously (which
+    timed out on the 30s frontend fetch ceiling), we now spawn
+    the async job and return an ``async_job`` envelope carrying
+    the ``job_id`` so callers can poll ``GET /soshie/brand-brain/
+    ingest/{job_id}``.  Idempotency semantics preserved via the
+    existing X-Idempotency-Key handshake.
+    """
+    from services.soshie.brand_ingest_jobs import (
+        create_ingest_job, spawn_ingest_job,
+    )
     idem_body = body.dict()
     idem_key, cached = await replay_or_reserve(
         request, tenant["id"], "POST /soshie/ingest-website", idem_body,
     )
     if cached is not None:
         return cached
-    result = await ingest_website(
-        tenant["id"], body.website_url, user_id=user["id"])
+    row = await create_ingest_job(
+        tenant["id"], body.website_url, extra_paths=[],
+        user_id=user["id"],
+    )
+    spawn_ingest_job(row["id"])
+    envelope = {
+        "async_job": True,
+        "job_id": row["id"],
+        "status": row["status"],
+        "poll_url": f"/api/soshie/brand-brain/ingest/{row['id']}",
+        # Preserve historical shape for callers that inspect these
+        # keys; the numbers are 0 until the job runs but the
+        # presence keeps JSON-schema-tight consumers happy.
+        "pages_fetched": 0,
+        "bullets_added": 0,
+        "urls": [],
+    }
     if idem_key:
         await store_response(
             idem_key, "POST /soshie/ingest-website",
-            tenant["id"], result, idem_body,
+            tenant["id"], envelope, idem_body,
         )
-    return result
+    return envelope
 
 
 

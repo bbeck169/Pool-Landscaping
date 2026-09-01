@@ -14031,3 +14031,67 @@ Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy 
 - Phase G4b: Expo/Mobile parity for Portal Activation filter (P1)
 - Expo/Mobile parity for Waitlist tab (P1)
 - Phase F6b: Mobile parity for crew filter + Active/Inactive filter (P1)
+
+---
+
+## Phase I4 — Soshie Brand-Ingest Async Job Pattern (Feb 2026) — SHIPPED
+
+### Problem
+Human reported the `/soshie` "Re-ingest brand memory" flow timing out on prod with the 30s frontend fetch cap. Sync ingest crawls 1-13 pages + parses HTML; a cold site on a slow origin easily blows the budget.
+
+### What shipped
+- **New endpoints** (all `require_admin`, tenant-scoped):
+  - `POST /api/soshie/brand-brain/ingest` → **202 Accepted** with job row + `Location: /api/soshie/brand-brain/ingest/<id>` header. Returns in <500ms.
+  - `GET /api/soshie/brand-brain/ingest/{job_id}` → job row (404 on missing/cross-tenant).
+  - `GET /api/soshie/brand-brain/ingest/latest` → most recent tenant job, `{job: null}` when empty. Drives the resume banner.
+- **Legacy shim**: `POST /api/soshie/ingest-website` still returns 200 with a `{async_job: true, job_id, poll_url, pages_fetched: 0, ...}` envelope — historical shape preserved for mobile + bookmarks.
+- **Worker**: `asyncio.create_task`-spawned. Wraps under `asyncio.wait_for(_do_ingest, timeout=300)` (5-min ceiling). Every exception path writes `status="failed", error=<200 char>` to the job row — never crashes the process.
+- **Path cap**: `MAX_TOTAL_PATHS=5` (home + 4 extras). Router returns 400 with `detail: too_many_paths` when caller submits more; worker re-enforces defensively.
+- **Stale-job sweep**: `cleanup_stale_ingest_jobs` registered as APScheduler `interval, minutes=5, id="soshie_ingest_stale_sweep"`. Marks any `running` job older than 15 minutes as `failed, error="timeout_stale"` — belt-and-suspenders for pod-died-mid-job.
+- **Progress signal**: worker updates `progress.paths_crawled`, `progress.paths_total`, `progress.current_step` at each phase (`queued` → `fetching_home` → `crawling_and_parsing` → `merging_brand_brain` → `succeeded`).
+
+### Frontend
+- `BrandBrainTab.jsx` modal now polls `GET /ingest/latest` every 5s while open. Success → toast + auto-close. Failure → modal stays open with a **Retry** button and the truncated error message.
+- **Resume banner** at the top of the tab on mount: `Ingest in progress — <step> · N/M pages` with an "Open modal" affordance.
+- Modal cancel button relabels to **"Close (keeps running)"** when a job is in-flight — the operator can walk away and check back.
+
+### Files
+- `/app/backend/services/soshie/brand_ingest_jobs.py` (365 LOC, new)
+- `/app/backend/routers/soshie_brand_ingest.py` (120 LOC, new)
+- `/app/backend/tests/test_soshie_brand_ingest_async.py` (474 LOC, new — 12 tests)
+- `/app/frontend/src/test/soshie-brand-ingest-async.test.jsx` (248 LOC, new — 7 tests)
+- `/app/backend/server.py` — router register + scheduler cron entry (+16 LOC)
+- `/app/backend/routers/soshie_publishing.py` — legacy endpoint shimmed to async (rewrite of `ingest_website_endpoint`)
+- `/app/backend/tests/_f7_loop_fixture.py` — add `routers.soshie_brand_ingest`, `routers.tenants`, `services.soshie.brand_ingest`, `services.soshie.brand_ingest_jobs` to `_REBOUND_MODULES`
+- `/app/frontend/src/pages/soshie/BrandBrainTab.jsx` — full rewrite of IngestModal + resume banner
+
+### Tests
+- Backend: **12 tests passing** — 202 shape, GET status returns progress, worker error encoding, `wait_for` timeout → `error="timeout"`, stale-sweep marks failed with `error="timeout_stale"` (untouched fresh jobs), `>5 paths → 400`, RBAC tech/unauth 403, `/latest` returns most-recent tenant-scoped job (cross-tenant leak guard), `/latest` returns `{job: null}` on empty tenant, worker writes brand_brain fields on success, legacy endpoint shim.
+- Frontend: **7 tests passing** — resume banner on mount when running, no banner on terminal, POST fires + progress shown, poll success → toast + close, poll fail → modal stays open + Retry, `extra_paths` textarea splits/trims correctly, regression guard against re-introducing the legacy sync endpoint.
+
+### Live curl proof (preview)
+```
+=== POST /api/soshie/brand-brain/ingest ===
+HTTP/2 202 
+location: /api/soshie/brand-brain/ingest/88143b5a-0a61-40a3-ace3-07eac2040e71
+{"id":"88143b5a-...","status":"queued","started_at":"...","progress":{"paths_crawled":0,"paths_total":2,"current_step":"queued"},"result_summary":null}
+
+=== poll cycle (1s intervals) ===
+poll #1 · status=succeeded · progress={paths_crawled: 2, paths_total: 2, current_step: succeeded} · error=None
+```
+POST returned in ~500ms, real crawl of `https://example.com` + `/about` completed in under 1s (small target), status transitioned `queued → running → succeeded` cleanly.
+
+### Screenshot
+- `/tmp/phase_i4_ingest_progress.png` — modal shows `RUNNING` pill, "Ingest in progress — this can take 1-3 minutes." message, `Step: crawling_and_parsing · Pages 0/2` counter, `Close (keeps running)` + `Ingesting…` footer buttons.
+
+### Surprises
+- The current sync `ingest_website` has **no LLM call** — it's pure BeautifulSoup + regex distillation. The brief mentioned a 30s LLM ceiling; I surfaced `LLM_TIMEOUT_S=30` as a module constant for future LLM steps but the current timeout risk is HTTP crawl latency, not model inference. Encoded as an overall 5-min `asyncio.wait_for` on the worker.
+- The legacy endpoint uses `get_current_user` (any auth), but the new endpoints use `require_admin`. Kept the legacy gate as-is to preserve behavior; new admin-only endpoints are the primary surface going forward.
+- `_f7_loop_fixture.py` needed **two additional module rebinds** (`routers.tenants`, `services.soshie.brand_ingest`) because both hold module-scope `db` references that JWT-authenticated ASGI tests hit. Same class of bug I3 tripped over with `utils`.
+- The legacy `POST /soshie/ingest-website` shim writes an idempotent cache entry via `store_response`; if a client retries with the same `X-Idempotency-Key` they get the SAME `job_id`, not a new one. Cheap deploy-safety for mobile.
+
+### Next queue (unchanged)
+- Phase G4b: Expo/Mobile parity for Portal Activation filter (P1)
+- Expo/Mobile parity for Waitlist tab (P1)
+- Phase F6b: Mobile parity for crew filter + Active/Inactive filter (P1)
+- Tenant switcher on logo (P2)
