@@ -238,3 +238,140 @@ def test_add_card_sms_from_via_legacy_utils_send_sms(monkeypatch):
         f"Legacy utils.send_sms → RC payload from-number regressed: "
         f"expected +16028874400, got {captured_from!r}."
     )
+
+
+# ══════════════════════ Phase G2 · TD-G1-1 tests ═══════════════════════
+def test_tenant_override_wins_over_env(monkeypatch):
+    """Phase G2 · TD-G1-1 — when the tenant has an explicit
+    ``tenants.rc_sms_from_number`` override, the RC adapter MUST use
+    it instead of the env fallback.
+
+    Uses a real Mongo document fixture so the exact
+    ``_resolve_from`` lookup path (``db.tenants.find_one``) is
+    exercised end-to-end.
+    """
+    ta = _load_adapter(
+        monkeypatch,
+        RC_SMS_DEFAULT_FROM="+16028874400",  # env stays healthy
+        **_RC_ENABLED,
+    )
+    client = _install_rc_mock(monkeypatch, [
+        _FakeResponse(200, {"id": 11111, "messageStatus": "Queued"}),
+    ])
+
+    # Seed a fake tenant with an override, then patch ``config.db``
+    # inside the adapter so its find_one returns our fixture.
+    _TENANT_ID = "g2-tenant-with-override"
+    _OVERRIDE_FROM = "+14805551212"
+
+    class _FakeTenantsCollection:
+        async def find_one(self, q, projection=None):
+            if q.get("id") == _TENANT_ID:
+                return {"id": _TENANT_ID,
+                          "rc_sms_from_number": _OVERRIDE_FROM}
+            return None
+
+    class _FakeDB:
+        tenants = _FakeTenantsCollection()
+
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "db", _FakeDB(), raising=False)
+
+    adapter = ta.RingCentralSMSAdapter()
+    res = _run(adapter.send(
+        to="+16028874400",
+        body="tenant-override end-to-end contract",
+        category="transactional",
+        tenant_id=_TENANT_ID,
+    ))
+    assert res["provider"] == "ringcentral"
+    assert res["provider_status"] == "sent"
+
+    captured_from = _capture_last_sms_from(client)
+    assert captured_from == _OVERRIDE_FROM, (
+        f"Tenant rc_sms_from_number override did not win: expected "
+        f"{_OVERRIDE_FROM!r}, got {captured_from!r}. Check "
+        f"services/sms/rc_adapter.py::_resolve_from priority."
+    )
+
+
+def test_env_fallback_when_tenant_setting_unset(monkeypatch):
+    """Phase G2 · TD-G1-1 — G1 regression guard. When the tenant
+    doc has no ``rc_sms_from_number`` field (the current aquaterra
+    prod state), the env ``RC_SMS_DEFAULT_FROM`` MUST win. This
+    protects the shipped G1 behavior on all existing tenants.
+    """
+    ta = _load_adapter(
+        monkeypatch,
+        RC_SMS_DEFAULT_FROM="+16028874400",
+        **_RC_ENABLED,
+    )
+    client = _install_rc_mock(monkeypatch, [
+        _FakeResponse(200, {"id": 22222, "messageStatus": "Queued"}),
+    ])
+
+    _TENANT_ID = "g2-tenant-no-override"
+
+    class _FakeTenantsCollection:
+        async def find_one(self, q, projection=None):
+            if q.get("id") == _TENANT_ID:
+                # Tenant exists but no override field set.
+                return {"id": _TENANT_ID}
+            return None
+
+    class _FakeDB:
+        tenants = _FakeTenantsCollection()
+
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "db", _FakeDB(), raising=False)
+
+    adapter = ta.RingCentralSMSAdapter()
+    res = _run(adapter.send(
+        to="+16028874400", body="g1 regression guard",
+        category="transactional", tenant_id=_TENANT_ID,
+    ))
+    assert res["provider"] == "ringcentral"
+
+    captured_from = _capture_last_sms_from(client)
+    assert captured_from == "+16028874400", (
+        f"G1 regression: tenant without rc_sms_from_number should "
+        f"fall back to env; expected +16028874400, got {captured_from!r}."
+    )
+
+
+def test_utils_send_sms_without_tenant_id_logs_warning(monkeypatch, caplog):
+    """Phase G2 · TD-G1-1 — call-site attribution. When a caller
+    invokes ``utils.send_sms`` without ``tenant_id``, a WARNING must
+    be logged so ops can spot the missed plumbing. Env fallback
+    still applies (backward-compatible).
+    """
+    import logging
+    ta = _load_adapter(
+        monkeypatch,
+        RC_SMS_DEFAULT_FROM="+16028874400",
+        **_RC_ENABLED,
+    )
+    _install_rc_mock(monkeypatch, [
+        _FakeResponse(200, {"id": 33333, "messageStatus": "Queued"}),
+    ])
+
+    import utils as _utils
+    import services.sms.rc_adapter as _mod
+    monkeypatch.setattr(_mod, "send",
+                          ta.RingCentralSMSAdapter().send, raising=False)
+
+    with caplog.at_level(logging.WARNING, logger="pool_crm"):
+        ok = _utils.send_sms(
+            "+16028874400",
+            "no tenant_id — should warn",
+        )
+    assert ok is True
+    # The warning must mention the caller's file (this test file).
+    joined = "\n".join(caplog.messages)
+    assert "without tenant_id" in joined, (
+        f"expected 'without tenant_id' warning in log; got {joined!r}"
+    )
+    assert "test_add_card_sms_from_number.py" in joined, (
+        f"expected call-site attribution to this test file; got {joined!r}"
+    )
+

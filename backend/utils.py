@@ -1,6 +1,7 @@
 from fastapi import HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 import os
 import uuid
 import jwt
@@ -227,7 +228,7 @@ def deny_impersonation(user: dict) -> None:
         raise HTTPException(status_code=403, detail="This action is disabled while viewing as a customer.")
 
 
-def send_sms(to: str, body: str) -> bool:
+def send_sms(to: str, body: str, *, tenant_id: Optional[str] = None) -> bool:
     """Legacy sync-return SMS helper.
 
     Feb-2026 · Twilio→RC consolidation — delegates to the shipped
@@ -236,9 +237,32 @@ def send_sms(to: str, body: str) -> bool:
     helper is invoked from sync fire-and-forget code paths like
     ``notify_customer``). Returns True on any successful queue/send,
     False otherwise — matches the historical return shape callers
-    already handle."""
+    already handle.
+
+    Phase G2 · Feb-2026 (TD-G1-1) — accepts ``tenant_id`` kwarg. When
+    provided, the RC adapter resolves the outbound ``from`` number
+    via ``tenants.rc_sms_from_number`` (per-tenant override) FIRST,
+    falling back to env ``RC_SMS_DEFAULT_FROM``. When omitted, only
+    the env fallback applies — a warning is logged with call-site
+    info so we can eventually reach 100% coverage. See
+    ``services/sms/rc_adapter.py::_resolve_from``.
+    """
     if not to:
         return False
+    if tenant_id is None:
+        # Call-site attribution — helps ops audit which caller is
+        # still missing the plumbing.
+        try:
+            import inspect
+            _frame = inspect.stack()[1]
+            _caller = f"{_frame.filename}:{_frame.lineno}"
+        except Exception:  # pragma: no cover
+            _caller = "unknown"
+        logger.warning(
+            "[send_sms] called without tenant_id from %s — "
+            "per-tenant rc_sms_from_number override cannot apply; "
+            "falling back to env RC_SMS_DEFAULT_FROM.", _caller,
+        )
     try:
         import asyncio
         # Lazy import to break circular dep with routers/marketing_preferences
@@ -246,7 +270,10 @@ def send_sms(to: str, body: str) -> bool:
         from services.sms.rc_adapter import send as _sms_send
 
         async def _go():
-            return await _sms_send(to=to, body=body, category="transactional")
+            return await _sms_send(
+                to=to, body=body, category="transactional",
+                tenant_id=tenant_id,
+            )
 
         try:
             # Running under an existing loop? Delegate to it.
@@ -296,7 +323,11 @@ async def notify_customer(customer_id: str, title: str, body: str, job_id: str =
     if sms:
         cust = await db.customers.find_one({"id": customer_id}, {"_id": 0})
         if cust and cust.get("phone"):
-            send_sms(cust["phone"], f"{title}: {body}")
+            # Phase G2 · Feb-2026 (TD-G1-1) — plumb tenant_id so the
+            # RC adapter can honour ``tenants.rc_sms_from_number`` for
+            # the notification recipient's tenant.
+            send_sms(cust["phone"], f"{title}: {body}",
+                        tenant_id=tenant_id)
 
 
 async def notify_technician(technician_id: str, title: str, body: str, job_id: str = None):

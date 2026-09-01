@@ -88,7 +88,11 @@ async def _dispatch_survey(job: dict, channel: str = "email") -> dict:
     if channel == "email":
         emailed = await _send_survey_email(cust, url)
     elif channel == "sms" and cust.get("phone"):
-        send_sms(cust["phone"], f"Hi {cust.get('name','')}, how did we do? Rate your visit: {url}")
+        # Phase G2 · Feb-2026 (TD-G1-1) — plumb tenant_id so the RC
+        # adapter honours ``tenants.rc_sms_from_number`` for CSAT SMS.
+        send_sms(cust["phone"],
+                    f"Hi {cust.get('name','')}, how did we do? Rate your visit: {url}",
+                    tenant_id=tid)
         emailed = True
     doc["url"] = url
     doc["emailed"] = emailed

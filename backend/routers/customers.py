@@ -2456,8 +2456,15 @@ async def send_card_add_link(cid: str,
         body_r, _ = render_template(sms_tpl.get("body") or "", ctx)
         try:
             import asyncio as _asyncio
+            # Phase G2 · Feb-2026 (TD-G1-1) — plumb tenant_id so the
+            # RC adapter honours ``tenants.rc_sms_from_number`` for
+            # the add-card send. Positional args + kwarg matches the
+            # ``send_sms(to, body, *, tenant_id=None)`` signature.
             await _asyncio.wait_for(
-                _asyncio.to_thread(send_sms, customer["phone"], body_r),
+                _asyncio.to_thread(
+                    send_sms, customer["phone"], body_r,
+                    tenant_id=tenant["id"],
+                ),
                 timeout=8.0,
             )
             sent_sms = True

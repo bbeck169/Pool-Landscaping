@@ -470,6 +470,10 @@ api_router.include_router(_f2_data_repair_router.router)
 # Phase D · Feb-2026 — Drift alerting settings + test-fire.
 from routers import drift_alerts as _phase_d_drift_alerts  # noqa: E402
 api_router.include_router(_phase_d_drift_alerts.router)
+
+# Phase G2 · Feb-2026 (TD-G1-1) — per-tenant RC SMS from-number setting.
+from routers import rc_sms_from_number_settings as _phase_g2_rc_from  # noqa: E402
+api_router.include_router(_phase_g2_rc_from.router)
 # Phase F2 · Feb-2026 — Charge Template Bundles (reusable line-item
 # bundles admins can apply to a job in one click).
 from routers import charge_templates as _phase_f2_charge_templates  # noqa: E402

@@ -167,7 +167,9 @@ async def generate(body: GenerateIn,
             raise HTTPException(400, "Phone number required for SMS")
         body_txt = _sms_body(branding["business_name"], dispatch["url"], body.expiry_hours or 48, body.custom_message)
         try:
-            ok = send_sms(body.to, body_txt)
+            # Phase G2 · Feb-2026 (TD-G1-1) — plumb tenant_id so the
+            # RC adapter honours ``tenants.rc_sms_from_number``.
+            ok = send_sms(body.to, body_txt, tenant_id=tenant["id"])
             if ok:
                 sent = True
             else:
@@ -252,8 +254,11 @@ async def resend(did: str,
     reason = None
     if d["method"] == "sms" and d.get("to"):
         try:
+            # Phase G2 · Feb-2026 (TD-G1-1) — plumb tenant_id so the
+            # RC adapter honours ``tenants.rc_sms_from_number``.
             ok = send_sms(d["to"], _sms_body(branding["business_name"], d["url"],
-                                             d.get("expiry_hours") or 48, d.get("custom_message", "")))
+                                             d.get("expiry_hours") or 48, d.get("custom_message", "")),
+                            tenant_id=tenant["id"])
             sent = bool(ok)
             if not sent:
                 reason = "sms-not-configured"
