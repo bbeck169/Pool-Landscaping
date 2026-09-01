@@ -28,6 +28,7 @@ vi.mock("@/api", () => ({
     post: (...a) => postMock(...a),
     del: (...a) => vi.fn()(...a),
   },
+  TOKEN_KEY: "token",
 }));
 vi.mock("@/theme", () => ({
   colors: {
@@ -72,7 +73,12 @@ vi.mock("@/components/payments/StripeAddBankForm", () => ({
 // Portal legacy body also imports these + ``getStripeConfig`` — stub
 // so the module load doesn't try to hit Stripe.
 vi.mock("@/lib/stripeConfig", () => ({
-  getStripeConfig: () => Promise.resolve({ publishable_key: "" }),
+  getStripeConfig: () => Promise.resolve({
+    publishable_key: "pk_test_portal",
+    stripe_configured: true,
+    mode: "test",
+  }),
+  _resetStripeConfigCacheForTests: () => {},
 }));
 // InvoiceView / EstimateView are unused in this test surface.
 vi.mock("@/components/InvoiceView", () => ({ default: () => null }));

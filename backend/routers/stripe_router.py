@@ -127,14 +127,24 @@ async def get_stripe_config(user: dict = Depends(get_current_user)):
     initialize ``<Elements>`` at page-load time without reading a
     ``REACT_APP_STRIPE_PUBLISHABLE_KEY`` env var.
 
+    Phase K1 · Feb-2026 — adds an explicit ``stripe_configured``
+    boolean so the frontend can render a neutral customer-facing
+    fallback instead of exposing raw env-var names when the pod
+    hasn't been configured.
+
     Role gate mirrors ``POST /setup-intent``: customer (any) OR
     admin/manager/super_admin. Techs are excluded (they never touch
     payment flows).
     """
     if not (_is_customer(user) or _is_admin(user)):
         raise HTTPException(403, "forbidden")
+    pub_key = stripe_svc._publishable_key()
+    stripe_configured = bool(pub_key)
+    if not stripe_configured:
+        stripe_svc._warn_unconfigured_once_per_hour()
     return {
-        "publishable_key": stripe_svc._publishable_key(),
+        "publishable_key": pub_key,
+        "stripe_configured": stripe_configured,
         # Feb-2026 · FIX 4 — return BOTH ``mode`` (legacy) and
         # ``stripe_mode`` (new canonical) for one release cycle so
         # existing callers keep working. Deprecation of ``mode``

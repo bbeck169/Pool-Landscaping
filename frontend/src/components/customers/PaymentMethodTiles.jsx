@@ -35,15 +35,27 @@
  *     customer's ``has_card_on_file`` badge in the admin header).
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { CreditCard, Landmark, Lock, Plus, Pencil, Trash2, Star }
+import { CreditCard, Landmark, Lock, Plus, Pencil, Trash2, Star, Info }
   from "lucide-react";
 import { toast } from "sonner";
 
 import StripeAddCardForm from "../payments/StripeAddCardForm";
 import StripeAddBankForm from "../payments/StripeAddBankForm";
 import TypedConfirmModal from "../ui/TypedConfirmModal";
-import { api } from "@/api";
+import { api, TOKEN_KEY } from "@/api";
+import { getStripeConfig } from "@/lib/stripeConfig";
 import { colors } from "@/theme";
+
+
+// Phase K1 · Feb-2026 — Stripe forms accept ``apiBase`` + ``authToken``
+// directly (they pre-date the shared ``api`` wrapper); resolve both
+// once at module load to avoid an extra prop-drill.
+const _API_BASE = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const _getAuthToken = () => (
+  typeof window !== "undefined"
+    ? (window.localStorage.getItem(TOKEN_KEY) || "")
+    : ""
+);
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -282,7 +294,7 @@ function BankTile({ row, onEdit, onDelete, onSetDefault, setDefaultBusy }) {
 }
 
 
-function EmptyState({ kind, onAdd, testid }) {
+function EmptyState({ kind, onAdd, testid, disabled }) {
   const copy = kind === "card"
     ? {
         title: "No Credit/Debit Card Information Found for This Customer",
@@ -307,17 +319,52 @@ function EmptyState({ kind, onAdd, testid }) {
           : <Landmark size={16} style={{ color: colors.onError }} />}
         <span className="text-sm font-bold">{copy.title}</span>
       </div>
-      <button
-        type="button"
-        className="text-xs font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
-        style={{
-          background: colors.surface, color: colors.onSurface,
-        }}
-        onClick={onAdd}
-        data-testid={`${testid}-add`}
-      >
-        <Plus size={12} /> {copy.cta}
-      </button>
+      {disabled ? null : (
+        <button
+          type="button"
+          className="text-xs font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
+          style={{
+            background: colors.surface, color: colors.onSurface,
+          }}
+          onClick={onAdd}
+          data-testid={`${testid}-add`}
+        >
+          <Plus size={12} /> {copy.cta}
+        </button>
+      )}
+    </div>
+  );
+}
+
+
+// Phase K1 · Feb-2026 — customer-facing neutral fallback rendered
+// in place of the Stripe Add form whenever the backend reports
+// ``stripe_configured=false``.  Never surfaces env-var names — the
+// operator sees the ops-visible warning in DevTools + server logs.
+function StripeUnavailableFallback({ testid }) {
+  return (
+    <div
+      className="rounded-2xl p-4 flex items-start gap-3"
+      style={{
+        background: "#F3F4F6",
+        border: "1px solid #E5E7EB",
+        color: "#374151",
+      }}
+      data-testid={testid}
+    >
+      <Info
+        size={18}
+        style={{ color: "#6B7280", flexShrink: 0, marginTop: 2 }}
+        aria-hidden
+      />
+      <div className="text-sm">
+        <div className="font-semibold mb-0.5">
+          Payment methods are temporarily unavailable
+        </div>
+        <div style={{ color: "#4B5563" }}>
+          Please contact support to set up card or bank payments.
+        </div>
+      </div>
     </div>
   );
 }
@@ -340,6 +387,30 @@ export default function PaymentMethodTiles({
   // Phase J1 · Feb-2026 — set-default in-flight target (row.id) so
   // the tile can render a scoped "Setting default…" state.
   const [defaultBusyId, setDefaultBusyId] = useState(null);
+
+  // Phase K1 · Feb-2026 — Stripe-not-configured fallback state.
+  // ``null`` while the config fetch is in flight so we don't flash
+  // the empty-state Add button before we know whether Stripe is
+  // available.
+  const [stripeConfigured, setStripeConfigured] = useState(null);
+  const [publishableKey, setPublishableKey] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    getStripeConfig().then((c) => {
+      if (cancelled) return;
+      setPublishableKey(c.publishable_key || "");
+      setStripeConfigured(Boolean(c.stripe_configured));
+    }).catch(() => {
+      if (cancelled) return;
+      setPublishableKey("");
+      setStripeConfigured(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+  // ``true`` = configured, ``false`` = unconfigured, ``null`` =
+  // still loading — treat ``null`` as ``true`` for the Add button
+  // gate to avoid a flicker on the happy path.
+  const stripeDisabled = stripeConfigured === false;
 
   const load = useCallback(async () => {
     if (!customerId) return;
@@ -473,7 +544,7 @@ export default function PaymentMethodTiles({
                     style={{ color: colors.onSurface }}>
             <CreditCard size={14} /> Credit / Debit Cards
           </h3>
-          {cards.length ? (
+          {cards.length && !stripeDisabled ? (
             <ActionButton
               label={<><Plus size={12} /> Add another card</>}
               onClick={() => openAdd("card")}
@@ -486,6 +557,7 @@ export default function PaymentMethodTiles({
             kind="card"
             onAdd={() => openAdd("card")}
             testid="payment-method-tiles-card-empty"
+            disabled={stripeDisabled}
           />
         ) : (
           <div className="space-y-3">
@@ -506,11 +578,21 @@ export default function PaymentMethodTiles({
                     style={{ background: colors.surfaceSecondary,
                                 border: `1px dashed ${colors.borderStrong}` }}
                     data-testid="payment-method-tiles-add-card-form">
-            <StripeAddCardForm
-              customerId={customerId}
-              onSuccess={onAddSuccess}
-              onCancel={closeAdd}
-            />
+            {stripeDisabled ? (
+              <StripeUnavailableFallback
+                testid="payment-method-tiles-card-fallback"
+              />
+            ) : (
+              <StripeAddCardForm
+                apiBase={_API_BASE}
+                authToken={_getAuthToken()}
+                publishableKey={publishableKey}
+                pubKeyLoading={stripeConfigured === null}
+                customerId={customerId}
+                onSuccess={onAddSuccess}
+                onCancel={closeAdd}
+              />
+            )}
           </div>
         ) : null}
       </section>
@@ -522,7 +604,7 @@ export default function PaymentMethodTiles({
                     style={{ color: colors.onSurface }}>
             <Landmark size={14} /> Bank Accounts
           </h3>
-          {banks.length ? (
+          {banks.length && !stripeDisabled ? (
             <ActionButton
               label={<><Plus size={12} /> Add another bank</>}
               onClick={() => openAdd("bank")}
@@ -535,6 +617,7 @@ export default function PaymentMethodTiles({
             kind="bank"
             onAdd={() => openAdd("bank")}
             testid="payment-method-tiles-bank-empty"
+            disabled={stripeDisabled}
           />
         ) : (
           <div className="space-y-3">
@@ -555,11 +638,21 @@ export default function PaymentMethodTiles({
                     style={{ background: colors.surfaceSecondary,
                                 border: `1px dashed ${colors.borderStrong}` }}
                     data-testid="payment-method-tiles-add-bank-form">
-            <StripeAddBankForm
-              customerId={customerId}
-              onSuccess={onAddSuccess}
-              onCancel={closeAdd}
-            />
+            {stripeDisabled ? (
+              <StripeUnavailableFallback
+                testid="payment-method-tiles-bank-fallback"
+              />
+            ) : (
+              <StripeAddBankForm
+                apiBase={_API_BASE}
+                authToken={_getAuthToken()}
+                publishableKey={publishableKey}
+                pubKeyLoading={stripeConfigured === null}
+                customerId={customerId}
+                onSuccess={onAddSuccess}
+                onCancel={closeAdd}
+              />
+            )}
           </div>
         ) : null}
       </section>

@@ -222,15 +222,21 @@ export default function StripeAddCardForm({
           <CardTitle>{title}</CardTitle>
         </CardHeader>
         <CardContent>
-          <p
-            className="text-sm text-red-700"
+          <div
+            className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 flex items-start gap-2"
             data-testid="stripe-add-card-not-configured"
+            role="status"
           >
-            Stripe publishable key not configured on the server. Set{" "}
-            <code>STRIPE_PUBLISHABLE_KEY_TEST</code> or{" "}
-            <code>STRIPE_PUBLISHABLE_KEY_LIVE</code> in the backend
-            environment.
-          </p>
+            <span aria-hidden className="mt-0.5">ⓘ</span>
+            <div>
+              <div className="font-semibold text-slate-800 mb-0.5">
+                Payment methods are temporarily unavailable
+              </div>
+              <div className="text-slate-600">
+                Please contact support to set up card or bank payments.
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
     );

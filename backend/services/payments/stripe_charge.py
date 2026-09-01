@@ -66,6 +66,38 @@ def _mode() -> str:
 # on the first miss so ops can see the mis-config without crashing
 # the payment flow (frontend falls back gracefully).
 _PUB_KEY_WARNED = False
+# Phase K1 · Feb-2026 — rate-limited per-hour warn for the config
+# endpoint.  Keyed globally (per-pod) because the env is pod-wide;
+# tenants can't have divergent Stripe keys under the current
+# architecture.  Kept separate from ``_PUB_KEY_WARNED`` (which
+# fires exactly-once at startup) so ops keeps getting a
+# heartbeat as long as the misconfig persists.
+_PUB_KEY_UNCONFIGURED_LAST_WARN_TS = 0.0
+_PUB_KEY_UNCONFIGURED_WARN_INTERVAL_S = 3600.0
+
+
+def _warn_unconfigured_once_per_hour() -> None:
+    """Phase K1 · Feb-2026 — emit an ops-visible WARNING whenever
+    ``GET /payments/stripe/config`` is called and the publishable
+    key isn't configured, rate-limited to once per hour so a busy
+    portal doesn't flood the logs."""
+    global _PUB_KEY_UNCONFIGURED_LAST_WARN_TS  # noqa: PLW0603
+    import time as _time
+    now = _time.time()
+    if (now - _PUB_KEY_UNCONFIGURED_LAST_WARN_TS
+            < _PUB_KEY_UNCONFIGURED_WARN_INTERVAL_S):
+        return
+    _PUB_KEY_UNCONFIGURED_LAST_WARN_TS = now
+    env_var = (
+        "STRIPE_PUBLISHABLE_KEY_LIVE"
+        if _mode() == "live"
+        else "STRIPE_PUBLISHABLE_KEY_TEST"
+    )
+    logger.warning(
+        "[stripe] config endpoint hit while %s is unset — "
+        "frontend will render the K1 neutral fallback. Ops action: "
+        "set the env on the pod.", env_var,
+    )
 
 
 def _publishable_key() -> str:
