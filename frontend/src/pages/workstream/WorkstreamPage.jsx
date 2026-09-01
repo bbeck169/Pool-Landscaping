@@ -16,7 +16,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Workflow, RefreshCw, Loader2, ChevronDown, X as XIcon, Image as ImageIcon, Video, MapPin, User, Star, Calendar as CalendarIcon, Pencil, Trash2 } from "lucide-react";
+import { Workflow, RefreshCw, Loader2, ChevronDown, X as XIcon, Image as ImageIcon, Video, MapPin, User, Star, Calendar as CalendarIcon, CheckCircle2, Pencil, Trash2 } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import { useAuth } from "@/auth";
 import { Forbidden } from "@/hooks/usePermissions";
@@ -65,6 +65,31 @@ function humanDate(iso) {
   if (!iso) return "Not scheduled";
   const bare = String(iso).slice(0, 10);
   return bare;
+}
+
+// Phase K12 · Feb-2026 — Absolute "Mon D, YYYY · h:mm AM" render of
+// the job's completion timestamp.  Fallback order per K12 spec:
+//   1. ``job.completed_at``
+//   2. ``job.updated_at`` when ``status === "completed"`` (legacy row)
+//   3. em-dash ``—`` otherwise
+// Uses ``Intl.DateTimeFormat`` because no shared tenant-local helper
+// exists on the frontend today.
+export function formatCompletedAt(job) {
+  if (!job) return "—";
+  let iso = job.completed_at;
+  if (!iso && (job.status || "").toLowerCase() === "completed") {
+    iso = job.updated_at;
+  }
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const datePart = new Intl.DateTimeFormat("en-US", {
+    month: "short", day: "numeric", year: "numeric",
+  }).format(d);
+  const timePart = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric", minute: "2-digit", hour12: true,
+  }).format(d);
+  return `${datePart} · ${timePart}`;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────
@@ -254,6 +279,26 @@ function JobCard({ job, onOpen, isSelected, onToggleSelect, canBulk, onEdit }) {
               <CalendarIcon size={11} /> {humanDate(job.scheduled_date)}
             </span>
           </div>
+          {/* Phase K12 · Feb-2026 — Completed timestamp.  Visible to
+              super_admin / admin / manager only (the ``canBulk`` gate
+              matches the exact role set in the spec).  Falls back to
+              ``updated_at`` when ``completed_at`` is missing on legacy
+              rows whose status is already "completed"; otherwise renders
+              an em-dash. */}
+          {canBulk ? (
+            <div
+              className="text-[11px] mt-0.5 flex items-center gap-1"
+              style={{ color: colors.muted }}
+              data-testid={`ws-job-completed-${job.id}`}
+            >
+              <CheckCircle2 size={11} />
+              <span>Completed</span>
+              <span>·</span>
+              <span data-testid={`ws-job-completed-value-${job.id}`}>
+                {formatCompletedAt(job)}
+              </span>
+            </div>
+          ) : null}
           <div className="text-[11px] mt-0.5 flex items-center gap-1.5"
                style={{ color: colors.muted }}
                data-testid={`ws-job-assignee-${job.id}`}>

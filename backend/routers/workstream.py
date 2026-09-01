@@ -391,6 +391,11 @@ async def list_workstream_jobs(
             "scheduled_date": d.get("scheduled_date"),
             "created_at": d.get("created_at"),
             "updated_at": d.get("updated_at"),
+            # Phase K12 · Feb-2026 — surface the completion timestamp so
+            # the Workstream table can render a "Completed" column
+            # (super_admin / admin / manager only — frontend gates the
+            # column render).  Written by the tech's mark-complete flow.
+            "completed_at": d.get("completed_at"),
             "customer_id": cid,
             "customer_name": (cust or {}).get("name") or d.get("customer_name") or "",
             "customer_is_vip": bool((cust or {}).get("is_vip")),
