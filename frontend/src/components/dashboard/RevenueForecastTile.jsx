@@ -54,10 +54,28 @@ function thisWeekRange() {
   return { start: isoDay(sunday), end: isoDay(saturday) };
 }
 
+// Phase H10 · Feb-2026 — month windows.
+function thisMonthRange() {
+  const now = startOfDay(new Date());
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  return { start: isoDay(first), end: isoDay(last) };
+}
+
+function nextMonthRange() {
+  const now = startOfDay(new Date());
+  const first = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+  return { start: isoDay(first), end: isoDay(last) };
+}
+
 const TABS = [
   { key: "today", label: "Today", build: todayRange },
   { key: "tomorrow", label: "Tomorrow", build: tomorrowRange },
   { key: "week", label: "This Week", build: thisWeekRange },
+  // Phase H10 · Feb-2026 — monthly outlook.
+  { key: "this_month", label: "This Month", build: thisMonthRange },
+  { key: "next_month", label: "Next Month", build: nextMonthRange },
 ];
 
 export default function RevenueForecastTile({ range }) {
@@ -202,6 +220,17 @@ export default function RevenueForecastTile({ range }) {
           >
             Based on {data.booked.job_count} booked job
             {data.booked.job_count === 1 ? "" : "s"} +{" "}
+            {/* Phase H10 · Feb-2026 — recurring_jobs surfaced
+                alongside subscriptions. Pluralization matches
+                the existing pattern; the recurring job count
+                stays hidden when there are zero templates so
+                subscription-only tenants see the old copy. */}
+            {(data.recurring.recurring_job_count ?? 0) > 0 ? (
+              <>
+                {data.recurring.recurring_job_count} recurring job
+                {data.recurring.recurring_job_count === 1 ? "" : "s"} +{" "}
+              </>
+            ) : null}
             {data.recurring.subscription_count} active subscription
             {data.recurring.subscription_count === 1 ? "" : "s"} across{" "}
             {data.recurring.cycle_count} billing cycle

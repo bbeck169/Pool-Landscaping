@@ -48,6 +48,14 @@ class RecurringJobIn(BaseModel):
     start_date: str
     end_date: Optional[str] = None
     assigned_tech_id: Optional[str] = None
+    # Phase H9 · Feb-2026 — assignment can now target a crew
+    # instead of an individual tech. Only one of the two may be
+    # set on any given template; the endpoint rejects the
+    # both-set case with HTTP 400. When ``crew_id`` is set, the
+    # generator preserves it on materialized job instances so
+    # the F6a scheduling semantic (crew → any tech in
+    # ``crew.tech_ids``) resolves at schedule time.
+    crew_id: Optional[str] = None
     price_cents: int = 0
     notes: str = ""
     allow_sunday: bool = False
@@ -81,6 +89,12 @@ class RecurringJobPatch(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     assigned_tech_id: Optional[str] = None
+    # Phase H9 · Feb-2026 — see create-body doc. On PATCH we
+    # allow explicit ``None`` to clear the assignment; the
+    # combined-picker UI sends the opposite key as ``None`` when
+    # a user flips between tech and crew, so the ``$set`` needs
+    # to actually stamp the field (not just omit it).
+    crew_id: Optional[str] = None
     price_cents: Optional[int] = None
     notes: Optional[str] = None
     allow_sunday: Optional[bool] = None
@@ -91,6 +105,37 @@ class RecurringJobPatch(BaseModel):
     monthly_weekday: Optional[int] = None
     # Feb 2026 · Retag pass-through for recurring templates.
     work_class: Optional[str] = None
+
+
+async def _resolve_crew_ref(tenant_id: str, crew_id: Optional[str]
+                                ) -> Optional[Dict[str, Any]]:
+    """Phase H9 · Feb-2026 — Load a crew by id, tenant-scoped.
+    Returns ``{id, name}`` on success, ``None`` when the caller
+    passed no crew_id. Raises HTTP 404 when a non-empty crew_id
+    doesn't resolve — cross-tenant refs and typos both land here.
+    """
+    if not crew_id:
+        return None
+    row = await db.crews.find_one(
+        {"id": crew_id, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "name": 1},
+    )
+    if not row:
+        raise HTTPException(404, "crew not found")
+    return row
+
+
+def _reject_double_assignment(*, assigned_tech_id: Optional[str],
+                                    crew_id: Optional[str]) -> None:
+    """Phase H9 · Feb-2026 — assign to tech OR crew, never both."""
+    if assigned_tech_id and crew_id:
+        raise HTTPException(
+            400,
+            {"detail": "assignment_conflict",
+             "hint": ("A recurring template can be assigned to a "
+                      "tech OR a crew, not both. Clear one and "
+                      "try again.")},
+        )
 
 
 def _parse_date(s: Optional[str]) -> Optional[date]:
@@ -371,12 +416,18 @@ async def create_recurring(body: RecurringJobIn,
                              user: dict = Depends(require_admin_or_manager),
                              tenant: dict = Depends(get_current_tenant)):
     _validate(body)
+    _reject_double_assignment(
+        assigned_tech_id=body.assigned_tech_id, crew_id=body.crew_id,
+    )
     await _ensure_indexes()
     cust = await db.customers.find_one(
         {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0, "name": 1}
     )
     if not cust:
         raise HTTPException(404, "customer not found")
+    # Phase H9 · Resolve crew name for the denorm (UI reads it
+    # to avoid a follow-up crew lookup).
+    crew = await _resolve_crew_ref(tenant["id"], body.crew_id)
     doc = body.dict()
     # Feb-2026 · Never-end intent overrides end_date. If the caller
     # said "runs until manually stopped", clear the end date so the
@@ -387,6 +438,9 @@ async def create_recurring(body: RecurringJobIn,
         "id": new_id(),
         "tenant_id": tenant["id"],
         "customer_name": cust.get("name"),
+        # Phase H9 · denorm crew name at write-time so the UI
+        # can render assignment without a separate crew fetch.
+        "crew_name": (crew or {}).get("name"),
         "last_generated_through": None,
         "created_at": now_iso(),
         "updated_at": now_iso(),
@@ -437,12 +491,32 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
                             user: dict = Depends(require_admin_or_manager),
                             tenant: dict = Depends(get_current_tenant)):
     _validate(body)
-    updates = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None or k == "active"}
-    # Feb-2026 · Never-end intent overrides end_date on patch too. If
-    # the caller flipped the flag on, clear end_date so the generator
-    # keeps walking; if they explicitly turned the flag off, leave
-    # end_date as whatever they passed (may still be None → still
-    # infinite via the pre-flag legacy path).
+    raw = body.dict(exclude_unset=True)
+    # Phase H9 · Feb-2026 — assignment fields (``assigned_tech_id``,
+    # ``crew_id``) must survive as explicit ``None`` in the ``$set``
+    # so a "flip from crew to tech" wipes the opposite side. The
+    # legacy filter dropped None to preserve nullable-optional
+    # semantics; carve those fields out.
+    _ASSIGN_KEYS = {"assigned_tech_id", "crew_id"}
+    updates: Dict[str, Any] = {
+        k: v for k, v in raw.items()
+        if v is not None or k == "active" or k in _ASSIGN_KEYS
+    }
+    # If the caller supplied both assignment fields with non-None
+    # values, reject before writing.
+    _reject_double_assignment(
+        assigned_tech_id=updates.get("assigned_tech_id"),
+        crew_id=updates.get("crew_id"),
+    )
+    # If ``crew_id`` is being SET (non-None), resolve it and stamp
+    # the denorm name. If cleared to None, drop the denorm too.
+    if "crew_id" in updates:
+        if updates["crew_id"]:
+            crew = await _resolve_crew_ref(tenant["id"], updates["crew_id"])
+            updates["crew_name"] = (crew or {}).get("name")
+        else:
+            updates["crew_name"] = None
+    # Feb-2026 · Never-end intent overrides end_date on patch too.
     if updates.get("recurrence_never_ends") is True:
         updates["end_date"] = None
     updates["updated_at"] = now_iso()
@@ -572,6 +646,14 @@ async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[st
                                           {"_id": 0, "name": 1, "technician_id": 1})
     tech_id = tpl.get("assigned_tech_id")
     tech_name = (tech or {}).get("name") or None
+    # Phase H9 · Feb-2026 — crew assignment. When the template
+    # carries a crew_id, the generated job carries it too and
+    # the F6a scheduling code path (crew_id OR technician_id ∈
+    # crew.tech_ids) resolves the specific tech at schedule
+    # time. When both are None the job stays unassigned so
+    # ``auto-assign`` behavior is preserved.
+    crew_id = tpl.get("crew_id")
+    crew_name = tpl.get("crew_name")
 
     price_dollars = round((tpl.get("price_cents") or 0) / 100.0, 2)
     inserted, skipped = 0, 0
@@ -589,6 +671,8 @@ async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[st
                 "address": cust.get("address") or "",
                 "technician_id": tech_id,
                 "technician_name": tech_name,
+                "crew_id": crew_id,
+                "crew_name": crew_name,
                 "scheduled_date": iso,
                 "status": "scheduled",
                 "price": price_dollars,

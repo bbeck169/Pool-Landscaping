@@ -38,23 +38,36 @@ export default function RecurringJobs() {
   const [items, setItems] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [techs, setTechs] = useState([]);
+  // Phase H9 · Feb-2026 — load crews for the combined "Assigned
+  // to" dropdown. Falls back to an empty list if the endpoint
+  // 403s (tech role) so the modal still renders.
+  const [crews, setCrews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  // Phase H9 · Feb-2026 — user-facing price string. Kept
+  // separate from ``editing.price_cents`` so the input is
+  // freely typable (backspace / select-all / partial decimals)
+  // WITHOUT round-tripping through Number() on every keystroke.
+  const [priceStr, setPriceStr] = useState("0.00");
+  const [priceErr, setPriceErr] = useState("");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [tpls, custs, techs] = await Promise.all([
+      const [tpls, custs, techsRes, crewsRes] = await Promise.all([
         api.get("/recurring-jobs"),
         api.get("/customers?is_active=true&limit=500").catch(() => ({ items: [] })),
         api.get("/technicians").catch(() => []),
+        // Phase H9 · Feb-2026 — crews. Same 403-safe pattern.
+        api.get("/crews").catch(() => ({ items: [] })),
       ]);
       setItems(tpls?.items || []);
       setCustomers(Array.isArray(custs) ? custs : (custs?.items || []));
-      setTechs(Array.isArray(techs) ? techs : (techs?.items || []));
+      setTechs(Array.isArray(techsRes) ? techsRes : (techsRes?.items || []));
+      setCrews(Array.isArray(crewsRes) ? crewsRes : (crewsRes?.items || []));
     } catch (e) {
       setError(e?.message || "Failed to load");
     } finally { setLoading(false); }
@@ -62,7 +75,12 @@ export default function RecurringJobs() {
 
   useEffect(() => { load(); }, []);
 
-  const openCreate = () => { setEditing({ frequency: "weekly", day_of_week: 0, start_date: todayIso(), price_cents: 12000, active: true, notes: "", recurrence_never_ends: true, end_date: null }); setModalOpen(true); };
+  const openCreate = () => {
+    setEditing({ frequency: "weekly", day_of_week: 0, start_date: todayIso(), price_cents: 12000, active: true, notes: "", recurrence_never_ends: true, end_date: null });
+    setPriceStr("120.00");
+    setPriceErr("");
+    setModalOpen(true);
+  };
   const openEdit = (row) => {
     // Feb-2026 · Ends-mode default. Legacy rows may have neither
     // `recurrence_never_ends` nor `end_date`; treat that as "Never"
@@ -70,16 +88,43 @@ export default function RecurringJobs() {
     const neverEnds = row.recurrence_never_ends === true
       || (row.recurrence_never_ends == null && !row.end_date);
     setEditing({ ...row, recurrence_never_ends: neverEnds });
+    setPriceStr(((row.price_cents || 0) / 100).toFixed(2));
+    setPriceErr("");
     setModalOpen(true);
+  };
+
+  // Phase H9 · Feb-2026 — Accept optional leading "$", 0-5 digit
+  // integer part, optional decimal with up to 2 fraction digits.
+  // Empty string counts as invalid so the caller can't accidentally
+  // silently blank the price.
+  const _PRICE_RE = /^\$?\d{1,5}(\.\d{0,2})?$/;
+  const _validatePrice = (s) => {
+    const trimmed = (s || "").trim();
+    if (!trimmed) return false;
+    if (!_PRICE_RE.test(trimmed)) return false;
+    const n = Number(trimmed.replace("$", ""));
+    if (!Number.isFinite(n)) return false;
+    if (n < 0 || n > 99999.99) return false;
+    return true;
   };
 
   const save = async () => {
     setError(null);
+    // Phase H9 · Feb-2026 — validate the free-text price. UI's
+    // save button is disabled while ``priceErr`` is non-empty
+    // but we defense-in-depth here too.
+    if (!_validatePrice(priceStr)) {
+      setPriceErr("Enter a valid price (0.00 – 99999.99)");
+      return;
+    }
     try {
+      const priceCents = Math.round(
+        Number(priceStr.replace("$", "")) * 100,
+      );
       // Feb-2026 · Never-end recurrence · UI intent maps to backend
       // flag. When true, clear the end_date field client-side too so
       // the payload doesn't fight the backend override.
-      const payload = { ...editing };
+      const payload = { ...editing, price_cents: priceCents };
       if (payload.recurrence_never_ends) payload.end_date = null;
       if (editing.id) {
         await api.patch(`/recurring-jobs/${editing.id}`, payload);
@@ -388,21 +433,106 @@ export default function RecurringJobs() {
                   </label>
                 </div>
               </fieldset>
-              <label className="text-xs font-semibold" style={{ color: colors.muted }}>Assigned tech
-                <select value={editing.assigned_tech_id || ""} onChange={(e) => setEditing((x) => ({ ...x, assigned_tech_id: e.target.value || null }))}
-                        className="w-full mt-1 px-2 py-1.5 rounded text-sm"
-                        style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-                        data-testid="recurring-jobs-tech">
-                  <option value="">Auto-assign</option>
-                  {techs.map((t) => <option key={t.id} value={t.id}>{t.name || t.email}</option>)}
+              <label className="text-xs font-semibold" style={{ color: colors.muted }}>Assigned to
+                {/* Phase H9 · Feb-2026 — Combined "Assigned to"
+                    dropdown. Value shape: ``"tech:{id}"`` or
+                    ``"crew:{id}"`` (dispatch table on save so
+                    payload lands with exactly one of
+                    ``assigned_tech_id`` / ``crew_id`` populated
+                    and the opposite side explicitly ``null``). */}
+                <select
+                  value={editing.crew_id
+                    ? `crew:${editing.crew_id}`
+                    : (editing.assigned_tech_id
+                        ? `tech:${editing.assigned_tech_id}`
+                        : "")}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setEditing((x) => {
+                      if (!v) {
+                        return { ...x, assigned_tech_id: null,
+                                     crew_id: null };
+                      }
+                      const [kind, id] = v.split(":", 2);
+                      if (kind === "crew") {
+                        return { ...x, assigned_tech_id: null,
+                                     crew_id: id };
+                      }
+                      return { ...x, assigned_tech_id: id,
+                                   crew_id: null };
+                    });
+                  }}
+                  className="w-full mt-1 px-2 py-1.5 rounded text-sm"
+                  style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
+                  data-testid="recurring-jobs-assign">
+                  <option value=""
+                             data-testid="recurring-jobs-assign-auto">
+                    Auto-assign
+                  </option>
+                  {techs.length ? (
+                    <optgroup label="Technicians"
+                                 data-testid="recurring-jobs-assign-techs">
+                      {techs.map((t) => (
+                        <option key={`tech-${t.id}`}
+                                   value={`tech:${t.id}`}
+                                   data-testid={`recurring-jobs-assign-tech-${t.id}`}>
+                          {t.name || t.email}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {crews.length ? (
+                    <optgroup label="Crews"
+                                 data-testid="recurring-jobs-assign-crews">
+                      {crews.map((c) => (
+                        <option key={`crew-${c.id}`}
+                                   value={`crew:${c.id}`}
+                                   data-testid={`recurring-jobs-assign-crew-${c.id}`}>
+                          Crew: {c.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
                 </select>
               </label>
               <label className="text-xs font-semibold" style={{ color: colors.muted }}>Price ($)
-                <input type="number" min="0" step="0.01" value={((editing.price_cents || 0) / 100).toFixed(2)}
-                       onChange={(e) => setEditing((x) => ({ ...x, price_cents: Math.round(Number(e.target.value) * 100) }))}
-                       className="w-full mt-1 px-2 py-1.5 rounded text-sm"
-                       style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-                       data-testid="recurring-jobs-price" />
+                {/* Phase H9 · Feb-2026 — free-typing price input.
+                    ``type=text`` + ``inputMode=decimal`` kills the
+                    number-spinner AND surfaces a decimal keypad
+                    on mobile. Validation runs on save via
+                    ``_validatePrice``; inline error surfaces
+                    below the input. */}
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={priceStr}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setPriceStr(v);
+                    setPriceErr(_validatePrice(v)
+                      ? ""
+                      : "Enter a valid price");
+                  }}
+                  onBlur={() => {
+                    // Normalize on blur only — don't re-format
+                    // mid-edit or the caret jumps.
+                    if (_validatePrice(priceStr)) {
+                      const n = Number(priceStr.replace("$", ""));
+                      setPriceStr(n.toFixed(2));
+                    }
+                  }}
+                  aria-invalid={!!priceErr}
+                  className="w-full mt-1 px-2 py-1.5 rounded text-sm"
+                  style={{ border: `1px solid ${priceErr ? colors.error : colors.border}`, background: colors.surface, color: colors.onSurface }}
+                  data-testid="recurring-jobs-price" />
+                {priceErr ? (
+                  <span className="block text-xs mt-1"
+                           style={{ color: colors.error }}
+                           data-testid="recurring-jobs-price-error">
+                    {priceErr}
+                  </span>
+                ) : null}
               </label>
               <label className="flex items-center gap-2 text-xs font-semibold" style={{ color: colors.muted }}>
                 <input type="checkbox" checked={!!editing.allow_sunday}
@@ -416,9 +546,9 @@ export default function RecurringJobs() {
                       className="text-sm font-semibold px-3 py-1.5 rounded"
                       style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                       data-testid="recurring-jobs-cancel">Cancel</button>
-              <button type="button" onClick={save} disabled={!editing.customer_id || !editing.service_type}
+              <button type="button" onClick={save} disabled={!editing.customer_id || !editing.service_type || !!priceErr}
                       className="text-sm font-bold px-4 py-1.5 rounded"
-                      style={{ background: colors.brand, color: "#fff", border: 0, opacity: (!editing.customer_id || !editing.service_type) ? 0.5 : 1 }}
+                      style={{ background: colors.brand, color: "#fff", border: 0, opacity: (!editing.customer_id || !editing.service_type || !!priceErr) ? 0.5 : 1 }}
                       data-testid="recurring-jobs-save">
                 {editing.id ? "Save changes" : "Create"}
               </button>

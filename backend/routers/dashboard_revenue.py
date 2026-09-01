@@ -529,6 +529,53 @@ async def revenue_forecast(
             amt = 0.0
         recurring_amount += amt * cycles
 
+    # ── Phase H10 · Feb-2026 — recurring_jobs templates ─────────
+    # Expected instances = enumerate next occurrences per template
+    # in the window, MINUS dates already materialized in ``jobs``
+    # (already counted under BOOKED).  Prevents double-counting.
+    from routers.recurring_jobs import _next_occurrences
+    tpls = await db.recurring_job_templates.find(
+        {"tenant_id": tenant_id, "active": True},
+        {"_id": 0, "id": 1, "frequency": 1, "day_of_week": 1,
+         "day_of_month": 1, "interval_days": 1, "start_date": 1,
+         "end_date": 1, "recurrence_never_ends": 1,
+         "monthly_pattern": 1, "monthly_nth_week": 1,
+         "monthly_weekday": 1, "allow_sunday": 1,
+         "price_cents": 1},
+    ).to_list(2000)
+    s_date = s_dt.date() if hasattr(s_dt, "date") else s_dt
+    e_date = e_dt.date() if hasattr(e_dt, "date") else e_dt
+    # Existing materialized template-linked jobs in the window —
+    # dedupe against these to avoid double-count.
+    materialized = await db.jobs.find(
+        {"tenant_id": tenant_id,
+         "scheduled_date": {"$gte": s_iso, "$lte": e_iso},
+         "recurring_template_id": {"$ne": None}},
+        {"_id": 0, "recurring_template_id": 1, "scheduled_date": 1},
+    ).to_list(5000)
+    seen_key = {
+        (m.get("recurring_template_id"),
+         (m.get("scheduled_date") or "")[:10])
+        for m in materialized
+    }
+    recurring_jobs_amount = 0.0
+    recurring_jobs_count = 0
+    recurring_jobs_active_templates = 0
+    for tpl in tpls:
+        recurring_jobs_active_templates += 1
+        try:
+            occ = _next_occurrences(tpl, s_date, e_date, max_count=200)
+        except Exception:
+            continue
+        price = float(tpl.get("price_cents") or 0) / 100.0
+        for d in occ:
+            key = (tpl.get("id"), d.isoformat())
+            if key in seen_key:
+                continue
+            recurring_jobs_count += 1
+            recurring_jobs_amount += price
+    recurring_amount = round(recurring_amount + recurring_jobs_amount, 2)
+
     combined = round(booked_amount + recurring_amount, 2)
 
     return {
@@ -537,9 +584,16 @@ async def revenue_forecast(
             "job_count": booked_count,
         },
         "recurring": {
-            "amount": round(recurring_amount, 2),
+            "amount": recurring_amount,
             "subscription_count": recurring_count,
             "cycle_count": recurring_cycles_total,
+            # Phase H10 · Feb-2026 — recurring_jobs contribution
+            # exposed on its own axis so the tile footer can render
+            # "N recurring jobs + M subscriptions" cleanly and
+            # H10 tests can lock partitioning.
+            "recurring_job_count": recurring_jobs_count,
+            "recurring_job_amount": round(recurring_jobs_amount, 2),
+            "active_template_count": recurring_jobs_active_templates,
         },
         "combined_total": combined,
         "currency": "USD",
