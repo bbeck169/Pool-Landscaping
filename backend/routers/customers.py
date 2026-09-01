@@ -270,6 +270,19 @@ async def list_customers(
     # active together. Whitespace-only fields are treated as missing.
     missing_email: Optional[bool] = False,
     missing_phone: Optional[bool] = False,
+    portal_status: Optional[str] = Query(
+        None,
+        description=(
+            "Phase G4a · Feb-2026 — filter by customer-portal "
+            "activation state. Values: ``all`` (or omit) = no filter; "
+            "``activated`` = customer has an active portal login "
+            "(``customers.has_login == True`` — denorm stamped when "
+            "``POST /customers/{cid}/portal-invite`` provisions the "
+            "``users`` doc); ``not_activated`` = no portal login "
+            "(missing or false). Composes as intersection with "
+            "``is_active`` / ``is_muted`` / search / tag filters."
+        ),
+    ),
     is_muted: Optional[bool] = Query(None, description="Feb-2026 · P28 admin/super_admin only — filter to muted (true) or non-muted (false); absent = no filter"),
     count_only: bool = False,
     include_deleted: bool = Query(False, description="Feb-2026 · P25 super_admin only — include soft-deleted customers"),
@@ -419,6 +432,41 @@ async def list_customers(
                 {"phone": {"$regex": r"^\s*$"}},
             ],
         }]
+    # Phase G4a · Feb-2026 — Portal-activation cohort filter. Uses the
+    # ``customers.has_login`` denorm (set to True on
+    # ``portal-invite``, False on ``portal-revoke``) for O(index)
+    # perf. ``activated`` = denorm True; ``not_activated`` = missing,
+    # false, or null. Unknown values → 400 so typos surface early.
+    #
+    # NB: ``isinstance(portal_status, str)`` — direct callers (e.g.
+    # tests that bypass FastAPI's DI) leave FastAPI ``Query(None,
+    # ...)`` sentinel as the raw default, which is neither ``None``
+    # nor a string. Checking for str-ness cleanly filters both the
+    # HTTP-omit path AND the direct-call default path.
+    if isinstance(portal_status, str) and portal_status.strip():
+        _ps = portal_status.strip().lower()
+        if _ps not in ("all", "activated", "not_activated"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "detail": "invalid_portal_status",
+                    "message": (
+                        "portal_status must be one of: all, activated, "
+                        "not_activated"
+                    ),
+                    "portal_status": portal_status,
+                },
+            )
+        if _ps == "activated":
+            q["$and"] = q.get("$and", []) + [{"has_login": True}]
+        elif _ps == "not_activated":
+            q["$and"] = q.get("$and", []) + [{
+                "$or": [
+                    {"has_login": {"$ne": True}},
+                    {"has_login": {"$exists": False}},
+                ],
+            }]
+        # ``all`` → intentionally no-op.
     if count_only:
         return {"count": await db.customers.count_documents(q)}
 

@@ -192,6 +192,40 @@ export default function CustomersList() {
     try { localStorage.setItem(_SORT_STORAGE_KEY, sortBy); }
     catch { /* localStorage unavailable — best-effort */ }
   }, [sortBy]);
+  // Phase G4a · Feb-2026 — Portal-activation dropdown filter.
+  // Options: all (default, no filter) | activated | not_activated.
+  // Stacks with the segmented cohort tabs so operators can chase
+  // signups ("Inactive + Not activated", "Active + Activated" etc.).
+  // Persisted under ``customerListFilter.portalStatus`` mirroring
+  // the F6c ``customerListFilter.status`` key convention.
+  const _PORTAL_STORAGE_KEY = "customerListFilter.portalStatus";
+  const _PORTAL_STATUS_OPTIONS = [
+    { value: "all",           label: "Portal: All" },
+    { value: "activated",     label: "Portal: Activated" },
+    { value: "not_activated", label: "Portal: Not activated" },
+  ];
+  const _PORTAL_STATUS_VALUES = new Set(
+    _PORTAL_STATUS_OPTIONS.map((o) => o.value),
+  );
+  const [portalStatus, setPortalStatus] = useState(() => {
+    try {
+      const raw = localStorage.getItem(_PORTAL_STORAGE_KEY);
+      return raw && _PORTAL_STATUS_VALUES.has(raw) ? raw : "all";
+    } catch { return "all"; }
+  });
+  // Mount-skip guard so hydrating from localStorage on first render
+  // does NOT reset page=1 (F6c-shaped invariant).
+  const _portalStatusInitRef = React.useRef(true);
+  useEffect(() => {
+    try { localStorage.setItem(_PORTAL_STORAGE_KEY, portalStatus); }
+    catch { /* localStorage unavailable — best-effort */ }
+    if (_portalStatusInitRef.current) {
+      _portalStatusInitRef.current = false;
+      return;
+    }
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portalStatus]);
   const [selected, setSelected] = useState(new Set());
   const [bulkTag, setBulkTag] = useState("");
   // Feb 2026 · Customer Merge Phase 2 — modal state + "Show merged"
@@ -300,6 +334,14 @@ export default function CustomersList() {
     else if (tab === "inactive") params.set("is_active", "false");
     else if (tab === "muted") params.set("is_muted", "true");
     if (missingCardOnly) params.set("missing_card", "true");
+    // Phase G4a · Feb-2026 — Portal-activation filter. Only send the
+    // param when the operator has selected a non-default value so
+    // the wire log stays clean and the backend never sees ``all``
+    // (harmless no-op today but explicit intent > accidental
+    // dependence on the server-side alias).
+    if (portalStatus && portalStatus !== "all") {
+      params.set("portal_status", portalStatus);
+    }
     // Feb-2026 · P43 — data-quality filters.
     if (missingEmail) params.set("missing_email", "true");
     if (missingPhone) params.set("missing_phone", "true");
@@ -388,7 +430,7 @@ export default function CustomersList() {
     loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
-       missingPhone, includeDeleted, includeMerged, page, city, selectedTags, sortBy]);
+       missingPhone, includeDeleted, includeMerged, page, city, selectedTags, sortBy, portalStatus]);
 
   // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
   // first invocation so hydrating chips from the URL on mount does
@@ -924,6 +966,33 @@ export default function CustomersList() {
         >
           {_SORT_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        {/* Phase G4a · Feb-2026 — Portal-activation filter dropdown.
+            Stacks with the segmented cohort tabs (Active | Inactive |
+            Muted | All). Persists via ``customerListFilter.portalStatus``
+            in localStorage. Selecting a non-default value resets to
+            page 1 via the ``portalStatus`` effect above. */}
+        <select
+          value={portalStatus}
+          onChange={(e) => setPortalStatus(e.target.value)}
+          className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurfaceSecondary,
+            border: `1px solid ${colors.border}`,
+          }}
+          aria-label="Filter customers by portal activation status"
+          data-testid="customers-filter-portal-status"
+        >
+          {_PORTAL_STATUS_OPTIONS.map((o) => (
+            <option
+              key={o.value}
+              value={o.value}
+              data-testid={`portal-status-option-${o.value}`}
+            >
               {o.label}
             </option>
           ))}
