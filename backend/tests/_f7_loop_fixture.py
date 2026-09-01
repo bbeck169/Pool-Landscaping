@@ -50,6 +50,7 @@ _REBOUND_MODULES = (
     "services.soshie.autopilot_config",
     "services.soshie.autopilot_scheduler",
     "services.soshie.llm_moderation",
+    "services.soshie.moderation",
 )
 
 

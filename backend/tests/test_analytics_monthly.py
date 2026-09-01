@@ -53,21 +53,32 @@ def test_h6_happy_path_aggregates_all_four_streams():
         prefix = f"TEST_H6_HP_{uuid.uuid4().hex[:6]}_"
         await _cleanup(db, tid, prefix)
         # Soshie moderation: 3 in window (2 approve, 1 flag, 1 cached), 1 out of window.
+        # Phase H7 · Feb-2026 — one row carries ``regex_short_circuit=True``
+        # to lock the new H6 counter contract.
         in_month = _in_month_iso()
         out_month = _out_of_month_iso()
         await db.soshie_moderation_results.insert_many([
             {"id": f"{prefix}m1", "tenant_id": tid,
              "decision": "approve", "cost_estimate_usd": 0.02,
-             "from_cache": False, "created_at": in_month},
+             "from_cache": False, "regex_short_circuit": False,
+             "created_at": in_month},
             {"id": f"{prefix}m2", "tenant_id": tid,
              "decision": "approve", "cost_estimate_usd": 0.00,
-             "from_cache": True, "created_at": in_month},
+             "from_cache": True, "regex_short_circuit": False,
+             "created_at": in_month},
             {"id": f"{prefix}m3", "tenant_id": tid,
              "decision": "flag", "cost_estimate_usd": 0.03,
-             "from_cache": False, "created_at": in_month},
+             "from_cache": False, "regex_short_circuit": False,
+             "created_at": in_month},
             {"id": f"{prefix}m4", "tenant_id": tid,
              "decision": "approve", "cost_estimate_usd": 0.10,
-             "from_cache": False, "created_at": out_month},
+             "from_cache": False, "regex_short_circuit": False,
+             "created_at": out_month},
+            # H7 short-circuit row (in window, $0, model=regex-p1).
+            {"id": f"{prefix}m5", "tenant_id": tid,
+             "decision": "block", "cost_estimate_usd": 0.0,
+             "from_cache": False, "regex_short_circuit": True,
+             "model": "regex-p1", "created_at": in_month},
         ])
         # Charge templates: 2 rows, one used in window one not.
         await db.charge_templates.insert_many([
@@ -152,14 +163,17 @@ def test_h6_happy_path_aggregates_all_four_streams():
                 month="2026-02", user=admin,
                 tenant={"id": tid, "timezone": "UTC"},
             )
-            # Soshie: 3 in-window calls, cost = $0.05, cache-hit 1/3.
+            # Soshie: 4 in-window calls (3 LLM + 1 regex short-circuit),
+            # cost = $0.05, cache-hit 1/4, decisions = 2 approve + 1 flag + 1 block.
             m = r["soshie_moderation"]
-            assert m["calls_total"] == 3, m
+            assert m["calls_total"] == 4, m
             assert abs(m["cost_estimate_usd"] - 0.05) < 1e-6, m
             assert m["decisions"]["approve"] == 2
             assert m["decisions"]["flag"] == 1
-            assert m["decisions"]["block"] == 0
-            assert abs(m["cache_hit_rate"] - round(1 / 3, 4)) < 1e-4
+            assert m["decisions"]["block"] == 1
+            assert abs(m["cache_hit_rate"] - round(1 / 4, 4)) < 1e-4
+            # H7 · regex_short_circuits counter
+            assert m["regex_short_circuits"] == 1
             # Templates: at least our 2 prefix rows are counted;
             # the tenant may carry other seed templates that bump
             # the totals. Our slice is verifiable via

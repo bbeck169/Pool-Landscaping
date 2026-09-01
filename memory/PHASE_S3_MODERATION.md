@@ -130,3 +130,27 @@ restart the backend supervisor.
 - To drop the queue router entirely (unlikely — the endpoints are
   additive): remove the `api_router.include_router(_phase_f3_...)`
   block in `backend/server.py`; no schema migration needed.
+
+
+## Phase H7 · Feb-2026 — Regex + LLM combo pipeline
+
+**Two-stage moderation for cost savings**
+
+`services.soshie.llm_moderation.moderate_post` now runs in this order:
+
+1. Kill switch — `SOSHIE_MODERATION_ENABLED=false` → approve.
+2. **Stage 1 · Regex prefilter ($0)** — `services.soshie.moderation.prefilter`:
+   - **High**-confidence sources (`brand_brain.dont_say`, `banned_phrases`) → short-circuit to `block`. **LLM is not called.**
+   - **Low**-confidence sources (`email`, `phone`, `ssn`, `credit_card`) → fall through to Stage 2; the low-confidence flag is folded via `_more_conservative` after the LLM verdict.
+3. Cache hit — replay a prior decisive LLM verdict; combined with any current regex-low flags (never downgrades a cached block).
+4. Credit floor gate.
+5. **Stage 2 · Live LLM call** — Claude Sonnet.
+
+**New env: `SOSHIE_REGEX_PREFILTER_ENABLED`**
+Default `true`. Set `false` / `0` / `off` / `no` to skip Stage 1 and force every draft through the LLM. Use for A/B validation or when you want to isolate a suspected regex false-positive.
+
+**New audit fields on `soshie_moderation_results`:**
+- `regex_short_circuit: bool` — true only when Stage 1 short-circuited to block. H6 monthly rollup exposes the count as `soshie_moderation.regex_short_circuits`.
+- `regex_high_flags` / `regex_low_flags` — full flag payloads captured on every row for auditability.
+
+**Expected cost savings:** ~15% on a realistic pool/landscape mix (measured on a synthetic 100-post batch with 15% policy-blocked drafts).

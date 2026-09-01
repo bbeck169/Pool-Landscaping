@@ -49,7 +49,31 @@ MODEL_NAME = "claude-sonnet-4-5"
 # monthly LLM burn.
 _INPUT_COST_PER_1K = 0.003
 _OUTPUT_COST_PER_1K = 0.015
+MODEL_REGEX_P1 = "regex-p1"
 CREDIT_FLOOR = 5  # mirror autopilot_scheduler.CREDIT_FLOOR
+
+
+def _regex_prefilter_enabled() -> bool:
+    """Phase H7 · Feb-2026 — env kill switch for the regex pre-
+    filter stage. Defaults to ON; setting
+    ``SOSHIE_REGEX_PREFILTER_ENABLED=false`` (or ``0``/``off``/
+    ``no``) skips Stage 1 and goes straight to the LLM. Useful
+    for A/B testing the combo pipeline vs. LLM-only or for
+    troubleshooting a false-positive block."""
+    v = (os.environ.get("SOSHIE_REGEX_PREFILTER_ENABLED") or "").strip().lower()
+    if v in ("false", "0", "off", "no"):
+        return False
+    return True
+
+
+_DECISION_SEVERITY = {"approve": 0, "flag": 1, "block": 2}
+
+
+def _more_conservative(a: str, b: str) -> str:
+    """Return the higher-severity of two decisions. Used by the
+    H7 combo pipeline to fold regex + LLM verdicts into one
+    final decision — block > flag > approve."""
+    return a if _DECISION_SEVERITY.get(a, 0) >= _DECISION_SEVERITY.get(b, 0) else b
 
 
 SYSTEM_PROMPT = (
@@ -137,7 +161,11 @@ async def _store_result(*, tenant_id: str, post_id: str,
                           cost_estimate_usd: float,
                           model: str,
                           from_cache: bool = False,
-                          error: Optional[str] = None) -> Dict[str, Any]:
+                          error: Optional[str] = None,
+                          regex_short_circuit: bool = False,
+                          regex_high_flags: Optional[List[Dict[str, str]]] = None,
+                          regex_low_flags: Optional[List[Dict[str, str]]] = None,
+                          ) -> Dict[str, Any]:
     doc = {
         "id": new_id(),
         "tenant_id": tenant_id,
@@ -152,6 +180,14 @@ async def _store_result(*, tenant_id: str, post_id: str,
         "cost_estimate_usd": float(cost_estimate_usd or 0),
         "from_cache": bool(from_cache),
         "error": error,
+        # Phase H7 · Feb-2026 — regex combo audit fields. Every
+        # row carries these so H6's monthly rollup can surface a
+        # ``regex_short_circuits`` counter and the cost-savings
+        # narrative stays defensible. ``regex_short_circuit=True``
+        # means the LLM was NEVER called for this post.
+        "regex_short_circuit": bool(regex_short_circuit),
+        "regex_high_flags": regex_high_flags or [],
+        "regex_low_flags": regex_low_flags or [],
         "created_at": now_iso(),
     }
     try:
@@ -179,10 +215,29 @@ async def _find_cached(tenant_id: str,
 async def moderate_post(
     *, post_id: str, tenant_id: str,
     text: str, media_urls: Optional[List[str]] = None,
+    dont_say: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Return ``{status, reasons, model, cost_estimate, from_cache}``.
 
     ``status`` is one of ``approve`` / ``flag`` / ``block``.
+
+    Phase H7 · Feb-2026 — Pipeline order:
+        1. Kill-switch (``SOSHIE_MODERATION_ENABLED=false``) → approve
+        2. Regex pre-filter (Stage 1, $0):
+            - ``high``-confidence hit → short-circuit BLOCK, LLM
+              never invoked. ``regex_short_circuit=True`` written.
+            - ``low``-confidence hit → keep the low-confidence
+              flag payload; fall through to LLM; combine.
+            - clean → fall through to LLM.
+        3. Cache lookup (F3) — deterministic replay of a prior
+           LLM verdict for identical content. Cached result IS
+           NOT combined with regex-low flags (the cached row
+           already carried its own snapshot).
+        4. Credit-floor gate — if under CREDIT_FLOOR, flag with
+           ``quota_exceeded``.
+        5. Live LLM call, then fold regex-low flags via
+           :func:`_more_conservative` so a regex-low ``flag`` +
+           LLM ``approve`` still lands as ``flag``.
     """
     media_urls = list(media_urls or [])
     content_hash = _content_hash(text, media_urls)
@@ -200,19 +255,69 @@ async def moderate_post(
             model="kill-switch",
         )
 
+    # ─── Phase H7 · Stage 1: regex prefilter ($0 fast-path). ─────────
+    regex_high: List[Dict[str, str]] = []
+    regex_low: List[Dict[str, str]] = []
+    if _regex_prefilter_enabled():
+        from services.soshie.moderation import prefilter as _regex_prefilter
+        pre, regex_high, regex_low = _regex_prefilter(
+            text or "", dont_say=dont_say,
+        )
+        if pre == "block":
+            # Definitive block — LLM is not consulted. Reasons
+            # are compact stringified source|match pairs so the
+            # audit surface stays readable.
+            reasons = [
+                f"{f.get('source', 'regex')}:{f.get('match', '')[:40]}"
+                for f in regex_high[:4]
+            ]
+            return await _store_result(
+                tenant_id=tenant_id, post_id=post_id,
+                content_hash=content_hash,
+                decision="block",
+                reasons=reasons or ["regex_policy_block"],
+                risk_level="high",
+                tokens_in=0, tokens_out=0,
+                cost_estimate_usd=0.0,
+                model=MODEL_REGEX_P1,
+                regex_short_circuit=True,
+                regex_high_flags=regex_high,
+                regex_low_flags=regex_low,
+            )
+        # ``pre`` is now either ``flag`` (regex-low hits) or
+        # ``approve``. Either way we fall through to the cache
+        # + LLM stages; the regex-low flags will be folded into
+        # the final decision below.
+
     # ─── Cache hit — replay prior decision. ───────────────────────────
     cached = await _find_cached(tenant_id, content_hash)
     if cached and not cached.get("error"):
+        # Fold in any regex-low flags — if the cached decision was
+        # ``approve`` but we now have a regex-low hit that wasn't
+        # present when we first cached (e.g. dont_say list grew),
+        # bump to ``flag``. Never downgrade a cached ``block``.
+        combined = _more_conservative(
+            cached["decision"],
+            "flag" if regex_low else "approve",
+        )
+        cached_reasons = list(cached.get("reasons") or [])
+        if regex_low and combined != cached["decision"]:
+            cached_reasons = (cached_reasons + [
+                f"{f.get('source','regex')}:{f.get('match','')[:40]}"
+                for f in regex_low[:2]
+            ])[:4]
         return await _store_result(
             tenant_id=tenant_id, post_id=post_id,
             content_hash=content_hash,
-            decision=cached["decision"],
-            reasons=list(cached.get("reasons") or []),
+            decision=combined,
+            reasons=cached_reasons,
             risk_level=cached.get("risk_level") or "low",
             tokens_in=0, tokens_out=0,
             cost_estimate_usd=0.0,
             model=cached.get("model") or MODEL_NAME,
             from_cache=True,
+            regex_high_flags=regex_high,
+            regex_low_flags=regex_low,
         )
 
     # ─── Quota gate — over the floor, don't burn LLM calls; flag. ────
@@ -228,6 +333,8 @@ async def moderate_post(
             cost_estimate_usd=0.0,
             model=MODEL_NAME,
             error="quota_exceeded",
+            regex_high_flags=regex_high,
+            regex_low_flags=regex_low,
         )
 
     # ─── Live LLM call. ───────────────────────────────────────────────
@@ -255,6 +362,8 @@ async def moderate_post(
             cost_estimate_usd=0.0,
             model=MODEL_NAME,
             error=str(e),
+            regex_high_flags=regex_high,
+            regex_low_flags=regex_low,
         )
 
     if res.get("error"):
@@ -268,11 +377,27 @@ async def moderate_post(
             cost_estimate_usd=0.0,
             model=MODEL_NAME,
             error=str(res.get("error")),
+            regex_high_flags=regex_high,
+            regex_low_flags=regex_low,
         )
     raw = res.get("raw") or {}
     decision = _sanitize_decision(raw.get("decision"))
     reasons = _sanitize_reasons(raw.get("reasons"))
     risk_level = _sanitize_risk(raw.get("risk_level"))
+    # Phase H7 · Combine LLM verdict with regex-low signal. The
+    # LLM sees the full text so it *should* catch a PII-looking
+    # substring, but folding in the regex-low signal is
+    # defense-in-depth: never lets a low-confidence hit slip
+    # past when the LLM approves. ``block`` from either side
+    # dominates; ``flag`` from either side dominates ``approve``.
+    if regex_low:
+        combined = _more_conservative(decision, "flag")
+        if combined != decision:
+            reasons = (reasons + [
+                f"{f.get('source','regex')}:{f.get('match','')[:40]}"
+                for f in regex_low[:2]
+            ])[:4]
+        decision = combined
     # Rough token estimate: 1 token ≈ 4 chars. Good enough for a
     # cost-audit surface — accurate accounting is out of scope for
     # F3 (would require the SDK to surface real usage, which the
@@ -289,4 +414,6 @@ async def moderate_post(
         tokens_in=tokens_in, tokens_out=tokens_out,
         cost_estimate_usd=cost,
         model=MODEL_NAME,
+        regex_high_flags=regex_high,
+        regex_low_flags=regex_low,
     )

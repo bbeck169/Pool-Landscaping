@@ -107,6 +107,13 @@ async def _soshie_moderation_rollup(
             "cache_hits": {"$sum": {"$cond": [
                 {"$eq": ["$from_cache", True]}, 1, 0,
             ]}},
+            # Phase H7 · Feb-2026 — regex short-circuit counter.
+            # Rows written by the ``regex-p1`` short-circuit
+            # never spent a cent on the LLM. Surface the count
+            # on the H6 dashboard so ops sees the savings.
+            "regex_short_circuits": {"$sum": {"$cond": [
+                {"$eq": ["$regex_short_circuit", True]}, 1, 0,
+            ]}},
             "approve": {"$sum": {"$cond": [
                 {"$eq": ["$decision", "approve"]}, 1, 0,
             ]}},
@@ -121,7 +128,9 @@ async def _soshie_moderation_rollup(
     rows = await db.soshie_moderation_results.aggregate(
         pipeline).to_list(1)
     r = rows[0] if rows else {"calls_total": 0, "cost_estimate_usd": 0,
-                                  "cache_hits": 0, "approve": 0,
+                                  "cache_hits": 0,
+                                  "regex_short_circuits": 0,
+                                  "approve": 0,
                                   "flag": 0, "block": 0}
     total = int(r.get("calls_total") or 0)
     cost = float(r.get("cost_estimate_usd") or 0)
@@ -140,6 +149,7 @@ async def _soshie_moderation_rollup(
         "avg_cost_per_call_usd": (
             round(cost / total, 6) if total else 0.0
         ),
+        "regex_short_circuits": int(r.get("regex_short_circuits") or 0),
     }
 
 
