@@ -1,3 +1,118 @@
+## Phase J1 · Feb-2026 — Smart Enhancement Follow-Ups — SHIPPED (items 1, 2, 5, 6)
+
+Bundle of six small web enhancements tied off in one commit.
+Items **#3** (set-default affordance on non-default cards) and
+**#4** (recent-3 preview on the tabs dropdown via localStorage)
+are **deferred** to a follow-up phase — logged in the "known
+deferred work" list at the bottom of this section.
+
+### #1 — URL persistence on Customer-detail tabs (P1)
+- `frontend/src/pages/customers/CustomerDetail.jsx` — the tab
+  state hook is now `[tab, _setTab] = useState("overview")` and
+  wrapped by a `setTab(next)` helper that pushes/deletes a
+  `?tab=<key>` query param via `useSearchParams`. Initial mount
+  reads `searchParams.get("tab")` so deep-links like
+  `/customers/{id}?tab=jobs` restore state. Default tab
+  (`"overview"`) is elided from the URL to keep the address bar
+  clean.
+- `frontend/src/test/customer-detail-tabs-dropdown.test.jsx` —
+  test count 7 → 9. The old **onChange-plain-`setTab`** assertion
+  was tightened to the wrapping-helper shape, and two new
+  assertions lock:
+  - `searchParams.get("tab") / params.set("tab", next) /
+     setSearchParams(params, { replace: true }) /
+     params.delete("tab")` — the full round-trip.
+  - `useSearchParams` import + destructured hook call.
+
+### #2 — Expires-soon chip on `PaymentMethodTiles` (P1)
+- `frontend/src/components/customers/PaymentMethodTiles.jsx` —
+  `CardTile` now derives a three-state `_chip` from `exp_month`
+  + `exp_year`:
+  - **Expired** — red pill (`#FEE2E2 / #991B1B`) when the expiry
+    lands strictly in the past.
+  - **Expires this month** — red pill when `(year, month)` ==
+    the current calendar month.
+  - **Expires soon** — amber pill (`#FEF3C7 / #92400E`) when
+    the expiry lands in the next 12 months.
+  - No chip past that horizon.
+- Rendered as an absolutely-positioned pill top-right, testid
+  `payment-tile-card-expiry-chip-{row.id}`.
+- Screenshot lives at `/tmp/phase_j1_expires_chip.png` +
+  `/app/artifacts/phase_j1/phase_j1_expires_chip.png` (three
+  states side-by-side on the same viewport).
+
+### #5 — Two-way timeline groundwork doc (P2)
+- `/app/memory/I7_TWO_WAY_TIMELINE.md` — audit note. Grepped
+  `sms_inbox / email_inbox / inbound_sms / inbound_email /
+  sms_messages / email_messages / messages` in preview: **all
+  empty or non-existent**. Doc captures the deferred merge path
+  in `backend/routers/communication_timeline.py` (queries a
+  future `notification_inbox_log`, flips `direction: "inbound"`,
+  merges into the same items array pre-sort, unchanged
+  frontend contract).
+
+### #6 — Stale-code sweep in `PortalPages.jsx` (P2)
+Wave D grep-verify pattern: identify unused symbols, confirm
+zero references across `src/`, delete.
+
+Removed:
+- `_ReadOnly({label, value})` helper (8 LOC) — defined but
+  never referenced anywhere in `src/`. Confirmed via
+  `grep -rn "\bReadOnly\b\|_ReadOnly" src/`.
+- `const [_active, _setActive] = useState(null);` inside
+  `PortalMessages` (1 LOC) — never referenced. `_setActive` is
+  cosmetically unique against a Homeworks importer named
+  `active_customers_importer as _active` in a test file, which
+  is unrelated.
+- `const [_customer, setCustomer] = useState(null);` + both
+  `setCustomer(...)` call sites inside `PortalProfile` (4 LOC)
+  — the state was purely write-only; nothing rendered from
+  `_customer`. The `resp` intermediate in `save()` is also
+  dropped because the API response payload is unused when the
+  `setCustomer` merge is gone.
+
+Total: **14 LOC removed** (`1051 → 1039`). Zero behaviour
+change.
+
+### Vitest — full-suite regression check
+- Pre-J1 baseline: **23 failing test files / 33 failing tests**
+  (all pre-existing failures unrelated to this scope — proven
+  by re-running the same set with the working tree stashed).
+- Post-J1: **23 failing test files / 33 failing tests** —
+  identical baseline. J1 introduced **zero** regressions.
+- Direct-target suites: `customer-detail-tabs-dropdown` +
+  `payment-method-tiles` → **23/23 passed**. Portal-facing
+  suites (`payment-method-tiles-portal-placement`,
+  `communication-timeline-portal-placement`,
+  `customer-portal-invite-relocation`, `phase27-portal-sections`,
+  `portal-quick-actions-wiring`,
+  `portal-payment-complete-reconcile`) → **38/38 passed**.
+
+### Files touched
+- Frontend (modified):
+  - `src/components/customers/PaymentMethodTiles.jsx` (+28 / -1)
+  - `src/pages/customers/CustomerDetail.jsx` (+18 / -2)
+  - `src/pages/portal/PortalPages.jsx` (+1 / -13)
+  - `src/test/customer-detail-tabs-dropdown.test.jsx` (+36 / -5)
+- Docs (created): `memory/I7_TWO_WAY_TIMELINE.md`.
+- Artifacts: `artifacts/phase_j1/phase_j1_expires_chip.png`.
+
+### Known deferred work
+- **J1 #3** — Set-default affordance on non-default cards.
+  Ripe for a small follow-up: add an "affordance" button on
+  each non-default tile that hits the existing
+  `POST /api/payments/stripe/payment-methods/{pm_id}/set-default`.
+  Contract already lives on the router; the UI is the missing
+  piece.
+- **J1 #4** — Recent-3 preview on the tabs dropdown. Wire the
+  `setTab` helper to also append to
+  `localStorage["cd-tabs-recent-3-{customer_id}"]` (LRU, cap
+  3) and render the chip above the dropdown. No backend
+  changes.
+
+---
+
+
 ## Phase F7 · Feb-2026 — "Add charge for visit" (job line-items + auto-invoice passthrough) — SHIPPED
 
 **Actual gap:** Slice K2 already shipped `db.jobs.line_items[]` + 4 granular endpoints (`POST/PATCH/DELETE/GET /api/jobs/{jid}/line-items[/{lid}]`) + a `LineItemsSection` component wired to `JobDetail`. What was missing:

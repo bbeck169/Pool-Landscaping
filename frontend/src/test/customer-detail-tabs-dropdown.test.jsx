@@ -74,12 +74,43 @@ describe("CustomerDetail · I6 tabs-as-dropdown", () => {
 
   it("tab state hook + setTab wire are retained", () => {
     // The tab state hook + change handler stay in place — no
-    // refactor of the state path. (CustomerDetail uses local
-    // ``useState`` rather than URL-sync — the same pattern as
-    // pre-I6.  If a future revision adds URL persistence, this
-    // test should be tightened accordingly.)
-    expect(CD_SRC).toMatch(/const\s+\[tab,\s*setTab\]\s*=\s*useState\(/);
+    // refactor of the state path.  Phase J1 · Feb-2026 wraps the
+    // raw ``useState`` setter behind a ``setTab`` helper that also
+    // pushes the value into the URL query string, so the hook is
+    // now declared as ``[tab, _setTab]`` with a wrapping helper.
+    expect(CD_SRC).toMatch(
+      /const\s+\[tab,\s*_setTab\]\s*=\s*useState\(/,
+    );
+    expect(CD_SRC).toMatch(/const\s+setTab\s*=\s*\(next\)\s*=>/);
     expect(CD_SRC).toMatch(/onChange=\{setTab\}/);
+  });
+
+  // ── Phase J1 · Feb-2026 — URL-param persistence on tabs ───────
+  it("tab selection round-trips through the ?tab= query param", () => {
+    // Initial mount seeds from the URL:
+    //   const q = searchParams.get("tab");
+    expect(CD_SRC).toMatch(/searchParams\.get\(\s*"tab"\s*\)/);
+    // ``setTab`` writes back into the URL via ``setSearchParams``:
+    //   params.set("tab", next);
+    //   setSearchParams(params, { replace: true });
+    expect(CD_SRC).toMatch(/params\.set\(\s*"tab"\s*,\s*next\s*\)/);
+    expect(CD_SRC).toMatch(
+      /setSearchParams\(\s*params\s*,\s*\{\s*replace:\s*true\s*\}\s*\)/,
+    );
+    // Default tab ("overview") is elided so the URL stays clean:
+    //   else params.delete("tab");
+    expect(CD_SRC).toMatch(/params\.delete\(\s*"tab"\s*\)/);
+  });
+
+  it("useSearchParams is imported + wired to the URL param hook", () => {
+    // Import + hook call must both be present so a future refactor
+    // that drops the hook will break loudly.
+    expect(CD_SRC).toMatch(
+      /import\s+\{[^}]*useSearchParams[^}]*\}\s+from\s+"react-router-dom"/,
+    );
+    expect(CD_SRC).toMatch(
+      /const\s+\[searchParams,\s*setSearchParams\]\s*=\s*useSearchParams\(\)/,
+    );
   });
 
   it("no legacy horizontal-scroll classes at the CustomerDetail mount", () => {

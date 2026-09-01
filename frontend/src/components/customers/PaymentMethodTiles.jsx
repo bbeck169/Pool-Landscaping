@@ -122,15 +122,42 @@ function CardTile({ row, onEdit, onDelete }) {
   const exp = (row.exp_month && row.exp_year)
     ? `${String(row.exp_month).padStart(2, "0")} / ${row.exp_year}`
     : "—";
+  // Phase J1 · Feb-2026 — expires-soon chip.  Amber when exp is
+  // within the next calendar year; dark-red once the expiry lands
+  // in the current month or already passed.
+  const _now = new Date();
+  const _thisY = _now.getFullYear();
+  const _thisM = _now.getMonth() + 1;
+  let _chip = null;
+  if (row.exp_month && row.exp_year) {
+    if (row.exp_year < _thisY
+        || (row.exp_year === _thisY && row.exp_month < _thisM)) {
+      _chip = { label: "Expired", bg: "#FEE2E2", fg: "#991B1B" };
+    } else if (row.exp_year === _thisY && row.exp_month === _thisM) {
+      _chip = { label: "Expires this month",
+                    bg: "#FEE2E2", fg: "#991B1B" };
+    } else if (row.exp_year <= _thisY + 1) {
+      _chip = { label: "Expires soon", bg: "#FEF3C7", fg: "#92400E" };
+    }
+  }
   return (
     <div
-      className="rounded-2xl p-4"
+      className="rounded-2xl p-4 relative"
       style={{
         background: _TILE_BG,
         border: `2px solid ${_TILE_BORDER}`,
       }}
       data-testid={`payment-tile-card-${row.id}`}
     >
+      {_chip ? (
+        <span
+          className="absolute top-3 right-3 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+          style={{ background: _chip.bg, color: _chip.fg }}
+          data-testid={`payment-tile-card-expiry-chip-${row.id}`}
+        >
+          {_chip.label}
+        </span>
+      ) : null}
       <div className="mb-3">
         <span
           className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider"

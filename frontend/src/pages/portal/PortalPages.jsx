@@ -463,7 +463,6 @@ export function PortalMessages() {
   // ``delivery_error``) for the portal caller.
   const { user } = useAuth();
   const [threads, setThreads] = useState(null);
-  const [_active, _setActive] = useState(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
@@ -545,7 +544,6 @@ export function PortalMessages() {
 // ──────────────── /portal/profile ────────────────
 export function PortalProfile() {
   const { user, refreshMe } = useAuth();
-  const [_customer, setCustomer] = useState(null);
   const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", address: "" });
   const [initial, setInitial] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -561,7 +559,6 @@ export function PortalProfile() {
     // /me so we start with the freshest linked values.
     api.get(`/me`)
       .then((c) => {
-        setCustomer(c);
         const nx = {
           first_name: c?.first_name || (user?.name || "").split(" ")[0] || "",
           last_name: c?.last_name || (user?.name || "").split(" ").slice(1).join(" ") || "",
@@ -590,14 +587,13 @@ export function PortalProfile() {
     if (!canSave) return;
     setSaving(true); setError("");
     try {
-      const resp = await api.patch("/customer-portal/profile", form);
+      await api.patch("/customer-portal/profile", form);
       setToast({ tone: "success", message: "Profile updated" });
       // Snapshot the saved values so the form becomes clean again.
       setInitial(JSON.stringify(form));
       // Refresh cached user context so the header / other surfaces
       // pick up the new name/email.
       try { await refreshMe?.(); } catch (_) { /* best-effort */ }
-      setCustomer((c) => ({ ...(c || {}), ...(resp?.profile || {}) }));
     } catch (err) {
       setError(err?.message || "Could not save. Please try again.");
     } finally {
@@ -662,14 +658,6 @@ export function PortalProfile() {
         </div>
       </div>
       <Toast toast={toast} onClose={() => setToast(null)} />
-    </div>
-  );
-}
-function _ReadOnly({ label, value }) {
-  return (
-    <div className="mb-2">
-      <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>{label}</div>
-      <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>{value || "—"}</div>
     </div>
   );
 }

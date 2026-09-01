@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate, useParams, Link } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock } from "lucide-react";
 import { api } from "@/api";
 import { colors } from '@/theme';
@@ -176,7 +176,23 @@ export default function CustomerDetail() {
   // the name (see the header render). Fetched alongside customer +
   // jobs so the address can appear in the first paint.
   const [properties, setProperties] = useState([]);
-  const [tab, setTab] = useState("overview");
+  const [tab, _setTab] = useState("overview");
+  // Phase J1 · Feb-2026 — URL round-trip on the tab dropdown so a
+  // deep-link like ``/customers/:id?tab=jobs`` restores state on
+  // mount and every selection updates the query string in place.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const q = searchParams.get("tab");
+    if (q && q !== tab) _setTab(q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const setTab = (next) => {
+    _setTab(next);
+    const params = new URLSearchParams(searchParams);
+    if (next && next !== "overview") params.set("tab", next);
+    else params.delete("tab");
+    setSearchParams(params, { replace: true });
+  };
   const [toast, setToast] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Feb-2026 · Customer Delete UX overhaul — which mode is currently
