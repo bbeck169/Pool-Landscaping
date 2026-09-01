@@ -247,6 +247,71 @@ async def delete_payment_method(
         raise HTTPException(502, f"stripe error: {exc}")
 
 
+# ── Phase I5 · Feb-2026 — Typed-last4 delete gate. ─────────────────
+# Defense-in-depth on top of the raw DELETE above: the frontend
+# TypedConfirmModal makes the operator retype the last-4 before
+# arming Delete; this endpoint re-validates that keyword server-side
+# so a scripted client can't skip the frontend check. Kept as its
+# own endpoint (not folded into the DELETE) so B-series callers of
+# the plain DELETE keep working unchanged.
+class TypedDeleteBody(BaseModel):
+    typed_last4: str = Field(..., min_length=1, max_length=8)
+
+
+@router.post("/payment-methods/{payment_method_id}/delete-typed")
+async def delete_payment_method_typed(
+    payment_method_id: str,
+    body: TypedDeleteBody,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if _is_tech(user):
+        raise HTTPException(403, "Technicians cannot access payment methods")
+    # Load the mirror row up-front so we can (a) validate the keyword
+    # against the stored last4 without trusting the client, and
+    # (b) enforce customer-scope on the customer role.
+    row = await db.payment_methods.find_one(
+        {
+            "provider_payment_method_id": payment_method_id,
+            "tenant_id": tenant["id"],
+            "provider": "stripe",
+        },
+        {"_id": 0, "customer_id": 1, "last4": 1, "type": 1, "brand": 1},
+    )
+    if not row:
+        raise HTTPException(404, "payment method not found")
+    owner = row.get("customer_id")
+    if _is_customer(user) and user.get("customer_id") != owner:
+        raise HTTPException(403, "Not allowed")
+    if not (_is_admin(user) or _is_customer(user)):
+        raise HTTPException(403, "Not allowed")
+
+    typed = (body.typed_last4 or "").strip()
+    stored_last4 = (row.get("last4") or "").strip()
+    # Case-sensitive exact match against the stored last4. Empty
+    # stored_last4 (which would happen for a partially-populated
+    # legacy row) short-circuits to a 400 rather than allow-through.
+    if not stored_last4 or typed != stored_last4:
+        raise HTTPException(
+            status_code=400,
+            detail="typed_last4_mismatch",
+        )
+    try:
+        result = await stripe_svc.detach_payment_method(
+            tenant_id=tenant["id"],
+            payment_method_id=payment_method_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[stripe] detach-typed error: %s", exc)
+        raise HTTPException(502, f"stripe error: {exc}")
+    return {**result,
+                "last4": stored_last4,
+                "type": row.get("type") or "card",
+                "brand": row.get("brand") or ""}
+
+
 @router.post("/charge")
 async def post_charge(
     body: ChargeBody,

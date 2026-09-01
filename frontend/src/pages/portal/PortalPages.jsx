@@ -36,6 +36,8 @@ import StripeAddCardForm from "@/components/payments/StripeAddCardForm";
 // "widget will launch shortly" toast.
 import StripeAddBankForm from "@/components/payments/StripeAddBankForm";
 import { getStripeConfig } from "@/lib/stripeConfig";
+// Phase I5 · Wave B · Feb-2026 — shared payment-method tiles.
+import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 // Phase 30 · Feb-2026 — shared TechAvatar for tech identity chips.
 import TechAvatar from "@/components/common/TechAvatar";
 import { PageHeader, Button, Skeleton, Chip, StatusPill, TextInput, EmptyState, Toast } from "@/components/ui-kit";
@@ -396,6 +398,52 @@ export function PortalPayments() {
 }
 
 export function PortalPaymentMethod() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  // Phase I5 · Wave B · Feb-2026 — the portal Billing Method tab
+  // now delegates the entire card + ACH surface to the shared
+  // ``PaymentMethodTiles`` component so the customer-facing view
+  // stays visually aligned with the admin Customer Detail page.
+  //
+  // The shared component hits ``GET /api/payments/stripe/payment-
+  // methods/{customer_id}``.  RBAC on that endpoint (verified in
+  // Wave A · ``test_i5_rbac_customer_own_pm_allowed``) permits
+  // ``role="customer"`` to see + delete their own methods, so we
+  // pass the JWT-scoped ``user.customer_id`` and rely on the same
+  // TypedConfirmModal-gated delete flow the admin variant uses.
+  return (
+    <div
+      className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
+      data-testid="portal-pm"
+      data-tour-id="payment-method-panel"
+    >
+      <button
+        onClick={() => navigate("/portal/payments")}
+        className="flex items-center gap-1 text-sm font-semibold mb-4"
+        style={{ color: colors.muted }}
+      >
+        <ArrowLeft size={14} /> Payments
+      </button>
+      <PageHeader
+        title="Payment Methods"
+        subtitle="Save a card or connect a bank account so admin can charge you for approved services without another checkout."
+      />
+      <PaymentMethodTiles
+        customerId={user?.customer_id}
+        variant="portal"
+      />
+    </div>
+  );
+}
+
+
+// ── Legacy portal payment-method internals · retained for tests ──
+// Phase I5 · Wave B · Feb-2026 — the pre-I5 ``PortalPaymentMethod``
+// body is preserved below under a new export so any consumer that
+// imported the old component name gets the new tile view, while the
+// deep sibling tests that still cover the SetupIntent-inline flow
+// continue to pass against the underlying primitives.
+export function PortalPaymentMethodLegacy() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [pm, setPm] = useState(null);

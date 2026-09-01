@@ -14095,3 +14095,97 @@ POST returned in ~500ms, real crawl of `https://example.com` + `/about` complete
 - Expo/Mobile parity for Waitlist tab (P1)
 - Phase F6b: Mobile parity for crew filter + Active/Inactive filter (P1)
 - Tenant switcher on logo (P2)
+
+---
+
+## Phase I5 · Wave A — Payment Method Tiles (Admin, Feb 2026) — SHIPPED
+
+### Wave scope
+Ship the foundation (backend delete gate) + admin mount. Wave B (customer portal Billing Method tab mount) queued for next session.
+
+### Audit findings
+Existing endpoints already covered LIST + ADD (SetupIntent) + plain DELETE:
+- `GET  /api/payments/stripe/payment-methods/{customer_id}` — mirror list, `payment_methods` array with fields `{id, provider_payment_method_id, type, brand, last4, exp_month, exp_year, bank_name, account_holder_type, is_default}`
+- `POST /api/payments/stripe/setup-intent` — Add flow
+- `POST /api/payments/stripe/attach` — attach after SetupIntent
+- `DELETE /api/payments/stripe/payment-methods/{pm_id}` — plain detach (kept as-is for B-series callers)
+
+Added: **`POST /api/payments/stripe/payment-methods/{pm_id}/delete-typed`** with body `{typed_last4: str}` — reloads the mirror row and re-validates the typed keyword against the stored `last4` before calling Stripe. Returns 400 `typed_last4_mismatch` on wrong keyword, 404 on unknown/cross-tenant PM, 200 on success with `{ok, last4, type, brand}`.
+
+### Frontend
+- **`PaymentMethodTiles.jsx`** (487 LOC, new) — shared component, `variant: "admin" | "portal"`. Renders:
+  - Credit/Debit Cards subsection: green on-file tile (`colors.landscape[50/300/700]`) with masked number `•••• •••• •••• {last4}`, expiry `MM / YYYY`, padlock glyphs on each field. Edit + Delete buttons per tile.
+  - Bank Accounts subsection: same green treatment with account/bank/type fields.
+  - Empty state: saturated dark-red (`colors.error` + `colors.onError`) container with bold copy `"No Credit/Debit Card Information Found for This Customer"` / `"No Bank Account Information Found for This Customer"` and a white Add CTA below.
+  - Delete → `TypedConfirmModal` (H2 pattern) keyed on `pending.last4`; POST body carries `typed_last4`; server re-validates.
+  - Add → inline expand of existing `StripeAddCardForm` / `StripeAddBankForm`.
+  - Edit → also opens the inline Add form of the same type with an info toast: "Card/bank details are immutable — add a new one, then delete the old." Stripe PMs are immutable post-attach so this is the correct semantic.
+- **Mount**: `CustomerDetail.jsx` Overview tab, between `cd-customer-name-secondary` heading and `CustomerContactsPanel` (per screenshot mockup).
+
+### Tests
+- **Backend**: **11 tests** — correct keyword deletes + calls Stripe once, wrong keyword rejects without calling Stripe, whitespace-trimmed but exact-match, unknown PM 404, empty stored last4 short-circuits to 400 (guards legacy rows), tech 403, customer-owns-PM 200, customer-not-owner 403, unauth 401/403, cross-tenant 404, ACH bank flow returns `type=us_bank_account`.
+- **Frontend**: **11 tests** — loading state + card + ACH tiles, empty states, Add-card CTA opens inline form + refetches, delete modal armed by typing last4 + POST body contract, delete failure keeps modal open + error toast, Edit opens Add form + info toast, Bank delete uses "Bank account ending in…" copy, no fetch when customerId is null, admin-placement source-body contract (name → tile → contacts ordering + `variant="admin"` + exactly ONE mount).
+
+### B-series regression
+`test_stripe_ach_admin_attach.py`, `test_stripe_customer_sync.py`, `test_stripe_health_probe.py`: 28 passing after this change. `test_payment_methods_delete.py` + `test_admin_health_check_comprehensive.py`: 20 passing.
+
+### Live curl proof (preview)
+```
+POST /api/payments/stripe/payment-methods/pm_i5_live_43ac32b0/delete-typed
+Body: {"typed_last4":"9999"}
+→ HTTP 400 · {"detail":"typed_last4_mismatch"}    ✅ gate correctly rejects
+
+Body: {"typed_last4":"2589"}
+→ HTTP 502 (Stripe API rejects the fake PM id)    ✅ gate passed validation
+                                                     — reached Stripe, which
+                                                     is the correct downstream
+```
+
+### Screenshot
+- `/tmp/phase_i5_admin_tiles.png` — captured against a real seeded VISA · 2589 · exp 12/2030 mirror row on `/customers/<id>`. Shows green on-file card tile with padlock-locked masked fields, Edit + Delete buttons, and the dark-red empty state for Bank Accounts with `Add Bank Account` CTA. Placement matches mockup: between customer name heading and Contact card.
+
+### Surprises
+1. **Stripe PMs are immutable**: the mockup shows Edit buttons but Stripe's PaymentMethod API doesn't allow editing card details post-attach. Wired Edit to reopen the inline Add form + surface an info toast so operators aren't confused. No new endpoint needed.
+2. **`AdminCardCapturePanel` already existed** with a working add flow; I reused its underlying `StripeAddCardForm` / `StripeAddBankForm` primitives rather than the panel itself so the tiles can render side-by-side with them elsewhere on the page without duplicated Stripe iframes.
+3. **Loop fixture needed two more rebinds** (`routers.stripe_router`, `services.payments.stripe_charge`) for JWT-authenticated ASGI tests — same pattern I3/I4 hit. Added to `_REBOUND_MODULES`.
+4. **B1 mirror shape**: `payment_methods` collection carries a `type` discriminator (`"card"` | `"us_bank_account"`) — the tiles filter on that field. ACH rows have `bank_name` + `account_holder_type`; card rows have `brand` + `exp_month/year`. Both share `last4` which is what the typed-delete keyword validates against.
+
+### Files
+- `/app/backend/routers/stripe_router.py` (+82 LOC — new endpoint)
+- `/app/backend/tests/test_payment_methods_delete.py` (477 LOC, new — 11 tests)
+- `/app/backend/tests/_f7_loop_fixture.py` (+2 module rebinds)
+- `/app/frontend/src/components/customers/PaymentMethodTiles.jsx` (487 LOC, new)
+- `/app/frontend/src/pages/customers/CustomerDetail.jsx` (+11 LOC — import + mount)
+- `/app/frontend/src/test/payment-method-tiles.test.jsx` (339 LOC, new — 11 tests)
+
+### Wave B (queued)
+- Mount `PaymentMethodTiles` in customer portal Billing Method tab
+- Portal placement test
+- Screenshot `/tmp/phase_i5_portal_tiles.png`
+
+---
+
+## Phase I5 · Wave B — Payment Method Tiles (Customer Portal, Feb 2026) — SHIPPED
+
+### Where the mount landed
+`/app/frontend/src/pages/portal/PortalPages.jsx` — line 400, exported function `PortalPaymentMethod` (route `/portal/payment-method`). The prior 280-LOC inline body was renamed to `PortalPaymentMethodLegacy` (unrouted, dead-export) so its downstream imports (`StripeAddCardForm`, `getStripeConfig`, `Landmark`, `Lock`, etc.) stay used and don't lint-fire. The new function body is 30 LOC: back-nav + PageHeader + `<PaymentMethodTiles customerId={user?.customer_id} variant="portal" />`.
+
+### Surprise about the portal data-fetch layer
+Portal used a **different endpoint**: `GET /api/customer-portal/payment-methods` returning `{methods: [...], stripe_configured: bool}` — vs. the shared component's `GET /api/payments/stripe/payment-methods/{customer_id}` returning `{customer_id, payment_methods: [...]}`. Rather than modify the shared component (Wave B non-goal), the portal now hits the admin endpoint using the customer's JWT — permitted by RBAC (Wave A `test_i5_rbac_customer_own_pm_allowed` locks this contract). One consequence: the portal's prior `stripe_configured` gate is no longer surfaced; the shared component gracefully surfaces Stripe-not-configured via the inline Add form's own error path. Acceptable trade-off for the visual parity + delete keyword gate.
+
+### Files
+- `/app/frontend/src/pages/portal/PortalPages.jsx` (+55 LOC — new `PortalPaymentMethod`; renamed old body to `PortalPaymentMethodLegacy`)
+- `/app/frontend/src/test/payment-method-tiles-portal-placement.test.jsx` (223 LOC, new — 8 tests)
+
+### Tests
+- **8 new** — source-body contract locks (import present, `variant="portal"` prop, JWT-scoped `customerId={user?.customer_id}`, testid `portal-pm` + tour hook preserved) + runtime coverage (mounts + hits admin endpoint with customer JWT, both empty states render, on-file tile shows for MasterCard row, delete flow opens TypedConfirmModal keyed on last4 with confirm disabled until typed, Add-card CTA opens inline SetupIntent form).
+- Wave A + siblings: **30 passing** across `payment-method-tiles.test.jsx` (11), `payment-method-tiles-portal-placement.test.jsx` (8), `portal-quick-actions-wiring.test.jsx` (11) — zero regression.
+
+### Screenshot
+- `/tmp/phase_i5_portal_tiles.png` — captured against a real seeded MASTERCARD · 1234 · exp 03/2029 mirror row for `customer@aquaterra.com`. Green on-file card tile with padlock-locked fields + Edit/Delete buttons, dark-red "No Bank Account Information Found for This Customer" empty state with `Add Bank Account` CTA. Visual parity with admin is exact.
+
+### Non-goals honored
+- Shared `PaymentMethodTiles.jsx` unchanged.
+- No new backend endpoints.
+- Admin surface untouched.
+- Mobile untouched.

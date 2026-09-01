@@ -14,6 +14,7 @@ import DemoAccountToggle from "@/components/comms/DemoAccountToggle";
 import CustomerCommunicationsTimeline from "@/components/customers/CustomerCommunicationsTimeline";
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
+import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
 import PropertiesTab from "./PropertiesTab";
 import MasterBillingCard from "./MasterBillingCard";
@@ -664,6 +665,13 @@ export default function CustomerDetail() {
               >
                 {customer.name}
               </div>
+              {/* Phase I5 · Feb-2026 — Payment Method Tiles between
+                  the customer name heading and the Contact panel,
+                  per the human's mockup with the red underline. */}
+              <PaymentMethodTiles
+                customerId={customer.id}
+                variant="admin"
+              />
               <CustomerContactsPanel
                 customer={customer}
                 onSaved={(updated) => {
