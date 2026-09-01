@@ -673,10 +673,18 @@ async def charge_card_on_file(
     metadata: Optional[Dict[str, Any]] = None,
     actor_user_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
+    via_impersonation: bool = False,
+    acting_admin_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create an off_session PaymentIntent using a saved card + log the
     attempt into ``db.stripe_charges``. Raises ``ValueError`` on missing
     prerequisites so the router can convert to HTTPException.
+
+    Phase K14 · Feb-2026 — accept ``via_impersonation`` / ``acting_admin_id``
+    so the persisted ``stripe_charges`` row (our "payments" ledger) carries
+    the K13 impersonation stamp when the initiating request was made
+    through an admin View-as-Customer session. Both fields default to
+    non-impersonated semantics so every existing call-site stays a no-op.
     """
     _init_api_key()
 
@@ -780,6 +788,8 @@ async def charge_card_on_file(
             error=None,
             actor_user_id=actor_user_id,
             created_at=now,
+            via_impersonation=via_impersonation,
+            acting_admin_id=acting_admin_id,
         )
         # Feb-2026 · FIX 2 (belt-and-suspenders) — synchronously flip
         # ``quotes.payment_status`` when the charge succeeded so the
@@ -815,6 +825,8 @@ async def charge_card_on_file(
             error=err_msg[:500],
             actor_user_id=actor_user_id,
             created_at=now,
+            via_impersonation=via_impersonation,
+            acting_admin_id=acting_admin_id,
         )
         logger.warning(
             "[stripe_charge] charge failed tenant=%s customer=%s pm=%s: %s",
@@ -837,9 +849,17 @@ async def _persist_charge(
     error: Optional[str],
     actor_user_id: Optional[str],
     created_at: str,
+    via_impersonation: bool = False,
+    acting_admin_id: Optional[str] = None,
 ) -> None:
     """Insert a single ``stripe_charges`` row. Kept in one place so the
-    schema is easy to audit."""
+    schema is easy to audit.
+
+    Phase K14 · Feb-2026 — persists K13 impersonation stamp fields
+    (``via_impersonation`` + ``acting_admin_id``) so the payments
+    ledger records who really pressed the button when the charge
+    was initiated through an admin View-as-Customer session.
+    """
     await db.stripe_charges.insert_one(
         {
             "id": row_id,
@@ -853,6 +873,8 @@ async def _persist_charge(
             "status": status,
             "error": error,
             "actor_user_id": actor_user_id,
+            "via_impersonation": bool(via_impersonation),
+            "acting_admin_id": acting_admin_id,
             "stripe_mode": _mode(),
             "created_at": created_at,
         }

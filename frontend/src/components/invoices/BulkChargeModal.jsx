@@ -82,9 +82,25 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
         const j = await post(true);
         setDryRun(j);
         setStep("review");
+        // K14 · Feb-2026 — surface an inline toast when every row is
+        // ineligible so the admin knows the disabled "Confirm" button
+        // is the intentional outcome, not a broken UI.
+        const s = j.summary || {};
+        if ((s.would_charge || 0) === 0 && (s.skipped || 0) > 0) {
+          toast.warning(
+            `No cards on file to charge — ${s.skipped} invoice${
+              s.skipped === 1 ? "" : "s"
+            } skipped`
+          );
+        }
       } catch (err) {
-        setErrMsg(String(err?.message || err));
+        const msg = String(err?.message || err);
+        setErrMsg(msg);
         setStep("error");
+        // K14 · Feb-2026 — toast on failure of the initial eligibility
+        // fetch so admins see something even if the modal is dismissed
+        // (or covered by another surface) before the inline block reads.
+        toast.error(`Bulk charge check failed: ${msg}`);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -99,10 +115,16 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
       const s = j.summary || {};
       const msg = `${s.charged || 0} charged · ${s.skipped || 0} skipped · ${s.failed || 0} failed`;
       if ((s.failed || 0) > 0) toast.error(msg);
+      else if ((s.charged || 0) === 0) toast.warning(msg);
       else toast.success(msg);
     } catch (err) {
-      setErrMsg(String(err?.message || err));
+      const msg = String(err?.message || err);
+      setErrMsg(msg);
       setStep("error");
+      // K14 · Feb-2026 — toast on confirm failure. Covers Stripe not
+      // configured (500 from _init_api_key), network drops, or any
+      // backend 5xx that HTTP-caught inline block might miss.
+      toast.error(`Bulk charge failed: ${msg}`);
     }
   };
 

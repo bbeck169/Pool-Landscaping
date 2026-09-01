@@ -245,6 +245,11 @@ async def execute_bulk_charge(
                             "bulk_idempotency_key": body.idempotency_key},
                 actor_user_id=user.get("id"),
                 idempotency_key=f"{body.idempotency_key}:{invoice_id}",
+                # K14 · Feb-2026 — propagate the K13 impersonation
+                # context so the ``stripe_charges`` row (payments
+                # ledger) records who really pressed the button.
+                via_impersonation=bool(user.get("is_impersonated")),
+                acting_admin_id=user.get("impersonator_id"),
             )
         except Exception as exc:  # noqa: BLE001 — bubble as failed row.
             results.append({
@@ -265,6 +270,37 @@ async def execute_bulk_charge(
                 "provider_status": res.get("status"),
             })
             total_amount_cents += outstanding_cents
+            # K14 · Feb-2026 — emit a communication-timeline audit
+            # event so the customer's timeline surfaces "Invoice
+            # auto-charged" alongside emails/SMS. Non-blocking:
+            # the ledger already carries the payments row; a failure
+            # here must not cause a charged invoice to appear failed.
+            try:
+                await db.audit_events.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "event_type": "invoice_auto_charged",
+                    "tenant_id": tenant["id"],
+                    "actor_id": user.get("id"),
+                    "actor_email": user.get("email"),
+                    "via_impersonation": bool(user.get("is_impersonated")),
+                    "acting_admin_id": user.get("impersonator_id"),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "payload": {
+                        "invoice_id": invoice_id,
+                        "customer_id": invoice.get("customer_id"),
+                        "amount_cents": outstanding_cents,
+                        "currency": (invoice.get("currency") or "usd"),
+                        "payment_intent_id": res.get("payment_intent_id"),
+                        "payment_method_id": pm.get("provider_payment_method_id"),
+                        "bulk_run_id": run_id,
+                        "invoice_number": invoice.get("invoice_number"),
+                    },
+                })
+            except Exception as _ae:  # noqa: BLE001
+                logger.warning(
+                    "[bulk-charge] audit_events insert failed inv=%s: %s",
+                    invoice_id, _ae,
+                )
             # Mirror payment_status on the invoice (best-effort — the
             # webhook handler in Phase 14a upserts the charge row; this
             # patch keeps the invoice list fresh without waiting).

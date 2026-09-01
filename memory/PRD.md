@@ -14680,3 +14680,50 @@ Reused the existing `ResponsiveTabs` component (which already had a dropdown bra
 - F6c cohort tabs on `/customers` list untouched.
 - I7 Communication Timeline mount (bottom of page, outside panel switch) untouched.
 - Mobile untouched.
+
+---
+
+## Phase K14 — Bulk-Charge Silent-Failure Fix + Audit Deltas (Feb 2026) — SHIPPED
+
+Redirected from the original K14 dispatch (which would have re-built the bulk-charge feature) after audit revealed Phase 14b already ships this capability. Scope was narrowed to: (1) surface the "silent no-op" via toasts, and (2) add two K13-adjacent audit stamps.
+
+### Root cause of the "silent no-op" on Prod
+1. Dry-run bypasses Stripe entirely (`_init_api_key()` is only called on real charges), so eligibility-mode `POST /api/invoices/bulk-charge-card-on-file?dry_run=true` returns 200 regardless of Stripe config — the modal renders eligibility rows.
+2. If **every** customer's PM is missing / mode-mismatched, dry-run marks all rows `no_card_on_file` → `would_charge=0` → the modal disables the "Confirm charge" button. Admin sees a table full of skips with **no toast**, no explanatory banner — feels like the button broke.
+3. Even if a real charge fires and `_UnconfiguredStripeError` bubbles from a missing `STRIPE_MODE=live` + `STRIPE_SECRET_KEY_LIVE` on the Prod pod, the router's try/except records the row as `failed` (200 OK). The existing frontend fires `toast.error` on `summary.failed>0` — but the mount-time dry-run failure path and the confirm-fetch throw path both **only rendered an inline error block, never a toast**. If the modal was covered or dismissed, admins saw nothing.
+
+### Fix delivered
+**Frontend — `frontend/src/components/invoices/BulkChargeModal.jsx`** (three surfaces):
+- Mount-time `dry_run` catch → `toast.error("Bulk charge check failed: <msg>")`.
+- `confirm()` catch → `toast.error("Bulk charge failed: <msg>")`.
+- Success path: added `toast.warning` for the "all skipped, nothing charged" and "eligibility ok but no cards to charge" cases so admins don't miss a functional-but-empty run.
+
+**Backend — `backend/services/payments/stripe_charge.py`**:
+- `charge_card_on_file` and `_persist_charge` now accept `via_impersonation: bool = False` + `acting_admin_id: Optional[str] = None`. Every `stripe_charges` row (the "payments" ledger) carries the K13 stamp on both success and failure paths. Defaults preserve every existing call-site.
+
+**Backend — `backend/routers/invoices_bulk_charge.py`**:
+- Forwards `user["is_impersonated"]` / `user["impersonator_id"]` (populated by `utils.get_current_user` from the JWT `act` claim) into the service call.
+- Inserts a `db.audit_events` row (`event_type="invoice_auto_charged"`) after every successful charge. Payload carries `invoice_id`, `customer_id`, `amount_cents`, `currency`, `payment_intent_id`, `bulk_run_id`, `payment_method_id`, `invoice_number`; top-level fields include `via_impersonation` + `acting_admin_id` so the timeline renderer can badge impersonated actions.
+
+**Backend — `backend/routers/communication_timeline.py`**:
+- Adds `invoice_auto_charged` to `_AUDIT_EVENT_TYPES` + a dedicated `_audit_to_item` branch that renders it as `type="payment"` with amount, PI tail (`pi_…abc123`), and `(via impersonation)` suffix when the row is impersonated.
+- Extends the audit-include filter to also fire when the client asks `types=payment`.
+
+### Tests
+- **New file `backend/tests/test_k14_bulk_charge_audit.py`** — 3 tests:
+  1. `test_k14_non_impersonated_charge_stamps_row_and_emits_audit` — direct admin bulk-charge writes `via_impersonation=False`, `acting_admin_id=None` on both the payments ledger row and the `audit_events` row.
+  2. `test_k14_impersonated_charge_stamps_row_and_emits_audit` — impersonated request (JWT `act` claim → `is_impersonated=True` + `impersonator_id`) writes `via_impersonation=True` + correct `acting_admin_id` on both rows AND asserts the kwargs flowed from router→service.
+  3. `test_k14_audit_event_surfaces_on_communication_timeline` — end-to-end HTTP: the audit row appears as a `type=payment` item on `GET /api/customers/{cid}/communication-timeline` with correct amount + impersonation flag.
+- **Full regression:** 28/28 pass across `test_bulk_charge_phase14b.py` (15), `test_communication_timeline.py` (10), `test_k14_bulk_charge_audit.py` (3).
+
+### Curl proof of the failure surface (preview)
+Confirmed on preview: sending an unpaid invoice with a stub PM through `POST /api/invoices/bulk-charge-card-on-file?dry_run=false` returns `summary.failed=1` (row-level `error_code`, `error_message`) — the frontend's `toast.error(<summary>)` now fires. The pre-existing `stripe_charges_pi_unique` index collision on `null` PI ids is orthogonal (see `known_issues.md`) and out of K14 scope.
+
+### RCA for Prod
+The silent behavior on Prod is a **frontend-observability gap** compounded by **missing Prod Stripe env vars**. Env vars (`STRIPE_MODE=live`, `STRIPE_SECRET_KEY_LIVE`, `STRIPE_WEBHOOK_SECRET_LIVE`, `STRIPE_PUBLISHABLE_KEY_LIVE`) must be set on the Prod pod for a real charge to succeed. Even before that env fix, admins now see a toast on every failure path so a live regression won't be silent again.
+
+### Next Action Items (deferred)
+- Set the four Prod Stripe env vars on the live pod (identified during K1 RCA; needed for portal payments too).
+- Optional: add a permanent inline banner inside `BulkChargeModal` when `_UnconfiguredStripeError` is detected in the failure detail, guiding ops to set the env var directly (P2).
+- Fix the pre-existing `stripe_charges_pi_unique` index collision on null PI ids so retried failures don't cross-collide (P1 — separate ticket).
+

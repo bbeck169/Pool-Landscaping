@@ -50,7 +50,14 @@ _MAX_LIMIT = 200
 # ``portal_invite_bulk`` surface so late-edit history shows up on
 # the customer timeline alongside emails, SMS, and portal
 # invites.  See ``_audit_to_item`` for the item shape.
-_AUDIT_EVENT_TYPES = ("portal_invite_bulk", "job_edited_after_completion")
+# Phase K14 · Feb-2026 — ``invoice_auto_charged`` joined so bulk
+# Stripe charges surface on the customer's communication timeline
+# next to emails/SMS/portal invites/late edits.
+_AUDIT_EVENT_TYPES = (
+    "portal_invite_bulk",
+    "job_edited_after_completion",
+    "invoice_auto_charged",
+)
 
 
 def _preview(text: Optional[str], n: int = 500) -> str:
@@ -171,6 +178,47 @@ def _audit_to_item(row: Dict[str, Any]) -> Dict[str, Any]:
             "fields_changed": fields,
             "invoice_recalculated": bool(payload.get("invoice_recalculated")),
         }
+    # Phase K14 · Feb-2026 — ``invoice_auto_charged`` branch. Renders a
+    # compact "Invoice auto-charged" card with the dollar amount and
+    # the last-4 of the payment intent id so operators can eyeball
+    # which bulk run touched this customer. Impersonation stamps come
+    # from the row's top-level ``via_impersonation`` /
+    # ``acting_admin_id`` fields (already excluded from the customer
+    # portal via ``_strip_admin_fields`` on ``actor_user_id``).
+    if event_type == "invoice_auto_charged":
+        amount_cents = int(payload.get("amount_cents") or 0)
+        currency = (payload.get("currency") or "usd").upper()
+        amount_str = f"${amount_cents / 100:,.2f} {currency}"
+        pi = payload.get("payment_intent_id") or ""
+        pi_tail = pi[-6:] if pi else ""
+        via_imp = bool(row.get("via_impersonation"))
+        stamp = " (via impersonation)" if via_imp else ""
+        subject = "Invoice auto-charged"
+        body = (
+            f"{label} charged {amount_str} to card on file"
+            f"{stamp} · pi_…{pi_tail}"
+        )
+        return {
+            "id": row.get("id"),
+            "type": "payment",
+            "occurred_at": row.get("timestamp") or "",
+            "actor_label": label,
+            "actor_kind": kind,
+            "actor_user_id": actor_user_id,
+            "direction": "internal",
+            "channel_id": row.get("id"),
+            "subject": subject,
+            "body_preview": _preview(body),
+            "recipient": "",
+            "delivery_status": "charged",
+            "delivery_error": None,
+            "invoice_id": payload.get("invoice_id"),
+            "amount_cents": amount_cents,
+            "currency": currency,
+            "payment_intent_id": pi,
+            "bulk_run_id": payload.get("bulk_run_id"),
+            "via_impersonation": via_imp,
+        }
     # Default (portal_invite_bulk) — unchanged.
     return {
         "id": row.get("id"),
@@ -265,8 +313,9 @@ async def communication_timeline(
     # Phase K6 · Feb-2026 — the timeline surfaces audit rows when
     # the caller either doesn't filter by type OR asks for "email"
     # (portal invites) or "job_edited" (K6 completion edits).
+    # Phase K14 · Feb-2026 — "payment" (invoice_auto_charged) joined.
     include_audit = (wanted_types is None) or bool(
-        set(wanted_types) & {"email", "job_edited"})
+        set(wanted_types) & {"email", "job_edited", "payment"})
     if include_audit:
         audit_filter: Dict[str, Any] = {
             "tenant_id": tenant["id"],
