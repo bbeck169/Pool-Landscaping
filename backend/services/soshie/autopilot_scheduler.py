@@ -312,10 +312,29 @@ async def _run_moderation_gate(
     draft = action.get("draft") or {}
     text = draft.get("text") or ""
     media_urls = [u for u in [media.get("media_url")] if u]
+    # Phase I1 · Feb-2026 — resolve tenant curator "don't say" list
+    # so the H7 regex prefilter can flag/block per-tenant phrases.
+    # Missing / non-list values fall back to an empty list (same
+    # behavior as pre-I1 — H7's own tests still cover the empty
+    # path).
+    dont_say: list = []
+    try:
+        bb = await db.brand_brain.find_one(
+            {"tenant_id": tenant_id}, {"_id": 0, "dont_say": 1},
+        )
+        raw = (bb or {}).get("dont_say") or []
+        if isinstance(raw, list):
+            dont_say = [str(p) for p in raw if p]
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[autopilot] dont_say lookup failed for tenant=%s: %s",
+            tenant_id, e,
+        )
     try:
         result = await moderate_post(
             post_id=aid, tenant_id=tenant_id,
             text=text, media_urls=media_urls,
+            dont_say=dont_say,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning(

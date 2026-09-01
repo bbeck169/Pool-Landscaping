@@ -62,23 +62,13 @@ const renderPage = () =>
 
 async function openEditModal() {
   renderPage();
-  const editBtn = await screen.findByTestId("recurring-jobs-edit-row-1")
-    .catch(() => null);
-  // Fallback: some builds don't testid the edit button — click the
-  // row itself.  Use a query-selector.
-  if (editBtn) {
-    fireEvent.click(editBtn);
-  } else {
-    const rowLink = document.querySelector(
-      '[data-testid="recurring-jobs-row-row-1"] button, ' +
-      '[data-testid="recurring-jobs-row-row-1"] a',
-    );
-    if (rowLink) fireEvent.click(rowLink);
-    else {
-      const anyEdit = document.querySelector('button[title="Edit"], button[aria-label*="Edit" i]');
-      if (anyEdit) fireEvent.click(anyEdit);
-    }
-  }
+  // Wait for the row to actually render (initial load fires the
+  // `/recurring-jobs` GET which resolves via the mock).
+  const editBtn = await screen.findByTestId(
+    "recurring-job-edit-row-1",
+    {}, { timeout: 3000 },
+  );
+  fireEvent.click(editBtn);
   await waitFor(() =>
     expect(screen.getByTestId("recurring-jobs-price")).toBeInTheDocument(),
   );

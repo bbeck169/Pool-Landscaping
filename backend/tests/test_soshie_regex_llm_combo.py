@@ -325,3 +325,74 @@ def test_h7_regex_low_hit_does_not_short_circuit(monkeypatch):
             await _cleanup(db, tid)
 
     run_test(_go)
+
+
+# ─── Phase I1 · Feb-2026 — autopilot dont_say wire-up ───────────
+def test_i1_autopilot_gate_passes_dont_say_from_brand_brain(monkeypatch):
+    """End-to-end: seed a tenant's ``brand_brain.dont_say`` list,
+    run the autopilot moderation gate against a draft carrying
+    one of those phrases, and assert:
+      * regex prefilter short-circuits to block
+      * LLM is NEVER invoked
+      * result row carries ``regex_short_circuit=True``
+      * ``regex_high_flags`` includes the tenant's forbidden phrase
+    """
+    _reset_env(monkeypatch)
+    from services.soshie import llm_moderation as lm
+    from services.soshie import autopilot_scheduler as sched
+
+    calls = {"llm": 0}
+
+    async def _spy_llm(**kw):
+        calls["llm"] += 1
+        return {"raw": {"decision": "approve", "reasons": [],
+                          "risk_level": "low"}, "error": None}
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", _spy_llm,
+    )
+
+    async def _go(db):
+        tid = await _tenant_with_credits(db)
+        await db.brand_brain.insert_one({
+            "tenant_id": tid,
+            "dont_say": ["magic potion", "snake oil"],
+        })
+        aid = f"i1-{uuid.uuid4().hex[:8]}"
+        # ``_run_moderation_gate`` writes onto the action row so
+        # seed one for it to update.
+        await db.ai_employee_actions.insert_one({
+            "id": aid, "tenant_id": tid, "status": "pending",
+            "draft": {"text": "Try our magic potion for spring cleaning!"},
+        })
+        try:
+            outcome = await sched._run_moderation_gate(
+                tenant_id=tid,
+                action={"id": aid,
+                          "draft": {"text": "Try our magic potion for spring cleaning!"}},
+                media={"media_url": None},
+            )
+            # Diverted (block) because the regex prefilter fired.
+            assert outcome is not None, "gate must divert on block"
+            assert outcome.get("outcome") == "moderation_block"
+            # LLM never touched.
+            assert calls["llm"] == 0
+            # Fingerprint on the moderation row.
+            row = await db.soshie_moderation_results.find_one(
+                {"tenant_id": tid, "post_id": aid}, {"_id": 0},
+            )
+            assert row is not None
+            assert row["decision"] == "block"
+            assert row["regex_short_circuit"] is True
+            assert row["model"] == "regex-p1"
+            # The forbidden phrase is captured in the flag payload
+            # so admins can audit exactly what tripped the gate.
+            matches = [f.get("match", "").lower()
+                        for f in (row.get("regex_high_flags") or [])]
+            assert any("magic potion" in m for m in matches), matches
+        finally:
+            await _cleanup(db, tid)
+            await db.brand_brain.delete_many({"tenant_id": tid})
+            await db.ai_employee_actions.delete_many({"id": aid})
+
+    run_test(_go)
