@@ -17,6 +17,9 @@ import { Input } from "../../../components/ui/input";
 // catastrophic Force-Full-Sync path (consumes QB API budget, can
 // double-invoice on re-run).
 import TypedConfirmModal from "../../../components/ui/TypedConfirmModal";
+// Phase H3 · Feb-2026 — typed-keyword confirm for the QB Revoke
+// Connection path via the shared hook.
+import useConfirmDelete from "@/hooks/useConfirmDelete";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -107,6 +110,8 @@ export default function QuickBooksIntegrationPage() {
 
 function ConnectTab({ res, onRefresh }) {
   const [starting, setStarting] = useState(false);
+  // Phase H3 · Feb-2026 — typed-keyword revoke gate.
+  const { dialog: revokeDialog, ask: askRevoke } = useConfirmDelete();
 
   const connect = async () => {
     setStarting(true);
@@ -122,7 +127,17 @@ function ConnectTab({ res, onRefresh }) {
   };
 
   const revoke = async (id) => {
-    if (!window.confirm("Revoke this QuickBooks connection?")) return;
+    // Phase H3 · Feb-2026 — replace ``window.confirm`` with the
+    // shared typed-keyword hook. Copy: "Revoking disconnects Quick-
+    // Books and stops sync. Type REVOKE to confirm."
+    const ok = await askRevoke({
+      title: "Revoke QuickBooks connection?",
+      body: "Revoking disconnects QuickBooks and stops sync. Type REVOKE to confirm.",
+      confirmLabel: "Revoke connection",
+      destructive: true,
+      typedKeyword: "REVOKE",
+    });
+    if (!ok) return;
     const r = await fetch(`${API}/qbo/connections/${id}`, {
       method: "DELETE", headers: _authHeader(),
     });
@@ -202,6 +217,8 @@ function ConnectTab({ res, onRefresh }) {
           </div>
         ))}
       </CardContent>
+      {/* Phase H3 · Feb-2026 — mount the revoke typed-keyword dialog. */}
+      {revokeDialog}
     </Card>
   );
 }

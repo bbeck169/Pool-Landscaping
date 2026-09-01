@@ -23,9 +23,19 @@ export default function useConfirmDelete() {
   const resolverRef = React.useRef(null);
 
   const ask = React.useCallback((opts = {}) => {
+    // Phase H3 · Feb-2026 — normalise the brief-spec ``typedKeyword``
+    // alias onto the underlying ``requireTypeConfirm`` +
+    // ``typeConfirmString`` shape the dialog already supports.
+    // Zero churn for the 3 pre-existing callers; new callers can pass
+    // ``typedKeyword: "REVOKE"`` and skip the two-flag boilerplate.
+    const normalised = { ...opts };
+    if (typeof opts.typedKeyword === "string" && opts.typedKeyword) {
+      normalised.requireTypeConfirm = true;
+      normalised.typeConfirmString = opts.typedKeyword;
+    }
     return new Promise((resolve) => {
       resolverRef.current = resolve;
-      setState({ open: true, ...opts });
+      setState({ open: true, ...normalised });
     });
   }, []);
 

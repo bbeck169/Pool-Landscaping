@@ -41,6 +41,9 @@ describe("F5 · destructive-copy sweep (regression guard)", () => {
     "src/pages/tenants/TenantsAdminPage.jsx",
     // Phase H2 · Feb-2026 (F5 Wave 2) — two more catastrophic sites.
     "src/pages/marketing/M2Campaigns.jsx",
+    // Phase H3 · Feb-2026 — QB revoke migrated to useConfirmDelete
+    // with typedKeyword="REVOKE". No raw window.confirm remains.
+    "src/pages/admin/integrations/QuickBooksIntegrationPage.jsx",
   ];
 
   it("catastrophic files no longer contain window.confirm", () => {
@@ -51,24 +54,6 @@ describe("F5 · destructive-copy sweep (regression guard)", () => {
       expect(src, `${rel} must not contain window.confirm`)
         .not.toMatch(/window\.confirm\(/);
     }
-  });
-
-  // Phase H2 · QuickBooksIntegrationPage still has an unrelated
-  // ``window.confirm`` on the Revoke Connection action — that
-  // retrofit is deferred to H3. The Wave-2 retrofit locks only the
-  // force-full-sync path.
-  it("QB force-full path no longer routes through window.confirm", () => {
-    const src = fs.readFileSync(
-      path.resolve(process.cwd(),
-          "src/pages/admin/integrations/QuickBooksIntegrationPage.jsx"),
-      "utf-8",
-    );
-    // The ``run = async () => {`` closure inside SyncTab is where the
-    // force-full guard used to live.
-    const runIdx = src.indexOf("const run = async () => {");
-    expect(runIdx).toBeGreaterThan(-1);
-    const runBody = src.slice(runIdx, runIdx + 900);
-    expect(runBody).not.toMatch(/window\.confirm\(/);
   });
 });
 
