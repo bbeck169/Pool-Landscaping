@@ -467,6 +467,11 @@ api_router.include_router(_subscriptions_router.router)
 # + apply endpoints with confirm_token workflow.
 from routers import data_repair as _f2_data_repair_router  # noqa: E402
 api_router.include_router(_f2_data_repair_router.router)
+# Phase I3 · Feb-2026 — Comprehensive post-deploy health-check
+# endpoint (super_admin). Ten-check verdict payload complementing
+# the anonymous k8s probes at /health/live and /health/ready.
+from routers import admin_health_check as _i3_admin_health_check  # noqa: E402
+api_router.include_router(_i3_admin_health_check.router)
 # Phase D · Feb-2026 — Drift alerting settings + test-fire.
 from routers import drift_alerts as _phase_d_drift_alerts  # noqa: E402
 api_router.include_router(_phase_d_drift_alerts.router)

@@ -19,6 +19,7 @@ import { api } from "@/api";
 import { colors } from "../../theme";
 import DataIntegrityTile from "@/components/admin/DataIntegrityTile";
 import DriftAlertsCard from "@/components/admin/DriftAlertsCard";
+import HealthCheckCard from "@/components/admin/HealthCheckCard";
 import { useAuth } from "@/auth";
 
 
@@ -618,6 +619,7 @@ export default function AdminMigrationsPage() {
           safe to render for anyone routed here (route already
           gates on super_admin). */}
       <DataIntegrityTile userRole={user?.role} />
+      <HealthCheckCard />
       <DriftAlertsCard userRole={user?.role} />
       <BackfillCard />
       <RosterCleanupCard />

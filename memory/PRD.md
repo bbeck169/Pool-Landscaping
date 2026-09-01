@@ -13961,3 +13961,73 @@ Both pre-existing events (from tester Bug #3 repro data) rolled into the Legacy 
 - Phase F6b: Expo/Mobile parity for crew filter + Active/Inactive filter (P1).
 - Phase E: Reorder Route mobile parity for Expo (P1).
 - Tenant switcher on logo (P2).
+
+---
+
+## Phase I3 — Post-Deploy Health-Checker Admin Endpoint (Feb 2026) — SHIPPED
+
+### What shipped
+- **New endpoint**: `GET /api/admin/health-check/comprehensive` (super_admin only). Never 5xxes — every failure encoded in the payload.
+- **10 checks, each timed independently**:
+  1. `boot_state` — F4 integrity scan complete + dangling_refs / enforce-mode
+  2. `mongo_ping` — 0.5s timeout ceiling
+  3. `required_migrations` — `["perf_customers_v1"]`
+  4. `optional_migrations` — pending count of non-required `migration_status` rows
+  5. `hotpath_smoke` — direct DB probe of `customers` + `jobs` + internal `_k8s_health_ready()` call (NO HTTP round-trip)
+  6. `comms_gate` — `services.comms_hardening.dispatch_guard` module + callable check
+  7. `rc_sms_from_number` — `RingCentralSMSAdapter._resolve_from(tenant_id)`, response never leaks the number
+  8. `scheduler` — APScheduler running-state + job count, respects `ENABLE_SCHEDULER=false` split-deployment posture
+  9. `env_sanity` — `EMERGENT_LLM_KEY`, `STRIPE_SECRET_KEY`, `RC_SMS_DEFAULT_FROM` (missing=fail, empty=warn)
+  10. `feature_gates` — informational snapshot with recovery-mode note when `INTEGRITY_CHECK_ENFORCE=false`
+
+- **Verdict**: `GO` / `GO_WITH_WARNINGS` / `NO_GO`. `fail` → NO_GO, `warn` → GO_WITH_WARNINGS.
+- **UI**: `HealthCheckCard.jsx` on `/admin/migrations` between DataIntegrityTile and DriftAlertsCard. Click → modal with color-coded verdict banner + per-check rows + recommendations + Copy JSON.
+
+### Files
+- `/app/backend/routers/admin_health_check.py` (507 LOC, new)
+- `/app/backend/tests/test_admin_health_check_comprehensive.py` (420 LOC, new — 9 tests)
+- `/app/frontend/src/components/admin/HealthCheckCard.jsx` (346 LOC, new)
+- `/app/frontend/src/test/admin-health-check-modal.test.jsx` (217 LOC, new — 12 tests)
+- `/app/backend/server.py` (+5 LOC — router registration)
+- `/app/backend/tests/_f7_loop_fixture.py` (+2 entries — `routers.admin_health_check` + `utils`)
+- `/app/frontend/src/pages/admin/AdminMigrationsPage.jsx` (+2 LOC — import + render)
+
+### Tests
+- Backend: 9 tests. Covers happy path, required-migration-missing NO_GO, dangling_refs+enforce=true NO_GO, dangling_refs+enforce=false GO_WITH_WARNINGS (recovery mode), RBAC (admin/tech/unauth all rejected), always-200 contract, feature-gate informational status.
+- Frontend: 12 tests. Covers trigger button, modal open, all 3 verdict colors, per-check rows, recommendations rendering + hiding, Copy JSON clipboard call, Copy disabled on error, summary counts, close.
+- Loop fixture surprise: `utils.py` imports `db` at module scope from `config`. Prior fixture didn't rebind it, so any JWT-authenticated ASGI test via `httpx.ASGITransport` failed with "attached to a different loop". Adding `"utils"` to `_REBOUND_MODULES` fixed it — safe for every JWT-gated test going forward.
+
+### Live curl proof (preview `aquaterra` tenant)
+```
+=== VERDICT: NO_GO
+=== SUMMARY: {'checks_total': 10, 'ok': 7, 'warn': 1, 'fail': 2}
+=== RECOMMENDATIONS:
+ - Boot integrity scan failed — check backend startup logs and run the F2 data-repair dry-run before declaring GO.
+ - Missing required env vars: STRIPE_SECRET_KEY. Deploy is misconfigured — set them and redeploy.
+ - SOSHIE_MODERATION_ENABLED is unset (defaults to enabled) — set explicitly for clarity.
+ - SOSHIE_REGEX_PREFILTER_ENABLED is unset (defaults to enabled) — set explicitly for clarity.
+=== NON-OK CHECKS:
+ [FAIL] boot_state: dangling_refs_total=14, integrity_check_enforce=true
+ [WARN] hotpath_smoke: health_ready http_status=503 (downstream of the boot_state failure)
+ [FAIL] env_sanity: missing STRIPE_SECRET_KEY (test env not seeded in preview)
+```
+
+### Screenshots
+- `/tmp/phase_i3_health_check_modal.png` — modal rendered against the real preview verdict, red NO_GO banner, all 10 check rows visible, Copy JSON + Done in footer.
+
+### Surprises about internal state accessibility
+- `_F4_BOOT_INTEGRITY_STATE` is a module-level dict in `server.py` — accessible via lazy `import server` from the check function; safe against import-cycle because we defer until the check runs.
+- `_k8s_health_ready` is defined at module scope in `server.py` and can be called directly from a router handler (no HTTP round-trip). Returns a bare dict when healthy or a `JSONResponse` when not — the check normalizes both shapes.
+- `_REQUIRED_MIGRATIONS` was defined **inside** `_k8s_health_ready` (function-local) rather than at module scope; duplicating the list into `routers/admin_health_check.py` was cheaper than refactoring the readiness handler.
+- `RingCentralSMSAdapter` re-instantiates cleanly per-call — safe to construct one for the check without polluting a singleton.
+
+### Non-goals honored
+- No PII leaked (RC number surfaced as `resolved: true, length: 12`, not the actual number).
+- k8s probe endpoints untouched.
+- No mobile changes.
+- No auto-polling — manual on-demand only.
+
+### Next queue (unchanged from I2 entry)
+- Phase G4b: Expo/Mobile parity for Portal Activation filter (P1)
+- Expo/Mobile parity for Waitlist tab (P1)
+- Phase F6b: Mobile parity for crew filter + Active/Inactive filter (P1)
