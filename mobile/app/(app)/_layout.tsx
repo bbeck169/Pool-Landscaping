@@ -238,6 +238,8 @@ export default function AppLayout() {
       <Tabs.Screen name="deals/index"   options={{ title: "Deals", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="git-branch-outline" size={size} color={color} /> }} />
       <Tabs.Screen name="deals/new"     options={{ title: "New Deal", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="add-outline" size={size} color={color} /> }} />
       <Tabs.Screen name="deals/[id]"    options={{ title: "Deal", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="git-branch-outline" size={size} color={color} /> }} />
+      {/* Phase H8 · Soshie Moderation Queue — admin-only, hidden from tab bar. */}
+      <Tabs.Screen name="soshie-moderation" options={{ title: "Soshie Moderation", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="shield-outline" size={size} color={color} /> }} />
       {/* Phase 3 · Templates Library — hidden from tab bar, reachable via Tools hub + router.push. */}
       <Tabs.Screen
         name="templates/index"

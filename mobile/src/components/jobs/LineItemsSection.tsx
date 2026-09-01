@@ -33,6 +33,7 @@ import {
   parseLineItemError,
 } from "@/src/api/lineItems";
 import type { LineItem, JobTotals, PricebookItem } from "@/src/api/lineItems";
+import ChargeTemplatePickerModal from "./ChargeTemplatePickerModal";
 
 const LOCKED = new Set(["completed", "cancelled"]);
 
@@ -555,6 +556,7 @@ export default function LineItemsSection({ jobId, jobStatus }: Props) {
   const [editItem, setEditItem] = useState<LineItem | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, any>>({});
   const [busyDel, setBusyDel] = useState<string | null>(null);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -627,17 +629,32 @@ export default function LineItemsSection({ jobId, jobStatus }: Props) {
           </Text>
         </View>
         {!locked ? (
-          <Pressable
-            style={[s.addBtn, !online && s.addBtnDisabled]}
-            onPress={() => setAddOpen(true)}
-            disabled={!online}
-            testID="job-lineitem-add-button"
-            accessibilityLabel="Add line item"
-            accessibilityRole="button"
-          >
-            <Ionicons name="add" size={16} color="#fff" />
-            <Text style={s.addBtnText}>Add line</Text>
-          </Pressable>
+          <View style={s.headerBtns}>
+            {isAdmin ? (
+              <Pressable
+                style={[s.templateBtn, !online && s.addBtnDisabled]}
+                onPress={() => setTemplatePickerOpen(true)}
+                disabled={!online}
+                testID="job-lineitem-template-button"
+                accessibilityLabel="Add from template"
+                accessibilityRole="button"
+              >
+                <Ionicons name="layers-outline" size={14} color={colors.onSurface} />
+                <Text style={s.templateBtnText}>Template</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              style={[s.addBtn, !online && s.addBtnDisabled]}
+              onPress={() => setAddOpen(true)}
+              disabled={!online}
+              testID="job-lineitem-add-button"
+              accessibilityLabel="Add line item"
+              accessibilityRole="button"
+            >
+              <Ionicons name="add" size={16} color="#fff" />
+              <Text style={s.addBtnText}>Add line</Text>
+            </Pressable>
+          </View>
         ) : null}
       </View>
 
@@ -715,6 +732,15 @@ export default function LineItemsSection({ jobId, jobStatus }: Props) {
         </View>
       )}
 
+      {/* Charge Template Picker (admin only) */}
+      {isAdmin ? (
+        <ChargeTemplatePickerModal
+          visible={templatePickerOpen}
+          jobId={jobId}
+          onClose={() => setTemplatePickerOpen(false)}
+          onApplied={load}
+        />
+      ) : null}
       {/* Add Sheet */}
       <AddEditSheet
         jobId={jobId}
@@ -756,6 +782,11 @@ const s = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: spacing.md,
   },
+  headerBtns: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
   sectionTitle: {
     fontFamily: font.bold,
     fontSize: fontSize.xl,
@@ -782,6 +813,22 @@ const s = StyleSheet.create({
     color: "#fff",
   },
   addBtnDisabled: { opacity: 0.4 },
+  templateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  templateBtnText: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.onSurface,
+  },
   /* offline */
   offlineBanner: {
     flexDirection: "row",

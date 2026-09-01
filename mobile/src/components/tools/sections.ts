@@ -87,6 +87,7 @@ export const ADMIN_SECTIONS: ToolSection[] = [
       { key: "marketing-studio", icon: "megaphone-outline", label: "Marketing Studio", desc: "Campaigns, sequences, reviews", route: "/marketing" as any },
       { key: "comms", icon: "mail-outline", label: "Communications", desc: "Templates, automations, sends", route: "/(app)/comms" },
       { key: "reviews", icon: "star-outline", label: "Reviews", desc: "Requests, ratings, widget & sync", route: "/(app)/reviews" as any },
+      { key: "soshie-moderation", icon: "shield-outline", label: "Soshie Moderation", desc: "Review flagged social posts", route: "/(app)/soshie-moderation" as any },
       { key: "ai-credits", icon: "sparkles-outline", label: "AI Credits", desc: "Balance & transactions", route: "/(app)/credits" as any },
       { key: "deals", icon: "git-branch-outline", label: "Deals", desc: "Pipeline · stages · won/lost", route: "/(app)/deals" as any },
       { key: "ai-estimator", icon: "bulb-outline", label: "AI Estimator", desc: "Generate estimates from photos + description", route: "/(app)/ai-estimator" as any },
