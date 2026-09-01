@@ -524,6 +524,12 @@ api_router.include_router(_lz1_link_callback.router)
 # Feb 2026 — Admin invoice edit (PATCH + audit history).
 from routers import invoice_edit as _invoice_edit  # noqa: E402
 api_router.include_router(_invoice_edit.router)
+# Phase H5 · Feb-2026 — Crew Productivity tile endpoint. Admin-only
+# weekly / monthly revenue-per-crew rollup for the admin dashboard.
+# Job attribution follows the F6a semantic (crew_id OR
+# technician_id ∈ crew.tech_ids).
+from routers import crew_productivity as _h5_crew_productivity  # noqa: E402
+api_router.include_router(_h5_crew_productivity.router)
 # Feb 2026 — Portal quick-action media aggregation (photos/videos/unread).
 from routers import portal_media as _portal_media  # noqa: E402
 api_router.include_router(_portal_media.router)

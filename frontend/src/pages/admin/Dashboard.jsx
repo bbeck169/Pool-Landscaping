@@ -13,8 +13,6 @@ import {
 import {
   Briefcase,
   Hourglass,
-  Users,
-  Wrench,
   UserCheck,
   UserX,
   TrendingUp,
@@ -42,6 +40,8 @@ import GlobalSearchBar from "@/components/dashboard/GlobalSearchBar";
 import DataIntegrityTile from "@/components/admin/DataIntegrityTile";
 // Phase F3 · Feb-2026 — Soshie Publishing Dashboard Tile.
 import SoshiePublishingTile from "@/components/admin/SoshiePublishingTile";
+// Phase H5 · Feb-2026 — Crew Productivity tile (weekly revenue-per-crew).
+import CrewProductivityTile from "@/components/admin/CrewProductivityTile";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -486,6 +486,16 @@ export default function AdminDashboard() {
       {["super_admin", "admin", "owner"].includes(user?.role) ? (
         <div className="mb-6">
           <SoshiePublishingTile />
+        </div>
+      ) : null}
+
+      {/* Phase H5 · Feb-2026 — Crew Productivity tile. Admin+ only
+          (endpoint gate is ``require_admin`` which allows admin /
+          super_admin / owner). Weekly-default revenue-per-crew
+          rollup driven by the F6a job-attribution semantic. */}
+      {["super_admin", "admin", "owner"].includes(user?.role) ? (
+        <div className="mb-6">
+          <CrewProductivityTile />
         </div>
       ) : null}
 

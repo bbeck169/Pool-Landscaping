@@ -31,6 +31,7 @@ load_dotenv("/app/backend/.env")
 _REBOUND_MODULES = (
     "config",
     "routers.charge_templates",
+    "routers.crew_productivity",
     "routers.customers",
     "routers.data_repair",
     "routers.drift_alerts",
