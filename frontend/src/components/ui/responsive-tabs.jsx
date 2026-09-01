@@ -71,16 +71,28 @@ export function ResponsiveTabs({
   onChange,
   testidPrefix = "rt-tab",
   ariaLabel = "Sections",
+  forceDropdown = false,
 }) {
   const items = _normalize(tabs);
   const activeItem = items.find((t) => t.k === active) || items[0] || null;
   const ActiveIcon = activeItem?.icon || null;
 
+  // Phase I6 · Feb-2026 — ``forceDropdown`` collapses the ≥md
+  // horizontal strip into the same dropdown variant used on small
+  // screens.  Turns a 10-tab overflow-x-auto scroll into a single
+  // width-bounded select on the customer detail page.  Other
+  // consumers (e.g. PropertyDrawer) keep their responsive behavior
+  // by leaving the prop unset.
+  const dropdownShellClass = forceDropdown ? "" : "md:hidden";
+  const stripClass = forceDropdown
+    ? "hidden"
+    : "hidden md:flex overflow-x-auto";
+
   return (
     <>
-      {/* ── Dropdown (< md) ─────────────────────────────────────── */}
+      {/* ── Dropdown (< md, OR forceDropdown) ─────────────────── */}
       <div
-        className="md:hidden"
+        className={dropdownShellClass}
         style={{ borderBottom: `1px solid ${colors.border}` }}
         data-testid={`${testidPrefix}-dropdown-shell`}
       >
@@ -129,9 +141,9 @@ export function ResponsiveTabs({
         </DropdownMenu>
       </div>
 
-      {/* ── Horizontal strip (≥ md) ─────────────────────────────── */}
+      {/* ── Horizontal strip (≥ md unless forceDropdown) ────── */}
       <nav
-        className="hidden md:flex overflow-x-auto"
+        className={stripClass}
         style={{ borderBottom: `1px solid ${colors.border}` }}
         aria-label={ariaLabel}
       >

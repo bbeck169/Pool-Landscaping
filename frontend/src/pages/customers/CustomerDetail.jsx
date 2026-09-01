@@ -638,8 +638,9 @@ export default function CustomerDetail() {
           deep-linking (see the initial ``tab`` from URL query in
           the ``useCustomerTabParam`` block above) is preserved. */}
       <div
-        className="rounded-2xl overflow-hidden mb-4"
-        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        className="mb-4"
+        style={{ maxWidth: 280 }}
+        data-testid="cd-tabs-dropdown-shell"
       >
         <ResponsiveTabs
           tabs={TABS}
@@ -647,7 +648,13 @@ export default function CustomerDetail() {
           onChange={setTab}
           testidPrefix="cd-tab"
           ariaLabel="Customer sections"
+          forceDropdown
         />
+      </div>
+      <div
+        className="rounded-2xl overflow-hidden mb-4"
+        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+      >
         <div className="p-5">
           {tab === "overview" ? (
             <div className="space-y-4">

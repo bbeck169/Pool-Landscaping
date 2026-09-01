@@ -14372,3 +14372,32 @@ GET /api/customers/8910bfde-…/communication-timeline?limit=3
 ### Non-goals honored
 - Shared component + backend endpoint unchanged.
 - No mobile changes.
+
+---
+
+## Phase I6 — Customer Tabs Dropdown (Feb 2026) — SHIPPED
+
+Reused the existing `ResponsiveTabs` component (which already had a dropdown branch for `<md` screens) by adding a **`forceDropdown` prop** that collapses the ≥md horizontal-strip branch on all breakpoints. Zero new UI primitives; the dropdown was already there — just gated by breakpoint. Other consumer (`PropertyDrawer`) keeps its responsive default (`forceDropdown = false`).
+
+### Files (small surface, ~30 LOC)
+- `components/ui/responsive-tabs.jsx` (+11 LOC) — signature adds `forceDropdown = false`, computes `dropdownShellClass` + `stripClass` from it, applies to both branches.
+- `pages/customers/CustomerDetail.jsx` (+9 LOC) — extracted `<ResponsiveTabs>` out of the tab-panel rounded card into a compact `<div style={{ maxWidth: 280 }} data-testid="cd-tabs-dropdown-shell">` above the panel container; passes `forceDropdown`.
+- `test/responsive-tabs.test.jsx` (3 assertions refreshed for the new branch-class variables + 1 new I6 test).
+- `test/customer-detail-tabs-dropdown.test.jsx` (114 LOC, new — 7 assertions).
+
+### Tests
+- **31 passing** across the three files: `responsive-tabs.test.jsx` (10, includes 1 new I6 branch-wiring lock), `customer-detail-tabs-dropdown.test.jsx` (7 new: mount uses `forceDropdown`, compact 280px width shell, shell sits above the panel container, `forceDropdown` prop wiring in the component, TABS array still lists every historical section, `useState(tab)` + `setTab` wire retained, no legacy `overflow-x-auto` / `hidden md:flex` classes at the mount), `communication-timeline.test.jsx` (14 — I7 regression baseline unchanged).
+
+### Screenshot
+`/tmp/phase_i6_customer_tabs_dropdown.png` — Jennifer Carson customer detail with dropdown OPEN showing all 13 sections (Overview [selected/highlighted], Properties, Jobs, Quotes, Invoices, Equipment, Tasks, Notes, Credits, Payments, Subscriptions, Reviews, Portal Access) with lucide icons; compact ~280px width; the tab-panel below dropdown correctly renders the Overview tab's content.
+
+### Surprises
+- The existing `ResponsiveTabs` component **already had a dropdown branch** — it was just gated at `md:hidden`. The whole feature ended up being a 2-line class-string swap plus a new prop, not the "~50-80 LOC" the brief estimated.
+- CustomerDetail does NOT actually URL-persist `tab` (uses local `useState`) despite earlier screenshot commands that used `?tab=jobs` — those queries were harmless but not read. Test updated to lock the state hook + change handler wiring rather than a non-existent URL sync. If URL persistence is wanted, that's a small follow-up (add `useSearchParams` sync ~10 LOC).
+- Preview environment has **13 tabs**, not the 10 the brief mentioned — Payments, Subscriptions, Reviews, Portal Access are also in the list. All render cleanly in the dropdown.
+
+### Non-goals honored
+- Tab-panel bodies untouched (each `tab === "..."` branch is 1:1 pre-I6).
+- F6c cohort tabs on `/customers` list untouched.
+- I7 Communication Timeline mount (bottom of page, outside panel switch) untouched.
+- Mobile untouched.

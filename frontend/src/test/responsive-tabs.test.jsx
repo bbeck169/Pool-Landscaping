@@ -25,15 +25,21 @@ const SRC = readFileSync(
 );
 
 describe("ResponsiveTabs — responsive contract", () => {
-  it("dropdown branch is md:hidden", () => {
-    // Dropdown trigger only renders on narrow viewports.
-    expect(SRC).toMatch(/className="md:hidden"/);
+  it("dropdown branch keys off ``md:hidden`` by default", () => {
+    // ``dropdownShellClass`` is derived from ``forceDropdown``.
+    expect(SRC).toMatch(/const\s+dropdownShellClass\s*=\s*forceDropdown\s*\?\s*""\s*:\s*"md:hidden"/);
     expect(SRC).toMatch(/testid=\{`\$\{testidPrefix\}-dropdown-trigger`\}/);
   });
 
-  it("horizontal strip branch is hidden md:flex", () => {
-    // Familiar strip only renders on ≥ md.
-    expect(SRC).toMatch(/className="hidden md:flex overflow-x-auto"/);
+  it("horizontal strip branch is hidden md:flex by default", () => {
+    expect(SRC).toMatch(/const\s+stripClass\s*=\s*forceDropdown\s*\n?\s*\?\s*"hidden"\s*\n?\s*:\s*"hidden md:flex overflow-x-auto"/);
+  });
+
+  it("Phase I6 · forceDropdown prop hides the strip on all breakpoints", () => {
+    // Signature includes ``forceDropdown = false``.
+    expect(SRC).toMatch(/forceDropdown\s*=\s*false/);
+    // Strip class becomes plain ``hidden`` when forced.
+    expect(SRC).toMatch(/forceDropdown\s*\n?\s*\?\s*"hidden"/);
   });
 
   it("both branches render the same item testids via _safeTestid", () => {
