@@ -19,6 +19,7 @@
  * path the runtime uses.
  */
 import { describe, it, expect } from "vitest";
+import { Repeat } from "lucide-react";
 import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 
 
@@ -85,6 +86,19 @@ describe("Task A · adminNav.js registration", () => {
     expect(entry.feature).toBe("scheduling");
     expect(entry.label).toBe("Recurring Jobs");
     expect(entry.icon).toBeTruthy();
+  });
+
+  // ── Phase K3 · Feb-2026 — icon locked to lucide ``Repeat`` ────
+  it("uses the lucide Repeat icon (K3 · signals 'recurring' visually)", () => {
+    const opsGroup = ADMIN_NAV_V2.find((g) => g.key === "operations");
+    const entry = opsGroup.entries.find(
+      (e) => e.to === RECURRING_TO && e.subsection === "Schedule & Dispatch",
+    );
+    // Lucide components carry a stable ``displayName`` per icon —
+    // asserting on identity + displayName both catches accidental
+    // swaps to a similar-looking icon.
+    expect(entry.icon).toBe(Repeat);
+    expect(entry.icon.displayName || entry.icon.name).toMatch(/Repeat/);
   });
 });
 

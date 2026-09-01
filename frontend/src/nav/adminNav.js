@@ -136,7 +136,10 @@ export const ADMIN_NAV_V2 = [
     // ``manager_only``; techs and portal customers never see it.
     // Route target is the existing ``/admin/recurring-jobs`` page
     // (also still linked from Reports for backwards compat).
-    { to: "/admin/recurring-jobs",   label: "Recurring Jobs",     icon: CalendarClock, feature: "scheduling", hard_rule: "manager_only", subsection: "Schedule & Dispatch" },
+    // Phase K3 · Feb-2026 — swapped the icon from ``CalendarClock``
+    // to ``Repeat`` so the visual signals "recurring" instead of
+    // "scheduled once".
+    { to: "/admin/recurring-jobs",   label: "Recurring Jobs",     icon: Repeat,       feature: "scheduling", hard_rule: "manager_only", subsection: "Schedule & Dispatch" },
     // Feb 2026 · Sidebar Pricebook shortcut — promoted from the
     // former Field Service subsection so it sits with the other
     // manager-facing quick-links (Recurring Jobs, Dispatch). Same
