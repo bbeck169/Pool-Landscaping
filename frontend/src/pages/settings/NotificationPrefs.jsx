@@ -303,6 +303,138 @@ export default function NotificationPrefs() {
           </div>
         ))}
       </div>
+
+      <PortalChatSmsBridgeCard />
+    </div>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// Phase K9 · Feb-2026 — Portal chat SMS notifications card.
+//
+// Binds ``tenant.admin_sms_notify_to`` (E.164 or null) to a
+// PATCH /api/tenants/{tid} call.  Rendered as a self-contained
+// subsection at the bottom of NotificationPrefs so it lives beside
+// the existing per-user matrix + quiet-hours block.
+// ─────────────────────────────────────────────────────────────────
+function PortalChatSmsBridgeCard() {
+  const [tenantId, setTenantId] = React.useState(null);
+  const [phone, setPhone] = React.useState("");
+  const [initial, setInitial] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const [toast, setToast] = React.useState("");
+  const [error, setError] = React.useState("");
+
+  const E164 = /^\+\d{10,15}$/;
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const t = await api.get("/tenants/current");
+        setTenantId(t?.id || null);
+        const v = t?.admin_sms_notify_to || "";
+        setPhone(v);
+        setInitial(v);
+      } catch {
+        /* silent */
+      }
+    })();
+  }, []);
+
+  const dirty = (phone || "") !== (initial || "");
+  const valid = phone === "" || E164.test(phone.trim());
+
+  const save = async () => {
+    if (!tenantId || !valid) {
+      setError("Enter a valid E.164 number (e.g. +16028874400) or leave empty to clear.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const body = { admin_sms_notify_to: phone.trim() ? phone.trim() : null };
+      const r = await api.patch(`/tenants/${tenantId}`, body);
+      const v = r?.admin_sms_notify_to || "";
+      setPhone(v);
+      setInitial(v);
+      setToast("Saved");
+      setTimeout(() => setToast(""), 2000);
+    } catch (e) {
+      setError(e?.message || "Save failed");
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div
+      className="mt-6 rounded-2xl p-4"
+      style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+      data-testid="k9-portal-sms-card"
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <MessageSquare size={14} style={{ color: colors.brand }} />
+        <div className="text-sm font-bold" style={{ color: colors.onSurface }}>
+          Portal chat SMS notifications
+        </div>
+      </div>
+      <div className="text-xs mb-3" style={{ color: colors.muted }}>
+        Admin phone to receive SMS pings when a customer posts on the portal.
+        Admin can reply to the SMS and the response is posted back to the
+        customer's portal chat as Support.
+      </div>
+      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+        <label className="flex flex-col gap-1 flex-1" style={{ color: colors.muted }}>
+          <span className="text-xs font-semibold uppercase tracking-wide">
+            Admin phone (E.164)
+          </span>
+          <input
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+16028874400"
+            className="px-3 py-2 rounded-lg text-sm"
+            style={{
+              backgroundColor: colors.surface,
+              border: `1px solid ${valid ? colors.border : "#DC2626"}`,
+              color: colors.onSurface,
+            }}
+            data-testid="k9-portal-sms-input"
+          />
+          {!valid && (
+            <span className="text-xs" style={{ color: "#DC2626" }} data-testid="k9-portal-sms-invalid">
+              Must be an E.164 number like +16028874400.
+            </span>
+          )}
+        </label>
+        <button
+          onClick={save}
+          disabled={!dirty || saving || !valid || !tenantId}
+          className="px-3 py-2 rounded-lg text-sm font-semibold inline-flex items-center gap-1.5 self-start sm:self-end"
+          style={{
+            backgroundColor: colors.brand,
+            color: "#fff",
+            opacity: dirty && valid && tenantId ? 1 : 0.5,
+          }}
+          data-testid="k9-portal-sms-save"
+        >
+          <Save size={14} /> {saving ? "Saving…" : "Save"}
+        </button>
+        {toast && (
+          <span
+            className="text-xs font-semibold px-2 py-1 rounded"
+            style={{ backgroundColor: "#DCFCE7", color: "#166534" }}
+            data-testid="k9-portal-sms-toast"
+          >
+            {toast}
+          </span>
+        )}
+      </div>
+      {error && (
+        <div className="mt-2 text-xs" style={{ color: "#DC2626" }} data-testid="k9-portal-sms-error">
+          {error}
+        </div>
+      )}
     </div>
   );
 }

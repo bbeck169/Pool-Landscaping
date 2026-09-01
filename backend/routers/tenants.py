@@ -19,7 +19,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile, File
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from config import db, logger
 from utils import now_iso, new_id, get_current_user, hash_password
@@ -282,6 +282,27 @@ class TenantUpdate(BaseModel):
     custom_domain: Optional[str] = None
     plan_tier: Optional[str] = None
     active: Optional[bool] = None
+    # Phase K9 · Feb-2026 — admin SMS phone to receive portal-chat pings.
+    # E.164 (e.g. ``+16028874400``) or null to clear. Top-level tenant
+    # field (mirrors ``rc_sms_from_number``), NOT under settings.*.
+    admin_sms_notify_to: Optional[str] = None
+
+    @field_validator("admin_sms_notify_to")
+    @classmethod
+    def _validate_admin_sms_e164(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            # Explicit "" clears the field — treat as null.
+            return None
+        import re as _re
+        if not _re.match(r"^\+\d{10,15}$", v):
+            raise ValueError(
+                "admin_sms_notify_to must be an E.164 phone number "
+                "(e.g. +16028874400), or null to clear."
+            )
+        return v
 
 
 # ══════════════════════════════════════════════════════════════

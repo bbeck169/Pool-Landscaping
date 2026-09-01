@@ -659,6 +659,28 @@ async def _handle_sms_event(body: Dict[str, Any]) -> None:
                         })
         except Exception as _e:
             logger.warning(f"[phase7b] STOP-keyword handling failed: {_e}")
+    # Phase K9 · Feb-2026 — Portal chat ↔ SMS bridge.  If the inbound
+    # SMS carries a ``[T:xxxxxx]`` tag OR the from-number matches a
+    # recent portal-chat notification, route it back to the thread
+    # as a "Support" reply.  Runs BEFORE the notify-admins pass so
+    # the admin-side notification already reflects any downstream
+    # side effects (audit event, unread count bump).  Never raises.
+    if direction == "inbound" and from_number:
+        try:
+            from services.portal_chat_sms_bridge import (
+                route_inbound_admin_reply,
+            )
+            k9_result = await route_inbound_admin_reply(
+                from_number=from_number, sms_text=msg,
+            )
+            if k9_result:
+                logger.info(
+                    "[k9] inbound SMS routed to portal chat thread=%s msg=%s",
+                    k9_result["thread_id"], k9_result["message_id"],
+                )
+        except Exception as _k9e:
+            logger.warning(f"[k9] inbound routing skipped: {_k9e}")
+
     # Phase 55 — notify admins on inbound SMS only.
     if direction == "inbound" and match:
         await _notify_admins(

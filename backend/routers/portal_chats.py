@@ -244,6 +244,15 @@ async def create_chat(body: ChatCreateIn,
         )
         await _broadcast_new(chat["id"], tenant["id"], "customer",
                               user["id"], msg["body"])
+        # Phase K9 · Feb-2026 — fire an admin-SMS ping in the
+        # background so the HTTP path stays fast.  Reuses the K8
+        # sender-name resolver so the SMS carries the canonical
+        # customer name, not the (possibly stale) users.name.
+        from services.portal_chat_sms_bridge import spawn_notify_task
+        spawn_notify_task(
+            tenant=tenant, chat=chat, message=msg,
+            customer_name=sender_name,
+        )
     chat.pop("_id", None)
     return chat
 
@@ -336,6 +345,15 @@ async def post_message(chat_id: str, body: MessagePostIn,
         update["$inc"] = inc
     await db.portal_chats.update_one({"id": chat_id}, update)
     await _broadcast_new(chat_id, tenant["id"], role, user["id"], msg["body"])
+    # Phase K9 · Feb-2026 — fire the admin-SMS ping on customer posts.
+    # Admin bubbles do NOT trigger a ping (that would loop back into
+    # RC via the throttle-window fallback path).
+    if role == "customer":
+        from services.portal_chat_sms_bridge import spawn_notify_task
+        spawn_notify_task(
+            tenant=tenant, chat=chat, message=msg,
+            customer_name=sender_name,
+        )
     msg.pop("_id", None)
     # Hydrate on return so the sender immediately sees rendered tiles.
     hydrated = await hydrate_message_attachments([msg], tenant["id"])
