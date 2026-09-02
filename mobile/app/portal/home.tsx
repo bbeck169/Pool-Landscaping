@@ -21,6 +21,8 @@ import TechAvatar from "@/components/common/TechAvatar";
 // shared PersonaAvatar (bundled JPEG w/ emoji fallback) so Billy /
 // Skedra render consistently with the admin persona list.
 import { PersonaAvatar } from "@/src/components/personas/PersonaAvatar";
+// Phase K24 — payment-method prompt modal on portal home.
+import PaymentMethodPromptModal from "@/src/components/portal/PaymentMethodPromptModal";
 
 const TOUR_KEY = "portal_tour_v2_done";
 const TOUR_STEPS: TourStep[] = [
@@ -452,6 +454,9 @@ export default function PortalHome() {
           AsyncStorage.setItem(TOUR_KEY, "1").catch(() => {});
         }}
       />
+
+      {/* K24 — payment method prompt (once per session) */}
+      <PaymentMethodPromptModal />
     </View>
   );
 }

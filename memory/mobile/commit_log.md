@@ -1,3 +1,17 @@
+## Iteration 61 — Phase K23: Mobile parity for K1 Stripe-not-configured fallback
+- **Commit**: 99b1e82a9d222de3aea91e1215dbe5972fc5f6a0
+- **Date**: 2026-09-02
+- **Changes**:
+  - Created `src/lib/stripeConfig.tsx` — `StripeUnconfiguredNotice` + `StripeUnconfiguredBanner`
+  - Updated `src/config/stripe.tsx` — added `stripeConfigured` boolean (fail-closed)
+  - Guarded 6 surfaces: customer payment-methods, invoice Pay Now, payments/methods, portal payment-method, quote Pay Now, PaymentMethodTiles
+  - Tests: 6 new (stripeConfig.test.tsx), all passing
+  - Metro clean, all 8 files lint clean
+- **Files created**: `src/lib/stripeConfig.tsx`, `__tests__/stripeConfig.test.tsx`
+- **Files modified**: `src/config/stripe.tsx`, 5 payment screens, `PaymentMethodTiles.tsx`
+
+
+
 ## Iteration 60 — Phase K22: Port K16 formatCompletedAt to Expo Mobile
 - **Commit**: 07d7e8ec3e06070e2ab7af14ab90e42edbce4546
 - **Date**: 2026-09-02
