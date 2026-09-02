@@ -1,0 +1,18 @@
+## Iteration 59 — Phase K20: Google Maps Config + Safety Guards on All Map Components
+- **Commit**: 33c886f660ab6b951b239fa9f2fc655b47aa7326
+- **Date**: 2026-09-02
+- **Changes**:
+  - **Central utility** (`src/utils/mapsKey.tsx`): Created `hasGoogleMapsKey()` (platform-aware: iOS always true/Apple Maps, Android checks expoConfig + env fallback, web always false), `hasMapboxToken()` (checks env + expoConfig.extra), `MapUnavailablePlaceholder` (graceful fallback component with map icon + message).
+  - **app.json**: Added `ios.config.googleMaps.apiKey: "$EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY"` and `android.config.googleMaps.apiKey: "$EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY"` — EAS resolves these at build time into AndroidManifest.xml.
+  - **.env**: Added `EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY` and `EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY` (same value as existing `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`).
+  - **MeasureMap.native.tsx**: Added `hasGoogleMapsKey()` guard → renders `MapUnavailablePlaceholder` when key missing. Fixed duplicate `react-native` import.
+  - **ScheduleMap.native.tsx**: Replaced inline `_hasAndroidGoogleMapsKey()` with centralized `hasGoogleMapsKey()` + `MapUnavailablePlaceholder`. Removed `expo-constants` import (no longer needed directly).
+  - **MapCanvas.native.tsx**: Added `hasGoogleMapsKey()` guard → renders `MapUnavailablePlaceholder` when key missing.
+  - **DailyRouteMap.native.tsx**: Replaced inline `!!process.env.EXPO_PUBLIC_MAPBOX_TOKEN` with `hasMapboxToken()` from central utility. Replaced inline banner with `MapUnavailablePlaceholder`.
+  - **LiveTechPinsMap.tsx**: Added `hasMapboxToken()` guard after hooks (rules-of-hooks compliant) → renders `MapUnavailablePlaceholder` when Mapbox token missing.
+  - **Tests**: 14 new tests (11 in mapsKey.test.ts + 3 in MeasureMap.native.test.tsx), all passing.
+  - **README.md**: Rewritten with EAS secrets setup instructions, safety guards table, env var documentation.
+  - Metro bundled 2077 modules clean. All lint issues resolved (only pre-existing warnings in LiveTechPinsMap: unused Platform/fontSize imports, require() style).
+- **Files created**: `src/utils/mapsKey.tsx`, `__tests__/mapsKey.test.ts`, `__tests__/MeasureMap.native.test.tsx`
+- **Files modified**: `app.json`, `.env`, `README.md`, `MeasureMap.native.tsx`, `ScheduleMap.native.tsx`, `MapCanvas.native.tsx`, `DailyRouteMap.native.tsx`, `LiveTechPinsMap.tsx`
+- **Web files referenced**: None (config + defensive coding task)

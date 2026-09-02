@@ -1,3 +1,23 @@
+## Iteration 59 — Phase K20: Google Maps Config + Safety Guards on All Map Components
+- **Commit**: 33c886f660ab6b951b239fa9f2fc655b47aa7326
+- **Date**: 2026-09-02
+- **Changes**:
+  - Created `src/utils/mapsKey.tsx` — `hasGoogleMapsKey()`, `hasMapboxToken()`, `MapUnavailablePlaceholder`
+  - Wired `android.config.googleMaps.apiKey` and `ios.config.googleMaps.apiKey` in `app.json` via `$EXPO_PUBLIC_GOOGLE_MAPS_*_KEY` EAS env refs
+  - Added `EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY` + `EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY` to `.env`
+  - Guarded `MeasureMap.native.tsx` with `hasGoogleMapsKey()` → `MapUnavailablePlaceholder`
+  - Guarded `ScheduleMap.native.tsx` — replaced inline `_hasAndroidGoogleMapsKey()` with centralized util
+  - Guarded `MapCanvas.native.tsx` with `hasGoogleMapsKey()` → `MapUnavailablePlaceholder`
+  - Guarded `DailyRouteMap.native.tsx` — `hasMapboxToken()` replaces inline token check
+  - Guarded `LiveTechPinsMap.tsx` — `hasMapboxToken()` after hooks (rules-of-hooks compliant)
+  - Tests: 14 new (11 mapsKey + 3 MeasureMap), all passing
+  - README.md rewritten with EAS secrets setup guide + safety guards table
+  - Metro 2077 modules clean
+- **Files created**: `src/utils/mapsKey.tsx`, `__tests__/mapsKey.test.ts`, `__tests__/MeasureMap.native.test.tsx`
+- **Files modified**: `app.json`, `.env`, `README.md`, `MeasureMap.native.tsx`, `ScheduleMap.native.tsx`, `MapCanvas.native.tsx`, `DailyRouteMap.native.tsx`, `LiveTechPinsMap.tsx`
+
+
+
 ## Iteration 58 — Phase K15.mobile: Schedule Error UI + AbortController + Timeout Race
 - **Commit**: 92c8bcdce8f93c3a0d55ce5e2a6979d7b57f2475
 - **Date**: 2026-09-02
