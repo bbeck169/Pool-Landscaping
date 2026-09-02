@@ -438,6 +438,13 @@ async def list_jobs(
     # Phase 51.I fix — recurring-template origin filter.
     if recurring_template_id:
         q["recurring_template_id"] = recurring_template_id
+    # K15 · Feb-2026 — defensive hard cap on tech/crew-scoped reads
+    # so a future caller widening the date window can't blow past
+    # 300 rows on the covered indexes (k15_jobs_tech_schedule_status
+    # / k15_jobs_crew_schedule). Non-scoped admin listings keep
+    # their existing 1000-row default.
+    if technician_id or crew_id:
+        limit = min(limit, 300)
     # Feb-2026 · Crew Phase A · admin-equivalent crew filter. Techs are
     # already scoped to their own jobs by ``scope_jobs_query`` above,
     # so a tech passing ``?crew_id=`` would still only see THEIR jobs
