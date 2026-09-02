@@ -1,3 +1,19 @@
+## Iteration 62 — Phase K24: Mobile parity for K11 payment-method prompts
+- **Commit**: 4f982098f5a2299084bb1b1d28a7cb4c6661580d
+- **Date**: 2026-09-02
+- **Changes**:
+  - Created `PaymentMethodPromptModal.tsx` (modal on portal home, missing/expiring)
+  - Created `PaymentMethodPromptBanner.tsx` (persistent light-blue strip, original_prompt_kind)
+  - Updated `portal/_layout.tsx` — banner in layout wrapper (route-aware exclusion)
+  - Updated `portal/home.tsx` — modal in render tree
+  - K13 impersonation interlock on both components
+  - Tests: 12 new (paymentMethodPrompt.test.tsx), all passing
+  - Metro clean, all files lint clean
+- **Files created**: `PaymentMethodPromptModal.tsx`, `PaymentMethodPromptBanner.tsx`, `paymentMethodPrompt.test.tsx`
+- **Files modified**: `portal/_layout.tsx`, `portal/home.tsx`
+
+
+
 ## Iteration 61 — Phase K23: Mobile parity for K1 Stripe-not-configured fallback
 - **Commit**: 99b1e82a9d222de3aea91e1215dbe5972fc5f6a0
 - **Date**: 2026-09-02

@@ -1,0 +1,35 @@
+## Iteration 62 — Phase K24: Mobile parity for K11 payment-method prompts
+- **Commit**: 4f982098f5a2299084bb1b1d28a7cb4c6661580d
+- **Date**: 2026-09-02
+- **Changes**:
+  - Created `src/components/portal/PaymentMethodPromptModal.tsx`:
+    - Fetches `GET /api/portal/payment-method/prompt-status` on mount
+    - `prompt_kind=missing` → "Add a payment method" modal (blue wallet icon, "Add card" CTA)
+    - `prompt_kind=expiring` → "Update your card" modal (amber warning icon, card brand/last4/expiry/days-left)
+    - Primary button navigates to `/portal/payment-method`
+    - "Remind me tomorrow" → POSTs `/portal/payment-method/prompt-snooze`, closes modal
+    - Module-level `_modalShownThisSession` flag (resets on JS reload, NOT on re-mount)
+    - Exports `_resetModalShown()` for testing
+  - Created `src/components/portal/PaymentMethodPromptBanner.tsx`:
+    - Persistent light-blue strip at top of portal pages
+    - Reads `original_prompt_kind` (renders even during active snooze)
+    - `missing` → "⚠ Add a payment method to keep your account active."
+    - `expiring` → "⚠ Your {brand} ending {last4} expires soon."
+    - Inline × dismiss (session-scoped module-level flag, no server mutation)
+    - Tap navigates to `/portal/payment-method`
+  - Updated `app/portal/_layout.tsx`:
+    - Wraps `<Stack>` with `<View>` + conditional `<PaymentMethodPromptBanner />`
+    - Route-aware: excluded on "home" (modal covers), "payment-method", "add-card"
+    - Uses `useSegments()` from expo-router
+  - Updated `app/portal/home.tsx`:
+    - Renders `<PaymentMethodPromptModal />` in the component tree (below Tour)
+  - K13 impersonation interlock:
+    - Both modal and banner check `isImpersonating` from `useAuth()`
+    - If impersonating → render nothing + skip API fetch entirely
+  - Tests: 12 new in `__tests__/paymentMethodPrompt.test.tsx`, all passing
+    - Modal: missing/expiring/none/navigate/snooze/impersonation
+    - Banner: missing/expiring/navigate/dismiss/impersonation/none
+  - Metro bundles clean, all files lint clean
+- **Files created**: `src/components/portal/PaymentMethodPromptModal.tsx`, `src/components/portal/PaymentMethodPromptBanner.tsx`, `__tests__/paymentMethodPrompt.test.tsx`
+- **Files modified**: `app/portal/_layout.tsx`, `app/portal/home.tsx`
+- **API endpoints used**: `GET /api/portal/payment-method/prompt-status`, `POST /api/portal/payment-method/prompt-snooze`

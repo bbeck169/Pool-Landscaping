@@ -181,6 +181,8 @@ export default function ScheduleCalendar() {
 
   // Phase F6b — Crew filter state. Selecting a crew passes crew_id to
   // the schedule fetch; clearing resets to "All crews".
+  // K25 — persisted to survive navigation (but defaults to "All" on cold start).
+  const CREW_FILTER_KEY = "k25_schedule_crew_filter";
   const [crews, setCrews] = useState<any[]>([]);
   const [crewFilter, setCrewFilter] = useState("");
   const [crewMembers, setCrewMembers] = useState<string[]>([]);
@@ -203,6 +205,7 @@ export default function ScheduleCalendar() {
   }, []);
 
   // Phase F6b — Fetch crews + all techs on mount for crew filter.
+  // K25 — hydrate persisted crew filter from storage.
   useEffect(() => {
     api.get("/crews")
       .then((res: any) => setCrews(Array.isArray(res) ? res : res?.items || []))
@@ -210,6 +213,10 @@ export default function ScheduleCalendar() {
     api.get("/users?role=tech")
       .then((res: any) => setAllTechs(res?.users || (Array.isArray(res) ? res : [])))
       .catch(() => setAllTechs([]));
+    // K25 — load persisted crew filter.
+    storage.getItem<string>(CREW_FILTER_KEY, "").then((v: any) => {
+      if (typeof v === "string" && v.length > 0) setCrewFilter(v);
+    }).catch(() => {});
   }, []);
   const setModePersist = (m: Mode) => {
     setMode(m);
@@ -217,9 +224,10 @@ export default function ScheduleCalendar() {
   };
 
   // Phase F6b — Handle crew selection. Resolves member names from
-  // crew.members or allTechs lookup.
+  // crew.members or allTechs lookup. K25 — persists to AsyncStorage.
   const handleCrewSelect = useCallback((crewId: string) => {
     setCrewFilter(crewId);
+    storage.setItem(CREW_FILTER_KEY, crewId).catch(() => {});
     if (!crewId) { setCrewMembers([]); return; }
     const crew = crews.find((c: any) => c.id === crewId);
     if (!crew) { setCrewMembers([]); return; }
