@@ -119,7 +119,7 @@ if (appJson) {
   if (!runtimeVersion) {
     errors.push(
       "app.json → expo.runtimeVersion is missing. Expected " +
-      "{ policy: 'appVersion' }.",
+      "{ policy: 'fingerprint' }.",
     );
   } else if (typeof runtimeVersion === "string") {
     // A literal string (e.g. "1.0.0") is technically valid for
@@ -127,13 +127,28 @@ if (appJson) {
     // this project relies on. Fail loudly.
     errors.push(
       "app.json → expo.runtimeVersion is a literal string. " +
-      "Phase 28 requires { policy: 'appVersion' } so JS-only " +
-      "OTA updates auto-scope to the current expo.version.",
+      "Phase K17 requires { policy: 'fingerprint' } so OTA " +
+      "updates only apply to binaries with matching native deps.",
     );
-  } else if (runtimeVersion.policy !== "appVersion") {
+  } else if (runtimeVersion.policy === "appVersion") {
+    // K17 · Sep-2026 — appVersion is UNSAFE. Any OTA matches any
+    // binary with the same expo.version, even when the JS bundle
+    // references native modules the binary doesn't have. This was
+    // the root cause of the Android crash-on-open in K17.
+    errors.push(
+      "app.json → expo.runtimeVersion.policy is 'appVersion'. " +
+      "This is UNSAFE — OTAs can be applied to binaries that " +
+      "lack required native modules, causing crash-on-open. " +
+      "Switch to { policy: 'fingerprint' }.",
+    );
+  } else if (
+    runtimeVersion.policy !== "fingerprint" &&
+    runtimeVersion.policy !== "nativeVersion"
+  ) {
     errors.push(
       "app.json → expo.runtimeVersion.policy is " +
-      `'${runtimeVersion.policy}', expected 'appVersion'.`,
+      `'${runtimeVersion.policy}', expected 'fingerprint' ` +
+      "(preferred) or 'nativeVersion'.",
     );
   }
 }
