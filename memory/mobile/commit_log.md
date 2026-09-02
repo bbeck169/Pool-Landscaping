@@ -1,3 +1,13 @@
+## Iteration 66 — Phase K28: Workstream completed_at column + LRU investigation
+- **Commit**: 4851ac251c72dddad77d4b23d7a20effbc5c16cd
+- **Date**: 2026-09-02
+- **Changes**:
+  - Part B: Added `completed_at` per-row on workstream list cards (+7 lines)
+  - Part J: LRU recent tabs — DEFERRED (web-only ResponsiveTabs feature, no mobile equivalent, exceeds scope)
+- **Files modified**: `app/workstream.tsx`
+
+
+
 ## Iteration 65 — Phase K27: Soshie API shape + Set-default payment method
 - **Commit**: 7d68485e8b713bc31dca244dbd40334d4c25d4f3
 - **Date**: 2026-09-02
@@ -1252,3 +1262,21 @@
 - **Files created**: 4 new files (475 LOC total)
 - **Web reference**: frontend/src/components/schedule/NavigateJobButton.jsx, frontend/src/test/schedule-navigate-button.test.jsx
 
+
+
+## Iteration 67 — Phase K29: Dynamic app.config.js + Mapbox secret cleanup
+- **Commit**: 4851ac251c72dddad77d4b23d7a20effbc5c16cd
+- **Date**: 2026-09-02
+- **Changes**:
+  - Deleted `mobile/app.json` (static config replaced by dynamic `app.config.js`)
+  - `app.config.js` reads Google Maps keys via `process.env` at build time:
+    - iOS: `ios.config.googleMapsApiKey` (flat key — correct iOS schema)
+    - Android: `android.config.googleMaps.apiKey` (nested — correct Android schema)
+  - Stripped secret Mapbox `sk.` token (`RNMAPBOX_MAPS_DOWNLOAD_TOKEN`) + comments from `.env`
+  - Public `pk.` Mapbox token (`EXPO_PUBLIC_MAPBOX_TOKEN`) left intact
+  - Validation: `npx expo config --json` parses correctly from `app.config.js`
+  - Validation: `npx expo-doctor` — 18/18 checks passed
+  - Screenshot: App renders correctly after config migration
+- **Files deleted**: mobile/app.json
+- **Files modified**: mobile/.env (removed 6 lines: sk. token + comments)
+- **Files referenced**: mobile/app.config.js (created in prior turn), mobile/package.json
