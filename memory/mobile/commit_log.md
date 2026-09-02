@@ -1,3 +1,18 @@
+## Iteration 57 — Phase K17: Android Crash Defensive Fix (runtimeVersion fingerprint)
+- **Commit**: 801cfde8b0b72446df9bf41cd1fabb88ad96ba51
+- **Date**: 2026-09-02
+- **Changes**:
+  - CHANGED: `runtimeVersion.policy` from `"appVersion"` to `"fingerprint"` in `app.json` (line 17)
+  - ADDED: `android.versionCode: 2` in `app.json` (was unset/default 1)
+  - BUMPED: `ios.buildNumber` from `"1"` to `"2"` in `app.json` (line 28)
+  - UPDATED: `validate_eas_update_config.mjs` — now rejects `appVersion` as UNSAFE, requires `fingerprint` or `nativeVersion`
+  - Validator passes ✓ (1 non-blocking warning about update branch alias)
+  - Metro 2236 modules clean
+- **Files modified**: `app.json` (+3/-2 lines), `validate_eas_update_config.mjs` (+18/-5 lines)
+- **Root cause**: `appVersion` policy pinned at "1.0.0" allowed any OTA JS bundle to apply to any native binary regardless of native module availability → crash-on-open when JS referenced a native module the binary didn't have
+
+
+
 ## Iteration 56 — Phase K18: Remove Apple Pay Entitlement + K17 OTA Analysis
 - **Commit**: a5d3bf6f31d0afdf3a4424a08df5d7b46768185d
 - **Date**: 2026-09-02
