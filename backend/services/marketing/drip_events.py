@@ -55,10 +55,20 @@ async def enrol_customer_into_sequence(
     sequence_id: str,
     customer_id: str,
     trigger_source: str = "event",
+    trigger_meta: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Insert one enrolment doc (or skip if one is already active).
     Returns the new enrolment id when a doc is inserted, ``None``
-    when the enrolment was deduped or the sequence is missing."""
+    when the enrolment was deduped or the sequence is missing.
+
+    K31 · Feb-2026 — accepts ``trigger_meta`` (dict) so the enrolment
+    row carries the source domain-event context (e.g., ``job_id``,
+    ``service_report_id`` for ``service_completed`` events). The
+    downstream sequence tick uses this to hydrate the render context
+    with ``job`` + ``service_report``, which fixes the "for ." empty
+    merge-tag rendering when the tenant's template references
+    ``{{SERVICE_NAME}}`` / ``{{job.*}}``.
+    """
     if not (tenant_id and sequence_id and customer_id):
         return None
     seq = await db.marketing_sequences.find_one(
@@ -81,6 +91,7 @@ async def enrol_customer_into_sequence(
         "id": new_id(), "tenant_id": tenant_id,
         "sequence_id": sequence_id, "customer_id": customer_id,
         "trigger_source": trigger_source,
+        "trigger_meta": trigger_meta or {},
         "enrolled_at": now_iso(),
         "current_step": 0,
         "next_send_at": next_at if steps else None,
@@ -234,6 +245,7 @@ async def on_event(
             eid = await enrol_customer_into_sequence(
                 tenant_id, s["id"], customer_id,
                 trigger_source=trigger_type,
+                trigger_meta=meta or {},
             )
             if eid:
                 outcome["enrolled"] += 1

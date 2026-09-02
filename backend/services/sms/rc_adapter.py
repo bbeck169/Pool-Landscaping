@@ -185,6 +185,27 @@ class RingCentralSMSAdapter:
             return {"provider": "ringcentral", "provider_status": "suppressed",
                     "provider_response_id": None, "attempts": 0, "error": None}
 
+        # K31 · Feb-2026 — Affirmative-consent gate. Opt-IN per tenant
+        # (``tenants.sms_consent_gate_enabled``). When the flag is off
+        # (default) this is a no-op; when on, blocks outbound SMS to
+        # customers without an ``sms_consent_captured_at`` timestamp
+        # and without a prior successful outbound (grandfather).
+        try:
+            from services.comms.consent_gate import has_sms_consent
+            _consent_ok = await has_sms_consent(
+                tenant_id, customer_id, category=category,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[rc-sms] consent gate errored — allowing: %s", exc)
+            _consent_ok = True
+        if not _consent_ok:
+            env = {"provider": "ringcentral",
+                    "provider_status": "no_consent",
+                    "provider_response_id": None, "attempts": 0,
+                    "error": None}
+            await _cache_sms_envelope(tenant_id, _idem_key, env)
+            return env
+
         # Feb-2026 · Comms whitelist gate (P0 safety directive).
         try:
             from services.comms.gate import is_comm_allowed

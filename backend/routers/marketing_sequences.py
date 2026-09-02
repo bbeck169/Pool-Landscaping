@@ -769,6 +769,39 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
         # referenced ``{{customer.*}}`` or ``{{tenant.*}}``.  The
         # unsubscribe URL is still injected as a flat-key override.
         _ctx = render_context(customer=cust, tenant=tenant_doc)
+        # K31 · Feb-2026 — hydrate ``job`` + ``service_report`` when the
+        # enrolment carries the ids in ``trigger_meta``. Fixes the
+        # empty ``{{SERVICE_NAME}}`` / ``{{job.*}}`` merge-tag rendering
+        # (Message 2 on plofv rendered "just finished your visit for ."
+        # because ``ctx.job`` was ``{}``). Best-effort — a missing
+        # service_report / job doc leaves the tag empty rather than
+        # crashing the tick.
+        _tmeta = e.get("trigger_meta") or {}
+        _sr_id = _tmeta.get("service_report_id")
+        _job_id = _tmeta.get("job_id")
+        if _sr_id or _job_id:
+            try:
+                sr_doc = None
+                if _sr_id:
+                    sr_doc = await db.service_reports.find_one(
+                        {"tenant_id": e["tenant_id"], "id": _sr_id},
+                        {"_id": 0},
+                    )
+                if not _job_id and sr_doc:
+                    _job_id = sr_doc.get("job_id")
+                job_doc = None
+                if _job_id:
+                    job_doc = await db.jobs.find_one(
+                        {"tenant_id": e["tenant_id"], "id": _job_id},
+                        {"_id": 0},
+                    )
+                _ctx["job"] = job_doc or {}
+                _ctx["service_report"] = sr_doc or {}
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning(
+                    "[k31] job/service_report hydrate failed enrol=%s: %s",
+                    e.get("id"), _exc,
+                )
         try:
             _ctx["unsubscribe_url"] = _unsub_url(e["customer_id"], e["tenant_id"])
         except Exception:

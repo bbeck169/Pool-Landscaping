@@ -127,6 +127,62 @@ def _apply_multi_contact(doc: dict) -> dict:
     return apply_multi_contact(doc)
 
 
+async def _k31_audit_phone_collision(doc: dict, tenant_id: str,
+                                        current_id: Optional[str] = None) -> None:
+    """K31 · Feb-2026 — post-write drift guard. If the customer being
+    written shares a phone (scalar OR any ``mobiles[].number_e164``)
+    with any OTHER customer in the same tenant, insert a non-blocking
+    ``audit_events`` row with ``event_type="customer_phone_collision"``
+    listing the sharing customer ids.
+
+    Non-blocking: any exception is swallowed so the customer write
+    never fails on this defensive check.  Grew out of the K31 SMS
+    misrouting RCA — a shared phone across two customer records will
+    silently deliver a completion SMS to the wrong recipient.  Surfacing
+    the collision proactively means ops sees the drift in the
+    communication timeline the moment it lands.
+    """
+    try:
+        phones: set[str] = set()
+        p = (doc.get("phone") or "").strip()
+        if p:
+            phones.add(p)
+        for m in (doc.get("mobiles") or []):
+            n = (m.get("number_e164") or "").strip()
+            if n:
+                phones.add(n)
+        if not phones:
+            return
+        q_or = [{"phone": {"$in": list(phones)}},
+                {"mobiles.number_e164": {"$in": list(phones)}}]
+        q: Dict[str, Any] = {"tenant_id": tenant_id, "$or": q_or}
+        if current_id:
+            q["id"] = {"$ne": current_id}
+        collisions: List[Dict[str, Any]] = []
+        async for other in db.customers.find(
+            q, {"_id": 0, "id": 1, "name": 1, "phone": 1},
+        ).limit(10):
+            collisions.append(other)
+        if not collisions:
+            return
+        await db.audit_events.insert_one({
+            "id": new_id(),
+            "event_type": "customer_phone_collision",
+            "tenant_id": tenant_id,
+            "timestamp": now_iso(),
+            "payload": {
+                "customer_id": current_id or doc.get("id"),
+                "customer_name": doc.get("name"),
+                "phones": sorted(phones),
+                "colliding_customer_ids": [c.get("id") for c in collisions],
+                "colliding_customer_names": [c.get("name") for c in collisions],
+            },
+        })
+    except Exception as _exc:  # noqa: BLE001
+        logger.warning("[k31] phone collision audit failed cid=%s: %s",
+                        current_id or doc.get("id"), _exc)
+
+
 def _apply_vip_stamp(doc: dict, existing: Optional[dict] = None) -> dict:
     """Auto-stamp ``vip_since`` when ``is_vip`` transitions to True;
     clear it when transitioning to False. Preserves ``vip_note`` across
@@ -868,6 +924,9 @@ async def create_customer(body: CustomerIn,
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": now_iso()})
     await db.customers.insert_one(doc)
     doc.pop("_id", None)
+    # K31 · Feb-2026 — flag any phone collision with another customer
+    # in the same tenant.  Non-blocking.
+    await _k31_audit_phone_collision(doc, tenant["id"], current_id=doc.get("id"))
     # Feb-2026 · P33 — auto-persist any novel tag strings on the
     # newly-created customer into the tenant catalog. Best-effort:
     # any failure is swallowed so the customer create never fails
@@ -1473,6 +1532,9 @@ async def update_customer(cid: str, body: CustomerIn,
     await db.customers.update_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"$set": payload}
     )
+    # K31 · Feb-2026 — flag any phone collision with another customer
+    # in the same tenant.  Non-blocking.
+    await _k31_audit_phone_collision(payload, tenant["id"], current_id=cid)
     # Feb-2026 · P33 — auto-persist any novel tag strings from the
     # incoming PUT into the tenant catalog. Best-effort (never blocks).
     try:
