@@ -16,24 +16,11 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { BODY_TYPE_LABELS, BODY_TYPE_TINTS, READING_LABELS } from "@/src/lib/waterBodies";
+import { formatCompletedAt } from "@/src/lib/dateTimeFormat";
 
 /* ── helpers ──────────────────────────────── */
 
-function fmtDate(iso: string | undefined) {
-  if (!iso) return "\u2014";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return String(iso);
-    return d.toLocaleDateString(undefined, {
-      weekday: "short",
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  } catch {
-    return String(iso);
-  }
-}
+// Phase K22 — fmtDate replaced by formatCompletedAt from @/src/lib/dateTimeFormat.
 
 function reportKind(sr: any): "pool" | "landscape" | "generic" {
   const raw = (
@@ -191,7 +178,7 @@ export default function PortalServiceReportDetail() {
                 <View style={s.metaItem} testID="portal-service-report-visit-date">
                   <Ionicons name="calendar-outline" size={12} color={colors.muted} />
                   <Text style={s.metaText}>
-                    {fmtDate(sr.submitted_at || sr?.job?.scheduled_start)}
+                    {formatCompletedAt(sr.submitted_at || sr?.job?.scheduled_start)}
                   </Text>
                 </View>
                 {sr.tech_name ? (

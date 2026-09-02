@@ -22,6 +22,7 @@ import { useAuth } from "@/src/auth";
 import { getServiceLog, emailDoorHanger, type ServiceLogData } from "@/src/api/serviceLog";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import { formatCompletedAt } from "@/src/lib/dateTimeFormat";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const SLIDE_W = SCREEN_W - spacing.lg * 2;
@@ -32,13 +33,7 @@ function fmtAddr(prop: ServiceLogData["property"]): string {
   return [a.line1, a.line2, [a.city, a.state].filter(Boolean).join(", "), a.postal_code].filter(Boolean).join(", ");
 }
 
-function fmtDate(iso?: string | null): string {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-  } catch { return iso; }
-}
+// Phase K22 — fmtDate replaced by formatCompletedAt from @/src/lib/dateTimeFormat.
 
 export default function ServiceLogScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -162,7 +157,7 @@ export default function ServiceLogScreen() {
           {/* Service date/time */}
           <View style={s.detailRow}>
             <Ionicons name="calendar" size={16} color={colors.brand} />
-            <Text style={s.detailValue}>{fmtDate(data.log_details.service_at)}</Text>
+            <Text style={s.detailValue}>{formatCompletedAt(data.log_details.service_at)}</Text>
           </View>
 
           {/* Time spent */}
@@ -205,7 +200,7 @@ export default function ServiceLogScreen() {
               <Text style={s.subLabel}>Previous Service</Text>
               {data.previous_service.map((ps) => (
                 <View key={ps.job_id} style={s.prevRow}>
-                  <Text style={s.prevDate}>{fmtDate(ps.completed_at)}</Text>
+                  <Text style={s.prevDate}>{formatCompletedAt(ps.completed_at)}</Text>
                   <TouchableOpacity
                     style={s.viewPill}
                     onPress={() => router.push(`/workstream/${ps.job_id}`)}

@@ -19,6 +19,7 @@ import { useAuth } from "@/src/auth";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { api } from "@/src/api";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import { formatCompletedAt } from "@/src/lib/dateTimeFormat";
 
 type WsJob = {
   id: string;
@@ -53,7 +54,7 @@ function relTime(iso?: string) {
     if (h < 24) return `${h}h ago`;
     const d = Math.floor(h / 24);
     if (d < 30) return `${d}d ago`;
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return formatCompletedAt(iso);
   } catch { return ""; }
 }
 
