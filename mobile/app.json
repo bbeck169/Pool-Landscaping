@@ -178,7 +178,6 @@
       [
         "@stripe/stripe-react-native",
         {
-          "merchantIdentifier": "merchant.com.poolscape.crm",
           "enableGooglePay": false
         }
       ]

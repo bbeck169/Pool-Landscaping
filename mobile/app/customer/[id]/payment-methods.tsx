@@ -241,7 +241,6 @@ export default function PaymentMethodsScreen() {
   return (
     <StripeProvider
       publishableKey={pk || "pk_stub"}
-      merchantIdentifier="merchant.com.poolscape.crm"
     >
       {renderScreen()}
     </StripeProvider>
