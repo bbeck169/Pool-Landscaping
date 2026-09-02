@@ -1,3 +1,17 @@
+## Iteration 56 — Phase K18: Remove Apple Pay Entitlement + K17 OTA Analysis
+- **Commit**: a5d3bf6f31d0afdf3a4424a08df5d7b46768185d
+- **Date**: 2026-09-02
+- **Changes**:
+  - REMOVED: `merchantIdentifier: "merchant.com.poolscape.crm"` from Stripe plugin config in `app.json` (line 181)
+  - REMOVED: `merchantIdentifier="merchant.com.poolscape.crm"` from `<StripeProvider>` prop in `payment-methods.tsx` (line 244)
+  - Confirmed ZERO Apple Pay runtime usage (no useApplePay/presentApplePay/PlatformPay calls)
+  - Stripe card payment flow preserved — only Apple Pay entitlement removed
+  - K17 OTA analysis: `runtimeVersion.policy: "appVersion"` pinned at "1.0.0", EAS CLI not available in container
+- **Files modified**: `app.json` (-1 line), `payment-methods.tsx` (-1 line)
+- **Web files referenced**: None
+
+
+
 ## Iteration 55 — Phase J2: Mobile Parity Sweep (4 features)
 - **Commit**: ee518a6865f57d4f6d317d0b3ad5d02e88160ac7
 - **Date**: 2026-09-01
