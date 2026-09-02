@@ -293,7 +293,7 @@ export default function SoshieModerationQueueScreen() {
     setError("");
     try {
       const res = await getModerationQueue(tab);
-      setPosts(res?.posts || []);
+      setPosts(res?.items || []);
     } catch (e: any) {
       setError(e?.message || "Failed to load moderation queue");
     } finally {

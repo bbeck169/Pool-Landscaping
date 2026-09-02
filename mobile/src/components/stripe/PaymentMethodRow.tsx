@@ -23,7 +23,9 @@ type Props = {
     is_default: boolean;
   };
   onRemove: (id: string) => void;
+  onSetDefault?: (id: string) => void;
   disabled?: boolean;
+  settingDefault?: boolean;
 };
 
 function VerificationChip({ status }: { status?: string }) {
@@ -42,7 +44,7 @@ function VerificationChip({ status }: { status?: string }) {
   );
 }
 
-export default function PaymentMethodRow({ pm, onRemove, disabled }: Props) {
+export default function PaymentMethodRow({ pm, onRemove, onSetDefault, disabled, settingDefault }: Props) {
   const isCard = pm.type === "card";
   const label = isCard
     ? (pm.brand || "Card").toUpperCase()
@@ -75,17 +77,35 @@ export default function PaymentMethodRow({ pm, onRemove, disabled }: Props) {
           {!isCard && <VerificationChip status={pm.verification_status} />}
         </View>
       </View>
-      <Pressable
-        onPress={() => onRemove(pm.provider_payment_method_id)}
-        disabled={disabled}
-        hitSlop={8}
-        style={[s.removeBtn, disabled && { opacity: 0.4 }]}
-        testID={`pm-remove-${pm.provider_payment_method_id}`}
-        accessibilityLabel="Remove payment method"
-        accessibilityRole="button"
-      >
-        <Ionicons name="trash-outline" size={18} color={colors.error} />
-      </Pressable>
+      <View style={s.actions}>
+        {!pm.is_default && onSetDefault && (
+          <Pressable
+            onPress={() => onSetDefault(pm.provider_payment_method_id)}
+            disabled={disabled || settingDefault}
+            hitSlop={8}
+            style={[s.setDefaultBtn, (disabled || settingDefault) && { opacity: 0.4 }]}
+            testID={`pm-set-default-${pm.provider_payment_method_id}`}
+            accessibilityLabel="Set as default payment method"
+            accessibilityRole="button"
+          >
+            <Ionicons name="star-outline" size={14} color="#1E40AF" />
+            <Text style={s.setDefaultText}>
+              {settingDefault ? "Setting…" : "Set default"}
+            </Text>
+          </Pressable>
+        )}
+        <Pressable
+          onPress={() => onRemove(pm.provider_payment_method_id)}
+          disabled={disabled}
+          hitSlop={8}
+          style={[s.removeBtn, disabled && { opacity: 0.4 }]}
+          testID={`pm-remove-${pm.provider_payment_method_id}`}
+          accessibilityLabel="Remove payment method"
+          accessibilityRole="button"
+        >
+          <Ionicons name="trash-outline" size={18} color={colors.error} />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -161,5 +181,24 @@ const s = StyleSheet.create({
     backgroundColor: "#FEE2E2",
     alignItems: "center",
     justifyContent: "center",
+  },
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  setDefaultBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#EFF6FF",
+  },
+  setDefaultText: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    color: "#1E40AF",
   },
 });

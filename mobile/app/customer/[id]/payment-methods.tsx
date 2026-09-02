@@ -89,6 +89,7 @@ export default function PaymentMethodsScreen() {
   const [addingAch, setAddingAch] = useState(false);
   const [hasAch, setHasAch] = useState(false);
   const [customerName, setCustomerName] = useState("");
+  const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
   /* ── Load ──────────────────────────────────────────────── */
   const load = useCallback(async () => {
@@ -189,6 +190,20 @@ export default function PaymentMethodsScreen() {
     }
   };
 
+  /* ── Set default ────────────────────────────────────────── */
+  const onSetDefault = async (pmId: string) => {
+    if (!online) return;
+    setSettingDefaultId(pmId);
+    try {
+      await api.post(`/payments/stripe/payment-methods/${pmId}/set-default`, {});
+      await load();
+    } catch (e: any) {
+      Alert.alert("Failed", e?.message || "Could not set default. Please try again.");
+    } finally {
+      setSettingDefaultId(null);
+    }
+  };
+
   /* ── Remove ────────────────────────────────────────────── */
   const onRemove = (pmId: string) => {
     if (!online) return;
@@ -233,7 +248,9 @@ export default function PaymentMethodsScreen() {
           key={m.provider_payment_method_id}
           pm={m}
           onRemove={onRemove}
+          onSetDefault={stripeConfigured ? onSetDefault : undefined}
           disabled={!online}
+          settingDefault={settingDefaultId === m.provider_payment_method_id}
         />
       ))}
     </View>

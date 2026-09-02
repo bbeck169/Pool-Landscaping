@@ -29,7 +29,7 @@ export type ModerationPost = {
 /** Fetch moderation queue. status: "awaiting_review" | "blocked" | "rejected" | "all" */
 export const getModerationQueue = (status: string) =>
   api.get(`/soshie/moderation/queue?status=${encodeURIComponent(status)}`) as Promise<{
-    posts: ModerationPost[];
+    items: ModerationPost[];
   }>;
 
 /** Approve a moderation post. */

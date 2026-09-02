@@ -1,3 +1,23 @@
+## Iteration 64 — Phase K26: Portal Activation filter + Waitlist tab (Investigation only)
+- **Commit**: N/A — no code changes; mobile already at full parity
+- **Date**: 2026-09-02
+- **Findings**: Status filter (Active/Inactive/Waitlist/All), portal activation filter (All/Activated/Not activated), and all API params (`is_active`, `waitlisted`, `portal_status`) already match web exactly. AsyncStorage persistence present. Nothing to ship.
+
+
+
+## Iteration 63 — Phase K25: Schedule Crew filter + Active/Inactive customer filter
+- **Commit**: 3db719aa9ac644e648795c72c3fcca26e69efb4f
+- **Date**: 2026-09-02
+- **Changes**:
+  - Schedule crew filter: already implemented — K25 added AsyncStorage persistence
+  - Customers active/inactive filter: already fully implemented with persistence — no changes needed
+  - CrewFilterBar.tsx was already available and in use ✅
+  - Tests: 17 new (7 crew filter + 10 customers filter), all passing
+- **Files modified**: `calendar.tsx` (+9 lines)
+- **Files created**: `scheduleCrewFilter.test.tsx`, `customersActiveFilter.test.tsx`
+
+
+
 ## Iteration 62 — Phase K24: Mobile parity for K11 payment-method prompts
 - **Commit**: 4f982098f5a2299084bb1b1d28a7cb4c6661580d
 - **Date**: 2026-09-02
