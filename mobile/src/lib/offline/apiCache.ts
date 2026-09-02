@@ -105,10 +105,11 @@ export async function cachedGet<T = any>(
   opts: {
     writeThrough?: (data: T) => Promise<void>;
     readCache?: () => Promise<T | null | undefined>;
+    signal?: AbortSignal;
   } = {},
 ): Promise<T> {
   try {
-    const data = (await api.get(path)) as T;
+    const data = (await api.get(path, opts.signal ? { signal: opts.signal } : undefined)) as T;
     if (opts.writeThrough) {
       // Fire-and-forget — a cache write failure shouldn't corrupt
       // the online path.

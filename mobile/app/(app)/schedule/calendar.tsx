@@ -233,6 +233,9 @@ export default function ScheduleCalendar() {
     } else { setCrewMembers([]); }
   }, [crews, allTechs]);
 
+  // K15 · per-request AbortController — abort stale loads on new ones.
+  const loadAbortRef = useRef<AbortController | null>(null);
+
   const load = useCallback(async (force = false) => {
     // Phase P17 — OOM fix: narrower window (±14d instead of -14/+60d)
     // + skip fetch if the focus date is still inside the cached range.
@@ -248,6 +251,10 @@ export default function ScheduleCalendar() {
     ) {
       return; // inside the cached interior — no network needed
     }
+    // Abort any in-flight load before starting a new one.
+    loadAbortRef.current?.abort();
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
     setLoading(true); setErr("");
     try {
       const start = iso(addDays(focus, -BACK_DAYS));
@@ -258,16 +265,32 @@ export default function ScheduleCalendar() {
       const techUserId = user?.id || "";
       const crewFiltered = !!crewFilter;
       const jobsUrl = `/jobs?start=${start}&end=${end}${crewFiltered ? `&crew_id=${crewFilter}` : ""}`;
-      const data = await cachedGet<any>(jobsUrl, {
-        writeThrough: crewFiltered ? undefined : async (d) => { await writeThroughJobs(techUserId, d); },
-        readCache:    async ()  => { return techUserId ? await readCachedWeekJobs(techUserId) : []; },
-      });
+      // K15 · outer timeout race — if cachedGet (network+SQLite)
+      // hasn't resolved in 25 s, give up and show the error card.
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Schedule load timed out. Tap to retry.")), 25_000),
+      );
+      const data = await Promise.race([
+        cachedGet<any>(jobsUrl, {
+          writeThrough: crewFiltered ? undefined : async (d) => { await writeThroughJobs(techUserId, d); },
+          readCache:    async ()  => { return techUserId ? await readCachedWeekJobs(techUserId) : []; },
+          signal: ac.signal,
+        }),
+        timeoutPromise,
+      ]);
+      // If this controller was aborted while we awaited, discard.
+      if (ac.signal.aborted) return;
       const arr = Array.isArray(data) ? data : (data.items || data.data || []);
       fetchedRangeRef.current = { start, end };
       setJobs(arr);
     } catch (e: any) {
+      // K15 · intentional abort from a newer load() — silently discard.
+      if (ac.signal.aborted) return;
       setErr(e.message || "Failed to load schedule");
-    } finally { setLoading(false); }
+    } finally {
+      // Only write loading=false if THIS controller is still current.
+      if (loadAbortRef.current === ac) setLoading(false);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, user?.id, crewFilter]);
 
@@ -501,7 +524,7 @@ export default function ScheduleCalendar() {
           tiles at the top of the schedule (above the WeekStrip).
           Client-side classification off ``service_type`` — no
           backend change. */}
-      <JobTrackerTiles jobs={dayJobs} loading={busy} />
+      <JobTrackerTiles jobs={dayJobs} loading={busy} listError={err} />
 
       {/* Feb-2026 · Schedule-UI · 7-day toggle strip.
           The strip drives the shared `focus` state — tapping a day
@@ -539,10 +562,25 @@ export default function ScheduleCalendar() {
         })}
       </View>
 
+      {/* K15 · Error card with retry — replaces the old tiny inline bar */}
       {err ? (
-        <View style={styles.errBar} testID="schedule-error">
-          <Ionicons name="warning-outline" size={12} color="#991B1B" />
-          <Text style={styles.errText}>{err}</Text>
+        <View style={styles.errCard} testID="schedule-error">
+          <View style={styles.errCardRow}>
+            <Ionicons name="alert-circle" size={20} color="#991B1B" />
+            <Text style={styles.errCardText} testID="schedule-error-message">
+              {err || "Couldn't load your schedule. Tap to retry."}
+            </Text>
+          </View>
+          <View style={styles.errCardActions}>
+            <Pressable
+              style={styles.errRetryBtn}
+              onPress={() => { setErr(""); load(true); }}
+              testID="schedule-error-retry"
+            >
+              <Ionicons name="refresh" size={14} color="#fff" />
+              <Text style={styles.errRetryText}>Retry</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
@@ -1312,6 +1350,31 @@ const styles = StyleSheet.create({
     backgroundColor: "#FEE2E2",
   },
   errText: { flex: 1, fontFamily: font.medium, fontSize: fontSize.sm, color: "#991B1B" },
+  // K15 · prominent error card with retry action
+  errCard: {
+    marginHorizontal: spacing.lg, marginBottom: spacing.md,
+    padding: spacing.md, borderRadius: radius.lg,
+    backgroundColor: "#FEF2F2", borderWidth: 1, borderColor: "#FCA5A5",
+    gap: spacing.sm,
+  },
+  errCardRow: {
+    flexDirection: "row", alignItems: "flex-start", gap: spacing.sm,
+  },
+  errCardText: {
+    flex: 1, fontFamily: font.medium, fontSize: fontSize.sm,
+    color: "#991B1B", lineHeight: 20,
+  },
+  errCardActions: {
+    flexDirection: "row", gap: spacing.sm,
+  },
+  errRetryBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: colors.brand, borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: 8,
+  },
+  errRetryText: {
+    fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff",
+  },
 });
 
 const gStyles = StyleSheet.create({

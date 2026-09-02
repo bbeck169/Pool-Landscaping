@@ -37,10 +37,18 @@ export class ApiNetworkError extends Error {
 let _logoutOn401: (() => void) | null = null;
 export function registerLogoutOn401(fn: () => void) { _logoutOn401 = fn; }
 
-async function request(path: string, options: RequestInit = {}, timeoutMs = 30000) {
+async function request(path: string, options: RequestInit = {}, timeoutMs = 30000, externalSignal?: AbortSignal) {
   const headers = await authHeaders();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // K15 · external AbortSignal — abort internal controller when external fires.
+  let _extCleanup: (() => void) | undefined;
+  if (externalSignal) {
+    if (externalSignal.aborted) { clearTimeout(timer); throw new ApiNetworkError("Request aborted"); }
+    const _onAbort = () => controller.abort();
+    externalSignal.addEventListener("abort", _onAbort, { once: true });
+    _extCleanup = () => externalSignal.removeEventListener("abort", _onAbort);
+  }
   let res: Response;
   try {
     res = await fetch(`${BASE}/api${path}`, {
@@ -50,10 +58,12 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
     });
   } catch (e: any) {
     clearTimeout(timer);
+    _extCleanup?.();
     if (e?.name === "AbortError") throw new ApiNetworkError("Request timed out — check your connection and try again.");
     throw new ApiNetworkError("Network error — check your connection and try again.");
   }
   clearTimeout(timer);
+  _extCleanup?.();
   const text = await res.text();
   let data: any = null;
   if (text) {
@@ -107,8 +117,8 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
 }
 
 export const api = {
-  get: (p: string, headers?: Record<string, string>) =>
-    request(p, headers ? { headers } : {}),
+  get: (p: string, opts?: { headers?: Record<string, string>; signal?: AbortSignal }) =>
+    request(p, opts?.headers ? { headers: opts.headers } : {}, 30000, opts?.signal),
   post: (p: string, body?: any, timeoutMs?: number, headers?: Record<string, string>) =>
     request(p, {
       method: "POST",

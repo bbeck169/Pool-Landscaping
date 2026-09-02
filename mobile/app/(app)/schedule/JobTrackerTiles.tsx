@@ -46,7 +46,7 @@ import { LinearGradient } from "expo-linear-gradient";
 
 type Job = { status?: string | null; service_type?: string | null };
 
-type Props = { jobs: Job[]; loading?: boolean };
+type Props = { jobs: Job[]; loading?: boolean; listError?: string };
 
 const _REPAIR_RX = /(repair|fix|broken|leak|replace)/i;
 
@@ -154,26 +154,38 @@ function Tile({ label, done, total, gradient, testID, loading }: {
   );
 }
 
-export default function JobTrackerTiles({ jobs, loading }: Props) {
+export default function JobTrackerTiles({ jobs, loading, listError }: Props) {
   const c = useMemo(() => computeCounts(jobs), [jobs]);
   return (
-    <View style={styles.row} testID="schedule-tracker-row">
-      <Tile
-        label="Service Stops"
-        done={c.svcDone}
-        total={c.svcTotal}
-        gradient={["#7c3aed", "#3b82f6"]}
-        testID="schedule-tile-service"
-        loading={loading}
-      />
-      <Tile
-        label="Repair Stops"
-        done={c.repDone}
-        total={c.repTotal}
-        gradient={["#7c3aed", "#3b82f6"]}
-        testID="schedule-tile-repair"
-        loading={loading}
-      />
+    <View testID="schedule-tracker-row">
+      <View style={styles.row}>
+        <Tile
+          label="Service Stops"
+          done={c.svcDone}
+          total={c.svcTotal}
+          gradient={["#7c3aed", "#3b82f6"]}
+          testID="schedule-tile-service"
+          loading={loading}
+        />
+        <Tile
+          label="Repair Stops"
+          done={c.repDone}
+          total={c.repTotal}
+          gradient={["#7c3aed", "#3b82f6"]}
+          testID="schedule-tile-repair"
+          loading={loading}
+        />
+      </View>
+      {/* K15 · list-vs-tile coordination: when list failed but tiles
+          have stale counters, explain why the list is empty. */}
+      {listError ? (
+        <Text
+          style={styles.listErrorHint}
+          testID="schedule-tiles-list-error-hint"
+        >
+          ⚠ Schedule list failed to load. Tap Retry above to load jobs.
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -246,5 +258,14 @@ const styles = StyleSheet.create({
     includeFontPadding: true,
     textAlign: "center",
     letterSpacing: 0.2,
+  },
+  // K15 · list-vs-tile state coordination hint
+  listErrorHint: {
+    fontWeight: "500",
+    fontSize: 12,
+    color: "#991B1B",
+    textAlign: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
 });
