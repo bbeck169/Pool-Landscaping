@@ -34,6 +34,7 @@ type WsJob = {
   media?: { photos_count?: number; videos_count?: number };
   created_at?: string;
   updated_at?: string;
+  completed_at?: string;
 };
 
 const SORT_OPTIONS = [
@@ -125,6 +126,11 @@ export default function WorkstreamScreen() {
           <Text style={s.cardTime}>{relTime(item.created_at)}</Text>
         </View>
         <Text style={s.cardTitle} numberOfLines={2}>{item.title || "Untitled Job"}</Text>
+        {item.completed_at ? (
+          <Text style={s.completedAt} numberOfLines={1} testID={`ws-completed-at-${item.id}`}>
+            Completed · {formatCompletedAt(item.completed_at)}
+          </Text>
+        ) : null}
         <View style={s.cardMeta}>
           {item.customer_name ? (
             <View style={s.metaChip}>
@@ -239,6 +245,7 @@ const s = StyleSheet.create({
   statusText: { fontFamily: font.bold, fontSize: 10, letterSpacing: 0.5, color: "#166534" },
   cardTime: { fontFamily: font.regular, fontSize: 11, color: colors.muted },
   cardTitle: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginBottom: spacing.sm },
+  completedAt: { fontFamily: font.regular, fontSize: 11, color: colors.muted, marginBottom: spacing.sm },
   cardMeta: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.xs },
   metaChip: { flexDirection: "row", alignItems: "center", gap: 4 },
   metaText: { fontFamily: font.regular, fontSize: 11, color: colors.muted, maxWidth: 140 },

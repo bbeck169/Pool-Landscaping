@@ -1,3 +1,15 @@
+## Iteration 65 — Phase K27: Soshie API shape + Set-default payment method
+- **Commit**: 7d68485e8b713bc31dca244dbd40334d4c25d4f3
+- **Date**: 2026-09-02
+- **Changes**:
+  - Part E: Fixed `soshieModeration.ts` type + `soshie-moderation.tsx` read from `res?.posts` → `res?.items`
+  - Part F: Added "Set default" affordance to `PaymentMethodRow.tsx` + wired in `customer/[id]/payment-methods.tsx`
+  - Tests: 7 new (5 PaymentMethodRow + 2 Soshie), all passing
+- **Files modified**: `soshieModeration.ts`, `soshie-moderation.tsx`, `PaymentMethodRow.tsx`, `customer/[id]/payment-methods.tsx`
+- **Files created**: `__tests__/k27_setDefault.test.tsx`
+
+
+
 ## Iteration 64 — Phase K26: Portal Activation filter + Waitlist tab (Investigation only)
 - **Commit**: N/A — no code changes; mobile already at full parity
 - **Date**: 2026-09-02
