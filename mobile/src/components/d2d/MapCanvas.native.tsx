@@ -2,8 +2,21 @@ import React from "react";
 import { StyleSheet } from "react-native";
 import MapView, { Marker, Polyline } from "react-native-maps";
 import { DISPO, leadStatusMeta } from "./dispo";
+import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
 
 export default function MapCanvas({ knocks, soldLeads = [], openLeads = [], route, region, onRegionChange, onLongPress, onMarkerPress, onSoldPress, onLeadPress }: any) {
+  // Phase K20 — safety guard: prevent native crash when Google Maps
+  // API key is missing on Android.
+  if (!hasGoogleMapsKey()) {
+    return (
+      <MapUnavailablePlaceholder
+        provider="Google Maps"
+        testID="d2d-map-unavailable"
+        message="Google Maps API key not configured. D2D map requires a valid key."
+      />
+    );
+  }
+
   return (
     <MapView
       style={StyleSheet.absoluteFill}

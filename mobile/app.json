@@ -27,7 +27,10 @@
       "bundleIdentifier": "com.emergent.poolappmobile.r03fw2",
       "buildNumber": "2",
       "config": {
-        "usesNonExemptEncryption": false
+        "usesNonExemptEncryption": false,
+        "googleMaps": {
+          "apiKey": "$EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY"
+        }
       },
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -121,6 +124,11 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
+      "config": {
+        "googleMaps": {
+          "apiKey": "$EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY"
+        }
+      },
       "versionCode": 2,
       "package": "com.emergent.poolappmobile.r03fw2",
       "permissions": [

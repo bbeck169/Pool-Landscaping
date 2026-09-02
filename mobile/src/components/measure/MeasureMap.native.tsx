@@ -1,9 +1,7 @@
 import React from "react";
-import { StyleSheet } from "react-native";
+import { StyleSheet, View, Text } from "react-native";
 import MapView, { Marker, Polyline, Polygon } from "react-native-maps";
-
-// small numbered vertex dot
-import { View, Text } from "react-native";
+import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
 
 type Coord = { latitude: number; longitude: number };
 
@@ -22,6 +20,18 @@ export default function MeasureMap({
   onPress: (c: Coord) => void;
   mapRef?: any;
 }) {
+  // Phase K20 — safety guard: prevent native crash when Google Maps
+  // API key is missing on Android.
+  if (!hasGoogleMapsKey()) {
+    return (
+      <MapUnavailablePlaceholder
+        provider="Google Maps"
+        testID="measure-map-unavailable"
+        message="Google Maps API key not configured. Measurement map requires a valid key."
+      />
+    );
+  }
+
   return (
     <MapView
       ref={mapRef}

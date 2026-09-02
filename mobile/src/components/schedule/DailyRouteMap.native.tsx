@@ -41,6 +41,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { geolocate } from "@/src/utils/geolocate";
 import OptimizeRoutePreview from "@/src/components/schedule/OptimizeRoutePreview";
+import { hasMapboxToken, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
 
 const PINNED_STATUSES = new Set([
   "completed", "could_not_service", "skipped", "canceled", "cancelled",
@@ -408,7 +409,7 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
   // Feature-level guard — 0 jobs scheduled = hide entire map.
   if (!jobs || jobs.length === 0) return null;
 
-  const hasToken = !!process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
+  const hasToken = hasMapboxToken();
 
   const toggleExpanded = async () => {
     setSelectedId(null);
@@ -480,10 +481,11 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
       {header}
 
       {!expanded ? null : !hasToken || !MapboxGL ? (
-        <View style={s.banner} testID="schedule-daily-route-map-token-banner">
-          <Ionicons name="alert-circle-outline" size={16} color="#92400E" />
-          <Text style={s.bannerText}>Map unavailable — Mapbox token not configured</Text>
-        </View>
+        <MapUnavailablePlaceholder
+          provider="Mapbox"
+          testID="schedule-daily-route-map-token-banner"
+          message="Mapbox token not configured. Route map requires a valid access token."
+        />
       ) : (
         <View style={s.mapWrap} testID="schedule-daily-route-map-canvas">
           <MapboxGL.MapView

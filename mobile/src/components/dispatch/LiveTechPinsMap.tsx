@@ -18,6 +18,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { hasMapboxToken, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
 
 // Dynamic require — throws in Expo Go where the native module isn't
 // present. Parent catches and renders the fallback banner.
@@ -88,6 +89,19 @@ export default function LiveTechPinsMap({
     setStyleIdx(next);
     await AsyncStorage.setItem(STYLE_KEY, String(next));
   }, [styleIdx]);
+
+  // Phase K20 — safety guard: graceful fallback when Mapbox token
+  // is missing (prevents blank map or runtime errors). Placed after
+  // hooks to satisfy the rules-of-hooks requirement.
+  if (!hasMapboxToken()) {
+    return (
+      <MapUnavailablePlaceholder
+        provider="Mapbox"
+        testID="dispatch-live-map-no-token"
+        message="Mapbox access token not configured. Live map requires a valid token."
+      />
+    );
+  }
 
   // Center on the first position (or a US-ish default).
   const center: [number, number] = positions.length

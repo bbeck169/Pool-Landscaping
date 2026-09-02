@@ -8,11 +8,11 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { View, Text, StyleSheet, Pressable, Linking, Platform } from "react-native";
 import MapView, { Marker, Region } from "react-native-maps";
 import * as Location from "expo-location";
-import Constants from "expo-constants";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
 
 interface Job {
   id: string;
@@ -45,30 +45,8 @@ function pinColor(status?: string): string {
   return PIN_COLORS[(status || "scheduled").toLowerCase()] || "#2563EB";
 }
 
-// Feb-2026 · P0 belt-and-suspenders — Android map crash safety net.
-//
-// ``react-native-maps`` on Android REQUIRES the Google Maps SDK API
-// key to be present in AndroidManifest.xml. Expo/EAS builds derive
-// that manifest entry from ``app.json``'s ``android.config.
-// googleMaps.apiKey``. When that key is missing (as it was on the
-// Aug-2026 production APK that surfaced the tech-cluster P0), the
-// native MapView init crashes — silently on Fabric
-// (newArchEnabled: true), taking the whole schedule screen down
-// with no JS-visible throw.
-//
-// iOS is unaffected: ``react-native-maps`` on iOS defaults to Apple
-// Maps and only requires a Google key when ``provider={PROVIDER_
-// GOOGLE}`` is passed to ``<MapView>`` explicitly — which this
-// component does NOT. So we only gate on Android.
-//
-// Mirrors the same fallback-banner pattern used in
-// ``DailyRouteMap.native.tsx:482`` for the Mapbox token.
-function _hasAndroidGoogleMapsKey(): boolean {
-  if (Platform.OS !== "android") return true;
-  const cfg: any = Constants.expoConfig || {};
-  const key = cfg?.android?.config?.googleMaps?.apiKey;
-  return typeof key === "string" && key.trim().length > 0;
-}
+// Phase K20 — Google Maps key check now centralized in mapsKey.ts.
+// See hasGoogleMapsKey() for the full platform-aware logic.
 
 function openDirections(address: string) {
   const encoded = encodeURIComponent(address);
@@ -129,15 +107,14 @@ export default function ScheduleMap({ jobs, testID }: Props) {
     );
   }
 
-  // Feb-2026 · P0 safety net — see comment on _hasAndroidGoogleMapsKey.
-  if (!_hasAndroidGoogleMapsKey()) {
+  // Phase K20 — centralized safety guard for missing Google Maps key.
+  if (!hasGoogleMapsKey()) {
     return (
-      <View style={s.empty} testID="schedule-map-no-key">
-        <Ionicons name="warning-outline" size={32} color={colors.muted} />
-        <Text style={s.emptyText}>
-          Map unavailable — Google Maps API key not configured
-        </Text>
-      </View>
+      <MapUnavailablePlaceholder
+        provider="Google Maps"
+        testID="schedule-map-no-key"
+        message="Google Maps API key not configured for this build."
+      />
     );
   }
 
