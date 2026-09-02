@@ -37,6 +37,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading, PrimaryButton, Card } from "@/src/components/ui";
+import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 
 
 type Pm = {
@@ -192,19 +193,20 @@ export default function PaymentMethod() {
         </Card>
 
         <View style={{ height: spacing.lg }} />
-        <PrimaryButton
-          title={has ? "Update payment method" : "Add card or bank (ACH)"}
-          icon="lock-closed"
-          loading={busy}
-          onPress={addMethod}
-          testID="add-payment-method"
-        />
         {stripeConfigured === false ? (
-          <Text style={styles.notice} testID="pm-stripe-unconfigured">
-            Payments are not currently configured on this account. Please contact us
-            to set up billing.
-          </Text>
-        ) : null}
+          <StripeUnconfiguredNotice
+            testID="pm-stripe-unconfigured"
+            message="Payments are not currently configured on this account. Please contact us to set up billing."
+          />
+        ) : (
+          <PrimaryButton
+            title={has ? "Update payment method" : "Add card or bank (ACH)"}
+            icon="lock-closed"
+            loading={busy}
+            onPress={addMethod}
+            testID="add-payment-method"
+          />
+        )}
         <Text style={styles.secure}>
           🔒 Payments are handled securely. We never store your card or bank details.
         </Text>

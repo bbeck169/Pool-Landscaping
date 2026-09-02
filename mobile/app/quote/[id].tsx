@@ -8,16 +8,19 @@ import * as Linking from "expo-linking";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useStripeConfig } from "@/src/config/stripe";
 import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, StatusChip, PrimaryButton } from "@/src/components/ui";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { Header, IconButton } from "@/src/components/widgets";
 import { exportInvoicePdf } from "@/src/utils/exportInvoicePdf";
+import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 
 export default function QuoteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
+  const { stripeConfigured } = useStripeConfig();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin" || user?.role === "manager";
   const insets = useSafeAreaInsets();
   const [q, setQ] = useState<any>(null);
@@ -313,6 +316,11 @@ export default function QuoteDetail() {
                 </View>
               </View>
             </View>
+          ) : !stripeConfigured ? (
+            <StripeUnconfiguredNotice
+              testID="quote-stripe-unconfigured"
+              message="Online payments are not available. Contact support to enable Stripe."
+            />
           ) : (
             <PrimaryButton title="Pay Now" icon="card-outline" onPress={payOnline} loading={busy} testID="pay-invoice-button" />
           )

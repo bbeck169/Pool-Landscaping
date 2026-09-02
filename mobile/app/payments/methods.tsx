@@ -19,7 +19,9 @@ import { Card, EmptyState, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate, isCustomer, isAdminPlus } from "@/src/components/RoleGate";
 import { useAuth } from "@/src/auth";
+import { useStripeConfig } from "@/src/config/stripe";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 
 type Pm = {
   provider_payment_method_id: string;
@@ -37,6 +39,7 @@ function _webPortalUrl(): string {
 
 export default function PaymentMethods() {
   const { user } = useAuth();
+  const { stripeConfigured } = useStripeConfig();
   const [customerId, setCustomerId] = useState<string>("");
   const [pms, setPms] = useState<Pm[]>([]);
   const [loading, setLoading] = useState(false);
@@ -166,10 +169,17 @@ export default function PaymentMethods() {
               title="Add card"
               icon="add-circle-outline"
               onPress={openAddCardWeb}
+              disabled={!stripeConfigured}
               testID="pm-add-card-btn"
             />
           </View>
-          {loading ? (
+          {!stripeConfigured && (
+            <StripeUnconfiguredNotice
+              testID="pm-methods-stripe-unconfigured"
+              message="Stripe is not configured. Card management is unavailable until an administrator enables Stripe."
+            />
+          )}
+          {stripeConfigured && loading ? (
             <Text style={styles.hint}>Loading…</Text>
           ) : !customerId ? (
             <EmptyState

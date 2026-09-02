@@ -23,6 +23,7 @@ import { useStripeConfig } from "@/src/config/stripe";
 import { getInvoiceFull, type InvoiceFull } from "@/src/api/invoices";
 import { createPaymentIntent } from "@/src/api/payments";
 import { InvoiceAttachments } from "@/src/components/files";
+import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
 const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
@@ -255,7 +256,13 @@ export default function InvoiceDetail() {
         )}
 
         {/* Pay Now */}
-        {canPay && (
+        {canPay && !stripe.stripeConfigured && (
+          <StripeUnconfiguredNotice
+            testID="invoice-stripe-unconfigured"
+            message="Online payments are not available. Contact support to enable Stripe payments."
+          />
+        )}
+        {canPay && stripe.stripeConfigured && (
           <TouchableOpacity
             style={s.payBtn}
             onPress={startPayment}

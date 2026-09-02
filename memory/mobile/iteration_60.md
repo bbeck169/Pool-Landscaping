@@ -1,0 +1,27 @@
+## Iteration 60 — Phase K22: Port K16 formatCompletedAt to Expo Mobile
+- **Commit**: 07d7e8ec3e06070e2ab7af14ab90e42edbce4546
+- **Date**: 2026-09-02
+- **Changes**:
+  - Created `src/lib/dateTimeFormat.ts` — TypeScript port of web `frontend/src/lib/dateTimeFormat.js`
+    - Named export: `formatCompletedAt(iso, options?)`
+    - Output: `"Sep 1, 2026 · 3:38 PM"` (canonical K16 format)
+    - Fallback ladder: `completed_at` → `completedAt` → `updated_at` (when status=completed) → em-dash `—`
+    - Supports `options.tz` for IANA timezone override
+    - Uses `Intl.DateTimeFormat` (available in Hermes)
+  - Updated `workstream.tsx`: imported `formatCompletedAt`, replaced `relTime()` >30-day fallback (was `toLocaleDateString("en-US", { month: "short", day: "numeric" })`)
+  - Updated `workstream/[id].tsx`: replaced inline `fmtDate()` with `formatCompletedAt` at 2 call sites:
+    - `service_at` (line 165) and `ps.completed_at` (line 208)
+  - Updated `portal/service-report/[id].tsx`: replaced inline `fmtDate()` with `formatCompletedAt` at 1 call site:
+    - `sr.submitted_at || sr?.job?.scheduled_start` (line 181)
+  - Grep-final inventory: **0 remaining** bare `toLocale*` calls in completion contexts. 116 non-completion calls correctly untouched (billing, payment, timesheets, SEO, etc.)
+  - Surfaces confirmed NOT needing changes:
+    - `calendar.tsx` — no `completed_at` renders (only date navigation headers)
+    - `JobTrackerTiles.tsx` — no timestamp renders (only counts completed vs total)
+    - `portal/service-reports.tsx` — `formatDateHeader` is a date-only group header (no time component), not a completion timestamp
+  - Tests: 11 new in `__tests__/dateTimeFormat.test.ts`, all passing (canonical, null, invalid, object-unwrap, tz, camelCase, fallback)
+  - Empirical proof: `scripts/empirical-proof-k22-dateTimeFormat.cjs` — 7/7 cases pass
+  - Metro 2178 modules clean, 0 lint issues across all 4 modified files
+- **Files created**: `src/lib/dateTimeFormat.ts`, `__tests__/dateTimeFormat.test.ts`, `scripts/empirical-proof-k22-dateTimeFormat.cjs`
+- **Files modified**: `app/workstream.tsx` (+3/-1), `app/workstream/[id].tsx` (+4/-7), `app/portal/service-report/[id].tsx` (+3/-15)
+- **Web files referenced**: `frontend/src/lib/dateTimeFormat.js` (ported)
+- **Note**: Workstream/service-report screenshots require authenticated session — demo logins disabled by server (`show_demo_logins: false`). Code verified via 11 unit tests + 7 empirical proof cases + Metro compile success.

@@ -36,6 +36,7 @@ import { Header } from "@/src/components/widgets";
 import { PrimaryButton, EmptyState } from "@/src/components/ui";
 import PaymentMethodRow from "@/src/components/stripe/PaymentMethodRow";
 import { StripeProvider, initPaymentSheet, presentPaymentSheet } from "@/src/lib/stripeSdk";
+import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
 /* ── Helpers ──────────────────────────────────────────────────── */
@@ -79,7 +80,7 @@ function Skeleton() {
 export default function PaymentMethodsScreen() {
   const { id: customerId } = useLocalSearchParams<{ id: string }>();
   const online = useOnline();
-  const { pk } = useStripeConfig();
+  const { pk, stripeConfigured } = useStripeConfig();
 
   const [methods, setMethods] = useState<PMType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -265,6 +266,14 @@ export default function PaymentMethodsScreen() {
         >
           {content}
 
+          {/* K23 — Stripe-not-configured fallback */}
+          {!stripeConfigured && (
+            <StripeUnconfiguredNotice
+              testID="pm-stripe-unconfigured-notice"
+              message="Stripe is not configured for this account. Card and bank account actions are unavailable until an administrator enables Stripe."
+            />
+          )}
+
           {hasAch && <AchNote />}
 
           <View style={s.btnRow}>
@@ -273,7 +282,7 @@ export default function PaymentMethodsScreen() {
               icon="card-outline"
               onPress={addCard}
               loading={addingCard}
-              disabled={!online || addingCard || addingAch}
+              disabled={!online || addingCard || addingAch || !stripeConfigured}
               testID="pm-add-card-btn"
             />
             <PrimaryButton
@@ -281,7 +290,7 @@ export default function PaymentMethodsScreen() {
               icon="business-outline"
               onPress={addAch}
               loading={addingAch}
-              disabled={!online || addingCard || addingAch}
+              disabled={!online || addingCard || addingAch || !stripeConfigured}
               testID="pm-add-ach-btn"
             />
           </View>

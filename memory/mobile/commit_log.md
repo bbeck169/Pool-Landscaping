@@ -1,3 +1,19 @@
+## Iteration 60 — Phase K22: Port K16 formatCompletedAt to Expo Mobile
+- **Commit**: 07d7e8ec3e06070e2ab7af14ab90e42edbce4546
+- **Date**: 2026-09-02
+- **Changes**:
+  - Created `src/lib/dateTimeFormat.ts` — TS port of web K16 `formatCompletedAt`
+  - Updated `workstream.tsx` — `relTime()` >30d fallback → `formatCompletedAt`
+  - Updated `workstream/[id].tsx` — replaced `fmtDate()` at `service_at` + `completed_at` call sites
+  - Updated `portal/service-report/[id].tsx` — replaced `fmtDate()` at `submitted_at` call site
+  - Grep-final: 0 bare completion-context toLocale* remaining (116 non-completion untouched)
+  - Tests: 11 new (dateTimeFormat.test.ts), all passing + empirical proof 7/7
+  - Metro 2178 modules clean
+- **Files created**: `src/lib/dateTimeFormat.ts`, `__tests__/dateTimeFormat.test.ts`, `scripts/empirical-proof-k22-dateTimeFormat.cjs`
+- **Files modified**: `workstream.tsx`, `workstream/[id].tsx`, `portal/service-report/[id].tsx`
+
+
+
 ## Iteration 59 — Phase K20: Google Maps Config + Safety Guards on All Map Components
 - **Commit**: 33c886f660ab6b951b239fa9f2fc655b47aa7326
 - **Date**: 2026-09-02

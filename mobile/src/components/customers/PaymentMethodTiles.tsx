@@ -22,6 +22,8 @@ import { useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useStripeConfig } from "@/src/config/stripe";
+import { StripeUnconfiguredBanner } from "@/src/lib/stripeConfig";
 
 /* ── Types ──────────────────────────────────────────────────── */
 type PM = {
@@ -279,6 +281,7 @@ export default function PaymentMethodTiles({
   onChange?: () => void;
 }) {
   const router = useRouter();
+  const { stripeConfigured } = useStripeConfig();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [methods, setMethods] = useState<PM[]>([]);
@@ -369,6 +372,11 @@ export default function PaymentMethodTiles({
           <Text style={s.errText}>{err}</Text>
         </View>
       ) : null}
+
+      {/* K23 — Stripe-not-configured banner */}
+      {!stripeConfigured && (
+        <StripeUnconfiguredBanner testID="pm-tiles-stripe-unconfigured" />
+      )}
 
       {/* Cards subsection */}
       <View testID="payment-method-tiles-cards-section">
