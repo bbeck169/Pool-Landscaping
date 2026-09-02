@@ -1,3 +1,16 @@
+## Iteration 58 — Phase K15.mobile: Schedule Error UI + AbortController + Timeout Race
+- **Commit**: 92c8bcdce8f93c3a0d55ce5e2a6979d7b57f2475
+- **Date**: 2026-09-02
+- **Changes**:
+  - **api.ts** (+16 lines): Added optional `signal` (AbortSignal) to `request()` and `api.get()`; external abort wired to internal controller.
+  - **apiCache.ts** (+3/-1): `cachedGet()` now accepts and forwards `signal` to `api.get()`.
+  - **calendar.tsx** (+81/-25): Per-request AbortController ref; abort stale loads; 25s `Promise.race` timeout on `cachedGet`; upgraded error bar → full error card with Retry button + testIDs; passes `listError` to tiles; aborted requests don't clobber state.
+  - **JobTrackerTiles.tsx** (+28/-7): New `listError` prop; renders "⚠ Schedule list failed to load" hint below tiles when list fetch errored.
+  - Metro 2225 modules clean, 0 lint issues (1 pre-existing unused-disable warning)
+- **Files modified**: `api.ts`, `apiCache.ts`, `calendar.tsx`, `JobTrackerTiles.tsx`
+
+
+
 ## Iteration 57 — Phase K17: Android Crash Defensive Fix (runtimeVersion fingerprint)
 - **Commit**: 801cfde8b0b72446df9bf41cd1fabb88ad96ba51
 - **Date**: 2026-09-02
