@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Switch } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Alert, Share } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -10,6 +11,8 @@ import { Header } from "@/src/components/widgets";
 import { registerForPushNotifications, deregisterPushToken } from "@/src/services/pushNotifications";
 // Phase O6 · Manual sync surface.
 import { ManualSyncButton } from "@/src/components/sync/ManualSyncButton";
+// K36 · Diagnostic ring-buffer surface.
+import { getDiagnostics, formatDiagnostics, clearDiagnostics } from "@/src/utils/diagnostics";
 // Phase (Feb-2026) — mobile admin drawer parity with the web sidebar.
 // Renders the ``QUICK_ACCESS`` shortcut group + the eight canonical
 // admin groups from a single source of truth so parity edits are a
@@ -236,6 +239,68 @@ export default function More() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Offline & Sync</Text>
           <ManualSyncButton />
+        </View>
+
+        {/* K36 · Diagnostics — copy the last 20 nav + last 20 API breadcrumbs
+            (+ any persisted crash) so support can triage a mobile crash
+            without a stack trace. Renders the same testIDs as ManualSyncButton
+            so QA can automate the flow. */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Support</Text>
+          <Pressable
+            testID="send-diagnostics-btn"
+            style={styles.link}
+            onPress={async () => {
+              try {
+                const snap = await getDiagnostics();
+                const text = formatDiagnostics(snap);
+                Alert.alert(
+                  "Diagnostics",
+                  `${snap.nav.length} nav + ${snap.api.length} API breadcrumbs${snap.lastCrash ? " · includes last crash" : ""}. Choose how to send:`,
+                  [
+                    {
+                      text: "Copy",
+                      onPress: async () => {
+                        try {
+                          await Clipboard.setStringAsync(text);
+                          Alert.alert("Copied", "Paste into an email or chat to support.");
+                        } catch {
+                          Alert.alert("Copy failed", "Try Share instead.");
+                        }
+                      },
+                    },
+                    {
+                      text: "Share",
+                      onPress: async () => {
+                        try {
+                          await Share.share({ message: text, title: "Mobile Diagnostics" });
+                        } catch {
+                          // User cancelled — silent.
+                        }
+                      },
+                    },
+                    {
+                      text: "Clear",
+                      style: "destructive",
+                      onPress: async () => {
+                        await clearDiagnostics();
+                        Alert.alert("Cleared", "Diagnostic breadcrumbs reset.");
+                      },
+                    },
+                    { text: "Cancel", style: "cancel" },
+                  ],
+                );
+              } catch (e: any) {
+                Alert.alert("Diagnostics unavailable", e?.message || String(e));
+              }
+            }}
+          >
+            <View style={styles.linkIcon}>
+              <Ionicons name="bug-outline" size={20} color={colors.brand} />
+            </View>
+            <Text style={styles.linkLabel}>Send Diagnostics</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </Pressable>
         </View>
 
         <Pressable style={styles.logout} onPress={logout} testID="logout-button">

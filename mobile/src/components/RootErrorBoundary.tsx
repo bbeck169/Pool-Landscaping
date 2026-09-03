@@ -14,6 +14,7 @@
  */
 import React from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet, Platform } from "react-native";
+import { persistCrash } from "@/src/utils/diagnostics";
 
 type Props = { children: React.ReactNode };
 type State = { error: Error | null; stack: string | null };
@@ -30,6 +31,9 @@ export class RootErrorBoundary extends React.Component<Props, State> {
     // that adb logcat / Metro / Sentry (if added later) picks it up.
     // eslint-disable-next-line no-console
     console.error("[RootErrorBoundary]", error, info?.componentStack);
+    // K36 · persist the crash so the next boot can attempt to
+    // upload it and the "Send diagnostics" button surfaces it.
+    persistCrash(error, info?.componentStack ?? null);
     this.setState({ stack: info?.componentStack ?? null });
   }
 

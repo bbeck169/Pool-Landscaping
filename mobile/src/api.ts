@@ -1,4 +1,5 @@
 import { storage } from "@/src/utils/storage";
+import { logApi } from "@/src/utils/diagnostics";
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
 export const TOKEN_KEY = "pool_crm_token";
@@ -33,14 +34,40 @@ export class ApiNetworkError extends Error {
  * JWT soft-delete enforcement — register a callback that fires on 401.
  * The AuthProvider calls this on mount so the API layer can trigger logout
  * when the backend rejects a soft-deleted user's token.
+ *
+ * K36 amendment · "kicked out all day" repro fix. A burst of parallel
+ * requests firing on Schedule mount (jobs + crews + users) could each
+ * see a transient 401 (clock skew, in-flight token rotation, or the
+ * legit expiry) and every one would independently call `_logoutOn401`,
+ * yanking the user out mid-load. We now debounce logout so only the
+ * first 401 in a `LOGOUT_COOLDOWN_MS` window actually triggers logout,
+ * and we breadcrumb each 401 so the diagnostic buffer captures the
+ * exact request that started it.
  */
 let _logoutOn401: (() => void) | null = null;
 export function registerLogoutOn401(fn: () => void) { _logoutOn401 = fn; }
+
+const LOGOUT_COOLDOWN_MS = 5_000;
+let _lastLogoutAt = 0;
+function _handle401(path: string) {
+  const now = Date.now();
+  if (now - _lastLogoutAt < LOGOUT_COOLDOWN_MS) {
+    // Suppressed — a sibling request already tripped the logout.
+    logApi({ method: "AUTH", path, status: 401, errorKind: "http", errorMsg: "401 suppressed (cooldown)" });
+    return;
+  }
+  _lastLogoutAt = now;
+  logApi({ method: "AUTH", path, status: 401, errorKind: "http", errorMsg: "401 → logout" });
+  storage.secureRemove(TOKEN_KEY).catch(() => {});
+  _logoutOn401?.();
+}
 
 async function request(path: string, options: RequestInit = {}, timeoutMs = 30000, externalSignal?: AbortSignal) {
   const headers = await authHeaders();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const _method = String(options.method || "GET").toUpperCase();
+  const _t0 = Date.now();
   // K15 · external AbortSignal — abort internal controller when external fires.
   let _extCleanup: (() => void) | undefined;
   if (externalSignal) {
@@ -59,7 +86,14 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
   } catch (e: any) {
     clearTimeout(timer);
     _extCleanup?.();
-    if (e?.name === "AbortError") throw new ApiNetworkError("Request timed out — check your connection and try again.");
+    const isTimeout = e?.name === "AbortError";
+    logApi({
+      method: _method, path,
+      ms: Date.now() - _t0,
+      errorKind: isTimeout ? "timeout" : "network",
+      errorMsg: e?.message || String(e),
+    });
+    if (isTimeout) throw new ApiNetworkError("Request timed out — check your connection and try again.");
     throw new ApiNetworkError("Network error — check your connection and try again.");
   }
   clearTimeout(timer);
@@ -74,10 +108,13 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
     }
   }
   if (!res.ok) {
-    // JWT soft-delete enforcement: 401 → clear token + logout callback.
+    // JWT soft-delete enforcement: 401 → clear token + logout callback
+    // (K36 · debounced so a burst of parallel 401s from the same
+    // Schedule mount doesn't compound-logout the tech).
     if (res.status === 401) {
-      storage.secureRemove(TOKEN_KEY).catch(() => {});
-      _logoutOn401?.();
+      _handle401(path);
+    } else {
+      logApi({ method: _method, path, status: res.status, ms: Date.now() - _t0, errorKind: "http" });
     }
     let msg: any = data?.detail;
     // FastAPI ``HTTPException(detail=[{"msg": ..., "loc": ...}, ...])``
@@ -113,6 +150,7 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
     if (typeof msg !== "string" || !msg) msg = `Request failed (${res.status})`;
     throw new Error(msg);
   }
+  logApi({ method: _method, path, status: res.status, ms: Date.now() - _t0 });
   return data;
 }
 

@@ -69,11 +69,41 @@ export default function RootLayout() {
 
   // Phase O2 · Offline sync foundation — init SQLite schema + net bus + auto-flush.
   // Phase O3 · Wire photo auto-upload on reconnect.
+  // K36 · Every boot-sync side-effect now runs inside try/catch with
+  // a diagnostic breadcrumb so a native module init failure never
+  // crashes the shell before the first frame renders.
   useEffect(() => {
-    getSyncDb().catch((e) => console.warn("[O2] SQLite init failed:", e));
-    startNetBus();
-    wireAutoFlush();
-    wirePhotoAutoUpload();
+    (async () => {
+      // Late-bind the diagnostic helpers so a bad module init here
+      // can't cascade into the layout module itself.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { logNav } = require("@/src/utils/diagnostics");
+      logNav("boot.sync.start");
+      try { await getSyncDb(); } catch (e: any) {
+        console.warn("[O2] SQLite init failed:", e?.message || e);
+        logNav("boot.sync.sqlite_failed", { err: String(e?.message || e).slice(0, 120) });
+      }
+      try { startNetBus(); } catch (e: any) {
+        console.warn("[boot] startNetBus failed:", e?.message || e);
+        logNav("boot.sync.netbus_failed", { err: String(e?.message || e).slice(0, 120) });
+      }
+      try { wireAutoFlush(); } catch (e: any) {
+        console.warn("[boot] wireAutoFlush failed:", e?.message || e);
+        logNav("boot.sync.autoflush_failed", { err: String(e?.message || e).slice(0, 120) });
+      }
+      try { wirePhotoAutoUpload(); } catch (e: any) {
+        console.warn("[boot] wirePhotoAutoUpload failed:", e?.message || e);
+        logNav("boot.sync.photo_failed", { err: String(e?.message || e).slice(0, 120) });
+      }
+      // K36 · best-effort crash upload from prior session's persisted
+      // slot. Never blocks boot; never surfaces errors.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { uploadPendingCrash } = require("@/src/utils/crashReporter");
+        uploadPendingCrash().catch(() => {});
+      } catch { /* swallow */ }
+      logNav("boot.sync.done");
+    })();
   }, []);
 
   // Phase P11c — Mapbox token placeholder guard (__DEV__ only).

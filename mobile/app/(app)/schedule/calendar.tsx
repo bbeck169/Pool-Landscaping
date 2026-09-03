@@ -32,6 +32,8 @@ import { useFocusEffect, useRouter, Redirect } from "expo-router";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { storage } from "@/src/utils/storage";
+import { logNav } from "@/src/utils/diagnostics";
+import { ScheduleErrorBoundary } from "@/src/components/ScheduleErrorBoundary";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header, NotificationBell } from "@/src/components/widgets";
 // Feb-2026 · Phase 1 offline foundation — write-through cache on
@@ -59,7 +61,10 @@ import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButt
 import NavigateJobButton from "@/src/components/schedule/NavigateJobButton";
 import NavigateRouteButton from "@/src/components/schedule/NavigateRouteButton";
 import CrewFilterBar from "@/src/components/schedule/CrewFilterBar";
-import ScheduleMap from "@/src/components/schedule/ScheduleMap";
+// K36 · Schedule map is now lazy-mounted — react-native-maps only
+// registers its native module when the tech toggles to the Map sub-view,
+// preventing missing-Google-Maps-key crashes on Schedule tab open.
+import ScheduleMapLazy from "@/src/components/schedule/ScheduleMapLazy";
 // Feb-2026 — Daily Route Map (@rnmapbox/maps). Collapsible per-tech
 // header, numbered pins by route_index, status-colored, tap for
 // callout with Open→job checklist. Hides itself when 0 jobs.
@@ -144,7 +149,14 @@ const jobHours = (j: Job): string => {
 const isRecurring = (j: Job): boolean =>
   Boolean(j.is_recurring || j.recurring || (j.recurrence && j.recurrence !== "none"));
 
-export default function ScheduleCalendar() {
+/** K36 · 20-second loading watchdog. If the initial load has not
+ *  produced jobs or an error card within this window, we swap the
+ *  spinner for an actionable fallback UI instead of leaving the tech
+ *  staring at "Loading…" forever (which is exactly what the iOS
+ *  watchdog kills at ~20 s). */
+const LOADING_WATCHDOG_MS = 20_000;
+
+function ScheduleCalendarInner() {
   const router = useRouter();
   const { user } = useAuth();
   const role = (user?.role as string) || "";
@@ -178,6 +190,11 @@ export default function ScheduleCalendar() {
   const [techs, setTechs] = useState<{ id: string; name: string }[]>([]);
   const [reassignTechId, setReassignTechId] = useState("");
   const [hourlyData, setHourlyData] = useState<HourlyEntry[]>([]);
+  // K36 · loading watchdog — flips true when the initial load has
+  // been in-flight for > LOADING_WATCHDOG_MS without producing an
+  // error card. Consumed by the render path to swap the spinner for
+  // a "Still loading — retry?" fallback.
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
 
   // Phase F6b — Crew filter state. Selecting a crew passes crew_id to
   // the schedule fetch; clearing resets to "All crews".
@@ -206,13 +223,16 @@ export default function ScheduleCalendar() {
 
   // Phase F6b — Fetch crews + all techs on mount for crew filter.
   // K25 — hydrate persisted crew filter from storage.
+  // K36 — Array.isArray guards on every response so an unexpected
+  // shape (backend returns {detail: "..."} for a 200 with a message,
+  // or a proxy HTML page) can't render-throw further down.
   useEffect(() => {
     api.get("/crews")
-      .then((res: any) => setCrews(Array.isArray(res) ? res : res?.items || []))
-      .catch(() => setCrews([]));
+      .then((res: any) => setCrews(Array.isArray(res) ? res : Array.isArray(res?.items) ? res.items : []))
+      .catch((e) => { console.warn("[schedule] /crews failed:", e?.message || e); setCrews([]); });
     api.get("/users?role=tech")
-      .then((res: any) => setAllTechs(res?.users || (Array.isArray(res) ? res : [])))
-      .catch(() => setAllTechs([]));
+      .then((res: any) => setAllTechs(Array.isArray(res?.users) ? res.users : Array.isArray(res) ? res : []))
+      .catch((e) => { console.warn("[schedule] /users?role=tech failed:", e?.message || e); setAllTechs([]); });
     // K25 — load persisted crew filter.
     storage.getItem<string>(CREW_FILTER_KEY, "").then((v: any) => {
       if (typeof v === "string" && v.length > 0) setCrewFilter(v);
@@ -263,7 +283,13 @@ export default function ScheduleCalendar() {
     loadAbortRef.current?.abort();
     const ac = new AbortController();
     loadAbortRef.current = ac;
-    setLoading(true); setErr("");
+    setLoading(true); setErr(""); setLoadingTimedOut(false);
+    // K36 · loading watchdog. Independent of the 25s network race
+    // below — this one runs at 20s and flips a UI state so the tech
+    // sees a fallback card rather than an infinite spinner.
+    const watchdog = setTimeout(() => {
+      if (loadAbortRef.current === ac) setLoadingTimedOut(true);
+    }, LOADING_WATCHDOG_MS);
     try {
       const start = iso(addDays(focus, -BACK_DAYS));
       const end   = iso(addDays(focus,  FWD_DAYS));
@@ -299,12 +325,19 @@ export default function ScheduleCalendar() {
       if (ac.signal.aborted) return;
       setErr(e.message || "Failed to load schedule");
     } finally {
+      clearTimeout(watchdog);
       // Only write loading=false if THIS controller is still current.
-      if (loadAbortRef.current === ac) setLoading(false);
+      if (loadAbortRef.current === ac) { setLoading(false); setLoadingTimedOut(false); }
     }
   }, [focus, user?.id, crewFilter, isTech]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    logNav("schedule/calendar.focus", {
+      role: (user?.role as string) || null,
+      user_id: user?.id || null,
+    });
+    load();
+  }, [load, user?.role, user?.id]));
 
   const focusISO = iso(focus);
   const dayJobs = useMemo(() => {
@@ -598,6 +631,13 @@ export default function ScheduleCalendar() {
         <GridView
           focus={focus} setFocus={setFocus}
           jobs={gridList} loading={loading}
+          loadingTimedOut={loadingTimedOut}
+          onLoadRetry={() => load(true)}
+          onLoadCancel={() => {
+            loadAbortRef.current?.abort();
+            setLoading(false);
+            setLoadingTimedOut(false);
+          }}
           checked={checked} onToggle={toggleCheck}
           canWrite={canWriteJobs}
           rearrangeMode={rearrangeMode}
@@ -736,7 +776,8 @@ export default function ScheduleCalendar() {
 /* ═══ Grid view ══════════════════════════════════════════════════════ */
 function GridView(props: any) {
   const {
-    focus, setFocus, jobs, loading, checked, onToggle, canWrite,
+    focus, setFocus, jobs, loading, loadingTimedOut, onLoadRetry, onLoadCancel,
+    checked, onToggle, canWrite,
     rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
     onBulkComplete, onBulkDelete, onOpenMove, onOpenReassign, moveOpen, setMoveOpen, moveDate, setMoveDate,
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData, userId,
@@ -927,7 +968,7 @@ function GridView(props: any) {
       </View>
 
       {gridSubMode === "map" ? (
-        <ScheduleMap jobs={dayJobs || jobs} testID="schedule-day-map" />
+        <ScheduleMapLazy jobs={dayJobs || jobs} testID="schedule-day-map" />
       ) : (
         <>
       {moveOpen ? (
@@ -963,7 +1004,36 @@ function GridView(props: any) {
       ) : null}
 
       {loading ? (
-        <View style={{ padding: spacing.xl, alignItems: "center" }}><ActivityIndicator color={colors.brand} /></View>
+        loadingTimedOut ? (
+          <View style={gStyles.timeoutBox} testID="schedule-loading-timeout">
+            <Ionicons name="hourglass-outline" size={28} color={colors.muted} />
+            <Text style={gStyles.timeoutTitle}>Schedule is taking longer than usual</Text>
+            <Text style={gStyles.timeoutHint}>
+              This can happen on a slow network or right after signing in. Retry the load, or continue in offline mode with your cached jobs.
+            </Text>
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Pressable
+                onPress={onLoadRetry}
+                style={[gStyles.timeoutBtn, { backgroundColor: colors.brand }]}
+                testID="schedule-loading-timeout-retry"
+              >
+                <Ionicons name="refresh" size={14} color="#fff" />
+                <Text style={gStyles.timeoutBtnText}>Retry</Text>
+              </Pressable>
+              <Pressable
+                onPress={onLoadCancel}
+                style={[gStyles.timeoutBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]}
+                testID="schedule-loading-timeout-continue"
+              >
+                <Text style={[gStyles.timeoutBtnText, { color: colors.onSurface }]}>Continue offline</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <View style={{ padding: spacing.xl, alignItems: "center" }} testID="schedule-loading-spinner">
+            <ActivityIndicator color={colors.brand} />
+          </View>
+        )
       ) : jobs.length === 0 ? (
         <View style={gStyles.empty} testID="grid-empty">
           <Ionicons name="calendar-outline" size={28} color={colors.muted} />
@@ -1520,6 +1590,45 @@ const gStyles = StyleSheet.create({
     borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border,
   },
   emptyTitle: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  // K36 · Loading watchdog fallback card.
+  timeoutBox: {
+    alignItems: "center",
+    padding: spacing.xl,
+    gap: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginHorizontal: spacing.md,
+  },
+  timeoutTitle: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.base,
+    color: colors.onSurface,
+    textAlign: "center",
+  },
+  timeoutHint: {
+    fontFamily: font.regular,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  timeoutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    height: 38,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    marginTop: spacing.xs,
+  },
+  timeoutBtnText: {
+    fontFamily: font.bold,
+    fontSize: fontSize.sm,
+    color: "#fff",
+  },
   subModeRow: {
     flexDirection: "row", gap: spacing.xs, marginBottom: spacing.sm,
   },
@@ -1690,3 +1799,18 @@ const actMenuStyles = StyleSheet.create({
     color: colors.onSurface,
   },
 });
+
+
+/**
+ * K36 · Default export is now wrapped in `ScheduleErrorBoundary` so
+ * a render throw inside the Schedule screen surfaces as an
+ * actionable card + a diagnostic breadcrumb instead of tanking the
+ * whole tab (and, on iOS, tripping the 0x8badf00d watchdog).
+ */
+export default function ScheduleCalendar() {
+  return (
+    <ScheduleErrorBoundary>
+      <ScheduleCalendarInner />
+    </ScheduleErrorBoundary>
+  );
+}

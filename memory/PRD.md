@@ -1,3 +1,121 @@
+## Phase K36 · Mobile Schedule Crash Hardening + Amendment — SHIPPED
+
+**Trigger.** iOS TestFlight users on tenant *Pool Landscaping of
+Vistancia* were being "kicked out all day" (Ethan Smith repro), with
+the Schedule tab hanging on "Loading…" and then hitting the iOS
+watchdog (0x8badf00d) without a usable stack trace. Zero telemetry
+was available — flying blind on Prod native crashes.
+
+### Root-cause investigation (amendment priority #1)
+
+The "kicked out" pattern is not a Schedule bug — it's an
+**auth-401 amplification loop**. The Schedule tab fires three parallel
+requests on mount (`/jobs`, `/crews`, `/users?role=tech`). If any one
+of them returns 401 (transient during token rotation, clock skew, or
+a legit brief expiry), the API layer used to call the logout callback
+**per-request**. A single expired-token burst = three logouts = the
+user gets bounced back to `/login` mid-load and the in-flight Schedule
+fetches wedge the tab.
+
+### Fixes shipped (mobile-only, `/app/mobile/`)
+
+1. **Debounced 401 logout** — `src/api.ts::_handle401()` now only
+   fires the logout callback for the first 401 in a 5-second window.
+   Sibling 401s are breadcrumbed but suppressed. Root cause fix for
+   the Ethan Smith repro.
+2. **Diagnostic ring buffer** — new `src/utils/diagnostics.ts` keeps
+   last 20 nav + last 20 API entries in AsyncStorage; every API call
+   (success, http-error, network, timeout) writes an entry. Persisted
+   across relaunch so a crash + reboot still surfaces the trailing
+   requests.
+3. **Schedule ErrorBoundary** — new `src/components/ScheduleErrorBoundary.tsx`
+   wraps `ScheduleCalendarInner`. A render throw now shows an
+   actionable card with the message + component stack, persists the
+   crash into the diagnostic slot, and offers "Try Again" instead of
+   killing the tab.
+4. **20-second loading watchdog** — `ScheduleCalendarInner.load()`
+   arms a 20 s timer; when it fires the JSX swaps the spinner for a
+   fallback card ("Schedule is taking longer than usual — Retry /
+   Continue offline"). Kills the infinite-spinner case that used to
+   trip the iOS watchdog.
+5. **Defensive guards on companion fetches** — `/crews` and
+   `/users?role=tech` responses are now `Array.isArray`-guarded so a
+   shape drift or proxy HTML page can't render-throw the tab.
+6. **Lazy-mounted `<ScheduleMap>`** — new
+   `src/components/schedule/ScheduleMapLazy.tsx` wraps `React.lazy` +
+   `<Suspense>` + `MapErrorBoundary`. `react-native-maps` no longer
+   registers its native module on Schedule tab open; it only loads
+   when the tech taps the Map sub-view. Fixes the missing-Google-
+   Maps-key crash-on-mount pattern. (`<DailyRouteMap>` already used a
+   dynamic `require('@rnmapbox/maps')` pattern and remains as-is.)
+7. **Boot-sync try/catch + breadcrumbs** — `app/_layout.tsx` now runs
+   each boot init (SQLite, net-bus, auto-flush, photo worker) inside
+   an isolated try/catch that breadcrumbs the failure. A single bad
+   native module init can no longer wedge the shell before first
+   frame.
+8. **Best-effort crash uploader** — new `src/utils/crashReporter.ts`
+   attempts to POST any persisted crash + trailing breadcrumbs to
+   `/api/telemetry/mobile-crash` on next boot. Silently degrades to a
+   no-op if the backend endpoint isn't wired yet (backend is
+   out-of-scope for K36 per user directive); the tech-triggered
+   "Send Diagnostics" flow remains the reliable path.
+9. **"Send Diagnostics" affordance** — new section on
+   `app/(app)/more.tsx` (test-id `send-diagnostics-btn`). Reads the
+   ring buffer + persisted crash, then offers Copy / Share / Clear
+   via the OS native share sheet.
+10. **Focus breadcrumb** — `useFocusEffect` on the Schedule screen
+    now logs `schedule/calendar.focus` with role + user_id so the next
+    trace shows exactly when the tech landed on the tab.
+
+### Files added
+
+- `mobile/src/utils/diagnostics.ts`
+- `mobile/src/utils/crashReporter.ts`
+- `mobile/src/components/ScheduleErrorBoundary.tsx`
+- `mobile/src/components/schedule/ScheduleMapLazy.tsx`
+- `mobile/__tests__/schedule-error-boundary.test.tsx` (4 tests)
+- `mobile/__tests__/schedule-loading-timeout.test.tsx` (5 tests)
+- `mobile/__tests__/k36-diagnostics.test.ts` (5 tests)
+
+### Files touched
+
+- `mobile/src/api.ts` — 401 debounce, per-request breadcrumb.
+- `mobile/src/components/RootErrorBoundary.tsx` — persistCrash hook.
+- `mobile/app/_layout.tsx` — try/catch + crash uploader on boot.
+- `mobile/app/(app)/schedule/calendar.tsx` — boundary wrap, watchdog
+  state, lazy map, defensive guards, focus breadcrumb.
+- `mobile/app/(app)/more.tsx` — Send Diagnostics section.
+- `mobile/__tests__/k32-tech-scoped-schedule.test.tsx` — added
+  AsyncStorage jest mock (calendar.tsx now imports the diagnostics
+  module which pulls AsyncStorage at module-load).
+
+### Tests
+
+`yarn jest __tests__/schedule-error-boundary.test.tsx
+__tests__/schedule-loading-timeout.test.tsx
+__tests__/k36-diagnostics.test.ts
+__tests__/k32-tech-scoped-schedule.test.tsx` — **20 pass / 0 fail**.
+
+Pre-existing unrelated failure in `schedule-daily-route-map.test.tsx`
+(text-copy assertion drift on the K20 "Map unavailable" banner)
+verified to be unchanged by K36 via a `git stash` sanity check.
+
+### Deferred / out of scope
+
+- **K37 · Customer portal blank page on Prod.** Prep-only — not
+  started. Suspected causes: missing `pk_live_*` on Prod, missing
+  deep-link route for `/portal/pay/:token`, or a top-level portal
+  error boundary swallowing a bundle error. To grep on kickoff:
+  `frontend/src/pages/portal/**`, StripeElements mount points,
+  portal shell error boundary.
+- Backend `/api/telemetry/mobile-crash` endpoint — mobile client is
+  wired; if you want server-side collection ship a 12-line FastAPI
+  POST handler that persists to a `mobile_crash_reports` collection.
+  Ring-buffer payload shape is defined in `crashReporter.ts`.
+
+---
+
+
 ## Phase J1 · Close-Out · Feb-2026 — Deferred #3 + #4 — SHIPPED
 
 Ships the two items left on the J1 board after the first pass. Both

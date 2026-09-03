@@ -9,6 +9,13 @@
 import React from "react";
 import { render, waitFor } from "@testing-library/react-native";
 
+// K36 · calendar.tsx now imports `@/src/utils/diagnostics`, which
+// pulls in AsyncStorage at module-load. Use the official jest mock
+// so this test suite doesn't crash before it renders.
+jest.mock("@react-native-async-storage/async-storage", () =>
+  require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
+);
+
 /* ── Mock dependencies ─────────────────────────────────────────────── */
 
 // Track fetch URLs
