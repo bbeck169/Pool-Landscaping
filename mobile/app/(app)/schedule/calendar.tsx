@@ -149,7 +149,7 @@ export default function ScheduleCalendar() {
   const { user } = useAuth();
   const role = (user?.role as string) || "";
   const isAdmin = role === "admin" || role === "super_admin" || role === "manager";
-  const isTech = role === "technician";
+  const isTech = role === "technician" || role === "tech";
   const canWriteJobs = isAdmin || isTech;
 
   const [mode, setMode] = useState<Mode>("grid");
@@ -272,7 +272,10 @@ export default function ScheduleCalendar() {
       // for the current tech (bulk-replace is scoped by user).
       const techUserId = user?.id || "";
       const crewFiltered = !!crewFilter;
-      const jobsUrl = `/jobs?start=${start}&end=${end}${crewFiltered ? `&crew_id=${crewFilter}` : ""}`;
+      // K32 — tech auto-scope: always send technician_id for tech role
+      // (defense in depth — server may also scope, but client enforces).
+      const techScope = isTech && user?.id ? `&technician_id=${user.id}` : "";
+      const jobsUrl = `/jobs?start=${start}&end=${end}${!isTech && crewFiltered ? `&crew_id=${crewFilter}` : ""}${techScope}`;
       // K15 · outer timeout race — if cachedGet (network+SQLite)
       // hasn't resolved in 25 s, give up and show the error card.
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -299,8 +302,7 @@ export default function ScheduleCalendar() {
       // Only write loading=false if THIS controller is still current.
       if (loadAbortRef.current === ac) setLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus, user?.id, crewFilter]);
+  }, [focus, user?.id, crewFilter, isTech]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -628,6 +630,7 @@ export default function ScheduleCalendar() {
           crewFilter={crewFilter}
           crewMembers={crewMembers}
           onCrewSelect={handleCrewSelect}
+          isTech={isTech}
         />
       ) : (
         <CalendarView
@@ -739,7 +742,7 @@ function GridView(props: any) {
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData, userId,
     weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection, role,
     gridSubMode, setGridSubMode, dayJobs, setReorderList,
-    crews, crewFilter, crewMembers, onCrewSelect,
+    crews, crewFilter, crewMembers, onCrewSelect, isTech,
   } = props;
   const focusISO = iso(focus);
   const isToday = focusISO === iso(new Date());
@@ -780,7 +783,7 @@ function GridView(props: any) {
       ) : (
         <View style={gStyles.filterRow}>
           <NavigateRouteButton jobs={jobs} />
-          {crews.length > 0 ? (
+          {!isTech && crews.length > 0 ? (
             <CrewFilterBar
               crews={crews}
               selectedCrewId={crewFilter}

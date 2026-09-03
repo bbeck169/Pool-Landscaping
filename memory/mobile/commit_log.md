@@ -1280,3 +1280,19 @@
 - **Files deleted**: mobile/app.json
 - **Files modified**: mobile/.env (removed 6 lines: sk. token + comments)
 - **Files referenced**: mobile/app.config.js (created in prior turn), mobile/package.json
+
+## Iteration 68 — Phase K32: Tech-scoped mobile Schedule (no filters, auto-scope)
+- **Commit**: 7eedcadf5d6c67cffe2efaa5b6420f2c8b7b24d5
+- **Date**: 2026-09-03
+- **Changes**:
+  - `isTech` now checks both `"technician"` and `"tech"` role spellings
+  - `load()` auto-appends `&technician_id=<user.id>` for tech role users
+  - `load()` skips `crew_id` param for tech role (irrelevant since filter hidden)
+  - CrewFilterBar hidden when `isTech` (wrapped in `!isTech && crews.length > 0`)
+  - `isTech` passed to GridView; removed stale eslint-disable directive
+  - Admin/manager/dispatcher unchanged (no technician_id forced, crew filter visible)
+  - Tests: 6 new (k32-tech-scoped-schedule.test.tsx), all passing
+  - API verified: admin sees 14 jobs, tech scoped sees 3 (same endpoint, different params)
+- **Files modified**: `app/(app)/schedule/calendar.tsx` (+8/-4 lines)
+- **Files created**: `__tests__/k32-tech-scoped-schedule.test.tsx` (6 tests)
+

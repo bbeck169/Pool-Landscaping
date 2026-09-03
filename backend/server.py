@@ -3018,6 +3018,54 @@ async def startup():
             )
     asyncio.create_task(_bg_customers_dashboard_active_inactive_idx())
 
+    # K15 · Feb-2026 — Jobs schedule/status/crew indexes (mobile
+    # Schedule perf).  Idempotent + sentinel-guarded.
+    async def _bg_k15_jobs_indexes():
+        try:
+            from services.migrations.k15_jobs_indexes import (
+                run_k15_jobs_indexes_migration,
+            )
+            _k15_boot = await run_k15_jobs_indexes_migration()
+            if _k15_boot.get("status") == "skipped":
+                logger.info(
+                    "[migration] k15_jobs_indexes: skipped · sentinel present",
+                )
+            else:
+                _s = _k15_boot.get("summary") or {}
+                logger.info(
+                    "[migration] k15_jobs_indexes: created=%s "
+                    "already_present=%s errors=%s",
+                    _s.get("created"), _s.get("already_present"),
+                    len(_s.get("errors") or []),
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"k15_jobs_indexes migration crashed: {e}")
+    asyncio.create_task(_bg_k15_jobs_indexes())
+
+    # K21 · Feb-2026 — Customer + Schedule web hot-path perf indexes.
+    # Idempotent + sentinel-guarded.
+    async def _bg_k21_perf_indexes():
+        try:
+            from services.migrations.k21_perf_indexes import (
+                run_k21_perf_indexes_migration,
+            )
+            _k21_boot = await run_k21_perf_indexes_migration()
+            if _k21_boot.get("status") == "skipped":
+                logger.info(
+                    "[migration] k21_perf_indexes: skipped · sentinel present",
+                )
+            else:
+                _s = _k21_boot.get("summary") or {}
+                logger.info(
+                    "[migration] k21_perf_indexes: created=%s "
+                    "already_present=%s errors=%s",
+                    _s.get("created"), _s.get("already_present"),
+                    len(_s.get("errors") or []),
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"k21_perf_indexes migration crashed: {e}")
+    asyncio.create_task(_bg_k21_perf_indexes())
+
     # Feb-2026 · Soshie AI-Agent Expansion P2 — indexes for the
     # social publishing collections (idempotency + audit).
     # Idempotent + sentinel-guarded.

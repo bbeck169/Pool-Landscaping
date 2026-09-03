@@ -6,9 +6,16 @@
  * relying on static "$ENV_VAR" string substitution.
  *
  * K20 map guards handle empty-key gracefully (MapUnavailablePlaceholder).
+ *
+ * NOTE: exported as a static CommonJS object, not a config function.
+ * Emergent's eas-update build step does `require('./app.config.js')`
+ * then `config.default || config` WITHOUT calling it — on Node 24 that
+ * require() auto-detects `export default (...) => {...}` as ESM and
+ * returns the un-invoked function, so JSON.stringify(fn) is undefined
+ * and app.json generation crashes. A plain object export sidesteps it;
+ * env vars are still read at file-load time, so behavior is unchanged.
  */
-export default ({ config }) => ({
-  ...config,
+module.exports = {
   expo: {
     name: "Pool & Landscaping of Vistancia",
     slug: "poolscape-audit",
@@ -223,4 +230,4 @@ export default ({ config }) => ({
       typedRoutes: true,
     },
   },
-});
+};
