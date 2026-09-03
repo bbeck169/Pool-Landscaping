@@ -4,8 +4,9 @@
 // POST /api/public/leads. If TURNSTILE_SITE_KEY is exposed via
 // window.__TENANT_CONFIG__?.turnstile_site_key the widget renders
 // and the token is passed in the payload.
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { toast, Toaster } from "sonner";
+import ThemedFormShell from "../../components/formBuilder/ThemedFormShell";
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -18,6 +19,16 @@ export default function PublicLeadIntake() {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [ok, setOk] = useState(false);
+  // K34 · Feb-2026 — pick up an optional ``theme`` object exposed
+  // by ``window.__TENANT_CONFIG__``.  Falls back to null so the
+  // default (pre-K34) app look is preserved for tenants that
+  // haven't picked a theme yet.
+  const [theme, setTheme] = useState(null);
+  useEffect(() => {
+    const t = (typeof window !== "undefined"
+                && window.__TENANT_CONFIG__?.form_theme) || null;
+    if (t) setTheme(t);
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -55,8 +66,11 @@ export default function PublicLeadIntake() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-emerald-50 py-10 px-4"
-           data-testid="public-lead-intake-page">
+    <ThemedFormShell theme={theme}
+                      testid="public-lead-intake-page"
+                      className={theme
+                        ? "min-h-screen py-10 px-4"
+                        : "min-h-screen bg-gradient-to-br from-sky-50 via-white to-emerald-50 py-10 px-4"}>
       <Toaster position="top-center" richColors />
       <div className="max-w-lg mx-auto">
         <div className="text-center mb-6">
@@ -152,6 +166,6 @@ export default function PublicLeadIntake() {
           </form>
         )}
       </div>
-    </div>
+    </ThemedFormShell>
   );
 }

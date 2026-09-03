@@ -182,6 +182,11 @@ class FormIn(BaseModel):
     # ``notify_admin_bell`` kept for backwards compat but the canonical
     # switch is now ``submit_config.admin_bell``.
     notify_admin_bell: Optional[bool] = None
+    # K34 · Feb-2026 — unified form theme (preset + colors + font).
+    # Untyped dict here so a future preset change on the frontend
+    # doesn't require a Pydantic schema bump. Defaults to None so
+    # legacy forms render with the app's default look.
+    theme: Optional[Dict[str, Any]] = None
 
 
 class FormPatch(BaseModel):
@@ -192,6 +197,8 @@ class FormPatch(BaseModel):
     submit_config: Optional[SubmitConfig] = None
     notify_admin_bell: Optional[bool] = None
     active: Optional[bool] = None
+    # K34 · Feb-2026 — patch surface for the unified form theme.
+    theme: Optional[Dict[str, Any]] = None
 
 
 class FormSubmit(BaseModel):
@@ -302,6 +309,9 @@ async def create_form(body: FormIn,
         "created_at": now_iso(),
         "updated_at": now_iso(),
         "submission_count": 0,
+        # K34 · Feb-2026 — untyped dict passthrough. None until the
+        # builder picks a preset / customizes colors.
+        "theme": body.theme,
     }
     await db.marketing_forms.insert_one(doc)
     doc.pop("_id", None)
@@ -401,7 +411,11 @@ async def get_widget_form(fid: str,
     doc = await db.marketing_forms.find_one(
         {"id": fid, "tenant_id": tenant["id"], "active": {"$ne": False}},
         {"_id": 0, "id": 1, "name": 1, "slug": 1, "fields": 1,
-         "submit_button_label": 1, "success_message": 1},
+         "submit_button_label": 1, "success_message": 1,
+         # K34 · Feb-2026 — surface the theme so the public widget
+         # renderer can apply it. Absent for legacy forms → renderer
+         # falls back to the app default.
+         "theme": 1},
     )
     if not doc:
         raise HTTPException(404, "Form not found or not active")

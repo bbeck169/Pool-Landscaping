@@ -5,6 +5,7 @@ import { brandGradientCss, colors, font } from "@/theme";
 import { PreviewDemoLogins } from "@/components/auth/PreviewDemoLogins";
 import { api } from "@/api";
 import { isPreviewOrDev } from "@/utils/env";
+import PortalWaterBackground from "@/components/portal/PortalWaterBackground";
 
 // Role -> home landing (mirrors the Expo app's tab targeting).
 function landingFor(role) {
@@ -143,6 +144,18 @@ export default function Login({ variant = "staff" } = {}) {
   };
 
   return (
+    isCustomerVariant ? (
+      <PortalLoginCustomerLayout
+        onSubmit={onSubmit}
+        email={email} setEmail={setEmail}
+        password={password} setPassword={setPassword}
+        showPw={showPw} setShowPw={setShowPw}
+        submitting={submitting}
+        error={error}
+        expiredBanner={expiredBanner}
+        isLinkExpired={isLinkExpired}
+      />
+    ) : (
     <div
       className="min-h-screen w-full flex flex-col md:flex-row"
       style={{ fontFamily: font.family, backgroundColor: colors.surface }}
@@ -412,6 +425,182 @@ export default function Login({ variant = "staff" } = {}) {
           </a>
         </div>
       </main>
+    </div>
+    )
+  );
+}
+
+/**
+ * Phase K35 · Feb-2026 — Customer-portal login layout. Rendered
+ * only when ``variant === "customer"`` (route ``/portal/login``).
+ * Animated pool-water background + centered white card with the
+ * pill-input treatment.  Auth logic (onSubmit / state / errors)
+ * is owned by the parent ``Login`` component and passed in as
+ * props so this file stays a single auth surface.
+ */
+function PortalLoginCustomerLayout({
+  onSubmit, email, setEmail, password, setPassword,
+  showPw, setShowPw, submitting, error, expiredBanner, isLinkExpired,
+}) {
+  const CARD_STYLE = {
+    background: "rgba(255,255,255,0.96)",
+    backdropFilter: "blur(8px)",
+    WebkitBackdropFilter: "blur(8px)",
+    borderRadius: 24,
+    boxShadow:
+      "0 20px 60px -20px rgba(2, 132, 199, 0.35), "
+      + "0 6px 20px -8px rgba(15, 23, 42, 0.15)",
+  };
+  const PILL_INPUT = {
+    width: "100%",
+    borderRadius: 999,
+    border: "1px solid #e5e7eb",
+    padding: "14px 20px",
+    fontSize: 15,
+    outline: "none",
+    background: "#ffffff",
+    color: "#111827",
+    transition: "border-color 0.15s",
+  };
+  return (
+    <div
+      data-testid="portal-login-page"
+      data-login-variant="customer"
+      style={{ minHeight: "100vh", position: "relative",
+                fontFamily: font.family, isolation: "isolate" }}
+    >
+      <PortalWaterBackground />
+      <div
+        style={{
+          position: "relative", zIndex: 1,
+          minHeight: "100vh",
+          display: "flex", flexDirection: "column", alignItems: "center",
+          justifyContent: "center", padding: "24px 16px", gap: 24,
+        }}
+      >
+        <img
+          src="/logo-full.png"
+          alt="Pool & Landscaping of Vistancia"
+          data-testid="portal-login-logo"
+          style={{ height: 96, maxWidth: "80%", objectFit: "contain",
+                    filter: "drop-shadow(0 4px 20px rgba(2, 132, 199, 0.3))" }}
+        />
+        <div
+          data-testid="portal-login-card"
+          style={{ ...CARD_STYLE, width: "100%", maxWidth: 440,
+                    padding: "36px 32px" }}
+        >
+          <h1
+            data-testid="portal-login-heading"
+            style={{
+              fontFamily: "Georgia, \"Times New Roman\", serif",
+              fontWeight: 700, fontSize: 28, color: "#0f172a",
+              margin: 0, marginBottom: 8, textAlign: "center",
+            }}
+          >
+            Customer Portal
+          </h1>
+          <p style={{
+              margin: 0, marginBottom: 24, textAlign: "center",
+              color: "#64748b", fontSize: 14,
+          }}>
+            Sign in to view your service history and invoices.
+          </p>
+
+          {expiredBanner && (
+            <div
+              role="status"
+              data-testid="login-session-expired-banner"
+              style={{
+                fontSize: 13, padding: "8px 12px", borderRadius: 12,
+                backgroundColor: "#FEF3C7", color: "#78350F",
+                border: "1px solid #FDE68A", marginBottom: 14,
+              }}
+            >
+              {isLinkExpired
+                ? "Your one-click link has expired. Please log in to continue."
+                : "Your session has expired. Please sign in again."}
+            </div>
+          )}
+
+          <form onSubmit={onSubmit} data-testid="login-form"
+                  style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <input
+              id="email" type="email" required autoComplete="email"
+              placeholder="you@email.com"
+              value={email} onChange={(e) => setEmail(e.target.value)}
+              style={PILL_INPUT}
+              data-testid="login-email-input"
+            />
+            <div style={{ position: "relative" }}>
+              <input
+                id="password" required autoComplete="current-password"
+                type={showPw ? "text" : "password"}
+                placeholder="Password"
+                value={password} onChange={(e) => setPassword(e.target.value)}
+                style={{ ...PILL_INPUT, paddingRight: 64 }}
+                data-testid="login-password-input"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPw((v) => !v)}
+                data-testid="login-toggle-password"
+                style={{
+                  position: "absolute", right: 16, top: "50%",
+                  transform: "translateY(-50%)", background: "none",
+                  border: "none", color: "#2e7d32", fontWeight: 600,
+                  fontSize: 11, letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >{showPw ? "HIDE" : "SHOW"}</button>
+            </div>
+
+            {error && (
+              <div
+                data-testid="login-error"
+                style={{ fontSize: 13, padding: "10px 14px",
+                          borderRadius: 12,
+                          backgroundColor: "#FEE2E2", color: "#991b1b" }}
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit" disabled={submitting}
+              data-testid="login-submit-button"
+              style={{
+                width: "100%", padding: "14px 20px", borderRadius: 999,
+                background: "#2e7d32", color: "#ffffff",
+                border: "none", fontSize: 15, fontWeight: 700,
+                cursor: submitting ? "not-allowed" : "pointer",
+                opacity: submitting ? 0.7 : 1,
+                boxShadow: "0 6px 18px -6px rgba(46, 125, 50, 0.55)",
+                transition: "transform 0.15s, box-shadow 0.15s",
+              }}
+            >
+              {submitting ? "Signing in…" : "Sign In"}
+            </button>
+          </form>
+
+          <div style={{
+              display: "flex", justifyContent: "space-between",
+              alignItems: "center", marginTop: 16,
+          }}>
+            <a href="/"
+                data-testid="portal-login-back-link"
+                style={{ color: "#2e7d32", fontWeight: 600, fontSize: 13,
+                          textDecoration: "none" }}>
+              ← Back to site
+            </a>
+            <Link to="/forgot-password"
+                    data-testid="login-forgot-password-link"
+                    style={{ color: "#2e7d32", fontWeight: 600, fontSize: 13,
+                              textDecoration: "none" }}>
+              Forgot password?
+            </Link>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

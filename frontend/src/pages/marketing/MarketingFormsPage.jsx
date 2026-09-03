@@ -13,6 +13,7 @@ import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { Card } from "@/components/ui/card";
 import { Trash2, Plus, Copy, RefreshCw, Save, ArrowUp, ArrowDown } from "lucide-react";
+import ThemePanel from "@/components/formBuilder/ThemePanel";
 
 const colors = {
   brand: "#0EA5E9",
@@ -189,6 +190,10 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
   const [submitCfg, setSubmitCfg] = useState(form.submit_config || {
     creates: "lead", confirmation_email_template_id: null, drip_sequence_id: null, admin_bell: true,
   });
+  // K34 · Feb-2026 — unified theme (preset + colors + font). Null
+  // until the user picks a preset; renderer falls back to the app
+  // default when null → zero regression for legacy forms.
+  const [theme, setTheme] = useState(form.theme || null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [previewNonce, setPreviewNonce] = useState(0);
@@ -241,6 +246,7 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
         submit_button_label: submitBtn,
         success_message: successMsg,
         submit_config: submitCfg,
+        theme,
       };
       let out;
       if (form._new) out = await api.post("/admin/forms", payload);
@@ -392,6 +398,13 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
                      style={{ border: `1px solid ${colors.border}` }}
                      data-testid="form-success-msg-input" />
             </div>
+          </div>
+
+          {/* K34 · Feb-2026 — Unified theme picker. Renders 5 presets +
+              Customize expand + font stacks. Emits a ``theme`` object
+              that persists on save + is read by every public renderer. */}
+          <div className="mb-4">
+            <ThemePanel value={theme} onChange={setTheme} />
           </div>
 
           {error && <div className="mb-3 text-sm p-2 rounded-lg"
