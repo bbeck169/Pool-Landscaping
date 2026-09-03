@@ -25,6 +25,11 @@ import AppBreadcrumbs from "@/components/nav/AppBreadcrumbs";
 import { DynamicCrumbProvider }
   from "@/components/nav/dynamicCrumbContext";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
+// K37 · Scoped portal boundary for the authenticated shell. Placed
+// around `<APIProvider>` so a bad Google Maps key or provider
+// exception surfaces a visible fallback card instead of blanking
+// the whole app.
+import PortalErrorBoundary from "@/components/errors/PortalErrorBoundary";
 import { brandGradientCss, colors, font } from "@/theme";
 import PaymentMethodPromptBanner from "@/components/portal/PaymentMethodPromptBanner";
 import {
@@ -296,22 +301,46 @@ function ProtectedShell() {
     );
   }
   if (!user) {
-    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+    // K37 · Unauthenticated hits under `/portal/*` land on the
+    // customer login surface, not the staff `/login` page. Every
+    // other unauthenticated route continues to hit `/login` as
+    // before. `state.from` is preserved so post-login redirect
+    // logic (see `Login.jsx` + `LoginCustomer.jsx`) still returns
+    // the user to their original destination.
+    const isPortalPath = location.pathname.startsWith("/portal");
+    return (
+      <Navigate
+        to={isPortalPath ? "/portal/login" : "/login"}
+        state={{ from: location.pathname + (location.search || "") }}
+        replace
+      />
+    );
   }
   // Phase 17 · Feb 2026 — mount the Google Maps <APIProvider> once
   // at the shell so the JS API script only loads a single time and
   // is available to every admin-facing page (dispatch board today;
   // schedule + workforce heat-maps later). Non-admin roles never
   // trigger a load because AdminOnly gates the map-consuming routes.
+  //
+  // K37 · Wrapped in a scoped `PortalErrorBoundary` so an invalid
+  // key or provider throw surfaces a visible fallback card instead
+  // of taking down the whole app. `resetKey={location.pathname}`
+  // clears the error state when the user navigates elsewhere.
   const mapsKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || "";
   if (mapsKey) {
     return (
-      <APIProvider apiKey={mapsKey} libraries={["marker", "geometry"]}>
-        <AppLayout />
-      </APIProvider>
+      <PortalErrorBoundary label="portal-shell" resetKey={location.pathname}>
+        <APIProvider apiKey={mapsKey} libraries={["marker", "geometry"]}>
+          <AppLayout />
+        </APIProvider>
+      </PortalErrorBoundary>
     );
   }
-  return <AppLayout />;
+  return (
+    <PortalErrorBoundary label="portal-shell" resetKey={location.pathname}>
+      <AppLayout />
+    </PortalErrorBoundary>
+  );
 }
 
 function AppLayout() {

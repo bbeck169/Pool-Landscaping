@@ -2,6 +2,13 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "@/index.css";
 import App from "@/App";
+// K37 · Top-level portal error boundary. Wraps `<App />` inside
+// `<StrictMode>` so it catches the pre-mount K13 impersonation
+// preamble side-effects, every public deep-link route, and any
+// top-level provider throw. `label="app-root"` disambiguates this
+// mount from the nested `portal-shell` mount in `ProtectedShell`
+// when triaging `/api/client-errors` rows.
+import PortalErrorBoundary from "@/components/errors/PortalErrorBoundary";
 
 // Phase K13 · Feb-2026 — portal impersonation token bootstrap.
 // Runs BEFORE React mounts so ``AuthProvider``'s initial
@@ -58,6 +65,8 @@ import App from "@/App";
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <React.StrictMode>
-    <App />
+    <PortalErrorBoundary label="app-root">
+      <App />
+    </PortalErrorBoundary>
   </React.StrictMode>,
 );

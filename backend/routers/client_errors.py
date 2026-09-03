@@ -78,6 +78,11 @@ class ClientErrorIn(BaseModel):
     user_agent: Optional[str] = None
     component: Optional[str] = None
     extra: Optional[Dict[str, Any]] = None
+    # K37 · optional top-level fields so client-error rows can be
+    # filtered by platform (web/mobile) + originating route without
+    # having to hunt inside ``extra``.
+    platform: Optional[str] = None
+    route: Optional[str] = None
 
 
 async def _optional_user(request: Request) -> Optional[Dict[str, Any]]:
@@ -116,6 +121,9 @@ async def ingest_client_error(
         "stack": _clip(body.stack, _STACK_CAP),
         "component": _clip(body.component, _COMPONENT_CAP),
         "extra": body.extra,
+        # K37 · top-level filter keys.
+        "platform": _clip(body.platform, 20),
+        "route": _clip(body.route, _URL_CAP),
         "ts": now_iso(),
         "created_at": now_iso(),
     }
