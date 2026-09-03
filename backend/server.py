@@ -666,6 +666,11 @@ api_router.include_router(_p19_integrations_admin.router)
 from routers import client_errors as _client_errors_router  # noqa: E402
 api_router.include_router(_client_errors_router.router)
 
+# K36 · Mobile crash telemetry ingest (POST /api/telemetry/mobile-crash).
+# Rate-limited 60/min/IP, unauthenticated, persists to `mobile_crash_reports`.
+from routers import telemetry_mobile_crash as _telemetry_mobile_crash_router  # noqa: E402
+api_router.include_router(_telemetry_mobile_crash_router.router)
+
 # Feb-2026 · Soshie AI-Agent Expansion P2 — social publishing router.
 # Mounts GET /soshie/platforms, POST /soshie/publish,
 # GET /soshie/publish/history, POST /soshie/ingest-website.
