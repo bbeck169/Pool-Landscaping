@@ -560,6 +560,10 @@ api_router.include_router(_portal_media.router)
 from routers import dashboard_revenue as _dashboard_revenue  # noqa: E402
 api_router.include_router(_dashboard_revenue.router)
 
+# Phase K41 · Feb-2026 — Clickable dashboard tiles drill-down.
+from routers import dashboard_drilldown as _dashboard_drilldown  # noqa: E402
+api_router.include_router(_dashboard_drilldown.router)
+
 # Feb 2026 · Dashboard global-search bar — quick-find across
 # customers / jobs / invoices / leads. Tenant-scoped, admin/manager
 # gated. New file: routers/global_search.py.

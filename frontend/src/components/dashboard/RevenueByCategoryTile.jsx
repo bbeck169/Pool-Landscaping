@@ -19,6 +19,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { colors, money } from "@/theme";
 import { api } from "@/api";
 import { Skeleton } from "@/components/ui-kit";
+import DashboardDrillDownModal from "@/components/dashboard/DashboardDrillDownModal";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -74,6 +75,8 @@ function CustomTooltip({ active, payload, total }) {
 export default function RevenueByCategoryTile({ range }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  // Phase K41 · Feb-2026 — legend click drill-down.
+  const [drillCategory, setDrillCategory] = useState(null);
 
   useEffect(() => {
     if (!range?.start || !range?.end) return;
@@ -164,7 +167,16 @@ export default function RevenueByCategoryTile({ range }) {
               data-testid="revenue-cat-legend">
             {items.map((it) => (
               <li key={it.category_id || it.category || it.displayLabel}
-                  className="flex items-center justify-between"
+                  className="flex items-center justify-between rounded-md px-1.5 py-1 cursor-pointer hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  tabIndex={0}
+                  role="button"
+                  onClick={() => setDrillCategory(it.displayLabel)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setDrillCategory(it.displayLabel);
+                    }
+                  }}
                   data-testid={`revenue-cat-legend-${it.displayLabel.replace(/\s+/g, "-")}`}>
                 <span className="flex items-center gap-2 truncate">
                   <span className="inline-block w-3 h-3 rounded-sm shrink-0"
@@ -179,6 +191,16 @@ export default function RevenueByCategoryTile({ range }) {
           </ul>
         </div>
       )}
+      <DashboardDrillDownModal
+        open={!!drillCategory}
+        onClose={() => setDrillCategory(null)}
+        variant="income-by-category"
+        params={{
+          category: drillCategory || "",
+          from: range?.start,
+          to: range?.end,
+        }}
+      />
     </div>
   );
 }

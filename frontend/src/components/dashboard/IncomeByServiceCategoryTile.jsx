@@ -11,6 +11,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { colors, money } from "@/theme";
 import { api } from "@/api";
 import { Skeleton } from "@/components/ui-kit";
+import DashboardDrillDownModal from "@/components/dashboard/DashboardDrillDownModal";
 
 function pct(part, total) {
   if (!total) return "0%";
@@ -51,6 +52,8 @@ function CustomTooltip({ active, payload, total }) {
 export default function IncomeByServiceCategoryTile({ range }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  // Phase K41 · Feb-2026 — legend click drill-down.
+  const [drillCategory, setDrillCategory] = useState(null);
 
   useEffect(() => {
     if (!range?.start || !range?.end) return;
@@ -111,7 +114,16 @@ export default function IncomeByServiceCategoryTile({ range }) {
               data-testid="income-svc-legend">
             {data.items.map((it) => (
               <li key={it.category}
-                  className="flex items-center justify-between"
+                  className="flex items-center justify-between rounded-md px-1.5 py-1 cursor-pointer hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  tabIndex={0}
+                  role="button"
+                  onClick={() => setDrillCategory(it.category)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setDrillCategory(it.category);
+                    }
+                  }}
                   data-testid={`income-svc-legend-${it.category.replace(/\s+/g, "-")}`}>
                 <span className="flex items-center gap-2 truncate">
                   <span className="inline-block w-3 h-3 rounded-sm shrink-0"
@@ -128,6 +140,16 @@ export default function IncomeByServiceCategoryTile({ range }) {
           </ul>
         </div>
       )}
+      <DashboardDrillDownModal
+        open={!!drillCategory}
+        onClose={() => setDrillCategory(null)}
+        variant="income-by-service"
+        params={{
+          service_category_id: drillCategory || "",
+          from: range?.start,
+          to: range?.end,
+        }}
+      />
     </div>
   );
 }

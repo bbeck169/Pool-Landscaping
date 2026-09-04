@@ -1,3 +1,45 @@
+## Phase K41 · Clickable dashboard tiles with drill-down + inline edit — SHIPPED
+
+**Scope.** Admin/super only. Web-only. Three dashboard tiles now open a modal with the underlying rows that fed the number, editable in place per K41 rules, wrapped in the K37 PortalErrorBoundary, honoring the same time window the tile itself uses.
+
+### Enumerated Data Integrity issue classes (from live grep of `data_repair._scan_dangling_refs`)
+1. `orphaned_customer_refs` — jobs whose `customer_id` points to a soft-deleted / non-existent customer.
+2. `orphaned_technician_refs` — jobs whose `technician_id` points to a non-existent user.
+3. `unassigned_pending_jobs` — jobs in status `pending` with a null `technician_id`.
+
+**Not extended.** Per user confirmation, we did NOT add missing_email/missing_phone/duplicate_customer/orphaned_job counters — that was the phase brief's incorrect guess about what the tile shows. Tile display is unchanged.
+
+### Invoice PATCH endpoint audit
+- `PATCH /api/quotes/{invoice_id}` (`backend/routers/invoice_edit.py`) already supports `line_items` with server-side `_compute_totals` recompute + full audit trail. K41 REUSES it verbatim — no new PATCH endpoint added.
+- Sent/paid invoices reject inline edits with 409 unless the caller passes the existing `confirm_edit_sent` / `confirm_edit_paid_invoice_number` guards. The modal surfaces the rejection inline and prompts the user to click "Open full edit".
+
+### File diff summary
+- **Backend endpoints** — 1 new router `backend/routers/dashboard_drilldown.py` (750 lines) exposing:
+  - `GET /api/dashboard/data-integrity/rows`
+  - `GET /api/dashboard/income/by-category/rows`
+  - `GET /api/dashboard/income/by-service/rows`
+  - `POST /api/dashboard/data-integrity/resolve`
+  - `POST /api/dashboard/drilldown/line-item-audit` (K41 audit + K6 hook companion)
+  - `GET /api/dashboard/drilldown/pickers/customers` / `.../technicians` (assign-picker introspection)
+  - Wired in `server.py` next to `dashboard_revenue`.
+- **Audit** — every write path emits `dashboard_drilldown_edit` with the exact K41 shape `{tile, field, before, after, actor_id}`. Line-item edits additionally emit `job_edited_after_completion` when the parent job is `status='completed'` (K6 completed-job-unlock contract from `services/edit_window.py`).
+- **Web modal** — new `frontend/src/components/dashboard/DashboardDrillDownModal.jsx` (single component, 3 variants — no fork).
+- **Tile wiring** — three tiles updated to open the modal:
+  - `frontend/src/components/dashboard/RevenueByCategoryTile.jsx` (legend rows keyboard-focusable)
+  - `frontend/src/components/dashboard/IncomeByServiceCategoryTile.jsx` (legend rows keyboard-focusable)
+  - `frontend/src/components/admin/DataIntegrityTile.jsx` (Dangling refs + Customer/Tech/Crew stat cells clickable)
+- **Tests** — `backend/tests/test_k41_dashboard_drilldown.py` (16 tests, all pass), `frontend/src/test/k41-dashboard-drilldown-modal.test.jsx` (20 tests, all pass). Regression suite: revenue-tiles + income-by-service-category + revenue-tile-uuid-defense (10 tests) still green.
+
+### Preview screenshots (captured live 2026-02-04)
+- `k41_income_cat_modal.png` — Income by Category drill-down (2 rows: Landscape, landscape_maintenance).
+- `k41_income_svc_modal.png` — Income by Service Category drill-down (Uncategorized bucket).
+- `k41_di_modal.png` — Data Integrity dangling-refs modal (16 orphaned customer refs, each with Assign customer… / Soft-delete job actions).
+
+### K6 confirmation
+Line-item edits go through the EXISTING invoice PATCH pipeline (`PATCH /api/quotes/{invoice_id}` → `_compute_totals` → `_write_audit`). No new recalc logic invented. When the parent job's `status='completed'`, the K41 companion audit endpoint additionally emits `job_edited_after_completion` per the K6 contract — verified end-to-end by `test_k41_line_item_audit_fires_k6_on_completed_job`.
+
+---
+
 ## Phase K40 · Default all filter dropdowns to "No filter" site-wide — SHIPPED
 
 **Scope.** Standardize filter defaults across every list page on Web + Mobile so every mount lands on "All / No filter", persistence is removed, and Customers list remains the ONE cohort exception (defaults to "Active"). Explicit URL params still win.

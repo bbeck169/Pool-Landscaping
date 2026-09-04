@@ -39,6 +39,7 @@ import {
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { AlertTriangle, CheckCircle2, RefreshCw, ShieldAlert } from "lucide-react";
+import DashboardDrillDownModal from "@/components/dashboard/DashboardDrillDownModal";
 
 
 function _isAttention(status) {
@@ -49,18 +50,35 @@ function _isAttention(status) {
 }
 
 
-function StatCell({ label, value, tone }) {
+function StatCell({ label, value, tone, onClick, testid }) {
   const fg =
     tone === "danger" ? colors.error :
     tone === "warn"   ? colors.warning :
     tone === "ok"     ? colors.success :
                         colors.onSurface;
+  const clickable = typeof onClick === "function";
   return (
     <div
-      className="rounded-lg px-3 py-2"
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      data-testid={testid}
+      onClick={clickable ? onClick : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+      className={clickable ? "cursor-pointer transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-400" : ""}
       style={{
         backgroundColor: colors.surfaceSecondary,
         border: `1px solid ${colors.border}`,
+        borderRadius: 8,
+        padding: "8px 12px",
       }}
     >
       <div
@@ -83,6 +101,8 @@ export default function DataIntegrityTile({ userRole }) {
   const [error, setError] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
+  // Phase K41 · Feb-2026 — drill-down modal state.
+  const [drillClass, setDrillClass] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -220,11 +240,15 @@ export default function DataIntegrityTile({ userRole }) {
               label="Dangling refs"
               value={total}
               tone={total > 0 ? "danger" : "ok"}
+              onClick={total > 0 ? () => setDrillClass("orphaned_customer_refs") : undefined}
+              testid="admin-data-integrity-drill-total"
             />
             <StatCell
               label="Customer / Tech / Crew"
               value={`${byClass.customer || 0} / ${byClass.technician || 0} / ${byClass.crew || 0}`}
               tone={total > 0 ? "danger" : undefined}
+              onClick={() => setDrillClass("orphaned_customer_refs")}
+              testid="admin-data-integrity-drill-byclass"
             />
             <StatCell
               label="Enforce mode"
@@ -338,6 +362,14 @@ export default function DataIntegrityTile({ userRole }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Phase K41 · Feb-2026 — drill-down modal for dangling refs. */}
+      <DashboardDrillDownModal
+        open={!!drillClass}
+        onClose={() => setDrillClass(null)}
+        variant="data-integrity"
+        params={{ issueClass: drillClass || "orphaned_customer_refs" }}
+      />
     </div>
   );
 }
