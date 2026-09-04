@@ -1,6 +1,6 @@
 import React from "react";
 import { StyleSheet } from "react-native";
-import MapView, { Marker, Polyline } from "react-native-maps";
+import { MapView, Marker, Polyline } from "@/src/lib/maps";
 import { DISPO, leadStatusMeta } from "./dispo";
 import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
 

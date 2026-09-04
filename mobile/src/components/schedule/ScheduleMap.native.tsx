@@ -6,7 +6,7 @@
  */
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { View, Text, StyleSheet, Pressable, Linking, Platform } from "react-native";
-import MapView, { Marker, Region } from "react-native-maps";
+import { MapView, Marker, type Region } from "@/src/lib/maps";
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";

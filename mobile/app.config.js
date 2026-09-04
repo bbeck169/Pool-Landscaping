@@ -216,6 +216,24 @@ module.exports = {
         },
       ],
       "expo-asset",
+      // Phase K39b · Feb-2026 — HERE Maps plugin.  Registered ONLY
+      // when the HERE credentials env is set so devs building with
+      // ``EXPO_PUBLIC_MAPS_PROVIDER=google`` (the default) don't have
+      // to touch HERE at all.  Manual .aar / .xcframework drop docs
+      // in ``mobile/heresdk/README.md``.
+      ...(process.env.EXPO_PUBLIC_HERE_ACCESS_KEY_ID
+        ? [
+            [
+              "react-native-here-explore",
+              {
+                accessKeyId: process.env.EXPO_PUBLIC_HERE_ACCESS_KEY_ID,
+                // The secret is resolved at build time via an EAS
+                // secret — never plain env, never git.
+                accessKeySecret: process.env.HERE_ACCESS_KEY_SECRET || undefined,
+              },
+            ],
+          ]
+        : []),
     ],
 
     /* ─── Extra ────────────────────────────────────────────── */

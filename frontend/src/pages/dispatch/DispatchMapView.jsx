@@ -10,7 +10,7 @@
 // the map only pans when the user Ctrl/⌘-scrolls, otherwise the
 // page scrolls naturally. See /app/memory/PRD.md § Phase 17.
 import React from "react";
-import { Map, AdvancedMarker, InfoWindow, useMap } from "@vis.gl/react-google-maps";
+import { Map, AdvancedMarker, InfoWindow, useMap } from "@/lib/maps";
 import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import { colors } from "@/theme";
 import { colorForPin } from "@/pages/dispatch/dispatchColors";

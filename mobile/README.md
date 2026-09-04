@@ -122,3 +122,25 @@ Central utility: `src/utils/mapsKey.tsx`
 - [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/)
 - [Expo on GitHub](https://github.com/expo/expo)
 - [Discord community](https://chat.expo.dev)
+
+---
+
+## Maps provider (Phase K39b · Feb-2026)
+
+The app supports two map providers behind a runtime env flag. Google is the default. HERE is opt-in.
+
+| Variable | Location | Default | Purpose |
+| --- | --- | --- | --- |
+| `EXPO_PUBLIC_MAPS_PROVIDER` | plain env / EAS var | `"google"` | `"google"` \| `"here"`. |
+| `EXPO_PUBLIC_HERE_ACCESS_KEY_ID` | plain env / EAS var | `""` | HERE Access Key ID (public-safe). |
+| `HERE_ACCESS_KEY_SECRET` | **EAS secret only** | `""` | HERE Access Key Secret. Never plain env, never git. |
+
+Behaviour:
+- **`google` (default)** — `react-native-maps` runs unchanged, both on Expo Go and dev-client builds.
+- **`here` + creds present** — `react-native-here-explore` renders HERE tiles. Requires a dev-client / EAS build (Expo Go won't work).
+- **`here` + creds empty OR SDK binary missing** — every map surface renders the K39b `MapUnavailablePlaceholder`; no crashes.
+
+Full binary drop procedure lives in [`heresdk/README.md`](./heresdk/README.md).
+
+**Customer portal rule (K39b amendment):** the customer-portal screens (`app/portal/**`) MUST NOT import from `@/src/lib/maps` (or from `react-native-maps` / `react-native-here-explore` directly). Any customer-facing map has to live inside its own locally-scoped component with its own error boundary. This is enforced by a jest guard (`__tests__/portal-maps-guard.test.ts`).
+

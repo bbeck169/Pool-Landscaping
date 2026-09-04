@@ -1,3 +1,93 @@
+## Phase K39b · Mobile maps migration (Google → HERE, feature-flagged) — SHIPPED
+
+**Scope.** Same shape as K39a, applied to the Expo/React-Native app under `/app/mobile/`. Google (react-native-maps) stays default. HERE (react-native-here-explore) is opt-in behind a flag. No react-native-maps removal (that's K39c).
+
+### Abstraction layer (new — `mobile/src/lib/maps/`)
+- `index.ts` — public API surface. Every consumer imports **only** from `@/src/lib/maps`.
+- `provider.ts` — `_computeProvider(env)` pure fn + `useMapsProvider()` hook + one-shot fallback `console.warn` (same shape as K39a web).
+- `googleAdapter.tsx` — thin pass-through over `react-native-maps` (MapView, Marker, Polyline, Polygon, Circle, PROVIDER_GOOGLE, Region, MapViewProps).
+- `hereAdapter.tsx` — wraps `react-native-here-explore` via guarded `require(...)`. Missing SDK / missing binaries → renders `MapUnavailablePlaceholder` (from `src/utils/mapsKey`) with a "HERE SDK not installed" copy per K39b §4 boundary contract.
+
+### Env vars (added to `mobile/.env`)
+- `EXPO_PUBLIC_MAPS_PROVIDER` — `"google"` (default) | `"here"`.
+- `EXPO_PUBLIC_HERE_ACCESS_KEY_ID` — HERE Access Key ID (public-safe).
+- `HERE_ACCESS_KEY_SECRET` — HERE Access Key Secret. **EAS secret only**, never plain env.
+
+### `app.config.js`
+Registered `react-native-here-explore`'s Expo config plugin — guarded so it's only added when `EXPO_PUBLIC_HERE_ACCESS_KEY_ID` is set. `HERE_ACCESS_KEY_SECRET` is resolved at build time via an EAS secret. Devs building with default `google` never touch HERE at all.
+
+### Binary drop procedure
+- `mobile/heresdk/README.md` — new; documents the manual `.aar` (Android) + `.xcframework` (iOS) drop. Binaries are NOT committed (licensed artifacts + each dev/CI runner pulls their own).
+- `mobile/scripts/heresdk-check.js` — new; wired as `postinstall`. Prints a friendly warning when binaries are missing and exits 0 (yarn install never fails). Verified locally.
+
+### Consumers migrated (imports now go through `@/src/lib/maps`)
+- `src/components/schedule/ScheduleMap.native.tsx` (K36 lazy-mount chunk — pattern preserved)
+- `src/components/d2d/MapCanvas.native.tsx`
+- `src/components/measure/MeasureMap.native.tsx`
+
+Grep confirmation: zero `from "react-native-maps"` outside `src/lib/maps/googleAdapter.tsx` and test mocks.
+
+### K39b AMENDMENT · Feb-2026 — Customer-portal maps guard
+Amendment: no file under `mobile/app/portal/**` may import from `@/src/lib/maps`, `react-native-maps`, or `react-native-here-explore`. Structurally enforced by `__tests__/portal-maps-guard.test.ts` which walks `app/portal/**` and fails the suite if any file matches a forbidden import. If a customer-portal screen ever needs a map, it must mount a locally-scoped component with its own error boundary. Documented in `mobile/README.md`.
+
+### Tests
+- `__tests__/maps-abstraction.test.ts` — 7 tests: resolver defaults / here-with-key / fallback+warn-once / google adapter passthrough / HERE adapter selection under here flag / ScheduleMap.native import grep / MapCanvas + MeasureMap import grep.
+- `__tests__/portal-maps-guard.test.ts` — 22 files scanned across `app/portal/**`, 0 forbidden imports → guard green.
+- Regression suite (all still green): `bulk-charge-ach-mobile`, `schedule-error-boundary`, `schedule-loading-timeout`. Total 42 mobile tests passing after K39b.
+
+### Verified locally
+- `yarn install` runs `postinstall` → prints K39b warning ("HERE SDK binaries not present") and exits 0.
+- Consumer file imports go through `@/src/lib/maps` only (verified by grep + jest static scan).
+- Under `EXPO_PUBLIC_MAPS_PROVIDER=google` (default), the abstraction re-exports `react-native-maps` unchanged → dev-client builds behave identically to pre-K39b.
+
+### Honest friction notes
+- `react-native-here-explore` (the JS npm package) is installable from the public registry, but the actual HERE SDK **native binaries** (.aar / .xcframework) ship on developer.here.com behind a login. That's a manual drop for anyone building HERE mode — no way around it until HERE publishes a public artifact endpoint.
+- We did NOT add `react-native-here-explore` to `mobile/package.json` yet — the `postinstall` guard makes this a two-line follow-up when someone wants HERE mode live (add dep + drop binaries). The `hereAdapter.tsx` `require(...)` guard means the missing dep doesn't crash Google mode.
+
+---
+
+
+## Phase K39a · Web maps migration (Google → HERE, feature-flagged) — SHIPPED
+
+**Scope.** Add HERE Maps as an opt-in provider gated by a runtime flag; keep Google as the default and fallback. No Google removal (that's K39c). Landed with the amendment: shell-level maps provider MUST NEVER mount for customer-portal users.
+
+### Abstraction layer (new)
+- `frontend/src/lib/maps/index.js` — public API: `MapsProviderGate`, `useMapsProvider`, `Map`, `MapView`, `AdvancedMarker`, `Marker`, `InfoWindow`, `Polyline`, `Pin`, `useMap`, `useMapsLibrary`. Runtime dispatch to the active adapter.
+- `frontend/src/lib/maps/googleAdapter.jsx` — thin pass-through over `@vis.gl/react-google-maps`; late-binding wrappers so partial vitest mocks don't blow up.
+- `frontend/src/lib/maps/hereAdapter.jsx` — HERE JS API wrapper. Lazy dynamic import so the SDK never lands unless the flag is `here`. Never throws at render time — missing key / missing package / SDK init crash → `Map unavailable` fallback tile (`data-testid="maps-here-fallback"`).
+- `frontend/src/lib/maps/MapsProviderGate.jsx` — top-level dispatcher (Google `APIProvider` vs HERE no-op).
+- `frontend/src/lib/maps/provider.js` — `_computeProvider(env)` pure fn + one-shot `console.warn` on `here` + empty-key fallback.
+- `frontend/src/lib/maps/README.md` — env matrix, HERE `.npmrc` install instructions, boundary contract.
+
+### Env flags (added to `frontend/.env`)
+- `REACT_APP_MAPS_PROVIDER` — `"google"` (default) | `"here"`.
+- `REACT_APP_HERE_API_KEY` — HERE JavaScript API key (default `""`). If flag=`here` + key empty → warn once + fall back to Google.
+
+### Consumers migrated (imports now go through `@/lib/maps`)
+- `src/layouts/AppLayout.jsx` (K37 `PortalErrorBoundary` intact; `<APIProvider>` swapped for `<MapsProviderGate>`)
+- `src/pages/dispatch/DispatchMapView.jsx`
+- `src/pages/dispatch/LiveTechPinsLayer.jsx`
+- `src/pages/schedule/ScheduleMap.jsx`
+- `src/pages/admin/RouteReplayPanel.jsx`
+- `src/pages/admin/GeofencesPage.jsx`
+
+Grep confirmation: zero `from "@vis.gl/react-google-maps"` outside `src/lib/maps/` and `src/test/`. Legacy `@react-google-maps/api` consumers (older SDK, out of K39a spec) untouched.
+
+### K39a AMENDMENT · Feb-2026 — Customer-portal shell must NOT mount maps
+Amendment: shell-level `<MapsProviderGate>` renders **only** for staff users. Detection uses `useAuth().user.role === "customer"` (the codebase-canonical field, verified). Customer role + unauthenticated `/portal/*` → children rendered without any maps wrapper. No `google.maps` script tag, no HERE dynamic import. K37 `<PortalErrorBoundary>` still wraps both branches. Structurally eliminates the "bad Google key blanks Trina's portal" class of bug regardless of provider or key validity.
+
+### Tests
+- `src/test/maps-provider-gate.test.jsx` — 7 tests: provider resolver defaults / here-with-key / fallback+warn-once / gate renders google `APIProvider` under default / gate is no-op under HERE / snapshot regression / HERE fallback tile renders when key missing.
+- `src/test/portal-maps-guard.test.jsx` — 5 tests: customer role → no `<MapsProviderGate>` + no `google.maps` script; admin + super_admin → gate mounted; unauth `/portal/*` → redirected to `/portal/login`; unauth non-portal → redirected to `/login`.
+- Regression suite (all still green): `dispatch-live-pins`, `schedule-map`, `route-replay-panel`, `geofences-page`, `slice-p17-dispatch-board`, `live-pins-address`, `tech-schedule-map-toggle`.
+
+### Verified in preview
+- Staff (super@aquaterra.com) dispatch board: 3 `maps.googleapis.com` scripts loaded, map tiles render (screenshot).
+- Customer (`rblake@outlook.com`) `/portal/home`: **zero** `maps.googleapis.com` / `js.api.here.com` scripts, `window.google.maps` is `undefined` (screenshot).
+
+---
+
+
 ## Phase K38 · Bulk Charge ACH on File (Backend + Web + Mobile) — SHIPPED
 
 **Scope.** Mirror the K14 "Bulk Charge Card on File" flow for ACH

@@ -1,6 +1,6 @@
 import React from "react";
 import { StyleSheet, View, Text } from "react-native";
-import MapView, { Marker, Polyline, Polygon } from "react-native-maps";
+import { MapView, Marker, Polyline, Polygon } from "@/src/lib/maps";
 import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
 
 type Coord = { latitude: number; longitude: number };

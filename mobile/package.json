@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "preinstall": "./scripts/cmd-guard.js --preinstall",
+    "postinstall": "node ./scripts/heresdk-check.js",
     "//scripts-note": "Feb-2026 · switched from bare ``expo`` to ``npx expo`` so any CI / build container that runs ``yarn <script>`` without ``./node_modules/.bin`` on PATH resolves the CLI correctly (previously showed as ``expo: command not found`` in emergent's EAS build Step #5).",
     "start": "npx expo start",
     "tunnel": "npx expo start --tunnel",

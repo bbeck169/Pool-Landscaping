@@ -13,7 +13,7 @@
  * Single-ping:  1 ping only             → static marker, no controls
  */
 import React from "react";
-import { Map, useMap, AdvancedMarker } from "@vis.gl/react-google-maps";
+import { Map, useMap, AdvancedMarker } from "@/lib/maps";
 import { Play, Pause, RotateCcw, MapPin, Route, Clock, Share2 } from "lucide-react";
 import { colors } from "@/theme";
 import useGpsRoute from "@/hooks/useGpsRoute";

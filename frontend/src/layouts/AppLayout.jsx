@@ -1,6 +1,6 @@
 import React from "react";
 import { NavLink, Outlet, useNavigate, Navigate, useLocation } from "react-router-dom";
-import { APIProvider } from "@vis.gl/react-google-maps";
+import MapsProviderGate from "@/lib/maps/MapsProviderGate";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
@@ -326,13 +326,35 @@ function ProtectedShell() {
   // key or provider throw surfaces a visible fallback card instead
   // of taking down the whole app. `resetKey={location.pathname}`
   // clears the error state when the user navigates elsewhere.
+  //
+  // K39a · Feb-2026 — the raw ``<APIProvider>`` is now behind
+  // ``<MapsProviderGate>`` (``@/lib/maps``) so a runtime env flag
+  // (``REACT_APP_MAPS_PROVIDER``) can swap Google for HERE without
+  // touching the shell. Google remains the default; behaviour is
+  // byte-identical under ``provider=google``.
+  //
+  // K39a AMENDMENT · Feb-2026 — the maps provider is STAFF-ONLY
+  // infrastructure. Customer-portal users (``user.role ===
+  // "customer"``) and unauthenticated requests to ``/portal/*``
+  // routes must NEVER cause a maps runtime to mount at the shell:
+  // no ``google.maps`` <script> tag, no HERE SDK dynamic import,
+  // no <APIProvider>. If a future customer-portal page needs a
+  // map (e.g. service-report location pin), it MUST mount its
+  // own local <MapsProviderGate> inside that component with its
+  // own local error boundary — shell-level mount is forbidden
+  // for the customer portal, permanently. This makes the "bad
+  // Maps key blanks Trina's portal" class of bug structurally
+  // impossible for customers regardless of provider or key
+  // validity.
   const mapsKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || "";
-  if (mapsKey) {
+  const isCustomer = (user?.role || "") === "customer";
+  const shouldMountMaps = !isCustomer && Boolean(mapsKey);
+  if (shouldMountMaps) {
     return (
       <PortalErrorBoundary label="portal-shell" resetKey={location.pathname}>
-        <APIProvider apiKey={mapsKey} libraries={["marker", "geometry"]}>
+        <MapsProviderGate apiKey={mapsKey} libraries={["marker", "geometry"]}>
           <AppLayout />
-        </APIProvider>
+        </MapsProviderGate>
       </PortalErrorBoundary>
     );
   }
