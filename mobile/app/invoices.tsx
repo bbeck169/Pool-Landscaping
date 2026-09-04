@@ -18,6 +18,10 @@ Object.assign(statusMeta, {
 });
 
 const FILTERS = [
+  // Phase K40 · Feb-2026 — "All" is now the default. "Outstanding"
+  // stays as a legacy pass-through chip; both bypass the boolean
+  // field filter (see filter loop in ``load``).
+  { key: "all", label: "All" },
   { key: "outstanding", label: "Outstanding" },
   { key: "pending", label: "Pending" },
   { key: "past_due", label: "Past Due" },
@@ -28,7 +32,7 @@ const FILTERS = [
 export default function Invoices() {
   const router = useRouter();
   const [data, setData] = useState<any>({ summary: null, invoices: [] });
-  const [filter, setFilter] = useState("outstanding");
+  const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [payFor, setPayFor] = useState<any>(null);
@@ -52,7 +56,13 @@ export default function Invoices() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const invoices = (data.invoices || []).filter((i: any) => (filter === "outstanding" ? true : i[filter]));
+  // Phase K40 · Feb-2026 — treat both ``"all"`` (the K40 default) and
+  // ``"outstanding"`` (legacy shortcut) as "no filter" pass-through.
+  // Any other value maps to a boolean field on the invoice row
+  // (``pending``, ``paid``, ``overdue`` …).
+  const invoices = (data.invoices || []).filter((i: any) =>
+    filter === "all" || filter === "outstanding" ? true : i[filter],
+  );
   const visibleIds = invoices.map((i: any) => i.id);
   const bulk = useBulkSelect(visibleIds);
   const exitSelectMode = () => { setSelectMode(false); bulk.clear(); };

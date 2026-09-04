@@ -97,25 +97,19 @@ export default function CustomersList() {
   // as an alias for ``?tab`` so the tile deep-link lands on the
   // right cohort. ``?tab`` still wins if both are present (existing
   // bookmarks / manual URL edits keep their meaning).
-  // Phase F6c · Feb-2026 — persist the active/inactive cohort tab under
-  // ``customerListFilter.status`` so a page refresh keeps the operator's
-  // last pick even without a bookmarked ?tab= param. Web parity with
-  // mobile (F6b) which uses the same key.
-  const _COHORT_STORAGE_KEY = "customerListFilter.status";
+  //
+  // Phase K40 · Feb-2026 — site-wide "no persistence across page
+  // loads" rule. Customers is the ONE explicit exception to the
+  // "default to All" policy: the tab still defaults to ``"active"``
+  // when no URL param is present. The previous localStorage read
+  // (F6c / H4) has been REMOVED so a page refresh always lands the
+  // operator back on the Active cohort. Explicit URL params (``?tab=``
+  // / ``?status=``) still win — see K40 rule #4.
   const initialTab = (() => {
     if (cohortParam === "inactive") return "inactive";
     if (cohortParam === "active") return "active";
     const urlTab = searchParams.get("tab") || searchParams.get("status");
     if (urlTab) return urlTab;
-    try {
-      const stored = localStorage.getItem(_COHORT_STORAGE_KEY);
-      // Phase H4 · Feb-2026 — accept "waitlist" as a persisted cohort
-      // value alongside the F6c set. Keeps the localStorage key
-      // singular across all five segmented tabs.
-      if (stored === "active" || stored === "inactive" ||
-          stored === "muted" || stored === "waitlist" ||
-          stored === "all") return stored;
-    } catch { /* localStorage unavailable — best-effort */ }
     return "active";
   })();
   const [tab, setTab] = useState(initialTab);
@@ -123,10 +117,7 @@ export default function CustomersList() {
   // initial ``?page=N`` query param — we only want to reset page
   // when the operator ACTIVELY changes the tab.
   const _tabInitRef = React.useRef(true);
-  // Persist tab changes for the next mount.
   useEffect(() => {
-    try { localStorage.setItem(_COHORT_STORAGE_KEY, tab); }
-    catch { /* localStorage unavailable — best-effort */ }
     if (_tabInitRef.current) {
       _tabInitRef.current = false;
       return;
@@ -200,29 +191,25 @@ export default function CustomersList() {
   // Options: all (default, no filter) | activated | not_activated.
   // Stacks with the segmented cohort tabs so operators can chase
   // signups ("Inactive + Not activated", "Active + Activated" etc.).
-  // Persisted under ``customerListFilter.portalStatus`` mirroring
-  // the F6c ``customerListFilter.status`` key convention.
-  const _PORTAL_STORAGE_KEY = "customerListFilter.portalStatus";
+  //
+  // Phase K40 · Feb-2026 — site-wide "no persistence across page
+  // loads" rule for filter dropdowns. The previous
+  // ``customerListFilter.portalStatus`` localStorage read + write
+  // has been REMOVED. Every mount lands on the "All" bucket
+  // regardless of the operator's last selection. Explicit URL
+  // params are NOT honored for the portal filter today (no deep-
+  // link pathway shipped) but the initializer is a stable literal
+  // so adding one later is trivial.
   const _PORTAL_STATUS_OPTIONS = [
     { value: "all",           label: "Portal: All" },
     { value: "activated",     label: "Portal: Activated" },
     { value: "not_activated", label: "Portal: Not activated" },
   ];
-  const _PORTAL_STATUS_VALUES = new Set(
-    _PORTAL_STATUS_OPTIONS.map((o) => o.value),
-  );
-  const [portalStatus, setPortalStatus] = useState(() => {
-    try {
-      const raw = localStorage.getItem(_PORTAL_STORAGE_KEY);
-      return raw && _PORTAL_STATUS_VALUES.has(raw) ? raw : "all";
-    } catch { return "all"; }
-  });
-  // Mount-skip guard so hydrating from localStorage on first render
-  // does NOT reset page=1 (F6c-shaped invariant).
+  const [portalStatus, setPortalStatus] = useState("all");
+  // Mount-skip guard so the first render doesn't reset page=1 (F6c-
+  // shaped invariant preserved even though persistence is gone).
   const _portalStatusInitRef = React.useRef(true);
   useEffect(() => {
-    try { localStorage.setItem(_PORTAL_STORAGE_KEY, portalStatus); }
-    catch { /* localStorage unavailable — best-effort */ }
     if (_portalStatusInitRef.current) {
       _portalStatusInitRef.current = false;
       return;

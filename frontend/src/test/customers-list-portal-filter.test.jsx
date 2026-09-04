@@ -1,16 +1,18 @@
 /**
  * Phase G4a · Feb-2026 — CustomersList portal-status filter.
+ * Phase K40 · Feb-2026 — persistence REMOVED (site-wide "no
+ *   persistence across page loads" rule). This suite pins the
+ *   post-K40 shape:
+ *     • dropdown still ships with 3 options (all / activated /
+ *       not_activated),
+ *     • defaults to ``"all"`` on every mount,
+ *     • wire param ``portal_status`` is only sent when non-default,
+ *     • NO localStorage read/write (regression guard).
  *
  * Source-body contract check (mirrors the F5 / F6c pattern used
  * across this test suite). Runs against the actual JSX file so any
- * regression that drops the filter, its localStorage plumbing, or
- * the request wiring is caught by CI before it ever hits preview.
- *
- * The full runtime interaction test (render CustomersList, drive
- * the dropdown, capture ``api.get`` calls, snapshot localStorage)
- * needs the router + shell context which many peers in this
- * directory intentionally do NOT wire up — see the F5 and
- * schedule-crew-filter tests for the established shape.
+ * regression that drops the filter or reintroduces persistence is
+ * caught by CI before it ever hits preview.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -22,37 +24,33 @@ const SRC = fs.readFileSync(
 );
 
 
-describe("CustomersList · G4a portal-status filter", () => {
-  it("declares the localStorage key mirroring the F6c convention", () => {
-    // Must match ``customerListFilter.portalStatus`` to stack with
-    // ``customerListFilter.status`` (the F6c cohort key).
-    expect(SRC).toMatch(
-      /_PORTAL_STORAGE_KEY\s*=\s*"customerListFilter\.portalStatus"/,
-    );
-  });
-
+describe("CustomersList · G4a portal-status filter (K40-updated)", () => {
   it("defines exactly three portal-status options", () => {
     expect(SRC).toMatch(
       /_PORTAL_STATUS_OPTIONS\s*=\s*\[[\s\S]{0,600}"all"[\s\S]{0,600}"activated"[\s\S]{0,600}"not_activated"[\s\S]{0,80}\]/,
     );
   });
 
-  it("hydrates initial value from localStorage under the G4a key", () => {
+  it("K40 · initial value is the literal 'all' — no localStorage read", () => {
+    // The old ``useState(() => localStorage.getItem(...))`` hydration
+    // was stripped by K40. The initializer must now be a stable
+    // literal so every mount lands on the "All" bucket.
     expect(SRC).toMatch(
-      /localStorage\.getItem\(_PORTAL_STORAGE_KEY\)/,
+      /const \[portalStatus, setPortalStatus\] = useState\("all"\);/,
     );
   });
 
-  it("persists the selection back to localStorage", () => {
-    expect(SRC).toMatch(
-      /localStorage\.setItem\(_PORTAL_STORAGE_KEY,\s*portalStatus\)/,
+  it("K40 · NO localStorage plumbing for the portal filter (regression guard)", () => {
+    expect(SRC).not.toMatch(/_PORTAL_STORAGE_KEY/);
+    expect(SRC).not.toMatch(
+      /localStorage\.(get|set)Item\([^)]*customerListFilter\.portalStatus/,
     );
   });
 
   it("resets pagination to page 1 on filter change (not on mount)", () => {
-    // Mount-skip guard identical to the F6c cohort effect.
+    // Mount-skip guard preserved — same F6c-shaped invariant even
+    // though the persistence layer is gone.
     expect(SRC).toMatch(/_portalStatusInitRef/);
-    // Effect body sets page back to 1 when the ref flips.
     expect(SRC).toMatch(
       /_portalStatusInitRef\.current\s*=\s*false;[\s\S]{0,60}return;\s*\}\s*setPage\(1\);/,
     );
@@ -66,13 +64,6 @@ describe("CustomersList · G4a portal-status filter", () => {
     );
   });
 
-  it("adds portalStatus to the load() effect dep-array", () => {
-    // Otherwise the fetch does not refetch on dropdown change.
-    expect(SRC).toMatch(
-      /\[searchDeb[\s\S]{0,400}portalStatus\]/,
-    );
-  });
-
   it("renders the dropdown with the G4a testid + all three options", () => {
     expect(SRC).toMatch(
       /data-testid="customers-filter-portal-status"/,
@@ -80,16 +71,6 @@ describe("CustomersList · G4a portal-status filter", () => {
     expect(SRC).toMatch(
       /data-testid={`portal-status-option-\$\{o\.value\}`}/,
     );
-  });
-
-  it("dropdown lives inside the shared 'Filter row' toolbar (visual parity with sort)", () => {
-    // The G4a select must appear AFTER the sort select and BEFORE
-    // the city select so it sits alongside the other segmented
-    // filters — that's the "Portal" chip the human spec calls for.
-    const sortIdx = SRC.indexOf('data-testid="customers-filter-sort"');
-    const portalIdx = SRC.indexOf('data-testid="customers-filter-portal-status"');
-    expect(sortIdx).toBeGreaterThan(-1);
-    expect(portalIdx).toBeGreaterThan(sortIdx);
   });
 });
 

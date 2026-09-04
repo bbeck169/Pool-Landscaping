@@ -1,26 +1,23 @@
 /**
- * customersActiveFilter.test.tsx — Phase K25
- * Tests for the Active/Inactive/Waitlist/All segmented control on the
- * customers list, plus AsyncStorage persistence.
+ * customersActiveFilter.test.tsx — Phase K25 (updated for Phase K40)
  *
- * The customers list (app/(app)/customers.tsx) is too large to render
- * fully in isolation (many imports). Instead, we test the filter's
- * behavior by asserting the query-string construction logic and the
- * storage persistence pattern.
+ * Phase K40 · Feb-2026 — the Customers list is the ONE exception to
+ * the "default to All / no filter" rule: the segmented control still
+ * defaults to ``"active"``. However K40 REMOVED the AsyncStorage
+ * persistence layer — every mount lands on Active regardless of the
+ * operator's last selection (unless a URL param overrides it, which
+ * this list surfaces via router state today).
+ *
+ * The customers list (``app/(app)/customers.tsx``) is too large to
+ * render fully in isolation. This suite still exercises the pure
+ * query-param mapping logic (unchanged by K40) and now enforces
+ * that the AsyncStorage read/write is GONE (regression guard).
  */
 
-/* ── Mocks ─────────────────────────────────────────── */
+import fs from "node:fs";
+import path from "node:path";
 
-const mockSetItem = jest.fn().mockResolvedValue(undefined);
-const mockGetItem = jest.fn().mockResolvedValue(null);
-jest.mock("@/src/utils/storage", () => ({
-  storage: {
-    setItem: (...args: any[]) => mockSetItem(...args),
-    getItem: (...args: any[]) => mockGetItem(...args),
-  },
-}));
-
-/* ── Tests ──────────────────────────────────────────── */
+/* ── Query-string mapping (unchanged by K40) ─────────────────── */
 
 describe("Customer status filter — query param logic", () => {
   it("maps 'active' → is_active=true", () => {
@@ -69,58 +66,35 @@ describe("Customer status filter — query param logic", () => {
   });
 });
 
-describe("Customer status filter — AsyncStorage persistence", () => {
-  beforeEach(() => {
-    mockSetItem.mockClear();
-    mockGetItem.mockClear();
+/* ── K40 · No-persistence contract check (source-body regex) ───── */
+
+const CUSTOMERS_SRC = fs.readFileSync(
+  path.resolve(__dirname, "..", "app", "(app)", "customers.tsx"),
+  "utf-8",
+);
+
+describe("Phase K40 · Customers status filter — NO AsyncStorage persistence", () => {
+  it("statusFilter initializer is the literal 'active' (no storage.getItem)", () => {
+    expect(CUSTOMERS_SRC).toMatch(
+      /useState<"active" \| "inactive" \| "all" \| "waitlist">\("active"\)/,
+    );
   });
 
-  it("persists selection to storage on change", async () => {
-    const STATUS_KEY = "customerListFilter.status";
-    const seg = "inactive";
-    await mockSetItem(STATUS_KEY, seg);
-    expect(mockSetItem).toHaveBeenCalledWith(STATUS_KEY, "inactive");
+  it("portalFilter initializer is the literal 'all' (no storage.getItem)", () => {
+    expect(CUSTOMERS_SRC).toMatch(
+      /useState<"all" \| "activated" \| "not_activated">\("all"\)/,
+    );
   });
 
-  it("reads persisted selection on mount", async () => {
-    const STATUS_KEY = "customerListFilter.status";
-    mockGetItem.mockResolvedValue("inactive");
-    const val = await mockGetItem(STATUS_KEY, "active");
-    expect(val).toBe("inactive");
-    expect(mockGetItem).toHaveBeenCalledWith(STATUS_KEY, "active");
+  it("no ``storage.getItem`` call for filter keys anywhere in the file", () => {
+    expect(CUSTOMERS_SRC).not.toMatch(
+      /storage\.getItem[^;]*customerListFilter\./,
+    );
   });
 
-  it("defaults to 'active' when no stored value", async () => {
-    mockGetItem.mockResolvedValue(null);
-    const val = await mockGetItem("customerListFilter.status", "active");
-    expect(val).toBeNull();
-    // Component would use "active" default
-  });
-});
-
-describe("Schedule crew filter — AsyncStorage persistence", () => {
-  beforeEach(() => {
-    mockSetItem.mockClear();
-    mockGetItem.mockClear();
-  });
-
-  it("persists crew selection to storage on change", async () => {
-    const CREW_KEY = "k25_schedule_crew_filter";
-    const crewId = "crew-123";
-    await mockSetItem(CREW_KEY, crewId);
-    expect(mockSetItem).toHaveBeenCalledWith(CREW_KEY, "crew-123");
-  });
-
-  it("reads persisted crew filter on mount", async () => {
-    const CREW_KEY = "k25_schedule_crew_filter";
-    mockGetItem.mockResolvedValue("crew-456");
-    const val = await mockGetItem(CREW_KEY, "");
-    expect(val).toBe("crew-456");
-  });
-
-  it("clears crew filter (empty string) when 'All crews' selected", async () => {
-    const CREW_KEY = "k25_schedule_crew_filter";
-    await mockSetItem(CREW_KEY, "");
-    expect(mockSetItem).toHaveBeenCalledWith(CREW_KEY, "");
+  it("no ``storage.setItem`` call for filter keys anywhere in the file", () => {
+    expect(CUSTOMERS_SRC).not.toMatch(
+      /storage\.setItem[^;]*customerListFilter\./,
+    );
   });
 });

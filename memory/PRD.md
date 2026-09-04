@@ -1,3 +1,54 @@
+## Phase K40 · Default all filter dropdowns to "No filter" site-wide — SHIPPED
+
+**Scope.** Standardize filter defaults across every list page on Web + Mobile so every mount lands on "All / No filter", persistence is removed, and Customers list remains the ONE cohort exception (defaults to "Active"). Explicit URL params still win.
+
+### Discovery table
+
+| Surface | File | Filter | Before | After (K40) | URL param honored |
+|---|---|---|---|---|---|
+| Web | `pages/customers/CustomersList.jsx` | tab (cohort) | localStorage → "active" | literal "active" **(EXCEPTION)** | `?tab` / `?status` |
+| Web | `pages/customers/CustomersList.jsx` | portalStatus | localStorage → "all" | literal "all" | no |
+| Web | `pages/customers/CustomersList.jsx` | sortBy (NOT a filter — retained) | localStorage | localStorage (kept) | no |
+| Web | `pages/invoices/InvoicesList.jsx` | status / card / category | URL / "" / "any" | unchanged | yes |
+| Web | `pages/quotes/QuotesList.jsx` | status | URL / "" | unchanged | yes |
+| Web | `pages/jobs/JobsList.jsx` | status | URL / "" | unchanged | yes |
+| Web | `pages/job_requests/JobRequestsPages.jsx` | status | already "" (pre-fixed earlier) | unchanged | no |
+| Web | `pages/comms/CommsPages.jsx` (Sends) | kind / status | "" / "" | unchanged | no |
+| Web | `pages/reviews/ReviewsPages.jsx` (Requests) | filterOutcome | "" | unchanged | no |
+| Web | `pages/leads/LeadsDashboardPage.jsx` | source / status | "" / "" | unchanged | no |
+| Web | `pages/admin/AdminUsersList.jsx` | role | "" | unchanged | no |
+| Web | `pages/admin/AdminReviewsPage.jsx` | status / is_public / min / max | "" all | unchanged | no |
+| Web | `pages/admin/AdminTimeEntriesList.jsx` | approvedFilter | "" | unchanged | no |
+| Web | `pages/finance/FinancePages.jsx` (Payments) | method / status | "all" / "" | unchanged | no |
+| Web | `pages/AdminTimeOffPage.jsx` | tab | **"pending"** | **"all"** | no |
+| Web | `pages/social/SocialExtras.jsx` (Approvals) | status | **"pending"** (no "All" option) | **""** + new "All" option in dropdown | no |
+| Mobile | `app/(app)/customers.tsx` | statusFilter | literal "active" (AsyncStorage already removed pre-K40 handoff) | literal "active" **(EXCEPTION)** | no |
+| Mobile | `app/(app)/customers.tsx` | portalFilter | literal "all" | unchanged | no |
+| Mobile | `app/(app)/jobs.tsx` | filter | "all" | unchanged | no |
+| Mobile | `app/invoices.tsx` | filter | "all" | unchanged | no |
+| Mobile | `app/leads/index.tsx` | filter | "all" | unchanged | no |
+| Mobile | `app/(app)/reviews/requests/index.tsx` | filter | "" | unchanged | no |
+
+Out of scope (verified during discovery, no changes): date range pickers, Dispatch Board default view, Mobile Schedule tech-scoping (`app/(app)/schedule/calendar.tsx` still writes `CREW_FILTER_KEY`), Reports date defaults, search/text-input filters. No dedicated "My/All" assignment-filter dropdown surfaces exist on any of the in-scope list pages today (verified by grep) — the rule applies preemptively should one land.
+
+### Code changes (3 files)
+1. `frontend/src/pages/customers/CustomersList.jsx` — removed `_PORTAL_STORAGE_KEY` + its `localStorage.getItem` / `localStorage.setItem` calls; initializer is now the literal `"all"`. Mount-skip page-reset guard preserved.
+2. `frontend/src/pages/AdminTimeOffPage.jsx` — default `tab` changed from `"pending"` to `"all"`.
+3. `frontend/src/pages/social/SocialExtras.jsx` (ApprovalsPage) — default `status` changed from `"pending"` to `""`; added `<option value="">All</option>` to the dropdown; `load()` now sends `?status=` only when non-empty.
+
+### Tests (Vitest + Jest)
+- Web (new): `src/test/k40-default-filters.test.jsx` — 23 tests × 4 K40 rules × 13 in-scope files.
+- Web (updated to reflect K40 removal of persistence): `customers-list-active-filter.test.jsx`, `customers-list-portal-filter.test.jsx`, `customers-list-waitlist-tab.test.jsx`.
+- Mobile (new): `__tests__/k40-default-filters.test.tsx` — 11 tests across customers / jobs / invoices / leads / reviews.
+- Mobile (updated): `customersActiveFilter.test.tsx` (persistence-absence regression guard), `mobile-customer-status-filter.test.tsx` (CSF-T5 flipped to "NOT persisted"), `mobile-portal-filter.test.tsx` (PF-T5/PF-T7 flipped to K40 behaviour).
+- **Result:** web `k40-default-filters + customers-list-* = 47/47 passing`. Mobile `k40-default-filters + customersActiveFilter + mobile-customer-status-filter + mobile-portal-filter = 31/31 passing`.
+
+### Notes
+- Sort persistence on Customers (`customers.sortBy`) intentionally retained — K40 scope is filters, not sort. A K40 test locks this carve-out in.
+- The `_portalStatusInitRef` mount-skip guard remains so the first render doesn't stomp `?page=N`.
+
+---
+
 ## Phase K39b · Mobile maps migration (Google → HERE, feature-flagged) — SHIPPED
 
 **Scope.** Same shape as K39a, applied to the Expo/React-Native app under `/app/mobile/`. Google (react-native-maps) stays default. HERE (react-native-here-explore) is opt-in behind a flag. No react-native-maps removal (that's K39c).

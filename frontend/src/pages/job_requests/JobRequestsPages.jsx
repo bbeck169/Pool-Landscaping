@@ -156,7 +156,13 @@ export function RequestJobPage() {
 
 export function AdminJobRequestsPage() {
   const [rows, setRows] = useState(null);
-  const [status, setStatus] = useState("pending");
+  // Phase K40 · Feb-2026 — site-wide "default to All / No filter"
+  // rule. This dropdown previously defaulted to ``"pending"`` so
+  // the admin landed on the incoming queue by default. Per K40, the
+  // initial state is now the "all statuses" bucket ("" == omit the
+  // ``status`` query param). Operators can still pick "Pending"
+  // from the dropdown to reproduce the old behaviour.
+  const [status, setStatus] = useState("");
   const [toast, setToast] = useState(null);
   const [convertOpen, setConvertOpen] = useState(null);   // {req}
   const [rejectOpen, setRejectOpen] = useState(null);     // {req}

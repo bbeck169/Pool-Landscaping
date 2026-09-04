@@ -6,7 +6,9 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { writeCache, readCache } from "@/src/services/readCache";
-import { storage } from "@/src/utils/storage";
+// Phase K40 · Feb-2026 — ``@/src/utils/storage`` no longer needed;
+// K40 removed the AsyncStorage persistence for status + portal filters.
+// (Import stripped by K40.)
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
@@ -44,22 +46,18 @@ export default function Customers() {
 
   // Phase F6b — Active/Inactive/All segmented control.
   // Phase J2 / H4 — Waitlist 4th segment.
-  const STATUS_KEY = "customerListFilter.status";
+  //
+  // Phase K40 · Feb-2026 — site-wide "no persistence across page
+  // loads" rule. Customers is the ONE explicit exception to the
+  // "default to All" policy: statusFilter still defaults to
+  // ``"active"`` on every mount. The previous AsyncStorage read
+  // (F6b / H4) has been REMOVED so a fresh open of the tab always
+  // lands the operator on the Active cohort. Web parity: same
+  // behaviour landed simultaneously in CustomersList.jsx.
   const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "all" | "waitlist">("active");
 
-  // Phase G4b — Portal activation filter.
-  const PORTAL_KEY = "customerListFilter.portalStatus";
+  // Phase G4b — Portal activation filter. K40 — no persistence.
   const [portalFilter, setPortalFilter] = useState<"all" | "activated" | "not_activated">("all");
-
-  // Load persisted filters on mount.
-  useEffect(() => {
-    storage.getItem<string>(STATUS_KEY, "active").then((v: any) => {
-      if (v === "active" || v === "inactive" || v === "all" || v === "waitlist") setStatusFilter(v);
-    }).catch(() => {});
-    storage.getItem<string>(PORTAL_KEY, "all").then((v: any) => {
-      if (v === "all" || v === "activated" || v === "not_activated") setPortalFilter(v);
-    }).catch(() => {});
-  }, []);
 
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
   const bulk = useBulkSelect(visibleIds);
@@ -196,7 +194,7 @@ export default function Customers() {
             key={seg}
             onPress={() => {
               setStatusFilter(seg);
-              storage.setItem(STATUS_KEY, seg).catch(() => {});
+              // Phase K40 — no persistence; page resets on filter change.
               setPage(1);
             }}
             style={[cs.segment, statusFilter === seg && cs.segmentActive]}
@@ -217,7 +215,7 @@ export default function Customers() {
             key={opt}
             onPress={() => {
               setPortalFilter(opt);
-              storage.setItem(PORTAL_KEY, opt).catch(() => {});
+              // Phase K40 — no persistence; page resets on filter change.
               setPage(1);
             }}
             style={[cs.portalChip, portalFilter === opt && cs.portalChipActive]}

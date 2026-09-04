@@ -127,19 +127,22 @@ describe("Portal Activation Filter — G4b", () => {
     console.log("✅ PF-T4: Not activated sends portal_status=not_activated");
   });
 
-  it("persists portal selection to AsyncStorage", async () => {
+  it("does NOT persist portal selection to AsyncStorage (K40)", async () => {
+    // Phase K40 · Feb-2026 — persistence REMOVED. Every mount lands
+    // on ``"all"``; changing the dropdown must NOT touch storage
+    // for the ``customerListFilter.*`` namespace.
     const tree = render(<Customers />);
     await waitFor(() =>
       expect(tree.getByTestId("customer-portal-activated")).toBeTruthy(),
     );
+    mockStorageSet.mockClear();
     fireEvent.press(tree.getByTestId("customer-portal-activated"));
-    await waitFor(() => {
-      expect(mockStorageSet).toHaveBeenCalledWith(
-        "customerListFilter.portalStatus",
-        "activated",
-      );
-    });
-    console.log("✅ PF-T5: portal selection persisted to AsyncStorage");
+    await waitFor(() => expect(mockApiGet).toHaveBeenCalled());
+    const filterWrites = mockStorageSet.mock.calls.filter((args: any[]) =>
+      typeof args[0] === "string" && args[0].startsWith("customerListFilter."),
+    );
+    expect(filterWrites).toHaveLength(0);
+    console.log("✅ PF-T5 (K40): portal selection NOT persisted to AsyncStorage");
   });
 
   it("stacks with Active/Inactive filter (intersection)", async () => {
@@ -162,16 +165,20 @@ describe("Portal Activation Filter — G4b", () => {
     console.log("✅ PF-T6: stacks with Active/Inactive (intersection query)");
   });
 
-  it("loads persisted portal value on mount", async () => {
+  it("K40 · ignores any pre-existing storage value on mount (defaults to 'all')", async () => {
+    // Phase K40 · Feb-2026 — a stale storage value from an older
+    // build must NOT hydrate the filter. Seed the bag and assert
+    // the API never sees ``portal_status=not_activated``.
     storageBag["customerListFilter.portalStatus"] = "not_activated";
     render(<Customers />);
-    // The load fires first with default "all", then storage resolves and
-    // portalFilter updates to "not_activated", triggering load() again.
-    await waitFor(() => {
-      const calls = mockApiGet.mock.calls.map((c: any) => c[0] as string);
-      const hasPersistedCall = calls.some((u: string) => u.includes("portal_status=not_activated"));
-      expect(hasPersistedCall).toBe(true);
-    }, { timeout: 3000 });
-    console.log("✅ PF-T7: persisted value loaded on mount");
+    // Give the load() effect a full tick to fire.
+    await waitFor(() => expect(mockApiGet).toHaveBeenCalled());
+    // Wait a bit longer to ensure no re-fetch was scheduled by a
+    // storage hydration effect (K40 removed that pathway).
+    await new Promise((r) => setTimeout(r, 200));
+    const calls = mockApiGet.mock.calls.map((c: any) => c[0] as string);
+    const anyPortalCall = calls.some((u: string) => u.includes("portal_status="));
+    expect(anyPortalCall).toBe(false);
+    console.log("✅ PF-T7 (K40): stale storage value ignored on mount");
   });
 });

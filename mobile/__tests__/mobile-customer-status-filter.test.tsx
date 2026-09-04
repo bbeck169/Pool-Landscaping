@@ -141,17 +141,26 @@ describe("Customer Status Filter", () => {
   });
 
   it("persists filter to AsyncStorage on change", async () => {
+    // Phase K40 · Feb-2026 — persistence REMOVED. The customers list
+    // no longer writes the segment selection to AsyncStorage; every
+    // mount lands on ``"active"`` per the K40 exception rule for
+    // this list. This test now enforces the ABSENCE of the storage
+    // write so a well-meaning future PR doesn't reintroduce it.
     const tree = render(<Customers />);
     await waitFor(() =>
       expect(tree.getByTestId("customer-status-inactive")).toBeTruthy(),
     );
+    mockStorageSet.mockClear();
     fireEvent.press(tree.getByTestId("customer-status-inactive"));
+    // Give the state change a tick to propagate; assert NO call
+    // touched the ``customerListFilter.*`` namespace.
     await waitFor(() => {
-      expect(mockStorageSet).toHaveBeenCalledWith(
-        "customerListFilter.status",
-        "inactive",
-      );
+      expect(mockApiGet).toHaveBeenCalled(); // fetch fired
     });
-    console.log("✅ CSF-T5: filter persisted to AsyncStorage");
+    const filterWrites = mockStorageSet.mock.calls.filter((args: any[]) =>
+      typeof args[0] === "string" && args[0].startsWith("customerListFilter."),
+    );
+    expect(filterWrites).toHaveLength(0);
+    console.log("✅ CSF-T5 (K40): filter NOT persisted to AsyncStorage");
   });
 });

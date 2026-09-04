@@ -51,14 +51,19 @@ const StatusPill = ({ status }) => {
 /* ═══════════ APPROVALS QUEUE ═══════════ */
 export function ApprovalsPage() {
   const [rows, setRows] = useState([]);
-  const [status, setStatus] = useState("pending");
+  // Phase K40 · Feb-2026 — filter dropdowns must default to "All /
+  // No filter" on every mount. Previously defaulted to
+  // ``"pending"`` (the approvals queue). The empty string is the
+  // "no ``?status`` query param" bucket handled below.
+  const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState("");
   const [comment, setComment] = useState({});
   const [threadOpen, setThreadOpen] = useState(null);
   const [threadDraft, setThreadDraft] = useState("");
 
   const load = async () => {
-    const r = await api.get(`/social/approvals?status=${encodeURIComponent(status)}`);
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    const r = await api.get(`/social/approvals${qs}`);
     setRows(r);
   };
   useEffect(() => { load(); /* eslint-disable-line */ }, [status]);
@@ -90,6 +95,7 @@ export function ApprovalsPage() {
                        className="px-3 py-2 rounded-xl text-sm"
                        style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                        data-testid="approvals-status-filter">
+                 <option value="">All</option>
                  <option value="pending">Pending</option>
                  <option value="approved">Approved</option>
                  <option value="rejected">Rejected</option>

@@ -41,15 +41,14 @@ describe("CustomersList · F6c active/inactive filter parity", () => {
 
   it("persists the tab under customerListFilter.status in localStorage",
      () => {
-    expect(SRC).toMatch(
-      /_COHORT_STORAGE_KEY\s*=\s*"customerListFilter\.status"/,
-    );
-    expect(SRC).toMatch(
-      /localStorage\.setItem\(_COHORT_STORAGE_KEY, tab\)/,
-    );
-    // And reads it back on init.
-    expect(SRC).toMatch(
-      /localStorage\.getItem\(_COHORT_STORAGE_KEY\)/,
+    // Phase K40 · Feb-2026 — persistence REMOVED. The old
+    // ``_COHORT_STORAGE_KEY`` localStorage plumbing has been stripped
+    // per K40 rule #4 (no persistence across page loads). This test
+    // now enforces the ABSENCE of that plumbing so a well-meaning
+    // future PR doesn't reintroduce it.
+    expect(SRC).not.toMatch(/_COHORT_STORAGE_KEY/);
+    expect(SRC).not.toMatch(
+      /localStorage\.(get|set)Item\([^)]*customerListFilter\.status/,
     );
   });
 

@@ -74,11 +74,20 @@ describe("CustomersList · H4 Waitlist cohort tab", () => {
     expect(wlBranch).toBeGreaterThan(mutedBranch);
   });
 
-  it("accepts ``waitlist`` as a valid persisted cohort in the F6c localStorage state machine", () => {
-    // Extend the ``initialTab`` guard so a stored "waitlist" value
-    // survives page refresh instead of falling back to "active".
+  it("accepts ``waitlist`` as a valid initial cohort via URL params (K40)", () => {
+    // Phase K40 · Feb-2026 — localStorage hydration was removed by
+    // K40. The old ``stored === "muted" || stored === "waitlist"``
+    // fallback chain is gone; the initializer now relies on
+    // ``?tab=waitlist`` / ``?status=waitlist`` URL params (which
+    // still win per K40 rule #4) plus the ``"active"`` default.
+    // Regression guard: the branch reading ``searchParams.get("tab")``
+    // must survive so a Waitlist deep-link keeps landing correctly.
+    expect(SRC).toMatch(/searchParams\.get\("tab"\)/);
+    expect(SRC).toMatch(/searchParams\.get\("status"\)/);
+    // And the load() logic must still recognize "waitlist" as a
+    // valid ``tab`` value once selected.
     expect(SRC).toMatch(
-      /stored\s*===\s*"muted"\s*\|\|\s*stored\s*===\s*"waitlist"\s*\|\|\s*stored\s*===\s*"all"/,
+      /else if\s*\(tab\s*===\s*"waitlist"\)\s*params\.set\("waitlisted",\s*"true"\)/,
     );
   });
 
@@ -121,10 +130,18 @@ describe("H4 · previously-shipped cohort tabs still ship (no accidental removal
     expect(SRC).toMatch(/setPage\(1\);[\s\S]{0,120}\/\/ eslint-disable-next-line react-hooks\/exhaustive-deps\s*\}\s*,\s*\[tab\]\);/);
   });
 
-  it("stacks with the G4a portal-status filter (both keys coexist)", () => {
+  it("stacks with the G4a portal-status filter (both filters coexist)", () => {
     // Regression guard for the intersection contract locked by the
     // backend test ``test_h4_waitlist_stacks_with_portal_status_as_intersection``.
-    expect(SRC).toMatch(/_COHORT_STORAGE_KEY\s*=\s*"customerListFilter\.status"/);
-    expect(SRC).toMatch(/_PORTAL_STORAGE_KEY\s*=\s*"customerListFilter\.portalStatus"/);
+    //
+    // Phase K40 · Feb-2026 — the localStorage keys the previous
+    // version of this test asserted (``_COHORT_STORAGE_KEY`` /
+    // ``_PORTAL_STORAGE_KEY``) were REMOVED with K40's "no
+    // persistence" rule. We now assert on the two React state
+    // owners that still coexist in the file — the cohort tab and
+    // the portal-status dropdown — which is the actual intersection
+    // contract the backend test cares about.
+    expect(SRC).toMatch(/const \[tab, setTab\] = useState\(initialTab\);/);
+    expect(SRC).toMatch(/const \[portalStatus, setPortalStatus\] = useState\("all"\);/);
   });
 });

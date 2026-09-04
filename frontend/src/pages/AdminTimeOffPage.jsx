@@ -2,7 +2,12 @@ import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@/api";
 
 export default function AdminTimeOffPage() {
-  const [tab, setTab] = useState("pending"); // pending | all
+  // Phase K40 · Feb-2026 — filter dropdowns must default to
+  // "All / No filter" on every mount. The tab previously defaulted
+  // to ``"pending"`` (the incoming-approvals queue). Per K40 the
+  // default is now ``"all"``; operators can still click "Pending
+  // Approvals" to reproduce the old behaviour.
+  const [tab, setTab] = useState("all"); // pending | all
   const [rows, setRows] = useState([]);
   const [balances, setBalances] = useState([]);
   const [policy, setPolicy] = useState(null);
