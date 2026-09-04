@@ -15211,3 +15211,67 @@ The silent behavior on Prod is a **frontend-observability gap** compounded by **
 
 ### Follow-ups (deferred)
 - None inside K41b scope.
+
+---
+
+## Phase K41b-hotfix · Feb-2026 — Sticky BulkResolveBar (SHIPPED)
+
+Tester reported the bar rendered inline between rows 8-9 and scrolled out of view.  Root cause: the bar's own `position: sticky; bottom: 0` had no scrollable ancestor (dialog content is not the scroll container), so the browser placed it at its natural document-flow position.
+
+### Fix (frontend only)
+- `DashboardDrillDownModal.jsx` — the Data-Integrity `ModalBody` branch now wraps its content in an explicit scroll region (`maxHeight: 70vh; overflowY: auto`).  The first child of that region is a **sticky action zone** (`data-testid="drilldown-di-sticky-zone"`) with `position: sticky; top: 0; z-index: 20`.  The zone contains `<BulkResolveBar />` + `<UndoBanner />` — never interleaved into `<tbody>`.
+- Removed `position: sticky` + `bottom: 0` from the bar's own container so responsibility now lives in exactly one place (the zone).
+- Vitest source-body regressions guard both structural moves.
+
+### Verification
+- Screenshot `/app/artifacts/k41c/k41c_sticky_after_scroll.png` shows the bar remains anchored at the modal-top after scrolling the inner container by 152px (bar `top=153px` matches zone `top=153px` at `scrollTop=152`).
+
+---
+
+## Phase K41c · Feb-2026 — Undo Last Bulk (10-minute window, SHIPPED)
+
+### Backend — `backend/routers/dashboard_drilldown.py`
+- **New endpoint** `POST /api/dashboard/data-integrity/undo-bulk` (admin + super).
+- Body: `{ bulk_batch_id: string }`.
+- Behaviour:
+  1. Fetch every `dashboard_drilldown_edit` audit row with matching `bulk_batch_id`.  Missing batch → **404** `batch_not_found`.
+  2. Newest audit row older than 10 min → **410** `window_expired`.
+  3. Any pre-existing `dashboard_drilldown_bulk_undone` for the batch → **409** `already_undone`.
+  4. Otherwise reverse each row: `soft_delete` → restore prior status + clear `deleted_*`; `customer_id`/`technician_id` assign → restore the audit's `before` value (and best-effort denorm name from the current customer/user).
+  5. Emit **companion audit** `dashboard_drilldown_bulk_undone` per row with `undone_from_batch_id` linking back to the source batch, plus a fresh `undo_batch_id`.
+  6. Idempotency — separate 60s TTL cache (`_bulk_undo_idempotency_cache`); replay returns identical response with `replayed: true` and NO extra mutations / audit rows.
+- Returns `{ ok, bulk_batch_id, undo_batch_id, total, restored: [{job_id, field, restored_to}], failed: [{job_id, error}] }`.  Hard-deleted jobs surface in `failed` with `job_not_found`.
+
+### Frontend — `DashboardDrillDownModal.jsx`
+- **`UndoBanner`** component renders inside the sticky zone, directly below `BulkResolveBar`.
+- Fires only after a successful bulk resolve — `handleBulkComplete` receives action metadata `(okIds, {bulkBatchId, action, mode, targetLabel})` and arms `lastBulk` with `expiresAt = now + 10 min`.
+- Per-action summary shape:
+  - Delete → red banner, "Soft-deleted N orphan jobs."
+  - Customer assign → blue banner, "Reassigned N orphan jobs to <target>."
+  - Tech assign → blue banner, "Reassigned N jobs to <target>."
+- Countdown (`expires in mm:ss`) ticks via `setInterval(setNow(Date.now()), 1000)`.  At 0:00 the button set collapses to a single Dismiss button.
+- `[Undo]` click flips to an inline `Cancel / Confirm — undo N changes` strip.  Confirm fires the endpoint.
+- On success — toast `Restored N rows`, banner cleared, drilldown re-fetched by bumping `reloadKey` (fetch effect now keyed on `[url, reloadKey]`).
+- On partial failure — `undo-banner-failed-list` block enumerates each failed row with its per-row reason.
+- Closing the modal drops `lastBulk` from the DOM — no global undo tray (per spec).
+
+### Tests
+- **Pytest** `backend/tests/test_k41c_undo_bulk.py` — 9 tests, 8 pass + 1 environmental skip (customer login rate-limit): happy soft-delete + audit-chain integrity; happy assign-customer reverting `before` value; 11-min-old batch → 410; already-undone → 409 (bypass idempotency by pre-seeding the companion audit row); missing batch → 404; hard-deleted job → per-row `failed: job_not_found`; non-admin (parametrized ×3) → 403; idempotent replay stamps `replayed: true` with zero extra companion audits.
+- **Vitest** `frontend/src/test/k41c-undo-bulk.test.jsx` — 17 tests, 17 pass.  Source-body assertions for banner test-ids, countdown wiring, summary shape, undo endpoint POST body, two-step confirm, refetch key wiring, K41b bar hand-off metadata; regression guards ensuring the bar no longer self-sticks (wrapper owns it) and both bar + banner live in the same sticky zone.
+- **Combined regression** — K41 pytest 16 pass + 3 skips · K41 vitest 20/20 · K41b pytest 10 pass + 1 skip · K41b vitest 21/21 · K41c pytest 8 pass + 1 skip · K41c vitest 17/17.  **Zero regression.**
+
+### Screenshots (persisted under `/app/artifacts/k41c/`)
+- `k41c_sticky_after_scroll.png` — bar remains anchored after scrolling the row list.
+- `k41c_undo_banner.png` — red destructive banner with `expires in 09:58` countdown, `Resolved 2/2 rows` toast, and the two soft-deleted rows dropped from the visible list.
+- `k41c_restored.png` — post-undo state: `Restored 2 rows` toast, banner dismissed, table re-fetched with the restored rows back.
+
+### Audit event discriminator decision
+Chose a **companion event type** `dashboard_drilldown_bulk_undone` (rather than a discriminator on `dashboard_drilldown_edit`) — three reasons:
+- Cleaner queries for both the K41b bulk-undo already-undone gate and any future forensic report ("which batches were rolled back?") — a single `event_type` predicate.
+- The reversed mutation is semantically a distinct action, not a re-emission of the original edit.
+- Keeps the K41b payload shape stable — no risk of downstream consumers reading `dashboard_drilldown_edit` rows and mis-classifying reverts.
+
+Both events are joined by `undone_from_batch_id` → `bulk_batch_id` for the full audit trail.
+
+### Follow-ups (deferred)
+- None inside K41c scope.

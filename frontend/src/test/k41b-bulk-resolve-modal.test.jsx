@@ -43,10 +43,13 @@ describe("K41b · Bulk selection column — checkbox on every DI row", () => {
 
 
 describe("K41b · Sticky Bulk Resolve action bar", () => {
-  it("renders a sticky action bar when at least one row is selected", () => {
+  it("renders a sticky action bar container when at least one row is selected", () => {
     expect(MODAL).toMatch(/data-testid="bulk-resolve-bar"/);
-    // Sticky position at the bottom of the modal body.
-    expect(MODAL).toMatch(/position: "sticky"[\s\S]{0,120}bottom: 0/);
+    // K41b hotfix — the sticky wrapper lives on the outer zone
+    // (drilldown-di-sticky-zone), not the bar itself.  Bar is inside
+    // the zone.
+    expect(MODAL).toMatch(/data-testid="drilldown-di-sticky-zone"/);
+    expect(MODAL).toMatch(/position: "sticky"[\s\S]{0,200}top: 0[\s\S]{0,200}zIndex: 20/);
   });
 
   it("exposes the three K41b action buttons", () => {
@@ -140,7 +143,7 @@ describe("K41b · Partial failure UX", () => {
   it("removes succeeded rows from the table and keeps failed ones", () => {
     // handleBulkComplete fades then filters ok ids out of rows,
     // never touching the failed ones.
-    expect(MODAL).toMatch(/handleBulkComplete = useCallback\(\(okIds\)/);
+    expect(MODAL).toMatch(/handleBulkComplete = useCallback\(\(okIds, meta\)/);
     expect(MODAL).toMatch(/setRows\(\(prev\) => prev\.filter\(\(r\) => !okIds\.includes\(r\.job_id\)\)\)/);
   });
 

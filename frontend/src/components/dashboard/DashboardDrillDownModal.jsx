@@ -543,7 +543,12 @@ function BulkResolveBar({
       const failedRows = results.filter((r) => !r.ok);
       setFailed(failedRows);
       if (okIds.length > 0) {
-        onBulkComplete(okIds);
+        onBulkComplete(okIds, {
+          bulkBatchId: resp?.bulk_batch_id || bulkBatchId,
+          action: act,
+          mode,
+          targetLabel: target?.name || target?.email || null,
+        });
         toast.success(
           `Resolved ${okIds.length}/${n} row${n === 1 ? "" : "s"}` +
             (failedRows.length > 0 ? ` · ${failedRows.length} failed` : ""),
@@ -587,16 +592,12 @@ function BulkResolveBar({
     <div
       data-testid="bulk-resolve-bar"
       style={{
-        position: "sticky",
-        bottom: 0,
         background: colors.surface,
-        borderTop: `2px solid ${colors.borderStrong}`,
-        boxShadow: "0 -6px 16px rgba(0,0,0,0.06)",
+        borderBottom: `1px solid ${colors.border}`,
         padding: "10px 14px",
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        zIndex: 20,
       }}
     >
       <div
@@ -760,6 +761,207 @@ function BulkResolveBar({
 
 
 /* ═══════════════════════════════════════════════════════════════
+   K41c — Undo Last Bulk banner (Data-Integrity only)
+   ═══════════════════════════════════════════════════════════════ */
+const UNDO_WINDOW_MS = 10 * 60 * 1000;
+
+function formatMMSS(msLeft) {
+  const total = Math.max(0, Math.floor(msLeft / 1000));
+  const mm = String(Math.floor(total / 60)).padStart(2, "0");
+  const ss = String(total % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+
+function UndoBanner({ lastBulk, onUndone, onDismiss }) {
+  const [now, setNow] = useState(() => Date.now());
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState("");
+  const [failedRows, setFailedRows] = useState([]);
+
+  useEffect(() => {
+    setNow(Date.now());
+    setConfirming(false);
+    setError("");
+    setFailedRows([]);
+  }, [lastBulk?.bulkBatchId]);
+
+  useEffect(() => {
+    if (!lastBulk) return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [lastBulk?.bulkBatchId]);
+
+  if (!lastBulk) return null;
+  const msLeft = lastBulk.expiresAt - now;
+  const expired = msLeft <= 0;
+
+  const summary = (() => {
+    const n = lastBulk.count;
+    const noun = n === 1 ? "" : "s";
+    if (lastBulk.mode === "delete") {
+      return `Soft-deleted ${n} orphan job${noun}.`;
+    }
+    if (lastBulk.mode === "customer") {
+      return `Reassigned ${n} orphan job${noun} to ${lastBulk.targetLabel || "—"}.`;
+    }
+    if (lastBulk.mode === "tech") {
+      return `Reassigned ${n} job${noun} to ${lastBulk.targetLabel || "—"}.`;
+    }
+    return `Applied ${n} change${noun}.`;
+  })();
+
+  const fireUndo = async () => {
+    if (!confirming) { setConfirming(true); return; }
+    setBusy(true);
+    setError("");
+    setFailedRows([]);
+    try {
+      const resp = await api.post(
+        "/dashboard/data-integrity/undo-bulk",
+        { bulk_batch_id: lastBulk.bulkBatchId },
+      );
+      const restored = Array.isArray(resp?.restored) ? resp.restored : [];
+      const failed = Array.isArray(resp?.failed) ? resp.failed : [];
+      setFailedRows(failed);
+      if (restored.length > 0) {
+        toast.success(
+          `Restored ${restored.length} row${restored.length === 1 ? "" : "s"}` +
+            (failed.length > 0 ? ` · ${failed.length} failed` : ""),
+        );
+      } else if (failed.length > 0) {
+        toast.error(`All ${failed.length} rows failed to restore.`);
+      }
+      onUndone(restored.map((r) => r.job_id));
+    } catch (e) {
+      const detail = e?.data?.detail || e?.message || "Undo failed";
+      setError(typeof detail === "string" ? detail : JSON.stringify(detail));
+      toast.error(detail);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const isDelete = lastBulk.mode === "delete";
+  const bg = isDelete ? "#FEF2F2" : "#EFF6FF";
+  const border = isDelete ? "#FCA5A5" : "#93C5FD";
+  const fg = isDelete ? colors.error : "#1D4ED8";
+
+  return (
+    <div
+      data-testid="undo-banner"
+      style={{
+        padding: "8px 14px",
+        background: bg,
+        borderTop: `1px solid ${border}`,
+        borderBottom: `1px solid ${border}`,
+        display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10,
+      }}
+    >
+      <span
+        style={{ fontSize: 13, color: fg }}
+        data-testid="undo-banner-summary"
+      >
+        {summary}
+      </span>
+      {!expired ? (
+        <span
+          style={{ fontSize: 12, color: colors.muted, fontFamily: "monospace" }}
+          data-testid="undo-banner-countdown"
+        >
+          expires in {formatMMSS(msLeft)}
+        </span>
+      ) : (
+        <span
+          style={{ fontSize: 12, color: colors.muted, fontStyle: "italic" }}
+          data-testid="undo-banner-expired"
+        >
+          undo window expired
+        </span>
+      )}
+      <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+        {!expired ? (
+          confirming ? (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setConfirming(false)}
+                disabled={busy}
+                data-testid="undo-banner-cancel"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="default"
+                onClick={fireUndo}
+                disabled={busy}
+                data-testid="undo-banner-confirm"
+              >
+                {busy
+                  ? "Restoring…"
+                  : `Confirm — undo ${lastBulk.count} change${lastBulk.count === 1 ? "" : "s"}`}
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={fireUndo}
+              disabled={busy}
+              data-testid="undo-banner-undo"
+            >
+              Undo
+            </Button>
+          )
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onDismiss}
+            data-testid="undo-banner-dismiss"
+          >
+            Dismiss
+          </Button>
+        )}
+      </div>
+      {error ? (
+        <div
+          data-testid="undo-banner-error"
+          style={{ width: "100%", color: colors.error, fontSize: 12 }}
+        >
+          {error}
+        </div>
+      ) : null}
+      {failedRows.length > 0 ? (
+        <div
+          data-testid="undo-banner-failed-list"
+          style={{
+            width: "100%", padding: "6px 8px", background: "#FFF",
+            border: `1px solid ${border}`, borderRadius: 6,
+            fontSize: 12, color: colors.error,
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            {failedRows.length} row{failedRows.length === 1 ? "" : "s"} failed to restore:
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, maxHeight: 100, overflow: "auto" }}>
+            {failedRows.map((f) => (
+              <li key={f.job_id || Math.random()}
+                  data-testid={`undo-banner-failed-${f.job_id || "unknown"}`}>
+                {String(f.job_id || "?").slice(0, 8)}… — {f.error || "error"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
    Main modal
    ═══════════════════════════════════════════════════════════════ */
 function ModalBody({ variant, params, onOpenFullEdit }) {
@@ -774,6 +976,10 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
   /* K41b — track rows that just resolved via bulk so they fade before
    * being removed from the array on the next render tick. */
   const [pendingBulkFade, setPendingBulkFade] = useState(() => new Set());
+  /* K41c — last bulk's info powers the Undo banner (10-min window). */
+  const [lastBulk, setLastBulk] = useState(null);
+  /* K41c — bump to force a re-fetch after undo restores rows. */
+  const [reloadKey, setReloadKey] = useState(0);
 
   const url = useMemo(() => {
     if (variant === "data-integrity") {
@@ -798,7 +1004,7 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
       .catch((e) => setErr(e?.message || "Load failed"))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url]);
+  }, [url, reloadKey]);
 
   const handleResolved = useCallback((jobId) => {
     setRows((prev) => prev.filter((r) => r.job_id !== jobId));
@@ -841,7 +1047,7 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  const handleBulkComplete = useCallback((okIds) => {
+  const handleBulkComplete = useCallback((okIds, meta) => {
     if (!Array.isArray(okIds) || okIds.length === 0) return;
     // Fade the resolved rows, then drop them + de-select on next tick.
     setPendingBulkFade((prev) => {
@@ -862,12 +1068,68 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
         return next;
       });
     }, 400);
+    // K41c — arm the undo banner with the just-completed batch info.
+    if (meta?.bulkBatchId) {
+      setLastBulk({
+        bulkBatchId: meta.bulkBatchId,
+        count: okIds.length,
+        mode: meta.mode,           // "customer" | "tech" | "delete"
+        action: meta.action,       // "assign" | "delete"
+        targetLabel: meta.targetLabel || null,
+        expiresAt: Date.now() + UNDO_WINDOW_MS,
+      });
+    }
   }, []);
+
+  /* K41c — after undo succeeds, drop the banner + re-fetch the rows
+   * so restored jobs reappear at their natural sort position. */
+  const handleUndone = useCallback(() => {
+    setLastBulk(null);
+    setCursor(null);
+    setReloadKey((k) => k + 1);
+  }, []);
+
+  const dismissBanner = useCallback(() => setLastBulk(null), []);
 
   if (variant === "data-integrity") {
     const selectedList = Array.from(selectedIds);
     return (
-      <div data-testid="drilldown-body-data-integrity">
+      <div
+        data-testid="drilldown-body-data-integrity"
+        style={{
+          maxHeight: "70vh",
+          overflowY: "auto",
+          overflowX: "hidden",
+          position: "relative",
+        }}
+      >
+        {/* K41b sticky action zone — pinned at the TOP of the scroll
+            region so users can keep selecting rows while the buttons
+            stay visible.  Contains the BulkResolveBar and, once a
+            bulk has fired, the K41c UndoBanner underneath. */}
+        <div
+          data-testid="drilldown-di-sticky-zone"
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 20,
+            background: colors.surface,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
+          }}
+        >
+          <BulkResolveBar
+            refClass={params?.issueClass}
+            selectedRows={selectedList}
+            onClearSelection={clearSelection}
+            onBulkComplete={handleBulkComplete}
+          />
+          <UndoBanner
+            lastBulk={lastBulk}
+            onUndone={handleUndone}
+            onDismiss={dismissBanner}
+          />
+        </div>
+
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: `2px solid ${colors.border}` }}>
@@ -930,12 +1192,6 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
             </Button>
           </div>
         ) : null}
-        <BulkResolveBar
-          refClass={params?.issueClass}
-          selectedRows={selectedList}
-          onClearSelection={clearSelection}
-          onBulkComplete={handleBulkComplete}
-        />
       </div>
     );
   }

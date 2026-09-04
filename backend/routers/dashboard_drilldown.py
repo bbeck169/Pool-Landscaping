@@ -904,6 +904,230 @@ async def data_integrity_resolve_bulk(
 
 
 # ═════════════════════════════════════════════════════════════════════
+# 4c) K41c — Undo last bulk (10-minute window).  Reverses every
+# ``dashboard_drilldown_edit`` audit row keyed by ``bulk_batch_id``.
+# ═════════════════════════════════════════════════════════════════════
+_UNDO_WINDOW_SECONDS = 600  # 10 minutes
+_UNDO_IDEMPOTENCY_TTL_S = 60.0
+# Separate cache to avoid conflating undo replays with resolve replays.
+_bulk_undo_idempotency_cache: Dict[str, Any] = {}
+
+
+def _prune_undo_cache() -> None:
+    now = time.monotonic()
+    stale = [k for k, (exp, _p) in _bulk_undo_idempotency_cache.items()
+             if exp <= now]
+    for k in stale:
+        _bulk_undo_idempotency_cache.pop(k, None)
+
+
+def _parse_iso(ts: Any) -> Optional[datetime]:
+    if not isinstance(ts, str):
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+class DataIntegrityUndoBulkBody(BaseModel):
+    bulk_batch_id: str = Field(...)
+
+
+async def _revert_single_audit_row(
+    audit_row: Dict[str, Any],
+    *,
+    actor_id: str,
+    undo_batch_id: str,
+) -> Dict[str, Any]:
+    """Reverse the mutation described by a single dashboard_drilldown_edit
+    audit row.  Emits a companion ``dashboard_drilldown_bulk_undone``
+    audit event linking back to the source batch.
+    """
+    job_id = audit_row.get("job_id")
+    field = audit_row.get("field")
+    before = audit_row.get("before")
+    after = audit_row.get("after")
+    action = audit_row.get("action")
+    tenant_id = audit_row.get("tenant_id")
+
+    if not job_id:
+        return {"job_id": None, "ok": False, "error": "audit_missing_job_id"}
+
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        # Hard-deleted after soft-delete — cannot restore.
+        return {"job_id": job_id, "ok": False, "error": "job_not_found"}
+
+    now = now_iso()
+    set_doc: Dict[str, Any] = {"updated_at": now}
+    unset_doc: Dict[str, Any] = {}
+
+    if field == "status" and after == "deleted":
+        # Undo soft-delete → restore prior status + clear delete markers.
+        set_doc["status"] = before if before is not None else "scheduled"
+        unset_doc["deleted_at"] = ""
+        unset_doc["deleted_reason"] = ""
+        unset_doc["deleted_by_user_id"] = ""
+    elif field == "customer_id":
+        set_doc["customer_id"] = before
+        # Best-effort denorm restoration.
+        if before:
+            cust = await db.customers.find_one(
+                {"id": before}, {"_id": 0, "name": 1},
+            )
+            set_doc["customer_name"] = (cust or {}).get("name") or ""
+        else:
+            set_doc["customer_name"] = ""
+    elif field == "technician_id":
+        set_doc["technician_id"] = before
+        if before:
+            tech = await db.users.find_one(
+                {"id": before}, {"_id": 0, "name": 1, "email": 1},
+            )
+            set_doc["technician_name"] = (
+                (tech or {}).get("name") or (tech or {}).get("email") or ""
+            )
+        else:
+            set_doc["technician_name"] = ""
+    else:
+        return {"job_id": job_id, "ok": False,
+                "error": f"unsupported_undo_field:{field}"}
+
+    update_doc: Dict[str, Any] = {"$set": set_doc}
+    if unset_doc:
+        update_doc["$unset"] = unset_doc
+    await db.jobs.update_one({"id": job_id}, update_doc)
+
+    # Emit companion audit — one per row — pointing back to the source
+    # batch via ``undone_from_batch_id``.
+    try:
+        await db.audit_events.insert_one({
+            "id": new_id(),
+            "event_type": "dashboard_drilldown_bulk_undone",
+            "actor_id": actor_id,
+            "tenant_id": tenant_id,
+            "timestamp": now,
+            "tile": "data-integrity",
+            "job_id": job_id,
+            "field": field,
+            "restored_before": before,
+            "reverted_after": after,
+            "original_action": action,
+            "undone_from_batch_id": audit_row.get("bulk_batch_id"),
+            "undo_batch_id": undo_batch_id,
+            "source": "dashboard_drilldown_undo",
+        })
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[k41c] undo audit insert failed: %s", exc)
+
+    return {"job_id": job_id, "ok": True, "field": field,
+            "restored_to": before}
+
+
+@router.post("/dashboard/data-integrity/undo-bulk")
+async def data_integrity_undo_bulk(
+    body: DataIntegrityUndoBulkBody = Body(...),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """K41c undo endpoint.
+
+    Reverses every ``dashboard_drilldown_edit`` audit row emitted for
+    the given ``bulk_batch_id``, provided:
+
+      * the newest row is within the 10-minute window,
+      * the batch has not already been undone.
+
+    Emits a ``dashboard_drilldown_bulk_undone`` audit event per row.
+    Idempotent within a 60s TTL — replaying the same undo returns the
+    identical response without re-mutating.
+    """
+    _require_admin_or_super(user)
+    bulk_batch_id = (body.bulk_batch_id or "").strip()
+    if not bulk_batch_id:
+        raise HTTPException(400, "bulk_batch_id_required")
+
+    _prune_undo_cache()
+    cached = _bulk_undo_idempotency_cache.get(bulk_batch_id)
+    if cached is not None:
+        _, payload = cached
+        return {**payload, "replayed": True}
+
+    # Find the audit rows for this batch.
+    audit_rows: List[Dict[str, Any]] = []
+    async for a in db.audit_events.find(
+        {"event_type": "dashboard_drilldown_edit",
+         "bulk_batch_id": bulk_batch_id},
+        {"_id": 0},
+    ):
+        audit_rows.append(a)
+
+    if not audit_rows:
+        raise HTTPException(404, "batch_not_found")
+
+    # Already-undone check — any companion event for this batch.
+    prior_undo = await db.audit_events.find_one(
+        {"event_type": "dashboard_drilldown_bulk_undone",
+         "undone_from_batch_id": bulk_batch_id},
+        {"_id": 0, "id": 1},
+    )
+    if prior_undo is not None:
+        raise HTTPException(409, "already_undone")
+
+    # Age check — newest audit row must be within the 10-minute window.
+    newest_ts: Optional[datetime] = None
+    for a in audit_rows:
+        parsed = _parse_iso(a.get("timestamp"))
+        if parsed is not None and (newest_ts is None or parsed > newest_ts):
+            newest_ts = parsed
+    if newest_ts is None:
+        raise HTTPException(500, "batch_timestamps_unreadable")
+    now_utc = datetime.now(timezone.utc)
+    age_s = (now_utc - newest_ts).total_seconds()
+    if age_s > _UNDO_WINDOW_SECONDS:
+        raise HTTPException(410, "window_expired")
+
+    actor_id = user.get("id") or user.get("_id") or ""
+    undo_batch_id = _uuid_v4()
+    restored: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
+
+    for a in audit_rows:
+        try:
+            r = await _revert_single_audit_row(
+                a, actor_id=actor_id, undo_batch_id=undo_batch_id,
+            )
+            if r.get("ok"):
+                restored.append(r)
+            else:
+                failed.append(r)
+        except Exception as exc:  # pragma: no cover
+            logger.exception(
+                "[k41c] undo unexpected error for %s: %s",
+                a.get("job_id"), exc,
+            )
+            failed.append({
+                "job_id": a.get("job_id"), "ok": False,
+                "error": "internal_error",
+            })
+
+    payload = {
+        "ok": len(failed) == 0,
+        "bulk_batch_id": bulk_batch_id,
+        "undo_batch_id": undo_batch_id,
+        "total": len(audit_rows),
+        "restored": restored,
+        "failed": failed,
+    }
+    _bulk_undo_idempotency_cache[bulk_batch_id] = (
+        time.monotonic() + _UNDO_IDEMPOTENCY_TTL_S,
+        payload,
+    )
+    return payload
+
+
+
+# ═════════════════════════════════════════════════════════════════════
 # 5) Companion audit endpoint for line-item edits
 # ═════════════════════════════════════════════════════════════════════
 class DrilldownLineItemAuditBody(BaseModel):
