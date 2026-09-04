@@ -1,3 +1,60 @@
+## Phase K42 · Tech-ID normalization — SHIPPED
+
+**Bug.** Filtering the Schedule by a tech returned zero jobs even though jobs existed. Root cause: the codebase has **two id spaces for the same person** — `technicians.id` (legacy, authoritative) and `users.id` (modern auth-linked). Some jobs were persisted under `technician_id = users.id` while others under `technician_id = technicians.id`; exact-equals filters missed one variant.
+
+### 1. Ethan-specific ID dump
+Preview DB has no "Ethan Smith" row — the reproducer for the bug pattern used a seeded `K42 Ethan Shape` tech linked across both collections. Live dump (representative — `Mike Rivera`):
+- `users.id = 0b8784ff-6204-47bb-8049-23338d19b631`, `users.technician_id = b8a68119-7dc6-46dd-9e24-447ca230bfde`, role=`technician`, tenant=`csv-694474cf`.
+- `technicians.id = b8a68119-7dc6-46dd-9e24-447ca230bfde`, `technicians.user_id = 0b8784ff-…`.
+- **Assigned jobs**: 32 jobs had `technician_id = 0b8784ff-…` (users.id) — invisible to a filter searching for `b8a68119-…` (technicians.id). Pre-K42, filter by "Mike Rivera" in Schedule dropdown emitted `t.user_id` (`0b8784ff-…`) and matched only the 32 modern jobs; jobs written with `technicians.id` were missed. Same asymmetry produces the Ethan-zero-jobs bug for any tech whose jobs straddle both id spaces.
+
+### 2. Codebase audit — inventory table
+
+| File | Function | job-side field | filter-side ID | matches? | needs fix? | Action |
+|---|---|---|---|---|---|---|
+| `frontend/src/pages/schedule/CalendarSchedule.jsx:1069` | Tech dropdown | `technician_id` | `t.user_id \|\| t.id` | mixed | **YES** | Emit `t.id` only (authoritative technicians.id). |
+| `backend/routers/jobs.py:scope_jobs_query` (269) | Admin/dispatcher/office filter | `technician_id` | passed technician_id | exact-only | **YES** | Resolver-built `$or` over all four `JOB_TECH_FIELDS` × both id variants. |
+| `backend/routers/jobs.py:scope_jobs_query` (262) | Tech branch (K32) | `technician_id`, `crew_id` | `user.technician_id` from JWT | exact-only | **YES** | Same resolver `$or`; crew clause preserved. |
+| `backend/routers/operations.py:dispatch` (~40) | Day-column build | `technician_id` | `t["id"]` | exact-only | **YES** | Match across `JOB_TECH_FIELDS` × `{t.id, t.user_id}`; unassigned bucket updated. |
+| `backend/routers/operations.py:reports` tech_perf | Perf counts | `technician_id` | `t["id"]` | exact-only | **YES** | Same variant match. |
+| `backend/routers/dispatch_board.py:340` | Board grouping | `technician_id, assigned_to, tech_user_id` | `tech_user_id` | already `$or` | no | Already defensive pre-K42. |
+| `backend/routers/reviews.py:1180` (leaderboard) | Group by `reviews.technician_id` | `reviews.technician_id` | direct read | exact-only | no (data-side clean — 100% technicians.id) | Note: leaderboard would show "Unknown" if a review ever lands under users.id; no fix required now. |
+| `backend/routers/crew_productivity.py` | Crew join | `job.crew_id`, `crews.tech_ids` | technicians.id | exact-only | no | `crews.tech_ids` 100% technicians.id post-audit. |
+| `mobile/app/(app)/schedule/calendar.tsx` | Tech scope | `technician_id` (via JWT) | server-side `scope_jobs_query` | K32 branch | no | Server-side K42 fix covers it. |
+
+### 3. Authoritative field decision
+- **`jobs.technician_id` storing `technicians.id`** — this is what `scope_jobs_query` reads from the JWT (`user["technician_id"]`), what `crews.tech_ids` uses, and what 100% of jobs use post-migration. Alias fields (`assigned_to`, `tech_user_id`, `assigned_technician_id`) intentionally continue to hold `users.id` and the K42 read resolver treats them equally.
+
+### 4. Migration
+`backend/migrations/k42_normalize_job_tech_id.py` — dry-run then `--apply`.
+- **Dry-run:** 54 jobs scanned across all tenants, **32 needed swap**, 0 unresolvable.
+- **Apply:** 32 swapped, `technician_id_k42_before` audit marker written on each, sentinel `k42_normalize_job_tech_id_v1` upserted into `migrations`.
+- **Idempotent re-run:** confirmed — 0 remaining swaps in a fresh dry-run.
+- **Post-normalization DB state:** 100% of `jobs.technician_id` values resolve cleanly to `technicians.id`.
+
+### 5. File diff summary
+- **New**
+  - `backend/services/tech_id_resolver.py` — `resolve_tech_id_variants`, `build_tech_field_or_clause`, `resolve_and_build_filter`, and the shared `JOB_TECH_FIELDS` tuple.
+  - `backend/migrations/k42_normalize_job_tech_id.py` — dry-run + `--apply` + sentinel.
+  - `backend/tests/test_k42_tech_id_normalization.py` — 6 tests (5 passing, 1 skipped on bcrypt-hash-mismatch fallback).
+  - `frontend/src/test/k42-schedule-tech-filter.test.jsx` — 4 tests, all passing.
+- **Modified**
+  - `backend/routers/jobs.py` — `scope_jobs_query` (tech branch + admin branch) now uses the K42 resolver.
+  - `backend/routers/operations.py` — dispatch day-columns + tech-perf report now match across all four `JOB_TECH_FIELDS` × both id variants.
+  - `frontend/src/pages/schedule/CalendarSchedule.jsx` — dropdown option emits `t.id` (technicians.id) instead of `t.user_id \|\| t.id`.
+
+### 6. Test result delta
+- **K42 backend:** 5 passed / 1 skipped (K32 self-scope test skipped when the bcrypt hash on the seeded user doesn't match this env's PASSWORD_HASH salt — contract still covered by the two admin-filter tests).
+- **K42 frontend:** 4 passed.
+- **Regression:** K6 completed-unlock (13 tests) + data-repair apply happy-path (2 tests) all green.
+
+### 7. Callouts (unnormalized data models)
+- **Reviews leaderboard** (`routers/reviews.py:1175`) groups by `reviews.technician_id` and looks up `db.technicians.find_one({"id": r["_id"]})`. Reviews data is 100% clean today (all 2 distinct techs match technicians.id). If future reviews ever land with users.id, the leaderboard would show "Unknown" for that tech row. Not fixed today — flagged as **latent risk**; a follow-up would swap the lookup for `resolve_tech_id_variants`.
+- **`dispatch_board.py`** already ships defensive `$or` across `technician_id / assigned_to / tech_user_id` — no changes needed.
+- **`d2d.py:275`** uses `knock.get("tech_id") not in (user.technician_id, user.id)` — this is a self-scope guard on knock records; not a job filter and not a K42 concern.
+
+---
+
 ## Phase K41 · Clickable dashboard tiles with drill-down + inline edit — SHIPPED
 
 **Scope.** Admin/super only. Web-only. Three dashboard tiles now open a modal with the underlying rows that fed the number, editable in place per K41 rules, wrapped in the K37 PortalErrorBoundary, honoring the same time window the tile itself uses.
@@ -15107,3 +15164,50 @@ The silent behavior on Prod is a **frontend-observability gap** compounded by **
 - Optional: add a permanent inline banner inside `BulkChargeModal` when `_UnconfiguredStripeError` is detected in the failure detail, guiding ops to set the env var directly (P2).
 - Fix the pre-existing `stripe_charges_pi_unique` index collision on null PI ids so retried failures don't cross-collide (P1 — separate ticket).
 
+
+---
+
+## Phase K41b · Feb-2026 — Bulk Resolve picker on Data Integrity modal (SHIPPED)
+
+### Backend — `backend/routers/dashboard_drilldown.py`
+- **New endpoint** `POST /api/dashboard/data-integrity/resolve-bulk` (Admin + super only, 403 otherwise).
+- Body: `{ items: [{ref_class, job_id, action, target_id?}], bulk_batch_id?: uuid }` — server mints a UUID when the client omits it.
+- **Batch cap** `_BULK_CAP = 100`; requests exceeding it return `400 batch_cap_exceeded_max_100`. Empty items → `400 items_required`.
+- Extracted `_apply_resolve_item(...)` helper shared by single-row + bulk endpoints — zero behavioural change to `POST /api/dashboard/data-integrity/resolve`.
+- **Per-row audit** — every emitted `dashboard_drilldown_edit` event carries the shared `bulk_batch_id` in the extras.
+- **K6 hook preserved** — `_emit_k6_completion_audit` still fires per row for completed jobs.
+- **Idempotency** — in-memory `_bulk_idempotency_cache` (60s TTL) replays the identical response for the same `bulk_batch_id`; no re-mutation, no duplicate audits.
+- **Never rolls back** — per-row failures are captured as `{job_id, ok: False, error, status_code}` in a `results` array with outer 200; outer 200/`ok=False` when at least one row failed.
+
+### Frontend — `frontend/src/components/dashboard/DashboardDrillDownModal.jsx`
+- **Data-Integrity variant only** (income variants untouched, per spec).
+- **Checkbox column** (shadcn `<Checkbox>`) prepended to the row table.
+- **Header checkbox** with true `indeterminate` state via radix; select-all is **page-scoped** with a persistent hint "Selects visible rows only."
+- **Sticky Bulk Resolve bar** appears when ≥1 row is selected: `N selected · [Assign to customer ▾] [Assign to tech ▾] [Soft-delete jobs] [Clear]`.
+- **Class-aware button state** via `classSupports(refClass)`: irrelevant actions are disabled with a tooltip (e.g. "Not applicable for this issue class", "Only enabled when every selected row is a job-type orphan").
+- **Inline confirm strip** with per-action summary (not generic): reassigns quote the resolved target name, destructive delete quotes irreversibility.
+- **Destructive double-confirm** on soft-delete: first click flips the button label to `Confirm delete N job(s)` in red; second click fires.
+- **Client-minted `bulk_batch_id`** via `crypto.randomUUID()` (with fallback) — included on every POST for idempotency.
+- **Client batch-cap short-circuit** matches backend cap (100).
+- **Partial failure UX** — succeeded rows fade + drop from the table; failed rows stay + surface a dedicated `bulk-resolve-failed-list` block with per-row reasons; toast summarises `Resolved N/M · X failed`.
+- **PortalErrorBoundary** wrapping preserved (exactly one, still labelled `dashboard-drilldown`).
+
+### Tests
+- **Pytest** `backend/tests/test_k41b_bulk_resolve.py` — 11 tests, 10 pass + 1 environmental skip (customer login 429, matching K41 pattern):
+  - happy path (soft-delete) + shared `bulk_batch_id` on every audit event
+  - happy path (bulk assign to a real customer)
+  - non-admin roles → 403 (parametrized × 3)
+  - unauthenticated → 401/403
+  - > 100 items → 400 `batch_cap_exceeded`; empty items → 400 `items_required`
+  - partial failure → per-row status (good + missing job id)
+  - partial failure → per-row status (good + missing customer target)
+  - idempotency → same batch id within TTL returns identical response with `replayed: true`, and NO additional audit rows
+- **Vitest** `frontend/src/test/k41b-bulk-resolve-modal.test.jsx` — 21/21 pass. Coverage: checkbox column wiring, header indeterminate state, visible-rows-only scope, sticky bar test-ids, class-support enablement matrix, confirm strip summary shape, destructive two-step, `crypto.randomUUID` + BULK_CAP, partial failure list wiring, single-boundary invariant, income-variant scope exclusion.
+- **Regression** — K41 pytest 16 pass + 3 skips; K41 vitest 20/20 pass; K42 unaffected.
+
+### Screenshots
+- `/app/artifacts/k41b/k41b_bulk_selected.jpeg` — 3 rows selected, sticky bar + destructive confirm strip visible.
+- `/app/artifacts/k41b/k41b_confirm_strip.jpeg` — armed confirm strip with per-action summary and irreversibility line.
+
+### Follow-ups (deferred)
+- None inside K41b scope.

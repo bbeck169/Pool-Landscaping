@@ -37,9 +37,25 @@ async def dispatch(user: dict = Depends(require_admin),
     techs = await db.technicians.find(
         {"tenant_id": tenant["id"]}, {"_id": 0}
     ).sort("name", 1).to_list(1000)
+    # Phase K42 · Feb-2026 — tech-ID normalization.  A job is "for this
+    # technician" if ANY of the four assignee fields on the job
+    # references EITHER the tech's ``technicians.id`` OR their linked
+    # ``users.id`` (see services/tech_id_resolver.JOB_TECH_FIELDS).
+    from services.tech_id_resolver import JOB_TECH_FIELDS
+    users_id_by_tech = {t["id"]: t.get("user_id") for t in techs}
+
+    def _job_matches_tech(j: dict, t: dict) -> bool:
+        variants = {t["id"], users_id_by_tech.get(t["id"])}
+        variants.discard(None)
+        for f in JOB_TECH_FIELDS:
+            v = j.get(f)
+            if v and v in variants:
+                return True
+        return False
+
     columns = []
     for t in techs:
-        tjobs = [j for j in day_jobs if j.get("technician_id") == t["id"]]
+        tjobs = [j for j in day_jobs if _job_matches_tech(j, t)]
         tjobs.sort(key=lambda j: j.get("scheduled_date") or "")
         columns.append({
             "technician_id": t["id"],
@@ -48,7 +64,13 @@ async def dispatch(user: dict = Depends(require_admin),
             "specialty": t.get("specialty", ""),
             "jobs": tjobs,
         })
-    unassigned = [j for j in day_jobs if not j.get("technician_id")]
+    # Unassigned = job has no non-empty value in any of the four
+    # assignee fields.  Previously only ``technician_id`` was checked
+    # so 16 modern jobs with the assignee in the alias fields (but
+    # ``technician_id=None``) got surfaced as unassigned.
+    def _is_unassigned(j: dict) -> bool:
+        return not any(j.get(f) for f in JOB_TECH_FIELDS)
+    unassigned = [j for j in day_jobs if _is_unassigned(j)]
     unassigned.sort(key=lambda j: j.get("scheduled_date") or "")
     return {"date": day, "columns": columns, "unassigned": unassigned}
 
@@ -178,10 +200,22 @@ async def _compute_reports(tenant_id: str, date_from: str | None = None, date_to
     )[:5]
 
     techs = await db.technicians.find(tq, {"_id": 0}).to_list(1000)
+    # Phase K42 · Feb-2026 — tech-ID normalization applies to the
+    # dashboard tech-performance widget too.  Match jobs against all
+    # four assignee fields × both id variants.
+    from services.tech_id_resolver import JOB_TECH_FIELDS
     tech_perf = []
     for t in techs:
-        completed = sum(1 for j in all_jobs if j.get("technician_id") == t["id"] and j.get("status") == "completed")
-        active = sum(1 for j in all_jobs if j.get("technician_id") == t["id"] and j.get("status") in ("pending", "active"))
+        variants = {t["id"], t.get("user_id")}
+        variants.discard(None)
+        def _match(j: dict) -> bool:
+            for f in JOB_TECH_FIELDS:
+                v = j.get(f)
+                if v and v in variants:
+                    return True
+            return False
+        completed = sum(1 for j in all_jobs if _match(j) and j.get("status") == "completed")
+        active = sum(1 for j in all_jobs if _match(j) and j.get("status") in ("pending", "active"))
         tech_perf.append({"label": t["name"], "completed": completed, "active": active})
     tech_perf.sort(key=lambda x: -x["completed"])
 

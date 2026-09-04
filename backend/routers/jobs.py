@@ -257,17 +257,52 @@ async def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], tech
                     crew_ids.append(row["id"])
         except Exception:  # noqa: BLE001 — never block on membership lookup
             crew_ids = []
-        if crew_ids:
-            q["$or"] = [
-                {"technician_id": tech_pk},
-                {"crew_id": {"$in": crew_ids}},
-            ]
+        # Phase K42 · Feb-2026 — the tech's OWN jobs may be persisted
+        # under either variant (technicians.id or users.id) across
+        # any of :data:`JOB_TECH_FIELDS`.  Merge the resolver-built
+        # ``$or`` with the existing crew branch.
+        from services.tech_id_resolver import (
+            resolve_and_build_filter,
+        )
+        _v, _tech_or = await resolve_and_build_filter(
+            tech_pk, tenant_id=tenant.get("id"),
+        )
+        tech_or_clauses: list = []
+        if _tech_or:
+            tech_or_clauses.extend(_tech_or["$or"])
         else:
-            q["technician_id"] = tech_pk
+            tech_or_clauses.append({"technician_id": tech_pk})
+        if crew_ids:
+            tech_or_clauses.append({"crew_id": {"$in": crew_ids}})
+        # Preserve the single-key shape when possible so downstream
+        # $and merges stay clean.
+        if len(tech_or_clauses) == 1:
+            q.update(tech_or_clauses[0])
+        else:
+            q["$or"] = tech_or_clauses
     elif user.get("role") == "customer":
         q["customer_id"] = user.get("customer_id")
     elif technician_id:
-        q["technician_id"] = technician_id
+        # Phase K42 · Feb-2026 — tech-ID normalization.  A filter can
+        # arrive as either ``technicians.id`` (legacy, authoritative)
+        # or ``users.id`` (modern write path).  Historically jobs
+        # were persisted under either variant across four field
+        # names (see :data:`JOB_TECH_FIELDS`).  Match via ``$or`` over
+        # every field × every id-variant so the operator sees every
+        # job for the person regardless of write-path era.
+        from services.tech_id_resolver import (  # inline import — util module lifecycle
+            resolve_and_build_filter,
+        )
+        _variants, _or = await resolve_and_build_filter(
+            technician_id, tenant_id=tenant.get("id"),
+        )
+        if _or:
+            q.update(_or)
+        else:
+            # Fallback — resolver could not find the id in either
+            # collection.  Preserve legacy behaviour so the caller
+            # still gets an empty set (not a full-scan blow-out).
+            q["technician_id"] = technician_id
     if status and status != "all":
         q["status"] = status
     return q

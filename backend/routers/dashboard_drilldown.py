@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -599,37 +600,53 @@ async def _emit_k6_completion_audit(
         logger.warning("[k41] K6 audit insert failed: %s", exc)
 
 
-@router.post("/dashboard/data-integrity/resolve")
-async def data_integrity_resolve(
-    body: DataIntegrityResolveBody = Body(...),
-    user: Dict[str, Any] = Depends(get_current_user),
+async def _apply_resolve_item(
+    *,
+    ref_class: str,
+    job_id: str,
+    action: str,
+    target_id: Optional[str],
+    user: Dict[str, Any],
+    bulk_batch_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    _require_admin_or_super(user)
-    if body.ref_class not in _VALID_INTEGRITY_CLASSES:
+    """Core resolve logic — shared by single-row + bulk endpoints.
+
+    Raises HTTPException on validation / lookup errors so callers get
+    the identical error contract as the single-row endpoint.  When
+    ``bulk_batch_id`` is provided it is stamped onto every emitted
+    ``dashboard_drilldown_edit`` audit event (K41b contract).
+    """
+    if ref_class not in _VALID_INTEGRITY_CLASSES:
         raise HTTPException(400, "invalid_ref_class")
-    if body.action not in _INTEGRITY_ACTIONS:
+    if action not in _INTEGRITY_ACTIONS:
         raise HTTPException(400, "invalid_action")
 
-    job = await db.jobs.find_one({"id": body.job_id}, {"_id": 0})
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
         raise HTTPException(404, "job_not_found")
 
     actor_id = user.get("id") or user.get("_id") or ""
     now = now_iso()
 
-    if body.ref_class == "orphaned_customer_refs":
-        if body.action == "assign":
-            if not body.target_id:
+    def _extra(**kw: Any) -> Dict[str, Any]:
+        base: Dict[str, Any] = {"job_id": job_id, **kw}
+        if bulk_batch_id:
+            base["bulk_batch_id"] = bulk_batch_id
+        return base
+
+    if ref_class == "orphaned_customer_refs":
+        if action == "assign":
+            if not target_id:
                 raise HTTPException(400, "target_id_required")
             cust = await db.customers.find_one(
-                {"id": body.target_id}, {"_id": 0, "id": 1, "name": 1},
+                {"id": target_id}, {"_id": 0, "id": 1, "name": 1},
             )
             if not cust:
                 raise HTTPException(400, "target_customer_not_found")
             before = job.get("customer_id")
-            after = body.target_id
+            after = target_id
             await db.jobs.update_one(
-                {"id": body.job_id},
+                {"id": job_id},
                 {"$set": {"customer_id": after,
                           "customer_name": cust.get("name") or "",
                           "updated_at": now}},
@@ -638,17 +655,18 @@ async def data_integrity_resolve(
                 tile="data-integrity", field="customer_id",
                 before=before, after=after,
                 actor_id=actor_id, tenant_id=job.get("tenant_id"),
-                extra={"job_id": body.job_id, "action": "assign"},
+                extra=_extra(action="assign"),
             )
             await _emit_k6_completion_audit(
                 job=job, actor=user,
                 changed_field="customer_id", before=before, after=after,
             )
             return {"ok": True, "resolved": True,
-                    "action": "assign", "target_id": after}
+                    "action": "assign", "target_id": after,
+                    "job_id": job_id}
         # delete → soft-delete the job (matches data_repair strategy)
         await db.jobs.update_one(
-            {"id": body.job_id},
+            {"id": job_id},
             {"$set": {"status": "deleted",
                       "deleted_at": now,
                       "deleted_reason": "data_repair_orphaned_customer",
@@ -659,24 +677,25 @@ async def data_integrity_resolve(
             tile="data-integrity", field="status",
             before=job.get("status"), after="deleted",
             actor_id=actor_id, tenant_id=job.get("tenant_id"),
-            extra={"job_id": body.job_id, "action": "delete"},
+            extra=_extra(action="delete"),
         )
-        return {"ok": True, "resolved": True, "action": "delete"}
+        return {"ok": True, "resolved": True, "action": "delete",
+                "job_id": job_id}
 
-    if body.ref_class == "orphaned_technician_refs":
-        if body.action == "assign":
-            if not body.target_id:
+    if ref_class == "orphaned_technician_refs":
+        if action == "assign":
+            if not target_id:
                 raise HTTPException(400, "target_id_required")
             tech = await db.users.find_one(
-                {"id": body.target_id}, {"_id": 0, "id": 1, "name": 1,
-                                          "email": 1},
+                {"id": target_id}, {"_id": 0, "id": 1, "name": 1,
+                                     "email": 1},
             )
             if not tech:
                 raise HTTPException(400, "target_technician_not_found")
             before = job.get("technician_id")
-            after = body.target_id
+            after = target_id
             await db.jobs.update_one(
-                {"id": body.job_id},
+                {"id": job_id},
                 {"$set": {"technician_id": after,
                           "technician_name": (tech.get("name")
                                                or tech.get("email") or ""),
@@ -686,43 +705,44 @@ async def data_integrity_resolve(
                 tile="data-integrity", field="technician_id",
                 before=before, after=after,
                 actor_id=actor_id, tenant_id=job.get("tenant_id"),
-                extra={"job_id": body.job_id, "action": "assign"},
+                extra=_extra(action="assign"),
             )
             await _emit_k6_completion_audit(
                 job=job, actor=user,
                 changed_field="technician_id", before=before, after=after,
             )
             return {"ok": True, "resolved": True,
-                    "action": "assign", "target_id": after}
+                    "action": "assign", "target_id": after,
+                    "job_id": job_id}
         # delete → null out technician_id (matches data_repair strategy)
         before = job.get("technician_id")
         await db.jobs.update_one(
-            {"id": body.job_id},
-            {"$set": {"technician_id": None,
-                      "updated_at": now}},
+            {"id": job_id},
+            {"$set": {"technician_id": None, "updated_at": now}},
         )
         await _emit_drilldown_audit(
             tile="data-integrity", field="technician_id",
             before=before, after=None,
             actor_id=actor_id, tenant_id=job.get("tenant_id"),
-            extra={"job_id": body.job_id, "action": "delete"},
+            extra=_extra(action="delete"),
         )
-        return {"ok": True, "resolved": True, "action": "delete"}
+        return {"ok": True, "resolved": True, "action": "delete",
+                "job_id": job_id}
 
     # unassigned_pending_jobs — assign a tech.
-    if body.action != "assign":
+    if action != "assign":
         raise HTTPException(400, "unassigned_jobs_only_support_assign")
-    if not body.target_id:
+    if not target_id:
         raise HTTPException(400, "target_id_required")
     tech = await db.users.find_one(
-        {"id": body.target_id}, {"_id": 0, "id": 1, "name": 1, "email": 1},
+        {"id": target_id}, {"_id": 0, "id": 1, "name": 1, "email": 1},
     )
     if not tech:
         raise HTTPException(400, "target_technician_not_found")
     before = job.get("technician_id")
-    after = body.target_id
+    after = target_id
     await db.jobs.update_one(
-        {"id": body.job_id},
+        {"id": job_id},
         {"$set": {"technician_id": after,
                   "technician_name": (tech.get("name")
                                         or tech.get("email") or ""),
@@ -732,14 +752,155 @@ async def data_integrity_resolve(
         tile="data-integrity", field="technician_id",
         before=before, after=after,
         actor_id=actor_id, tenant_id=job.get("tenant_id"),
-        extra={"job_id": body.job_id, "action": "assign"},
+        extra=_extra(action="assign"),
     )
     await _emit_k6_completion_audit(
         job=job, actor=user,
         changed_field="technician_id", before=before, after=after,
     )
     return {"ok": True, "resolved": True,
-            "action": "assign", "target_id": after}
+            "action": "assign", "target_id": after,
+            "job_id": job_id}
+
+
+@router.post("/dashboard/data-integrity/resolve")
+async def data_integrity_resolve(
+    body: DataIntegrityResolveBody = Body(...),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_admin_or_super(user)
+    return await _apply_resolve_item(
+        ref_class=body.ref_class,
+        job_id=body.job_id,
+        action=body.action,
+        target_id=body.target_id,
+        user=user,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 4b) K41b — Bulk resolve.  Per-row audits share a bulk_batch_id UUID.
+# ═════════════════════════════════════════════════════════════════════
+_BULK_CAP = 100
+_BULK_IDEMPOTENCY_TTL_S = 60.0
+# Maps bulk_batch_id -> (expires_monotonic, cached_response_dict)
+_bulk_idempotency_cache: Dict[str, Any] = {}
+
+
+def _uuid_v4() -> str:
+    return str(uuid.uuid4())
+
+
+def _prune_idempotency_cache() -> None:
+    now = time.monotonic()
+    stale = [k for k, (exp, _p) in _bulk_idempotency_cache.items()
+             if exp <= now]
+    for k in stale:
+        _bulk_idempotency_cache.pop(k, None)
+
+
+class DataIntegrityResolveBulkItem(BaseModel):
+    ref_class: str = Field(...)
+    job_id: str = Field(...)
+    action: str = Field(...)
+    target_id: Optional[str] = None
+
+
+class DataIntegrityResolveBulkBody(BaseModel):
+    items: List[DataIntegrityResolveBulkItem] = Field(...)
+    bulk_batch_id: Optional[str] = None
+
+
+@router.post("/dashboard/data-integrity/resolve-bulk")
+async def data_integrity_resolve_bulk(
+    body: DataIntegrityResolveBulkBody = Body(...),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """K41b bulk resolve endpoint.
+
+    Runs the single-row resolve logic per item, tagging every emitted
+    ``dashboard_drilldown_edit`` audit event with the shared
+    ``bulk_batch_id``.  Never rolls back — partial success is expected
+    and surfaced via the ``results`` array.
+
+    Batch cap: 100.  Idempotency: replay identical response for the
+    same ``bulk_batch_id`` within 60s.
+    """
+    _require_admin_or_super(user)
+
+    if not body.items:
+        raise HTTPException(400, "items_required")
+    if len(body.items) > _BULK_CAP:
+        raise HTTPException(
+            400, f"batch_cap_exceeded_max_{_BULK_CAP}",
+        )
+
+    _prune_idempotency_cache()
+
+    batch_id = (body.bulk_batch_id or "").strip() or _uuid_v4()
+
+    cached = _bulk_idempotency_cache.get(batch_id)
+    if cached is not None:
+        # Replay — client submitted the same batch again within TTL.
+        _, payload = cached
+        return {**payload, "replayed": True}
+
+    results: List[Dict[str, Any]] = []
+    succeeded = 0
+    failed = 0
+
+    for item in body.items:
+        try:
+            r = await _apply_resolve_item(
+                ref_class=item.ref_class,
+                job_id=item.job_id,
+                action=item.action,
+                target_id=item.target_id,
+                user=user,
+                bulk_batch_id=batch_id,
+            )
+            results.append({
+                "job_id": item.job_id,
+                "ok": True,
+                "action": r.get("action"),
+                "target_id": r.get("target_id"),
+            })
+            succeeded += 1
+        except HTTPException as e:
+            detail = e.detail if isinstance(e.detail, str) else str(e.detail)
+            results.append({
+                "job_id": item.job_id,
+                "ok": False,
+                "error": detail,
+                "status_code": e.status_code,
+            })
+            failed += 1
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.exception(
+                "[k41b] resolve-bulk unexpected error for %s: %s",
+                item.job_id, exc,
+            )
+            results.append({
+                "job_id": item.job_id,
+                "ok": False,
+                "error": "internal_error",
+                "status_code": 500,
+            })
+            failed += 1
+
+    payload = {
+        "ok": failed == 0,
+        "bulk_batch_id": batch_id,
+        "total": len(body.items),
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    }
+    _bulk_idempotency_cache[batch_id] = (
+        time.monotonic() + _BULK_IDEMPOTENCY_TTL_S,
+        payload,
+    )
+    return payload
 
 
 # ═════════════════════════════════════════════════════════════════════

@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import PortalErrorBoundary from "@/components/errors/PortalErrorBoundary";
 import { api } from "@/api";
@@ -45,6 +46,19 @@ import { colors, money } from "@/theme";
 
 /* ── helpers ─────────────────────────────────────────────────── */
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/* K41b — client-minted UUID v4 for bulk-batch idempotency. */
+function makeBulkBatchId() {
+  try {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+  } catch { /* fallthrough */ }
+  return `bulk-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/* K41b — page-scope bulk cap must match backend _BULK_CAP. */
+const BULK_CAP = 100;
 
 function useDebounced(value, delay = 250) {
   const [v, setV] = useState(value);
@@ -165,7 +179,7 @@ function AssignPicker({ kind, onSelect }) {
   );
 }
 
-function DataIntegrityRow({ row, refClass, onResolved }) {
+function DataIntegrityRow({ row, refClass, onResolved, selected, onToggleSelect, faded: externalFaded }) {
   const [action, setAction] = useState(""); // "assign" | "delete"
   const [target, setTarget] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -197,9 +211,17 @@ function DataIntegrityRow({ row, refClass, onResolved }) {
 
   return (
     <RowShell
-      faded={faded}
+      faded={faded || externalFaded}
       testid={`di-row-${row.job_id}`}
     >
+      <td style={{ padding: "8px 8px", width: 32 }}>
+        <Checkbox
+          checked={!!selected}
+          onCheckedChange={(v) => onToggleSelect?.(row.job_id, !!v)}
+          aria-label={`Select job ${row.job_id}`}
+          data-testid={`di-row-${row.job_id}-select`}
+        />
+      </td>
       <td style={{ padding: "8px 12px", fontSize: 12 }} data-testid={`di-row-${row.job_id}-jobid`}>
         {row.job_id.slice(0, 8)}…
       </td>
@@ -432,6 +454,312 @@ function IncomeRow({ row, tile, onEdited, onOpenFull }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   K41b — Bulk resolve action bar (data-integrity only)
+   ═══════════════════════════════════════════════════════════════ */
+
+/** Per-class action affordances.  Buttons the current class doesn't
+ * support are disabled with a tooltip so the UX is uniform across
+ * classes even though the modal is single-class today.
+ */
+function classSupports(refClass) {
+  if (refClass === "orphaned_customer_refs") {
+    return { customer: true, tech: false, delete: true };
+  }
+  if (refClass === "orphaned_technician_refs") {
+    return { customer: false, tech: true, delete: false };
+  }
+  // unassigned_pending_jobs
+  return { customer: false, tech: true, delete: false };
+}
+
+function BulkResolveBar({
+  refClass,
+  selectedRows,
+  onClearSelection,
+  onBulkComplete,
+}) {
+  const [mode, setMode] = useState(""); // "" | "customer" | "tech" | "delete"
+  const [target, setTarget] = useState(null); // {id, name} for assigns
+  const [confirming, setConfirming] = useState(false); // destructive 2-step
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [failed, setFailed] = useState([]); // {job_id, error}
+
+  const support = classSupports(refClass);
+  const n = selectedRows.length;
+
+  const reset = () => {
+    setMode("");
+    setTarget(null);
+    setConfirming(false);
+    setError("");
+    setFailed([]);
+  };
+
+  // Reset the transient picker/confirm state when the selection is
+  // cleared or the pending action's target changes classes.
+  useEffect(() => { if (n === 0) reset(); }, [n]);
+
+  const confirmDisabled = busy
+    || (mode === "customer" && !target)
+    || (mode === "tech" && !target)
+    || (mode === "delete" && !support.delete);
+
+  const buildSummary = () => {
+    if (mode === "customer") {
+      return `Reassign ${n} orphan job${n === 1 ? "" : "s"} to Customer "${target?.name || target?.email || target?.id || "—"}".`;
+    }
+    if (mode === "tech") {
+      return `Reassign ${n} job${n === 1 ? "" : "s"} to Technician "${target?.name || target?.email || target?.id || "—"}".`;
+    }
+    if (mode === "delete") {
+      return `Soft-delete ${n} orphan job${n === 1 ? "" : "s"} — cannot be undone by user.`;
+    }
+    return "";
+  };
+
+  const runBulk = async (act, tgtId) => {
+    if (n > BULK_CAP) {
+      setError(`Batch cap exceeded (max ${BULK_CAP}).`);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setFailed([]);
+    const bulkBatchId = makeBulkBatchId();
+    const items = selectedRows.map((jobId) => ({
+      ref_class: refClass,
+      job_id: jobId,
+      action: act,
+      target_id: tgtId || null,
+    }));
+    try {
+      const resp = await api.post(
+        "/dashboard/data-integrity/resolve-bulk",
+        { items, bulk_batch_id: bulkBatchId },
+      );
+      const results = Array.isArray(resp?.results) ? resp.results : [];
+      const okIds = results.filter((r) => r.ok).map((r) => r.job_id);
+      const failedRows = results.filter((r) => !r.ok);
+      setFailed(failedRows);
+      if (okIds.length > 0) {
+        onBulkComplete(okIds);
+        toast.success(
+          `Resolved ${okIds.length}/${n} row${n === 1 ? "" : "s"}` +
+            (failedRows.length > 0 ? ` · ${failedRows.length} failed` : ""),
+        );
+      } else if (failedRows.length > 0) {
+        toast.error(`All ${n} rows failed.  See details below.`);
+      }
+      if (failedRows.length === 0) {
+        reset();
+      } else {
+        // Keep the strip up so the user can see the per-row errors.
+        setConfirming(false);
+      }
+    } catch (e) {
+      const msg = e?.data?.detail || e?.message || "Bulk resolve failed";
+      setError(typeof msg === "string" ? msg : JSON.stringify(msg));
+      toast.error(msg);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fireConfirm = () => {
+    if (mode === "delete") {
+      if (!confirming) {
+        // First click on destructive — arm the second-click.
+        setConfirming(true);
+        return;
+      }
+      runBulk("delete", null);
+      return;
+    }
+    if (mode === "customer" || mode === "tech") {
+      runBulk("assign", target?.id);
+    }
+  };
+
+  if (n === 0 && failed.length === 0) return null;
+
+  return (
+    <div
+      data-testid="bulk-resolve-bar"
+      style={{
+        position: "sticky",
+        bottom: 0,
+        background: colors.surface,
+        borderTop: `2px solid ${colors.borderStrong}`,
+        boxShadow: "0 -6px 16px rgba(0,0,0,0.06)",
+        padding: "10px 14px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        zIndex: 20,
+      }}
+    >
+      <div
+        style={{ display: "flex", flexWrap: "wrap", alignItems: "center",
+                  gap: 10 }}
+      >
+        <span
+          data-testid="bulk-resolve-selection-count"
+          style={{ fontSize: 13, fontWeight: 600, color: colors.onSurface }}
+        >
+          {n} selected
+        </span>
+
+        <span style={{ color: colors.muted }}>·</span>
+
+        {/* Assign to customer */}
+        {mode === "customer" ? (
+          <div style={{ minWidth: 220 }}>
+            <AssignPicker
+              kind="customers"
+              onSelect={(r) => setTarget(r)}
+            />
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            variant={support.customer ? "secondary" : "outline"}
+            disabled={busy || !support.customer}
+            onClick={() => { setMode("customer"); setTarget(null); setConfirming(false); }}
+            title={support.customer ? "Reassign the selected rows to a customer" : "Not applicable for this issue class"}
+            data-testid="bulk-resolve-mode-customer"
+          >
+            Assign to customer ▾
+          </Button>
+        )}
+
+        {/* Assign to tech */}
+        {mode === "tech" ? (
+          <div style={{ minWidth: 220 }}>
+            <AssignPicker
+              kind="technicians"
+              onSelect={(r) => setTarget(r)}
+            />
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            variant={support.tech ? "secondary" : "outline"}
+            disabled={busy || !support.tech}
+            onClick={() => { setMode("tech"); setTarget(null); setConfirming(false); }}
+            title={support.tech ? "Reassign the selected rows to a technician" : "Not applicable for this issue class"}
+            data-testid="bulk-resolve-mode-tech"
+          >
+            Assign to tech ▾
+          </Button>
+        )}
+
+        {/* Soft-delete */}
+        <Button
+          size="sm"
+          variant={mode === "delete" ? "destructive" : "outline"}
+          disabled={busy || !support.delete}
+          onClick={() => { setMode("delete"); setTarget(null); setConfirming(false); }}
+          title={support.delete
+            ? "Soft-delete every selected orphan job"
+            : "Only enabled when every selected row is a job-type orphan"}
+          data-testid="bulk-resolve-mode-delete"
+        >
+          Soft-delete jobs
+        </Button>
+
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => { onClearSelection(); reset(); }}
+          disabled={busy}
+          data-testid="bulk-resolve-clear"
+        >
+          Clear
+        </Button>
+      </div>
+
+      {/* Inline confirm strip — appears when a mode is selected. */}
+      {mode && (
+        <div
+          style={{
+            display: "flex", flexWrap: "wrap", alignItems: "center",
+            gap: 10, padding: "8px 10px",
+            background: mode === "delete" ? "#FEF2F2" : colors.surfaceSecondary,
+            border: `1px solid ${mode === "delete" ? "#FCA5A5" : colors.border}`,
+            borderRadius: 6,
+          }}
+          data-testid="bulk-resolve-confirm-strip"
+        >
+          <span
+            style={{ fontSize: 12, color: mode === "delete" ? colors.error : colors.onSurface }}
+            data-testid="bulk-resolve-confirm-summary"
+          >
+            {buildSummary()}
+          </span>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => { setMode(""); setTarget(null); setConfirming(false); }}
+              disabled={busy}
+              data-testid="bulk-resolve-confirm-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant={mode === "delete" ? "destructive" : "default"}
+              disabled={confirmDisabled}
+              onClick={fireConfirm}
+              data-testid="bulk-resolve-confirm-fire"
+            >
+              {busy
+                ? "Applying…"
+                : mode === "delete"
+                  ? (confirming ? `Confirm delete ${n} job${n === 1 ? "" : "s"}` : "Confirm")
+                  : `Confirm (${n})`}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {error ? (
+        <div
+          data-testid="bulk-resolve-error"
+          style={{ color: colors.error, fontSize: 12 }}
+        >
+          {error}
+        </div>
+      ) : null}
+
+      {failed.length > 0 ? (
+        <div
+          data-testid="bulk-resolve-failed-list"
+          style={{
+            padding: "8px 10px", background: "#FEF2F2",
+            border: `1px solid #FCA5A5`, borderRadius: 6,
+            fontSize: 12, color: colors.error,
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            {failed.length} row{failed.length === 1 ? "" : "s"} failed:
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, maxHeight: 100, overflow: "auto" }}>
+            {failed.map((f) => (
+              <li key={f.job_id} data-testid={`bulk-resolve-failed-${f.job_id}`}>
+                {String(f.job_id).slice(0, 8)}… — {f.error || "error"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
    Main modal
    ═══════════════════════════════════════════════════════════════ */
 function ModalBody({ variant, params, onOpenFullEdit }) {
@@ -441,6 +769,11 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
   const [nextCursor, setNextCursor] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  /* K41b — selection state (data-integrity only; page-scope). */
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  /* K41b — track rows that just resolved via bulk so they fade before
+   * being removed from the array on the next render tick. */
+  const [pendingBulkFade, setPendingBulkFade] = useState(() => new Set());
 
   const url = useMemo(() => {
     if (variant === "data-integrity") {
@@ -469,14 +802,85 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
 
   const handleResolved = useCallback((jobId) => {
     setRows((prev) => prev.filter((r) => r.job_id !== jobId));
+    setSelectedIds((prev) => {
+      if (!prev.has(jobId)) return prev;
+      const next = new Set(prev);
+      next.delete(jobId);
+      return next;
+    });
+  }, []);
+
+  /* K41b — bulk selection helpers. */
+  const toggleSelect = useCallback((jobId, checked) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(jobId); else next.delete(jobId);
+      return next;
+    });
+  }, []);
+
+  const visibleJobIds = useMemo(
+    () => rows.map((r) => r.job_id), [rows],
+  );
+  const allVisibleSelected = visibleJobIds.length > 0
+    && visibleJobIds.every((id) => selectedIds.has(id));
+  const someVisibleSelected = !allVisibleSelected
+    && visibleJobIds.some((id) => selectedIds.has(id));
+
+  const toggleSelectAllVisible = useCallback((checked) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        visibleJobIds.forEach((id) => next.add(id));
+      } else {
+        visibleJobIds.forEach((id) => next.delete(id));
+      }
+      return next;
+    });
+  }, [visibleJobIds]);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const handleBulkComplete = useCallback((okIds) => {
+    if (!Array.isArray(okIds) || okIds.length === 0) return;
+    // Fade the resolved rows, then drop them + de-select on next tick.
+    setPendingBulkFade((prev) => {
+      const next = new Set(prev);
+      okIds.forEach((id) => next.add(id));
+      return next;
+    });
+    setTimeout(() => {
+      setRows((prev) => prev.filter((r) => !okIds.includes(r.job_id)));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        okIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      setPendingBulkFade((prev) => {
+        const next = new Set(prev);
+        okIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    }, 400);
   }, []);
 
   if (variant === "data-integrity") {
+    const selectedList = Array.from(selectedIds);
     return (
       <div data-testid="drilldown-body-data-integrity">
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: `2px solid ${colors.border}` }}>
+              <th style={{ padding: "8px 8px", width: 32 }}>
+                <Checkbox
+                  checked={allVisibleSelected
+                    ? true
+                    : (someVisibleSelected ? "indeterminate" : false)}
+                  onCheckedChange={(v) => toggleSelectAllVisible(!!v)}
+                  aria-label="Select all visible rows"
+                  data-testid="di-select-all"
+                />
+              </th>
               <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 11, color: colors.muted }}>JOB</th>
               <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 11, color: colors.muted }}>
                 {params?.issueClass === "orphaned_customer_refs" ? "CUSTOMER (DENORM)"
@@ -494,10 +898,19 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
                 row={r}
                 refClass={params?.issueClass}
                 onResolved={handleResolved}
+                selected={selectedIds.has(r.job_id)}
+                onToggleSelect={toggleSelect}
+                faded={pendingBulkFade.has(r.job_id)}
               />
             ))}
           </tbody>
         </table>
+        <div
+          style={{ padding: "6px 12px", fontSize: 11, color: colors.muted }}
+          data-testid="di-select-all-hint"
+        >
+          Selects visible rows only.
+        </div>
         {loading ? <div style={{ padding: 12, color: colors.muted }} data-testid="drilldown-loading">Loading…</div> : null}
         {err ? <div style={{ padding: 12, color: colors.error }} data-testid="drilldown-error">{err}</div> : null}
         {!loading && rows.length === 0 ? (
@@ -517,6 +930,12 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
             </Button>
           </div>
         ) : null}
+        <BulkResolveBar
+          refClass={params?.issueClass}
+          selectedRows={selectedList}
+          onClearSelection={clearSelection}
+          onBulkComplete={handleBulkComplete}
+        />
       </div>
     );
   }

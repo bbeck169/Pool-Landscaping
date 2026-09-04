@@ -1066,7 +1066,17 @@ export default function CalendarSchedule() {
         >
           <option value="">{crewId ? "Techs (from crew)" : "All techs"}</option>
           {techs.map((t) => (
-            <option key={t.id} value={t.user_id || t.id}>{t.name || t.email}</option>
+            // Phase K42 · Feb-2026 — always emit the AUTHORITATIVE
+            // ``technicians.id`` (``t.id``).  Historically this used
+            // ``t.user_id || t.id`` which shipped ``users.id`` when
+            // available — but ``jobs.technician_id`` stores
+            // ``technicians.id`` for legacy jobs and the two id
+            // spaces are NOT interchangeable.  The K42 backend
+            // resolver now accepts either variant defensively, but
+            // sending the authoritative id at the wire boundary keeps
+            // the query fast (no resolver hop) and the filter
+            // reversible.
+            <option key={t.id} value={t.id}>{t.name || t.email}</option>
           ))}
         </select>
 
