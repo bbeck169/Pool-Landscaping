@@ -1,3 +1,82 @@
+## Phase K38 · Bulk Charge ACH on File (Backend + Web + Mobile) — SHIPPED
+
+**Scope.** Mirror the K14 "Bulk Charge Card on File" flow for ACH
+(Stripe `us_bank_account` PaymentMethods). Ship backend endpoint,
+webhook settlement handling, web + mobile UI parity, and tests.
+
+### Backend
+- **New endpoint**: `POST /api/invoices/bulk-charge-ach-on-file` in
+  `routers/invoices_bulk_charge.py` (mirrors the K14 card endpoint,
+  reuses `BulkChargeBody` model + `bulk_charge_runs` idempotency
+  index). Filters PMs by `type == "us_bank_account"` + requires
+  `verification_status == "verified"`. Skip reasons:
+  `no_bank_on_file`, `bank_unverified`, `pending_ach`, `already_paid`,
+  `zero_balance`, `not_found`. Deterministic per-invoice idempotency
+  key: `f"{key}:ach:{invoice_id}"`.
+- **New charge helper**: `services/payments/stripe_charge.py`
+  `charge_ach_on_file(...)` — creates PaymentIntent with
+  `payment_method_types=["us_bank_account"]`, `off_session=True`,
+  `confirm=True`. Stamps `metadata.payment_type="ach"`. Stripe
+  returns `status="processing"` on create; the row is persisted
+  into `db.stripe_charges` with that status.
+- **Invoice status transitions**: on successful PI create, invoice
+  is flipped to `payment_status = "pending_ach"` (NOT `paid`).
+- **Webhook settlement** (`stripe_charge.handle_webhook_event`):
+  - `payment_intent.succeeded` → `_mark_invoice_paid` flips
+    `pending_ach` → `paid` (existing behaviour, PI-deduped).
+  - `payment_intent.payment_failed` → `_mark_invoice_failed` now
+    branches: if current status is `pending_ach`, revert to
+    `unpaid` (K38 spec). Non-ACH failures still land on `failed`
+    (regression guard test).
+
+### Web (`/app/frontend/`)
+- `components/invoices/BulkChargeModal.jsx` parameterized with
+  new prop `paymentMethod: "card" | "ach"` (default `"card"`).
+  ACH mode:
+  - Renders the verbatim K38 warning banner (test-fixture anchor,
+    NOT paraphrased): "ACH payments take 3–5 business days to
+    settle. Charges may still fail after submission (NSF, closed
+    account, or incorrect routing). Failed charges will revert
+    the invoice to Unpaid." Exported as `ACH_SETTLEMENT_WARNING`.
+  - Hits `/invoices/bulk-charge-ach-on-file`, surfaces bank last-4
+    + bank name per row, uses "Would submit" / "Submit ACH" /
+    "Initiated" copy in place of "Would charge" / "Confirm charge"
+    / "Charged". Test IDs prefixed with `bulk-charge-ach-*` so
+    both flows can co-exist on the same page.
+- `pages/invoices/InvoicesList.jsx` gained a second bulk-action
+  button `data-testid="bulk-charge-ach-button"` alongside the
+  existing card button; each opens the parameterized modal.
+
+### Mobile (`/app/mobile/`)
+- `app/invoices.tsx` gained a new bulk action
+  `bulk-charge-ach-invoices` on the `BulkActionBar`. Tap →
+  `Alert.alert` with the verbatim K38 message and two buttons
+  (Cancel / Submit ACH). Submit posts to
+  `/invoices/bulk-charge-ach-on-file` with a client-minted
+  idempotency key and shows a success / failure Alert with the
+  initiated / skipped / failed counts.
+
+### Tests
+- Backend: `tests/test_bulk_charge_ach_phase_k38.py` — 10 tests.
+  Covers dry-run eligibility (all skip buckets), real charges +
+  `pending_ach` mirror, replay idempotency, exception path,
+  cap-over-100 422, role guard 403, cross-tenant not_found, plus
+  three webhook tests (`pending_ach` → `paid`, `pending_ach` →
+  `unpaid`, non-ACH failure still `failed`).
+- Web: `src/test/bulk-charge-ach-modal.test.jsx` — 4 tests.
+  Verbatim ACH warning, endpoint routing + bank last-4, card-path
+  regression, 500-response error surface.
+- Mobile: `__tests__/bulk-charge-ach-mobile.test.tsx` — 3 tests.
+  Verbatim Alert copy, endpoint payload shape (dry_run=false +
+  idempotency_key), failure Alert.
+
+All 17 K38 tests pass. Pre-existing failures in
+`invoice-edit-modal.test.jsx` (unrelated to K38) confirmed via
+`git stash` sanity check.
+
+---
+
+
 ## Phase K36 · Mobile Schedule Crash Hardening + Amendment — SHIPPED
 
 **Trigger.** iOS TestFlight users on tenant *Pool Landscaping of

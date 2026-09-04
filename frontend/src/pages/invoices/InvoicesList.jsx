@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, Landmark, ArrowUp, ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -112,6 +112,8 @@ export default function InvoicesList() {
   const initialCategories = params.getAll("category");
   const [selectedCategories, setSelectedCategories] = useState(initialCategories);
   const [bulkChargeOpen, setBulkChargeOpen] = useState(false);
+  // Phase K38 · Feb-2026 — separate flag for the ACH-on-file bulk modal.
+  const [bulkChargeAchOpen, setBulkChargeAchOpen] = useState(false);
 
   const setStatus = (v) => {
     const s = new URLSearchParams(params);
@@ -630,6 +632,18 @@ export default function InvoicesList() {
           >
             <CreditCard size={12} /> Charge cards on file
           </button>
+          {/* Phase K38 · Feb 2026 — ACH-on-file bulk charge (mirrors K14). */}
+          <button
+            type="button"
+            onClick={() => setBulkChargeAchOpen(true)}
+            disabled={busy || selectedCount === 0 || selectedCount > 100}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
+            style={{ backgroundColor: "#0369A1", color: "#FFFFFF" }}
+            data-testid="bulk-charge-ach-button"
+            title={selectedCount > 100 ? "Max 100 invoices per batch" : ""}
+          >
+            <Landmark size={12} /> Charge ACH on file
+          </button>
           <button
             type="button"
             onClick={() => setConfirmDeleteOpen(true)}
@@ -718,8 +732,23 @@ export default function InvoicesList() {
       {bulkChargeOpen ? (
         <BulkChargeModal
           invoiceIds={Array.from(selected)}
+          paymentMethod="card"
           onClose={(runId) => {
             setBulkChargeOpen(false);
+            if (runId) {
+              clearSelection();
+              loadRows();
+            }
+          }}
+        />
+      ) : null}
+      {/* Phase K38 · Feb 2026 — Stripe ACH bulk-charge modal. */}
+      {bulkChargeAchOpen ? (
+        <BulkChargeModal
+          invoiceIds={Array.from(selected)}
+          paymentMethod="ach"
+          onClose={(runId) => {
+            setBulkChargeAchOpen(false);
             if (runId) {
               clearSelection();
               loadRows();

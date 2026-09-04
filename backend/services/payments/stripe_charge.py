@@ -835,6 +835,199 @@ async def charge_card_on_file(
         raise
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Phase K38 · Feb-2026 — ACH-on-file (us_bank_account) charge helper.
+#
+# Mirrors ``charge_card_on_file`` but requests a PaymentIntent with
+# ``payment_method_types=["us_bank_account"]``. ACH charges settle in
+# 3–5 business days — Stripe returns status="processing" on the
+# initial create + confirm. The invoice is flipped to ``pending_ach``
+# so the UI shows the in-transit state; the invoice moves to ``paid``
+# only on the ``payment_intent.succeeded`` webhook (or reverts to
+# ``unpaid`` on ``payment_intent.payment_failed``).
+# ═════════════════════════════════════════════════════════════════════
+async def _create_ach_intent(
+    *,
+    amount_cents: int,
+    currency: str,
+    customer: Optional[str],
+    payment_method: str,
+    description: Optional[str],
+    metadata: Dict[str, Any],
+    idempotency_key: str,
+) -> Any:
+    """Create a Stripe PaymentIntent for a us_bank_account PM. Kept
+    at module scope so pytest can monkeypatch it in-process.
+    """
+    return await _to_thread(
+        _stripe.PaymentIntent.create,
+        amount=amount_cents,
+        currency=currency,
+        customer=customer,
+        payment_method=payment_method,
+        payment_method_types=["us_bank_account"],
+        off_session=True,
+        confirm=True,
+        description=description or None,
+        metadata=metadata,
+        idempotency_key=idempotency_key,
+    )
+
+
+async def charge_ach_on_file(
+    *,
+    tenant_id: str,
+    customer_id: str,
+    payment_method_id: str,
+    amount_cents: int,
+    currency: str = "usd",
+    invoice_id: Optional[str] = None,
+    description: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    actor_user_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    via_impersonation: bool = False,
+    acting_admin_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create an off_session ACH PaymentIntent using a saved
+    ``us_bank_account`` payment method + log the attempt into
+    ``db.stripe_charges``.
+
+    Unlike ``charge_card_on_file`` (which returns ``status="succeeded"``
+    on the same request), ACH settlement is asynchronous: Stripe
+    returns ``status="processing"`` and the ``payment_intent.succeeded``
+    webhook fires 3–5 business days later. The caller (bulk endpoint)
+    marks the linked invoice ``pending_ach`` so the UI reflects the
+    in-transit state.
+    """
+    _init_api_key()
+
+    if not isinstance(amount_cents, int) or amount_cents <= 0:
+        raise ValueError("amount_cents must be a positive integer")
+
+    row = await db.payment_methods.find_one(
+        {
+            "tenant_id": tenant_id,
+            "customer_id": customer_id,
+            "provider_payment_method_id": payment_method_id,
+            "provider": "stripe",
+        },
+        {"_id": 0},
+    )
+    if not row:
+        raise ValueError("payment method not attached to this customer")
+    if (row.get("type") or "") != "us_bank_account":
+        raise ValueError("payment method is not a us_bank_account")
+    provider_customer_id = row.get("provider_customer_id")
+
+    # Reconciliation guards — mirror ``charge_card_on_file`` but treat
+    # a prior ``processing`` row for the same (tenant, invoice, amount,
+    # pm) as an already-in-flight ACH attempt so the bulk driver
+    # dedupes cleanly across retries.
+    if invoice_id:
+        prior = await db.stripe_charges.find_one({
+            "tenant_id": tenant_id,
+            "invoice_id": invoice_id,
+            "amount_cents": amount_cents,
+            "provider_payment_method_id": payment_method_id,
+            "status": {"$in": ["succeeded", "processing", "pending"]},
+        }, {"_id": 0, "id": 1, "stripe_payment_intent_id": 1, "status": 1})
+        if prior and prior.get("status") == "succeeded":
+            raise ChargeAlreadySucceededError(
+                f"invoice {invoice_id} already charged",
+                payment_intent_id=prior.get("stripe_payment_intent_id"),
+            )
+        inv = await db.quotes.find_one(
+            {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
+            {"_id": 0, "payment_status": 1},
+        )
+        if inv and (inv.get("payment_status") or "").lower() == "paid":
+            raise InvoiceAlreadyPaidError(f"invoice {invoice_id} already paid")
+
+    # ``payment_type`` metadata is used by the webhook branch to
+    # decide whether a payment_failed should revert pending_ach →
+    # unpaid (K38) vs the legacy card path that flips to "failed".
+    md = {
+        "crm_tenant_id": tenant_id,
+        "crm_customer_id": customer_id,
+        "crm_invoice_id": invoice_id or "",
+        "actor_user_id": actor_user_id or "",
+        "payment_type": "ach",
+        **{str(k): str(v) for k, v in (metadata or {}).items()},
+    }
+    charge_row_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    deterministic_key = (
+        f"ach:{tenant_id}:{invoice_id or 'noinv'}:"
+        f"{amount_cents}:{payment_method_id}"
+    )
+
+    try:
+        intent = await _create_ach_intent(
+            amount_cents=amount_cents,
+            currency=currency,
+            customer=provider_customer_id,
+            payment_method=payment_method_id,
+            description=description,
+            metadata=md,
+            idempotency_key=idempotency_key or deterministic_key,
+        )
+        pi = _asdict(intent)
+        status = pi.get("status")
+        payment_intent_id = pi.get("id")
+        # ACH normal path: ``processing``. If Stripe surprises us with
+        # ``succeeded`` (some verified paths do), we still persist as
+        # succeeded — the webhook will re-affirm.
+        outcome = status or "unknown"
+        await _persist_charge(
+            charge_row_id,
+            tenant_id=tenant_id,
+            customer_id=customer_id,
+            payment_method_id=payment_method_id,
+            amount_cents=amount_cents,
+            currency=currency,
+            invoice_id=invoice_id,
+            payment_intent_id=payment_intent_id,
+            status=outcome,
+            error=None,
+            actor_user_id=actor_user_id,
+            created_at=now,
+            via_impersonation=via_impersonation,
+            acting_admin_id=acting_admin_id,
+        )
+        return {
+            "ok": status in ("processing", "succeeded"),
+            "charge_row_id": charge_row_id,
+            "payment_intent_id": payment_intent_id,
+            "status": outcome,
+            "amount_cents": amount_cents,
+            "currency": currency,
+        }
+    except Exception as exc:
+        err_msg = str(exc) or exc.__class__.__name__
+        await _persist_charge(
+            charge_row_id,
+            tenant_id=tenant_id,
+            customer_id=customer_id,
+            payment_method_id=payment_method_id,
+            amount_cents=amount_cents,
+            currency=currency,
+            invoice_id=invoice_id,
+            payment_intent_id=None,
+            status="failed",
+            error=err_msg[:500],
+            actor_user_id=actor_user_id,
+            created_at=now,
+            via_impersonation=via_impersonation,
+            acting_admin_id=acting_admin_id,
+        )
+        logger.warning(
+            "[stripe_charge] ACH charge failed tenant=%s customer=%s pm=%s: %s",
+            tenant_id, customer_id, payment_method_id, err_msg,
+        )
+        raise
+
+
 async def _persist_charge(
     row_id: str,
     *,
@@ -1209,6 +1402,23 @@ async def _mark_invoice_paid(*, tenant_id: str, invoice_id: str,
 
 async def _mark_invoice_failed(*, tenant_id: str, invoice_id: str,
                                 failure_reason: str) -> None:
+    # Phase K38 · Feb-2026 — ACH settlement failure. When the invoice
+    # is currently in ``pending_ach`` (bulk-charge-ach-on-file flipped
+    # it there at PaymentIntent create time), revert to ``unpaid``
+    # per spec rather than flipping to ``failed``. The card path
+    # keeps its existing ``failed`` behaviour.
+    inv = await db.quotes.find_one(
+        {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
+        {"_id": 0, "payment_status": 1},
+    )
+    if inv and (inv.get("payment_status") or "").lower() == "pending_ach":
+        await db.quotes.update_one(
+            {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice",
+             "payment_status": "pending_ach"},
+            {"$set": {"payment_status": "unpaid",
+                        "failure_reason": failure_reason}},
+        )
+        return
     await db.quotes.update_one(
         {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice",
          "payment_status": {"$nin": ["paid", "refunded", "partially_refunded"]}},

@@ -1,21 +1,26 @@
 /**
  * Phase 14b · Feb-2026 — Two-step bulk-charge modal.
+ * Phase K38 · Feb-2026 — Parameterized to support ACH (us_bank_account)
+ * in addition to card. Same two-step dry-run/confirm flow.
  *
  * Flow:
- *   1. Mount → immediately calls `/api/invoices/bulk-charge-card-on-file` with
- *      `dry_run=true` + a client-generated UUID `idempotency_key`. Renders the
- *      per-row eligibility table with badges.
- *   2. "Confirm charge — $Y" button (only enabled once step-1 resolves) →
- *      calls the same endpoint with `dry_run=false` + the *same* key. Renders
- *      results + amounts + charge IDs. Toast summary on close.
+ *   1. Mount → immediately calls the appropriate bulk endpoint with
+ *      `dry_run=true` + a client-generated UUID `idempotency_key`.
+ *      Renders the per-row eligibility table with badges.
+ *   2. "Confirm" button (only enabled once step-1 resolves) → calls
+ *      the same endpoint with `dry_run=false` + the *same* key.
+ *      Renders results + amounts + charge IDs. Toast summary on close.
  *
  * Props:
- *   invoiceIds  (string[])  — selected invoice IDs (must be ≤ 100).
- *   onClose     (fn(runId?))
+ *   invoiceIds     (string[])  — selected invoice IDs (must be ≤ 100).
+ *   paymentMethod  ("card"|"ach", default "card") — Phase K38 · Feb-2026.
+ *                                Controls endpoint URL, copy, and result
+ *                                terminology ("Charged" vs "Initiated").
+ *   onClose        (fn(runId?))
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { X as XIcon, ChevronRight, Check, AlertTriangle } from "lucide-react";
+import { X as XIcon, ChevronRight, Check, AlertTriangle, Landmark } from "lucide-react";
 
 import { Button } from "../ui/button";
 
@@ -31,7 +36,7 @@ function _uuid() {
   );
 }
 
-const _SKIP_LABELS = {
+const _SKIP_LABELS_CARD = {
   already_paid: { label: "Already paid", tone: "bg-slate-100 text-slate-700" },
   no_card_on_file: { label: "No card on file", tone: "bg-amber-100 text-amber-800" },
   card_expired: { label: "Card expired", tone: "bg-red-100 text-red-800" },
@@ -39,11 +44,30 @@ const _SKIP_LABELS = {
   not_found: { label: "Not found", tone: "bg-red-100 text-red-800" },
 };
 
+const _SKIP_LABELS_ACH = {
+  already_paid: { label: "Already paid", tone: "bg-slate-100 text-slate-700" },
+  pending_ach: { label: "ACH in-flight", tone: "bg-amber-100 text-amber-800" },
+  no_bank_on_file: { label: "No bank on file", tone: "bg-amber-100 text-amber-800" },
+  bank_unverified: { label: "Bank not verified", tone: "bg-red-100 text-red-800" },
+  zero_balance: { label: "Zero balance", tone: "bg-slate-100 text-slate-700" },
+  not_found: { label: "Not found", tone: "bg-red-100 text-red-800" },
+};
+
+// K38 · Feb-2026 — verbatim ACH settlement warning copy.  Anchored as a
+// test fixture — DO NOT paraphrase.
+export const ACH_SETTLEMENT_WARNING =
+  "ACH payments take 3\u20135 business days to settle. Charges may still fail after submission (NSF, closed account, or incorrect routing). Failed charges will revert the invoice to Unpaid.";
+
 function _dollarsFromCents(c) {
   return `$${((c || 0) / 100).toFixed(2)}`;
 }
 
-export default function BulkChargeModal({ invoiceIds, onClose }) {
+export default function BulkChargeModal({ invoiceIds, paymentMethod = "card", onClose }) {
+  const isAch = paymentMethod === "ach";
+  const endpoint = isAch
+    ? "/invoices/bulk-charge-ach-on-file"
+    : "/invoices/bulk-charge-card-on-file";
+  const skipLabels = isAch ? _SKIP_LABELS_ACH : _SKIP_LABELS_CARD;
   const [key] = useState(_uuid);
   const [step, setStep] = useState("loading"); // loading | review | confirming | done | error
   const [dryRun, setDryRun] = useState(null);
@@ -54,7 +78,7 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
 
   const post = useCallback(
     async (dry) => {
-      const res = await fetch(`${API}/invoices/bulk-charge-card-on-file`, {
+      const res = await fetch(`${API}${endpoint}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -73,7 +97,7 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
       }
       return j;
     },
-    [invoiceIds, key, token]
+    [invoiceIds, key, token, endpoint]
   );
 
   useEffect(() => {
@@ -82,13 +106,10 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
         const j = await post(true);
         setDryRun(j);
         setStep("review");
-        // K14 · Feb-2026 — surface an inline toast when every row is
-        // ineligible so the admin knows the disabled "Confirm" button
-        // is the intentional outcome, not a broken UI.
         const s = j.summary || {};
         if ((s.would_charge || 0) === 0 && (s.skipped || 0) > 0) {
           toast.warning(
-            `No cards on file to charge — ${s.skipped} invoice${
+            `${isAch ? "No bank accounts on file" : "No cards on file"} to charge — ${s.skipped} invoice${
               s.skipped === 1 ? "" : "s"
             } skipped`
           );
@@ -97,10 +118,7 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
         const msg = String(err?.message || err);
         setErrMsg(msg);
         setStep("error");
-        // K14 · Feb-2026 — toast on failure of the initial eligibility
-        // fetch so admins see something even if the modal is dismissed
-        // (or covered by another surface) before the inline block reads.
-        toast.error(`Bulk charge check failed: ${msg}`);
+        toast.error(`Bulk ${isAch ? "ACH " : ""}charge check failed: ${msg}`);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,18 +131,23 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
       setReal(j);
       setStep("done");
       const s = j.summary || {};
-      const msg = `${s.charged || 0} charged · ${s.skipped || 0} skipped · ${s.failed || 0} failed`;
-      if ((s.failed || 0) > 0) toast.error(msg);
-      else if ((s.charged || 0) === 0) toast.warning(msg);
-      else toast.success(msg);
+      if (isAch) {
+        const initiated = s.initiated || 0;
+        const msg = `${initiated} initiated · ${s.skipped || 0} skipped · ${s.failed || 0} failed`;
+        if ((s.failed || 0) > 0) toast.error(msg);
+        else if (initiated === 0) toast.warning(msg);
+        else toast.success(msg);
+      } else {
+        const msg = `${s.charged || 0} charged · ${s.skipped || 0} skipped · ${s.failed || 0} failed`;
+        if ((s.failed || 0) > 0) toast.error(msg);
+        else if ((s.charged || 0) === 0) toast.warning(msg);
+        else toast.success(msg);
+      }
     } catch (err) {
       const msg = String(err?.message || err);
       setErrMsg(msg);
       setStep("error");
-      // K14 · Feb-2026 — toast on confirm failure. Covers Stripe not
-      // configured (500 from _init_api_key), network drops, or any
-      // backend 5xx that HTTP-caught inline block might miss.
-      toast.error(`Bulk charge failed: ${msg}`);
+      toast.error(`Bulk ${isAch ? "ACH " : ""}charge failed: ${msg}`);
     }
   };
 
@@ -135,6 +158,8 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
       .reduce((acc, r) => acc + (r.amount_cents || 0), 0);
   }, [dryRun]);
 
+  const testIdPrefix = isAch ? "bulk-charge-ach" : "bulk-charge";
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center px-4"
@@ -142,7 +167,7 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && step !== "confirming") onClose?.();
       }}
-      data-testid="bulk-charge-modal"
+      data-testid={`${testIdPrefix}-modal`}
     >
       <div
         className="w-full max-w-3xl rounded-2xl bg-white p-6 shadow-2xl"
@@ -151,7 +176,7 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
         <div className="mb-4 flex items-start justify-between">
           <div>
             <h2 className="text-lg font-bold text-slate-900">
-              Bulk charge cards on file
+              {isAch ? "Bulk charge ACH on file" : "Bulk charge cards on file"}
             </h2>
             <p className="text-xs text-slate-500">
               {invoiceIds.length} invoice{invoiceIds.length === 1 ? "" : "s"} selected · idempotency key {" "}
@@ -163,14 +188,24 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
             onClick={() => onClose?.(real?.run_id)}
             className="p-1 text-slate-500"
             aria-label="Close"
-            data-testid="bulk-charge-close"
+            data-testid={`${testIdPrefix}-close`}
           >
             <XIcon size={18} />
           </button>
         </div>
 
+        {isAch ? (
+          <div
+            className="mb-4 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+            data-testid="bulk-charge-ach-warning"
+          >
+            <Landmark size={14} className="mt-0.5 shrink-0" />
+            <p>{ACH_SETTLEMENT_WARNING}</p>
+          </div>
+        ) : null}
+
         {step === "loading" ? (
-          <p className="text-sm text-slate-600" data-testid="bulk-charge-loading">
+          <p className="text-sm text-slate-600" data-testid={`${testIdPrefix}-loading`}>
             Checking eligibility…
           </p>
         ) : null}
@@ -178,10 +213,10 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
         {step === "error" ? (
           <div
             className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800"
-            data-testid="bulk-charge-error"
+            data-testid={`${testIdPrefix}-error`}
           >
             <div className="flex items-center gap-2 font-semibold">
-              <AlertTriangle size={14} /> Bulk charge failed
+              <AlertTriangle size={14} /> Bulk {isAch ? "ACH " : ""}charge failed
             </div>
             <p className="mt-1">{errMsg}</p>
             <div className="mt-3 flex justify-end">
@@ -196,14 +231,14 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
           <>
             <div
               className="mb-3 flex items-baseline justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
-              data-testid="bulk-charge-summary"
+              data-testid={`${testIdPrefix}-summary`}
             >
               <div className="text-sm text-slate-700">
                 <strong>{dryRun.summary?.would_charge || 0}</strong> eligible ·{" "}
                 <strong>{dryRun.summary?.skipped || 0}</strong> skipped
               </div>
               <div className="text-sm font-semibold text-slate-900">
-                {_dollarsFromCents(totalCents)} will be charged
+                {_dollarsFromCents(totalCents)} will {isAch ? "be submitted" : "be charged"}
               </div>
             </div>
             <div className="max-h-72 overflow-y-auto rounded-md border border-slate-200">
@@ -212,26 +247,29 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
                   <tr>
                     <th className="px-2 py-1.5 text-left font-semibold">Invoice</th>
                     <th className="px-2 py-1.5 text-left font-semibold">Status</th>
+                    {isAch ? (
+                      <th className="px-2 py-1.5 text-left font-semibold">Bank</th>
+                    ) : null}
                     <th className="px-2 py-1.5 text-right font-semibold">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {dryRun.results.map((r) => {
                     const skip = r.skip_reason
-                      ? _SKIP_LABELS[r.skip_reason] || {
+                      ? skipLabels[r.skip_reason] || {
                           label: r.skip_reason,
                           tone: "bg-slate-100 text-slate-700",
                         }
                       : null;
                     return (
-                      <tr key={r.invoice_id} data-testid={`bulk-charge-row-${r.invoice_id}`}>
+                      <tr key={r.invoice_id} data-testid={`${testIdPrefix}-row-${r.invoice_id}`}>
                         <td className="px-2 py-1.5 font-mono text-[11px] text-slate-700">
                           {r.invoice_id}
                         </td>
                         <td className="px-2 py-1.5">
                           {r.status === "would_charge" ? (
                             <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-800">
-                              Would charge
+                              {isAch ? "Would submit" : "Would charge"}
                             </span>
                           ) : skip ? (
                             <span
@@ -243,6 +281,17 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
                             r.status
                           )}
                         </td>
+                        {isAch ? (
+                          <td className="px-2 py-1.5 text-slate-700">
+                            {r.bank_last4 ? (
+                              <span data-testid={`bulk-charge-ach-bank-${r.invoice_id}`}>
+                                {r.bank_name ? `${r.bank_name} ` : ""}••••{r.bank_last4}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        ) : null}
                         <td className="px-2 py-1.5 text-right text-slate-700">
                           {r.amount_cents ? _dollarsFromCents(r.amount_cents) : "—"}
                         </td>
@@ -257,7 +306,7 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
                 variant="ghost"
                 onClick={() => onClose?.()}
                 disabled={step === "confirming"}
-                data-testid="bulk-charge-cancel"
+                data-testid={`${testIdPrefix}-cancel`}
               >
                 Cancel
               </Button>
@@ -266,13 +315,14 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
                 disabled={
                   step === "confirming" || (dryRun.summary?.would_charge || 0) === 0
                 }
-                data-testid="bulk-charge-confirm"
+                data-testid={`${testIdPrefix}-confirm`}
               >
                 {step === "confirming" ? (
-                  "Charging…"
+                  isAch ? "Submitting…" : "Charging…"
                 ) : (
                   <>
-                    Confirm charge — {_dollarsFromCents(totalCents)}{" "}
+                    {isAch ? "Submit ACH — " : "Confirm charge — "}
+                    {_dollarsFromCents(totalCents)}{" "}
                     <ChevronRight size={14} />
                   </>
                 )}
@@ -282,13 +332,14 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
         ) : null}
 
         {step === "done" && real ? (
-          <div data-testid="bulk-charge-result">
+          <div data-testid={`${testIdPrefix}-result`}>
             <div className="mb-3 flex items-center justify-between rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm">
               <div className="flex items-center gap-2 font-semibold text-emerald-800">
-                <Check size={14} /> Bulk charge complete
+                <Check size={14} /> {isAch ? "ACH submissions sent" : "Bulk charge complete"}
               </div>
               <div className="text-emerald-800">
-                <strong>{real.summary?.charged || 0}</strong> charged ·{" "}
+                <strong>{isAch ? (real.summary?.initiated || 0) : (real.summary?.charged || 0)}</strong>{" "}
+                {isAch ? "initiated" : "charged"} ·{" "}
                 <strong>{real.summary?.skipped || 0}</strong> skipped ·{" "}
                 <strong>{real.summary?.failed || 0}</strong> failed
               </div>
@@ -299,13 +350,15 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
                   <tr>
                     <th className="px-2 py-1.5 text-left font-semibold">Invoice</th>
                     <th className="px-2 py-1.5 text-left font-semibold">Outcome</th>
-                    <th className="px-2 py-1.5 text-left font-semibold">Charge / error</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">
+                      {isAch ? "Intent / error" : "Charge / error"}
+                    </th>
                     <th className="px-2 py-1.5 text-right font-semibold">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {real.results.map((r) => (
-                    <tr key={r.invoice_id} data-testid={`bulk-charge-result-row-${r.invoice_id}`}>
+                    <tr key={r.invoice_id} data-testid={`${testIdPrefix}-result-row-${r.invoice_id}`}>
                       <td className="px-2 py-1.5 font-mono text-[11px] text-slate-700">
                         {r.invoice_id}
                       </td>
@@ -313,6 +366,10 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
                         {r.status === "charged" ? (
                           <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-800">
                             Charged
+                          </span>
+                        ) : r.status === "initiated" ? (
+                          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800">
+                            Initiated
                           </span>
                         ) : r.status === "failed" ? (
                           <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-800">
@@ -325,7 +382,7 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
                         )}
                       </td>
                       <td className="px-2 py-1.5 text-slate-700">
-                        {r.status === "charged" ? (
+                        {r.status === "charged" || r.status === "initiated" ? (
                           <code className="text-[10px]">{r.charge_id}</code>
                         ) : r.status === "failed" ? (
                           <span className="text-red-800">
@@ -350,11 +407,11 @@ export default function BulkChargeModal({ invoiceIds, onClose }) {
               <a
                 href={`/admin/finance/bulk-charge-runs/${real.run_id}`}
                 className="text-xs font-semibold text-blue-700 underline"
-                data-testid="bulk-charge-run-link"
+                data-testid={`${testIdPrefix}-run-link`}
               >
                 View this run
               </a>
-              <Button onClick={() => onClose?.(real.run_id)} data-testid="bulk-charge-done">
+              <Button onClick={() => onClose?.(real.run_id)} data-testid={`${testIdPrefix}-done`}>
                 Done
               </Button>
             </div>

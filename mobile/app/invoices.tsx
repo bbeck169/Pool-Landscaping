@@ -70,6 +70,51 @@ export default function Invoices() {
     ]);
   };
 
+  // Phase K38 · Feb-2026 — Bulk Charge ACH on File. Mirrors the web
+  // confirmation flow: shows the verbatim 3–5 business day settlement
+  // warning, then submits the ACH bulk endpoint (dry_run=false).
+  const [bulkAchBusy, setBulkAchBusy] = useState(false);
+  const bulkChargeAch = () => {
+    const ids = [...bulk.selected];
+    if (!ids.length || bulkAchBusy) return;
+    const key = `ach-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    Alert.alert(
+      `Charge ACH for ${ids.length} invoice${ids.length !== 1 ? "s" : ""}?`,
+      // K38 · Feb-2026 — verbatim test-fixture anchor. DO NOT paraphrase.
+      "ACH payments take 3\u20135 business days to settle. Charges may still fail after submission (NSF, closed account, or incorrect routing). Failed charges will revert the invoice to Unpaid.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Submit ACH",
+          onPress: async () => {
+            setBulkAchBusy(true);
+            try {
+              const res = await api.post("/invoices/bulk-charge-ach-on-file", {
+                invoice_ids: ids,
+                dry_run: false,
+                idempotency_key: key,
+              });
+              const s = (res && res.summary) || {};
+              const initiated = s.initiated || 0;
+              const skipped = s.skipped || 0;
+              const failed = s.failed || 0;
+              Alert.alert(
+                "ACH submissions sent",
+                `${initiated} initiated · ${skipped} skipped · ${failed} failed`,
+              );
+              exitSelectMode();
+              load();
+            } catch (e: any) {
+              Alert.alert("ACH bulk charge failed", e?.message || "Failed");
+            } finally {
+              setBulkAchBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const openPay = (inv: any) => {
     setPayFor(inv);
     setAmount(String(inv.balance));
@@ -273,6 +318,7 @@ export default function Invoices() {
         onClear={exitSelectMode}
         actions={[
           { key: "bulk-mark-paid-invoices", label: "Mark Paid", icon: "checkmark-circle-outline", tone: "primary", onPress: bulkMarkPaid },
+          { key: "bulk-charge-ach-invoices", label: "Charge ACH", icon: "business-outline", tone: "primary", onPress: bulkChargeAch },
         ]}
       />
     </View>
