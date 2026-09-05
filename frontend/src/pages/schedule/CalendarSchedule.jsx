@@ -1029,27 +1029,43 @@ export default function CalendarSchedule() {
         ) : null}
       </div>
 
-      {/* Filter toolbar */}
+      {/* Filter toolbar — Phase K52 Slice A · Feb-2026: navy chrome
+          strip.  Every input on this row (search, select triggers,
+          the "Clear" affordance) renders white-on-navy so the whole
+          strip reads as one navigation surface.  Native <select>
+          options and native <input type="date"> popovers remain
+          browser-controlled and stay on their default (light)
+          chrome — those are out of our reach without wholesale
+          replacement with shadcn primitives, which is out of scope
+          for K52. */}
       <div
         className="rounded-2xl p-3 mb-3 flex flex-wrap items-center gap-2"
-        style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+        style={{
+          background: colors.nav.bg,
+          border: `1px solid ${colors.nav.border}`,
+        }}
         data-testid="calendar-filters"
+        data-k52-navy-strip="true"
       >
         <div className="flex items-center gap-1 flex-1 min-w-[180px]"
-             style={{ background: colors.surfaceSecondary, borderRadius: 8, padding: "6px 10px",
-                      border: `1px solid ${colors.border}` }}>
-          <Search size={14} style={{ color: colors.muted }} />
+             style={{
+               background: "rgba(255,255,255,0.10)",
+               borderRadius: 8,
+               padding: "6px 10px",
+               border: `1px solid ${colors.nav.border}`,
+             }}>
+          <Search size={14} style={{ color: colors.nav.fgMuted }} />
           <input
             data-testid="calendar-search"
             value={q}
             onChange={(e) => { setQ(e.target.value); setParam("q", e.target.value); }}
             placeholder="Search customer, service, address…"
-            className="flex-1 bg-transparent outline-none text-sm"
-            style={{ color: colors.onSurface }}
+            className="flex-1 bg-transparent outline-none text-sm placeholder:text-white/70"
+            style={{ color: colors.nav.fg }}
           />
           {q ? (
             <button onClick={() => { setQ(""); setParam("q", ""); }} data-testid="calendar-search-clear">
-              <XIcon size={12} style={{ color: colors.muted }} />
+              <XIcon size={12} style={{ color: colors.nav.fgMuted }} />
             </button>
           ) : null}
         </div>
@@ -1060,9 +1076,9 @@ export default function CalendarSchedule() {
           data-testid="calendar-filter-tech"
           className="text-sm rounded-lg px-2 py-1.5"
           disabled={!!crewId}
-          style={{ background: colors.surface,
-                   border: `1px solid ${colors.border}`,
-                   color: crewId ? colors.muted : colors.onSurface,
+          style={{ background: colors.nav.bg,
+                   border: `1px solid ${colors.nav.border}`,
+                   color: crewId ? colors.nav.fgMuted : colors.nav.fg,
                    opacity: crewId ? 0.55 : 1,
                    cursor: crewId ? "not-allowed" : "pointer" }}
           title={crewId
@@ -1094,9 +1110,9 @@ export default function CalendarSchedule() {
           onChange={(e) => { setCrewId(e.target.value); setParam("crew", e.target.value); }}
           data-testid="calendar-filter-crew"
           className="text-sm rounded-lg px-2 py-1.5"
-          style={{ background: colors.surface,
-                   border: `1px solid ${colors.border}`,
-                   color: colors.onSurface }}
+          style={{ background: colors.nav.bg,
+                   border: `1px solid ${colors.nav.border}`,
+                   color: colors.nav.fg }}
         >
           <option value="">All crews</option>
           {crews.slice().sort((a, b) =>
@@ -1111,7 +1127,9 @@ export default function CalendarSchedule() {
           onChange={(e) => { setService(e.target.value); setParam("service", e.target.value); }}
           data-testid="calendar-filter-service"
           className="text-sm rounded-lg px-2 py-1.5"
-          style={{ background: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+          style={{ background: colors.nav.bg,
+                   border: `1px solid ${colors.nav.border}`,
+                   color: colors.nav.fg }}
         >
           <option value="">All services</option>
           {serviceTypes.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -1122,7 +1140,9 @@ export default function CalendarSchedule() {
           onChange={(e) => { setStatus(e.target.value); setParam("status", e.target.value); }}
           data-testid="calendar-filter-status"
           className="text-sm rounded-lg px-2 py-1.5"
-          style={{ background: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+          style={{ background: colors.nav.bg,
+                   border: `1px solid ${colors.nav.border}`,
+                   color: colors.nav.fg }}
         >
           <option value="">All statuses</option>
           {Object.keys(STATUS_COLORS).map((s) => (
@@ -1135,7 +1155,9 @@ export default function CalendarSchedule() {
             onClick={clearFilters}
             data-testid="calendar-filter-clear"
             className="text-xs font-semibold px-2 py-1.5 rounded-lg"
-            style={{ color: colors.muted, background: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+            style={{ color: colors.nav.fg,
+                     background: "rgba(255,255,255,0.10)",
+                     border: `1px solid ${colors.nav.border}` }}
           >
             <Filter size={11} className="inline mr-1" /> Clear
           </button>
@@ -1173,9 +1195,22 @@ export default function CalendarSchedule() {
         </div>
       ) : null}
 
-      {/* Custom-range preset row */}
-      <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="calendar-presets">
-        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: colors.muted }}>
+      {/* Custom-range preset row — Phase K52 Slice A · Feb-2026:
+          continuation of the navy filter strip.  Preset chips render
+          white outline on navy; the ACTIVE preset uses the K52
+          signature gradient so it matches Slice D's active-nav
+          pattern. */}
+      <div
+        className="rounded-2xl p-3 mb-3 flex flex-wrap items-center gap-2"
+        style={{
+          background: colors.nav.bg,
+          border: `1px solid ${colors.nav.border}`,
+        }}
+        data-testid="calendar-presets"
+        data-k52-navy-strip="true"
+      >
+        <span className="text-xs font-semibold uppercase tracking-wide"
+              style={{ color: colors.nav.fgMuted }}>
           Custom range
         </span>
         {RANGE_PRESETS.map((p) => {
@@ -1186,11 +1221,13 @@ export default function CalendarSchedule() {
               onClick={() => { setRange({ ...range, key: p.key }); openPreset(p); }}
               className="text-xs font-semibold px-3 py-1 rounded-full"
               style={{
-                background: active ? colors.brand : colors.surface,
-                color: active ? "#fff" : colors.onSurface,
-                border: `1px solid ${active ? "transparent" : colors.border}`,
+                background: active ? colors.gradient.css : "transparent",
+                color: colors.nav.fg,
+                border: `1px solid ${active ? "transparent" : colors.nav.fgMuted}`,
+                textShadow: active ? colors.gradient.textShadow : undefined,
               }}
               data-testid={`calendar-preset-${p.key}`}
+              data-active={active ? "true" : "false"}
             >
               {p.label}
             </button>
@@ -1204,9 +1241,12 @@ export default function CalendarSchedule() {
           }))}
           data-testid="calendar-range-from"
           className="text-xs rounded-lg px-2 py-1"
-          style={{ background: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+          style={{ background: colors.nav.bg,
+                   border: `1px solid ${colors.nav.border}`,
+                   color: colors.nav.fg,
+                   colorScheme: "dark" }}
         />
-        <span className="text-xs" style={{ color: colors.muted }}>→</span>
+        <span className="text-xs" style={{ color: colors.nav.fgMuted }}>→</span>
         <input
           type="date"
           value={range.end ? format(range.end, "yyyy-MM-dd") : ""}
@@ -1215,13 +1255,18 @@ export default function CalendarSchedule() {
           }))}
           data-testid="calendar-range-to"
           className="text-xs rounded-lg px-2 py-1"
-          style={{ background: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+          style={{ background: colors.nav.bg,
+                   border: `1px solid ${colors.nav.border}`,
+                   color: colors.nav.fg,
+                   colorScheme: "dark" }}
         />
         {rangeMatchEvents ? (
           <span
             className="text-xs font-semibold px-2 py-1 rounded-full"
             data-testid="calendar-range-count"
-            style={{ background: "#DBEAFE", color: "#1E40AF" }}
+            style={{ background: "rgba(255,255,255,0.15)",
+                     color: colors.nav.fg,
+                     border: `1px solid ${colors.nav.border}` }}
           >
             {rangeMatchEvents.length} jobs in range
           </span>
@@ -1230,7 +1275,7 @@ export default function CalendarSchedule() {
           <button
             onClick={() => setRange({ start: null, end: null })}
             className="text-xs font-semibold"
-            style={{ color: colors.muted }}
+            style={{ color: colors.nav.fgMuted }}
             data-testid="calendar-range-clear"
           >
             Clear

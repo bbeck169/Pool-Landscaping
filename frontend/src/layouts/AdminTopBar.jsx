@@ -104,18 +104,29 @@ function CategoryDropdown({ group }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="group inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold whitespace-nowrap transition-all duration-200 ease-out will-change-transform hover:scale-[1.02] hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:scale-[1.02]"
+        className="group inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold whitespace-nowrap transition-all duration-200 ease-out will-change-transform hover:scale-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:scale-[1.02]"
         style={{
-          // Phase K50 · Feb-2026 — navy chrome. Idle-state text /
-          // icon render white on the navy top bar; hover surfaces a
-          // subtle white overlay (``bg-white/10``).  Active state
-          // (route match) renders as a white pill with navy text —
-          // mirrors the ``QuickNavRail`` active affordance so the
-          // two chrome surfaces feel unified.
-          color: active ? colors.nav.fgActive : colors.nav.fg,
-          backgroundColor: active ? colors.nav.bgActive : undefined,
+          // Phase K52 Slice D · Feb-2026 — active category renders on
+          // the K52 signature gradient (replaces the K50 white pill).
+          // Idle state keeps the K50 white-on-navy hover.  The
+          // trigger's ``hover:bg-white/10`` class is only applied
+          // when NOT active — otherwise it fights the gradient — so
+          // we drive the hover overlay through the inline
+          // ``backgroundImage`` above and let the class handle idle.
+          color: colors.nav.fg,
+          background: active ? colors.gradient.css : undefined,
+          textShadow: active ? colors.gradient.textShadow : undefined,
+        }}
+        onMouseEnter={(e) => {
+          if (active) e.currentTarget.style.background = colors.gradient.cssHover;
+          else e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.10)";
+        }}
+        onMouseLeave={(e) => {
+          if (active) e.currentTarget.style.background = colors.gradient.css;
+          else e.currentTarget.style.backgroundColor = "";
         }}
         data-testid={`admin-topbar-${group.key}`}
+        data-active={active ? "true" : "false"}
       >
         <CatIcon size={16} className="transition-colors duration-200" />
         <span className="transition-colors duration-200">{group.label}</span>
@@ -123,8 +134,21 @@ function CategoryDropdown({ group }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="min-w-[280px] max-h-[70vh] overflow-y-auto"
+        className="min-w-[280px] max-h-[70vh] overflow-y-auto p-1 border-0 shadow-xl [&_[role=menuitem]]:text-white [&_[role=menuitem]]:cursor-pointer [&_[role=menuitem]:focus]:bg-[#2A2F7A] [&_[role=menuitem]:focus]:text-white [&_[role=menuitem]:hover]:bg-[#2A2F7A] [&_[role=menuitem]:hover]:text-white [&_[data-radix-menu-label]]:text-white/72 [&_[role=separator]]:bg-white/10"
+          // Phase K52 Slice B · Feb-2026 — navy popover panel.  The
+          // shadcn ``DropdownMenuContent`` primitive is not modified
+          // globally — instead we scope the navy chrome to this one
+          // top-nav consumer via ``className`` overrides + inline
+          // ``style`` so unrelated ``DropdownMenu`` usages
+          // (row-action menus, kebab menus) keep their default
+          // light theme.  Items, labels, and separators are
+          // re-tinted for legibility on navy.
+        style={{
+          backgroundColor: colors.nav.bg,
+          color: colors.nav.fg,
+        }}
         data-testid={`admin-topbar-${group.key}-menu`}
+        data-k52-navy-popover="true"
       >
         {group.noSub.map((e) => (
           <EntryItem key={e.to} e={e} />
@@ -134,7 +158,10 @@ function CategoryDropdown({ group }) {
         ) : null}
         {Object.entries(group.bySub).map(([sub, entries], i, arr) => (
           <React.Fragment key={sub}>
-            <DropdownMenuLabel className="text-[10px] uppercase tracking-wider opacity-60">
+            <DropdownMenuLabel
+              className="text-[10px] uppercase tracking-wider"
+              style={{ color: colors.nav.fgMuted }}
+            >
               {sub}
             </DropdownMenuLabel>
             {entries.map((e) => <EntryItem key={e.to} e={e} />)}
@@ -147,9 +174,23 @@ function CategoryDropdown({ group }) {
 }
 
 function EntryItem({ e }) {
+  const location = useLocation();
   const Icon = e.icon;
+  const active = location.pathname === e.to;
   return (
-    <DropdownMenuItem asChild data-testid={`admin-topbar-link-${e.to.replace(/^\/+/, "").replace(/\//g, "-") || "root"}`}>
+    <DropdownMenuItem
+      asChild
+      data-testid={`admin-topbar-link-${e.to.replace(/^\/+/, "").replace(/\//g, "-") || "root"}`}
+      data-active={active ? "true" : "false"}
+      style={active ? {
+        // Phase K52 Slice B · Feb-2026 — active row inside the navy
+        // popover renders as a white pill with navy text.  This is
+        // the K50 active affordance (kept here — the K52 gradient
+        // is reserved for the NAV surfaces themselves per Slice D).
+        backgroundColor: colors.nav.bgActive,
+        color: colors.nav.fgActive,
+      } : undefined}
+    >
       <Link to={e.to} className="flex items-center gap-2 cursor-pointer">
         {Icon ? <Icon size={14} className="opacity-80 shrink-0" /> : null}
         <span className="truncate">{e.label}</span>

@@ -264,16 +264,19 @@ function QuickNavRail({ role }) {
             ].join(" ")
           }
           style={({ isActive }) => ({
-            // Phase K50 · Feb-2026 — navy chrome.
-            // Active state renders as a white pill with navy text
-            // (matches the K50 spec "active nav item indicator:
-            // white pill with navy text").  Idle state stays
-            // transparent so the parent ``<aside>`` navy shows
-            // through; icon/label render in white via
-            // ``colors.nav.fg``.
-            backgroundColor: isActive ? colors.nav.bgActive : "transparent",
-            color: isActive ? colors.nav.fgActive : colors.nav.fg,
-            border: `1px solid ${isActive ? colors.nav.bgActive : "transparent"}`,
+            // Phase K52 Slice D · Feb-2026 — active state renders on
+            // the K52 signature gradient (emerald→sky).  Idle state
+            // keeps the K50 transparent-on-navy treatment (icon +
+            // label in white via ``colors.nav.fg``, hover overlay
+            // via the ``hover:bg-white/10`` class above).  Legacy
+            // ``colors.nav.bgActive`` / ``fgActive`` white-pill
+            // pattern is preserved on the shadcn ``DropdownMenu``
+            // active row (see AdminTopBar.jsx :: EntryItem) but is
+            // NO LONGER used on the nav rail itself.
+            background: isActive ? colors.gradient.css : "transparent",
+            color: isActive ? colors.gradient.fg : colors.nav.fg,
+            border: `1px solid ${isActive ? "transparent" : "transparent"}`,
+            textShadow: isActive ? colors.gradient.textShadow : undefined,
           })}
           data-testid={`rail-nav-${key}`}
           aria-label={label}

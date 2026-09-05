@@ -109,11 +109,37 @@ export const colors = {
   nav: {
     bg: "#1B1F5C",
     bgHover: "#2A2F7A",
-    bgActive: "#FFFFFF",
+    bgActive: "#FFFFFF",     // legacy pill active — retained for portal preview; K52 primary chrome uses ``gradient.css`` instead
     fg: "#FFFFFF",
-    fgActive: "#1B1F5C",
-    fgMuted: "rgba(255, 255, 255, 0.65)",
+    fgActive: "#1B1F5C",     // legacy pill text — retained for portal preview
+    fgMuted: "rgba(255, 255, 255, 0.72)",
     border: "rgba(255, 255, 255, 0.10)",
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // Phase K52 · Feb-2026 — signature action gradient (E → e2).
+  //
+  // Used on: primary CTAs (shadcn ``Button`` default variant), the
+  // active-state pill in the sidebar / top-bar / sub-nav, and the
+  // focus-ring accent on the navy filter strip.  Every consumer
+  // must resolve values through ``colors.gradient.*`` rather than
+  // inlining the hex — the tokens are the single source of truth
+  // so a future palette shift is a one-file change.
+  //
+  // Contrast rule: white text on ``gradient.to`` (#7DD3FC) is the
+  // weakest point (~2.4:1 raw).  The gradient consumers apply a
+  // subtle ``text-shadow: 0 1px 2px rgba(0,0,0,0.25)`` on the label
+  // to lift small text back over WCAG AA large-text (3:1) — this
+  // is the ``gradient.textShadow`` token below.
+  // ═══════════════════════════════════════════════════════════════
+  gradient: {
+    from: "#22C55E",         // emerald-500
+    to:   "#7DD3FC",         // sky-300
+    css:      "linear-gradient(90deg, #22C55E 0%, #7DD3FC 100%)",
+    cssHover: "linear-gradient(90deg, #34D673 0%, #93DDFD 100%)",  // ~+8% lightness on each stop
+    fg: "#FFFFFF",
+    fgHover: "#FFFFFF",
+    textShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
   },
 };
 

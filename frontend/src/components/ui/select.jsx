@@ -51,13 +51,20 @@ const SelectContent = React.forwardRef(({ className, children, position = "poppe
   <SelectPrimitive.Portal>
     <SelectPrimitive.Content
       ref={ref}
+      // Phase K52 Slice B · Feb-2026 — every ``<Select>`` popover
+      // panel in the app renders on the navy chrome so the popover
+      // matches the K50 nav-bar palette.  Hex values sit inline
+      // because Tailwind CVA cannot consume JS tokens directly; the
+      // hexes are asserted against ``theme.js`` in
+      // ``k52-theming.test.js`` so a token change fails fast.
       className={cn(
-        "relative z-50 max-h-[--radix-select-content-available-height] min-w-[8rem] overflow-y-auto overflow-x-hidden rounded-md border bg-popover text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-[--radix-select-content-transform-origin]",
+        "relative z-50 max-h-[--radix-select-content-available-height] min-w-[8rem] overflow-y-auto overflow-x-hidden rounded-md border border-white/10 bg-[#1B1F5C] text-white shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-[--radix-select-content-transform-origin]",
         position === "popper" &&
           "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
         className
       )}
       position={position}
+      data-k52-navy-popover="true"
       {...props}>
       <SelectScrollUpButton />
       <SelectPrimitive.Viewport
@@ -74,7 +81,9 @@ SelectContent.displayName = SelectPrimitive.Content.displayName
 const SelectLabel = React.forwardRef(({ className, ...props }, ref) => (
   <SelectPrimitive.Label
     ref={ref}
-    className={cn("px-2 py-1.5 text-sm font-semibold", className)}
+    // Phase K52 Slice B · Feb-2026 — section headers on the navy
+    // popover render as white-72% uppercase (matches ``colors.nav.fgMuted``).
+    className={cn("px-2 py-1.5 text-[10px] uppercase tracking-wider font-semibold text-white/72", className)}
     {...props} />
 ))
 SelectLabel.displayName = SelectPrimitive.Label.displayName
@@ -82,8 +91,12 @@ SelectLabel.displayName = SelectPrimitive.Label.displayName
 const SelectItem = React.forwardRef(({ className, children, ...props }, ref) => (
   <SelectPrimitive.Item
     ref={ref}
+    // Phase K52 Slice B · Feb-2026 — item hover uses the
+    // ``colors.nav.bgHover`` (``#2A2F7A``) navy-tint; selected item
+    // uses the white pill / navy text pattern (K50 active
+    // affordance) via ``data-[state=checked]``.
     className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-2 pr-8 text-sm text-white outline-none focus:bg-[#2A2F7A] focus:text-white hover:bg-[#2A2F7A] hover:text-white data-[state=checked]:bg-white data-[state=checked]:text-[#1B1F5C] data-[state=checked]:font-semibold data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className
     )}
     {...props}>
@@ -100,7 +113,9 @@ SelectItem.displayName = SelectPrimitive.Item.displayName
 const SelectSeparator = React.forwardRef(({ className, ...props }, ref) => (
   <SelectPrimitive.Separator
     ref={ref}
-    className={cn("-mx-1 my-1 h-px bg-muted", className)}
+    // Phase K52 Slice B · Feb-2026 — dividers on the navy popover
+    // render as a subtle white/10% line (``colors.nav.border``).
+    className={cn("-mx-1 my-1 h-px bg-white/10", className)}
     {...props} />
 ))
 SelectSeparator.displayName = SelectPrimitive.Separator.displayName

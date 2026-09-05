@@ -93,12 +93,14 @@ export function BusinessOSLayout() {
               end={to === "/os"}
               className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-colors duration-150 hover:bg-white/10"
               style={({ isActive }) => ({
-                // Active = white pill with navy text (mirrors the
-                // ``QuickNavRail`` + ``AdminTopBar`` category
-                // affordance so all three surfaces read as one
-                // family).  Idle = white on navy.
-                backgroundColor: isActive ? colors.nav.bgActive : "transparent",
-                color: isActive ? colors.nav.fgActive : colors.nav.fg,
+                // Phase K52 Slice D · Feb-2026 — active tab on the
+                // BusinessOS sub-nav renders on the K52 signature
+                // gradient (emerald→sky), matching the sidebar rail
+                // and the top-bar CategoryDropdown active state.
+                // Idle = white on navy.
+                background: isActive ? colors.gradient.css : "transparent",
+                color: isActive ? colors.gradient.fg : colors.nav.fg,
+                textShadow: isActive ? colors.gradient.textShadow : undefined,
               })}
               data-testid={`os-tab-${label.toLowerCase()}`}
             >

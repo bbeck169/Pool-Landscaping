@@ -115,16 +115,24 @@ describe("Vertical quick-nav rail (sidebar pivot)", () => {
     expect(screen.queryByTestId("rail-nav-estimates")).toBeNull();
   });
 
-  it("active-route rail item picks up the K50 navy chrome (white pill on navy)", () => {
+  it("active-route rail item picks up the K52 signature gradient (Slice D promoted from K50 white pill)", () => {
     mount("super_admin", "/invoices");
     const link = screen.getByTestId("rail-nav-invoices");
-    // Phase K50 · Feb-2026 — navy chrome landed.  Active state
-    // now renders as a WHITE pill (``colors.nav.bgActive = #FFFFFF``)
-    // sitting on the navy sidebar (``colors.nav.bg = #1B1F5C``)
-    // with navy text (``colors.nav.fgActive = #1B1F5C``).
+    // Phase K52 Slice D · Feb-2026 — active state is now the K52
+    // signature gradient (emerald→sky) instead of the K50 white pill.
+    // ``colors.gradient.css`` renders as
+    // ``linear-gradient(90deg, #22C55E 0%, #7DD3FC 100%)`` inline —
+    // React normalises the hexes and keeps the linear-gradient
+    // token verbatim on ``style.background``.
     const style = link.getAttribute("style") || "";
-    expect(style).toMatch(/rgb\(255,\s*255,\s*255\)|#FFFFFF|white/i);
-    expect(style).toMatch(/rgb\(27,\s*31,\s*92\)|#1B1F5C/i);
+    // Gradient background present with both stops.
+    expect(style).toMatch(/linear-gradient\(90deg,\s*#22C55E\s*0%,\s*#7DD3FC\s*100%\)/i);
+    // Label text stays white on the gradient.
+    expect(style).toMatch(/color:\s*(rgb\(255,\s*255,\s*255\)|#FFFFFF|white)/i);
+    // Regression guard — the K50 solid ``rgb(27, 31, 92)`` navy is
+    // NOT painted as the active pill background (only the parent
+    // <aside> carries the navy chrome).
+    expect(style).not.toMatch(/background(-color)?:\s*rgb\(27,\s*31,\s*92\)/i);
   });
 
   it("horizontal quick-nav row is no longer rendered (pivot complete)", () => {

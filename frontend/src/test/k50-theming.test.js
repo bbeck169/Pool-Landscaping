@@ -59,16 +59,23 @@ describe("K50 · Slice A — Navy sidebar + top main menu", () => {
     expect(APP_LAYOUT).not.toMatch(/background:\s*\n?\s*"linear-gradient\(180deg,\s*rgba\(2,\s*132,\s*199,\s*0\.06\)/);
   });
 
-  it("QuickNavRail active state uses the white-pill / navy-text combo", () => {
-    // Active: bg = nav.bgActive (#FFFFFF), color = nav.fgActive (#1B1F5C).
-    // Idle:  bg = transparent,           color = nav.fg (#FFFFFF).
-    expect(APP_LAYOUT).toMatch(/backgroundColor:\s*isActive\s*\?\s*colors\.nav\.bgActive\s*:\s*"transparent"/);
-    expect(APP_LAYOUT).toMatch(/color:\s*isActive\s*\?\s*colors\.nav\.fgActive\s*:\s*colors\.nav\.fg/);
+  it("QuickNavRail active state — Phase K52 Slice D · Feb-2026 promoted from white pill to signature gradient", () => {
+    // K52 Slice D · Feb-2026 — active state now paints
+    // ``colors.gradient.css`` (emerald→sky) instead of the K50
+    // ``colors.nav.bgActive`` white pill.  Idle stays transparent
+    // (parent <aside> navy shows through); icon/label still render
+    // in white via ``colors.nav.fg``.
+    expect(APP_LAYOUT).toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css\s*:\s*"transparent"/);
+    expect(APP_LAYOUT).toMatch(/color:\s*isActive\s*\?\s*colors\.gradient\.fg\s*:\s*colors\.nav\.fg/);
     // Regression guard — no lingering ``sky-50`` / ``sky-600`` hover
     // classes on rail items.
     const railBody = APP_LAYOUT.split("function QuickNavRail(")[1].split("\nfunction ")[0];
     expect(railBody).not.toMatch(/hover:bg-sky-50/);
     expect(railBody).not.toMatch(/group-hover:text-sky-600/);
+    // Regression guard — K50 white-pill pattern MUST NOT reappear on
+    // the rail; the ``colors.nav.bgActive`` token is still exported
+    // but is reserved for the shadcn DropdownMenu active row.
+    expect(railBody).not.toMatch(/isActive\s*\?\s*colors\.nav\.bgActive/);
   });
 
   it("AdminTopBar wrapper renders on the ``nav.bg`` navy", () => {
@@ -77,13 +84,18 @@ describe("K50 · Slice A — Navy sidebar + top main menu", () => {
     expect(TOP_BAR).not.toMatch(/backgroundColor:\s*"rgba\(2,\s*132,\s*199,\s*0\.045\)"/);
   });
 
-  it("CategoryDropdown triggers render white on navy (active = white pill)", () => {
-    expect(TOP_BAR).toMatch(/color:\s*active\s*\?\s*colors\.nav\.fgActive\s*:\s*colors\.nav\.fg/);
-    expect(TOP_BAR).toMatch(/backgroundColor:\s*active\s*\?\s*colors\.nav\.bgActive\s*:\s*undefined/);
-    // Regression guard — no more ``hover:bg-sky-50`` on the trigger.
+  it("CategoryDropdown triggers — Phase K52 Slice D · Feb-2026: active state is signature gradient (was white pill)", () => {
+    // K52 Slice D · Feb-2026 — the active category trigger now
+    // paints ``colors.gradient.css``.  Idle color stays white via
+    // ``colors.nav.fg`` (the K50 ``fgActive`` swap is retired on
+    // the trigger — gradient supplies both bg AND fg here).
+    expect(TOP_BAR).toMatch(/color:\s*colors\.nav\.fg,/);
+    expect(TOP_BAR).toMatch(/background:\s*active\s*\?\s*colors\.gradient\.css\s*:\s*undefined/);
+    // Regression guard — no more ``hover:bg-sky-50`` on the trigger,
+    // and no lingering K50 ``bgActive`` white-pill fallback.
     const catBody = TOP_BAR.split("function CategoryDropdown(")[1].split("\nfunction ")[0];
     expect(catBody).not.toMatch(/hover:bg-sky-50/);
-    expect(catBody).toMatch(/hover:bg-white\/10/);
+    expect(catBody).not.toMatch(/backgroundColor:\s*active\s*\?\s*colors\.nav\.bgActive/);
   });
 });
 
@@ -140,11 +152,16 @@ describe("K50 · Slice A extension — Portal top nav + sub-nav strips", () => {
     expect(BUSINESS_OS).toMatch(/backgroundColor:\s*colors\.nav\.bg,/);
     expect(BUSINESS_OS).toMatch(/borderRight:\s*`1px solid \$\{colors\.nav\.border\}`/);
     expect(BUSINESS_OS).toMatch(/data-testid="os-subnav"/);
-    // Active tab = white pill with navy text (matches
-    // ``QuickNavRail`` + ``CategoryDropdown`` active affordance so
-    // every nav surface reads as one family).
-    expect(BUSINESS_OS).toMatch(/backgroundColor:\s*isActive\s*\?\s*colors\.nav\.bgActive\s*:\s*"transparent"/);
-    expect(BUSINESS_OS).toMatch(/color:\s*isActive\s*\?\s*colors\.nav\.fgActive\s*:\s*colors\.nav\.fg/);
+    // Active tab — Phase K52 Slice D · Feb-2026: promoted from the
+    // K50 white pill / navy text to the K52 signature gradient
+    // (matches ``QuickNavRail`` + ``CategoryDropdown`` active
+    // affordance so all three nav surfaces read as one family).
+    expect(BUSINESS_OS).toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css\s*:\s*"transparent"/);
+    expect(BUSINESS_OS).toMatch(/color:\s*isActive\s*\?\s*colors\.gradient\.fg\s*:\s*colors\.nav\.fg/);
+    // Regression guard — K50 white-pill pattern MUST NOT reappear
+    // on the sub-nav; ``colors.nav.bgActive`` / ``fgActive`` stay
+    // reserved for the shadcn DropdownMenu active row.
+    expect(BUSINESS_OS).not.toMatch(/backgroundColor:\s*isActive\s*\?\s*colors\.nav\.bgActive/);
     // Regression guard — no more ``brandTertiary`` / ``onBrandTertiary``
     // active-state coupling in this strip.
     expect(BUSINESS_OS).not.toMatch(/backgroundColor:\s*isActive\s*\?\s*colors\.brandTertiary/);
