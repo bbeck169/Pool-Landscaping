@@ -1,3 +1,17 @@
+# K55.c · Tester decision — ACCEPTED with WARN (Feb-2026)
+
+Tester passed 4/5 with 1 WARN: grep-based lint flagged that
+`.env.example:83` still mentions `SUPERCOOL_MCP_URL` and `HOMEWORKS_*`
+strings. **Confirmed intentional** — those hits are the explanatory
+"vars removed from this template as part of K55.c" comment block,
+not env-var assignments. The comment is retained deliberately as
+historical context for a future engineer reading the file (matches
+the "SEO CRM Twilio removed 2026-07" pattern already used elsewhere
+in this template). No further action; K55.c is closed.
+
+---
+
+
 # Phase K55.c · Env cleanup + docs deprecation — Ship Report
 
 **Date:** Feb 2026
