@@ -56,6 +56,11 @@ export function jobStatusColor(status) {
     closed: "completed",
     done: "completed",
     canceled: "cancelled",   // US spelling → canonical UK spelling.
+    pending: "open",         // K57 · Feb-2026 — legacy ``pending`` bucket
+                             // adjudicated to the ``open`` colour so
+                             // mobile Schedule cards stop rendering
+                             // white on pending jobs.  Web + mobile
+                             // parity — see ``PHASE_K57_MOBILE_SCHEDULE_PENDING_ALIAS.md``.
   };
   const key = alias[s] || s;
   return K50_JOB_STATUS_BG[key] || null;

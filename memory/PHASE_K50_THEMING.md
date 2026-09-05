@@ -100,6 +100,8 @@ inprogress → in_progress
 closed     → completed
 done       → completed
 canceled   → cancelled   (US → canonical UK spelling)
+pending    → open        (#D6F5EE — added in K57 · Feb-2026;
+                          see PHASE_K57_MOBILE_SCHEDULE_PENDING_ALIAS.md)
 ```
 
 Any status outside the map returns `null` so callers fall back to

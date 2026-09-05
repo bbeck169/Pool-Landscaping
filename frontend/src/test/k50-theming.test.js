@@ -278,6 +278,26 @@ describe("K50 · Slice B — Schedule card status background", () => {
     expect(jobStatusColor("canceled")).toBe("#FECACA");
   });
 
+  it("K57 · Feb-2026 — ``pending`` resolves to the ``open`` bucket (#D6F5EE)", () => {
+    // Field report: mobile Schedule cards rendered a white
+    // background on jobs with ``status = "pending"`` because the
+    // K50 helper had no entry for it and fell through to ``null``
+    // → callers' ``colors.surface`` fallback.  User adjudicated
+    // ``pending`` to the ``open`` bucket in K57 Step 2 so pending
+    // and open share the light-teal-green treatment (they're the
+    // same real-world state — "on the schedule, not yet started").
+    // Web + mobile share this contract via byte-for-byte parity in
+    // the alias tables.
+    expect(jobStatusColor("pending")).toBe("#D6F5EE");
+    // Case-insensitivity — the helper lowercases + trims input, so
+    // a mixed-case "Pending" or fully-uppercase "PENDING" (real
+    // shapes surfaced by upstream write paths that don't normalise
+    // status) must still resolve.  Whitespace-tolerance is already
+    // covered by the generic Slice-B suite above.
+    expect(jobStatusColor("Pending")).toBe("#D6F5EE");
+    expect(jobStatusColor("PENDING")).toBe("#D6F5EE");
+  });
+
   it("is case + whitespace insensitive", () => {
     expect(jobStatusColor("  In_Progress ")).toBe("#FEF3C7");
     expect(jobStatusColor("COMPLETED")).toBe("#FDECEC");

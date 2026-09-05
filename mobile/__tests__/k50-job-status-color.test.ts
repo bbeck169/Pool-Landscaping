@@ -27,6 +27,17 @@ describe("K50 · Slice B — Mobile Schedule card status background", () => {
     expect(jobStatusColor("canceled")).toBe("#FECACA");
   });
 
+  it("K57 · Feb-2026 — ``pending`` resolves to the ``open`` bucket (#D6F5EE)", () => {
+    // Parity with the web helper — see
+    // ``frontend/src/test/k50-theming.test.js`` for the field-report
+    // context.  Mobile is the surface where the bug was reported, so
+    // this assertion is the primary regression gate.
+    expect(jobStatusColor("pending")).toBe("#D6F5EE");
+    // Case-insensitivity — helper lowercases + trims input.
+    expect(jobStatusColor("Pending")).toBe("#D6F5EE");
+    expect(jobStatusColor("PENDING")).toBe("#D6F5EE");
+  });
+
   it("is case + whitespace insensitive", () => {
     expect(jobStatusColor("  In_Progress ")).toBe("#FEF3C7");
     expect(jobStatusColor("COMPLETED")).toBe("#FDECEC");

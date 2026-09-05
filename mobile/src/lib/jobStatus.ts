@@ -23,6 +23,7 @@ const _ALIAS: Readonly<Record<string, string>> = Object.freeze({
   closed: "completed",
   done: "completed",
   canceled: "cancelled",
+  pending: "open", // K57 · Feb-2026 — parity with web helper.
 });
 
 /**
