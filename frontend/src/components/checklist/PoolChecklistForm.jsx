@@ -20,6 +20,10 @@ import { AlertTriangle, CheckCircle2, FlaskConical, RefreshCw } from 'lucide-rea
 import { api } from "@/api";
 import { compressImageIfNeeded } from "@/lib/imageCompress";
 import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
+// K60 · Feb-2026 — expand short-form chemistry labels (FC, TA, CYA, …)
+// to full names on the display surface.  Data keys unchanged.  Kept in
+// lockstep with mobile/src/lib/expandChemistryLabel.ts.
+import { expandChemistryLabel } from "@/lib/expandChemistryLabel";
 
 // Phase 48 — per-key validation rules for the manual-entry reading rows.
 // Keys are normalized snake_case; aliases share the same rule.
@@ -105,7 +109,7 @@ function ReadingInputRow({ testKey, reading, previous, recent, locked, onChange 
     >
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] font-bold uppercase tracking-wider inline-flex items-center gap-2" style={{ color: colors.onSurface }}>
-          <span>{reading.name}{reading.unit ? ` (${reading.unit})` : ""}</span>
+          <span>{expandChemistryLabel(reading.name)}{reading.unit ? ` (${reading.unit})` : ""}</span>
           <ReadingSparkline recent={recentArr} median={median} testKey={testKey} />
         </span>
         <button

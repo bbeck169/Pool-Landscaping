@@ -26,6 +26,9 @@ import * as ImagePicker from "expo-image-picker";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import ReadingChipRow from "./ReadingChipRow";
+// K60 · Feb-2026 — expand short-form chemistry labels (FC, TA, CYA, …)
+// to full names on the display surface.  Data keys unchanged.
+import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
 import ChemicalPickerSheet from "./ChemicalPickerSheet";
 // Phase 44 · Fix 5 — `react-native-draggable-flatlist` uses
@@ -446,7 +449,7 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
             <ReadingChipRow
               key={key}
               readingKey={key}
-              label={r.name}
+              label={expandChemistryLabel(r.name)}
               unit={r.unit}
               value={r.value}
               step={r.step}

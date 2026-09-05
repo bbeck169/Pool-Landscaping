@@ -40,6 +40,16 @@ export class OfflineError extends Error {
   constructor(msg: string) { super(msg); this.name = "OfflineError"; }
 }
 
+/**
+ * K59.a · Feb-2026 — ``stringifyDetail`` lives in a sibling module
+ * (``./serviceReportMediaErrors``) so it can be unit-tested without
+ * pulling in AsyncStorage / SecureStore.  Re-exported here for
+ * backward-compat with any consumer that expects it on this module.
+ * See PHASE_K59_a_UPLOAD_ERROR_STRINGIFIER.md.
+ */
+export { stringifyDetail } from "./serviceReportMediaErrors";
+import { stringifyDetail as _stringifyDetail } from "./serviceReportMediaErrors";
+
 /* ── Upload ─────────────────────────────────────────────────────── */
 export async function uploadServiceReportMedia(opts: {
   reportId: string;
@@ -98,8 +108,15 @@ export async function uploadServiceReportMedia(opts: {
         catch { reject(new Error("Malformed server response.")); }
       } else {
         let msg = `Upload failed (${xhr.status})`;
-        try { msg = JSON.parse(xhr.responseText).detail || msg; }
-        catch { /* ignore */ }
+        // K59.a · Feb-2026 — flatten FastAPI's three ``detail`` shapes
+        // (string / list[dict] / dict) into a readable string.  Pre-
+        // K59.a, the list-of-dicts 422 case yielded ``[object Object]``
+        // in the user-facing banner.  See PHASE_K59_a_UPLOAD_ERROR_STRINGIFIER.md.
+        try {
+          const parsed = JSON.parse(xhr.responseText);
+          const flat = _stringifyDetail(parsed?.detail);
+          if (flat) msg = flat;
+        } catch { /* non-JSON body — keep the generic status-code msg */ }
         reject(new Error(msg));
       }
     };

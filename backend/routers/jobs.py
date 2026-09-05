@@ -624,6 +624,15 @@ async def list_jobs(
                     # web + mobile schedule maps consume. ``None`` when
                     # the customer hasn't been geocoded (pin is skipped
                     # client-side; no fake coords ever rendered).
+                    #
+                    # K58 · Feb-2026 — this is now only the LOWEST rung
+                    # of the coord resolver ladder.  The dedicated K58
+                    # ladder block below may UPGRADE these values to a
+                    # higher-priority source (job.site_lat/lng or
+                    # job.latitude/longitude or property.latitude/
+                    # longitude) if one is available.  Left in place
+                    # so pre-Slice-A behaviour is preserved when no
+                    # higher rung fires.
                     lat = c.get("service_lat")
                     lng = c.get("service_lng")
                     d["location_lat"] = float(lat) if lat is not None else None
@@ -644,12 +653,23 @@ async def list_jobs(
     for d in docs:
         d.setdefault("property_label", None)
         d.setdefault("property_address", None)
+    # K58 · Feb-2026 — hoist ``pmap`` outside the try/except so the
+    # coord resolver ladder below can consume it.  Empty dict when
+    # the property batch is skipped (no jobs have ``property_id``) or
+    # the fetch fails (see the except clause).
+    pmap: dict = {}
     try:
         pids = list({d.get("property_id") for d in docs if d.get("property_id")})
         if pids:
             props = await db.properties.find(
                 {"id": {"$in": pids}, "tenant_id": tenant["id"]},
-                {"_id": 0, "id": 1, "label": 1, "address": 1},
+                # K58 · Feb-2026 — pull property-level coord fields into
+                # the batched projection so the resolver ladder below
+                # can consult ``property.latitude/longitude`` (newer
+                # geocoding write path) and ``property.lat/lng`` (older
+                # flat shape) without an N+1 lookup.
+                {"_id": 0, "id": 1, "label": 1, "address": 1,
+                 "latitude": 1, "longitude": 1, "lat": 1, "lng": 1},
             ).to_list(len(pids) * 2)
             pmap = {p["id"]: p for p in props}
             for d in docs:
@@ -665,6 +685,72 @@ async def list_jobs(
     except Exception:
         # Non-fatal — the chip just doesn't render.
         pass
+    # K58 · Feb-2026 — Schedule-map coord resolver ladder.
+    #
+    # Priority (highest wins — first hit stops the ladder):
+    #   1. job.site_lat / job.site_lng          — set by services/google_maps/geocoding.py
+    #   2. job.latitude / job.longitude         — set by newer geocoding write paths
+    #   3. property.latitude / property.longitude  (or the flat lat/lng shape)
+    #   4. customer.service_lat / .service_lng  — pre-K58 baseline (already
+    #                                              seeded into location_lat/lng
+    #                                              in the customer block above;
+    #                                              this rung is a NO-OP here
+    #                                              because a lower-priority
+    #                                              source is only kept when a
+    #                                              higher rung didn't fire).
+    #
+    # Both ``location_lat/lng`` (the historical key mobile + web filter
+    # on) AND ``latitude/longitude`` (dual-key output for the mobile
+    # shared-helper backfill — K58 Slice B) are stamped with the
+    # resolved value.  ``None`` on both keys is preserved when no rung
+    # yields coords.
+    #
+    # Customers do not see this block — the ``else:`` branch above is
+    # skipped for role=customer and no coord fields are set.  This
+    # ladder therefore only fires for admin / manager / technician.
+    if user.get("role") != "customer":
+        for d in docs:
+            # Preserve the pre-K58 baseline value (customer.service_lat
+            # already seeded into location_lat/lng above).
+            lat = d.get("location_lat")
+            lng = d.get("location_lng")
+            # Rung 1 — job.site_lat/lng.
+            site_lat = d.get("site_lat")
+            site_lng = d.get("site_lng")
+            if site_lat is not None and site_lng is not None:
+                lat = site_lat
+                lng = site_lng
+            # Rung 2 — job.latitude/longitude.
+            elif d.get("latitude") is not None and d.get("longitude") is not None:
+                lat = d.get("latitude")
+                lng = d.get("longitude")
+            # Rung 3 — property.latitude/longitude (or flat lat/lng
+            # shape as an inner fallback).
+            else:
+                pid = d.get("property_id")
+                p = pmap.get(pid) if pid else None
+                if p:
+                    p_lat = p.get("latitude") if p.get("latitude") is not None else p.get("lat")
+                    p_lng = p.get("longitude") if p.get("longitude") is not None else p.get("lng")
+                    if p_lat is not None and p_lng is not None:
+                        lat = p_lat
+                        lng = p_lng
+            # Rung 4 — customer.service_lat/lng.  Already seeded above;
+            # nothing to do here.
+            #
+            # Stamp resolved value under BOTH keys.  ``None`` is
+            # preserved as ``None`` — no floats-of-null.  K58: dual-
+            # key output for mobile shared-helper backfill.
+            try:
+                d["location_lat"] = float(lat) if lat is not None else None
+                d["location_lng"] = float(lng) if lng is not None else None
+            except (TypeError, ValueError):
+                # Malformed coord data (string that isn't a number,
+                # etc.) — treat as absent.
+                d["location_lat"] = None
+                d["location_lng"] = None
+            d["latitude"] = d["location_lat"]
+            d["longitude"] = d["location_lng"]
     # Feb-2026 · Schedule notes surface — cap the free-text ``notes``
     # column at 500 chars on the wire and expose ``notes_truncated``
     # so the schedule card can render a 2-line clamp + expand hint

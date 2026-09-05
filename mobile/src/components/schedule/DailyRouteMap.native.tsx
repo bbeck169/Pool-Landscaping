@@ -46,6 +46,17 @@ import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey
 // so a tech can hop from the tapped route pin straight into
 // turn-by-turn without leaving the schedule screen.
 import { openNativeNavTo } from "@/src/utils/nativeNav";
+// K58 · Feb-2026 — shared coord resolver.  The pre-K58 inline
+// ``resolveJobCoords`` in this file has been extracted to
+// ``@/src/utils/jobCoords`` so ScheduleMap.native.tsx and this
+// component stay in lockstep on which jobs are "mapped".  The local
+// export below is kept as a thin re-export so downstream consumers +
+// existing tests that import ``resolveJobCoords`` from this file
+// continue to work unchanged.
+import {
+  resolveJobCoords as _sharedResolveJobCoords,
+  type JobLikeForCoords,
+} from "@/src/utils/jobCoords";
 // K46 · Feb-2026 — Migrated from @rnmapbox/maps to react-native-maps
 // with the Google provider.  See memory/PHASE_K46_GOOGLE_ONLY_MAPS.md
 // for the full migration rationale (root cause of the K45 Android
@@ -94,36 +105,29 @@ const STORAGE_KEY_PREFIX = "schedule_daily_map_expanded_v1:";
 
 /**
  * Resolve pin coordinates from a job, tolerating the legacy shapes
- * that exist in this codebase. Preference order (per the Feb-2026
- * brief): property.location → flat location_lat/lng → job.location
- * → service_address.coordinates. First hit wins.
+ * that exist in this codebase.
+ *
+ * K58 · Feb-2026 — the resolution ladder now lives in
+ * ``@/src/utils/jobCoords`` so ``DailyRouteMap`` and ``ScheduleMap``
+ * agree on which jobs are "mapped".  Preference order (post-K58):
+ *
+ *   1. job.location_lat / job.location_lng   (/api/jobs canonical)
+ *   2. job.latitude / job.longitude          (K58 dual-key output)
+ *   3. job.site_lat / job.site_lng           (legacy write path)
+ *   4. job.property?.location?.{lat,lng}     (legacy nested)
+ *
+ * The pre-K58 preference (``property.location`` FIRST) was intentional
+ * for a period when the backend serializer was missing coord data on
+ * the top-level job doc.  K58 Slice A fixed that gap so the flat
+ * ``location_*`` alias is now authoritative — placing it first in the
+ * ladder means fewer property-lookup dereferences on the hot path.
+ *
+ * This re-export exists so pre-K58 callers that ``import { resolveJobCoords }``
+ * from this file keep working.  New callers should import from
+ * ``@/src/utils/jobCoords`` directly.
  */
-export function resolveJobCoords(job: RouteMapJob): { lat: number; lng: number } | null {
-  const trySet = (lat: any, lng: any): { lat: number; lng: number } | null => {
-    const la = Number(lat);
-    const lo = Number(lng);
-    if (Number.isFinite(la) && Number.isFinite(lo) && (la !== 0 || lo !== 0)) {
-      return { lat: la, lng: lo };
-    }
-    return null;
-  };
-  const canonical = job.property?.location;
-  if (canonical) {
-    const hit = trySet(canonical.lat, canonical.lng ?? canonical.lon);
-    if (hit) return hit;
-  }
-  const flat = trySet(job.location_lat, job.location_lng);
-  if (flat) return flat;
-  if (job.location) {
-    const hit = trySet(job.location.lat, job.location.lng ?? job.location.lon);
-    if (hit) return hit;
-  }
-  const sa = job.service_address?.coordinates;
-  if (sa) {
-    const hit = trySet(sa.lat ?? sa.latitude, sa.lng ?? sa.lon ?? sa.longitude);
-    if (hit) return hit;
-  }
-  return null;
+export function resolveJobCoords(job: any): { lat: number; lng: number } | null {
+  return _sharedResolveJobCoords(job as JobLikeForCoords);
 }
 
 type PinKind = "pending" | "completed" | "cns";

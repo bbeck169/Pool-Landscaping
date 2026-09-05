@@ -243,9 +243,13 @@ export default function ServiceReportMediaUploader({
         )}
       </View>
 
-      {/* Error */}
+      {/* Error — K59.a · Feb-2026 renamed testid to reflect that
+          this banner surfaces all upload / picker errors, not just
+          the client-side "video too long" case it originally shipped
+          for.  Legacy testid retained via ``aria-label`` fallback for
+          any tests still gate-checking on the old id. */}
       {err ? (
-        <View style={s.errorBox} testID="svc-report-video-duration-error">
+        <View style={s.errorBox} testID="svc-report-upload-error" accessibilityLabel="svc-report-video-duration-error">
           <Text style={s.errorText}>{err}</Text>
           <Pressable onPress={() => setErr("")} hitSlop={8}>
             <Ionicons name="close" size={14} color="#991B1B" />

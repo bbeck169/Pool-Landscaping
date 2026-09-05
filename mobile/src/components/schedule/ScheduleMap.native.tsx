@@ -13,6 +13,9 @@ import { useRouter } from "expo-router";
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
+// K58 · Feb-2026 — shared coord resolver so ScheduleMap and DailyRouteMap
+// stay in lockstep on which jobs are "mapped".  See PHASE_K58_MAP_COORD_LADDER.md.
+import { resolveJobCoords, type JobLikeForCoords } from "@/src/utils/jobCoords";
 
 interface Job {
   id: string;
@@ -20,8 +23,17 @@ interface Job {
   customer_name?: string;
   address?: string;
   scheduled_time?: string | null;
+  // K58 · Feb-2026 — coord fields consumed via ``resolveJobCoords``;
+  // the shared helper tolerates the full ladder (location_lat/lng →
+  // latitude/longitude → site_lat/lng → property.location.{lat,lng})
+  // so ScheduleMap no longer keys strictly on ``location_*``.
   location_lat?: number | null;
   location_lng?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  site_lat?: number | null;
+  site_lng?: number | null;
+  property?: JobLikeForCoords["property"];
 }
 
 interface Props {
@@ -67,7 +79,20 @@ export default function ScheduleMap({ jobs, testID }: Props) {
   const [selected, setSelected] = useState<Job | null>(null);
 
   const geocoded = useMemo(
-    () => jobs.filter((j) => j.location_lat != null && j.location_lng != null),
+    // K58 · Feb-2026 — filter via the shared ``resolveJobCoords``
+    // helper so a job is "mapped" when ANY rung of the coord ladder
+    // yields coords, not just the strict ``location_lat/lng`` gate
+    // that used to gate this component pre-K58.  Each geocoded entry
+    // is annotated with its resolved ``__coords`` so the render loop
+    // below doesn't recompute the ladder per marker.
+    () => jobs.reduce<Array<Job & { __coords: { lat: number; lng: number } }>>(
+      (acc, j) => {
+        const coords = resolveJobCoords(j as JobLikeForCoords);
+        if (coords) acc.push({ ...j, __coords: coords });
+        return acc;
+      },
+      [],
+    ),
     [jobs],
   );
 
@@ -84,8 +109,8 @@ export default function ScheduleMap({ jobs, testID }: Props) {
   // Compute initial region from pins
   const initialRegion: Region | undefined = useMemo(() => {
     if (geocoded.length === 0) return undefined;
-    const lats = geocoded.map((j) => j.location_lat!);
-    const lngs = geocoded.map((j) => j.location_lng!);
+    const lats = geocoded.map((j) => j.__coords.lat);
+    const lngs = geocoded.map((j) => j.__coords.lng);
     const minLat = Math.min(...lats);
     const maxLat = Math.max(...lats);
     const minLng = Math.min(...lngs);
@@ -131,7 +156,7 @@ export default function ScheduleMap({ jobs, testID }: Props) {
         {geocoded.map((j) => (
           <Marker
             key={j.id}
-            coordinate={{ latitude: j.location_lat!, longitude: j.location_lng! }}
+            coordinate={{ latitude: j.__coords.lat, longitude: j.__coords.lng }}
             pinColor={pinColor(j.status)}
             title={j.customer_name || "Job"}
             onPress={() => setSelected(j)}
