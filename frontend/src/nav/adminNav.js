@@ -229,15 +229,13 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/comms/suppression-log", label: "Comms Suppression Log", icon: Shield, feature: "settings", hard_rule: "super_admin_only", subsection: "Settings" },
     { to: "/access-settings",       label: "Access Settings", icon: Shield,   feature: "permissions", subsection: "Settings" },
     { to: "/settings/integrations", label: "Integrations",    icon: Compass,  feature: "settings", subsection: "Settings" },
-    // Phase 0 POC · Feb-2026 — Homeworks (home.works MCP) BYO-creds admin.
-    // Super_admin only; hard_rule enforces on the nav filter, and the
-    // route wrapper (`SuperAdminOnly`) enforces on the router.
-    { to: "/admin/integrations/homeworks", label: "Homeworks (POC)", icon: PlugZap, feature: "settings", hard_rule: "super_admin_only", subsection: "Settings" },
+    // Feb-2026 · K55.a — Homeworks (POC) + Import from Homeworks nav
+    // entries removed as part of the SuperCool + HomeWorks
+    // integration sunset (see PHASE_K55_a_FRONTEND_REMOVAL.md).
+    // Historical audit fields on customer/job/invoice docs are
+    // preserved intact; only the write-path UI is gone.
     // Feb-2026 · Item 3 — Deletions audit (super_admin only).
     { to: "/admin/audit/deletions", label: "Deletion audit", icon: ShieldCheck, feature: "settings", hard_rule: "super_admin_only", subsection: "Settings" },
-    // Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer.
-    // Admin + super_admin only — one-shot destructive-ish operation.
-    { to: "/settings/import/homeworks", label: "Import from Homeworks", icon: ImportIcon, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
     // G0 · Feb-2026 — GPS driver-activity settings (admin-only).
     { to: "/admin/settings/gps",    label: "GPS Driver Activity", icon: MapPin, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
     { to: "/settings/maps",         label: "Maps",            icon: MapIcon,  feature: "settings", subsection: "Settings" },

@@ -32,7 +32,11 @@ const MIGRATED_SITES = [
   ["mobile/app/landscape.tsx", "Delete design?", "showConfirm"],
   ["mobile/app/payments/methods.tsx", "Remove card?", "showConfirm"],
   ["mobile/app/income-categories.tsx", "Remove category", "showConfirm"],
-  ["mobile/app/settings/integrations/supercool.tsx", "Disconnect Supercool?", "showConfirm"],
+  // Feb-2026 · K55.a — SuperCool integration page removed as part
+  // of the sunset (PHASE_K55_a_FRONTEND_REMOVAL.md).  This entry
+  // used to lock in ``mobile/app/settings/integrations/supercool.tsx``
+  // ``Disconnect Supercool?`` confirmation dialog — no longer
+  // applicable.
   ["mobile/app/settings/vanity-slugs.tsx", "Delete alias?", "showConfirm"],
   ["mobile/app/admin/seo/llm-visibility.tsx", "Delete query", "showConfirm"],
   ["mobile/app/aeo/library.tsx", "Delete template?", "showConfirm"],

@@ -46,11 +46,13 @@ export default function RepairCalculatorPage() {
   const [aiResult, setAiResult] = React.useState(null);
   const [aiBusy, setAiBusy] = React.useState(null);       // "photo" | "voice" | null
   const [aiError, setAiError] = React.useState(null);
-  // Phase B follow-up — Supercool connection + before/after concept
-  // render state. `photoDataUrl` is the last uploaded pool photo
-  // encoded as a data URI; used both as the BEFORE preview and as
-  // the ``source_image_url`` payload for /api/media/image/edit.
-  const [supercoolConnected, setSupercoolConnected] = React.useState(null);
+  // Feb-2026 · K55.a — SuperCool connection state removed as part
+  // of the sunset (PHASE_K55_a_FRONTEND_REMOVAL.md).  Buttons no
+  // longer gate on ``supercoolConnected``; image editing runs
+  // through the Emergent nano-banana-2 fallback (see K56).
+  // ``photoDataUrl`` is the last uploaded pool photo encoded as a
+  // data URI; used both as the BEFORE preview and as the
+  // ``source_image_url`` payload for /api/media/image/edit.
   const [photoDataUrl, setPhotoDataUrl] = React.useState(null);
   const [afterRender, setAfterRender] = React.useState(null);   // {url, prompt, provider, attached}
   const [renderBusy, setRenderBusy] = React.useState(false);
@@ -61,12 +63,7 @@ export default function RepairCalculatorPage() {
       const list = Array.isArray(r) ? r : (r?.customers || r?.items || []);
       setCustomers(list.slice(0, 500));
     }).catch(() => {});
-    // Phase B follow-up — supercool connection status. Buttons that
-    // hit the Supercool MCP are disabled with a tooltip when this
-    // flag is false.
-    api.get("/integrations/supercool/status")
-      .then((s) => setSupercoolConnected(!!s?.connected))
-      .catch(() => setSupercoolConnected(false));
+    // Feb-2026 · K55.a — SuperCool status polling removed.
   }, []);
 
   // Live-recompute quote whenever any input changes.
@@ -251,10 +248,7 @@ export default function RepairCalculatorPage() {
 
   const generateAfterRender = React.useCallback(async () => {
     if (!aiResult || !photoDataUrl) return;
-    if (!supercoolConnected) {
-      toast.error("Connect Supercool first to enable AI concept renders.");
-      return;
-    }
+    // Feb-2026 · K55.a — SuperCool connection gate removed.
     setRenderBusy(true);
     try {
       const prompt = buildAfterPrompt(aiResult);
@@ -271,7 +265,7 @@ export default function RepairCalculatorPage() {
         image_id: r?.image_id,
         attached: false,
       });
-      toast.success(`Concept render ready · ${r?.provider || "supercool"}`);
+      toast.success(`Concept render ready · ${r?.provider || "emergent"}`);
     } catch (e) {
       const msg = e?.message || "Render failed";
       if (/daily_limit_reached/i.test(msg)) {
@@ -280,7 +274,7 @@ export default function RepairCalculatorPage() {
         toast.error(msg);
       }
     } finally { setRenderBusy(false); }
-  }, [aiResult, photoDataUrl, supercoolConnected, buildAfterPrompt]);
+  }, [aiResult, photoDataUrl, buildAfterPrompt]);
 
   const attachRenderToEmail = React.useCallback(() => {
     if (!afterRender?.url) return;
@@ -352,7 +346,6 @@ export default function RepairCalculatorPage() {
           photoDataUrl={photoDataUrl}
           afterRender={afterRender}
           renderBusy={renderBusy}
-          supercoolConnected={supercoolConnected}
           onGenerate={generateAfterRender}
           onAttachToEmail={attachRenderToEmail}
         />
@@ -973,18 +966,17 @@ function EmailConfirmModal({ quote, customers, customerId, setCustomerId,
 // Phase B follow-up · Feb-2026 — AI Photo-to-Estimate before/after.
 //
 // Renders a side-by-side BEFORE|AFTER grid + the mandatory legal
-// caption. The "Generate 'after' concept render" button is disabled
-// with a tooltip when Supercool is not connected — the concept-render
-// flow is scoped to the primary Supercool image-gen provider per the
-// Phase B follow-up brief.
+// caption.  Feb-2026 · K55.a — the "Generate 'after' concept render"
+// button used to gate on the SuperCool connection flag; SuperCool
+// was removed in the sunset, so the gate + hint banner are gone.
+// Image editing now runs through the Emergent nano-banana-2
+// fallback unconditionally (see K56).
 function BeforeAfterRender({ photoDataUrl, afterRender, renderBusy,
-                              supercoolConnected, onGenerate, onAttachToEmail }) {
-  const canGenerate = !!supercoolConnected && !!photoDataUrl && !renderBusy;
-  const tooltip = !supercoolConnected
-    ? "Connect Supercool to enable AI concept renders."
-    : !photoDataUrl
-      ? "Upload a photo via 📷 Snap a photo first."
-      : "Generate an AI concept render of the finished repair.";
+                              onGenerate, onAttachToEmail }) {
+  const canGenerate = !!photoDataUrl && !renderBusy;
+  const tooltip = !photoDataUrl
+    ? "Upload a photo via 📷 Snap a photo first."
+    : "Generate an AI concept render of the finished repair.";
   return (
     <div
       className="rounded-xl p-4 mb-3"
@@ -1018,17 +1010,8 @@ function BeforeAfterRender({ photoDataUrl, afterRender, renderBusy,
         </button>
       </div>
 
-      {!supercoolConnected ? (
-        <div
-          className="text-[11px] mb-2 rounded-md p-2"
-          style={{ backgroundColor: "#FEF9C3", border: "1px solid #FDE68A", color: "#854D0E" }}
-          data-testid="repair-calc-before-after-supercool-hint"
-        >
-          Supercool isn't connected — concept renders are disabled. Connect
-          it under <b>Settings → Integrations → Supercool</b> to enable this
-          feature.
-        </div>
-      ) : null}
+      {/* Feb-2026 · K55.a — SuperCool disconnected hint removed as
+          part of the sunset (see PHASE_K55_a_FRONTEND_REMOVAL.md). */}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"
            data-testid="repair-calc-before-after-grid">
@@ -1098,7 +1081,7 @@ function BeforeAfterRender({ photoDataUrl, afterRender, renderBusy,
               : <><Paperclip size={12} /> Attach to quote email</>}
           </button>
           <span className="text-[11px]" style={{ color: colors.muted }}>
-            Provider · <b>{afterRender.provider || "supercool"}</b>
+            Provider · <b>{afterRender.provider || "emergent"}</b>
           </span>
         </div>
       ) : null}

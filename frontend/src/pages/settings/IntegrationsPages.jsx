@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Sparkles } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
-import HomeworksIntegrationCard from "@/components/settings/HomeworksIntegrationCard";
-import HomeworksImportCenter from "@/components/settings/HomeworksImportCenter";
+import { colors } from "@/theme";
+// Feb-2026 · K55.a — SuperCool + HomeWorks integration surfaces
+// removed as part of the sunset (PHASE_K55_a_FRONTEND_REMOVAL.md).
+// Historical audit fields on data documents are preserved intact.
 
 function Card({ children, testid, className = "" }) {
   return (
@@ -29,7 +29,10 @@ export function IntegrationsHub() {
     try { return JSON.parse(localStorage.getItem("user") || "null"); }
     catch { return null; }
   })();
-  const isSuperAdmin = user?.role === "super_admin";
+  // Feb-2026 · K55.a — ``isSuperAdmin`` was only used to gate the
+  // SuperCool tile that we just removed; ``user`` is preserved
+  // because other cards below may still reference role in future.
+  void user;
   useEffect(() => { api.get("/settings/integrations").then(setRows).catch(() => setRows({})); }, []);
   const runBackfill = async () => {
     setBackfillState({ running: true, result: null, error: null });
@@ -122,42 +125,21 @@ export function IntegrationsHub() {
         </div>
       </Card>
 
-      {isSuperAdmin ? (
-        <Card testid="supercool-tile-card">
-          <div className="flex items-start gap-3">
-            <div
-              className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
-              style={{ background: brandGradientCss, color: "#fff" }}
-            >
-              <Sparkles size={20} />
-            </div>
-            <div className="flex-1">
-              <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
-                Supercool AI (Image + Video)
-              </h2>
-              <p className="text-sm" style={{ color: colors.onSurfaceSecondary }}>
-                Model-agnostic MCP integration — one OAuth handshake unlocks
-                every image + video model Supercool supports. Managed here.
-              </p>
-            </div>
-            <Link
-              to="/settings/integrations/supercool"
-              className="px-3 py-2 rounded-lg text-sm font-bold text-white shrink-0"
-              style={{ background: brandGradientCss }}
-              data-testid="supercool-tile-open-btn"
-            >
-              Open
-            </Link>
-          </div>
-        </Card>
-      ) : null}
+      {/* Feb-2026 · K55.a — SuperCool AI (Image + Video) tile
+          removed as part of the SuperCool + HomeWorks integration
+          sunset.  ``db.mcp_oauth_tokens`` where
+          ``provider="supercool"`` and ``db.generated_media`` where
+          ``provider="supercool"`` are preserved intact.  Image
+          generation now runs through the Emergent nano-banana-2
+          fallback (see K56). */}
 
-      {/* Feb-2026 · Phase 1a — Homeworks (MCP) OAuth integration card. */}
-      <HomeworksIntegrationCard />
-
-      {/* Queue Item 5 · Feb-2026 — Unified Homeworks Import Center
-          (dry-run + queue + polling for all customer importers). */}
-      {user?.role === "super_admin" ? <HomeworksImportCenter /> : null}
+      {/* Feb-2026 · K55.a — Homeworks (MCP) OAuth integration card
+          + Homeworks Import Center removed as part of the sunset.
+          Historical ``homeworks_*`` audit fields on customers /
+          jobs / invoices / quotes / pricebook_items / properties /
+          suppliers are preserved intact.  BYO OAuth token store
+          (``db.homeworks_byo_integrations``) is preserved so the
+          integration is trivially re-enable-able later. */}
 
       <Card testid="geocode-backfill-card">
         <h2 className="text-lg font-bold mb-1">Geocode backfill</h2>

@@ -65,12 +65,10 @@ const VENDORS = [
     data: "Redacted service notes; job summaries; anonymized customer references for operational LLM features (Marina auto-reply, Vizzy call prep, Dexter analytics, churn scoring, retention drafts, check-in rewrites, review replies) — these do NOT send customer names, emails, phones, or exact addresses. NOTE: the Admin Copilot is an intentional exception — when an authenticated administrator explicitly queries customer data (e.g. \"find customer Garcia\"), the requested customer records including name, email, phone, and service address are sent to the LLM provider under Anthropic's zero-retention agreement and are not used for training.",
     href: "https://openai.com/policies/privacy-policy",
   },
-  {
-    name: "Homeworks",
-    purpose: "CRM sync for tenants who migrated from Homeworks",
-    data: "Customer name, email, phone, address, service history",
-    href: "https://home.works/privacy",
-  },
+  // Feb-2026 · K55.a — Homeworks vendor entry removed as part of
+  // the SuperCool + HomeWorks integration sunset.  Historical
+  // ``homeworks_*`` audit fields on data documents are preserved
+  // intact; no live data continues to flow to Homeworks.
 ];
 
 

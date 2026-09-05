@@ -77,7 +77,8 @@ import BillingSettings from "@/pages/settings/BillingSettings";
 import SupplierSettings from "@/pages/settings/SupplierSettings";
 import SupplierSyncAnalytics from "@/pages/reports/SupplierSyncAnalytics";
 // Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer scaffold.
-import HomeworksImport from "@/pages/settings/HomeworksImport";
+// Feb-2026 · K55.a — import removed as part of the SuperCool +
+// HomeWorks integration sunset (PHASE_K55_a_FRONTEND_REMOVAL.md).
 import AutoVisitEmailSettings from "@/pages/settings/AutoVisitEmailSettings";
 import PortalPhotos from "@/pages/portal/PortalPhotos";
 import PortalReviews from "@/pages/portal/PortalReviews";
@@ -219,13 +220,11 @@ import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 // Feb-2026 · Slice 2B — Multi-ToS admin editor (Pool + Landscaping).
 import TosAdminEditor from "@/pages/settings/TosAdminEditor";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
-// Phase 26 · Feb 2026 · Supercool MCP OAuth integration (super_admin only).
-import SupercoolIntegrationPage from "@/pages/settings/integrations/SupercoolIntegrationPage";
-// Phase 0 POC · Feb-2026 — Homeworks (home.works MCP) BYO-creds admin.
-// Super_admin only. Separate surface from the env-var-driven
-// /settings/integrations Homeworks card.
-import HomeworksIntegrationPage from "@/pages/admin/integrations/HomeworksIntegrationPage";
-import HomeworksOAuthCallback from "@/pages/admin/integrations/HomeworksOAuthCallback";
+// Feb-2026 · K55.a — SuperCool + HomeWorks integration surfaces
+// removed as part of the sunset.  Historical DB data (per-doc
+// ``homeworks_*`` audit fields + ``db.mcp_oauth_tokens`` where
+// ``provider="supercool"``) is preserved intact.  See
+// /app/memory/PHASE_K55_a_FRONTEND_REMOVAL.md.
 // Feb-2026 · Item 3 — Deletions audit page (super_admin only).
 import DeletionsAuditPage from "@/pages/admin/audit/DeletionsAuditPage";
 // Feb-2026 · Admin migrations dashboard (super_admin only) — driver
@@ -734,8 +733,9 @@ export default function App() {
             {/* Phase 56-a.5 · Aug-2026 — Pricebook Suppliers admin
                 (vendor CRUD that feeds the Ops Hub Price Book grid). */}
             <Route path="settings/pricebook-suppliers" element={<AdminOnly><PricebookSuppliersAdmin /></AdminOnly>} />
-            {/* Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer. */}
-            <Route path="settings/import/homeworks" element={<AdminOnly><HomeworksImport /></AdminOnly>} />
+            {/* Phase 55-a · Aug-2026 — Homeworks importer route.
+                Feb-2026 · K55.a — removed as part of the SuperCool +
+                HomeWorks integration sunset. */}
             {/* Phase 56-c · Aug-2026 — Pricebook Cost Comparison report. */}
             <Route path="admin/reports/pricebook-cost-comparison" element={<AdminOnly><PricebookCostComparison /></AdminOnly>} />
             {/* Phase 56-d · Aug-2026 — Supplier Spend / Margin report. */}
@@ -763,18 +763,13 @@ export default function App() {
             <Route path="settings/legal/terms-of-service" element={<AdminOnly><TosAdminEditor /></AdminOnly>} />
             {/* Feb-2026 · Consolidated Settings Hub — `/settings/integrations`
                 now nests inside <SettingsHub> above so the hub sidebar
-                stays visible. Sub-detail pages (supercool, homeworks)
-                remain top-level because they're specialised OAuth
-                flows that need the full viewport. */}
+                stays visible.  K55.a removed the SuperCool + HomeWorks
+                sub-detail routes; historical audit fields on data
+                documents are preserved intact. */}
             {/* Phase 54b · Feb-2026 — Wholesale supplier settings. */}
             <Route path="settings/suppliers" element={<AdminOrManagerForSuppliers><SupplierSettings /></AdminOrManagerForSuppliers>} />
             {/* Phase 54g · Feb-2026 — supplier sync analytics dashboard. */}
             <Route path="reports/supplier-syncs" element={<AdminOrManagerForSuppliers><SupplierSyncAnalytics /></AdminOrManagerForSuppliers>} />
-            {/* Phase 26 · Feb 2026 — Supercool MCP OAuth 2.1 (super_admin only). */}
-            <Route path="settings/integrations/supercool" element={<SuperAdminOnly><SupercoolIntegrationPage /></SuperAdminOnly>} />
-            {/* Phase 0 POC · Feb-2026 — Homeworks BYO-creds surface (super_admin only). */}
-            <Route path="admin/integrations/homeworks" element={<SuperAdminOnly><HomeworksIntegrationPage /></SuperAdminOnly>} />
-            <Route path="admin/integrations/homeworks/oauth/callback" element={<SuperAdminOnly><HomeworksOAuthCallback /></SuperAdminOnly>} />
             {/* Feb-2026 · Item 3 — Deletions audit page (super_admin only). */}
             <Route path="admin/audit/deletions" element={<SuperAdminOnly><DeletionsAuditPage /></SuperAdminOnly>} />
             <Route path="admin/migrations" element={<SuperAdminOnly><AdminMigrationsPage /></SuperAdminOnly>} />

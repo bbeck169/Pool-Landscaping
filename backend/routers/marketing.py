@@ -186,7 +186,11 @@ async def submit_public_form(slug: str, body: dict, request: Request,
             )
         except Exception as _e:  # noqa: BLE001
             logger.warning(f"[p18] lead alert dispatch failed: {_e}")
-    return {"ok": True, "redirect_url": form.get("redirect_url")}
+    # Feb-2026 · K53.2 — happy-path response now surfaces
+    # ``lead_created`` explicitly so Path A / Path B response shapes
+    # stay consistent for future API consumers.
+    return {"ok": True, "redirect_url": form.get("redirect_url"),
+            "lead_created": dest == "lead"}
 
 
 @router.get("/forms/{fid}/preview")

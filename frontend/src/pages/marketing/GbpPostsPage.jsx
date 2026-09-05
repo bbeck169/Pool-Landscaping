@@ -56,8 +56,10 @@ export default function GbpPostsPage() {
     purpose: "update", tone: "friendly", topic_hint: "", cta_type: "Call now",
   });
   const [busy, setBusy] = React.useState(false);
-  // Phase B follow-up — Supercool connection + composer modal state.
-  const [supercoolConnected, setSupercoolConnected] = React.useState(null);
+  // Feb-2026 · K55.a — SuperCool connection state removed as part
+  // of the sunset.  Composer modal is always available; image
+  // generation runs through the Emergent nano-banana-2 fallback
+  // unconditionally (see K56).
   const [composer, setComposer] = React.useState(null);  // { draft }
 
   const load = React.useCallback(async () => {
@@ -71,13 +73,8 @@ export default function GbpPostsPage() {
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    api.get("/integrations/supercool/status").then((s) => {
-      if (!cancelled) setSupercoolConnected(!!s?.connected);
-    }).catch(() => { if (!cancelled) setSupercoolConnected(false); });
-    return () => { cancelled = true; };
-  }, []);
+  // Feb-2026 · K55.a — SuperCool status polling removed as part of
+  // the sunset (see PHASE_K55_a_FRONTEND_REMOVAL.md).
 
   const generate = async () => {
     setBusy(true);
@@ -253,20 +250,16 @@ export default function GbpPostsPage() {
                     <Copy size={11} /> Copy
                   </button>
 
-                  {/* Phase B follow-up — Generate branded image */}
+                  {/* Phase B follow-up — Generate branded image.
+                      Feb-2026 · K55.a — SuperCool connection gate
+                      removed; button is always enabled.  Image gen
+                      runs through Emergent nano-banana-2 fallback. */}
                   <button
                     type="button"
-                    onClick={() => supercoolConnected ? setComposer({ draft: r }) : null}
-                    disabled={!supercoolConnected}
-                    title={supercoolConnected
-                      ? "Generate a branded image for this post"
-                      : "Connect Supercool to enable AI image generation"}
-                    className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={supercoolConnected
-                      ? { background: brandGradientCss, color: "#fff" }
-                      : { backgroundColor: colors.surfaceSecondary,
-                            color: colors.muted,
-                            border: `1px solid ${colors.border}` }}
+                    onClick={() => setComposer({ draft: r })}
+                    title="Generate a branded image for this post"
+                    className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md hover:brightness-95"
+                    style={{ background: brandGradientCss, color: "#fff" }}
                     data-testid={`gbp-gen-image-btn-${r.id}`}
                   >
                     <Sparkles size={11} /> Generate branded image

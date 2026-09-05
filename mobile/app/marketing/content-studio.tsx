@@ -44,18 +44,12 @@ export default function ContentStudio() {
   const [aspect, setAspect] = useState("1:1");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any>(null);
-  const [supercoolConnected, setSupercoolConnected] = useState<boolean | null>(null);
+  // Feb-2026 · K55.a — SuperCool connection state removed as part
+  // of the sunset (see PHASE_K55_a_FRONTEND_REMOVAL.md).  Image
+  // generation now runs unconditionally through the Emergent
+  // nano-banana-2 fallback (see K56).
   const [library, setLibrary] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const loadStatus = useCallback(async () => {
-    try {
-      const s = await api.get("/integrations/supercool/status");
-      setSupercoolConnected(!!s?.connected);
-    } catch {
-      setSupercoolConnected(false);
-    }
-  }, []);
 
   const loadLibrary = useCallback(async () => {
     try {
@@ -67,8 +61,8 @@ export default function ContentStudio() {
   }, []);
 
   useEffect(() => {
-    Promise.all([loadStatus(), loadLibrary()]).finally(() => setLoading(false));
-  }, [loadStatus, loadLibrary]);
+    loadLibrary().finally(() => setLoading(false));
+  }, [loadLibrary]);
 
   const generate = async () => {
     if (!prompt.trim()) {
@@ -122,19 +116,12 @@ export default function ContentStudio() {
       <ScrollView
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: 80 }}
         refreshControl={
-          <RefreshControl refreshing={false} onRefresh={() => { loadStatus(); loadLibrary(); }} />
+          <RefreshControl refreshing={false} onRefresh={() => { loadLibrary(); }} />
         }
         keyboardShouldPersistTaps="handled"
       >
-        {/* Supercool banner */}
-        {supercoolConnected === false && (
-          <Card style={s.banner} testID="content-studio-supercool-banner">
-            <Ionicons name="information-circle-outline" size={18} color="#D97706" />
-            <Text style={s.bannerText}>
-              Supercool not connected. Image generation uses fallback mode.
-            </Text>
-          </Card>
-        )}
+        {/* Feb-2026 · K55.a — SuperCool banner removed as part of
+            the sunset (see PHASE_K55_a_FRONTEND_REMOVAL.md). */}
 
         {/* Prompt */}
         <Text style={s.label}>PROMPT</Text>

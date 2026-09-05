@@ -87,6 +87,14 @@ def test_k531_your_email_cell_phone_customer_name_aliases(k531_public_form):
         f"K53.1 widened aliases must create a real lead;"
         f" got {body!r}"
     )
+    # Feb-2026 · K53.2 — Path A happy-path response must explicitly
+    # surface ``lead_created: True`` so callers can distinguish
+    # created vs guard-skipped without also parsing the presence of
+    # a lead row.  Matches Path B (``routers/marketing_forms``) shape.
+    assert body.get("lead_created") is True, (
+        f"K53.2 Path A happy-path must include lead_created=True;"
+        f" got {body!r}"
+    )
     lead = _latest_lead(tid=k531_public_form["tenant_id"])
     assert lead is not None
     assert lead["name"] == "Chase K531", (

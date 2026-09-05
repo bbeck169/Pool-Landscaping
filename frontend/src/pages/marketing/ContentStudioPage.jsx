@@ -46,15 +46,12 @@ export default function ContentStudioPage() {
   const [refUrl, setRefUrl] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [result, setResult] = React.useState(null);
-  const [supercoolConnected, setSupercoolConnected] = React.useState(null);
+  // Feb-2026 · K55.a — SuperCool connection status check removed as
+  // part of the sunset.  Image generation now runs unconditionally
+  // through the Emergent nano-banana-2 fallback (see K56).  The
+  // degraded-mode banner + "connect Supercool" link are gone; if
+  // the endpoint is added back later, restore the state + banner.
   const [library, setLibrary] = React.useState({ items: [], total: 0, quota: null });
-
-  const loadStatus = React.useCallback(async () => {
-    try {
-      const s = await api.get("/integrations/supercool/status");
-      setSupercoolConnected(!!s?.connected);
-    } catch { setSupercoolConnected(false); }
-  }, []);
 
   const loadLibrary = React.useCallback(async () => {
     try {
@@ -63,7 +60,7 @@ export default function ContentStudioPage() {
     } catch { setLibrary({ items: [], total: 0, quota: null }); }
   }, []);
 
-  React.useEffect(() => { loadStatus(); loadLibrary(); }, [loadStatus, loadLibrary]);
+  React.useEffect(() => { loadLibrary(); }, [loadLibrary]);
 
   const doGenerate = async () => {
     if (!prompt.trim() || prompt.trim().length < 3) {
@@ -132,8 +129,7 @@ export default function ContentStudioPage() {
           </h1>
           <p className="text-sm" style={{ color: colors.muted }}>
             Generate branded imagery for social posts, GBP, emails, and
-            landing pages — powered by Supercool AI with a nano-banana
-            fallback.
+            landing pages — powered by AI image generation.
           </p>
         </div>
         {quota ? (
@@ -149,26 +145,10 @@ export default function ContentStudioPage() {
         ) : null}
       </header>
 
-      {supercoolConnected === false ? (
-        <div
-          className="rounded-xl p-3 flex items-start gap-2"
-          style={{ backgroundColor: "#FEF9C3", border: "1px solid #FDE68A",
-                     color: "#854D0E" }}
-          data-testid="content-studio-degraded-banner"
-        >
-          <Info size={16} className="mt-0.5" />
-          <div className="text-sm">
-            Supercool isn't connected — generation is running on the
-            Emergent fallback (nano-banana). For full quality + stock
-            search + PhotoRoom background removal,{" "}
-            <Link to="/settings/integrations/supercool"
-                    className="underline font-semibold"
-                    data-testid="content-studio-connect-link">
-              connect Supercool
-            </Link>{" "}first.
-          </div>
-        </div>
-      ) : null}
+      {/* Feb-2026 · K55.a — SuperCool degraded-mode banner removed
+          as part of the sunset (see PHASE_K55_a_FRONTEND_REMOVAL.md).
+          Image generation now runs unconditionally through the
+          Emergent nano-banana-2 fallback (see K56). */}
 
       <section
         className="rounded-2xl p-5 grid grid-cols-1 md:grid-cols-3 gap-4"

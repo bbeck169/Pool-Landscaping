@@ -66,15 +66,17 @@ describe("App.js · Settings hub route wiring", () => {
     );
   });
 
-  it("no sibling `Route path=\"settings/integrations\"` route exists "
-      + "(the supercool sub-route is kept separately)", () => {
-    // The literal `settings/integrations` sibling should be gone,
-    // but the deeper `settings/integrations/supercool` OAuth flow
-    // MUST remain as its own top-level route.
+  it("no sibling `Route path=\"settings/integrations\"` route exists", () => {
+    // Feb-2026 · K55.a — the deeper ``settings/integrations/supercool``
+    // sub-route was removed as part of the SuperCool + HomeWorks
+    // sunset (see PHASE_K55_a_FRONTEND_REMOVAL.md).  The literal
+    // ``settings/integrations`` sibling should also be gone because
+    // the hub route is now nested inside the SettingsHub above.
     expect(APP_SRC).not.toMatch(
       /<Route\s+path="settings\/integrations"\s+element=\{\s*<AdminOnly>\s*<IntegrationsHub\s*\/>\s*<\/AdminOnly>/,
     );
-    expect(APP_SRC).toMatch(
+    // K55.a — no separate top-level supercool sub-route anymore.
+    expect(APP_SRC).not.toMatch(
       /<Route\s+path="settings\/integrations\/supercool"\s+element/,
     );
   });

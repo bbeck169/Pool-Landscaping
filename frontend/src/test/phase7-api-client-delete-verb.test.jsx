@@ -50,10 +50,14 @@ describe("api.delete verb (P7 hotfix)", () => {
 
   it("api.delete(path) hits the correct URL with method DELETE", async () => {
     const { api } = await import("@/api");
-    await api.delete("/integrations/homeworks/disconnect");
+    // Feb-2026 · K55.a — old assertion used the Homeworks disconnect
+    // URL as a canonical DELETE example; the endpoint was retired
+    // in the sunset (see PHASE_K55_a_FRONTEND_REMOVAL.md).  Any
+    // path exercises the DELETE verb wrapper equivalently.
+    await api.delete("/customers/example-id");
     expect(global.fetch).toHaveBeenCalledTimes(1);
     const [url, opts] = global.fetch.mock.calls[0];
-    expect(url).toBe("https://test.example/api/integrations/homeworks/disconnect");
+    expect(url).toBe("https://test.example/api/customers/example-id");
     expect(opts.method).toBe("DELETE");
   });
 

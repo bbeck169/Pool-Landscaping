@@ -155,10 +155,8 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Access Settings",    route: "/access-settings",      icon: "shield-outline",       tier: "t1", testID: "drawer-nav-access-settings" },
       { label: "Business Card",      route: "/settings/business-card", icon: "card-outline",       tier: "t1", testID: "drawer-nav-business-card" },
       { label: "Website SEO",        route: "/settings/website-seo", icon: "globe-outline",        tier: "t1", testID: "drawer-nav-website-seo" },
-      // Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer.
-      // Web-only surface (t3) — one-shot migration UX lives on the
-      // admin web portal. Role gate: admin + super_admin only.
-      { label: "Import from Homeworks", route: "/settings/import/homeworks", icon: "cloud-download-outline", tier: "t3", roles: ["super_admin", "admin"], testID: "drawer-nav-t3-homeworks-import" },
+      // Feb-2026 · K55.a — Homeworks importer nav entry removed as
+      // part of the SuperCool + HomeWorks integration sunset.
       { label: "Local SEO",          route: "/settings/local-seo",   icon: "location-outline",     tier: "t1", testID: "drawer-nav-local-seo" },
       { label: "Terms",              route: "/settings/terms",       icon: "document-outline",     tier: "t2", testID: "drawer-nav-terms" },
       { label: "Legal Docs",         route: "/settings/legal",       icon: "document-text-outline",tier: "t2", testID: "drawer-nav-legal-docs" },

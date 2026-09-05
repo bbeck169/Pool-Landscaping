@@ -57,15 +57,20 @@ describe("PrivacyPolicy content (P21)", () => {
     );
   });
 
-  it("names all 8 disclosed vendors", () => {
+  it("names all disclosed vendors", () => {
     const { container } = renderPolicy();
     const text = container.textContent;
+    // Feb-2026 · K55.a — Homeworks vendor entry removed as part of
+    // the SuperCool + HomeWorks integration sunset (see
+    // PHASE_K55_a_FRONTEND_REMOVAL.md).  Historical audit fields
+    // on data documents are preserved intact.
     for (const vendor of [
       "Stripe", "Mapbox", "RingCentral", "Resend",
-      "Google Maps", "OpenAI", "Homeworks", "Twilio",
+      "Google Maps", "OpenAI", "Twilio",
     ]) {
       expect(text).toContain(vendor);
     }
+    expect(text).not.toContain("Homeworks");
   });
 
   it("renders all 13 numbered section headings", () => {
@@ -83,7 +88,11 @@ describe("PrivacyPolicy content (P21)", () => {
   it("marks every external vendor link with rel=noopener noreferrer target=_blank", () => {
     const { container } = renderPolicy();
     const externals = Array.from(container.querySelectorAll('a[href^="https://"]'));
-    expect(externals.length).toBeGreaterThanOrEqual(8);
+    // Feb-2026 · K55.a — Homeworks external link removed as part of
+    // the SuperCool + HomeWorks integration sunset (see
+    // PHASE_K55_a_FRONTEND_REMOVAL.md).  Vendor links count
+    // dropped 8 → 7.
+    expect(externals.length).toBeGreaterThanOrEqual(7);
     for (const a of externals) {
       expect(a.getAttribute("target")).toBe("_blank");
       expect(a.getAttribute("rel")).toBe("noopener noreferrer");
