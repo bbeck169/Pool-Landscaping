@@ -111,3 +111,85 @@ down and persists across modal reopen for paid revenue rows.
 
 **Regression sweep:** K41 (20) + K41b + K41c (17) + K48 (15) +
 K49 (12) = **85/85 green**.  No neighbour drift.
+
+---
+
+## Verify-hotfix 2 (2026-02-XX) — BU-only PATCH payload
+
+**Tester report:** Initial verify-hotfix rendered the Select on paid
+rows (render half of the fix landed), but saving from a paid invoice
+409'd with
+`line_items[0].quantity/unit_price must be numeric`.  Root cause:
+`commitBusinessUnit` was spreading the row's `line_items` into the
+PATCH body; the shape validator (`_validate_line_items`) upstream of
+the paid-lock guard rejected stringified numerics before the K41
+confirmation gate even ran.
+
+**Fix — invoice-level `business_unit` field + minimal payload:**
+
+* `backend/routers/invoice_edit.py`
+  * Added `business_unit: Optional[str] = None` to `InvoiceEditBody`.
+  * Added `"business_unit"` to `_EDITABLE_FIELDS` so the field is
+    picked up by the existing audit-diff + `$set` pipeline.
+  * `business_unit` is deliberately NOT in `_MONEY_FIELDS` — it
+    never triggers totals recompute or Lumino re-fire.  Paid /
+    sent confirmation guards remain in force (`business_unit` does
+    NOT bypass them).
+* `frontend/src/components/dashboard/DashboardDrillDownModal.jsx`
+  * `commitBusinessUnit` now sends a MINIMAL body:
+    `{ business_unit, confirm_edit_sent?, confirm_edit_paid_invoice_number? }`.
+    No `line_items` spread, no `GET /quotes/{iid}` pre-fetch, no
+    `income_category_id` / `category` per-line-item write.
+  * Audit-companion `field` renamed to `"business_unit"` to match
+    the wire shape.
+* `frontend/src/test/k48-drilldown-business-unit.test.jsx`
+  * Rewrote the "PATCH pipeline" contract check to lock in the
+    BU-only payload shape + explicit regression guards against
+    re-introducing `target.income_category_id` /
+    `target.category = ` / `line_items: items`.
+* `backend/tests/test_k48_business_unit_patch.py` (new)
+  * 5 dedicated tests: BU-only 200 on paid, DB doc mutation,
+    money-neutrality (totals unchanged), missing-confirmation still
+    409s, and an explicit regression guard for the tester-reported
+    `quantity/unit_price must be numeric` string.
+
+**Aggregation note:** The invoice-level `business_unit` field is
+written to the DB doc but the existing `dashboard_revenue`
+aggregation still resolves buckets via
+`line_items[].income_category_id → income_categories.name`
+(with `line_items[].category` fallback).  Reconciling the
+aggregation source of truth to prefer `invoice.business_unit`
+when present is deliberately deferred — the BU-only patch lands
+the field cleanly for downstream reporting to consume once the
+aggregation is refactored.  Tracked below in Future Work.
+
+**Test evidence:**
+* Frontend: 15/15 K48 vitest green (rewritten payload contract).
+* Backend: 5/5 K48 BU-only pytest green (`test_k48_business_unit_patch.py`).
+* Regression: existing `test_invoice_edit.py` failures on this
+  branch are pre-existing (reproduce on `git stash`) and unrelated —
+  those tests still use `manager@aquaterra.com` which the
+  `_require_staff(admin/super_admin)` guard has always rejected.
+
+---
+
+## Future Work (logged from tester's suggestion)
+
+* **Audit-companion "auto-confirmed" flag** — worth stamping a
+  `confirmation_source: "auto_money_neutral" | "operator_typed"`
+  field on the `dashboard_drilldown_edit` audit companion when
+  `commitBusinessUnit` auto-carries the K41 confirmation flags.
+  Enables finance to distinguish operator-typed confirmations from
+  auto-carried ones at month-end.  Not shipped in this hotfix per
+  user brief — captured here for the next K48-adjacent phase.
+* **Aggregation refactor** — `dashboard_revenue.revenue_by_category`
+  should prefer `invoice.business_unit` when set, fall back to the
+  existing `line_items[].income_category_id → name` map.  Landing
+  this closes the loop between the K48 write path and the tile
+  aggregation.
+* **Path B → Path C migration** — the pre-verify-hotfix
+  `line_items[].category` denormalisation is still in the DB for
+  historically-edited rows.  A backfill migration to consolidate
+  onto `invoice.business_unit` (or drop the denormalisation entirely
+  in favour of `income_category_id`) would eliminate the split
+  source of truth.

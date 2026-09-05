@@ -38,6 +38,11 @@ _EDITABLE_FIELDS = [
     "customer_id", "line_items", "discount_amount", "discount_type",
     "promo_code", "tax_rate", "due_date", "notes", "memo",
     "private_notes", "terms", "currency", "invoice_number",
+    # K48 verify-hotfix · Feb-2026 — invoice-level Business Unit tag.
+    # Money-NEUTRAL (subtotal / tax / total unchanged), so PATCH can
+    # carry a BU-only payload without a ``line_items`` array.  Written
+    # via ``$set`` alongside the paid/sent confirmation-flag flow.
+    "business_unit",
 ]
 
 
@@ -55,6 +60,11 @@ class InvoiceEditBody(BaseModel):
     terms: Optional[str] = None
     currency: Optional[str] = None
     invoice_number: Optional[str] = None
+    # K48 verify-hotfix · Feb-2026 — invoice-level Business Unit tag
+    # written by the Revenue-by-Category drill-down.  Money-neutral;
+    # the router applies via ``$set`` and does NOT require a
+    # ``line_items`` array to be resent.
+    business_unit: Optional[str] = None
     reason: Optional[str] = None
     confirm_edit_sent: Optional[bool] = None
     confirm_edit_paid_invoice_number: Optional[str] = None

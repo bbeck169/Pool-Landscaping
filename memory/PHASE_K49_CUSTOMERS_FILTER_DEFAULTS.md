@@ -127,3 +127,61 @@ Two-file revert restores pre-K49 behaviour:
 * `backend/routers/customers.py` — remove the `_k49_lastname_pipeline` helper + drop `last_name_asc` from `_SORT_MAP`.
 
 Zero data migrations to unwind. Legacy `customers.sortBy` localStorage entries in the wild simply go unread.
+
+---
+
+## API layer note (K49 warn — 2026-02-XX)
+
+**Status:** Product decision — defaults are **UI-only**.  Approved by
+product owner after the K48 verify-hotfix ship report surfaced the
+question.
+
+### 1) What the API returns by default
+
+`GET /api/customers` (no `is_active` / `sort` params) still returns
+the **pre-K49 shape** — all customers (active + inactive + muted +
+merged if `include_merged=true`) sorted `created_desc` (Newest →
+Oldest, tie-broken by `_id`).  The K49 defaults (`is_active=true` +
+`sort=last_name_asc`) live ONLY in the web `CustomersList.jsx`
+component.
+
+### 2) What consumers must send to match the web UI
+
+| Consumer                     | Must send explicitly to match K49 web defaults                     |
+|------------------------------|--------------------------------------------------------------------|
+| Mobile Customers tab         | `GET /api/customers?is_active=true&sort=last_name_asc`             |
+| CSV export / admin scripts   | Same as above                                                      |
+| 3rd-party integrations       | Same as above                                                      |
+| Curl / manual QA             | Same as above                                                      |
+
+### 3) Rationale for UI-only
+
+* `/api/customers` is a **shared read surface** across web, mobile,
+  CSV export, admin scripts, and integrations.  Silently applying
+  `is_active=true` + `last_name_asc` at the router would flip
+  observable behaviour for every one of them without notice.
+* Existing pytest coverage was authored against an **explicit-param
+  model** — pushing defaults into the router would break
+  `test_customers_pagination_p35.py`,
+  `test_customers_list_sort_feb2026.py::test_default_sort_is_created_desc`,
+  and other suites that assert on `created_desc` when no `sort`
+  param is supplied.
+* Mobile CustomersList relies on the raw (all-status) endpoint for
+  its **All** tab semantics — silently gating on `is_active=true`
+  server-side would strip the tab's meaning.
+
+### 4) Safer path if server-side defaults are ever re-opened
+
+If a future phase wants the K49 defaults to reach non-web consumers
+without a per-caller change, ship them as an **opt-in query param**
+(e.g. `?apply_ui_defaults=true`).  Silent default changes on a
+shared surface are prohibited.
+
+### 5) Related audits
+
+* K48 verify-hotfix ship (`/app/memory/PHASE_K48_BUSINESS_UNIT_EDIT.md`)
+  — surfaces the same "web-UI-only vs shared-surface" decision for
+  the Business Unit dropdown.
+* K49b hotfix ship (`/app/memory/PHASE_K49b_HOTFIX.md`) — extended
+  the search surface at the router level (safe: no default
+  change, only widened match on an existing param).

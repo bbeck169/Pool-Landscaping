@@ -109,20 +109,32 @@ describe("K48 · DashboardDrillDownModal — Business Unit editor", () => {
     expect(MODAL).toMatch(/confirm_edit_paid_invoice_number/);
   });
 
-  it("saves via the existing K41 PATCH pipeline (no new endpoint)", () => {
-    // commitBusinessUnit writes both income_category_id + category
-    // and PATCHes /quotes/{iid} — same pipeline as commitField.
-    expect(MODAL).toMatch(/target\.income_category_id = nextId;/);
-    expect(MODAL).toMatch(/target\.category = nextCat\.name;/);
-    expect(MODAL).toMatch(/api\.patch\(`\/quotes\/\$\{row\.invoice_id\}`/);
+  it("saves via the existing K41 PATCH pipeline (BU-only payload, no line_items)", () => {
+    // K48 verify-hotfix · Feb-2026 — commitBusinessUnit now sends a
+    // MINIMAL BU-only payload.  Do NOT spread ``line_items`` into
+    // the body — the shape validator upstream of the paid-lock
+    // guard 409s on stringified numerics.  Backend accepts a top-
+    // level ``business_unit`` field via ``$set`` (money-neutral).
+    expect(MODAL).toMatch(
+      /const patchBody = \{ business_unit: nextCat\.name \};/,
+    );
+    expect(MODAL).toMatch(/api\.patch\(`\/quotes\/\$\{row\.invoice_id\}`, patchBody\)/);
+    // Regression guard — the BU-only patch path must NEVER re-fetch
+    // the invoice and spread line_items into the payload.
+    const commitBody = MODAL.split("const commitBusinessUnit = async")[1]
+      .split("const bindText")[0];
+    expect(commitBody).not.toMatch(/target\.income_category_id/);
+    expect(commitBody).not.toMatch(/target\.category = /);
+    expect(commitBody).not.toMatch(/line_items: items/);
   });
 
-  it("emits the K41 audit companion with field=\"income_category_id\"", () => {
-    // The audit companion call is emitted with the K48 field name so
-    // downstream reporting attributes the mutation to the Business
-    // Unit editor (dashboard_drilldown_edit event on the backend).
+  it("emits the K41 audit companion with field=\"business_unit\"", () => {
+    // K48 verify-hotfix · Feb-2026 — audit field name now matches
+    // the invoice-level ``business_unit`` tag written on the wire
+    // (was ``income_category_id`` in the pre-verify-hotfix ship
+    // that patched line_items[].category).
     expect(MODAL).toMatch(
-      /api\.post\("\/dashboard\/drilldown\/line-item-audit",[\s\S]{0,400}field: "income_category_id"/,
+      /api\.post\("\/dashboard\/drilldown\/line-item-audit",[\s\S]{0,400}field: "business_unit"/,
     );
   });
 

@@ -464,13 +464,16 @@ function IncomeRow({
    * ``movedTo`` so the row stays visible with a "Moved to X" chip
    * until the modal is refreshed (user-approved default). */
   const commitBusinessUnit = async (nextId) => {
-    // K48 · Feb-2026 (revised) — Business Unit re-classification is
-    // money-NEUTRAL (subtotal / tax / total are unchanged by a
-    // category-only edit).  Allow the edit on ``paid`` / ``sent`` /
-    // ``partially_paid`` / ``refunded`` rows by carrying the
-    // backend's required confirmation flags automatically; hard-
-    // reject only ``void`` / ``cancelled`` (backend rejects even
-    // with confirmations).
+    // K48 verify-hotfix · Feb-2026 — send a MINIMAL BU-only PATCH
+    // payload.  Prior ship spread the row's ``line_items`` into the
+    // body which triggered the numeric ``_validate_line_items`` guard
+    // upstream of the paid/sent confirmation gate (409 with
+    // ``line_items[0].quantity/unit_price must be numeric``).  The
+    // backend now accepts a top-level ``business_unit`` field
+    // written via ``$set`` — money-neutral, no ``line_items``
+    // required.  We still carry the paid/sent confirmation flags
+    // through so the K41 status gate accepts the edit on realised-
+    // revenue rows.
     if (k48Status.isTerminal) {
       setSaveErr("Invoice is void/cancelled — cannot re-classify.");
       toast.error("Invoice is void/cancelled — cannot re-classify.");
@@ -478,10 +481,6 @@ function IncomeRow({
     }
     if (!nextId) return;
     if (nextId === buOriginalRef.current) return;
-    if (row.line_item_id == null && row.line_index == null) {
-      setSaveErr("Legacy row — use Open full edit.");
-      return;
-    }
     const nextCat = incomeCategories.find((c) => c.id === nextId);
     if (!nextCat) {
       setSaveErr("Unknown business unit.");
@@ -494,47 +493,26 @@ function IncomeRow({
     // Optimistic — reflect the new selection immediately.
     setBuCategoryId(nextId);
     try {
-      const fetched = await api.get(`/quotes/${row.invoice_id}`);
-      const items = Array.isArray(fetched?.line_items)
-        ? fetched.line_items.map((li) => ({ ...li }))
-        : [];
-      const idx = row.line_index != null
-        ? row.line_index
-        : items.findIndex((li) => li.id === row.line_item_id);
-      if (idx < 0 || idx >= items.length) {
-        throw new Error("Line item not found in current invoice");
-      }
-      const target = { ...items[idx] };
-      // K48 · Path B — write both fields so the aggregation source
-      // of truth (line_items[].category / income_category_id) stays
-      // in sync with the canonical id.
-      target.income_category_id = nextId;
-      target.category = nextCat.name;
-      items[idx] = target;
-      // K48 · Auto-carry the sent/paid confirmation flags the
-      // backend requires (see routers/invoice_edit.patch_invoice).
-      // Money-neutral re-classification is safe to auto-confirm.
-      const patchBody = { line_items: items };
+      // K48 verify-hotfix — BU-only patch body.  Do NOT spread
+      // row.line_items or any other invoice fields into this
+      // payload; the shape validators upstream of the paid-lock
+      // guard reject stringified numerics and would 409 the edit.
+      const patchBody = { business_unit: nextCat.name };
       if (k48Status.needsSentConfirm) {
         patchBody.confirm_edit_sent = true;
       }
       if (k48Status.needsPaidConfirm) {
-        // Backend requires the caller to type the invoice_number
-        // back to prove they saw the paid warning.  For an
-        // automated money-neutral re-classification from the
-        // drill-down we echo the row's own invoice_number.
-        patchBody.confirm_edit_paid_invoice_number =
-          row.invoice_number || fetched?.invoice_number || "";
+        patchBody.confirm_edit_paid_invoice_number = row.invoice_number || "";
       }
       await api.patch(`/quotes/${row.invoice_id}`, patchBody);
       try {
         await api.post("/dashboard/drilldown/line-item-audit", {
           tile,
           invoice_id: row.invoice_id,
-          line_index: idx,
-          field: "income_category_id",
+          line_index: row.line_index ?? null,
+          field: "business_unit",
           before: beforeId || beforeName || null,
-          after: nextId,
+          after: nextCat.name,
         });
       } catch (auditErr) {
         // eslint-disable-next-line no-console
@@ -554,7 +532,7 @@ function IncomeRow({
       } else {
         setMovedTo(null);
       }
-      onEdited?.(row, "income_category_id", beforeId, nextId);
+      onEdited?.(row, "business_unit", beforeId, nextId);
       setFaded(true);
       setTimeout(() => setFaded(false), 300);
     } catch (e) {
