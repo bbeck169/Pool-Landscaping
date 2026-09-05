@@ -199,6 +199,16 @@ def test_k43_charge_ach_on_file_passes_verified_bank_through():
     tenant_id = ctx["tenant_id"]
     cid, pm_id = _seed_customer_and_pm(tenant_id, verification_status="verified")
 
+    # K45-companion test-hygiene fix (Feb-2026): the sparse-unique
+    # ``stripe_charges_pi_unique`` index treats an explicit ``null``
+    # PI as "present" for uniqueness purposes.  If a prior test run
+    # crashed mid-flight it can leave both a ``pi_TESTK43`` row AND a
+    # null-PI failure row in the collection, causing THIS test to
+    # dup-key on both the happy-path insert and the exception-handler
+    # fallback insert.  Purge any leaked K43 rows before we seed.
+    _db.stripe_charges.delete_many({"customer_id": cid})
+    _db.stripe_charges.delete_many({"stripe_payment_intent_id": "pi_TESTK43"})
+
     try:
         from services.payments import stripe_charge as svc
         # The guard passes when status=verified.  The next call is
@@ -225,12 +235,18 @@ def test_k43_charge_ach_on_file_passes_verified_bank_through():
                 description="K43 test", metadata={},
                 actor_user_id="test-actor",
             ))
-            assert res["intent_id"] == "pi_TESTK43"
+            assert res["payment_intent_id"] == "pi_TESTK43"
         finally:
             svc._to_thread = monkey_before  # type: ignore
     finally:
         _db.customers.delete_one({"id": cid})
         _db.payment_methods.delete_many({"customer_id": cid})
+        # K45-companion test-hygiene fix — always drain the
+        # stripe_charges rows this test created (both the happy-path
+        # ``pi_TESTK43`` row and any null-PI failure row the
+        # exception handler may have persisted).
+        _db.stripe_charges.delete_many({"customer_id": cid})
+        _db.stripe_charges.delete_many({"stripe_payment_intent_id": "pi_TESTK43"})
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -350,10 +366,23 @@ def test_k43_bulk_charge_skip_row_carries_customer_id():
                    "billing_settings.default_ach_pm_id": pm_id}},
     )
     inv_id = f"TEST-K43-INV-{uuid.uuid4().hex[:8]}"
-    _db.invoices.insert_one({
+    # K45-companion fix (Feb-2026): the bulk-charge endpoint reads
+    # invoices from the ``quotes`` collection (``doc_type: "invoice"``),
+    # not from a legacy ``invoices`` collection.  Inserting into the
+    # wrong one made the router return ``skip_reason=not_found`` and
+    # the K43 contract assertion never fired.
+    #
+    # The eligibility helper also reads dollar-denominated ``total``
+    # + ``amount_paid`` fields (not the ``_cents`` variants), so we
+    # seed both so the invoice is picked up AND has non-zero
+    # outstanding balance — otherwise the skip reason short-circuits
+    # to ``zero_balance`` before the K43 bank_unverified branch runs.
+    _db.quotes.insert_one({
         "id": inv_id, "tenant_id": tenant_id, "customer_id": cid,
+        "doc_type": "invoice",
         "invoice_number": "K43-1",
         "status": "sent", "currency": "usd",
+        "total": 15.0, "amount_paid": 0.0,
         "total_cents": 1500, "amount_paid_cents": 0,
         "created_at": now, "issued_at": now,
     })
@@ -382,4 +411,4 @@ def test_k43_bulk_charge_skip_row_carries_customer_id():
     finally:
         _db.customers.delete_one({"id": cid})
         _db.payment_methods.delete_many({"customer_id": cid})
-        _db.invoices.delete_many({"id": inv_id})
+        _db.quotes.delete_many({"id": inv_id})
