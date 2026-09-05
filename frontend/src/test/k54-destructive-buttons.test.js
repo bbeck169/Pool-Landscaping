@@ -151,3 +151,97 @@ describe("K54 · DeleteAccountDangerCard parity", () => {
     expect(window).not.toMatch(/disabled:opacity-40/);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase K54.1 · Feb-2026 — legacy inline outlined-red Delete buttons
+// promoted to the solid destructive spec.  Tester found three surfaces
+// still rendering outlined-red (transparent fill + red text) instead of
+// the solid #DC2626 + white text spec:
+//
+//   • MarketingTemplatesAdmin  (template detail Delete)
+//   • MarketingMediaAdmin      (bulk-select Delete)
+//   • InstaScheduleAdmin       (ServiceRow row-remove icon)
+//
+// Also asserts the two shadcn ``Button variant="destructive"`` consumers
+// (RouteOptimizationApprovalModal + DashboardDrillDownModal) still use
+// the shadcn primitive so they inherit the K54 spec automatically via
+// ``button.jsx``.
+// ═══════════════════════════════════════════════════════════════════════
+describe("K54.1 · legacy outlined-red Delete → solid destructive", () => {
+  it.each([
+    [
+      "pages/marketing/MarketingTemplatesAdmin.jsx",
+      "template-detail-delete",
+    ],
+    [
+      "pages/marketing/MarketingMediaAdmin.jsx",
+      "media-admin-bulk-delete-btn",
+    ],
+    [
+      "pages/marketing/InstaScheduleAdmin.jsx",
+      "insta-service-row-remove-btn",
+    ],
+  ])(
+    "%s (data-testid=%s) uses the K54 solid destructive spec",
+    (relPath, testid) => {
+      const src = READ(path.join(REPO, relPath));
+      const idx = src.indexOf(`data-testid="${testid}"`);
+      expect(idx, `data-testid ${testid} present`).toBeGreaterThan(-1);
+      // className can be authored either BEFORE or AFTER the
+      // data-testid attribute, so scan a wide window both sides.
+      const window = src.slice(Math.max(0, idx - 900), idx + 900);
+      expect(window).toMatch(/bg-\[#DC2626\]/);
+      expect(window).toMatch(/hover:bg-\[#B91C1C\]/);
+      expect(window).toMatch(/focus-visible:ring-\[#EF4444\]/);
+      expect(window).toMatch(/text-white/);
+    },
+  );
+
+  it.each([
+    ["pages/marketing/MarketingTemplatesAdmin.jsx", "template-detail-delete"],
+    ["pages/marketing/MarketingMediaAdmin.jsx", "media-admin-bulk-delete-btn"],
+  ])(
+    "%s (data-testid=%s) no longer uses the pre-K54.1 outlined-red spec",
+    (relPath, testid) => {
+      const src = READ(path.join(REPO, relPath));
+      const idx = src.indexOf(`data-testid="${testid}"`);
+      expect(idx).toBeGreaterThan(-1);
+      const window = src.slice(Math.max(0, idx - 900), idx + 900);
+      expect(window).not.toMatch(/text-red-600\s+border\s+border-red/);
+      expect(window).not.toMatch(/border-red-200[^"]*hover:bg-red-50/);
+    },
+  );
+});
+
+describe("K54.1 · shadcn Button variant='destructive' consumers still use the primitive", () => {
+  // These 2 pages already routed through the shadcn primitive so
+  // they automatically inherit the K54 solid-red spec via
+  // ``components/ui/button.jsx``.  This test guards against a
+  // regression where someone swaps them back to a legacy inline
+  // <button> and drifts off spec.
+  it.each([
+    [
+      "pages/dispatch/RouteOptimizationApprovalModal.jsx",
+      "route-optimization-approval-reject-confirm",
+    ],
+    [
+      "components/dashboard/DashboardDrillDownModal.jsx",
+      /di-row-.*-delete-btn/,
+    ],
+  ])("%s (testid ~= %s) still uses <Button variant=\"destructive\">", (relPath, testid) => {
+    const src = READ(path.join(REPO, relPath));
+    let idx = -1;
+    if (typeof testid === "string") {
+      idx = src.indexOf(`data-testid="${testid}"`);
+    } else {
+      const m = src.match(new RegExp(`data-testid=(?:\\{|")[^"}]*${testid.source}[^"}]*(?:\\}|")`));
+      if (m) idx = src.indexOf(m[0]);
+    }
+    expect(idx).toBeGreaterThan(-1);
+    const window = src.slice(Math.max(0, idx - 400), idx + 200);
+    expect(window).toMatch(/variant="destructive"/);
+    // Anchor to a Button component (rules out legacy <button>).
+    expect(window).toMatch(/<Button[\s\S]*?variant="destructive"/);
+  });
+});
+

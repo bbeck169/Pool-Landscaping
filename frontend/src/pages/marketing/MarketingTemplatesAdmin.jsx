@@ -416,7 +416,13 @@ export function MarketingTemplateDetailPage() {
             <button
               onClick={del}
               data-testid="template-detail-delete"
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-red-600 border border-red-200 hover:bg-red-50"
+              // Phase K54.1 · Feb-2026 — promoted from outlined-red
+              // (text-red-600 + border-red-200) to the solid
+              // ``colors.destructive`` spec.  Matches the K54
+              // shadcn ``Button variant="destructive"`` surface so
+              // every Delete/Remove affordance across the app
+              // reads identically.
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-white bg-[#DC2626] hover:bg-[#B91C1C] active:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444] focus-visible:ring-offset-1 disabled:opacity-55 shadow-sm"
             >
               <Trash2 className="w-4 h-4" />
               Delete

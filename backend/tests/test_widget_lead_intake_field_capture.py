@@ -116,25 +116,40 @@ def test_common_field_aliases_now_land_on_lead(p17_public_form):
     assert lead["address"] == "456 Alias Rd"
 
 
-# ── 3. Missing-everything payload still creates a lead (backcompat) ──
-def test_completely_empty_payload_still_creates_website_visitor(p17_public_form):
-    """Pins the pre-P17 fallback: submissions with no recognisable
-    contact field still land as a ``Website Visitor`` row — matches
-    the 2 empty prod rows the user reported. Backward-compat: the
-    drawer must not crash on these rows."""
+# ── 3. Missing-everything payload → K53.1 guard-skip (no placeholder) ─
+def test_completely_empty_payload_no_longer_creates_placeholder(p17_public_form):
+    """Feb-2026 · K53.1 Fix B contract.
+
+    Pre-K53.1: submissions without any recognisable contact field
+    would land as a ``"Website Visitor"`` placeholder on the leads
+    board — matching a bug where Prod accumulated empty rows.
+
+    Post-K53.1: Path A now requires an ``email`` or ``phone``
+    before it inserts a lead row (matches the widget path guard at
+    ``routers/marketing_forms.py:501``).  The submission is still
+    stored in ``db.form_submissions`` so nothing is truly lost;
+    the response carries ``lead_created=False`` +
+    ``reason="no_contact_captured"`` so callers can distinguish.
+    """
     r = requests.post(
         f"{API}/public/forms/{p17_public_form['slug']}/submit",
         json={"values": {"unrecognised_field": "ignored"}},
         timeout=15,
     )
     assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("lead_created") is False, (
+        f"K53.1 guard-skip must report lead_created=False; got {body!r}"
+    )
+    assert body.get("reason") == "no_contact_captured", (
+        f"K53.1 guard-skip must return reason=no_contact_captured;"
+        f" got {body!r}"
+    )
     lead = _find_lead(tid=p17_public_form["tenant_id"])
-    assert lead is not None
-    assert lead["name"] == "Website Visitor"
-    assert lead["phone"] == ""
-    assert lead["email"] == ""
-    assert lead["message"] == ""
-    assert lead["service_interest"] is None
+    assert lead is None, (
+        f"K53.1 guard-skip must NOT insert a placeholder lead;"
+        f" found {lead!r}"
+    )
 
 
 # ── 4. GET /api/leads/{id} exposes every new field ───────────────

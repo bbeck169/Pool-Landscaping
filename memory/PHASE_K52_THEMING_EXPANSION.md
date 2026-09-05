@@ -562,3 +562,65 @@ re-introduces the /leads render crash — revert would only be
 appropriate as a rollback to pre-K52.1, in which case the K52.1
 filter-strip additions in `LeadsDashboardPage.jsx` also need
 reverting).
+
+---
+
+## Design Principles (K52.1 codification — read before adjudicating "gradient drift" bug reports)
+
+Six months of "why does this button look different?" tickets crystallized
+into these principles.  When a tester or future agent flags a primary CTA
+as "off spec", check this list before opening a fix — most flags are
+intentional design distinctions, not regressions.
+
+1. **K52 gradient is scoped to the shadcn ``Button`` primitive.**
+   ``colors.gradient.css`` (``#22C55E`` → ``#7DD3FC``, green → sky) paints
+   ONLY the shadcn ``Button variant="default"`` at
+   ``frontend/src/components/ui/button.jsx``.  Every consumer that reaches
+   for ``<Button>`` picks it up automatically; every consumer that inlines
+   a ``<button>`` stays on its pre-K52 palette by design.
+
+2. **Legacy inline ``colors.brand`` buttons stay solid sky-600.**  The
+   ``colors.brand`` token (``#0284C7``, sky-600) predates the K52 gradient
+   and is intentionally distinct.  Examples: ``+ New Job`` on the Jobs
+   pages, various inline primaries on legacy admin surfaces.  These stay
+   solid ``#0284C7`` — no gradient promotion.
+
+3. **``brandGradientCss`` (sky-600 → green-600) is a SEPARATE gradient
+   from the K52 gradient.**  ``brandGradientCss`` at ``theme.js:148`` is
+   ``#0284C7`` → ``#16A34A`` (sky-600 → green-600) — the pre-K52
+   marketing/hero gradient.  ``colors.gradient.css`` is ``#22C55E`` →
+   ``#7DD3FC`` (green-500 → sky-300) — the K52 primary-CTA gradient.
+   They look similar (both green/sky spectrum) but paint in opposite
+   directions and use different hex stops on purpose.  Consumers of
+   ``brandGradientCss`` (e.g., ``Add Customer`` on the Customers page,
+   top-of-page hero gradients) stay on ``brandGradientCss`` intentionally.
+
+4. **Two independent gradient traditions can coexist in the same app.**
+   K52 gradient = interactive action affordance.  ``brandGradientCss`` =
+   brand/marketing surface.  A tester seeing both on the same page is
+   seeing design intent, not drift.
+
+### Testing-agent guidance
+
+If a report says "primary CTA uses the wrong gradient", first identify:
+- Does it wrap a ``<Button variant="default">``?  Should be K52 gradient
+  (``#22C55E`` → ``#7DD3FC``).
+- Is it an inline ``<button>`` styled with ``colors.brand``?  Should be
+  solid ``#0284C7``.
+- Is it an inline ``<button>`` styled with ``brandGradientCss``?  Should
+  be ``#0284C7`` → ``#16A34A``.
+
+All three are valid; drift means the button uses one when it should use
+another.  **Consulted this list on ``Add Customer`` (Customers page,
+``brandGradientCss`` consumer) and ``+ New Job`` (Jobs page,
+``colors.brand`` consumer) — both are on their intended palette. No
+fix required.**
+
+### Future work (deferred)
+
+Whether the top-level primary CTAs (``Add Customer`` / ``+ New Job``) 
+should be promoted to the K52 shadcn gradient for app-wide visual 
+consistency at the most-visible action affordances is a **K52.2 
+candidate** — deferred pending user decision.  Do NOT ship the promotion
+without explicit user approval; the current inconsistency is intentional
+per principles 1-4 above.

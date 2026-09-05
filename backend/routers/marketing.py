@@ -150,10 +150,28 @@ async def submit_public_form(slug: str, body: dict, request: Request,
     await db.form_submissions.insert_one(sub)
     dest = (form.get("destination") or "lead").lower()
     if dest == "lead":
+        # Feb-2026 · K53.1 — Fix B: require an email OR phone before
+        # we insert a lead row.  Prior behaviour was to unconditionally
+        # save a ``{"name": "Website Visitor"}`` placeholder whenever
+        # extraction failed to find a contact — matching the guard on
+        # the modern widget path (``routers/marketing_forms.py:501``).
+        # Raw submissions are still written to ``db.form_submissions``
+        # above so nothing is truly lost.
+        from services.lead_extraction import extract_contact_fields
+        _extracted = extract_contact_fields(vals)
+        if not (_extracted.get("email") or _extracted.get("phone")):
+            logger.info(
+                f"[k53.1] Path A guard-skip · tenant={tid} form={form.get('id')}"
+                f" slug={slug} submission_id={sub['id']}"
+                f" values_keys={list(vals.keys())[:20]}"
+            )
+            return {"ok": True, "redirect_url": form.get("redirect_url"),
+                    "lead_created": False, "reason": "no_contact_captured"}
         lead = _lead_row_from_form_values(
             tid=tid, vals=vals,
             source_label=form.get("name") or "Web Form",
         )
+        lead["submission_id"] = sub["id"]
         await db.leads.insert_one(lead)
         # Feb-2026 · P18 — instant SMS+email alert to tenant-configured
         # recipients.  Deferred via BackgroundTasks; no-op when both
@@ -197,10 +215,25 @@ async def submit_form(fid: str, body: FormSubmitIn, request: Request,
     sub = {"id": new_id(), "tenant_id": tid, "form_id": fid,
            "values": vals, "created_at": now_iso()}
     await db.form_submissions.insert_one(sub)
+    # Feb-2026 · K53.1 — Fix B: require an email OR phone before
+    # inserting a lead row.  Matches the widget path's guard so
+    # ``"Website Visitor"`` placeholders cannot originate from
+    # either Path A endpoint.  Raw submission remains persisted
+    # above so nothing is truly lost.
+    from services.lead_extraction import extract_contact_fields
+    _extracted = extract_contact_fields(vals)
+    if not (_extracted.get("email") or _extracted.get("phone")):
+        logger.info(
+            f"[k53.1] Path A guard-skip · tenant={tid} form={fid}"
+            f" submission_id={sub['id']} values_keys={list(vals.keys())[:20]}"
+        )
+        return {"ok": True, "lead_created": False,
+                "reason": "no_contact_captured"}
     lead = _lead_row_from_form_values(
         tid=tid, vals=vals,
         source_label=form.get("name", "Web Form"),
     )
+    lead["submission_id"] = sub["id"]
     await db.leads.insert_one(lead)
     # Feb-2026 · P18 — same lead-alert fan-out as the /public path.
     try:

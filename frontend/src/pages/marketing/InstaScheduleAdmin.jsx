@@ -37,7 +37,15 @@ function ServiceRow({ svc, onChange, onRemove }) {
                  onCheckedChange={(v) => set({ requires_address: v })} />
         Needs address
       </label>
-      <button className="col-span-1 text-red-500 p-1" onClick={onRemove}>
+      <button
+        // Phase K54.1 · Feb-2026 — promoted icon-only remove from
+        // ``text-red-500`` foreground to the solid destructive
+        // spec.  Row-level trash button; small but destructive.
+        className="col-span-1 inline-flex items-center justify-center h-8 w-8 rounded-lg text-white bg-[#DC2626] hover:bg-[#B91C1C] active:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444] focus-visible:ring-offset-1 disabled:opacity-55 shadow-sm"
+        onClick={onRemove}
+        aria-label="Remove service"
+        data-testid="insta-service-row-remove-btn"
+      >
         <Trash2 className="w-4 h-4" />
       </button>
     </div>
