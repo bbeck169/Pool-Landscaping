@@ -15,7 +15,7 @@
  */
 import React from "react";
 import { toast } from "sonner";
-import { Upload, Trash2, ImageIcon, Loader2, AlertCircle } from "lucide-react";
+import { Upload, Trash2, ImageIcon, Loader2, AlertCircle, AlertTriangle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { api, api_base } from "@/api";
 import { colors } from "@/theme";
@@ -55,6 +55,13 @@ export default function BrandLogoSettings() {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
   const [confirmRemove, setConfirmRemove] = React.useState(false);
+  // Phase K51 · Feb-2026 — contrast heuristic for the navy-chrome
+  // preview tile.  ``null`` = no warning; ``"logo_has_solid_bg"``
+  // means the sampled canvas showed ≥95% fully-opaque pixels →
+  // the ``filter: brightness(0) invert(1)`` treatment used by the
+  // live navy nav bars will render the logo as a solid white block
+  // (mark invisible).  Rough heuristic — a hint, not a gate.
+  const [contrastWarn, setContrastWarn] = React.useState(null);
   const fileInputRef = React.useRef(null);
 
   const refresh = React.useCallback(async () => {
@@ -69,6 +76,50 @@ export default function BrandLogoSettings() {
 
   const currentLogoUrl = tenant?.branding?.logo_url || tenant?.logo_url || null;
   const currentLogoAbsolute = toAbsolute(currentLogoUrl);
+  // Phase K51 — the chrome-preview tiles mirror whatever is currently
+  // "live" (uploaded logo), OR the pending pre-save file if the admin
+  // is mid-replace. The staging preview always takes precedence so the
+  // admin can eyeball the new asset against both chromes before Save.
+  const previewSrc = pending?.previewUrl || currentLogoAbsolute || null;
+
+  // Reset the contrast heuristic whenever the previewed source
+  // changes — an old warning shouldn't persist across a re-upload.
+  React.useEffect(() => { setContrastWarn(null); }, [previewSrc]);
+
+  // Phase K51 · Feb-2026 — Sample the previewed logo on the canvas
+  // and classify it. If ≥95% of the sampled pixels are fully-opaque,
+  // the `brightness(0) invert(1)` treatment applied by the live navy
+  // nav bar will render the logo as a solid white block against the
+  // navy chrome — visually indistinguishable and effectively invisible.
+  // Rough heuristic (fires on <img onLoad>), guarded so it silently
+  // no-ops when `getContext` is unavailable (SSR / jsdom without a
+  // canvas polyfill).
+  const onNavyPreviewLoad = React.useCallback((evt) => {
+    try {
+      const img = evt?.currentTarget;
+      if (!img) return;
+      const canvas = document.createElement("canvas");
+      const w = 32; const h = 32;
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext && canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0, w, h);
+      const data = ctx.getImageData(0, 0, w, h).data;
+      let opaque = 0;
+      const total = w * h;
+      for (let i = 3; i < data.length; i += 4) {
+        if (data[i] >= 240) opaque += 1;
+      }
+      if (total > 0 && opaque / total >= 0.95) {
+        setContrastWarn("logo_has_solid_bg");
+      } else {
+        setContrastWarn(null);
+      }
+    } catch {
+      // Cross-origin taint or missing polyfill — silently skip; we
+      // never want the heuristic to break the preview render itself.
+    }
+  }, []);
 
   const pickFile = () => {
     setError("");
@@ -250,6 +301,92 @@ export default function BrandLogoSettings() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Phase K51 · Feb-2026 — side-by-side chrome preview so admins
+            can see how their logo will look against both the light and
+            navy nav-bar chromes _before_ shipping it. The navy tile
+            mirrors the exact `filter: brightness(0) invert(1)` treatment
+            applied by the live app-shell navy nav strip. */}
+        <div data-testid="logo-preview-chrome-group">
+          <div className="text-[11px] uppercase tracking-wide font-semibold mb-2"
+                style={{ color: colors.muted }}>
+            Chrome preview
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div
+              className="h-24 rounded-lg flex items-center justify-center overflow-hidden"
+              style={{
+                backgroundColor: "#FFFFFF",
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid="logo-preview-light"
+            >
+              {previewSrc ? (
+                <img
+                  src={previewSrc}
+                  alt="Logo on light chrome"
+                  className="max-h-16 max-w-full object-contain"
+                  data-testid="logo-preview-light-img"
+                />
+              ) : (
+                <span
+                  className="text-[11px] uppercase tracking-widest"
+                  style={{ color: colors.muted }}
+                  data-testid="logo-preview-empty"
+                >
+                  No logo uploaded
+                </span>
+              )}
+            </div>
+            <div
+              className="h-24 rounded-lg flex items-center justify-center overflow-hidden"
+              style={{
+                backgroundColor: "#1B1F5C",
+                border: `1px solid #1B1F5C`,
+              }}
+              data-testid="logo-preview-navy"
+            >
+              {previewSrc ? (
+                <img
+                  src={previewSrc}
+                  alt="Logo on navy chrome"
+                  onLoad={onNavyPreviewLoad}
+                  crossOrigin="anonymous"
+                  className="max-h-16 max-w-full object-contain"
+                  style={{ filter: "brightness(0) invert(1)" }}
+                  data-testid="logo-preview-navy-img"
+                />
+              ) : (
+                <span
+                  className="text-[11px] uppercase tracking-widest"
+                  style={{ color: "#FFFFFF", opacity: 0.8 }}
+                  data-testid="logo-preview-navy-empty"
+                >
+                  No logo uploaded
+                </span>
+              )}
+            </div>
+          </div>
+          {contrastWarn ? (
+            <div
+              className="mt-2 flex items-start gap-2 rounded-md px-3 py-2 text-xs"
+              style={{
+                background: "#FFFBEB",
+                color: "#92400E",
+                border: "1px solid #FCD34D",
+              }}
+              data-testid="logo-preview-contrast-warning"
+            >
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span>
+                This logo looks like a solid block on navy chrome —
+                the app-shell white-fill treatment will render it as
+                an opaque white rectangle. Consider a transparent
+                background or a lighter variant.
+              </span>
+            </div>
+          ) : null}
         </div>
 
         {/* Feb-2026 enhancement — "Last changed <relative> by <name>"

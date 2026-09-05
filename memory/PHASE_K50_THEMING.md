@@ -197,6 +197,13 @@ Either slice can be reverted without disturbing the other.
   fills baked in.  Track down the tenant-brand asset pipeline and
   cut a light variant.  No visual regression risk; the interim is
   visually indistinguishable from an inverted-fill asset.
+  * **Follow-up shipped (K51)** — admin-side chrome preview surface
+    landed at `/settings/branding` so admins can eyeball their logo
+    against both light and navy chromes before saving, with a rough
+    contrast heuristic hinting when the interim `brightness(0)
+    invert(1)` treatment would degrade to a solid white block.  See
+    `PHASE_K51_LOGO_PREVIEW.md` for details.  The underlying
+    white-fill asset pipeline is still deferred.
 * **Mobile drawer chrome navy parity** — deferred per brief (user
   explicitly scoped mobile chrome unchanged).  If the drawer is ever
   re-themed, `AdminSidebar` group headers, pinned rows, palette
