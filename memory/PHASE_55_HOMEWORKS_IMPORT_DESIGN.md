@@ -1,3 +1,24 @@
+# DEPRECATED (K55 · Feb-2026)
+#
+# The Homeworks (home.works / Copilot CRM) importer described below
+# was never shipped — Phase K55 retired the entire Homeworks
+# integration surface (design doc + BYO-MCP scaffolding).  This
+# design doc is retained as historical context for future engineers
+# investigating why the ``homeworks_import_runs`` collection exists
+# with legacy rows but no live importer code.
+#
+# For the removal record, see:
+#   * /app/memory/PHASE_K55_INTEGRATION_REMOVAL_DIAGNOSIS.md
+#   * /app/memory/PHASE_K55_a_FRONTEND_REMOVAL.md
+#   * /app/memory/PHASE_K55_b_BACKEND_REMOVAL.md
+#   * /app/memory/PHASE_K55_c_ENV_DOCS.md
+#
+# Do NOT resurrect this design without a fresh recon — the marketing
+# / SEC filings landscape captured below is over a year old.
+#
+# ─────────────────────────────────────────────────────────────────────
+
+
 # Phase 55 — Homeworks Importer · Recon + Design Doc
 
 **Status**: DESIGN ONLY — no code shipped. Awaiting user review + strategy approval before dispatching Phase 55-a.

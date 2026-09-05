@@ -1,3 +1,48 @@
+## Phase K55.c · Env cleanup + docs deprecation — SHIPPED (Feb 2026)
+
+**Scope:** docs-only. No code changes.
+
+**`.env.example` cleanup** (`backend/.env.example`)
+- Removed `SUPERCOOL_MCP_URL` (only listed K55 var actually present
+  in the template — the other `HOMEWORKS_*` / `SUPERCOOL_URL` vars
+  had never been checked in).
+- `SUPERCOOL_DAILY_IMAGE_LIMIT` retained with inline comment
+  `# [K56] deprecated — migrate to AI_MEDIA_DAILY_IMAGE_LIMIT. Removal scheduled for K56.hardcut.`
+- Former "Phase 26 · MCP OAuth 2.1 (Supercool image + video
+  generation)" section header retitled DEPRECATED with pointers to
+  the K55 removal reports. `APP_BASE_URL` + `MCP_TOKEN_ENCRYPTION_KEY`
+  retained (latter still reads historical `mcp_tokens` rows).
+
+**Docs deprecated**
+- `memory/homeworks_integration.md` — DEPRECATED header prepended
+  (content preserved).
+- `memory/PHASE_55_HOMEWORKS_IMPORT_DESIGN.md` — DEPRECATED header
+  prepended (content preserved).
+- `memory/env_vars.md` — SUPERCOOL / MCP rows split into 5 rows
+  with DEPRECATED flags on `SUPERCOOL_MCP_URL` (K55.b) +
+  `SUPERCOOL_DAILY_IMAGE_LIMIT` (K56); added new canonical rows
+  for `AI_MEDIA_DAILY_IMAGE_LIMIT` + `EMERGENT_IMAGE_MODEL`.
+- `memory/PROD_DEPLOY_CHECKLIST.md` — combined SUPERCOOL row
+  (line 461) split into 4 rows with the same treatment.
+
+**Left alone (intentional)**
+- `backend/.env` (prod ops-owned, per instruction).
+- `backend/.env.production.example` (spec named only `.env.example`;
+  follow-up ticket `K55.c.prod-example` flagged in ship report).
+- `memory/pricebook_backfill_audit.md` + mobile logs (historical
+  snapshots — annotating would rewrite history).
+
+**Ops reminder** — Prod / Staging `.env` still contain dormant
+`SUPERCOOL_MCP_URL` and possibly `HOMEWORKS_*` vars that need
+**manual ops cleanup** by the user. `MCP_TOKEN_ENCRYPTION_KEY`
+must NOT be deleted from Prod (historical audit view dependency).
+
+**Docs**
+- `/app/memory/PHASE_K55_c_ENV_DOCS.md` (new — full checklist)
+
+---
+
+
 ## Phase K56 · AI Media-Gen Migration to Emergent — SHIPPED (Feb 2026)
 
 **P0 fix**: `POST /api/media/image/generate` was returning HTTP 502

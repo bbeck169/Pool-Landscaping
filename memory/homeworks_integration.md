@@ -1,3 +1,25 @@
+# DEPRECATED (K55 · Feb-2026)
+#
+# The Homeworks (home.works / Copilot CRM) BYO-MCP integration was
+# retired in Phase K55.  This document is preserved as historical
+# context for future engineers investigating legacy
+# ``homeworks_byo_integrations`` / ``homeworks_byo_oauth_states`` /
+# ``homeworks_import_runs`` rows (kept intact for audit) and the
+# ``homeworks_integration_models.py`` typed-access module.
+#
+# For the actual removal record, see:
+#   * /app/memory/PHASE_K55_INTEGRATION_REMOVAL_DIAGNOSIS.md
+#   * /app/memory/PHASE_K55_a_FRONTEND_REMOVAL.md   (frontend rip)
+#   * /app/memory/PHASE_K55_b_BACKEND_REMOVAL.md    (backend rip)
+#   * /app/memory/PHASE_K55_c_ENV_DOCS.md           (env + docs cleanup)
+#
+# Do NOT resurrect any wiring described below without a fresh design
+# doc — the surrounding code paths (routers/services/frontend pages)
+# no longer exist.
+#
+# ─────────────────────────────────────────────────────────────────────
+
+
 # Homeworks (home.works) MCP · Phase 0 POC
 
 **Status:** Shell + shell tests complete. **Not yet validated against real

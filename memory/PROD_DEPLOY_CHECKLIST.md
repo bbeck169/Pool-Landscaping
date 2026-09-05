@@ -458,7 +458,10 @@ covers the web/API deploy only.
 | `PAYMENT_PROVIDER` | yes | Set to `lumino` post-LZ4 | — |
 | `PAYMENTS_TEST_ALLOWLIST_CUSTOMERS` | optional | Preview-only allowlist | — |
 | `COMMS_TEST_ALLOWLIST_EMAILS` / `COMMS_TEST_ALLOWLIST_PHONES` | optional | Preview-only allowlist | — |
-| `SUPERCOOL_MCP_URL` / `SUPERCOOL_DAILY_IMAGE_LIMIT` | optional | Supercool integration | — |
+| `SUPERCOOL_MCP_URL` | **removed** | **DEPRECATED (K55.b · Feb-2026)** — Supercool retired. Do NOT set on Prod. | — |
+| `SUPERCOOL_DAILY_IMAGE_LIMIT` | optional | **DEPRECATED (K56 · Feb-2026)** — migrate to `AI_MEDIA_DAILY_IMAGE_LIMIT`. Router dual-reads for one release cycle. | — |
+| `AI_MEDIA_DAILY_IMAGE_LIMIT` | optional | Canonical name for the per-tenant daily image-gen cap (default 100). | — |
+| `EMERGENT_IMAGE_MODEL` | optional | Emergent image-gen model id (default `gemini-3.1-flash-image-preview`; alt `gemini-3-pro-image-preview`). | — |
 | `TEST_LLM_MOCK` | no | Must be **false/absent** on Prod | — |
 | **`MAPBOX_ACCESS_TOKEN`** | recommended (wired in Phase G3) | Reverse-geocoding of stop coordinates. **Hot-picked-up:** if the user sets it later on Preview or Prod, `GET /api/admin/gps/settings` will immediately return `mapbox_token_configured: true` on the next request — **no backend restart required** for the value to be picked up. If unset, reverse-geocoding gracefully degrades (stops render lat/lng only, no address strings; no errors). | — |
 

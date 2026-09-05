@@ -77,9 +77,11 @@ Columns:
 | `YELP_API_KEY` | `TODO` if used | Yelp reviews scraper. | be |
 | `WEATHERAPI_KEY` | `TODO` | Schedule-page weather strip. | be |
 | `RC_CLIENT_ID` / `RC_CLIENT_SECRET` / `RC_JWT` / `RC_SERVER_URL` / `RC_WEBHOOK_URL` / `RC_VERIFICATION_TOKEN` / `RC_MODE` | `TODO` (all secrets) | RingCentral voice + SMS. `RC_MODE=live` in prod. | be |
-| `SUPERCOOL_MCP_URL` | `https://mcp.supercool.com/mcp` | Homeworks MCP endpoint. | be |
-| `MCP_TOKEN_ENCRYPTION_KEY` | `TODO` — 32-byte b64 | AES-GCM key for MCP OAuth token storage. | be |
-| `SUPERCOOL_DAILY_IMAGE_LIMIT` | `100` | Per-tenant/day AI-image cap. | be |
+| `SUPERCOOL_MCP_URL` | ~~`https://mcp.supercool.com/mcp`~~ | **DEPRECATED (K55.b · Feb-2026)** — Supercool + Homeworks MCP retired. Var no longer read. See `/app/memory/PHASE_K55_c_ENV_DOCS.md`. | — |
+| `MCP_TOKEN_ENCRYPTION_KEY` | `TODO` — 32-byte b64 | AES-GCM key for **historical** `mcp_tokens` rows (admin audit views only; K55.b retired active MCP flows). | be |
+| `SUPERCOOL_DAILY_IMAGE_LIMIT` | `100` | **DEPRECATED (K56 · Feb-2026)** — migrate to `AI_MEDIA_DAILY_IMAGE_LIMIT`. Router dual-reads for one release cycle; removal scheduled for K56.hardcut. | be |
+| `AI_MEDIA_DAILY_IMAGE_LIMIT` | `100` | Per-tenant/day AI-image cap (canonical name introduced by K56). | be |
+| `EMERGENT_IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | Emergent image-gen model id passed to `LlmChat.with_model("gemini", …)`. Playbook-validated alternate: `gemini-3-pro-image-preview`. | be |
 | `COMMS_TEST_ALLOWLIST_EMAILS` | (blank in prod) | Preview allowlist. Whole whitelist bypassed when `APP_ENV=production`. | be |
 | `COMMS_TEST_ALLOWLIST_PHONES` | (blank in prod) | Same as above for SMS. | be |
 | `PAYMENT_PROVIDER` | `stripe` | Selects Stripe vs Lumino as primary. | be |
