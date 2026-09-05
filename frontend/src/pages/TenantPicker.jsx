@@ -81,7 +81,11 @@ export default function TenantPicker() {
           ))}
         </div>
         <div className="mt-8 flex justify-between text-sm">
-          <button onClick={logout} className="text-slate-500 hover:text-slate-800" data-testid="tenant-picker-logout">
+          <button
+            onClick={logout}
+            className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-semibold shadow-sm text-white bg-[#DC2626] hover:bg-[#B91C1C] active:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444] focus-visible:ring-offset-1 disabled:opacity-55"
+            data-testid="tenant-picker-logout"
+          >
             Sign out
           </button>
           <button

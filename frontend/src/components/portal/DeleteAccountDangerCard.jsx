@@ -78,8 +78,10 @@ export default function DeleteAccountDangerCard() {
           {!open ? (
             <button
               onClick={() => setOpen(true)}
-              className="mt-3 inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white"
-              style={{ backgroundColor: "#DC2626" }}
+              // Phase K54 · Feb-2026 — token-compliant destructive.
+              // #DC2626 base / #B91C1C hover / #EF4444 focus ring /
+              // 0.55 disabled opacity per ``colors.destructive``.
+              className="mt-3 inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white bg-[#DC2626] hover:bg-[#B91C1C] active:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444] focus-visible:ring-offset-1 disabled:opacity-55 shadow-sm"
               data-testid="portal-preferences-delete-account-open-btn"
             >
               Delete My Account
@@ -122,8 +124,12 @@ export default function DeleteAccountDangerCard() {
                 <button
                   disabled={!canConfirm}
                   onClick={onConfirm}
-                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-40"
-                  style={{ backgroundColor: "#DC2626" }}
+                  // Phase K54 · Feb-2026 — token-compliant destructive.
+                  // Disabled opacity moves from ``0.4`` → ``0.55`` per
+                  // ``colors.destructive.disabledOpacity`` so the
+                  // affordance matches every other destructive
+                  // button in the app.
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white bg-[#DC2626] hover:bg-[#B91C1C] active:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444] focus-visible:ring-offset-1 disabled:opacity-55 shadow-sm"
                   data-testid="portal-preferences-delete-account-confirm-btn"
                 >
                   {busy ? (

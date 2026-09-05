@@ -123,16 +123,24 @@ describe("K50 · Slice A extension — Portal top nav + sub-nav strips", () => {
     expect(header).not.toMatch(/backgroundColor:\s*colors\.surface,[\s\S]{0,80}borderBottom:\s*`1px solid \$\{colors\.border\}`/);
   });
 
-  it("Mobile top-bar sign-out + hamburger contrast tuned for navy", () => {
-    // Sign out button now uses ``colors.nav.fg`` (white) text with
-    // a red-tinted backdrop so the "danger" affordance still reads
-    // against the navy header.
+  it("Mobile top-bar sign-out uses the K54 solid destructive red on navy", () => {
+    // Phase K50 originally shipped a semi-transparent red tint
+    // (``rgba(239,68,68,0.35)``) + white text + navy border here.
+    // Phase K54 (Feb-2026) promoted every Sign-out entry point in
+    // the app to the solid ``colors.destructive`` spec (#DC2626 /
+    // white / #B91C1C hover / #EF4444 focus ring / 0.55 disabled
+    // opacity).  The K54 spec is locked separately in
+    // ``k54-destructive-buttons.test.js`` — this suite just
+    // asserts the pre-K54 muted-red tint is gone so nobody
+    // silently regresses back to it.
     expect(APP_LAYOUT).toMatch(/data-testid="shell-logout-button-mobile"/);
     const signOutBlock = APP_LAYOUT.split('data-testid="shell-logout-button-mobile"')[0];
     const lastBtnIdx = signOutBlock.lastIndexOf("<button");
     const btn = APP_LAYOUT.slice(lastBtnIdx).split("</button>")[0];
-    expect(btn).toMatch(/color:\s*colors\.nav\.fg/);
-    expect(btn).toMatch(/border:\s*`1px solid \$\{colors\.nav\.border\}`/);
+    expect(btn).toMatch(/bg-\[#DC2626\]/);
+    expect(btn).toMatch(/hover:bg-\[#B91C1C\]/);
+    expect(btn).toMatch(/text-white/);
+    expect(btn).not.toMatch(/rgba\(239,\s*68,\s*68,\s*0\.35\)/);
   });
 
   it("Mobile top-bar logo wrapped in an ``invert(1)`` filter for navy legibility", () => {

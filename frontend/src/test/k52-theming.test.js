@@ -213,10 +213,16 @@ describe("K52 · Slice C — Gradient primary Button", () => {
   });
 
   it("``destructive`` variant is NOT gradient-ified (danger stays flat red)", () => {
-    // Explicit spec — destructive keeps its ``bg-destructive`` fill
-    // so the danger affordance stays semantically distinct.
+    // Explicit spec — destructive keeps a flat red fill so the
+    // danger affordance stays semantically distinct.
+    //
+    // Feb-2026 update · K54 — the destructive variant migrated
+    // from the semantic ``bg-destructive`` Tailwind class to the
+    // solid #DC2626 hex per ``colors.destructive.bg``.  The
+    // "no-gradient" intent is unchanged; the hex spec is locked
+    // by ``test/k54-destructive-buttons.test.js``.
     const destBlock = BUTTON.split("destructive:")[1].split("outline:")[0];
-    expect(destBlock).toMatch(/bg-destructive/);
+    expect(destBlock).toMatch(/bg-\[#DC2626\]/);
     expect(destBlock).not.toMatch(/linear-gradient/);
     expect(destBlock).not.toMatch(/#22C55E/);
     expect(destBlock).not.toMatch(/#7DD3FC/);

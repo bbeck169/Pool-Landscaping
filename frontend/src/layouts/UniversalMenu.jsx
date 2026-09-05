@@ -185,11 +185,11 @@ export default function UniversalMenu({ variant = "floating" } = {}) {
               nav("/portal/login", { replace: true });
             }
           }}
-          className="fixed top-3 right-[6.5rem] z-40 inline-flex items-center gap-1 h-10 px-3 rounded-lg text-xs font-semibold shadow-sm bg-white hover:brightness-95 focus:outline-none"
-          style={{
-            color: colors.error,
-            border: `1px solid ${colors.border}`,
-          }}
+          // Phase K54 · Feb-2026 — solid destructive red per
+          // ``colors.destructive``. Same spec as the admin
+          // ``header-signout`` in ``AdminTopBar`` so every
+          // Sign-out surface in the app reads identically.
+          className="fixed top-3 right-[6.5rem] z-40 inline-flex items-center gap-1 h-10 px-3 rounded-lg text-xs font-semibold shadow-sm text-white bg-[#DC2626] hover:bg-[#B91C1C] active:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444] focus-visible:ring-offset-1 disabled:opacity-55"
           data-testid="portal-signout"
           aria-label="Sign out"
         >

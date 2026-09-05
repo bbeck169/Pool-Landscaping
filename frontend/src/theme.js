@@ -141,6 +141,34 @@ export const colors = {
     fgHover: "#FFFFFF",
     textShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
   },
+
+  // ═══════════════════════════════════════════════════════════════
+  // Phase K54 · Feb-2026 — solid destructive-red token.
+  //
+  // Applied to: shadcn ``Button variant="destructive"``, every
+  // Sign-out entry point (AdminTopBar / UniversalMenu portal pill /
+  // AppLayout mobile bar / TenantPicker), and legacy inline
+  // Delete / Discard / Void / Deactivate buttons.
+  //
+  //   • ``bg``               #DC2626 (red-600) — button surface.
+  //   • ``bgHover``          #B91C1C (red-700) — hover surface.
+  //   • ``fg``               #FFFFFF          — foreground text.
+  //   • ``ring``             #EF4444 (red-500) — focus-visible ring.
+  //   • ``disabledOpacity``  0.55             — matches the shared
+  //                                              ``disabled:opacity-55``
+  //                                              in ``buttonVariants``.
+  //
+  // Contrast rule: white text on ``#DC2626`` → 5.9 : 1 (WCAG AA
+  // body + AAA large). White text on ``#B91C1C`` → 7.9 : 1 (AAA
+  // body). Verified in ``test/k54-destructive-buttons.test.js``.
+  // ═══════════════════════════════════════════════════════════════
+  destructive: {
+    bg: "#DC2626",
+    bgHover: "#B91C1C",
+    fg: "#FFFFFF",
+    ring: "#EF4444",
+    disabledOpacity: 0.55,
+  },
 };
 
 // Signature primary gradient: sky-600 -> green-600

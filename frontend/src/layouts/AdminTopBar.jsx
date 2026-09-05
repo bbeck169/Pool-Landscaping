@@ -532,16 +532,16 @@ function SignOutButton() {
       navigate("/login", { replace: true });
     }
   };
+  // Phase K54 · Feb-2026 — solid destructive red per
+  // ``colors.destructive`` in ``theme.js``. #DC2626 bg / white text /
+  // #B91C1C hover / #EF4444 focus ring / 0.55 disabled opacity —
+  // matches the shadcn ``Button variant="destructive"`` spec so
+  // every Sign-out entry point in the app reads identically.
   return (
     <button
       type="button"
       onClick={onLogout}
-      className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-semibold shadow-sm hover:brightness-95"
-      style={{
-        backgroundColor: colors.surfaceSecondary,
-        color: colors.error,
-        border: `1px solid ${colors.border}`,
-      }}
+      className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-semibold shadow-sm text-white bg-[#DC2626] hover:bg-[#B91C1C] active:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444] focus-visible:ring-offset-1 disabled:opacity-55"
       data-testid="header-signout"
       aria-label="Sign out"
     >

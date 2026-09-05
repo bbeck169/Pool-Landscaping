@@ -630,16 +630,14 @@ function AppLayout() {
           </div>
           <button
             onClick={onLogout}
-            className="text-xs font-semibold px-3 py-1.5 rounded-md"
-            style={{
-              // Phase K50 extension — sign-out pill on navy.  Keep
-              // the "danger" affordance via a red-tinted background
-              // but white text/border so it reads clean against
-              // the navy header.
-              color: colors.nav.fg,
-              border: `1px solid ${colors.nav.border}`,
-              backgroundColor: "rgba(239, 68, 68, 0.35)",
-            }}
+            className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-md text-white bg-[#DC2626] hover:bg-[#B91C1C] active:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444] focus-visible:ring-offset-1 disabled:opacity-55 shadow-sm"
+            // Phase K54 · Feb-2026 — solid destructive red per
+            // ``colors.destructive`` in ``theme.js``.  Replaces the
+            // K50 semi-transparent red tint so every Sign-out
+            // surface in the app matches the shadcn ``destructive``
+            // variant spec.  Border/tint styles are now driven by
+            // Tailwind arbitrary values so no inline ``style`` is
+            // needed on this button.
             data-testid="shell-logout-button-mobile"
           >
             Sign out
