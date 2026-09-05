@@ -414,37 +414,17 @@ from routers import ai_visibility as _aiv_router  # noqa: E402
 api_router.include_router(_aiv_router.router)
 from routers import ai_media_estimator as _p25_ai_media_router  # noqa: E402
 api_router.include_router(_p25_ai_media_router.router)
-from routers import integrations_supercool as _p26_supercool_router  # noqa: E402
-api_router.include_router(_p26_supercool_router.router)
+# Feb-2026 · K55.b — SuperCool + HomeWorks integration router
+# registrations removed as part of the sunset.  Historical DB
+# collections (``mcp_oauth_tokens`` where ``provider="supercool"``,
+# ``generated_media`` where ``provider="supercool"``,
+# ``homeworks_byo_integrations``, ``homeworks_byo_oauth_states``,
+# ``homeworks_import_runs``, ``homeworks_import_state``) and
+# per-doc ``homeworks_*`` audit fields on customers/jobs/invoices/
+# quotes/pricebook_items/properties/suppliers are preserved intact.
+# See /app/memory/PHASE_K55_b_BACKEND_REMOVAL.md.
 # Phase 11b · Feb 2026 — Customer account deletion.
 api_router.include_router(_p11b_customer_account.router)
-# Feb-2026 · Phase 1a — Homeworks (MCP via api.home.works) OAuth
-# lifecycle (DCR + authcode + PKCE). Token exchange only — MCP
-# tools/list / tools/call land in Phase 1b.
-from routers import integrations_homeworks_oauth as _hw_mcp_oauth  # noqa: E402
-api_router.include_router(_hw_mcp_oauth.router)
-# Feb-2026 · Phase 1b — inactive-customers importer (dry-run + run +
-# cancel + status + history + active).
-from routers import integrations_homeworks_imports as _hw_imports  # noqa: E402
-api_router.include_router(_hw_imports.router)
-from routers import integrations_homeworks_active_imports as _hw_active_imports  # noqa: E402
-api_router.include_router(_hw_active_imports.router)
-# Queue Item 5 · Feb-2026 — Delta Sync + Pricebook (income items)
-# importer surfaces. Both live under super_admin.
-from routers import integrations_homeworks_delta_sync as _hw_delta_sync  # noqa: E402
-api_router.include_router(_hw_delta_sync.router)
-from routers import integrations_homeworks_income_items as _hw_income_items  # noqa: E402
-api_router.include_router(_hw_income_items.router)
-# Task 5 · Feb-2026 — "Run now" dispatcher trigger (super_admin only,
-# 5-second cooldown). Complements the 30-second scheduled tick.
-from routers import integrations_homeworks_dispatcher as _hw_dispatcher_router  # noqa: E402
-api_router.include_router(_hw_dispatcher_router.router)
-# Phase 0 POC · Feb-2026 — Homeworks BYO-creds admin surface.
-# Distinct from the env-var-driven ``integrations_homeworks_oauth``
-# above; this one is per-tenant, super_admin gated, and scoped to a
-# read-only smoke-test (Phase 0).  See /app/memory/homeworks_integration.md.
-from routers import homeworks_integration as _hw_byo_router  # noqa: E402
-api_router.include_router(_hw_byo_router.router)
 # Feb-2026 · Item 3 — deletion audit + restore (super_admin only).
 # Provides ``GET /admin/audit/deletions`` and
 # ``POST /admin/audit/deletions/{id}/restore``. The writer helper
@@ -596,9 +576,8 @@ api_router.include_router(_pb_spend.router)
 from routers import pricebook_supplier_names as _pb_supplier_names  # noqa: E402
 api_router.include_router(_pb_supplier_names.router)
 
-# Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer scaffold.
-from routers import homeworks_import as _homeworks_import  # noqa: E402
-api_router.include_router(_homeworks_import.router)
+# Feb-2026 · K55.b — Homeworks (Copilot CRM) importer router removed
+# as part of the SuperCool + HomeWorks integration sunset.
 # Feb 2026 — Admin check-in overrides.
 from routers import admin_checkins as _admin_checkins  # noqa: E402
 api_router.include_router(_admin_checkins.router)
@@ -1329,16 +1308,10 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"aiv seed crashed: {e}")
 
-    # Feb-2026 · Phase 26 — MCP OAuth 2.1 client indexes (Supercool).
-    # Creates the state TTL index + unique connection/tool_catalog keys.
-    # Feb-2026 · D2 — skipped in prod.
-    try:
-        if not _RUN_STARTUP_INDEXES:
-            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
-        from services import mcp_oauth_client as _mcp
-        await _mcp.ensure_indexes()
-    except Exception as e:
-        logger.warning(f"mcp_oauth ensure_indexes crashed: {e}")
+    # Feb-2026 · K55.b — SuperCool ``mcp_oauth_client`` startup index
+    # bootstrap removed as part of the sunset.  The module was only
+    # used by SuperCool; deleted alongside the provider class.
+    # Historical rows on ``db.mcp_oauth_tokens`` remain intact.
 
     # Feb-2026 · Phase B — image generation indexes.
     # Feb-2026 · D2 — skipped in prod.
@@ -1877,17 +1850,14 @@ async def _background_seed():
             register_lumino_reconciler_job(scheduler)
         except Exception as e:                                    # noqa: BLE001
             logger.warning(f"[task-qq] lumino reconciler cron install failed: {e}")
-        # Queue Item 5c · Feb-2026 — Homeworks Import Dispatcher.
-        # Replaces the operator-driven nohup workflow: polls every 30s
-        # for ``status=queued`` docs on ``homeworks_import_runs`` and
-        # drives the correct importer's ``run_full`` inline. Manual
-        # ``scripts/homeworks_run_*.py`` launchers stay in-tree as
-        # debugging escape hatches.
-        try:
-            from services.homeworks_mcp.import_dispatcher import register_dispatcher
-            register_dispatcher(scheduler)
-        except Exception as e:                                    # noqa: BLE001
-            logger.warning(f"[queue-item-5c] homeworks import dispatcher install failed: {e}")
+        # Feb-2026 · K55.b — Homeworks Import Dispatcher removed as
+        # part of the SuperCool + HomeWorks integration sunset.
+        # ``services.homeworks_mcp.import_dispatcher`` no longer exists;
+        # the scheduler job used to poll ``homeworks_import_runs`` for
+        # ``status=queued`` docs, but no live UI/CLI enqueues jobs
+        # after K55.a.  Historical ``homeworks_import_runs`` and
+        # ``homeworks_import_state`` docs are preserved intact as
+        # audit trail.
         # Phase 52.A — monthly pricing insights digest (1st @ 09:00 UTC).
         from services.monthly_pricing_digest import run_monthly_pricing_digest
         scheduler.add_job(
