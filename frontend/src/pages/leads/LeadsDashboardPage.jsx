@@ -8,15 +8,24 @@ import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Search, ArrowRight, X, Trash2, ChevronDown } from "lucide-react";
+import { colors } from "@/theme";
 
-const colors = {
-  brand: "#0EA5E9",
-  onSurface: "#0F172A",
-  muted: "#64748B",
-  border: "#E2E8F0",
-  surface: "#FFFFFF",
-  surfaceSecondary: "#F8FAFC",
-};
+// Phase K52.1a · Feb-2026 — the local ``colors`` const previously
+// shadowed the shared ``@/theme`` export.  It carried a slate-tinted
+// zinc-adjacent palette (brand #0EA5E9, muted #64748B, border
+// #E2E8F0) that pre-dated the K50/K52 nav-chrome tokens — and
+// crucially, DID NOT export a ``nav.*`` sub-object.  The K52.1
+// filter-strip additions referenced ``colors.nav.bg`` /
+// ``colors.nav.fg`` / ``colors.nav.fgMuted`` / ``colors.nav.border``
+// and blew up at render with ``Cannot read properties of undefined
+// (reading 'bg')``.  Fix: delete the shadow, consume the shared
+// ``colors`` export — this eliminates the class of bug (a local
+// shadow silently drifting from the theme) and matches how the
+// other 4 K52.1 pages resolve tokens.  Downstream visual delta:
+// swaps a small handful of slate-tinted values for their zinc
+// equivalents (brand #0EA5E9 → #0284C7, muted #64748B → #71717A,
+// border #E2E8F0 → #E4E4E7, surfaceSecondary #F8FAFC → #F4F4F5) —
+// this aligns the leads page with every other admin surface.
 
 // Phase 34 · Task CC · Feb 2026 — canonical status enum (must match
 // backend `_CANONICAL_STATUSES` in routers/leads.py). Order matters —

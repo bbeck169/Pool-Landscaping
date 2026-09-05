@@ -390,7 +390,7 @@ LOGIC changed.
 | **Quotes** (`/quotes`) | `pages/quotes/QuotesList.jsx` | `quotes-filters` | Search + status select navy. |
 | **Invoices** (`/invoices`) | `pages/invoices/InvoicesList.jsx` | `invoices-filters` | Search + status + card-on-file selects navy. "Has late fee" toggle promoted from red-tint to gradient-when-active. Selected-category chips promoted from blue-tint (`#DBEAFE`) to gradient (matches active filter-state affordance). |
 | **Leads** (`/leads`) | `pages/leads/LeadsDashboardPage.jsx` | `leads-filters` | Was a bare flex row; wrapped in a proper K52 navy strip. Search + source + status selects navy. |
-| **Job Timers** (`/timers`) | `pages/timers/JobTimersPage.jsx` | `timers-filters` | 2 date inputs opt into `colorScheme: "dark"` so the native calendar icon inverts white. 2 text inputs use the K52 `rgba(255,255,255,0.10)` tinted-card treatment (matches CalendarSchedule search input). |
+| **Job Timers** (`/job-timers`) | `pages/timers/JobTimersPage.jsx` | `timers-filters` | 2 date inputs opt into `colorScheme: "dark"` so the native calendar icon inverts white. 2 text inputs use the K52 `rgba(255,255,255,0.10)` tinted-card treatment (matches CalendarSchedule search input). |
 
 ### Plus K52 (already shipped) — 2 strips on `pages/schedule/CalendarSchedule.jsx`:
 * `calendar-filters` (filter toolbar)
@@ -465,3 +465,100 @@ git-stash):
 | `frontend/src/pages/timers/JobTimersPage.jsx` | Filter strip → navy K52; date inputs opt into dark colorScheme |
 | `frontend/src/test/k52-theming.test.js` | +6 K52.1 assertions (one per swept page + marker sweep) |
 | `memory/PHASE_K52_THEMING_EXPANSION.md` | This section |
+
+---
+
+## K52.1a · Feb-2026 — /leads render crash hotfix
+
+**Bug**: Tester found `LeadsDashboardPage.jsx` threw at render on
+preview:
+```
+TypeError: Cannot read properties of undefined (reading 'bg')
+```
+
+**Root cause**: The page carried a LOCAL `const colors = { … }`
+shadow (lines 12–19) with only `{brand, onSurface, muted, border,
+surface, surfaceSecondary}` — no `nav` sub-object.  The K52.1
+filter-strip additions referenced `colors.nav.bg`, `colors.nav.fg`,
+`colors.nav.fgMuted`, and `colors.nav.border` — every one of them
+undefined at runtime.  The page blew up before mount.
+
+**Fix**: Delete the shadow, import shared `colors` from `@/theme`.
+This eliminates the class of bug (a local shadow silently drifting
+from the theme) and matches how every other K52.1 page consumes
+tokens.
+
+### Downstream visual delta (pre-existing slate → theme zinc)
+
+The shadow used a slate-tinted palette; the theme uses zinc.  Removing
+the shadow shifts these values on the leads page:
+
+| Token | Local shadow (pre) | Shared theme (post) |
+| --- | --- | --- |
+| `brand` | `#0EA5E9` (sky-500) | `#0284C7` (sky-600) |
+| `muted` | `#64748B` (slate-500) | `#71717A` (zinc-500) |
+| `border` | `#E2E8F0` (slate-200) | `#E4E4E7` (zinc-200) |
+| `surfaceSecondary` | `#F8FAFC` (slate-50) | `#F4F4F5` (zinc-100) |
+
+Net effect: the leads page's non-nav chrome now aligns with every
+other admin surface (all admin pages already use the theme's zinc
+palette).  The shift is intentional and cosmetic-only.
+
+### Audit — remaining K52.1 files
+
+Grepped every K52.1-touched file (Customers, Quotes, Invoices,
+Job Timers, plus CalendarSchedule from K52) for the same local-
+shadow anti-pattern.  **All 5 already import `colors` from
+`@/theme`**:
+
+```
+pages/customers/CustomersList.jsx    : import { colors } from "@/theme";
+pages/quotes/QuotesList.jsx          : import { colors, money } from "@/theme";
+pages/invoices/InvoicesList.jsx      : import { colors, money } from "@/theme";
+pages/timers/JobTimersPage.jsx       : import { colors } from "@/theme";
+pages/schedule/CalendarSchedule.jsx  : import { colors, font } from "@/theme";
+```
+
+`LeadsDashboardPage.jsx` was the only offender.  No further
+migrations required in this commit.
+
+### Belt-and-braces regression guard
+
+New runtime-mount test: `frontend/src/test/k52-1a-leads-mount.test.jsx`.
+One assertion:
+
+* Mounts `LeadsDashboardPage` in a jsdom environment with the API
+  mocked to an empty list.  Wraps the render in a try/catch and
+  asserts `renderError` is `null` with an actionable message
+  (`"LeadsDashboardPage threw during render — likely a local
+  ``colors`` shadow missing the ``nav`` sub-object.  Import shared
+  ``@/theme`` colors."`).  Then asserts the `leads-filters` strip
+  is on the DOM with `data-k52-navy-strip="true"` and the inline
+  `style.backgroundColor === "rgb(27, 31, 92)"`.
+
+**Confirmed via git-stash** — with the pre-K52.1a
+`LeadsDashboardPage.jsx` (local shadow restored), the test FAILS
+with the render error.  With the K52.1a fix in place, it PASSES.
+The test WOULD have caught this pre-ship.
+
+### Doc corrections
+
+* Route table above corrected: Job Timers actual route is
+  `/job-timers` (per `App.js:1097`), not `/timers`.  The strip
+  testid (`timers-filters`) was correct.
+
+### Files changed (K52.1a delta)
+
+| File | Change |
+| --- | --- |
+| `frontend/src/pages/leads/LeadsDashboardPage.jsx` | Delete local `colors` shadow (lines 12–19); import shared `colors` from `@/theme` |
+| `frontend/src/test/k52-1a-leads-mount.test.jsx` | New — runtime-mount regression guard |
+| `memory/PHASE_K52_THEMING_EXPANSION.md` | Route correction (`/timers` → `/job-timers`) + this hotfix section |
+
+### Revert
+Two-file revert: delete `k52-1a-leads-mount.test.jsx`, restore the
+local `colors` shadow in `LeadsDashboardPage.jsx` (but doing so
+re-introduces the /leads render crash — revert would only be
+appropriate as a rollback to pre-K52.1, in which case the K52.1
+filter-strip additions in `LeadsDashboardPage.jsx` also need
+reverting).
