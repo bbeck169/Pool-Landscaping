@@ -70,6 +70,11 @@ import { useNumberedOrder, NumberOrderInput, ReorderBanner, BulkReorderModal } f
 // Feb-2026 · Google-Maps stops map above the DnD panel (reuses the
 // app-wide ``<APIProvider>`` mounted in ``layouts/AppLayout.jsx``).
 import ScheduleMap from "@/pages/schedule/ScheduleMap";
+// Phase K50 · Feb-2026 — Schedule job-card status background shading.
+// Single source of truth: ``frontend/src/lib/jobStatus.js`` (web) +
+// ``mobile/src/lib/jobStatus.ts`` (mobile).  DO NOT inline the hex
+// codes here — extend the helper map if a new status is added.
+import { jobStatusColor as k50JobStatusColor } from "@/lib/jobStatus";
 
 
 // Feb-2026 · Schedule-UI · left-border indicator for status.
@@ -1864,6 +1869,12 @@ function GridPanel({
             const isChecked = checked.has(j.id);
             // Feb-2026 · Schedule-UI · colored left border.
             const statusBorderColor = getStatusBorderColor(j.status);
+            // Phase K50 · Feb-2026 — status-tinted card background.
+            // Falls through to ``colors.surface`` (white) for statuses
+            // outside the K50 map so the day/week view visual language
+            // for ``on_hold`` / ``requested`` / ``reopened`` remains
+            // unchanged (those retain their pill treatment).
+            const k50CardBg = k50JobStatusColor(j.status) || colors.surface;
             // Feb-2026 · Schedule multi-select · per-card delete checkbox.
             const isSelectedForDelete = !!(selectedJobIds && selectedJobIds.has(j.id));
             return (
@@ -1871,13 +1882,14 @@ function GridPanel({
                 key={j.id}
                 className="flex items-center gap-3 px-3 py-3 rounded-xl cursor-pointer"
                 style={{
-                  background: colors.surface,
+                  background: k50CardBg,
                   border: `1px solid ${colors.border}`,
                   borderLeftWidth: 4,
                   borderLeftColor: statusBorderColor,
                 }}
                 data-testid={`grid-job-${j.id}`}
                 data-status-color={statusBorderColor}
+                data-k50-bg={k50CardBg}
                 onClick={() => onOpenJob(j.id)}
                 role="button"
               >

@@ -91,8 +91,12 @@ describe("Feb-2026 UI polish · menu chrome + hover states", () => {
     expect(ADMIN_TOPBAR_SRC).not.toMatch(/import\s+BrandLogo\s+from/);
   });
 
-  it("AdminTopBar root sticky bar picks up the subtle brand tint", () => {
-    expect(ADMIN_TOPBAR_SRC).toMatch(/rgba\(2, ?132, ?199,\s*0\.0[0-9]/);
+  it("AdminTopBar root sticky bar picks up the K50 navy chrome", () => {
+    // Phase K50 · Feb-2026 — the pre-K50 sky-tinted brand wash
+    // (``rgba(2, 132, 199, 0.045)``) was replaced with the
+    // Pipedrive-inspired navy chrome (``colors.nav.bg = #1B1F5C``).
+    // Both single-source-of-truth on ``colors.nav`` in theme.js.
+    expect(ADMIN_TOPBAR_SRC).toMatch(/backgroundColor:\s*colors\.nav\.bg,/);
   });
 
   it("AdminSidebar entries ship hover motion + focus-visible parity", () => {

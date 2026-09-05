@@ -48,6 +48,9 @@ import { showConfirm } from "@/src/components/ConfirmModal";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
 import ScheduleJobEditSheet from "@/src/components/schedule/ScheduleJobEditSheet";
+// Phase K50 · Feb-2026 — Schedule job-card status background shading.
+// Web mirror: ``frontend/src/lib/jobStatus.js``.
+import { jobStatusColor as k50JobStatusColor } from "@/src/lib/jobStatus";
 // Phase 27 · Feb-2026 — Global avatar swap for the per-job card in
 // the schedule grid. Compact 20dp footprint keeps row height
 // invariant vs the pre-Phase-27 layout.
@@ -1134,6 +1137,12 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
   const svc = SERVICE_COLOR(job.service_type);
   // Feb-2026 · Schedule-UI · colored left border.
   const statusBorder = getStatusBorderColor(job.status);
+  // Phase K50 · Feb-2026 — status-tinted card background (parity
+  // with WEB Schedule cards).  Falls through to
+  // ``colors.surface`` (white) for statuses outside the K50 map
+  // so ``on_hold`` / ``requested`` / ``reopened`` keep their
+  // existing pill-only treatment.
+  const k50CardBg = k50JobStatusColor(job.status) || colors.surface;
   const _TERMINAL_STATUS = new Set(["completed", "canceled", "cancelled", "skipped", "could_not_service"]);
   const showOnMyWay = !_TERMINAL_STATUS.has((job.status || "").toLowerCase());
   const showDragHandle = rearrangeMode && isAdminForCard && onDrag;
@@ -1149,7 +1158,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
   // remain the only interactive elements.
   return (
     <Pressable
-      style={[gStyles.card, { borderLeftWidth: 4, borderLeftColor: statusBorder }, isDragging && { opacity: 0.7, shadowOpacity: 0.3 }]}
+      style={[gStyles.card, { borderLeftWidth: 4, borderLeftColor: statusBorder, backgroundColor: k50CardBg }, isDragging && { opacity: 0.7, shadowOpacity: 0.3 }]}
       onPress={rearrangeMode ? undefined : onOpen}
       onLongPress={showDragHandle ? onDrag : undefined}
       testID={`grid-job-${job.id}`}

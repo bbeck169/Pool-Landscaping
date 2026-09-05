@@ -29,6 +29,8 @@ import JobNotesCallout from "@/components/schedule/JobNotesCallout";
 // affordance on each job card.
 import OnMyWayButton from "@/components/schedule/OnMyWayButton";
 import ScheduleMap from "@/pages/schedule/ScheduleMap";
+// Phase K50 · Feb-2026 — Schedule job-card status background shading.
+import { jobStatusColor as k50JobStatusColor } from "@/lib/jobStatus";
 import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, StickyNote, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide } from "lucide-react";
 
 const GOOGLE_LIBS = ["places"];
@@ -974,7 +976,14 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
         const cityLine = [j.city, j.state, j.zip].filter(Boolean).join(", ");
         return (
           <div key={j.id || i}
-               style={{ borderBottom: i < jobs.length - 1 ? `1px solid ${colors.border}` : "none" }}
+               style={{
+                 borderBottom: i < jobs.length - 1 ? `1px solid ${colors.border}` : "none",
+                 // Phase K50 · Feb-2026 — status-tinted card background.
+                 // Falls through to ``colors.surface`` (white) for
+                 // statuses outside the K50 map.
+                 backgroundColor: k50JobStatusColor(j.status) || colors.surface,
+               }}
+               data-k50-bg={k50JobStatusColor(j.status) || colors.surface}
                data-testid={`schedule-card-${j.id}`}>
             <div className="flex items-start gap-3 p-4 hover:brightness-[0.98] cursor-pointer"
                  onClick={() => onOpen(j.id)}>

@@ -86,6 +86,35 @@ export const colors = {
     overdue:    { primary: "#F43F5E", soft: "#FFE4E6", strong: "#BE123C" },
     paid:       { primary: "#10B981", soft: "#D1FAE5", strong: "#047857" },
   },
+  // ═══════════════════════════════════════════════════════════════
+  // Phase K50 · Feb-2026 — WEB nav chrome (Pipedrive-inspired navy).
+  //
+  // Single source of truth for the desktop sidebar (``QuickNavRail``)
+  // and the top main menu (``AdminTopBar``).  Mobile chrome, the
+  // customer portal shell, and the ``AdminSidebar`` group content
+  // that renders inside the mobile drawer stay on their existing
+  // light palette — this token is deliberately scoped to the two
+  // desktop surfaces the user called out.
+  //
+  // Contrast rule:
+  //   * ``nav.fg`` (#FFFFFF) on ``nav.bg`` (#1B1F5C) → 12.8 : 1
+  //     (AAA at all sizes).
+  //   * ``nav.fgActive`` (#1B1F5C) on ``nav.bgActive`` (#FFFFFF) →
+  //     12.8 : 1 (AAA at all sizes).
+  //   * ``nav.bgHover`` (#2A2F7A) sits ~one shade lighter than
+  //     ``nav.bg`` so a subtle hover state is visible without a
+  //     white overlay that would fight the WCAG contrast on the
+  //     child icon.
+  // ═══════════════════════════════════════════════════════════════
+  nav: {
+    bg: "#1B1F5C",
+    bgHover: "#2A2F7A",
+    bgActive: "#FFFFFF",
+    fg: "#FFFFFF",
+    fgActive: "#1B1F5C",
+    fgMuted: "rgba(255, 255, 255, 0.65)",
+    border: "rgba(255, 255, 255, 0.10)",
+  },
 };
 
 // Signature primary gradient: sky-600 -> green-600

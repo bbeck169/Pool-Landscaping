@@ -1,0 +1,40 @@
+/**
+ * Phase K50 · Feb-2026 — Schedule job-card status background shading.
+ *
+ * MOBILE mirror of ``frontend/src/lib/jobStatus.js`` — same status
+ * keys, same hex values, same alias table.  Web + mobile Schedule
+ * cards MUST render identically per the K50 brief.
+ */
+
+export const K50_JOB_STATUS_BG: Readonly<Record<string, string>> =
+  Object.freeze({
+    open: "#D6F5EE",
+    scheduled: "#D6F5EE",
+    in_progress: "#FEF3C7",
+    completed: "#FDECEC",
+    cancelled: "#FECACA",
+    skipped: "#FED7AA",
+  });
+
+const _ALIAS: Readonly<Record<string, string>> = Object.freeze({
+  active: "in_progress",
+  in_progress: "in_progress",
+  inprogress: "in_progress",
+  closed: "completed",
+  done: "completed",
+  canceled: "cancelled",
+});
+
+/**
+ * Resolve the K50 background hex for a given job status.
+ *
+ * Case-insensitive; trims whitespace; returns ``null`` for any
+ * unknown / empty status so the caller can fall back to its
+ * previous default (typically ``colors.surface``).
+ */
+export function jobStatusColor(status?: string | null): string | null {
+  const s = String(status ?? "").toLowerCase().trim();
+  if (!s) return null;
+  const key = _ALIAS[s] || s;
+  return K50_JOB_STATUS_BG[key] || null;
+}

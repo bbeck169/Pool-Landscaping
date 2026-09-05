@@ -115,13 +115,16 @@ describe("Vertical quick-nav rail (sidebar pivot)", () => {
     expect(screen.queryByTestId("rail-nav-estimates")).toBeNull();
   });
 
-  it("active-route rail item picks up the brand-tinted styling", () => {
+  it("active-route rail item picks up the K50 navy chrome (white pill on navy)", () => {
     mount("super_admin", "/invoices");
     const link = screen.getByTestId("rail-nav-invoices");
-    // Active NavLink resolves the ``isActive`` style branch; the
-    // resulting inline background is the ``brandTertiary`` token
-    // (light blue #E0F2FE).
-    expect(link.getAttribute("style")).toMatch(/rgb\(224, 242, 254\)|#E0F2FE/i);
+    // Phase K50 · Feb-2026 — navy chrome landed.  Active state
+    // now renders as a WHITE pill (``colors.nav.bgActive = #FFFFFF``)
+    // sitting on the navy sidebar (``colors.nav.bg = #1B1F5C``)
+    // with navy text (``colors.nav.fgActive = #1B1F5C``).
+    const style = link.getAttribute("style") || "";
+    expect(style).toMatch(/rgb\(255,\s*255,\s*255\)|#FFFFFF|white/i);
+    expect(style).toMatch(/rgb\(27,\s*31,\s*92\)|#1B1F5C/i);
   });
 
   it("horizontal quick-nav row is no longer rendered (pivot complete)", () => {

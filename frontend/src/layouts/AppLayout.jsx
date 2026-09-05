@@ -256,27 +256,31 @@ function QuickNavRail({ role }) {
               "group mx-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5",
               "text-[10px] font-semibold",
               "transition-all duration-200 ease-out will-change-transform",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40",
               "hover:scale-[1.02] focus-visible:scale-[1.02]",
               isActive
-                ? "shadow-[0_1px_2px_rgba(2,132,199,0.08)]"
-                : "hover:bg-sky-50/70 hover:text-sky-600",
+                ? "shadow-[0_1px_2px_rgba(0,0,0,0.15)]"
+                : "hover:bg-white/10",
             ].join(" ")
           }
           style={({ isActive }) => ({
-            // Keep inline styles authoritative for active state so
-            // downstream tests (`rail-nav.test.jsx`) that assert the
-            // ``brandTertiary`` background attribute keep passing.
-            backgroundColor: isActive ? colors.brandTertiary : "transparent",
-            color: isActive ? colors.brand : colors.onSurfaceSecondary,
-            border: `1px solid ${isActive ? colors.brand : "transparent"}`,
+            // Phase K50 · Feb-2026 — navy chrome.
+            // Active state renders as a white pill with navy text
+            // (matches the K50 spec "active nav item indicator:
+            // white pill with navy text").  Idle state stays
+            // transparent so the parent ``<aside>`` navy shows
+            // through; icon/label render in white via
+            // ``colors.nav.fg``.
+            backgroundColor: isActive ? colors.nav.bgActive : "transparent",
+            color: isActive ? colors.nav.fgActive : colors.nav.fg,
+            border: `1px solid ${isActive ? colors.nav.bgActive : "transparent"}`,
           })}
           data-testid={`rail-nav-${key}`}
           aria-label={label}
           title={label}
         >
-          <Icon size={20} className="transition-colors duration-200 group-hover:text-sky-600" />
-          <span className="leading-none text-center transition-colors duration-200 group-hover:text-sky-600">{label}</span>
+          <Icon size={20} className="transition-colors duration-200" />
+          <span className="leading-none text-center transition-colors duration-200">{label}</span>
         </NavLink>
       ))}
     </nav>
@@ -516,14 +520,13 @@ function AppLayout() {
             : "hidden"
         }
         style={{
-          // Feb-2026 UI Polish Addendum — subtle brand tint on the
-          // desktop side-nav so the shell no longer reads as a flat
-          // white rail next to tinted content. Uses the sky-brand
-          // (colors.brand = #0284C7) at ~5% alpha, blended into a
-          // top-down wash for extra depth.
-          background:
-            "linear-gradient(180deg, rgba(2, 132, 199, 0.06) 0%, rgba(2, 132, 199, 0.02) 100%)",
-          borderRight: `1px solid ${colors.border}`,
+          // Phase K50 · Feb-2026 — Pipedrive-inspired navy chrome.
+          // Single-token source; do NOT reintroduce the sky-tinted
+          // gradient this replaced (the previous
+          // ``linear-gradient(180deg, rgba(2,132,199,0.06)…)`` is
+          // preserved in git history if we ever want to revert).
+          backgroundColor: colors.nav.bg,
+          borderRight: `1px solid ${colors.nav.border}`,
         }}
         data-testid="side-nav"
       >

@@ -104,20 +104,21 @@ function CategoryDropdown({ group }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="group inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold whitespace-nowrap transition-all duration-200 ease-out will-change-transform hover:scale-[1.02] hover:bg-sky-50 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:scale-[1.02]"
+        className="group inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold whitespace-nowrap transition-all duration-200 ease-out will-change-transform hover:scale-[1.02] hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:scale-[1.02]"
         style={{
-          // Feb-2026 UI Polish Addendum — active state still leans on
-          // the app-wide brand tokens, but idle-state colouring moved
-          // to className-driven Tailwind so hover / focus-visible
-          // transitions animate cleanly. When active, keep the
-          // inline overrides so the tint matches the sidebar.
-          color: active ? colors.brand : undefined,
-          backgroundColor: active ? colors.brandTertiary : undefined,
+          // Phase K50 · Feb-2026 — navy chrome. Idle-state text /
+          // icon render white on the navy top bar; hover surfaces a
+          // subtle white overlay (``bg-white/10``).  Active state
+          // (route match) renders as a white pill with navy text —
+          // mirrors the ``QuickNavRail`` active affordance so the
+          // two chrome surfaces feel unified.
+          color: active ? colors.nav.fgActive : colors.nav.fg,
+          backgroundColor: active ? colors.nav.bgActive : undefined,
         }}
         data-testid={`admin-topbar-${group.key}`}
       >
-        <CatIcon size={16} className="transition-colors duration-200 group-hover:text-sky-600" />
-        <span className="transition-colors duration-200 group-hover:text-sky-600">{group.label}</span>
+        <CatIcon size={16} className="transition-colors duration-200" />
+        <span className="transition-colors duration-200">{group.label}</span>
         <ChevronDown size={14} className="opacity-70 transition-transform duration-200 group-hover:translate-y-[1px]" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -164,9 +165,12 @@ function MobileMenu({ visible }) {
       <DropdownMenuTrigger
         className="inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold border"
         style={{
-          color: colors.onSurface,
-          borderColor: colors.border,
-          backgroundColor: colors.surface,
+          // Phase K50 · Feb-2026 — narrow-viewport "Menu" trigger
+          // sits inside the navy top bar; render as a white-on-navy
+          // outlined pill so it reads against the navy backdrop.
+          color: colors.nav.fg,
+          borderColor: colors.nav.border,
+          backgroundColor: "transparent",
         }}
         data-testid="admin-topbar-mobile-trigger"
       >
@@ -335,11 +339,13 @@ export default function AdminTopBar() {
     <div
       className="sticky top-0 z-30 w-full border-b backdrop-blur-[2px]"
       style={{
-        // Feb-2026 UI Polish Addendum — subtle brand tint on the
-        // top-nav (matches the sidebar wash) so the shell reads as
-        // themed rather than flat white.
-        backgroundColor: "rgba(2, 132, 199, 0.045)",
-        borderColor: colors.border,
+        // Phase K50 · Feb-2026 — Pipedrive-inspired navy chrome.
+        // Matches the desktop sidebar (``colors.nav.bg`` = #1B1F5C).
+        // The right-side cluster (SignOut / Sprocket / etc.) keeps
+        // its light-chip styling — the pills read cleanly on navy
+        // without extra work.
+        backgroundColor: colors.nav.bg,
+        borderColor: colors.nav.border,
       }}
       data-testid="admin-topbar"
       data-vw={vw}
