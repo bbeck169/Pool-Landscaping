@@ -357,6 +357,20 @@ function IncomeRow({
   const k48Status = _k48StatusFlags(row);
   const isRevenueVariant = variant === "income-by-category";
   const resolveInitialBuId = () => {
+    // K48 Round-4 · Feb-2026 — prefer the invoice-level
+    // ``business_unit`` written by ``commitBusinessUnit`` over the
+    // legacy per-line-item ``income_category_id`` / ``category``
+    // fallbacks.  ``business_unit`` is the K48 source of truth on
+    // the wire; the fallbacks stay in place so legacy rows that
+    // predate the write-path fix (or rows that were re-tagged via
+    // the earlier Path-B pipeline) still hydrate correctly.
+    const bu = (row?.business_unit || "").trim().toLowerCase();
+    if (bu) {
+      const buHit = incomeCategories.find(
+        (c) => (c?.name || "").trim().toLowerCase() === bu,
+      );
+      if (buHit) return buHit.id;
+    }
     const direct = (row?.income_category_id || "").trim();
     if (direct) return direct;
     const nm = (row?.category || "").trim().toLowerCase();
@@ -369,6 +383,25 @@ function IncomeRow({
   const [buCategoryId, setBuCategoryId] = useState(resolveInitialBuId);
   const [movedTo, setMovedTo] = useState(null);
   const buOriginalRef = useRef(buCategoryId);
+
+  // K48 Round-4 · Feb-2026 — re-resolve the initial BU id once the
+  // async ``incomeCategories`` fetch lands.  ``useState`` snapshots
+  // the initial value at mount when the categories list is still
+  // empty, so name-based lookups (``business_unit`` / ``category``)
+  // return "" even though a match would exist post-fetch.  Only
+  // upgrade when the user hasn't yet edited the row (guarded via
+  // ``buOriginalRef`` — a live commit updates the ref).
+  useEffect(() => {
+    if (!isRevenueVariant) return;
+    if (buCategoryId) return;
+    if (!Array.isArray(incomeCategories) || incomeCategories.length === 0) return;
+    const resolved = resolveInitialBuId();
+    if (resolved && resolved !== buCategoryId) {
+      setBuCategoryId(resolved);
+      buOriginalRef.current = resolved;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomeCategories, isRevenueVariant]);
 
   const commitField = async (field) => {
     if (!EDITABLE_INCOME_FIELDS.has(field)) return;

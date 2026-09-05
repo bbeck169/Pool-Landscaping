@@ -88,6 +88,9 @@ def paid_invoice():
         "tax_rate": 0.0,
         "amount_paid": 100.0,
         "status": "paid",
+        # Read-path cursor filters on ``payment_status: "paid"``
+        # (see ``_paid_invoice_cursor``).
+        "payment_status": "paid",
         "currency": "USD",
         "title": "TEST_k48_paid_invoice",
         "doc_type": "invoice",
@@ -204,3 +207,53 @@ def test_k48_bu_only_patch_never_triggers_numeric_line_item_guard(paid_invoice):
     assert "quantity/unit_price must be numeric" not in r.text, (
         f"BU-only patch surfaced the tester-reported numeric guard: {r.text}"
     )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 6) K48 Round-4 — read path projects invoice.business_unit
+# ═════════════════════════════════════════════════════════════════════
+def test_k48_rows_endpoint_projects_business_unit_after_patch(paid_invoice):
+    """K48 Round-4 read-path parity: after a BU-only PATCH, the
+    drill-down rows endpoint (``GET /api/dashboard/income/by-category/rows``)
+    must project ``invoice.business_unit`` onto each row so the
+    modal Select hydrates the saved bucket on reopen.
+
+    Bucket GROUPING (query-param bucket) is unchanged — still keyed
+    on ``line_items.income_category_id`` per the deferred
+    aggregation refactor.  This test asserts projection only.
+    """
+    ctx = paid_invoice
+    # 1) Write the BU tag.
+    r = _patch(ctx["inv_id"], {
+        "business_unit": "Pool",
+        "confirm_edit_paid_invoice_number": ctx["invoice_number"],
+    }, ctx["headers"])
+    assert r.status_code == 200, r.text
+
+    # 2) Query the rows endpoint for the bucket the seed row lives
+    # in (``Landscape``).  The endpoint requires ``bucket`` (name)
+    # plus ``since`` / ``until`` window.  Use a very wide window
+    # to catch the just-seeded row regardless of created_at drift.
+    rows_r = requests.get(
+        f"{API}/dashboard/income/by-category/rows",
+        params={
+            "category": "Landscape",
+            "from": "1970-01-01",
+            "to": "2999-12-31",
+            "limit": 200,
+        },
+        headers=ctx["headers"], timeout=30,
+    )
+    assert rows_r.status_code == 200, rows_r.text
+    payload = rows_r.json()
+    rows = payload.get("rows") or payload.get("items") or []
+    matches = [r for r in rows if r.get("invoice_id") == ctx["inv_id"]]
+    assert matches, (
+        f"seeded invoice {ctx['inv_id']!r} not surfaced in "
+        f"Landscape bucket rows (got {len(rows)} rows total)"
+    )
+    for r in matches:
+        assert r.get("business_unit") == "Pool", (
+            f"row projection missing business_unit — "
+            f"got {r.get('business_unit')!r} on row keys {list(r.keys())}"
+        )

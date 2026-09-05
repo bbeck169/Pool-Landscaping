@@ -288,7 +288,13 @@ async def _paid_invoice_cursor(
          "customer_name": 1, "line_items": 1, "total": 1, "tax": 1,
          "status": 1, "payment_status": 1, "paid_at": 1,
          "payment_method": 1, "job_id": 1, "issue_date": 1,
-         "invoice_date": 1, "created_at": 1, "currency": 1},
+         "invoice_date": 1, "created_at": 1, "currency": 1,
+         # K48 Round-4 · Feb-2026 — project the invoice-level
+         # ``business_unit`` tag written by the drill-down modal so
+         # the read path can hydrate the row on modal reopen.
+         # Bucket grouping is unchanged (still via line_items
+         # income_category_id) — this is a projection-only add.
+         "business_unit": 1},
     )
 
 
@@ -323,6 +329,12 @@ def _row_for_line_item(
         "payment_status": inv.get("payment_status") or "",
         "paid_at": inv.get("paid_at"),
         "payment_method": inv.get("payment_method"),
+        # K48 Round-4 · Feb-2026 — invoice-level Business Unit tag
+        # (nullable).  ``resolveInitialBuId`` on the frontend prefers
+        # this over the legacy income_category_id / category
+        # resolution so the Select renders the saved value on
+        # modal reopen.
+        "business_unit": inv.get("business_unit"),
     }
 
 
@@ -394,6 +406,10 @@ async def income_by_category_rows(
                 "payment_status": inv.get("payment_status") or "",
                 "paid_at": inv.get("paid_at"),
                 "payment_method": inv.get("payment_method"),
+                # K48 Round-4 · Feb-2026 — surface BU on the
+                # synthetic fallback too so a re-classified totals-
+                # only echo still hydrates the Select on reopen.
+                "business_unit": inv.get("business_unit"),
                 "synthetic_fallback": True,
             })
 
@@ -506,6 +522,10 @@ async def income_by_service_rows(
                 "payment_status": inv.get("payment_status") or "",
                 "paid_at": inv.get("paid_at"),
                 "payment_method": inv.get("payment_method"),
+                # K48 Round-4 · Feb-2026 — surface BU on the
+                # synthetic fallback too so a re-classified totals-
+                # only echo still hydrates the Select on reopen.
+                "business_unit": inv.get("business_unit"),
                 "synthetic_fallback": True,
             })
 

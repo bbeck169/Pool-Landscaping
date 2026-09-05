@@ -164,6 +164,30 @@ describe("K48 · DashboardDrillDownModal — Business Unit editor", () => {
     expect(MODAL).toMatch(/row\?\.income_category_id/);
     expect(MODAL).toMatch(/incomeCategories\.find\(/);
   });
+
+  it("K48 Round-4 · prefers row.business_unit over income_category_id / category on hydrate", () => {
+    // Round-4 read-path fix — the backend now projects the invoice-
+    // level ``business_unit`` field onto each drill-down row.  The
+    // resolver MUST prefer this value over the legacy per-line-item
+    // ``income_category_id`` / ``category`` fallbacks so a re-tagged
+    // paid invoice hydrates the Select with the saved bucket on
+    // modal reopen (fixes the "Select…" placeholder regression).
+    const body = MODAL.split("const resolveInitialBuId = ()")[1]
+      .split("};")[0];
+    // 1. First branch reads row.business_unit + lowercases it.
+    expect(body).toMatch(/const bu = \(row\?\.business_unit \|\| ""\)\.trim\(\)\.toLowerCase\(\);/);
+    // 2. Name match against incomeCategories fires FIRST — before
+    //    the id fallback — so a saved BU wins over a stale
+    //    income_category_id on the same line item.
+    const buIdx = body.indexOf("row?.business_unit");
+    const directIdx = body.indexOf("row?.income_category_id");
+    expect(buIdx).toBeGreaterThan(-1);
+    expect(directIdx).toBeGreaterThan(-1);
+    expect(buIdx).toBeLessThan(directIdx);
+    // 3. Re-resolve effect re-runs when the async incomeCategories
+    //    fetch lands (mount snapshot sees empty list; effect fills).
+    expect(MODAL).toMatch(/useEffect\(\(\) => \{[\s\S]{0,600}resolveInitialBuId\(\)/);
+  });
 });
 
 

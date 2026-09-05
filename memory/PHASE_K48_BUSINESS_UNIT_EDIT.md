@@ -182,14 +182,84 @@ aggregation is refactored.  Tracked below in Future Work.
   Enables finance to distinguish operator-typed confirmations from
   auto-carried ones at month-end.  Not shipped in this hotfix per
   user brief — captured here for the next K48-adjacent phase.
+* **Top-level invoice-edit BU field** — wire `business_unit` into
+  the top-level invoice edit form (not just the drill-down) so
+  operators can tag a BU at invoice creation time.  Closes the loop
+  and removes the drill-down as the only entry point.
 * **Aggregation refactor** — `dashboard_revenue.revenue_by_category`
   should prefer `invoice.business_unit` when set, fall back to the
   existing `line_items[].income_category_id → name` map.  Landing
   this closes the loop between the K48 write path and the tile
-  aggregation.
+  aggregation.  Round-4 shipped projection-only; grouping is still
+  keyed on line-item income_category_id.
 * **Path B → Path C migration** — the pre-verify-hotfix
   `line_items[].category` denormalisation is still in the DB for
   historically-edited rows.  A backfill migration to consolidate
   onto `invoice.business_unit` (or drop the denormalisation entirely
   in favour of `income_category_id`) would eliminate the split
   source of truth.
+
+---
+
+## Verify-hotfix 3 (Round-4, 2026-02-XX) — read-path projection parity
+
+**Tester report:** Write path clean (BU-only PATCH 200, money-
+neutral) but on modal reopen the Select rendered `Select…` instead
+of the saved `Pool`.  Root cause: the drill-down rows endpoint
+(`GET /api/dashboard/income/by-category/rows`) didn't project the
+newly-written `invoice.business_unit` field onto row payloads, so
+`resolveInitialBuId()` fell through to the legacy
+`income_category_id` / `category` fallbacks (unchanged on the
+line item — write path is money-neutral).
+
+**Fix — projection-only (no grouping change):**
+
+* `backend/routers/dashboard_drilldown.py`
+  * Added `"business_unit": 1` to the `_paid_invoice_cursor`
+    projection (shared by all revenue-tile drill-downs).
+  * Added `"business_unit": inv.get("business_unit")` to
+    `_row_for_line_item` — normal line-item rows.
+  * Same field surfaced on both `synthetic_fallback` echo blocks
+    (invoice-total-only rows for line-item-less invoices) in the
+    `by-category` and `by-service` variants.
+  * Bucket grouping is **unchanged** — still keyed on
+    `line_items.income_category_id`.  The `dashboard_revenue`
+    aggregation refactor stays in Future Work per user brief.
+* `frontend/src/components/dashboard/DashboardDrillDownModal.jsx`
+  * `resolveInitialBuId()` — new preferred first branch reads
+    `row.business_unit` and case-insensitively matches against the
+    tenant's `incomeCategories`.  Falls back to the existing
+    `income_category_id` (direct id) and `category` (denormalised
+    name) resolution for legacy rows that predate the write-path
+    fix.
+  * New `useEffect` re-resolves the initial Select value once the
+    async `incomeCategories` fetch lands — `useState` snapshots at
+    mount when the categories list is still empty, so name-based
+    lookups (`business_unit` / `category`) return "" on first paint
+    without a re-resolve pass.  Guarded on
+    `!buCategoryId` so a live user selection is never clobbered.
+* `frontend/src/test/k48-drilldown-business-unit.test.jsx`
+  * New assertion: `resolveInitialBuId` first-branch reads
+    `row?.business_unit`, appears BEFORE the `row?.income_category_id`
+    fallback in the resolver body, and the re-resolve `useEffect`
+    is wired.
+* `backend/tests/test_k48_business_unit_patch.py`
+  * New test `test_k48_rows_endpoint_projects_business_unit_after_patch`
+    seeds a paid invoice, PATCHes `business_unit="Pool"`, then hits
+    `GET /api/dashboard/income/by-category/rows` for the seeded
+    row's category and asserts the returned row carries
+    `business_unit == "Pool"`.
+
+**Test evidence:**
+* Backend: 6/6 K48 pytest green (5 write-path + 1 read-path).
+* Frontend: 16/16 K48 vitest green (adds Round-4 hydrate-preference case).
+* Regression: 63/63 across K41 (20) + K48 (16) + K49 (12) + K49b (6) + K49 sort (3) + K48 backend (6). Pre-existing `test_invoice_edit.py` failures still reproduce on `git stash` — unrelated.
+
+**Read-path / write-path parity guarantee:**
+A single BU-only PATCH now round-trips end-to-end: the write lands
+via `$set business_unit`, the paid-lock guard accepts the money-
+neutral confirmation, the drill-down rows endpoint projects the
+field, `resolveInitialBuId()` prefers it on hydrate, and the
+Select renders the saved bucket on modal reopen — all without
+touching the line-item `category` denormalisation or the bucket
+aggregation grouping.
