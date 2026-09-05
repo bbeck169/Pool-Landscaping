@@ -1,34 +1,35 @@
-// Phase 38b · Feb-2026 — Mobile Live Tech Position Pins map.
-//
-// Uses @rnmapbox/maps@^10 (native module — requires the dev-client
-// rebuild described in `mobile/EXPO_GO_RUNBOOK.md`). Wrapped in a
-// try/catch dynamic require so plain Expo Go doesn't crash — the
-// fallback banner is rendered by the parent when this module fails
-// to import.
-//
-// Contract with the parent (`dispatch/board.tsx`):
-//   * Positions are polled by the parent at 15s cadence.
-//   * The parent hands us positions + a `onPinTap(user_id)` callback.
-//   * We only render UI — no fetching, no side effects other than
-//     the AsyncStorage persistence for the style + expanded toggles.
+/**
+ * Phase K46 · Feb-2026 — Live Tech Position Pins map (Google-only).
+ *
+ * Migrated from ``@rnmapbox/maps`` to ``react-native-maps`` with the
+ * Google provider as part of the Phase K46 map consolidation
+ * (root cause of the Android white-screen crash — Mapbox's native
+ * initializer threw before JS bundled, blanking the shell).
+ *
+ * Contract with the parent (``dispatch/board.tsx``):
+ *   * Positions are polled by the parent at 15s cadence.
+ *   * The parent hands us positions + a ``onPinTap(user_id)`` callback.
+ *   * We only render UI — no fetching, no side effects other than
+ *     the AsyncStorage persistence for the map style toggle.
+ *
+ * Style toggle: cycles ``standard`` → ``satellite`` → ``hybrid``
+ * via ``react-native-maps``' built-in ``mapType`` prop (was three
+ * Mapbox style URLs pre-K46). AsyncStorage key unchanged
+ * (``dispatch_map_style_v1``) to preserve the tech's saved choice.
+ */
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import Constants from "expo-constants";
+import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 
-import { colors, spacing, radius, font, fontSize } from "@/src/theme";
-import { hasMapboxToken, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
+import { colors, spacing, radius, font } from "@/src/theme";
+import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
 
-// Dynamic require — throws in Expo Go where the native module isn't
-// present. Parent catches and renders the fallback banner.
- 
-const MapboxGL: any = require("@rnmapbox/maps").default;
-
-const STYLES: { url: string; label: string; icon: string }[] = [
-  { url: "mapbox://styles/mapbox/streets-v12",           label: "Streets",    icon: "map-outline" },
-  { url: "mapbox://styles/mapbox/satellite-streets-v12", label: "Satellite",  icon: "earth-outline" },
-  { url: "mapbox://styles/mapbox/dark-v11",              label: "Dark",       icon: "moon-outline" },
+const STYLES: { mapType: "standard" | "satellite" | "hybrid"; label: string; icon: string }[] = [
+  { mapType: "standard",  label: "Streets",   icon: "map-outline" },
+  { mapType: "satellite", label: "Satellite", icon: "earth-outline" },
+  { mapType: "hybrid",    label: "Hybrid",    icon: "layers-outline" },
 ];
 
 const STYLE_KEY = "dispatch_map_style_v1";
@@ -68,15 +69,11 @@ export default function LiveTechPinsMap({
 }: LiveTechPinsMapProps) {
   const [styleIdx, setStyleIdx] = useState(0);
 
-  // Boot: token config + hydrate the persisted style.
+  // Hydrate the persisted style toggle. No native token setup needed
+  // for Google Maps — the API key is resolved from ``app.config.js``'s
+  // ``android.config.googleMaps.apiKey`` / ``ios.config.googleMapsApiKey``
+  // at EAS build time.
   useEffect(() => {
-    const token =
-      process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
-      (Constants.expoConfig?.extra as any)?.mapboxToken ||
-      "";
-    if (MapboxGL && typeof MapboxGL.setAccessToken === "function") {
-      MapboxGL.setAccessToken(token);
-    }
     (async () => {
       const raw = await AsyncStorage.getItem(STYLE_KEY);
       const parsed = raw ? Number(raw) : 0;
@@ -90,39 +87,46 @@ export default function LiveTechPinsMap({
     await AsyncStorage.setItem(STYLE_KEY, String(next));
   }, [styleIdx]);
 
-  // Phase K20 — safety guard: graceful fallback when Mapbox token
-  // is missing (prevents blank map or runtime errors). Placed after
-  // hooks to satisfy the rules-of-hooks requirement.
-  if (!hasMapboxToken()) {
+  // K20 · Safety guard: graceful fallback when the Google Maps API
+  // key is missing. Placed after hooks to satisfy rules-of-hooks.
+  if (!hasGoogleMapsKey()) {
     return (
       <MapUnavailablePlaceholder
-        provider="Mapbox"
+        provider="Google Maps"
         testID="dispatch-live-map-no-token"
-        message="Mapbox access token not configured. Live map requires a valid token."
+        message="Google Maps API key not configured. Live map requires a valid key."
       />
     );
   }
 
-  // Center on the first position (or a US-ish default).
-  const center: [number, number] = positions.length
-    ? [positions[0].lon, positions[0].lat]
-    : [-112.0740, 33.4484];  // Phoenix — safe default for this tenant.
+  // Center on the first position (or a Phoenix-area default).
+  const initialRegion = {
+    latitude: positions.length ? positions[0].lat : 33.4484,
+    longitude: positions.length ? positions[0].lon : -112.0740,
+    latitudeDelta: 0.6,
+    longitudeDelta: 0.6,
+  };
 
   return (
     <View style={styles.wrap} testID="dispatch-live-map-inner">
-      <MapboxGL.MapView
+      <MapView
+        provider={PROVIDER_GOOGLE}
         style={styles.map}
-        styleURL={STYLES[styleIdx].url}
-        logoEnabled={false}
-        attributionEnabled={false}
+        mapType={STYLES[styleIdx].mapType}
+        initialRegion={initialRegion}
+        showsUserLocation={false}
+        showsMyLocationButton={false}
+        toolbarEnabled={false}
+        testID="dispatch-live-map-view"
       >
-        <MapboxGL.Camera zoomLevel={10} centerCoordinate={center} />
         {positions.map((p) => (
-          <MapboxGL.PointAnnotation
+          <Marker
             key={p.user_id}
-            id={`pin-${p.user_id}`}
-            coordinate={[p.lon, p.lat]}
-            onSelected={() => onPinTap(p.user_id, p.user_name)}
+            identifier={`dispatch-live-pin-${p.user_id}`}
+            coordinate={{ latitude: p.lat, longitude: p.lon }}
+            onPress={() => onPinTap(p.user_id, p.user_name)}
+            anchor={{ x: 0.5, y: 0.5 }}
+            tracksViewChanges={false}
           >
             <View
               style={[
@@ -130,17 +134,15 @@ export default function LiveTechPinsMap({
                 { backgroundColor: _colorFromId(p.user_id) },
                 p.is_stale && styles.pinStale,
               ]}
-              // testID is duplicated on the inner view — pin annotations
-              // don't forward accessibility props on all platforms.
               testID={`dispatch-live-pin-${p.user_id}`}
             >
               <Text style={styles.pinText}>{_initials(p.user_name)}</Text>
             </View>
-          </MapboxGL.PointAnnotation>
+          </Marker>
         ))}
-      </MapboxGL.MapView>
+      </MapView>
 
-      {/* Theme toggle */}
+      {/* Map-type toggle (standard / satellite / hybrid) */}
       <Pressable
         onPress={cycleStyle}
         style={styles.styleBtn}

@@ -1,5 +1,10 @@
 /**
- * mapsKey.test.ts — Phase K20 · Unit tests for the map API key helpers.
+ * mapsKey.test.ts — Phase K20 · Unit tests for the Google Maps key
+ * helper.
+ *
+ * Phase K46 · Feb-2026 AMENDMENT — ``hasMapboxToken`` tests removed
+ * along with the helper itself; Mapbox is no longer a runtime
+ * dependency of this app.
  */
 import { Platform } from "react-native";
 
@@ -15,7 +20,7 @@ jest.mock("@expo/vector-icons", () => ({
 }));
 
 import Constants from "expo-constants";
-import { hasGoogleMapsKey, hasMapboxToken } from "@/src/utils/mapsKey";
+import { hasGoogleMapsKey } from "@/src/utils/mapsKey";
 
 // We need to swap Platform.OS at runtime. Jest-expo defaults to "ios".
 const originalOS = Platform.OS;
@@ -79,28 +84,13 @@ describe("hasGoogleMapsKey", () => {
   });
 });
 
-describe("hasMapboxToken", () => {
-  beforeEach(() => {
-    (Constants as any).expoConfig = null;
-    delete process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
-  });
-
-  it("returns false when no token is set", () => {
-    expect(hasMapboxToken()).toBe(false);
-  });
-
-  it("returns true when EXPO_PUBLIC_MAPBOX_TOKEN env var is set", () => {
-    process.env.EXPO_PUBLIC_MAPBOX_TOKEN = "pk.test_token";
-    expect(hasMapboxToken()).toBe(true);
-  });
-
-  it("returns true when expoConfig extra has the token", () => {
-    (Constants as any).expoConfig = { extra: { mapboxToken: "pk.config_token" } };
-    expect(hasMapboxToken()).toBe(true);
-  });
-
-  it("returns false when token is an unresolved reference", () => {
-    (Constants as any).expoConfig = { extra: { mapboxToken: "$EXPO_PUBLIC_MAPBOX_TOKEN" } };
-    expect(hasMapboxToken()).toBe(false);
+// Phase K46 · Feb-2026 — Regression guard: ``hasMapboxToken`` must
+// no longer be exported from the helper. This test would fail at
+// import time if the symbol were re-added.
+describe("K46 · Mapbox helper removed", () => {
+  it("does not export hasMapboxToken any more", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("@/src/utils/mapsKey");
+    expect(mod.hasMapboxToken).toBeUndefined();
   });
 });

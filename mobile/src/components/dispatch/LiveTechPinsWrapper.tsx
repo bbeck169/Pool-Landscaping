@@ -1,12 +1,12 @@
-// Phase 38b · Feb-2026 — Mobile Live Tech Pins wrapper.
+// Phase K46 · Feb-2026 — Live Tech Pins wrapper (Google-only).
 //
-// Wraps the real @rnmapbox/maps map component in a try/catch dynamic
-// require so plain Expo Go doesn't crash — devs on Expo Go get a
-// fallback banner explaining they need the dev-client rebuild (see
-// mobile/EXPO_GO_RUNBOOK.md), while everything else on the dispatch
-// board keeps working.
+// Post-K46 the wrapper no longer needs to dynamic-require the native
+// map module inside a try/catch: ``react-native-maps`` ships with
+// every Expo shell (Expo Go and dev client both include it), so a
+// plain static import is safe. The Google Maps API key guard now
+// lives inside ``LiveTechPinsMap.tsx`` itself via
+// ``hasGoogleMapsKey()`` — this wrapper only owns:
 //
-// Also owns:
 //   • the 15s poll on GET /api/gps/live-positions
 //   • the collapsible top-region toggle (persisted in AsyncStorage)
 //   • the "GPS feed offline" chip state
@@ -18,22 +18,12 @@ import { useFocusEffect, router } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
-import type { LivePosition } from "@/src/components/dispatch/LiveTechPinsMap";
+import LiveTechPinsMap, {
+  type LivePosition,
+} from "@/src/components/dispatch/LiveTechPinsMap";
 
 const EXPANDED_KEY = "dispatch_map_expanded_v1";
 const POLL_MS = 15_000;
-
-// Attempt the native-module require at module load. If it throws —
-// Expo Go, unlinked dev client, or missing token — we render the
-// fallback banner instead of crashing. `MapImpl` is `null` on failure.
-let MapImpl: any = null;
-let importError: string | null = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  MapImpl = require("@/src/components/dispatch/LiveTechPinsMap").default;
-} catch (e: any) {
-  importError = e?.message || String(e);
-}
 
 export function LiveTechPinsWrapper({
   onNavigateToShift,
@@ -92,26 +82,6 @@ export function LiveTechPinsWrapper({
     };
   }, [pollOnce]));
 
-  // Fallback banner — no map module OR no token.
-  const hasToken = !!(
-    process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
-    // Constants.expoConfig?.extra?.mapboxToken populated at build time
-    (globalThis as any).__EXPO_MAPBOX_TOKEN__
-  );
-
-  if (!MapImpl) {
-    return (
-      <View style={styles.fallback} testID="dispatch-live-map-fallback">
-        <Ionicons name="map-outline" size={18} color={colors.muted} />
-        <Text style={styles.fallbackTitle}>Live map requires the dev client</Text>
-        <Text style={styles.fallbackSub}>
-          Expo Go can&apos;t load @rnmapbox/maps. Rebuild the dev client
-          per mobile/EXPO_GO_RUNBOOK.md to enable this section.
-        </Text>
-      </View>
-    );
-  }
-
   return (
     <View
       style={[
@@ -138,25 +108,17 @@ export function LiveTechPinsWrapper({
         </Pressable>
       </View>
       {expanded ? (
-        !hasToken ? (
-          <View style={styles.noToken} testID="dispatch-live-map-no-token">
-            <Text style={styles.noTokenText}>
-              Live map unavailable — set EXPO_PUBLIC_MAPBOX_TOKEN to enable.
-            </Text>
-          </View>
-        ) : (
-          <MapImpl
-            positions={positions}
-            onPinTap={(uid: string, uname: string) => {
-              if (onNavigateToShift) return onNavigateToShift(uid, uname);
-              router.push({
-                pathname: "/dispatch/shift-route",
-                params: { source: uid, sourceName: uname, scope: "whole_route" },
-              } as any);
-            }}
-            offline={offline}
-          />
-        )
+        <LiveTechPinsMap
+          positions={positions}
+          onPinTap={(uid: string, uname: string) => {
+            if (onNavigateToShift) return onNavigateToShift(uid, uname);
+            router.push({
+              pathname: "/dispatch/shift-route",
+              params: { source: uid, sourceName: uname, scope: "whole_route" },
+            } as any);
+          }}
+          offline={offline}
+        />
       ) : (
         <View style={styles.strip} testID="dispatch-live-map-strip">
           <Text style={styles.stripText}>
@@ -186,15 +148,4 @@ const styles = StyleSheet.create({
   toggle: { padding: 4 },
   strip: { flex: 1, alignItems: "center", justifyContent: "center" },
   stripText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
-  fallback: {
-    marginBottom: spacing.md, padding: spacing.md,
-    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
-    backgroundColor: colors.surfaceSecondary, gap: spacing.xs,
-  },
-  fallbackTitle: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurface },
-  fallbackSub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
-  noToken: {
-    flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.md,
-  },
-  noTokenText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, textAlign: "center" },
 });

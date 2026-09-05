@@ -1,3 +1,78 @@
+## Phase K47 · Invoice View Tracking — SHIPPED (Feb 2026)
+
+**Locked answers**: 1b (list + detail) · 2d (all sources, first + last + count) · 3c (full history w/ source + timestamp) · 4b (mobile parity).
+
+**Backend**
+- New `services/invoice_view_tracker.py` — insert + denormalise on the invoice doc + 30 s per-source dedupe. Best-effort, never raises.
+- New `routers/invoice_views.py` — `GET /api/invoices/{iid}/views` (admin/office/dispatcher; tech + customer → 403).
+- `pay_link_builder.build_pay_now_url` accepts optional `src`; `emailer.py` sends `src="email"`, `dunning.py` mints per-channel URLs (`src="email"` / `src="sms"`).
+- `invoice_magic_view.py` reads `?src=` and forwards to the tracker; `invoice_viewer.py` stamps `source="portal"` when the caller's role is `customer`.
+- `invoices/overview` endpoint now surfaces `first_viewed_at` / `last_viewed_at` / `view_count` on every row.
+
+**Web**
+- New `components/invoices/InvoiceViewHistory.jsx` — mounted on `QuoteInvoiceDetail` when `isInvoice && isStaff`.
+- `InvoicesList.jsx` — new "Viewed" column (`hidden lg:table-cell`) with testID `invoice-viewed-{id}`.
+- `PublicInvoicePay.jsx` reads `?src=` (whitelist-guarded) and forwards to `InvoiceView.jsx`'s new `magicSrc` prop.
+
+**Mobile parity**
+- New `mobile/src/components/invoices/InvoiceViewHistory.tsx` (self-hides on 403).
+- `mobile/app/invoice/[id].tsx` mounts the history card.
+- `mobile/app/invoices.tsx` renders a compact "Viewed Nd ago" pill (testID `invoice-viewed-{id}`).
+
+**Tests**
+- `backend/tests/test_k47_invoice_view_tracking.py` — 9 tests pass (record + denorm, dedupe scope + window, source whitelist, empty-id noop, UA truncation, summary shape, pay-link `src` forwarding).
+- `frontend/src/test/k47-invoice-view-tracking.test.jsx` — 17 source-inspection guards (backend + web + mobile).
+
+**Deferred / follow-ups**
+- Customer-facing read receipts (explicit K47 non-goal).
+- Email open pixel (separate feature).
+- Portal-side invoices list "Viewed" column (out of the locked 1b scope).
+- Pre-existing pytest cross-module DB mutation (K43 fallout) — P2, untouched.
+
+**Ship report**: `memory/PHASE_K47_INVOICE_VIEW_TRACKING.md`
+
+---
+
+
+## Phase K46 · Google-only Maps Migration — SHIPPED (Feb 2026)
+
+**Root cause fix.** Removed `@rnmapbox/maps` from the Expo mobile app (root cause of the K45 Android white-screen crash — the module's native constructor threw synchronously at app boot when the Mapbox token wasn't wired at build time). Standardised on Google Maps via `react-native-maps`. Killed remaining HERE plugin remnants. Wired the shared `openNativeNavTo` deep-link helper into every "Navigate" button.
+
+**Files touched (mobile):**
+- `src/components/dispatch/LiveTechPinsMap.tsx` — full rewrite on `react-native-maps` + `PROVIDER_GOOGLE`; `mapType` cycles `standard`/`satellite`/`hybrid`.
+- `src/components/dispatch/LiveTechPinsWrapper.tsx` — removed try/catch dynamic-require + dev-client fallback banner.
+- `src/components/schedule/DailyRouteMap.native.tsx` — added Navigate button in the pin callout (uses `openNativeNavTo`).
+- `src/components/schedule/NavigateJobButton.tsx` — swapped `mapsDeepLink` path for `openNativeNavTo` (coord-only). Address-only jobs alert instead of silently opening the wrong maps URL.
+- `src/utils/mapsKey.tsx` — removed `hasMapboxToken`.
+- `app.config.js` — removed `["@rnmapbox/maps", {}]` plugin + `extra.mapboxToken`.
+- `app/_layout.tsx` — removed the `__DEV__` Mapbox placeholder guard useEffect.
+- `package.json` — removed `@rnmapbox/maps` dep. `yarn.lock` regenerated (Mapbox subtree fully purged).
+
+**Tests:**
+- Refactored `__tests__/mapsKey.test.ts` (removed Mapbox helper tests + added regression guard) — 7 tests pass.
+- Added `__tests__/k46-google-maps-only.test.ts` — 13 landing-state guards (package.json, app.config.js, LiveTechPinsMap, wrapper, Navigate buttons, root layout).
+- Rewrote `__tests__/daily-route-map-web.test.tsx` bomb-mock from `@rnmapbox/maps` → `react-native-maps` + added web-source-inspection guard — 5 tests pass.
+- Refreshed `__tests__/schedule-daily-route-map.test.tsx` + `__tests__/optimize-route-flow.test.tsx` to mock `react-native-maps` (was `@rnmapbox/maps`) and use `hasGoogleMapsKey` — 25 + 16 tests pass.
+- Updated `__tests__/navigate-job-button.test.tsx` for the coord-only K46 semantics — 20 tests pass.
+- Flipped `frontend/src/test/phase38-mobile-dispatch-parity.test.jsx` + rewrote `phase38b-live-pins.test.jsx` as K46 lock-in guards — 62/62 vitest tests pass.
+
+**Preserved on purpose:**
+- `backend/services/reverse_geocoder.py` — still uses Mapbox server-side for geocoding (per user directive).
+- `mobile/src/lib/maps/hereAdapter.tsx` + `provider.ts` — K45b nuclear stub kept in place; adapter no-ops and resolver always downgrades to Google.
+- `mobile/src/services/navigation/mapsDeepLink.ts` — coexists with `nativeNav.ts` for any future address-based deep links.
+
+**⚠️ EAS rebuild required.** Removing `@rnmapbox/maps` alters the native auto-linked manifest — a JS-only OTA update can't ship this. Run `eas build --profile <production|preview> --platform all` before promoting.
+
+**Deferred / follow-ups:**
+- K47 — Invoice-view-tracking feature. Answers locked at 1b / 2d / 3c / 4b. Starts immediately per user standing directive.
+- Pre-existing pytest cross-module DB mutation bug (K43 fallout) — untouched, still P2.
+- Pre-existing Jest failures unrelated to maps (`schedule-job-notes`, `phase41-5c-mobile-notif-prefs`, `mobile-line-items-*`, etc.) — pre-existed K46, not regressions.
+
+**Ship report:** `memory/PHASE_K46_GOOGLE_MAPS_MIGRATION.md`
+
+---
+
+
 ## Phase K42 · Tech-ID normalization — SHIPPED
 
 **Bug.** Filtering the Schedule by a tech returned zero jobs even though jobs existed. Root cause: the codebase has **two id spaces for the same person** — `technicians.id` (legacy, authoritative) and `users.id` (modern auth-linked). Some jobs were persisted under `technician_id = users.id` while others under `technician_id = technicians.id`; exact-equals filters missed one variant.

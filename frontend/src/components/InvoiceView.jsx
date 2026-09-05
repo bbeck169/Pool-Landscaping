@@ -24,7 +24,7 @@ function fmtMoney(n) {
   return v.toFixed(2);
 }
 
-export default function InvoiceView({ invoiceId, printable = false, magicToken = "" }) {
+export default function InvoiceView({ invoiceId, printable = false, magicToken = "", magicSrc = "" }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [payOpen, setPayOpen] = useState(false);
@@ -32,13 +32,23 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
 
   useEffect(() => {
     if (!invoiceId) return;
-    const url = magicToken
-      ? `/invoices/${invoiceId}/full-magic?token=${encodeURIComponent(magicToken)}`
-      : `/invoices/${invoiceId}/full`;
+    // Phase K47 · Feb-2026 — forward ``?src=email|sms|link`` to the
+    // magic-link viewer so ``invoice_views`` records the send
+    // channel that got the customer here. Ignored for the
+    // authenticated ``/full`` path (portal source is inferred
+    // server-side from the customer role).
+    let url;
+    if (magicToken) {
+      const params = new URLSearchParams({ token: magicToken });
+      if (magicSrc) params.set("src", magicSrc);
+      url = `/invoices/${invoiceId}/full-magic?${params.toString()}`;
+    } else {
+      url = `/invoices/${invoiceId}/full`;
+    }
     api.get(url)
       .then(setData)
       .catch((e) => setErr(e?.message || "Failed to load invoice."));
-  }, [invoiceId, reloadTick, magicToken]);
+  }, [invoiceId, reloadTick, magicToken, magicSrc]);
 
   const openPdf = () => {
     const token = localStorage.getItem(TOKEN_KEY);

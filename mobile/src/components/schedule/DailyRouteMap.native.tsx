@@ -41,23 +41,22 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { geolocate } from "@/src/utils/geolocate";
 import OptimizeRoutePreview from "@/src/components/schedule/OptimizeRoutePreview";
-import { hasMapboxToken, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
+import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
+// K46 · Native-navigation deep link helper. Used inside the callout
+// so a tech can hop from the tapped route pin straight into
+// turn-by-turn without leaving the schedule screen.
+import { openNativeNavTo } from "@/src/utils/nativeNav";
+// K46 · Feb-2026 — Migrated from @rnmapbox/maps to react-native-maps
+// with the Google provider.  See memory/PHASE_K46_GOOGLE_ONLY_MAPS.md
+// for the full migration rationale (root cause of the K45 Android
+// white-screen crash class).
+import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import type { Region } from "react-native-maps";
 
 const PINNED_STATUSES = new Set([
   "completed", "could_not_service", "skipped", "canceled", "cancelled",
 ]);
 const UNDO_WINDOW_MS = 10_000;
-
-// Dynamic require — throws in Expo Go without the dev-client. We
-// catch and render the fallback banner instead of crashing.
-let MapboxGL: any = null;
-let mapboxImportError: string | null = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  MapboxGL = require("@rnmapbox/maps").default;
-} catch (e: any) {
-  mapboxImportError = e?.message || String(e);
-}
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -170,6 +169,7 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
   const role = ((user?.role as string) || "").toLowerCase();
   const isAdmin = role === "admin" || role === "super_admin";
   const cameraRef = useRef<any>(null);
+  const mapRef = useRef<MapView | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -232,21 +232,29 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
   }, [jobs]);
 
   // Camera fit — bounds w/ padding for >1 pin, zoom 15 for single.
+  // K46 · react-native-maps uses `fitToCoordinates` / `animateCamera`
+  // instead of Mapbox's imperative Camera ref. `mapRef.current`
+  // becomes available after MapView mounts.
   useEffect(() => {
-    if (!expanded || !cameraRef.current || pins.length === 0) return;
+    if (!expanded || !mapRef.current || pins.length === 0) return;
     if (pins.length === 1) {
-      cameraRef.current.setCamera?.({
-        centerCoordinate: [pins[0].coords.lng, pins[0].coords.lat],
-        zoomLevel: 15,
-        animationDuration: 350,
-      });
+      mapRef.current.animateCamera(
+        {
+          center: { latitude: pins[0].coords.lat, longitude: pins[0].coords.lng },
+          zoom: 15,
+        },
+        { duration: 350 },
+      );
       return;
     }
-    const lats = pins.map((p) => p.coords.lat);
-    const lngs = pins.map((p) => p.coords.lng);
-    const ne: [number, number] = [Math.max(...lngs), Math.max(...lats)];
-    const sw: [number, number] = [Math.min(...lngs), Math.min(...lats)];
-    cameraRef.current.fitBounds?.(ne, sw, [48, 48, 48, 48], 350);
+    const coords = pins.map((p) => ({
+      latitude: p.coords.lat,
+      longitude: p.coords.lng,
+    }));
+    mapRef.current.fitToCoordinates(coords, {
+      edgePadding: { top: 48, right: 48, bottom: 48, left: 48 },
+      animated: true,
+    });
   }, [pins, expanded]);
 
   /* ── Optimize Route — auto-preview + handlers ───────────────────── */
@@ -409,7 +417,7 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
   // Feature-level guard — 0 jobs scheduled = hide entire map.
   if (!jobs || jobs.length === 0) return null;
 
-  const hasToken = hasMapboxToken();
+  const hasToken = hasGoogleMapsKey();
 
   const toggleExpanded = async () => {
     setSelectedId(null);
@@ -480,41 +488,45 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
     <View style={s.container} testID={testID || "schedule-daily-route-map"}>
       {header}
 
-      {!expanded ? null : !hasToken || !MapboxGL ? (
+      {!expanded ? null : !hasToken ? (
         <MapUnavailablePlaceholder
-          provider="Mapbox"
+          provider="Google Maps"
           testID="schedule-daily-route-map-token-banner"
-          message="Mapbox token not configured. Route map requires a valid access token."
+          message="Google Maps API key not configured for this build."
         />
       ) : (
         <View style={s.mapWrap} testID="schedule-daily-route-map-canvas">
-          <MapboxGL.MapView
+          <MapView
+            ref={mapRef}
+            provider={PROVIDER_GOOGLE}
             style={s.map}
-            styleURL="mapbox://styles/mapbox/streets-v12"
-            logoEnabled={false}
-            attributionEnabled={false}
+            initialRegion={{
+              latitude: pins.length > 0 ? pins[0].coords.lat : 33.4484,
+              longitude: pins.length > 0 ? pins[0].coords.lng : -112.074,
+              latitudeDelta: pins.length === 1 ? 0.015 : 0.4,
+              longitudeDelta: pins.length === 1 ? 0.015 : 0.4,
+            }}
+            showsUserLocation={false}
+            showsMyLocationButton={false}
+            toolbarEnabled={false}
             testID="schedule-daily-route-map-view"
           >
-            <MapboxGL.Camera
-              ref={cameraRef}
-              zoomLevel={pins.length === 1 ? 15 : 10}
-              centerCoordinate={
-                pins.length > 0
-                  ? [pins[0].coords.lng, pins[0].coords.lat]
-                  : [-112.074, 33.4484]
-              }
-            />
             {pins.map((p) => (
-              <MapboxGL.PointAnnotation
+              <Marker
                 key={p.job.id}
-                id={`schedule-daily-route-map-pin-${p.job.id}`}
-                coordinate={[p.coords.lng, p.coords.lat]}
-                onSelected={() => setSelectedId(p.job.id)}
+                identifier={`schedule-daily-route-map-pin-${p.job.id}`}
+                coordinate={{
+                  latitude: p.coords.lat,
+                  longitude: p.coords.lng,
+                }}
+                anchor={{ x: 0.5, y: 0.5 }}
+                onPress={() => setSelectedId(p.job.id)}
+                tracksViewChanges={false}
               >
                 <RoutePinView pinKind={p.kind} num={p.num} jobId={p.job.id} />
-              </MapboxGL.PointAnnotation>
+              </Marker>
             ))}
-          </MapboxGL.MapView>
+          </MapView>
 
           {pins.length === 0 ? (
             <View style={s.emptyOverlay} testID="schedule-daily-route-map-no-coords">
@@ -561,6 +573,21 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
                   <Ionicons name="close" size={18} color={colors.muted} />
                 </Pressable>
               </View>
+              <Pressable
+                onPress={() =>
+                  openNativeNavTo(
+                    selectedPin.coords.lat,
+                    selectedPin.coords.lng,
+                    selectedPin.job.customer_name || undefined,
+                  )
+                }
+                style={s.navBtn}
+                testID="schedule-daily-route-map-callout-navigate"
+                accessibilityLabel="Navigate to this stop"
+              >
+                <Ionicons name="navigate" size={14} color="#fff" />
+                <Text style={s.openBtnLabel}>Navigate</Text>
+              </Pressable>
               <Pressable
                 onPress={() => openJob(selectedPin.job.id)}
                 style={s.openBtn}
@@ -743,6 +770,13 @@ const s = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "center",
     gap: 4,
     height: 36, borderRadius: radius.md, backgroundColor: colors.brand,
+    flex: 1,
+  },
+  navBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 4,
+    height: 36, borderRadius: radius.md, backgroundColor: "#059669",
+    flex: 1, marginBottom: 4,
   },
   openBtnLabel: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" },
 });

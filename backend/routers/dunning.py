@@ -271,7 +271,8 @@ def _render(template: str, ctx: Dict[str, Any]) -> str:
 
 
 async def _payment_link_for(invoice: Dict[str, Any],
-                              settings: Dict[str, Any]) -> str:
+                              settings: Dict[str, Any],
+                              *, src: str = "link") -> str:
     """Return a hosted payment-link URL (created + cached on the
     invoice), or the public magic-link viewer as fallback.
 
@@ -282,6 +283,12 @@ async def _payment_link_for(invoice: Dict[str, Any],
     ``stripe_payment_link``) is returned as-is. The magic-link viewer
     stays the reliable fallback so a paying customer never sees a
     dead page even if the Lumino dispatch is still in-flight.
+
+    Phase K47 · Feb 2026 — the ``src`` kwarg is forwarded onto the
+    magic-link URL so the resulting ``invoice_views`` row is
+    stamped with the send channel. Ignored when a cached
+    ``payment_link`` is returned (those URLs are minted upstream
+    by Lumino and have their own tracking).
     """
     cached = invoice.get("payment_link")
     if cached:
@@ -292,11 +299,14 @@ async def _payment_link_for(invoice: Dict[str, Any],
     # the public magic-link viewer instead so the fallback still
     # works for logged-out recipients.
     from services.pay_link_builder import build_pay_now_url
-    return build_pay_now_url(invoice["id"], invoice.get("tenant_id") or "")
+    return build_pay_now_url(
+        invoice["id"], invoice.get("tenant_id") or "", src=src,
+    )
 
 
 async def _build_context(invoice: Dict[str, Any], tenant: Dict[str, Any],
-                           settings: Dict[str, Any]) -> Dict[str, Any]:
+                           settings: Dict[str, Any],
+                           *, src: str = "link") -> Dict[str, Any]:
     customer = None
     if invoice.get("customer_id"):
         customer = await db.customers.find_one(
@@ -317,7 +327,7 @@ async def _build_context(invoice: Dict[str, Any], tenant: Dict[str, Any],
         "invoice_total": f"{float(invoice.get('total', 0)):.2f}",
         "due_date": due or "TBD",
         "days_past_due": days_past_due,
-        "payment_link": await _payment_link_for(invoice, settings),
+        "payment_link": await _payment_link_for(invoice, settings, src=src),
         "tenant_name": tenant.get("name") or "Your Business",
         "tenant_phone": (tenant.get("phone")
                            or (tenant.get("settings") or {}).get("phone")
@@ -378,24 +388,29 @@ async def _send_reminder(invoice: Dict[str, Any], stage: Dict[str, Any],
                             triggered_by: str = "auto") -> List[Dict[str, Any]]:
     """Send a reminder on the given stage. Returns list of persisted
     `dunning_reminders` docs (one per channel actually attempted)."""
-    ctx = await _build_context(invoice, tenant, settings)
+    # Phase K47 · Feb-2026 — build per-channel contexts so the
+    # ``payment_link`` embedded in the email vs SMS body carries
+    # the correct ``?src=`` tag; the receiving magic-link viewer
+    # uses this to stamp source on ``invoice_views``.
+    ctx_email = await _build_context(invoice, tenant, settings, src="email")
+    ctx_sms = await _build_context(invoice, tenant, settings, src="sms")
     chans = channels or stage["channels"]
-    subject = _render(stage.get("subject_template") or "", ctx)
-    body_text = _render(custom_message or stage.get("body_template") or "", ctx)
+    subject = _render(stage.get("subject_template") or "", ctx_email)
+    body_text = _render(custom_message or stage.get("body_template") or "", ctx_email)
     sms_text = _render(stage.get("sms_template") or stage.get("body_template")
-                        or "", ctx)
+                        or "", ctx_sms)
     persisted: List[Dict[str, Any]] = []
 
     for ch in chans:
         if ch == "email":
             result = await _send_email(
-                ctx.get("customer_email") or "",
-                subject, body_text, ctx["tenant_name"])
+                ctx_email.get("customer_email") or "",
+                subject, body_text, ctx_email["tenant_name"])
             doc = {
                 "id": new_id(), "tenant_id": tenant["id"],
                 "invoice_id": invoice["id"],
                 "stage_id": stage["id"], "channel": "email",
-                "recipient": ctx.get("customer_email") or "",
+                "recipient": ctx_email.get("customer_email") or "",
                 "subject": subject, "body": body_text,
                 "status": result["status"],
                 "error": result.get("error") or result.get("reason"),
@@ -404,7 +419,7 @@ async def _send_reminder(invoice: Dict[str, Any], stage: Dict[str, Any],
             }
         elif ch == "sms":
             result = await _send_sms(
-                ctx.get("customer_phone") or "", sms_text,
+                ctx_sms.get("customer_phone") or "", sms_text,
                 tenant_id=tenant["id"],
                 customer_id=invoice.get("customer_id"),
             )
@@ -412,7 +427,7 @@ async def _send_reminder(invoice: Dict[str, Any], stage: Dict[str, Any],
                 "id": new_id(), "tenant_id": tenant["id"],
                 "invoice_id": invoice["id"],
                 "stage_id": stage["id"], "channel": "sms",
-                "recipient": ctx.get("customer_phone") or "",
+                "recipient": ctx_sms.get("customer_phone") or "",
                 "subject": "", "body": sms_text,
                 "status": result["status"],
                 "error": result.get("error") or result.get("reason"),

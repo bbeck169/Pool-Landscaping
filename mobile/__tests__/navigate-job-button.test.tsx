@@ -108,17 +108,17 @@ describe("NavigateJobButton · component", () => {
     console.log("✅ NJB-C1: renders with lat/lng + opens maps");
   });
 
-  it("renders for job with address only", async () => {
+  it("Phase K46 · shows alert toast when only an address is present (K46 is coord-only)", () => {
     const tree = render(
       <NavigateJobButton job={job({ latitude: null, longitude: null })} />
     );
     fireEvent.press(tree.getByTestId("schedule-job-nav-job-1"));
-    await waitFor(() => {
-      expect(mockOpenURL).toHaveBeenCalledTimes(1);
-    });
-    const url = mockOpenURL.mock.calls[0][0];
-    expect(url).toContain("Vistancia");
-    console.log("✅ NJB-C2: renders with address-only fallback");
+    expect(mockAlertFn).toHaveBeenCalledWith(
+      "No address on file",
+      "This job has no coordinates to navigate to.",
+    );
+    expect(mockOpenURL).not.toHaveBeenCalled();
+    console.log("✅ NJB-C2 (K46): address-only → alert (coord-only nav)");
   });
 
   it("disabled state shows alert toast when no address or coords", () => {
@@ -128,7 +128,7 @@ describe("NavigateJobButton · component", () => {
     fireEvent.press(tree.getByTestId("schedule-job-nav-job-1"));
     expect(mockAlertFn).toHaveBeenCalledWith(
       "No address on file",
-      "This job has no address or coordinates.",
+      "This job has no coordinates to navigate to.",
     );
     expect(mockOpenURL).not.toHaveBeenCalled();
     console.log("✅ NJB-C3: disabled → toast, no openURL");
@@ -148,17 +148,18 @@ describe("NavigateJobButton · component", () => {
     console.log("✅ NJB-C4: coords preferred over address");
   });
 
-  it("(0,0) coords fall back to address", async () => {
+  it("Phase K46 · (0,0) coords are rejected (K46 is coord-only, no address fallback)", () => {
     const tree = render(
       <NavigateJobButton job={job({ latitude: 0, longitude: 0 })} />
     );
     fireEvent.press(tree.getByTestId("schedule-job-nav-job-1"));
-    await waitFor(() => {
-      expect(mockOpenURL).toHaveBeenCalled();
-    });
-    const url = mockOpenURL.mock.calls[0][0];
-    expect(url).toContain("Vistancia");
-    console.log("✅ NJB-C5: (0,0) → falls back to address");
+    // (0,0) is treated as un-geocoded → no coords → alert (no fallback to address).
+    expect(mockAlertFn).toHaveBeenCalledWith(
+      "No address on file",
+      "This job has no coordinates to navigate to.",
+    );
+    expect(mockOpenURL).not.toHaveBeenCalled();
+    console.log("✅ NJB-C5 (K46): (0,0) → alert, no address fallback");
   });
 
   it("onPress doesn't bubble to parent row", () => {

@@ -542,6 +542,12 @@ api_router.include_router(_lz1_link_callback.router)
 # Feb 2026 — Admin invoice edit (PATCH + audit history).
 from routers import invoice_edit as _invoice_edit  # noqa: E402
 api_router.include_router(_invoice_edit.router)
+# Phase K47 · Feb-2026 — Admin invoice view-tracking history endpoint
+# (GET /invoices/{iid}/views). Companion to the tracker service that
+# records every customer-facing view of an invoice on the magic-link
+# and portal read paths.
+from routers import invoice_views as _k47_invoice_views  # noqa: E402
+api_router.include_router(_k47_invoice_views.router)
 # Phase H5 · Feb-2026 — Crew Productivity tile endpoint. Admin-only
 # weekly / monthly revenue-per-crew rollup for the admin dashboard.
 # Job attribution follows the F6a semantic (crew_id OR
@@ -1393,6 +1399,19 @@ async def _background_seed():
         logger.info(f"[perf-customers-v1] {_pcv1_res}")
     except Exception as e:
         logger.warning(f"perf_customers_indexes crashed: {e}")
+
+    # Phase K47 · Feb-2026 — ``invoice_views`` collection indexes for
+    # the view-tracking feature. Idempotent + best-effort — if the
+    # bootstrap fails the tracker will still record events (Mongo
+    # falls back to a collection scan for the history endpoint).
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
+        from services.invoice_view_tracker import ensure_invoice_view_indexes
+        await ensure_invoice_view_indexes()
+        logger.info("[k47-invoice-views] indexes ensured")
+    except Exception as e:
+        logger.warning(f"k47_invoice_views ensure_indexes crashed: {e}")
 
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.

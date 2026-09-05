@@ -23,6 +23,7 @@ import { useStripeConfig } from "@/src/config/stripe";
 import { getInvoiceFull, type InvoiceFull } from "@/src/api/invoices";
 import { createPaymentIntent } from "@/src/api/payments";
 import { InvoiceAttachments } from "@/src/components/files";
+import InvoiceViewHistory from "@/src/components/invoices/InvoiceViewHistory";
 import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
@@ -424,6 +425,10 @@ export default function InvoiceDetail() {
 
         {/* F2b — Attachments */}
         <InvoiceAttachments docId={id!} isInvoice={true} user={user} />
+
+        {/* Phase K47 · Feb-2026 — Invoice view history (admin only,
+            self-hides on 403 for customer/technician callers). */}
+        <InvoiceViewHistory invoiceId={id!} />
       </ScrollView>
 
       {/* Payment WebView Modal */}

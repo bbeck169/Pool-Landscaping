@@ -199,7 +199,21 @@ module.exports = {
           isAndroidForegroundServiceEnabled: true,
         },
       ],
-      ["@rnmapbox/maps", {}],
+      // Phase K46 · Feb-2026 — ``@rnmapbox/maps`` plugin removed.
+      //
+      //   Mapbox's native initializer was the root cause of the
+      //   Phase K45 Android white-screen crash — the module's
+      //   Objective-C / Java constructor threw before any JS runs
+      //   when the access token wasn't wired at build time,
+      //   blanking the shell. K46 rips Mapbox out entirely and
+      //   standardises on Google Maps via ``react-native-maps``.
+      //   See ``memory/PHASE_K46_GOOGLE_MAPS_MIGRATION.md`` for
+      //   the full migration rationale. ``react-native-maps`` does
+      //   not require a config plugin — its Google Maps API keys
+      //   are consumed directly from ``ios.config.googleMapsApiKey``
+      //   / ``android.config.googleMaps.apiKey`` above. An EAS
+      //   rebuild is required after K46 lands because the native
+      //   auto-linked manifest changes.
       [
         "expo-audio",
         {
@@ -233,7 +247,12 @@ module.exports = {
 
     /* ─── Extra ────────────────────────────────────────────── */
     extra: {
-      mapboxToken: process.env.EXPO_PUBLIC_MAPBOX_TOKEN || "",
+      // Phase K46 · Feb-2026 — ``mapboxToken`` removed. Mapbox has
+      // been ripped out of the mobile stack (see plugins block
+      // above). Any lingering runtime reads of
+      // ``Constants.expoConfig.extra.mapboxToken`` will read as
+      // ``undefined`` — the K46 map surfaces all use
+      // ``hasGoogleMapsKey()`` from ``@/src/utils/mapsKey`` instead.
       eas: {
         projectId: "bdd4bc95-5d7c-46d8-8243-0b6ed1e9aa19",
       },

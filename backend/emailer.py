@@ -113,7 +113,9 @@ def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
         pay_link = portal_cta_url
     else:
         from services.pay_link_builder import build_pay_now_url
-        pay_link = build_pay_now_url(inv["id"], inv.get("tenant_id") or "")
+        pay_link = build_pay_now_url(
+            inv["id"], inv.get("tenant_id") or "", src="email",
+        )
     link_html = f'<p><a href="{pay_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Pay Now</a></p>' if pay_link else ""
     # Phase B1 · Feb 2026 — F2b attachment-count copy.
     n = max(0, int(attachment_count or 0))

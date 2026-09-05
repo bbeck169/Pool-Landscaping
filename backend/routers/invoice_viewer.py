@@ -28,7 +28,7 @@ import os
 from io import BytesIO
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 from config import db, logger
@@ -259,9 +259,32 @@ async def _build_viewer_payload(iid: str, tenant: dict, user: dict) -> Dict[str,
 
 @router.get("/invoices/{iid}/full")
 async def get_invoice_full(iid: str,
+                            request: Request,
                             user: dict = Depends(get_current_user),
                             tenant: dict = Depends(get_current_tenant)):
-    return await _build_viewer_payload(iid, tenant, user)
+    result = await _build_viewer_payload(iid, tenant, user)
+
+    # Phase K47 · Feb-2026 — record portal-authenticated customer
+    # views. Admin/office/dispatcher views are NOT tracked here
+    # (this is a customer-engagement signal, not an internal
+    # audit log). The magic-link viewer records email/sms opens in
+    # a separate hook — see ``routers/invoice_magic_view.py``.
+    if (user.get("role") or "").lower() == "customer":
+        try:
+            from services.invoice_view_tracker import record_invoice_view
+            ua = request.headers.get("user-agent")
+            ip = request.client.host if request.client is not None else None
+            await record_invoice_view(
+                invoice_id=iid,
+                tenant_id=tenant["id"],
+                source="portal",
+                user_agent=ua,
+                ip=ip,
+            )
+        except Exception:  # pragma: no cover — defensive
+            pass
+
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════

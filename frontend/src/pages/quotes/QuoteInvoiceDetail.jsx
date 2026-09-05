@@ -24,6 +24,9 @@ import PaymentForm from "@/components/PaymentForm";
 import { useAuth } from "@/auth";
 import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
+// Phase K47 · Feb-2026 — View-history card (admin/office/dispatcher
+// only; the component hides itself when the endpoint 403s).
+import InvoiceViewHistory from "@/components/invoices/InvoiceViewHistory";
 import { Button, Skeleton, StatusPill, Modal, TextInput, Toast, Chip } from "@/components/ui-kit";
 
 // ─── Pure helpers · exported for Vitest ────────────────────────────────
@@ -636,6 +639,11 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           read-only list; upload UI is gated on role inside the
           component. */}
       <InvoiceAttachments docId={doc.id} isInvoice={isInvoice} user={user} />
+
+      {/* Phase K47 · Feb-2026 — Invoice view-history card. Only
+          rendered on invoices (quotes have their own separate
+          audit tab) and only for staff-authenticated views. */}
+      {isInvoice && isStaff && <InvoiceViewHistory invoiceId={doc.id} />}
 
       {/* Terms & Conditions */}
       <div

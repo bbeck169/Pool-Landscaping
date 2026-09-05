@@ -827,6 +827,12 @@ async def invoices_overview(user: dict = Depends(require_admin),
             "charge_failed": charge_failed,
             "charge_error": d.get("charge_error", "") if charge_failed else "",
             "charge_failed_at": d.get("charge_failed_at") if charge_failed else None,
+            # Phase K47 · Feb-2026 — surface the denormalised view
+            # aggregates so the invoices list "Viewed Nd ago" pill
+            # renders without an extra roundtrip per row.
+            "first_viewed_at": d.get("first_viewed_at"),
+            "last_viewed_at": d.get("last_viewed_at"),
+            "view_count": int(d.get("view_count") or 0),
         }
         out.append(row)
         summary["outstanding"]["count"] += 1

@@ -33,22 +33,42 @@ jest.mock("expo-router", () => ({
   useRouter: () => ({ push: mockRouterPush }),
 }));
 
-// @rnmapbox/maps — mirror the mock used in schedule-daily-route-map.test.tsx.
-jest.mock("@rnmapbox/maps", () => {
+// Phase K46 · react-native-maps — mirror the mock used in
+// schedule-daily-route-map.test.tsx. MapView acts as a passthrough
+// View; Marker forwards its ``onPress`` and identifier so callout
+// interactions remain queryable in Jest.
+jest.mock("react-native-maps", () => {
   const RN = require("react-native");
   const R = require("react");
-  const Passthrough = R.forwardRef((props: any, ref: any) =>
-    R.createElement(RN.View, { ref, testID: props.testID }, props.children),
-  );
-  const CameraMock = R.forwardRef((_props: any, ref: any) => {
-    R.useImperativeHandle(ref, () => ({ fitBounds: jest.fn(), setCamera: jest.fn() }), []);
-    return null;
+  const MapViewMock = R.forwardRef((props: any, ref: any) => {
+    R.useImperativeHandle(
+      ref,
+      () => ({
+        fitToCoordinates: jest.fn(),
+        animateToRegion: jest.fn(),
+        animateCamera: jest.fn(),
+      }),
+      [],
+    );
+    return R.createElement(
+      RN.View,
+      { ref, testID: props.testID },
+      props.children,
+    );
   });
-  const PointAnnotationMock = (props: any) =>
-    R.createElement(RN.Pressable, { testID: props.id, onPress: props.onSelected }, props.children);
+  const MarkerMock = (props: any) =>
+    R.createElement(
+      RN.Pressable,
+      { testID: props.identifier, onPress: props.onPress },
+      props.children,
+    );
   return {
     __esModule: true,
-    default: { MapView: Passthrough, Camera: CameraMock, PointAnnotation: PointAnnotationMock },
+    default: MapViewMock,
+    Marker: MarkerMock,
+    Callout: (p: any) => R.createElement(RN.View, null, p.children),
+    Polyline: () => null,
+    PROVIDER_GOOGLE: "google",
   };
 });
 
@@ -77,7 +97,6 @@ jest.mock("@/src/auth", () => ({
 }));
 
 const AsyncStorageMock = require("@react-native-async-storage/async-storage");
-const ORIG_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 
 /* ── Component under test ──────────────────────────────────────── */
 
@@ -133,15 +152,10 @@ beforeEach(() => {
   mockGetCurrentPosition.mockReset();
   mockAuthUser.role = "technician";
   mockAuthUser.id = "u_tech";
-  process.env.EXPO_PUBLIC_MAPBOX_TOKEN = "pk.test.token";
 });
 
 afterEach(() => {
   jest.useRealTimers();
-});
-
-afterAll(() => {
-  process.env.EXPO_PUBLIC_MAPBOX_TOKEN = ORIG_TOKEN;
 });
 
 /** Mount + settle initial auto-preview call so `showPill` derives cleanly. */

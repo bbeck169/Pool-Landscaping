@@ -553,6 +553,11 @@ export default function InvoicesList() {
                 <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Customer</th>
                 <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>Due</th>
                 <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Amount</th>
+                {/* Phase K47 · Feb-2026 — "Viewed" indicator column
+                    shows a small eye icon + relative "Nd ago" for
+                    any invoice with ``first_viewed_at`` populated.
+                    Empty for invoices that have never been opened. */}
+                <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>Viewed</th>
                 <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Status</th>
               </tr>
             </thead>
@@ -582,6 +587,40 @@ export default function InvoicesList() {
                   <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-row-customer-${r.id}`}>{formatCustomerName(r)}</td>
                   <td className="px-3 py-3 hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.due_date || "—"}</td>
                   <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)}>{money(r.total)}</td>
+                  {/* Phase K47 · Feb-2026 — Viewed indicator */}
+                  <td
+                    className="px-3 py-3 hidden lg:table-cell"
+                    style={{ color: colors.onSurfaceSecondary }}
+                    onClick={() => navigate(`/invoices/${r.id}`)}
+                    data-testid={`invoice-viewed-${r.id}`}
+                  >
+                    {r.first_viewed_at ? (
+                      <span title={r.last_viewed_at || r.first_viewed_at} className="inline-flex items-center gap-1 text-xs">
+                        <span aria-hidden>👁</span>
+                        {(() => {
+                          const iso = r.last_viewed_at || r.first_viewed_at;
+                          const ts = Date.parse(iso);
+                          if (Number.isNaN(ts)) return "seen";
+                          const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+                          if (diffSec < 60) return `${diffSec}s ago`;
+                          const m = Math.floor(diffSec / 60);
+                          if (m < 60) return `${m}m ago`;
+                          const h = Math.floor(m / 60);
+                          if (h < 24) return `${h}h ago`;
+                          const d = Math.floor(h / 24);
+                          if (d < 30) return `${d}d ago`;
+                          return `${Math.floor(d / 30)}mo ago`;
+                        })()}
+                        {r.view_count > 1 ? (
+                          <span className="ml-1 text-[10px]" style={{ color: colors.muted }} data-testid={`invoice-view-count-${r.id}`}>
+                            ({r.view_count}×)
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className="text-xs" style={{ color: colors.muted }}>—</span>
+                    )}
+                  </td>
                   <td className="px-3 py-3" onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-card-${r.id}`}>
                     {r.has_payment_method
                       ? <span className="text-xs font-semibold" style={{ color: colors.success }}>✓ {r.pm_label || "On file"}</span>

@@ -10,7 +10,7 @@
 import React, { useRef } from "react";
 import { Pressable, StyleSheet, Alert, Animated } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { resolveDestination, openMaps } from "@/src/services/navigation/mapsDeepLink";
+import { openNativeNavTo } from "@/src/utils/nativeNav";
 import { colors } from "@/src/theme";
 
 type Props = {
@@ -18,14 +18,52 @@ type Props = {
     id: string;
     latitude?: number | null;
     longitude?: number | null;
+    location_lat?: number | null;
+    location_lng?: number | null;
     address?: string;
     customer_name?: string;
   } | null;
 };
 
+/**
+ * K46 · Resolve a job's destination for native navigation.
+ *
+ * Coord priority (finite, non-(0,0)):
+ *   1. ``job.latitude`` / ``job.longitude`` (canonical shape used
+ *      throughout the schedule surfaces)
+ *   2. ``job.location_lat`` / ``job.location_lng`` (legacy shape
+ *      still emitted by a couple of older endpoints)
+ *
+ * If coords are unavailable we return ``null`` — the button
+ * disables itself and shows an "address on file" toast. Address-only
+ * navigation is intentionally NOT supported by the K46 native-nav
+ * helper (which is coord-only by design — see ``nativeNav.ts``).
+ * Any consumer that needs address-based deep links should keep
+ * using the legacy ``services/navigation/mapsDeepLink.ts`` path.
+ */
+function _resolveCoords(job: Props["job"]): { lat: number; lng: number } | null {
+  if (!job) return null;
+  const pairs = [
+    [job.latitude, job.longitude],
+    [job.location_lat, job.location_lng],
+  ];
+  for (const [rawLat, rawLng] of pairs) {
+    const lat = Number(rawLat);
+    const lng = Number(rawLng);
+    if (
+      Number.isFinite(lat) &&
+      Number.isFinite(lng) &&
+      !(lat === 0 && lng === 0)
+    ) {
+      return { lat, lng };
+    }
+  }
+  return null;
+}
+
 export default function NavigateJobButton({ job }: Props) {
-  const dest = resolveDestination(job);
-  const disabled = !dest;
+  const coords = _resolveCoords(job);
+  const disabled = !coords;
   const customerName = job?.customer_name || "customer";
   const label = disabled
     ? "No address on file"
@@ -42,11 +80,14 @@ export default function NavigateJobButton({ job }: Props) {
   };
 
   const onPress = () => {
-    if (disabled) {
-      Alert.alert("No address on file", "This job has no address or coordinates.");
+    if (!coords) {
+      Alert.alert("No address on file", "This job has no coordinates to navigate to.");
       return;
     }
-    openMaps(dest!);
+    // K46 · Deep-link to the platform's native navigation app via
+    // the shared helper — silent fallback to the universal HTTPS
+    // Google Maps URL if the native scheme fails.
+    openNativeNavTo(coords.lat, coords.lng, customerName);
   };
 
   return (

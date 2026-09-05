@@ -262,6 +262,33 @@ export default function Invoices() {
                 </View>
                 <Text style={styles.customer}>{formatCustomerName(item)}</Text>
                 <Text style={[styles.due, item.past_due && { color: colors.error }]}>{dueLabel(item)}</Text>
+                {/* Phase K47 · Feb-2026 — "Viewed Nd ago" indicator.
+                    Reads the denormalised aggregate fields off the
+                    invoice doc; if the overview endpoint hasn't
+                    been backfilled with these fields yet the pill
+                    simply doesn't render (graceful). */}
+                {item.first_viewed_at ? (
+                  <View style={styles.viewedRow} testID={`invoice-viewed-${item.id}`}>
+                    <Ionicons name="eye-outline" size={12} color={colors.onSurfaceSecondary} />
+                    <Text style={styles.viewedText}>
+                      Viewed {(() => {
+                        const iso = item.last_viewed_at || item.first_viewed_at;
+                        const ts = Date.parse(iso);
+                        if (Number.isNaN(ts)) return "recently";
+                        const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+                        if (diffSec < 60) return `${diffSec}s ago`;
+                        const m = Math.floor(diffSec / 60);
+                        if (m < 60) return `${m}m ago`;
+                        const h = Math.floor(m / 60);
+                        if (h < 24) return `${h}h ago`;
+                        const d = Math.floor(h / 24);
+                        if (d < 30) return `${d}d ago`;
+                        return `${Math.floor(d / 30)}mo ago`;
+                      })()}
+                      {item.view_count > 1 ? ` · ${item.view_count}×` : ""}
+                    </Text>
+                  </View>
+                ) : null}
                 <View style={styles.amountRow}>
                   <View>
                     <Text style={styles.balanceLabel}>Balance due</Text>
@@ -357,6 +384,8 @@ const styles = StyleSheet.create({
   title: { flex: 1, fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
   customer: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },
   due: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.onSurfaceSecondary, marginTop: 2 },
+  viewedRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
+  viewedText: { fontFamily: font.regular, fontSize: fontSize.xs, color: colors.onSurfaceSecondary },
   amountRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginTop: spacing.sm },
   balanceLabel: { fontFamily: font.regular, fontSize: 11, color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5 },
   balance: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface },

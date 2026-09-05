@@ -1,4 +1,14 @@
-// Phase 38b · Feb-2026 — Live Tech Pins map source-inspection.
+// Phase K46 · Feb-2026 — Google-only maps migration source-inspection.
+//
+// Locks in the K46 landing state so any accidental re-introduction
+// of @rnmapbox/maps or the HERE plugin fails the suite. Was the
+// Phase 38b test before K46; the Mapbox contract lock-in tests
+// were flipped to "Mapbox must be absent" as part of the
+// migration.
+//
+// NOTE — the mobile app has always used ``app.config.js`` (dynamic
+// Expo config, Phase K29). ``app.json`` does not exist; the K46
+// suite reads ``app.config.js`` directly.
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -9,75 +19,93 @@ const F = (rel) => resolve(MOBILE, rel);
 const R = (rel) => existsSync(F(rel)) ? readFileSync(F(rel), "utf8") : "";
 
 const PKG_PATH = F("package.json");
-const APP_JSON = F("app.json");
-const ENV_FILE = F(".env");
-const BOARD = F("app/(app)/dispatch/board.tsx");
+const APP_CFG = F("app.config.js");
 const MAP = F("src/components/dispatch/LiveTechPinsMap.tsx");
 const WRAP = F("src/components/dispatch/LiveTechPinsWrapper.tsx");
-const RUNBOOK = F("EXPO_GO_RUNBOOK.md");
+const MAPS_KEY = F("src/utils/mapsKey.tsx");
+const NATIVE_NAV = F("src/utils/nativeNav.ts");
+const NAV_JOB_BTN = F("src/components/schedule/NavigateJobButton.tsx");
+const DAILY_ROUTE_MAP = F("src/components/schedule/DailyRouteMap.native.tsx");
+const ROOT_LAYOUT = F("app/_layout.tsx");
 
-describe("Phase 38b · Mapbox dep + config", () => {
+describe("Phase K46 · Mapbox dep + config fully removed", () => {
   const pkg = readFileSync(PKG_PATH, "utf8");
-  const app = readFileSync(APP_JSON, "utf8");
+  const app = readFileSync(APP_CFG, "utf8");
 
-  it("adds @rnmapbox/maps@^10.1.x to mobile/package.json", () => {
-    expect(pkg).toMatch(/"@rnmapbox\/maps"\s*:\s*"\^?10\.1\./);
+  it("removes @rnmapbox/maps from mobile/package.json", () => {
+    expect(pkg).not.toMatch(/"@rnmapbox\/maps"\s*:/);
   });
 
-  it("registers the @rnmapbox/maps expo config plugin in app.json", () => {
-    expect(app).toContain('"@rnmapbox/maps"');
-    expect(app).toContain('$EXPO_PUBLIC_MAPBOX_TOKEN');
+  it("removes the @rnmapbox/maps expo config plugin from app.config.js", () => {
+    // Strip line-comments before scanning — the migration note
+    // legitimately mentions the removed module by name.
+    const stripped = app.replace(/\/\/[^\n]*\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "");
+    // A bare-string plugin like ``"@rnmapbox/maps"`` or a tuple
+    // ``["@rnmapbox/maps", {...}]`` would fail the guard.
+    expect(stripped).not.toMatch(/["'`]@rnmapbox\/maps["'`]/);
   });
 
-  it("exposes the token to Constants.expoConfig.extra.mapboxToken", () => {
-    expect(app).toContain('"extra"');
-    expect(app).toContain('"mapboxToken"');
+  it("removes the mapboxToken expo-extra plumbing from app.config.js", () => {
+    // The comment documents the removal; the actual `mapboxToken:`
+    // assignment must be gone.
+    expect(app).not.toMatch(/mapboxToken:\s*process\.env\.EXPO_PUBLIC_MAPBOX_TOKEN/);
   });
 
-  it("adds the EXPO_PUBLIC_MAPBOX_TOKEN placeholder to mobile/.env", () => {
-    const env = readFileSync(ENV_FILE, "utf8");
-    expect(env).toMatch(/EXPO_PUBLIC_MAPBOX_TOKEN=/);
+  it("keeps the Google Maps API-key plumbing intact for Android + iOS", () => {
+    expect(app).toContain("EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY");
+    expect(app).toContain("EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY");
   });
 });
 
-describe("Phase 38b · Live pins map component (LiveTechPinsMap.tsx)", () => {
+describe("Phase K46 · LiveTechPinsMap uses react-native-maps + Google", () => {
   const src = R("src/components/dispatch/LiveTechPinsMap.tsx");
   it("file exists", () => expect(existsSync(MAP)).toBe(true));
-  it('imports the @rnmapbox/maps module', () => {
-    expect(src).toMatch(/require\(["']@rnmapbox\/maps["']\)/);
+  it("imports react-native-maps with the Google provider", () => {
+    expect(src).toMatch(/from\s+["']react-native-maps["']/);
+    expect(src).toContain("PROVIDER_GOOGLE");
   });
-  it("cycles through three tile styles (streets / satellite / dark)", () => {
-    expect(src).toContain("streets-v12");
-    expect(src).toContain("satellite-streets-v12");
-    expect(src).toContain("dark-v11");
+  it("does NOT import @rnmapbox/maps any more", () => {
+    // Match only real import/require statements — a comment/docstring
+    // may legitimately reference the removed module for context.
+    expect(src).not.toMatch(/require\(["']@rnmapbox\/maps["']\)/);
+    expect(src).not.toMatch(/from\s+["']@rnmapbox\/maps["']/);
+    expect(src).not.toContain("MapboxGL");
+  });
+  it("cycles Google mapType (standard/satellite/hybrid) — no more Mapbox style URLs", () => {
+    expect(src).toContain("standard");
+    expect(src).toContain("satellite");
+    expect(src).toContain("hybrid");
+    expect(src).not.toContain("streets-v12");
+    expect(src).not.toContain("mapbox://");
   });
   it("persists the chosen style in AsyncStorage under dispatch_map_style_v1", () => {
     expect(src).toContain('"dispatch_map_style_v1"');
     expect(src).toMatch(/AsyncStorage\.(getItem|setItem)/);
   });
-  it("reads the Mapbox token from EXPO_PUBLIC_MAPBOX_TOKEN or Constants.extra (never hardcoded)", () => {
-    expect(src).toMatch(/EXPO_PUBLIC_MAPBOX_TOKEN/);
-    expect(src).toMatch(/Constants\.expoConfig/);
-    // Sanity: no obvious pk.xxxx literal that would leak a token.
-    expect(src).not.toMatch(/pk\.[a-zA-Z0-9]{20,}/);
+  it("guards missing Google Maps key via hasGoogleMapsKey()", () => {
+    expect(src).toContain("hasGoogleMapsKey");
+    expect(src).toContain("dispatch-live-map-no-token");
   });
   it("exposes the theme toggle testID + per-pin testIDs", () => {
     expect(src).toContain("dispatch-live-map-style-toggle");
     expect(src).toContain("dispatch-live-pin-");
   });
+  it("carries no hardcoded API keys", () => {
+    expect(src).not.toMatch(/pk\.[a-zA-Z0-9]{20,}/);
+    expect(src).not.toMatch(/AIzaSy[a-zA-Z0-9_-]{20,}/);
+  });
 });
 
-describe("Phase 38b · Wrapper (LiveTechPinsWrapper.tsx)", () => {
+describe("Phase K46 · LiveTechPinsWrapper (dynamic-require removed)", () => {
   const src = R("src/components/dispatch/LiveTechPinsWrapper.tsx");
   it("file exists", () => expect(existsSync(WRAP)).toBe(true));
-  it("dynamic-requires the map inside try/catch (Expo Go safe)", () => {
-    // Pattern: try { MapImpl = require(...) } catch { importError = ... }
-    expect(src).toMatch(/try\s*\{[\s\S]*require\(["']@\/src\/components\/dispatch\/LiveTechPinsMap["']\)/);
-    expect(src).toMatch(/catch\s*\(/);
+  it("statically imports LiveTechPinsMap (no more try/catch require)", () => {
+    expect(src).toMatch(/import\s+LiveTechPinsMap[\s\S]*?from\s+["']@\/src\/components\/dispatch\/LiveTechPinsMap["']/);
+    expect(src).not.toMatch(/try\s*\{[\s\S]*require\(["']@\/src\/components\/dispatch\/LiveTechPinsMap["']\)/);
   });
-  it("renders the fallback banner testID when the map module is missing", () => {
-    expect(src).toContain("dispatch-live-map-fallback");
-    expect(src).toContain("EXPO_GO_RUNBOOK");
+  it("no longer renders the dev-client fallback banner (react-native-maps is universal)", () => {
+    expect(src).not.toContain("dispatch-live-map-fallback");
+    expect(src).not.toContain("EXPO_GO_RUNBOOK");
   });
   it("polls /gps/live-positions at 15s cadence", () => {
     expect(src).toContain("/gps/live-positions");
@@ -91,10 +119,9 @@ describe("Phase 38b · Wrapper (LiveTechPinsWrapper.tsx)", () => {
   it("persists the collapsible expanded state under dispatch_map_expanded_v1", () => {
     expect(src).toContain('"dispatch_map_expanded_v1"');
   });
-  it("carries the required testIDs (map, toggle, offline, no-token, strip)", () => {
+  it("carries the required testIDs (map, toggle, strip)", () => {
     expect(src).toContain("dispatch-live-map");
     expect(src).toContain("dispatch-live-map-toggle");
-    expect(src).toContain("dispatch-live-map-no-token");
     expect(src).toContain("dispatch-live-map-strip");
   });
   it("pin tap navigates to /dispatch/shift-route (ShiftRouteDialog)", () => {
@@ -105,10 +132,51 @@ describe("Phase 38b · Wrapper (LiveTechPinsWrapper.tsx)", () => {
   });
 });
 
-describe("Phase 38b · Board wiring", () => {
+describe("Phase K46 · mapsKey helper — Mapbox removed", () => {
+  const src = R("src/utils/mapsKey.tsx");
+  it("file exists", () => expect(existsSync(MAPS_KEY)).toBe(true));
+  it("hasGoogleMapsKey remains exported", () => {
+    expect(src).toMatch(/export function hasGoogleMapsKey/);
+  });
+  it("hasMapboxToken export is gone", () => {
+    expect(src).not.toMatch(/export function hasMapboxToken/);
+  });
+});
+
+describe("Phase K46 · nativeNav helper + wired consumers", () => {
+  const nav = R("src/utils/nativeNav.ts");
+  const btn = R("src/components/schedule/NavigateJobButton.tsx");
+  const map = R("src/components/schedule/DailyRouteMap.native.tsx");
+
+  it("nativeNav.ts exports openNativeNavTo", () => {
+    expect(existsSync(NATIVE_NAV)).toBe(true);
+    expect(nav).toMatch(/export async function openNativeNavTo/);
+  });
+
+  it("NavigateJobButton uses openNativeNavTo", () => {
+    expect(existsSync(NAV_JOB_BTN)).toBe(true);
+    expect(btn).toContain("openNativeNavTo");
+    expect(btn).toMatch(/from\s+["']@\/src\/utils\/nativeNav["']/);
+  });
+
+  it("DailyRouteMap.native uses openNativeNavTo (callout Navigate)", () => {
+    expect(existsSync(DAILY_ROUTE_MAP)).toBe(true);
+    expect(map).toContain("openNativeNavTo");
+    expect(map).toContain("schedule-daily-route-map-callout-navigate");
+  });
+});
+
+describe("Phase K46 · root layout Mapbox guard removed", () => {
+  const src = R("app/_layout.tsx");
+  it("no longer references EXPO_PUBLIC_MAPBOX_TOKEN", () => {
+    expect(src).not.toContain("EXPO_PUBLIC_MAPBOX_TOKEN");
+  });
+});
+
+describe("Phase K46 · Board wiring (unchanged surface)", () => {
   const src = R("app/(app)/dispatch/board.tsx");
   it("imports the wrapper", () => {
-    expect(src).toContain('LiveTechPinsWrapper');
+    expect(src).toContain("LiveTechPinsWrapper");
     expect(src).toContain('from "@/src/components/dispatch/LiveTechPinsWrapper"');
   });
   it("renders <LiveTechPinsWrapper /> in the board", () => {
@@ -120,17 +188,5 @@ describe("Phase 38b · Board wiring", () => {
     expect(src).toContain("dispatch-open-shift-route");
     expect(src).toContain('from "@/src/components/dispatch/TechLoadStrip"');
     expect(src).toContain('from "@/src/components/dispatch/UnroutedPanel"');
-  });
-});
-
-describe("Phase 38b · Runbook", () => {
-  const src = existsSync(RUNBOOK) ? readFileSync(RUNBOOK, "utf8") : "";
-  it("EXPO_GO_RUNBOOK.md exists", () => expect(existsSync(RUNBOOK)).toBe(true));
-  it("documents the Phase 38b Mapbox setup steps", () => {
-    expect(src).toContain("Phase 38b");
-    expect(src).toContain("@rnmapbox/maps");
-    expect(src).toContain("EXPO_PUBLIC_MAPBOX_TOKEN");
-    expect(src).toContain("npx expo prebuild --clean");
-    expect(src).toContain("eas build --profile development");
   });
 });

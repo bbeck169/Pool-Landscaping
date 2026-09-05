@@ -3,7 +3,7 @@
  *
  * Covers 9 behavioural assertions of DailyRouteMap.tsx:
  *   1. Returns null (hides entire component) when 0 jobs.
- *   2. Renders the fallback banner when EXPO_PUBLIC_MAPBOX_TOKEN is missing.
+ *   2. Renders the fallback banner when the Google Maps API key is missing.
  *   3. Renders one numbered pin per job that resolves coords; jobs
  *      without coords stay off the map (still would show in list).
  *   4. Pin numbers use job.route_index when present.
@@ -24,6 +24,26 @@ import { render, fireEvent, waitFor, act } from "@testing-library/react-native";
 
 /* ── Mocks ─────────────────────────────────────────────────────────── */
 
+// Phase K46 · The Google Maps key helper. Default: available (matches
+// iOS Apple-Maps default). Individual tests override via
+// ``mockHasGoogleMapsKey.mockReturnValueOnce(false)`` to exercise
+// the fallback banner path.
+const mockHasGoogleMapsKey = jest.fn(() => true);
+jest.mock("@/src/utils/mapsKey", () => {
+  const R = require("react");
+  const RN = require("react-native");
+  return {
+    hasGoogleMapsKey: (...args: any[]) => mockHasGoogleMapsKey(...args),
+    MapUnavailablePlaceholder: (props: any) =>
+      R.createElement(
+        RN.View,
+        { testID: props.testID },
+        R.createElement(RN.Text, null, `${props.provider || "Map"} unavailable`),
+        R.createElement(RN.Text, null, props.message || ""),
+      ),
+  };
+});
+
 // AsyncStorage — use the official jest mock so `.getItem`/`.setItem`
 // resolve cleanly without hitting the null native module.
 jest.mock("@react-native-async-storage/async-storage", () =>
@@ -35,53 +55,54 @@ jest.mock("expo-router", () => ({
   useRouter: () => ({ push: mockRouterPush }),
 }));
 
-// @rnmapbox/maps — no native module in Jest. Render the children so
-// PointAnnotation children (our RoutePinView) mount and their inner
-// testIDs are queryable via getByTestId. Camera + MapView both act
-// as passthrough Views.
-jest.mock("@rnmapbox/maps", () => {
+// Phase K46 · react-native-maps — no native module in Jest. Render
+// children so Marker children (our RoutePinView) mount and their
+// inner testIDs are queryable via getByTestId. MapView acts as a
+// passthrough View; Marker forwards its ``onPress`` as the tap
+// handler.
+jest.mock("react-native-maps", () => {
   const RN = require("react-native");
   const R = require("react");
-  const Passthrough = R.forwardRef((props: any, ref: any) =>
-    R.createElement(RN.View, { ref, testID: props.testID }, props.children),
-  );
-  const CameraMock = R.forwardRef((_props: any, ref: any) => {
+  const MapViewMock = R.forwardRef((props: any, ref: any) => {
     R.useImperativeHandle(
       ref,
-      () => ({ fitBounds: jest.fn(), setCamera: jest.fn() }),
+      () => ({
+        fitToCoordinates: jest.fn(),
+        animateToRegion: jest.fn(),
+        animateCamera: jest.fn(),
+      }),
       [],
     );
-    return null;
+    return R.createElement(
+      RN.View,
+      { testID: props.testID, ref },
+      props.children,
+    );
   });
-  const PointAnnotationMock = (props: any) =>
+  const MarkerMock = (props: any) =>
     R.createElement(
       RN.Pressable,
-      { testID: props.id, onPress: props.onSelected },
+      { testID: props.identifier, onPress: props.onPress },
       props.children,
     );
   return {
     __esModule: true,
-    default: {
-      MapView: Passthrough,
-      Camera: CameraMock,
-      PointAnnotation: PointAnnotationMock,
-    },
+    default: MapViewMock,
+    Marker: MarkerMock,
+    Callout: (p: any) => R.createElement(RN.View, null, p.children),
+    Polyline: () => null,
+    PROVIDER_GOOGLE: "google",
   };
 });
 
 /* ── Suite helpers ─────────────────────────────────────────────────── */
 
 const AsyncStorageMock = require("@react-native-async-storage/async-storage");
-const ORIG_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 
 beforeEach(() => {
   AsyncStorageMock.clear && AsyncStorageMock.clear();
   mockRouterPush.mockClear();
-  process.env.EXPO_PUBLIC_MAPBOX_TOKEN = "pk.test.token";
-});
-
-afterAll(() => {
-  process.env.EXPO_PUBLIC_MAPBOX_TOKEN = ORIG_TOKEN;
+  mockHasGoogleMapsKey.mockReturnValue(true);
 });
 
 // Import AFTER mocks so the module under test picks them up.
@@ -149,14 +170,14 @@ describe("DailyRouteMap — Feb-2026 daily route map for tech schedule", () => {
   });
 
   /* 2 ─────────────────────────────────────────────────────────────── */
-  it("renders the fallback banner when the Mapbox token is missing", () => {
-    delete process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
+  it("renders the fallback banner when the Google Maps API key is missing", () => {
+    mockHasGoogleMapsKey.mockReturnValue(false);
     const { getByTestId, getByText, queryByTestId } = render(
       <DailyRouteMap jobs={[JOB_A]} userId="tech-1" />,
     );
     expect(getByTestId("schedule-daily-route-map-token-banner")).toBeTruthy();
-    expect(getByText("Map unavailable — Mapbox token not configured")).toBeTruthy();
-    // Map canvas should NOT render when the token is missing.
+    expect(getByText("Google Maps unavailable")).toBeTruthy();
+    // Map canvas should NOT render when the key is missing.
     expect(queryByTestId("schedule-daily-route-map-canvas")).toBeNull();
   });
 

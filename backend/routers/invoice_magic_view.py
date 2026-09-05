@@ -52,7 +52,7 @@ from __future__ import annotations
 import logging
 
 import jwt
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from config import db, JWT_ALGO, JWT_SECRET
 
@@ -85,13 +85,19 @@ def _verify_invoice_magic_token(token: str) -> dict:
 
 
 @router.get("/invoices/{iid}/full-magic")
-async def invoice_full_magic(iid: str, token: str = ""):
+async def invoice_full_magic(iid: str, token: str = "", src: str = "",
+                              request: Request = None):
     """Public — no session cookie / no ``get_current_user`` dep.
 
     Verifies the magic token, then returns the exact same payload
     shape as the authenticated ``/full`` endpoint. Frontend
     ``InvoiceView.jsx`` treats both endpoints as interchangeable
     once auth is established.
+
+    Phase K47 · Feb-2026 — the optional ``?src=email|sms|link``
+    query param is forwarded into the ``invoice_view_tracker`` so
+    the resulting ``invoice_views`` record carries the send
+    channel. Values outside the whitelist collapse to ``"link"``.
     """
     payload = _verify_invoice_magic_token(token)
     # Defence-in-depth — the token's invoice_id MUST match the URL
@@ -115,4 +121,25 @@ async def invoice_full_magic(iid: str, token: str = ""):
     # token has already established ownership.
     virt_user = {"role": "admin", "id": "magic-link",
                     "email": "magic-link@invoice"}
-    return await _build_viewer_payload(iid, tenant, virt_user)
+    result = await _build_viewer_payload(iid, tenant, virt_user)
+
+    # Phase K47 · Fire-and-forget view stamp. Never raises —
+    # ``record_invoice_view`` swallows Mongo failures internally so
+    # the customer's page render is never blocked on it.
+    try:
+        from services.invoice_view_tracker import record_invoice_view
+        ua = request.headers.get("user-agent") if request is not None else None
+        ip = (request.client.host
+                if request is not None and request.client is not None
+                else None)
+        await record_invoice_view(
+            invoice_id=iid,
+            tenant_id=tenant["id"],
+            source=src or "link",
+            user_agent=ua,
+            ip=ip,
+        )
+    except Exception:  # pragma: no cover — defensive belt-and-suspenders
+        pass
+
+    return result

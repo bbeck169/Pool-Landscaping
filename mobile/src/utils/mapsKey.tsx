@@ -1,10 +1,15 @@
 /**
- * mapsKey.tsx — Phase K20 · Central helper for map API key retrieval
- * and graceful placeholder when keys are missing.
+ * mapsKey.tsx — Phase K20 · Central helper for Google Maps API key
+ * retrieval and graceful placeholder when the key is missing.
  *
  * Prevents native crashes on Android when the Google Maps API key
  * is absent from the AndroidManifest (react-native-maps MapView
  * init crashes fatally without it on Fabric / newArch).
+ *
+ * Phase K46 · Feb-2026 AMENDMENT — ``hasMapboxToken`` removed as
+ * part of the Google-only maps migration. Mapbox is no longer a
+ * runtime dependency of this app; every map surface now consumes
+ * ``hasGoogleMapsKey()`` exclusively.
  */
 import React from "react";
 import { Platform, View, Text, StyleSheet } from "react-native";
@@ -41,20 +46,6 @@ export function hasGoogleMapsKey(): boolean {
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY ||
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
   return typeof envKey === "string" && envKey.trim().length > 0;
-}
-
-/**
- * Returns true when a Mapbox public access token is configured.
- */
-export function hasMapboxToken(): boolean {
-  const token =
-    process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
-    ((Constants.expoConfig?.extra as any)?.mapboxToken ?? "");
-  return (
-    typeof token === "string" &&
-    token.trim().length > 0 &&
-    !token.startsWith("$")
-  );
 }
 
 /**

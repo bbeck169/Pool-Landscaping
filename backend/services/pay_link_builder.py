@@ -42,7 +42,8 @@ def issue_invoice_magic_token(invoice_id: str, tenant_id: str,
 
 def build_pay_now_url(invoice_id: str, tenant_id: str,
                         base_url: Optional[str] = None,
-                        days: int = 30) -> str:
+                        days: int = 30,
+                        src: Optional[str] = None) -> str:
     """Return the full public Pay Now URL for a given invoice.
 
     Falls back to ``os.environ['APP_PUBLIC_URL']`` when ``base_url`` is
@@ -50,6 +51,13 @@ def build_pay_now_url(invoice_id: str, tenant_id: str,
     and return an empty string; callers should treat that as "no pay
     link available" and omit the CTA rather than emailing a broken
     relative URL.
+
+    Phase K47 · Feb-2026 — the optional ``src`` parameter is appended
+    to the URL query string (``&src=email|sms|link``) so the public
+    magic-link viewer can stamp the correct source on the resulting
+    ``invoice_views`` record. Any value passed through here is
+    trusted — the receiving endpoint normalises against a fixed
+    whitelist before storage.
     """
     base = (base_url or os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
     if not base:
@@ -59,4 +67,7 @@ def build_pay_now_url(invoice_id: str, tenant_id: str,
         )
         return ""
     token = issue_invoice_magic_token(invoice_id, tenant_id, days=days)
-    return f"{base}/pay/invoice/{invoice_id}?token={token}"
+    url = f"{base}/pay/invoice/{invoice_id}?token={token}"
+    if src:
+        url = f"{url}&src={src}"
+    return url

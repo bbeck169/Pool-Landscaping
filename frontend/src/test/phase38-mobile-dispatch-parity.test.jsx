@@ -137,14 +137,14 @@ describe("Phase 38 · Phase 30.4 completeness patch on huddle.tsx", () => {
   });
 });
 
-describe("Phase 38 · Live-pin layer — Phase 38b landing note", () => {
-  it("Phase 38b subsequently added @rnmapbox/maps — this is the intended landing", () => {
+describe("Phase 38 · Live-pin layer — Phase K46 landing note", () => {
+  it("Phase K46 removed @rnmapbox/maps — mobile is now Google-only", () => {
     const pkg = readFileSync(resolve(MOBILE, "package.json"), "utf8");
     // The pre-existing dep (react-native-maps) is still there.
     expect(pkg).toContain('"react-native-maps"');
-    // Phase 38b added the Mapbox package on top per the follow-up phase.
-    // Test intentionally documents this transition — see CHANGELOG.
-    expect(pkg).toMatch(/"@rnmapbox\/maps"\s*:\s*"\^?10\./);
+    // Phase K46 · Feb-2026 — Mapbox has been ripped out. Any
+    // recurrence of @rnmapbox/maps in package.json fails the suite.
+    expect(pkg).not.toMatch(/"@rnmapbox\/maps"\s*:/);
   });
   it("board file references the wrapper (Phase 38b) — no direct LivePins raw layer", () => {
     const src = R("app/(app)/dispatch/board.tsx");

@@ -1,11 +1,12 @@
 /**
- * Phase 4B · Public magic-link invoice payer.
+ * PublicInvoicePay — Feb 2026 · Public magic-link viewer landing page.
  *
- * Route: /pay/invoice/:id?token=<magic>
+ * Route: /pay/invoice/:id?token=<jwt>[&src=email|sms|link]
  *
- * Renders <InvoiceView> pointed at the ``/full-magic`` endpoint and
- * exposes the same "Pay Now" flow used by the authenticated portal.
- * No login required — the magic token is the sole credential.
+ * Reads the JWT from the query string and hands it to <InvoiceView>
+ * which fetches ``/api/invoices/{id}/full-magic``. Phase K47 forwards
+ * the optional ``?src=`` query param so the resulting ``invoice_views``
+ * record is stamped with the send channel that got the customer here.
  */
 import React from "react";
 import { useParams, useSearchParams } from "react-router-dom";
@@ -15,21 +16,38 @@ export default function PublicInvoicePay() {
   const { id } = useParams();
   const [sp] = useSearchParams();
   const token = sp.get("token") || "";
-  if (!id || !token) {
+  const rawSrc = (sp.get("src") || "").toLowerCase();
+  // Whitelist match — anything unknown collapses to "link" so we
+  // don't accidentally forward attacker-controlled free text.
+  const src = ["email", "sms", "portal", "link"].includes(rawSrc)
+    ? rawSrc
+    : "";
+
+  if (!token) {
     return (
-      <div style={{ maxWidth: 480, margin: "10vh auto", padding: 24,
-                    borderRadius: 12, background: "#FEE2E2",
-                    color: "#991B1B", fontSize: 14 }}
-            data-testid="public-invoice-pay-invalid">
-        This invoice link is invalid or has expired. Please contact us for
-        a new payment link.
+      <div
+        style={{ minHeight: "100vh", padding: 24 }}
+        data-testid="public-invoice-pay-missing-token"
+      >
+        <div
+          style={{
+            maxWidth: 720, margin: "40px auto", padding: 24,
+            background: "#FEF2F2", border: "1px solid #FCA5A5",
+            borderRadius: 8, color: "#991B1B",
+          }}
+        >
+          <strong>Link invalid.</strong>{" "}
+          <span>This payment link is missing its access token — please request a new one.</span>
+        </div>
       </div>
     );
   }
+
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}
-          data-testid="public-invoice-pay-shell">
-      <InvoiceView invoiceId={id} magicToken={token} />
+    <div style={{ minHeight: "100vh", padding: 24, background: "#F3F4F6" }} data-testid="public-invoice-pay-root">
+      <div style={{ maxWidth: 960, margin: "0 auto" }}>
+        <InvoiceView invoiceId={id} magicToken={token} magicSrc={src} />
+      </div>
     </div>
   );
 }
