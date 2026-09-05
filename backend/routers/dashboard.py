@@ -225,6 +225,76 @@ async def dashboard(user: dict = Depends(get_current_user),
     total_leads = await db.leads.count_documents(tenant_q)
     open_leads = await db.leads.count_documents({**tenant_q, "status": {"$in": ["new", "contacted", "quoted"]}})
 
+    # ── Phase K41d · Feb-2026 — Bulk Operations audit summary ──
+    # Small "Last 24h" tile on the admin dashboard that reports:
+    #   * bulk_actions_24h        — distinct bulk_batch_id in
+    #                                dashboard_drilldown_edit events
+    #                                within the last 24h.
+    #   * bulk_actions_undone_24h — distinct undone_from_batch_id in
+    #                                dashboard_drilldown_bulk_undone
+    #                                events within the last 24h
+    #                                (subset of ``bulk_actions_24h``).
+    #   * bulk_actions_expired_24h — bulk batches whose newest edit
+    #                                is > 10 min old AND which have
+    #                                no undo companion. These are the
+    #                                batches admins can no longer
+    #                                undo, so exposing the count is
+    #                                the whole point of the tile.
+    #
+    # NO NEW ENDPOINTS. NO NEW INDEXES. Backed by the existing
+    # audit_events indexes (event_type + timestamp + tenant_id +
+    # bulk_batch_id) shipped in Phase K41c.
+    _now_utc = datetime.now(timezone.utc)
+    _since_24h_iso = (_now_utc - timedelta(hours=24)).isoformat()
+    _cutoff_undo_iso = (_now_utc - timedelta(minutes=10)).isoformat()
+    _bulk_edit_batches = await db.audit_events.distinct(
+        "bulk_batch_id",
+        {
+            "event_type": "dashboard_drilldown_edit",
+            "tenant_id": tid,
+            "timestamp": {"$gte": _since_24h_iso},
+            "bulk_batch_id": {"$ne": None},
+        },
+    )
+    _bulk_undone_batches = await db.audit_events.distinct(
+        "undone_from_batch_id",
+        {
+            "event_type": "dashboard_drilldown_bulk_undone",
+            "tenant_id": tid,
+            "timestamp": {"$gte": _since_24h_iso},
+            "undone_from_batch_id": {"$ne": None},
+        },
+    )
+    _undone_set = {b for b in _bulk_undone_batches if b}
+    # A batch counts as "expired" when its newest edit is older than
+    # the 10-minute undo window AND it has no undo companion.  Batches
+    # still inside the window aren't expired *yet* (they're just
+    # pending / actionable), so we omit them from the count.
+    _expired_count = 0
+    if _bulk_edit_batches:
+        pipeline = [
+            {"$match": {
+                "event_type": "dashboard_drilldown_edit",
+                "tenant_id": tid,
+                "timestamp": {"$gte": _since_24h_iso},
+                "bulk_batch_id": {"$in": [b for b in _bulk_edit_batches if b]},
+            }},
+            {"$group": {
+                "_id": "$bulk_batch_id",
+                "newest": {"$max": "$timestamp"},
+            }},
+        ]
+        async for row in db.audit_events.aggregate(pipeline):
+            bid = row.get("_id")
+            newest = row.get("newest")
+            if not bid or bid in _undone_set:
+                continue
+            if isinstance(newest, str) and newest < _cutoff_undo_iso:
+                _expired_count += 1
+    bulk_actions_24h = len([b for b in _bulk_edit_batches if b])
+    bulk_actions_undone_24h = len(_undone_set)
+    bulk_actions_expired_24h = _expired_count
+
     return {
         "role": user.get("role", "admin"),
         "revenue": revenue,
@@ -265,4 +335,11 @@ async def dashboard(user: dict = Depends(get_current_user),
         "pool_revenue": pool_revenue,
         "landscape_revenue": landscape_revenue,
         "mixed_revenue": mixed_revenue,
+        # ── Phase K41d · Feb-2026 — Bulk Operations audit tile ──
+        # Additive fields; existing consumers keep working. Zero
+        # new endpoints — the admin dashboard already fetches this
+        # response on every mount.
+        "bulk_actions_24h": bulk_actions_24h,
+        "bulk_actions_undone_24h": bulk_actions_undone_24h,
+        "bulk_actions_expired_24h": bulk_actions_expired_24h,
     }

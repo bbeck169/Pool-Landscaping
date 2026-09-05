@@ -38,6 +38,7 @@ import IncomeByServiceCategoryTile from "@/components/dashboard/IncomeByServiceC
 import EbitTile from "@/components/dashboard/EbitTile";
 import GlobalSearchBar from "@/components/dashboard/GlobalSearchBar";
 import DataIntegrityTile from "@/components/admin/DataIntegrityTile";
+import BulkOpsAuditTile from "@/components/admin/BulkOpsAuditTile";
 // Phase F3 · Feb-2026 — Soshie Publishing Dashboard Tile.
 import SoshiePublishingTile from "@/components/admin/SoshiePublishingTile";
 // Phase H5 · Feb-2026 — Crew Productivity tile (weekly revenue-per-crew).
@@ -596,6 +597,15 @@ export default function AdminDashboard() {
           admin+). */}
       {user?.role === "super_admin" ? (
         <DataIntegrityTile userRole={user?.role} />
+      ) : null}
+      {/* Phase K41d · Feb-2026 — Bulk Operations audit tile.
+          Renders below DataIntegrityTile because both tiles share
+          the "admin drilldown activity" mental model. Role gate is
+          admin+/super_admin (same as the bulk-resolve/undo endpoints
+          the tile summarizes). The tile self-hides when the backend
+          hasn't shipped K41d yet — safe under mixed-version rolls. */}
+      {["super_admin", "admin", "owner"].includes(user?.role) ? (
+        <BulkOpsAuditTile data={data} />
       ) : null}
       {["super_admin", "admin", "owner"].includes(user?.role) ? (
         <div className="mb-6">
