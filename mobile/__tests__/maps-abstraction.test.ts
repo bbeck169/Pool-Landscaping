@@ -12,7 +12,13 @@ describe("K39b · useMapsProvider / _computeProvider", () => {
     expect(_computeProvider({})).toBe("google");
   });
 
-  it("returns here when flag=here + key present", () => {
+  it("returns here when flag=here + key present + binaries present (K45)", () => {
+    // K45 · The resolver now also gates on HERE_BINARIES_PRESENT so a
+    // successful "here" resolution requires all three: env flag, key,
+    // and the generated binary-presence constant.
+    jest.doMock("../src/lib/maps/heresdkStatus.generated", () => ({
+      HERE_BINARIES_PRESENT: true,
+    }));
     const { _computeProvider } = require("../src/lib/maps/provider");
     expect(
       _computeProvider({
