@@ -165,3 +165,74 @@ the app reads any of the new testids or exported types.
 * **Preview-hover comparison** — nice-to-have hover state that
   overlays both tiles' logos on a 50/50 split for direct comparison.
   Not requested; parking for future polish.
+
+---
+
+## K51.1 · Feb-2026 — Logo container background parity
+
+**Follow-up patch.** K51 gave admins a *preview* surface but didn't
+touch the actual nav-bar chrome.  Field report: a tenant uploads a
+transparent-PNG logo → the live nav bars *do* paint navy on the
+outer `<aside>` / `<header>`, but the immediate wrapping `<div>`
+around the `BrandLogo` mount had no inline background.  It was
+inherited-navy in practice, but a future refactor wrapping the logo
+in a light surface would silently reintroduce a white-tile artefact
+around the transparent PNG.  K51.1 pins the intent inline.
+
+### Change
+Two immediate logo containers in `frontend/src/layouts/AppLayout.jsx`
+now carry an explicit `backgroundColor: colors.nav.bg` inline style:
+
+| Location | Line | Testid | Notes |
+| --- | --- | --- | --- |
+| Desktop sidebar logo slot | ~537 | `side-nav-logo-slot` | Padding preserved. |
+| Mobile header logo slot | ~589 | `app-logo-mobile-white` | Existing `brightness(0) invert(1)` filter preserved; navy added to the same inline `style` object. |
+
+**Not touched.**
+* `AdminTopBar.jsx` — does not mount `BrandLogo` after the K50
+  dedupe.  A new K50 test guards against a future remount.
+* Portal / BusinessOS sub-nav — those surfaces already inherit
+  their chrome from the K50 `colors.nav.bg` token and do not
+  render the tenant `BrandLogo` in a separately-styled container.
+* K51 preview tiles in `BrandLogoSettings.jsx` — the whole point
+  of the side-by-side preview is showing both light and navy
+  chromes.  Both tiles are unchanged.  New K50 tests explicitly
+  assert the light tile stays `#FFFFFF` and the navy tile stays
+  `#1B1F5C`.
+
+### Tests
+Extended `frontend/src/test/k50-theming.test.js` with a new
+`K51.1 · Logo container background parity with nav chrome` describe
+block — 4 assertions:
+
+1. Sidebar logo slot has an explicit `backgroundColor: colors.nav.bg`
+   inline style on the wrapping `<div>`.
+2. Mobile header logo slot carries both `backgroundColor:
+   colors.nav.bg` AND the interim `brightness(0) invert(1)` filter
+   on the same inline `style` object.
+3. `AdminTopBar.jsx` does NOT mount `<BrandLogo>` (regression guard
+   — if it ever remounts, the test fails and reminds the author to
+   apply the same background parity there).
+4. `BrandLogoSettings.jsx` preview tiles stay untouched — navy tile
+   keeps `#1B1F5C`, light tile keeps `#FFFFFF`.  Guards against a
+   well-meaning refactor unifying the two preview tiles.
+
+All 22 K50 + 4 K51 tests pass under `yarn test:unit`.  Sibling
+sidebar / top-bar suites (`rail-nav`, `rail-nav-leads`,
+`nav-hover-polish`, `admin-sidebar-pinned-nav`,
+`brand-logo-single-instance`, `header-signout-relocated`) also all
+pass — no regressions.
+
+### Revert
+Two-hunk revert on `AppLayout.jsx` (drop the two inline `style`
+objects) and delete the new describe block in `k50-theming.test.js`.
+
+### Still open (unchanged by K51.1)
+The **actual white-fill logo asset pipeline** remains the outstanding
+follow-up.  K51.1 removes the white-tile artefact around transparent
+PNGs but does nothing for a solid-white-background PNG (those still
+render as a white rectangle inside navy chrome — that's the case the
+K51 contrast heuristic warns about).  Fix requires either a
+`BrandLogo variant="icon-light"` asset baked into the tenant-brand
+pipeline OR admin-side upload-time white-fill removal.  Cross-linked
+in `PHASE_K50_THEMING.md` → Follow-ups.

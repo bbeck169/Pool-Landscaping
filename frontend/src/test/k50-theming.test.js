@@ -164,6 +164,72 @@ describe("K50 · Slice A extension — Portal top nav + sub-nav strips", () => {
 
 
 /* ══════════════════════════════════════════════════════════════════ */
+/* Phase K51.1 — Logo container background parity                     */
+/* ══════════════════════════════════════════════════════════════════ */
+
+describe("K51.1 · Logo container background parity with nav chrome", () => {
+  it("Desktop sidebar logo slot has an explicit ``colors.nav.bg`` background", () => {
+    // Regression: pre-K51.1 the ``side-nav-logo-slot`` <div> had no
+    // inline background and merely inherited the <aside>'s navy —
+    // meaning a transparent-PNG tenant logo *did* blend, but there
+    // was nothing preventing a future refactor from wrapping the
+    // logo in a light-surface container and reintroducing the
+    // white-tile artefact.  K51.1 pins the intent inline.
+    const slotStart = APP_LAYOUT.indexOf('data-testid="side-nav-logo-slot"');
+    expect(slotStart).toBeGreaterThan(-1);
+    // Scan backwards ~600 chars to find the wrapping <div>'s style prop.
+    const slotBlock = APP_LAYOUT.slice(Math.max(0, slotStart - 600), slotStart);
+    expect(slotBlock).toMatch(/style=\{\{\s*backgroundColor:\s*colors\.nav\.bg\s*\}\}/);
+  });
+
+  it("Mobile header logo slot carries the navy background + retains the invert filter", () => {
+    // The mobile logo container must paint navy behind the mark AND
+    // keep the interim ``brightness(0) invert(1)`` filter — the
+    // filter flattens dark-fill logos to a white silhouette; the
+    // navy background stops transparent PNGs from bleeding onto a
+    // white sub-container (defensive against future refactors).
+    const idx = APP_LAYOUT.indexOf('data-testid="app-logo-mobile-white"');
+    expect(idx).toBeGreaterThan(-1);
+    const block = APP_LAYOUT.slice(Math.max(0, idx - 400), idx);
+    expect(block).toMatch(/backgroundColor:\s*colors\.nav\.bg/);
+    expect(block).toMatch(/filter:\s*"brightness\(0\) invert\(1\)"/);
+  });
+
+  it("AdminTopBar does NOT mount BrandLogo (dedupe stays; nothing to re-paint there)", () => {
+    // Regression guard against a future refactor that remounts the
+    // brand mark on the admin top bar.  If it ever does, THIS test
+    // will fail and remind the author to apply the K51.1 background
+    // parity there as well.  Comment-only ``BrandLogo`` mentions in
+    // the file header don't count as a mount — assert on an actual
+    // JSX usage instead.
+    expect(TOP_BAR).not.toMatch(/<BrandLogo[\s/>]/);
+  });
+
+  it("Preview page navy tile still paints ``#1B1F5C`` — K51 side-by-side surface unchanged", () => {
+    // K51.1 does NOT unify the two preview tiles in
+    // ``BrandLogoSettings.jsx`` — the whole point of the preview is
+    // showing light + navy chromes side-by-side.  Regression guard:
+    // both hex codes stay in the preview source.
+    const PREVIEW = read("src/pages/settings/BrandLogoSettings.jsx");
+    // Navy tile paints ``#1B1F5C`` (matches the nav chrome).  The
+    // testid follows the ``style`` prop in JSX order — scan the ~400
+    // chars preceding the testid for the hex.
+    const navyIdx = PREVIEW.indexOf('data-testid="logo-preview-navy"');
+    expect(navyIdx).toBeGreaterThan(-1);
+    const navyBlock = PREVIEW.slice(Math.max(0, navyIdx - 400), navyIdx);
+    expect(navyBlock).toMatch(/#1B1F5C/);
+    // Light tile stays ``#FFFFFF`` — this is the intentional contrast
+    // case and MUST NOT be flipped to navy.
+    const lightIdx = PREVIEW.indexOf('data-testid="logo-preview-light"');
+    expect(lightIdx).toBeGreaterThan(-1);
+    const lightBlock = PREVIEW.slice(Math.max(0, lightIdx - 400), lightIdx);
+    expect(lightBlock).toMatch(/#FFFFFF/);
+    expect(lightBlock).not.toMatch(/#1B1F5C/);
+  });
+});
+
+
+/* ══════════════════════════════════════════════════════════════════ */
 /* Slice B — Schedule job-card status background shading              */
 /* ══════════════════════════════════════════════════════════════════ */
 

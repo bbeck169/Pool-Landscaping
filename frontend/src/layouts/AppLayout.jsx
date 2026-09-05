@@ -534,7 +534,17 @@ function AppLayout() {
             so the app shell has consistent brand recognition. Tenant
             override wins via ``useTenantBrand``; falls back to the
             placeholder /brand/logo-icon.png. */}
-        <div className="pt-3 pb-1 flex items-center justify-center" data-testid="side-nav-logo-slot">
+        <div
+          className="pt-3 pb-1 flex items-center justify-center"
+          // Phase K51.1 · Feb-2026 — Logo container background parity.
+          // The parent <aside> already paints navy chrome, but an
+          // explicit ``colors.nav.bg`` here documents the intent and
+          // keeps a transparent-PNG tenant logo blending seamlessly
+          // into the surrounding chrome (no white "tile" artefact
+          // around the mark).  Padding preserved.
+          style={{ backgroundColor: colors.nav.bg }}
+          data-testid="side-nav-logo-slot"
+        >
           <BrandLogo variant="icon" testId="side-nav-logo" height={40} />
         </div>
         <QuickNavRail role={effectiveRole || user.role} />
@@ -587,7 +597,18 @@ function AppLayout() {
                 CSS filter that flattens the logo to a white silhouette;
                 a proper white-asset swap is logged in Future Work. */}
             <div
-              style={{ filter: "brightness(0) invert(1)" }}
+              // Phase K51.1 · Feb-2026 — Logo container background
+              // parity.  The mobile <header> already paints navy, but
+              // making it explicit on the logo container documents the
+              // intent and keeps a transparent-PNG tenant logo blending
+              // into the chrome (no white "tile" artefact around the
+              // mark).  The interim ``brightness(0) invert(1)`` filter
+              // stays — it flattens dark-fill tenant logos to a white
+              // silhouette so they read on navy.
+              style={{
+                backgroundColor: colors.nav.bg,
+                filter: "brightness(0) invert(1)",
+              }}
               data-testid="app-logo-mobile-white"
             >
               <BrandLogo variant="icon" testId="app-logo-icon-mobile" height={32} />

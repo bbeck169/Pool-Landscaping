@@ -189,6 +189,21 @@ Either slice can be reverted without disturbing the other.
 
 ---
 
+## Verification
+* **`closed → completed` alias resolution — preview-side coverage
+  confirmed (Feb-2026, K51.1 window).**  Grepped
+  `frontend/src/pages/schedule/CalendarSchedule.jsx` and
+  `frontend/src/pages/schedule/TodaySchedule.jsx` on preview after a
+  field report of white cards on Prod: both `grid-job` (Calendar,
+  line ~1885) and `schedule-card` (Today `ScheduleCardList`, line
+  ~984) render the card body with `k50JobStatusColor(j.status) ||
+  colors.surface`, and `jobStatus.js` alias table maps
+  `closed → completed → "#FDECEC"`.  Report was Prod-only — Prod
+  hasn't been redeployed with K50 yet, so the shading gap is an
+  operational deploy delta, NOT a code regression.  No code change.
+
+---
+
 ## Follow-ups (not shipped)
 * **Proper white-fill logo asset** — mobile top-bar currently applies
   `filter: brightness(0) invert(1)` to the tenant `BrandLogo` so a
@@ -204,6 +219,17 @@ Either slice can be reverted without disturbing the other.
     invert(1)` treatment would degrade to a solid white block.  See
     `PHASE_K51_LOGO_PREVIEW.md` for details.  The underlying
     white-fill asset pipeline is still deferred.
+  * **Follow-up shipped (K51.1)** — pinned an explicit
+    `backgroundColor: colors.nav.bg` inline style on the two live
+    logo containers in `AppLayout.jsx` (desktop sidebar +
+    mobile header) so a transparent-PNG tenant logo blends into the
+    navy chrome without a white-tile artefact.  Regression-guarded
+    against a future refactor wrapping the logo in a light surface.
+    Does NOT fix a solid-white-background PNG — that still renders
+    as a white rectangle (which is the case the K51 contrast
+    heuristic warns admins about).  The **proper white-fill logo
+    variant asset** remains open — this patch removes an *artefact*,
+    not the underlying pipeline gap.
 * **Mobile drawer chrome navy parity** — deferred per brief (user
   explicitly scoped mobile chrome unchanged).  If the drawer is ever
   re-themed, `AdminSidebar` group headers, pinned rows, palette
