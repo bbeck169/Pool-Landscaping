@@ -115,12 +115,31 @@ function CardRow({ r, onRemove }) {
 }
 
 
-function BankRow({ r, onRemove, onReverify }) {
-  const failed = String(r.verification_status || "").toLowerCase() === "failed";
+function BankRow({ r, onRemove, onReverify, onVerifyMicrodeposits }) {
+  /* K43 · Feb-2026 — surface a verify action on ANY unverified bank,
+   * not just the K37 ``failed`` state.  The reason we show two
+   * different buttons:
+   *
+   *   * ``pending_microdeposit`` — Stripe already sent the two cent
+   *     amounts; the admin can enter them right now via the
+   *     "Verify (micro-deposits)" modal.
+   *   * everything else non-verified — no live SetupIntent; the
+   *     admin needs to kick off a fresh Financial Connections /
+   *     magic-link flow via "Re-verify bank" (was: the K37 "Re-verify"
+   *     link on ``failed`` only).
+   */
+  const status = String(r.verification_status || "").toLowerCase();
+  const failed = status === "failed";
+  const pendingMicrodeposit = status === "pending_microdeposit"
+                                || status === "pending"
+                                || status === "new";
+  const needsReverify = !!status && status !== "verified"
+                          && !pendingMicrodeposit;
+  const pmId = r.provider_payment_method_id;
   return (
     <li
       className="flex items-center justify-between p-3"
-      data-testid={`admin-bank-row-${r.provider_payment_method_id}`}
+      data-testid={`admin-bank-row-${pmId}`}
     >
       <div className="text-sm">
         <div className="font-medium inline-flex items-center gap-1">
@@ -132,14 +151,24 @@ function BankRow({ r, onRemove, onReverify }) {
           <span className="capitalize">
             {r.account_holder_type || "ACH"}
           </span>
-          {failed ? (
+          {pendingMicrodeposit ? (
+            <button
+              type="button"
+              onClick={() => onVerifyMicrodeposits(r)}
+              className="text-emerald-700 underline"
+              data-testid={`admin-bank-verify-microdeposits-${pmId}`}
+            >
+              Verify (micro-deposits)
+            </button>
+          ) : null}
+          {(failed || needsReverify) ? (
             <button
               type="button"
               onClick={() => onReverify(r)}
               className="text-red-600 underline"
-              data-testid={`admin-bank-reverify-${r.provider_payment_method_id}`}
+              data-testid={`admin-bank-reverify-${pmId}`}
             >
-              Re-verify
+              Re-verify bank
             </button>
           ) : null}
         </div>
@@ -149,7 +178,7 @@ function BankRow({ r, onRemove, onReverify }) {
         variant="ghost"
         className="text-red-600 hover:bg-red-50"
         onClick={() => onRemove(r, "bank")}
-        data-testid={`admin-remove-bank-${r.provider_payment_method_id}`}
+        data-testid={`admin-remove-bank-${pmId}`}
       >
         Remove
       </Button>
@@ -166,6 +195,14 @@ export default function AdminCardCapturePanel({ customerId, onChange }) {
   const [addOpen, setAddOpen] = useState(null);   // null | "card" | "bank"
   const [pubKey, setPubKey] = useState("");
   const [confirmBank, setConfirmBank] = useState(null);
+  /* K43 · Feb-2026 — micro-deposits verify modal state. */
+  const [verifyPm, setVerifyPm] = useState(null);   // pm row or null
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [verifyMode, setVerifyMode] = useState("amounts"); // amounts | descriptor
+  const [amtA, setAmtA] = useState("");
+  const [amtB, setAmtB] = useState("");
+  const [descriptor, setDescriptor] = useState("");
+  const [verifyError, setVerifyError] = useState("");
   const token = typeof window !== "undefined"
     ? window.localStorage.getItem("token") : "";
 
@@ -221,10 +258,93 @@ export default function AdminCardCapturePanel({ customerId, onChange }) {
     removeById(row.provider_payment_method_id, "card");
   };
 
-  const startReverify = (_row) => {
-    // Re-verification uses the same admin ACH capture flow — Stripe
-    // detects the existing PM and drives the micro-deposit verify UX.
-    setAddOpen("bank");
+  const startReverify = async (row) => {
+    /* K43 · Feb-2026 — for banks that are unverified with NO live
+     * SetupIntent (e.g. Hector's Wells Fargo backlog case) we can't
+     * reuse the local Elements form; the admin needs a fresh
+     * SetupIntent + magic-link email so the customer can finish
+     * the flow from either the portal or their inbox.
+     */
+    try {
+      const res = await fetch(
+        `${API}/customers/${customerId}/bank-accounts/${row.provider_payment_method_id}/re-verify`,
+        { method: "POST",
+           headers: { Authorization: `Bearer ${token}`,
+                      "Content-Type": "application/json" }},
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(json.detail || "Re-verify failed.");
+        return;
+      }
+      toast.success(
+        json.email_sent
+          ? "Re-verify link emailed to the customer."
+          : "Re-verify session opened.",
+      );
+      await load();
+      onChange?.();
+    } catch (e) {
+      toast.error("Re-verify failed.");
+    }
+  };
+
+  const startVerifyMicrodeposits = (row) => {
+    setVerifyPm(row);
+    setVerifyMode("amounts");
+    setAmtA("");
+    setAmtB("");
+    setDescriptor("");
+    setVerifyError("");
+  };
+
+  const submitVerifyMicrodeposits = async () => {
+    if (!verifyPm) return;
+    setVerifyError("");
+    let body;
+    if (verifyMode === "amounts") {
+      const a = parseInt(amtA, 10);
+      const b = parseInt(amtB, 10);
+      if (!Number.isFinite(a) || !Number.isFinite(b)
+          || a < 1 || a > 99 || b < 1 || b > 99) {
+        setVerifyError(
+          "Enter both deposits as cent amounts between 1 and 99.",
+        );
+        return;
+      }
+      body = { amounts_cents: [a, b] };
+    } else {
+      const code = String(descriptor || "").trim();
+      if (!code) {
+        setVerifyError("Enter the 6-digit descriptor code from the deposit.");
+        return;
+      }
+      body = { descriptor_code: code };
+    }
+    setVerifyBusy(true);
+    try {
+      const res = await fetch(
+        `${API}/customers/${customerId}/bank-accounts/${verifyPm.provider_payment_method_id}/verify-microdeposits`,
+        { method: "POST",
+           headers: { Authorization: `Bearer ${token}`,
+                      "Content-Type": "application/json" },
+           body: JSON.stringify(body) },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setVerifyError(json.detail || "Verification failed.");
+        setVerifyBusy(false);
+        return;
+      }
+      toast.success("Bank verified — ACH charges enabled.");
+      setVerifyPm(null);
+      setVerifyBusy(false);
+      await load();
+      onChange?.();
+    } catch (e) {
+      setVerifyError("Verification failed.");
+      setVerifyBusy(false);
+    }
   };
 
   const cards = rows.filter((r) => !isBankRow(r));
@@ -267,7 +387,8 @@ export default function AdminCardCapturePanel({ customerId, onChange }) {
               <BankRow key={r.provider_payment_method_id}
                           r={r}
                           onRemove={requestRemove}
-                          onReverify={startReverify} />
+                          onReverify={startReverify}
+                          onVerifyMicrodeposits={startVerifyMicrodeposits} />
             ))}
           </ul>
         )}
@@ -362,6 +483,115 @@ export default function AdminCardCapturePanel({ customerId, onChange }) {
               data-testid="admin-confirm-remove-bank-submit"
             >
               Remove bank
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* K43 · Feb-2026 — Micro-deposits verify modal.  Admin can
+          either enter the two cent-amount deposits Stripe sent OR the
+          6-digit descriptor code from the single-descriptor deposit
+          path.  Success flips the mirror row's verification_status
+          to "verified" and unblocks K38 bulk / autobilling. */}
+      <Dialog
+        open={!!verifyPm}
+        onOpenChange={(open) => { if (!open) setVerifyPm(null); }}
+      >
+        <DialogContent data-testid="admin-bank-verify-modal">
+          <DialogHeader>
+            <DialogTitle>
+              Verify bank via micro-deposits
+            </DialogTitle>
+            <DialogDescription>
+              Enter the two cent-amount deposits Stripe sent to{" "}
+              <strong>
+                {verifyPm?.bank_name || "the bank"} ••••{" "}
+                {verifyPm?.last4 || "----"}
+              </strong>
+              , or the 6-digit descriptor code if the customer received a
+              single verification deposit.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mb-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setVerifyMode("amounts")}
+              className={`rounded border px-2 py-1 text-xs ${verifyMode === "amounts" ? "bg-slate-900 text-white" : "bg-white"}`}
+              data-testid="admin-bank-verify-mode-amounts"
+            >
+              Two amounts
+            </button>
+            <button
+              type="button"
+              onClick={() => setVerifyMode("descriptor")}
+              className={`rounded border px-2 py-1 text-xs ${verifyMode === "descriptor" ? "bg-slate-900 text-white" : "bg-white"}`}
+              data-testid="admin-bank-verify-mode-descriptor"
+            >
+              Descriptor code
+            </button>
+          </div>
+
+          {verifyMode === "amounts" ? (
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-xs">
+                Deposit 1 (cents)
+                <input
+                  type="number" min="1" max="99"
+                  className="mt-1 block w-full rounded border px-2 py-1 text-sm"
+                  value={amtA}
+                  onChange={(e) => setAmtA(e.target.value)}
+                  data-testid="admin-bank-verify-amt-a"
+                />
+              </label>
+              <label className="text-xs">
+                Deposit 2 (cents)
+                <input
+                  type="number" min="1" max="99"
+                  className="mt-1 block w-full rounded border px-2 py-1 text-sm"
+                  value={amtB}
+                  onChange={(e) => setAmtB(e.target.value)}
+                  data-testid="admin-bank-verify-amt-b"
+                />
+              </label>
+            </div>
+          ) : (
+            <label className="text-xs">
+              Descriptor code (6 digits)
+              <input
+                type="text" maxLength="6"
+                className="mt-1 block w-full rounded border px-2 py-1 text-sm font-mono uppercase"
+                value={descriptor}
+                onChange={(e) => setDescriptor(e.target.value)}
+                data-testid="admin-bank-verify-descriptor"
+              />
+            </label>
+          )}
+
+          {verifyError ? (
+            <div
+              className="mt-2 text-sm text-red-600"
+              data-testid="admin-bank-verify-error"
+            >
+              {verifyError}
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setVerifyPm(null)}
+              disabled={verifyBusy}
+              data-testid="admin-bank-verify-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={submitVerifyMicrodeposits}
+              disabled={verifyBusy}
+              data-testid="admin-bank-verify-submit"
+            >
+              {verifyBusy ? "Verifying…" : "Verify bank"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -320,7 +320,7 @@ async def create_setup_intent(
     # flavour (or after a mode flip) doesn't dedupe back to the
     # wrong SetupIntent.
     def _build_si_kwargs(cust_id: str) -> Dict[str, Any]:
-        return dict(
+        kwargs: Dict[str, Any] = dict(
             customer=cust_id,
             payment_method_types=list(types),
             usage="off_session",
@@ -335,6 +335,26 @@ async def create_setup_intent(
                 f"{datetime.now(timezone.utc).strftime('%Y%m%d')}"
             ),
         )
+        # Phase K43 · Feb-2026 — Force Financial Connections + instant
+        # verification for every ACH SetupIntent so the resulting
+        # PaymentMethod comes back ``verified`` and can be charged
+        # immediately (K38 bulk / autobilling / one-off).  Without this
+        # option Stripe's PaymentElement may fall through to manual
+        # routing+account entry, which produces PMs stuck in
+        # ``new`` / ``pending_microdeposit`` state indefinitely (this
+        # was the root cause of Hector Guerrero's Wells Fargo •••3429
+        # skip on the prod K38 bulk modal).  Manual entry is retained
+        # as an explicit fallback surfaced via the frontend toggle.
+        if "us_bank_account" in types:
+            kwargs["payment_method_options"] = {
+                "us_bank_account": {
+                    "verification_method": "instant",
+                    "financial_connections": {
+                        "permissions": ["payment_method", "balances"],
+                    },
+                },
+            }
+        return kwargs
 
     try:
         setup_intent = await _to_thread(
@@ -918,6 +938,41 @@ async def charge_ach_on_file(
         raise ValueError("payment method not attached to this customer")
     if (row.get("type") or "") != "us_bank_account":
         raise ValueError("payment method is not a us_bank_account")
+
+    # Phase K43 · Feb-2026 — Defence-in-depth verification guard.
+    # ``invoices_bulk_charge._ach_eligibility_and_pm`` already filters
+    # bulk callers, but this helper is now invoked from three call
+    # sites (bulk, direct one-off, and any future autobilling
+    # scheduler).  Skip loudly on unverified banks BEFORE we hit
+    # Stripe so we never create a doomed PaymentIntent.  Emits the
+    # ``autobilling_ach_skipped_unverified`` audit event so ops can
+    # quantify the impact per tenant.
+    v_status = (row.get("verification_status") or "").lower()
+    if v_status != "verified":
+        try:
+            await db.audit_events.insert_one({
+                "id": str(uuid.uuid4()),
+                "event_type": "autobilling_ach_skipped_unverified",
+                "tenant_id": tenant_id,
+                "customer_id": customer_id,
+                "payment_method_id": payment_method_id,
+                "verification_status": v_status or "unknown",
+                "amount_cents": amount_cents,
+                "invoice_id": invoice_id or "",
+                "actor_user_id": actor_user_id or "",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "source": "stripe_charge.charge_ach_on_file",
+            })
+        except Exception as exc:  # pragma: no cover — audit best-effort
+            logger.warning(
+                "[k43] audit insert failed for autobilling_ach_skipped_unverified: %s",
+                exc,
+            )
+        logger.info(
+            "[autobilling] skipping customer_id=%s reason=bank_unverified pm_id=%s status=%s",
+            customer_id, payment_method_id, v_status or "unknown",
+        )
+        raise ValueError("bank_unverified")
     provider_customer_id = row.get("provider_customer_id")
 
     # Reconciliation guards — mirror ``charge_card_on_file`` but treat

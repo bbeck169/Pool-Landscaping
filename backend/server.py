@@ -1411,6 +1411,16 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"brian integrations transfer crashed: {e}")
 
+    # Phase K43 · Feb-2026 — one-shot ACH bank verification sync.
+    # Idempotent + sentinel-guarded so second-and-later boots skip.
+    try:
+        from migrations.k43_sync_bank_verification_status import (
+            run as _k43_ach_sync_run,
+        )
+        await _k43_ach_sync_run()
+    except Exception as e:
+        logger.warning(f"[migration:k43-ach-sync] crashed: {e}")
+
     # Feb-2026 · D2 — the following demo tech users + demo-only
     # data seeds skip in production (APP_ENV=production or
     # SEED_DEMO_DATA=false).  Each ``seed_*_user`` also individually
@@ -3026,6 +3036,27 @@ async def startup():
                 f"customers_dashboard_active_inactive_idx migration crashed: {e}",
             )
     asyncio.create_task(_bg_customers_dashboard_active_inactive_idx())
+
+    # K44 · Feb-2026 — Prod perf-index reconciliation. Always-on
+    # defense-in-depth migration that force-applies the union of the
+    # K15 + K21 + F3.5 perf indexes without sentinel gating. Runs
+    # every boot regardless of ``RUN_STARTUP_INDEXES`` because prod
+    # shipped 30s+ page loads when the gated migrations skipped.
+    # Idempotent (``create_index`` name check per collection).
+    async def _bg_k44_perf_indexes():
+        try:
+            from migrations.k44_perf_indexes import run as _k44_run
+            _k44_boot = await _k44_run()
+            _s = _k44_boot.get("summary") or {}
+            logger.info(
+                "[migration] k44_perf_indexes: created=%s "
+                "already_present=%s errors=%s",
+                _s.get("created"), _s.get("already_present"),
+                len(_s.get("errors") or []),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"k44_perf_indexes migration crashed: {e}")
+    asyncio.create_task(_bg_k44_perf_indexes())
 
     # K15 · Feb-2026 — Jobs schedule/status/crew indexes (mobile
     # Schedule perf).  Idempotent + sentinel-guarded.

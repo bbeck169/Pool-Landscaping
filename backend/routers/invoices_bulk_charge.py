@@ -508,10 +508,18 @@ async def execute_bulk_charge_ach(
         reason, pm, meta = await _ach_eligibility_and_pm(invoice, tenant["id"])
         outstanding_cents = int(meta.get("outstanding_cents") or 0)
         if reason != "eligible":
+            # K43 · Feb-2026 — include customer_id + payment_method_id
+            # on the skip row so the K38 UI can deep-link "BANK NOT
+            # VERIFIED" pills straight to the customer detail page's
+            # ACH verify affordance.
             results.append({
                 "invoice_id": invoice_id,
                 "status": "skipped",
                 "skip_reason": reason,
+                "customer_id": invoice.get("customer_id"),
+                "payment_method_id": (pm or {}).get("provider_payment_method_id"),
+                "bank_last4": (pm or {}).get("last4") or "",
+                "bank_name": (pm or {}).get("bank_name") or "",
             })
             continue
 

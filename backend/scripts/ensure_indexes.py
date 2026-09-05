@@ -175,6 +175,25 @@ async def main() -> int:
         "call_logs_and_ringcentral", _call_logs_and_ringcentral_indexes(),
     ))
 
+    # ── K44 · Feb-2026 — belt-and-suspenders perf-index seed. The
+    # boot-wired variant lives in ``migrations.k44_perf_indexes``
+    # and runs on every startup; running it here as well keeps the
+    # ops runbook (``python -m scripts.ensure_indexes``) authoritative
+    # for the K15 + K21 + F3.5 perf-index set. Idempotent.
+    try:
+        from migrations.k44_perf_indexes import run as _k44_run
+        _k44_summary = await _k44_run()
+        _s = _k44_summary.get("summary") or {}
+        detail = (
+            f"created={_s.get('created')} "
+            f"already={_s.get('already_present')} "
+            f"errors={len(_s.get('errors') or [])}"
+        )
+        status = "ok" if not (_s.get("errors") or []) else "partial"
+        results.append(("k44_perf_indexes", status, detail))
+    except Exception as e:  # noqa: BLE001
+        results.append(("k44_perf_indexes", "skipped", str(e)))
+
     # ── Report ────────────────────────────────────────────────
     ok = sum(1 for _, s, _ in results if s == "ok")
     skipped = sum(1 for _, s, _ in results if s != "ok")

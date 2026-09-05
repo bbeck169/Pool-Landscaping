@@ -69,8 +69,31 @@ def should_seed_demo_data() -> bool:
 def should_run_startup_indexes() -> bool:
     """Gate for ``create_index`` / ``ensure_indexes()`` calls that
     normally run inside the FastAPI startup event.
+
+    Phase K44 · Feb-2026 — production opt-in override. When
+    ``RUN_STARTUP_INDEXES`` is EXPLICITLY set to a truthy value
+    (``"true"`` / ``"1"`` / ``"yes"``, case-insensitive) the flag
+    honours that value even under ``APP_ENV=production``. This
+    exists because the original SCHEDULER_WORKER-style hard gate on
+    production silently shipped the 30s+ prod-page regression when
+    ops forgot to run ``python -m scripts.ensure_indexes`` out of
+    band after a redeploy. Prod stays lean by default (unset ==
+    False), but ops can now re-enable startup indexing on a single
+    redeploy without waiting for a new pod image.
+
+    Preserves the original semantic: dev/preview defaults to True;
+    an explicit ``RUN_STARTUP_INDEXES=false`` in ANY env still turns
+    the whole block off.
     """
-    return (not is_production()) and _flag("RUN_STARTUP_INDEXES", "true")
+    raw = (os.environ.get("RUN_STARTUP_INDEXES") or "").strip().lower()
+    # Explicit opt-in wins, in any env (K44 override).
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    # Explicit opt-out wins, in any env.
+    if raw in ("0", "false", "no", "off"):
+        return False
+    # Unset — legacy default: on outside prod, off in prod.
+    return not is_production()
 
 
 def should_enable_scheduler() -> bool:

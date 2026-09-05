@@ -272,11 +272,29 @@ export default function BulkChargeModal({ invoiceIds, paymentMethod = "card", on
                               {isAch ? "Would submit" : "Would charge"}
                             </span>
                           ) : skip ? (
-                            <span
-                              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${skip.tone}`}
-                            >
-                              {skip.label}
-                            </span>
+                            r.skip_reason === "bank_unverified" && r.customer_id ? (
+                              // K43 · Feb-2026 — QoL: link the "BANK NOT
+                              // VERIFIED" pill directly to the customer
+                              // detail page so admins can click through
+                              // and fire the K43 verify action without
+                              // hunting for the customer.
+                              <a
+                                href={`/customers/${r.customer_id}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase underline ${skip.tone}`}
+                                data-testid={`${testIdPrefix}-row-${r.invoice_id}-verify-link`}
+                                title="Open customer detail to verify bank"
+                              >
+                                {skip.label} ↗
+                              </a>
+                            ) : (
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${skip.tone}`}
+                              >
+                                {skip.label}
+                              </span>
+                            )
                           ) : (
                             r.status
                           )}

@@ -8,6 +8,18 @@
  * saw a toast saying "widget will launch shortly" — and nothing
  * happened. This component fixes that end-to-end.
  *
+ * K43 · Feb-2026 — the backend ``create_setup_intent`` helper now
+ * always passes ``payment_method_options.us_bank_account.verification_method
+ * = "instant"`` + ``financial_connections.permissions = ["payment_method",
+ * "balances"]`` when the SetupIntent covers ``us_bank_account``.  That
+ * upgrades the PaymentElement below into a Financial-Connections-first
+ * flow — the resulting PaymentMethod is returned in ``verified`` state
+ * so K38 bulk-charge and autobilling can dispatch it immediately.
+ * Stripe's own Element renders a subtle "Enter bank details manually"
+ * fallback inside the FC modal when the customer's bank isn't reachable
+ * via FC — those PMs land in ``pending_microdeposit`` state and are
+ * cleared by the admin via the K43 verify-microdeposits action.
+ *
  * Backend contract:
  *   * ``POST /customer-portal/payment-methods/ach/link-session``
  *     → ``{ok, client_secret, publishable_key, mode}``. Backend now

@@ -1,0 +1,103 @@
+{
+  "enforce_mode": true,
+  "orphans": {
+    "crew_refs": [],
+    "customer_refs": [
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "222abfa1-0195-448b-93a5-fb5a7112f624",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "debaaa0a-2386-4bd0-9869-74a271390673",
+        "customer_name_denorm": "K6 Test Customer",
+        "job_id": "e0a66b36-faef-4bcb-9e97-6381f50cdfe2",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "debaaa0a-2386-4bd0-9869-74a271390673",
+        "customer_name_denorm": "K6 Test Customer",
+        "job_id": "4a8d175c-f49d-41bb-ae0b-116907de44a4",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "d4cc12ce-2974-4eac-ac34-c4402d06ea98",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "e8e08157-0fa2-4cf7-a83d-49da703554b0",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "2f87055a-f8c6-4185-800b-8824ec00ad18",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "e0825bf1-1f29-42dc-9dc1-4c7e27a99af0",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "2d2e5a1e-dffe-43e9-be05-6c954c415662",
+        "customer_name_denorm": "Beau Bauerle",
+        "job_id": "4e76ed76-7fbb-47d7-8aa7-7956d81eb772",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "632f0439-4f67-455b-b69c-88b168ccee4f",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "8e0e6bc7-f2cc-41c3-9139-e8a28c8553c9",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "f098469d-04d0-48e2-9628-36b9eb2e902c",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "7fe38da3-aeb1-4b68-a474-8f298e9986c8",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "c42f2841-6de5-4eaa-8600-538b7a29790b",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      },
+      {
+        "customer_id": "4d4376b2-945b-4afb-99ef-9eaaed150f1f",
+        "customer_name_denorm": "Aimee Baram",
+        "job_id": "7820c114-0e2b-45ef-be78-40eda85ca182",
+        "tenant_id": "affdfbfa-88b9-4baa-ae45-2ef78531b6e4"
+      }
+    ],
+    "technician_refs": []
+  },
+  "tenant_breakdown": {
+    "affdfbfa-88b9-4baa-ae45-2ef78531b6e4": 14
+  },
+  "timestamp": "2026-09-05T00:59:17.210214Z",
+  "totals": {
+    "crew": 0,
+    "customer": 14,
+    "technician": 0,
+    "total": 14
+  }
+}

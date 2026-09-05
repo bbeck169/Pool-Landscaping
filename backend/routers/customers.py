@@ -2738,6 +2738,250 @@ async def public_add_card_attach(token: str, body: dict = Body(...)):
 
 
 # ═════════════════════════════════════════════════════════════════════
+# Phase K43 · Feb-2026 — Admin bank-account verify actions.
+#
+# Two entrypoints on the customer-detail admin surface:
+#
+#   * ``verify-microdeposits`` — admin enters the two cent-amount
+#     descriptors Stripe sent to the customer's account.  Calls
+#     ``stripe.PaymentMethod.verify_microdeposits`` and syncs the
+#     mirror row's ``verification_status``.
+#   * ``re-verify``           — Hector's case: unverified PM with
+#     no live SetupIntent.  Mints a fresh SetupIntent that will
+#     drive the Financial Connections modal on the customer's next
+#     portal visit AND emails them the magic add-card link so they
+#     can complete it out-of-band.
+# ═════════════════════════════════════════════════════════════════════
+
+class _VerifyMicroDepositsBody(BaseModel):
+    """Body for the admin micro-deposit verify action.
+
+    Stripe accepts EITHER an ``amounts`` array (two ints, in the
+    account's smallest currency unit — cents for USD) OR a
+    ``descriptor_code`` (the six-digit code Stripe includes on the
+    single $0.01 verification deposit).  The frontend picks one.
+    """
+    amounts_cents: Optional[List[int]] = None
+    descriptor_code: Optional[str] = None
+
+
+@router.post(
+    "/customers/{cid}/bank-accounts/{pm_id}/verify-microdeposits",
+    tags=["customers", "payments"],
+)
+async def admin_verify_bank_microdeposits(
+    cid: str,
+    pm_id: str,
+    body: _VerifyMicroDepositsBody = Body(...),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """K43 · Admin action — verify a customer's ACH bank via micro-deposits.
+
+    Admin + super only (``require_admin`` already blocks non-admin roles).
+    Delegates to ``stripe.PaymentMethod.verify_microdeposits`` then
+    stamps the local mirror row's ``verification_status`` so the K38
+    bulk modal + autobilling filter recognise the bank as chargeable.
+    """
+    row = await db.payment_methods.find_one(
+        {"tenant_id": tenant["id"], "customer_id": cid,
+         "provider_payment_method_id": pm_id, "provider": "stripe"},
+        {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "bank_account_not_found")
+    if (row.get("type") or "") != "us_bank_account":
+        raise HTTPException(422, "not_a_bank_account")
+
+    if not body.amounts_cents and not body.descriptor_code:
+        raise HTTPException(422, "amounts_cents_or_descriptor_code_required")
+    if body.amounts_cents is not None:
+        if (not isinstance(body.amounts_cents, list)
+                or len(body.amounts_cents) != 2
+                or not all(isinstance(a, int) and 0 < a < 100
+                           for a in body.amounts_cents)):
+            raise HTTPException(
+                422,
+                "amounts_cents must be two integers between 1 and 99",
+            )
+
+    from services.payments import stripe_charge as stripe_svc
+    stripe_svc._init_api_key()
+    kwargs: Dict[str, Any] = {}
+    if body.amounts_cents:
+        kwargs["amounts"] = body.amounts_cents
+    if body.descriptor_code:
+        kwargs["descriptor_code"] = body.descriptor_code
+    try:
+        pm_obj = await stripe_svc._to_thread(
+            stripe_svc._stripe.PaymentMethod.verify_microdeposits,
+            pm_id,
+            **kwargs,
+        )
+    except Exception as exc:
+        code = getattr(getattr(exc, "error", None), "code", None) or ""
+        msg = str(exc)
+        logger.warning(
+            "[k43] microdeposit verify failed cid=%s pm=%s code=%s: %s",
+            cid, pm_id, code, msg,
+        )
+        if code in ("payment_method_microdeposit_verification_amounts_mismatch",
+                     "payment_method_microdeposit_verification_amounts_invalid",
+                     "payment_method_microdeposit_verification_attempts_exceeded",
+                     "payment_method_microdeposit_verification_descriptor_code_mismatch",
+                     "payment_method_microdeposit_failed"):
+            raise HTTPException(400, code)
+        raise HTTPException(502, "stripe_error")
+
+    # Sync the mirror row so downstream filters see the new status.
+    pm_dict = stripe_svc._asdict(pm_obj) if pm_obj else {}
+    new_status = "verified"
+    await db.payment_methods.update_one(
+        {"tenant_id": tenant["id"], "customer_id": cid,
+         "provider_payment_method_id": pm_id, "provider": "stripe"},
+        {"$set": {"verification_status": new_status,
+                   "verified_at": now_iso(),
+                   "verified_by_user_id": user.get("id") or ""}},
+    )
+    # Audit trail so ops can see who cleared the backlog + when.
+    try:
+        await db.audit_events.insert_one({
+            "id": new_id(),
+            "event_type": "bank_verification_completed",
+            "actor_id": user.get("id") or "",
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "payment_method_id": pm_id,
+            "method": "microdeposit_amounts" if body.amounts_cents else "microdeposit_descriptor",
+            "timestamp": now_iso(),
+            "source": "admin_customer_detail",
+        })
+    except Exception:  # pragma: no cover
+        pass
+    return {"ok": True, "verification_status": new_status,
+            "payment_method_id": pm_id}
+
+
+@router.post(
+    "/customers/{cid}/bank-accounts/{pm_id}/re-verify",
+    tags=["customers", "payments"],
+)
+async def admin_reverify_bank(
+    cid: str,
+    pm_id: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """K43 · Admin action — re-open the ACH verification flow for a
+    bank that's unverified but has no live SetupIntent.
+
+    Behaviour:
+      1. Mint a fresh ``us_bank_account`` SetupIntent (Financial
+         Connections-forced by the K43 SetupIntent options).  This
+         returns a ``client_secret`` the frontend can use to open
+         the in-portal Financial Connections modal.
+      2. Send the customer the standard 30-day magic add-card email
+         so they can complete verification from their inbox if
+         they'd rather not log into the portal right now.
+      3. Mirror-row is stamped ``pending_reverification`` so the
+         admin UI reflects the new state without waiting for a webhook.
+    """
+    row = await db.payment_methods.find_one(
+        {"tenant_id": tenant["id"], "customer_id": cid,
+         "provider_payment_method_id": pm_id, "provider": "stripe"},
+        {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "bank_account_not_found")
+    if (row.get("type") or "") != "us_bank_account":
+        raise HTTPException(422, "not_a_bank_account")
+
+    from services.payments import stripe_charge as stripe_svc
+    try:
+        setup = await stripe_svc.create_setup_intent(
+            tenant_id=tenant["id"],
+            customer_id=cid,
+            actor_user_id=user.get("id"),
+            payment_method_types=["us_bank_account"],
+        )
+    except Exception as exc:
+        logger.warning("[k43] re-verify SetupIntent failed cid=%s: %s", cid, exc)
+        raise HTTPException(502, "stripe_setupintent_failed")
+
+    # Fire the transactional email if the customer has one on file.
+    # Reuses the same magic-link email machinery as the admin
+    # "Send add-card link" action — best-effort, never blocks the
+    # SetupIntent return.  We call the endpoint's underlying helper
+    # by lazy-importing the send_email path directly.
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "email": 1, "name": 1},
+    ) or {}
+    email_sent = False
+    if cust.get("email"):
+        try:
+            from services.add_card_links import build_add_card_link
+            from services.comms_email_adapter import send_email
+            import asyncio as _asyncio
+            base_url = (
+                os.environ.get("PUBLIC_FRONTEND_ORIGIN")
+                or (tenant.get("brand") or {}).get("public_origin")
+                or "https://poolscape-audit.preview.emergentagent.com"
+            ).strip()
+            link = build_add_card_link(base_url, cid, tenant["id"])
+            subject = "Please verify your bank account"
+            html = (
+                f"<p>Hi {cust.get('name') or 'there'},</p>"
+                f"<p>Please complete your ACH bank verification so we can process your recurring payments:</p>"
+                f'<p><a href="{link}">Verify bank account</a></p>'
+                f"<p>This link is valid for 30 days.</p>"
+            )
+            res = await _asyncio.wait_for(send_email(
+                tenant_id=tenant["id"], to_email=cust["email"],
+                subject=subject, html=html,
+                from_name=(tenant.get("name") or None),
+            ), timeout=8.0)
+            email_sent = (res or {}).get("status", "").startswith("sent")
+        except Exception as exc:  # pragma: no cover — email best-effort
+            logger.info(
+                "[k43] re-verify email skipped for cid=%s: %s", cid, exc,
+            )
+
+    await db.payment_methods.update_one(
+        {"tenant_id": tenant["id"], "customer_id": cid,
+         "provider_payment_method_id": pm_id, "provider": "stripe"},
+        {"$set": {"verification_status": "pending_reverification",
+                   "reverify_setup_intent_id": setup.get("setup_intent_id") or "",
+                   "reverify_requested_at": now_iso(),
+                   "reverify_requested_by_user_id": user.get("id") or ""}},
+    )
+    try:
+        await db.audit_events.insert_one({
+            "id": new_id(),
+            "event_type": "bank_reverification_requested",
+            "actor_id": user.get("id") or "",
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "payment_method_id": pm_id,
+            "setup_intent_id": setup.get("setup_intent_id") or "",
+            "email_sent_to": cust.get("email") or "",
+            "email_sent": email_sent,
+            "timestamp": now_iso(),
+            "source": "admin_customer_detail",
+        })
+    except Exception:  # pragma: no cover
+        pass
+    return {
+        "ok": True,
+        "verification_status": "pending_reverification",
+        "setup_intent_id": setup.get("setup_intent_id"),
+        "client_secret": setup.get("client_secret"),
+        "publishable_key": setup.get("publishable_key"),
+        "email_sent": email_sent,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════
 # Feb-2026 · P41 — CSV import for customers (web-only, admin/manager).
 # ─────────────────────────────────────────────────────────────────────
 # Import contract (locked with user):
