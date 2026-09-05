@@ -1,3 +1,60 @@
+## Phase K56 · AI Media-Gen Migration to Emergent — SHIPPED (Feb 2026)
+
+**P0 fix**: `POST /api/media/image/generate` was returning HTTP 502
+`emergent_call_failed` after K55.b promoted `EmergentFallbackProvider`
+to sole provider — the wiring `("google", "nano-banana-2")` was
+doubly-invalid (bad provider **and** bad model id).
+
+**Model discovery receipts**: `integration_playbook_expert_v2` +
+live proxy probe confirmed `("gemini", "gemini-3.1-flash-image-preview")`
+as the correct default (validated alternate:
+`gemini-3-pro-image-preview`).
+
+**Backend**
+- `services/media_provider.py` — new constants
+  `EMERGENT_IMAGE_PROVIDER="gemini"`,
+  `EMERGENT_IMAGE_MODEL_DEFAULT="gemini-3.1-flash-image-preview"` +
+  env-override helper `_emergent_image_model()`. `EmergentFallbackProvider.generate`
+  rewired to `.with_model("gemini", model)`, `.with_params(modalities=["image","text"])`,
+  `send_message_multimodal_response(msg)`, and transcodes the returned
+  `{mime_type, data}` dicts into `data:<mime>;base64,<b64>` URIs so
+  the downstream `image_urls: List[str]` contract is unchanged.
+  `tool_used` now records the actual model id.
+- `routers/media_gen.py` — env-var rename with **dual-read fallback**:
+  `AI_MEDIA_DAILY_IMAGE_LIMIT` (canonical) → `SUPERCOOL_DAILY_IMAGE_LIMIT`
+  (legacy, one release cycle) → default 100. Emits a one-shot startup
+  WARN on legacy read: `[k56] SUPERCOOL_DAILY_IMAGE_LIMIT is deprecated; migrate to AI_MEDIA_DAILY_IMAGE_LIMIT`.
+- `backend/.env` + `.env.example` — added `EMERGENT_IMAGE_MODEL` and
+  `AI_MEDIA_DAILY_IMAGE_LIMIT`. Legacy line kept for the cycle.
+
+**Frontend**
+- **New** `frontend/src/config/featureFlags.js` — first feature-flag
+  registry in the codebase. Exposes `FEATURE_FLAGS` (frozen) +
+  `isFeatureEnabled(name)`. `FEATURE_STOCK_SEARCH` and `FEATURE_REMOVE_BG`
+  both default `false` — K56.1 will flip them on.
+- `ContentStudioPage.jsx` — inline nano-banana-2 comments retargeted
+  to `gemini-3.1-flash-image-preview`. No UI removal needed (search-
+  stock / remove-bg CTAs never rendered).
+
+**Tests** — 13 new tests pass:
+- `backend/tests/test_k56_media_provider.py` (9) — provider tuple,
+  modalities, env override, empty-images error, missing-key error,
+  search/remove-bg unsupported, canonical/legacy/default limit.
+- `frontend/src/test/phase-k56-feature-flags.test.js` (4) — both
+  flags OFF, frozen registry, unknown flag safe.
+- Adjacent `tests/test_soshie_ai_image_gen.py` (7) still green.
+
+**E2E** — Live preview `POST /api/media/image/generate` → HTTP 200,
+`tool_used=gemini-3.1-flash-image-preview`, `GET /api/objects/…` →
+965,635-byte image/jpeg. Baseline was HTTP 502.
+
+**Deferred**: K56.1 (Unsplash + remove.bg wiring), K56.2 (Sora 2),
+K56.hardcut (drop dual-read after one release), K55.c (env cleanup —
+now unblocked).
+
+---
+
+
 ## Phase K47 · Invoice View Tracking — SHIPPED (Feb 2026)
 
 **Locked answers**: 1b (list + detail) · 2d (all sources, first + last + count) · 3c (full history w/ source + timestamp) · 4b (mobile parity).

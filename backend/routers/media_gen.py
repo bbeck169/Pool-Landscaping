@@ -3,14 +3,22 @@
 Exposes:
   POST /api/media/image/generate
   POST /api/media/image/edit
-  POST /api/media/image/search
-  POST /api/media/image/remove-background
+  POST /api/media/image/search           (K56: Emergent provider does not support)
+  POST /api/media/image/remove-background (K56: Emergent provider does not support)
   GET  /api/media/library
   DELETE /api/media/library/{image_id}
 
-All admin+ gated. Rate-limited to ``SUPERCOOL_DAILY_IMAGE_LIMIT``
+All admin+ gated. Rate-limited to ``AI_MEDIA_DAILY_IMAGE_LIMIT``
 (default 100) generations per tenant per UTC day, tracked in
 ``media_gen_quotas``.
+
+Feb-2026 · K56 — the daily-limit env var was renamed from
+``SUPERCOOL_DAILY_IMAGE_LIMIT`` (a leftover from the retired
+SuperCool integration) to ``AI_MEDIA_DAILY_IMAGE_LIMIT``.  A dual-
+read fallback keeps ops-managed prod deploys working during the
+one-release migration window; a startup ``WARN`` is emitted when
+the deprecated var is still present.  Once every environment has
+migrated, remove the fallback branch (see K56.hardcut).
 """
 from __future__ import annotations
 
@@ -29,9 +37,32 @@ from services import media_provider as _mp
 router = APIRouter(tags=["Phase B · Image Generation"])
 
 
+# Feb-2026 · K56 — dual-read env fallback.  New canonical name is
+# ``AI_MEDIA_DAILY_IMAGE_LIMIT``; the legacy ``SUPERCOOL_DAILY_IMAGE_LIMIT``
+# is honoured for one release window so ops-managed prod deploys
+# don't silently reset their tenant limit to the default when the
+# new name is not yet set in their .env.  Remove the legacy branch
+# in ticket K56.hardcut.
+_LEGACY_LIMIT_ENV = "SUPERCOOL_DAILY_IMAGE_LIMIT"
+_CANONICAL_LIMIT_ENV = "AI_MEDIA_DAILY_IMAGE_LIMIT"
+_LEGACY_LIMIT_WARNED = False
+
+
 def _daily_limit() -> int:
+    global _LEGACY_LIMIT_WARNED
+    raw = (os.environ.get(_CANONICAL_LIMIT_ENV) or "").strip()
+    if not raw:
+        legacy = (os.environ.get(_LEGACY_LIMIT_ENV) or "").strip()
+        if legacy:
+            if not _LEGACY_LIMIT_WARNED:
+                logger.warning(
+                    "[k56] %s is deprecated; migrate to %s",
+                    _LEGACY_LIMIT_ENV, _CANONICAL_LIMIT_ENV,
+                )
+                _LEGACY_LIMIT_WARNED = True
+            raw = legacy
     try:
-        return max(1, int(os.environ.get("SUPERCOOL_DAILY_IMAGE_LIMIT") or 100))
+        return max(1, int(raw or 100))
     except (TypeError, ValueError):
         return 100
 

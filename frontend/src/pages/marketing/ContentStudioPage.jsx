@@ -48,7 +48,7 @@ export default function ContentStudioPage() {
   const [result, setResult] = React.useState(null);
   // Feb-2026 · K55.a — SuperCool connection status check removed as
   // part of the sunset.  Image generation now runs unconditionally
-  // through the Emergent nano-banana-2 fallback (see K56).  The
+  // through Emergent's gemini-3.1-flash-image-preview (see K56).  The
   // degraded-mode banner + "connect Supercool" link are gone; if
   // the endpoint is added back later, restore the state + banner.
   const [library, setLibrary] = React.useState({ items: [], total: 0, quota: null });
@@ -148,7 +148,7 @@ export default function ContentStudioPage() {
       {/* Feb-2026 · K55.a — SuperCool degraded-mode banner removed
           as part of the sunset (see PHASE_K55_a_FRONTEND_REMOVAL.md).
           Image generation now runs unconditionally through the
-          Emergent nano-banana-2 fallback (see K56). */}
+          Emergent gemini-3.1-flash-image-preview provider (see K56). */}
 
       <section
         className="rounded-2xl p-5 grid grid-cols-1 md:grid-cols-3 gap-4"
