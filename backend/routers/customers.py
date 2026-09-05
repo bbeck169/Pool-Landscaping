@@ -273,6 +273,108 @@ class CustomerListCount(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────
+# K49 · Feb-2026 — Customers list Last-Name-A→Z aggregation.
+# ─────────────────────────────────────────────────────────────────
+def _k49_lastname_pipeline(
+    match: dict,
+    *,
+    skip: Optional[int] = None,
+    limit: Optional[int] = None,
+) -> List[dict]:
+    """Build the ``$last_name ASC`` aggregation pipeline for the K49
+    Customers-list sort. Handles:
+
+    * Primary key: ``last_name`` when non-empty.
+    * Fallback: substring after the LAST space in ``name``
+      (``Jane Doe`` → ``Doe``, ``Cher`` → ``Cher``).
+    * Nulls-last: rows with no derivable last name (both fields
+      empty / missing) land at the end.
+    * Compound tie-breaker: ``first_name`` ASC → ``_id`` ASC.
+
+    Case-insensitive: normalises the sort key to lower-case so
+    ``Adams`` and ``adams`` collate together.
+    """
+    # ``$split`` on a missing / non-string field would error; the
+    # ``$ifNull`` + ``$toLower`` chain coerces every doc into a
+    # non-null string first.
+    stages: List[dict] = [
+        {"$match": match},
+        {"$addFields": {
+            "_k49_last_name_norm": {"$toLower": {
+                "$ifNull": ["$last_name", ""],
+            }},
+            "_k49_name_norm": {"$toLower": {
+                "$ifNull": ["$name", ""],
+            }},
+        }},
+        {"$addFields": {
+            "_k49_last_from_name": {
+                "$let": {
+                    "vars": {
+                        "parts": {"$split": [
+                            {"$trim": {"input": "$_k49_name_norm"}},
+                            " ",
+                        ]},
+                    },
+                    "in": {"$cond": [
+                        {"$gt": [{"$size": "$$parts"}, 0]},
+                        {"$arrayElemAt": [
+                            "$$parts",
+                            {"$subtract": [
+                                {"$size": "$$parts"}, 1,
+                            ]},
+                        ]},
+                        "",
+                    ]},
+                },
+            },
+        }},
+        {"$addFields": {
+            "_k49_sort_key": {"$cond": [
+                {"$gt": [
+                    {"$strLenCP": "$_k49_last_name_norm"}, 0,
+                ]},
+                "$_k49_last_name_norm",
+                "$_k49_last_from_name",
+            ]},
+        }},
+        {"$addFields": {
+            # 1 = has a real key → sort BEFORE the empty bucket
+            # (nulls-last).
+            "_k49_has_key": {"$cond": [
+                {"$gt": [
+                    {"$strLenCP": "$_k49_sort_key"}, 0,
+                ]},
+                1,
+                0,
+            ]},
+        }},
+        {"$sort": {
+            "_k49_has_key": -1,
+            "_k49_sort_key": 1,
+            "first_name": 1,
+            "_id": 1,
+        }},
+    ]
+    if skip:
+        stages.append({"$skip": int(skip)})
+    if limit is not None:
+        stages.append({"$limit": int(limit)})
+    # Strip the synthetic sort keys + the raw ``_id`` before the
+    # doc leaves the DB layer so downstream ``clean_customer_doc``
+    # sees the same shape it does for the ``find()`` path.
+    stages.append({"$project": {
+        "_id": 0,
+        "_k49_last_name_norm": 0,
+        "_k49_name_norm": 0,
+        "_k49_last_from_name": 0,
+        "_k49_sort_key": 0,
+        "_k49_has_key": 0,
+    }})
+    return stages
+
+
+# ─────────────────────────────────────────────────────────────────
 # Feb-2026 · P35 — pagination response shape (opt-in).
 # The endpoint keeps returning a bare ``List[CustomerListItem]``
 # when neither ``page`` nor ``page_size`` is supplied so the 20+
@@ -351,13 +453,18 @@ async def list_customers(
             "Feb-2026 · Customers list sort order. Supported values: "
             "``created_desc`` (default — newest → oldest), "
             "``created_asc`` (oldest → newest), ``name_asc`` "
-            "(alphabetical A → Z), ``name_desc`` (alphabetical Z → A). "
-            "Unknown values fall back to "
-            "``created_desc``. When the sort is by creation time and "
-            "a legacy doc lacks ``created_at``, the compound sort "
-            "falls back to the Mongo-generated ``_id`` (which encodes "
-            "creation time in its ObjectId prefix) so those rows still "
-            "land in the correct chronological bucket."
+            "(alphabetical A → Z), ``name_desc`` (alphabetical Z → A), "
+            "``last_name_asc`` (K49 · Feb-2026 — last name A → Z with "
+            "``first_name`` tie-breaker; docs missing ``last_name`` "
+            "fall back to the substring after the LAST space of "
+            "``name`` (``Jane Doe`` → ``Doe``, ``Cher`` → ``Cher``); "
+            "rows with no derivable last name sort LAST). "
+            "Unknown values fall back to ``created_desc``. When the "
+            "sort is by creation time and a legacy doc lacks "
+            "``created_at``, the compound sort falls back to the "
+            "Mongo-generated ``_id`` (which encodes creation time in "
+            "its ObjectId prefix) so those rows still land in the "
+            "correct chronological bucket."
         ),
     ),
 ):
@@ -573,30 +680,61 @@ async def list_customers(
         "created_asc": [("created_at", 1), ("_id", 1)],
         "name_asc": [("name", 1), ("_id", 1)],
         "name_desc": [("name", -1), ("_id", -1)],
+        # K49 · Feb-2026 — kept in the map for parity with the fast
+        # path enum guard even though ``last_name_asc`` routes
+        # through the dedicated aggregation branch below (needed for
+        # the last-space fallback + nulls-last ordering that plain
+        # ``$sort`` can't express).
+        "last_name_asc": [("last_name", 1), ("first_name", 1),
+                            ("_id", 1)],
     }
-    _sort_spec = _SORT_MAP.get(sort or "", _SORT_MAP["created_desc"])
+    _sort_key = sort or ""
+    _sort_spec = _SORT_MAP.get(_sort_key, _SORT_MAP["created_desc"])
+
+    # K49 · Feb-2026 — dedicated pipeline for the Last-Name-A→Z sort.
+    # Mongo's plain ``$sort`` puts nulls-first on ASC; we want
+    # nulls-last per the K49 spec. We also need the last-space
+    # fallback for legacy docs whose backfill hasn't run yet (they
+    # have ``name`` but no ``last_name``). Both requirements collapse
+    # into a single aggregation stage.
+    _use_lastname_pipeline = _sort_key == "last_name_asc"
 
     if _paginated and not _needs_python_postfilter:
         # Fast path — DB-side pagination.
         total = await db.customers.count_documents(q)
         skip = (page - 1) * page_size
-        docs = await (db.customers.find(q, {"_id": 0})
-                          .sort(_sort_spec)
-                          .skip(skip).limit(page_size)
-                          .to_list(page_size))
+        if _use_lastname_pipeline:
+            docs = await db.customers.aggregate(
+                _k49_lastname_pipeline(q, skip=skip, limit=page_size),
+            ).to_list(page_size)
+        else:
+            docs = await (db.customers.find(q, {"_id": 0})
+                              .sort(_sort_spec)
+                              .skip(skip).limit(page_size)
+                              .to_list(page_size))
     elif _paginated and _needs_python_postfilter:
         # Correct-but-slower path — Python-side slice after post-filters.
         # Uncapped fetch so ``total`` reflects the true filtered count
         # for tenants past the legacy 2000-row ceiling. The skip/limit
         # is applied AFTER unscheduled / missing_card below.
-        docs = await (db.customers.find(q, {"_id": 0})
-                          .sort(_sort_spec)
-                          .to_list(length=None))
+        if _use_lastname_pipeline:
+            docs = await db.customers.aggregate(
+                _k49_lastname_pipeline(q),
+            ).to_list(length=None)
+        else:
+            docs = await (db.customers.find(q, {"_id": 0})
+                              .sort(_sort_spec)
+                              .to_list(length=None))
     else:
         # Legacy path — no pagination requested. Keep the 2000-row
         # ceiling to preserve exact backwards-compat with all bare-array
         # callers (they've been living with this cap since Phase 34f).
-        docs = await db.customers.find(q, {"_id": 0}).sort(_sort_spec).to_list(2000)
+        if _use_lastname_pipeline:
+            docs = await db.customers.aggregate(
+                _k49_lastname_pipeline(q, limit=2000),
+            ).to_list(2000)
+        else:
+            docs = await db.customers.find(q, {"_id": 0}).sort(_sort_spec).to_list(2000)
 
     # Feb-2026 · P0 hotfix — legacy prod docs occasionally store BSON
     # ``datetime`` values in fields declared as ``Optional[str]`` on

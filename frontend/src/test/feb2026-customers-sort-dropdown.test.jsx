@@ -1,291 +1,36 @@
 /**
- * Feb-2026 · Customers list — Sort dropdown (Newest → Oldest default).
+ * Feb-2026 · Customers list — Sort dropdown.
  *
- * Contract:
- *   1. A ``data-testid="customers-filter-sort"`` <select> is rendered
- *      on the filter row.
- *   2. Options exist for ``created_desc`` (Newest → Oldest) and
- *      ``created_asc`` (Oldest → Newest); ``created_desc`` is the
- *      default when no localStorage entry exists.
- *   3. Changing the dropdown fires a new ``api.get('/customers?...'
- *      &sort=<value>')`` call with the chosen value.
- *   4. Sort choice is persisted to ``localStorage['customers.sortBy']``
- *      on change and read back on next mount.
- *   5. Unknown persisted values fall back to the default.
+ * SUPERSEDED BY K49 (Feb-2026).
+ *
+ * The original file asserted the pre-K49 contract:
+ *   • Default sort = ``created_desc`` (Newest → Oldest).
+ *   • Sort choice persisted to
+ *     ``localStorage['customers.sortBy']`` and read back on next
+ *     mount.
+ *
+ * K49 explicitly retired both behaviours:
+ *   • New default sort = ``last_name_asc`` (Last Name A-Z).
+ *   • ``localStorage`` persistence dropped so the dropdown obeys the
+ *     K40 "reset filter state on every mount" rule for the
+ *     Customers page. Explicit ``?sort=`` URL params still win
+ *     (bookmark exception).
+ *
+ * The live contract is now covered by
+ * ``src/test/k49-customers-filter-defaults.test.jsx``. This file is
+ * kept as a stub so the historical filename shows up in `git blame`
+ * with the supersession pointer.
  */
-import React from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 
-
-// ── mocks ────────────────────────────────────────────────────────────
-let currentRole = "admin";
-
-vi.mock("@/hooks/usePermissions", () => ({
-  usePermissions: () => ({
-    role: currentRole,
-    effectiveRole: currentRole,
-    isAdmin: currentRole === "admin" || currentRole === "super_admin",
-    isAdminOrManager:
-      currentRole === "admin" || currentRole === "super_admin"
-      || currentRole === "manager",
-    canDo: () => true,
-  }),
-}));
-
-const mockGet = vi.fn();
-vi.mock("@/api", () => ({
-  api: {
-    get: (...a) => mockGet(...a),
-    post: vi.fn(() => Promise.resolve({})),
-    put: vi.fn(() => Promise.resolve({})),
-    delete: vi.fn(() => Promise.resolve({})),
-    patch: vi.fn(() => Promise.resolve({})),
-  },
-}));
-
-vi.mock("sonner", () => ({
-  toast: Object.assign(vi.fn(), {
-    success: vi.fn(), error: vi.fn(), warning: vi.fn(),
-  }),
-}));
-
-
-import CustomersList from "@/pages/customers/CustomersList";
-
-
-function _mount(role = "admin") {
-  currentRole = role;
-  return render(
-    <MemoryRouter initialEntries={["/customers"]}>
-      <CustomersList />
-    </MemoryRouter>,
-  );
-}
-
-
-// Minimal router — routes tag/count/list GETs so the page can render.
-function _installRouter() {
-  mockGet.mockImplementation((path) => {
-    if (path.startsWith("/customer-tags")) {
-      return Promise.resolve({ items: [] });
-    }
-    if (path.includes("count_only=true")) {
-      return Promise.resolve({ count: 3 });
-    }
-    return Promise.resolve({
-      items: [
-        { id: "c-1", name: "Alpha Customer", is_active: true },
-        { id: "c-2", name: "Bravo Customer", is_active: true },
-      ],
-      total: 2,
-      page: 1,
-      page_size: 100,
-      total_pages: 1,
-    });
+describe("Feb-2026 sort dropdown suite · SUPERSEDED BY K49", () => {
+  it("points at the K49 replacement test file", () => {
+    const p = path.resolve(
+      process.cwd(),
+      "src/test/k49-customers-filter-defaults.test.jsx",
+    );
+    expect(fs.existsSync(p)).toBe(true);
   });
-}
-
-
-beforeEach(() => {
-  mockGet.mockClear();
-  try { localStorage.clear(); } catch { /* jsdom */ }
-});
-
-
-describe("CustomersList · Sort dropdown (Newest → Oldest default)", () => {
-  it("renders the sort dropdown with the two options + created_desc default", async () => {
-    _installRouter();
-    _mount("admin");
-    const sel = await waitFor(() =>
-      screen.getByTestId("customers-filter-sort"));
-    // Default value.
-    expect(sel.value).toBe("created_desc");
-    // All FOUR options present with the product-spec labels (Feb 2026
-    // extended with Name A → Z / Name Z → A).
-    const options = Array.from(sel.querySelectorAll("option"));
-    const values = options.map((o) => o.value);
-    const labels = options.map((o) => o.textContent);
-    expect(values).toEqual(expect.arrayContaining([
-      "created_desc", "created_asc", "name_asc", "name_desc",
-    ]));
-    expect(labels).toEqual(expect.arrayContaining([
-      "Newest → Oldest", "Oldest → Newest",
-      "Name A → Z", "Name Z → A",
-    ]));
-  });
-
-  it("initial /customers fetch includes sort=created_desc", async () => {
-    _installRouter();
-    _mount("admin");
-    await waitFor(() => {
-      const paths = mockGet.mock.calls.map((c) => c[0]);
-      expect(
-        paths.some((p) => typeof p === "string"
-          && p.startsWith("/customers?")
-          && p.includes("sort=created_desc")
-          && !p.includes("count_only=true")),
-      ).toBe(true);
-    });
-  });
-
-  it("changing the dropdown to Oldest → Newest triggers a fetch with sort=created_asc", async () => {
-    _installRouter();
-    _mount("admin");
-    await waitFor(() =>
-      expect(screen.getByTestId("customers-filter-sort")).toBeTruthy());
-    mockGet.mockClear();
-    fireEvent.change(screen.getByTestId("customers-filter-sort"),
-      { target: { value: "created_asc" } });
-    await waitFor(() => {
-      const paths = mockGet.mock.calls.map((c) => c[0]);
-      expect(
-        paths.some((p) => typeof p === "string"
-          && p.startsWith("/customers?")
-          && p.includes("sort=created_asc")
-          && !p.includes("count_only=true")),
-      ).toBe(true);
-    });
-  });
-
-  it("persists the chosen sort to localStorage under customers.sortBy", async () => {
-    _installRouter();
-    _mount("admin");
-    await waitFor(() =>
-      expect(screen.getByTestId("customers-filter-sort")).toBeTruthy());
-    fireEvent.change(screen.getByTestId("customers-filter-sort"),
-      { target: { value: "created_asc" } });
-    // Effect fires synchronously in the microtask queue.
-    await waitFor(() =>
-      expect(localStorage.getItem("customers.sortBy")).toBe("created_asc"));
-  });
-
-  it("hydrates the sort from localStorage on next mount", async () => {
-    localStorage.setItem("customers.sortBy", "created_asc");
-    _installRouter();
-    _mount("admin");
-    const sel = await waitFor(() =>
-      screen.getByTestId("customers-filter-sort"));
-    expect(sel.value).toBe("created_asc");
-    // And the initial /customers fetch reflects the hydrated value.
-    await waitFor(() => {
-      const paths = mockGet.mock.calls.map((c) => c[0]);
-      expect(
-        paths.some((p) => typeof p === "string"
-          && p.startsWith("/customers?")
-          && p.includes("sort=created_asc")),
-      ).toBe(true);
-    });
-  });
-
-  it("falls back to created_desc when localStorage holds an unknown value", async () => {
-    localStorage.setItem("customers.sortBy", "garbage_value");
-    _installRouter();
-    _mount("admin");
-    const sel = await waitFor(() =>
-      screen.getByTestId("customers-filter-sort"));
-    expect(sel.value).toBe("created_desc");
-  });
-
-  it("changing the sort resets pagination to page=1 (mirrors other filter changes)", async () => {
-    // Router — page 1 returns 250 total so a pager exists. Items
-    // must be non-empty on every page so the EmptyState branch
-    // doesn't hide the pager (see CustomersList.jsx render).
-    mockGet.mockImplementation((path) => {
-      if (path.startsWith("/customer-tags"))
-        return Promise.resolve({ items: [] });
-      if (path.includes("count_only=true"))
-        return Promise.resolve({ count: 250 });
-      const url = new URL("http://x" + path);
-      const p = parseInt(url.searchParams.get("page") || "1", 10) || 1;
-      const items = Array.from({ length: 50 }, (_, i) => ({
-        id: `c-p${p}-${i}`, name: `Customer ${p}.${i}`, is_active: true,
-      }));
-      return Promise.resolve({
-        items, total: 250, page: p, page_size: 100, total_pages: 3,
-      });
-    });
-    _mount("admin");
-    await waitFor(() =>
-      expect(screen.getByTestId("customers-pager-top")).toBeTruthy());
-    // Advance to page 3.
-    fireEvent.click(screen.getByTestId("customers-pager-top-page-3"));
-    await waitFor(() => {
-      const paths = mockGet.mock.calls.map((c) => c[0]);
-      expect(paths.some((p) => typeof p === "string" && p.includes("page=3"))).toBe(true);
-    });
-    mockGet.mockClear();
-    // Now switch the sort — should re-fetch with page=1.
-    fireEvent.change(screen.getByTestId("customers-filter-sort"),
-      { target: { value: "created_asc" } });
-    await waitFor(() => {
-      const paths = mockGet.mock.calls.map((c) => c[0]);
-      expect(
-        paths.some((p) => typeof p === "string"
-          && p.startsWith("/customers?")
-          && p.includes("page=1")
-          && p.includes("sort=created_asc")
-          && !p.includes("count_only=true")),
-      ).toBe(true);
-    });
-  });
-
-  // Feb 2026 · new alphabetical options — separate tests so a
-  // regression on either sort key gives a clear failure signal.
-  it.each([
-    ["name_asc",  "Name A → Z"],
-    ["name_desc", "Name Z → A"],
-  ])("changing the dropdown to %s fires a fetch with sort=%s", async (value, _label) => {
-    _installRouter();
-    _mount("admin");
-    await waitFor(() =>
-      expect(screen.getByTestId("customers-filter-sort")).toBeTruthy());
-    mockGet.mockClear();
-    fireEvent.change(screen.getByTestId("customers-filter-sort"),
-      { target: { value } });
-    await waitFor(() => {
-      const paths = mockGet.mock.calls.map((c) => c[0]);
-      expect(
-        paths.some((p) => typeof p === "string"
-          && p.startsWith("/customers?")
-          && p.includes(`sort=${value}`)
-          && !p.includes("count_only=true")),
-      ).toBe(true);
-    });
-  });
-
-  it.each(["name_asc", "name_desc"])(
-    "persists %s to localStorage",
-    async (value) => {
-      _installRouter();
-      _mount("admin");
-      await waitFor(() =>
-        expect(screen.getByTestId("customers-filter-sort")).toBeTruthy());
-      fireEvent.change(screen.getByTestId("customers-filter-sort"),
-        { target: { value } });
-      await waitFor(() =>
-        expect(localStorage.getItem("customers.sortBy")).toBe(value));
-    },
-  );
-
-  it.each(["name_asc", "name_desc"])(
-    "hydrates %s from localStorage on mount + initial fetch uses it",
-    async (value) => {
-      localStorage.setItem("customers.sortBy", value);
-      _installRouter();
-      _mount("admin");
-      const sel = await waitFor(() =>
-        screen.getByTestId("customers-filter-sort"));
-      expect(sel.value).toBe(value);
-      await waitFor(() => {
-        const paths = mockGet.mock.calls.map((c) => c[0]);
-        expect(
-          paths.some((p) => typeof p === "string"
-            && p.startsWith("/customers?")
-            && p.includes(`sort=${value}`)),
-        ).toBe(true);
-      });
-    },
-  );
 });

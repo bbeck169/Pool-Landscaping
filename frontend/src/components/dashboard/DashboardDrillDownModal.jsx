@@ -39,6 +39,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import PortalErrorBoundary from "@/components/errors/PortalErrorBoundary";
 import { api } from "@/api";
@@ -288,7 +295,28 @@ const EDITABLE_INCOME_FIELDS = new Set([
   "description", "quantity", "unit_price", "category",
 ]);
 
-function IncomeRow({ row, tile, onEdited, onOpenFull }) {
+/* K48 · Feb-2026 — invoice status values that lock line-item edits.
+ * Mirrors the K41 backend guard on PATCH /api/quotes/{iid}: paid /
+ * sent invoices reject line-item mutations with a 409.  In the
+ * revenue-by-category variant we surface this proactively by
+ * swapping the Business Unit editor for a read-only chip so the
+ * operator sees the lock BEFORE they attempt an edit. */
+const K48_LOCKED_STATUSES = new Set([
+  "paid", "sent", "partially_paid", "refunded",
+]);
+function _isLineItemLocked(row) {
+  const s = String(row?.invoice_status || "").toLowerCase();
+  const p = String(row?.payment_status || "").toLowerCase();
+  return K48_LOCKED_STATUSES.has(s) || K48_LOCKED_STATUSES.has(p);
+}
+
+function IncomeRow({
+  row, tile, onEdited, onOpenFull,
+  /* K48 additions — only meaningful for variant="income-by-category". */
+  variant,
+  incomeCategories = [],
+  currentBucket = null,
+}) {
   const [draft, setDraft] = useState({
     description: row.description || "",
     quantity: row.quantity ?? 0,
@@ -299,6 +327,30 @@ function IncomeRow({ row, tile, onEdited, onOpenFull }) {
   const [saveErr, setSaveErr] = useState("");
   const [faded, setFaded] = useState(false);
   const originalRef = useRef({ ...draft });
+
+  /* K48 — Business Unit editor state.  ``buCategoryId`` reflects the
+   * live selection (income_categories.id).  We resolve it from the
+   * row's ``income_category_id`` first, falling back to a name-match
+   * against ``incomeCategories`` for legacy rows that only carry the
+   * denormalized name in ``category``.  ``movedTo`` holds the name
+   * of the destination bucket AFTER a successful save so the row can
+   * stay in place with a "Moved to X" indicator (K48 default per
+   * user brief). */
+  const isLocked = _isLineItemLocked(row);
+  const isRevenueVariant = variant === "income-by-category";
+  const resolveInitialBuId = () => {
+    const direct = (row?.income_category_id || "").trim();
+    if (direct) return direct;
+    const nm = (row?.category || "").trim().toLowerCase();
+    if (!nm) return "";
+    const hit = incomeCategories.find(
+      (c) => (c?.name || "").trim().toLowerCase() === nm,
+    );
+    return hit ? hit.id : "";
+  };
+  const [buCategoryId, setBuCategoryId] = useState(resolveInitialBuId);
+  const [movedTo, setMovedTo] = useState(null);
+  const buOriginalRef = useRef(buCategoryId);
 
   const commitField = async (field) => {
     if (!EDITABLE_INCOME_FIELDS.has(field)) return;
@@ -385,6 +437,94 @@ function IncomeRow({ row, tile, onEdited, onOpenFull }) {
     "data-testid": `income-row-${row.invoice_id}-${row.line_index ?? "x"}-${field}`,
   });
 
+  /* ── K48 · Business Unit commit ─────────────────────────────────
+   * Reuses the existing K41 PATCH /api/quotes/{iid} pipeline.  We
+   * write BOTH the canonical ``income_category_id`` and the
+   * denormalized ``category`` (Path B — no schema change), then
+   * emit the standard drill-down audit companion with
+   * ``field="income_category_id"``.  On success we stamp
+   * ``movedTo`` so the row stays visible with a "Moved to X" chip
+   * until the modal is refreshed (user-approved default). */
+  const commitBusinessUnit = async (nextId) => {
+    if (isLocked) return;
+    if (!nextId) return;
+    if (nextId === buOriginalRef.current) return;
+    if (row.line_item_id == null && row.line_index == null) {
+      setSaveErr("Legacy row — use Open full edit.");
+      return;
+    }
+    const nextCat = incomeCategories.find((c) => c.id === nextId);
+    if (!nextCat) {
+      setSaveErr("Unknown business unit.");
+      return;
+    }
+    const beforeId = buOriginalRef.current;
+    const beforeName = (row.category || "").trim();
+    setSaving(true);
+    setSaveErr("");
+    // Optimistic — reflect the new selection immediately.
+    setBuCategoryId(nextId);
+    try {
+      const fetched = await api.get(`/quotes/${row.invoice_id}`);
+      const items = Array.isArray(fetched?.line_items)
+        ? fetched.line_items.map((li) => ({ ...li }))
+        : [];
+      const idx = row.line_index != null
+        ? row.line_index
+        : items.findIndex((li) => li.id === row.line_item_id);
+      if (idx < 0 || idx >= items.length) {
+        throw new Error("Line item not found in current invoice");
+      }
+      const target = { ...items[idx] };
+      // K48 · Path B — write both fields so the aggregation source
+      // of truth (line_items[].category / income_category_id) stays
+      // in sync with the canonical id.
+      target.income_category_id = nextId;
+      target.category = nextCat.name;
+      items[idx] = target;
+      await api.patch(`/quotes/${row.invoice_id}`, { line_items: items });
+      try {
+        await api.post("/dashboard/drilldown/line-item-audit", {
+          tile,
+          invoice_id: row.invoice_id,
+          line_index: idx,
+          field: "income_category_id",
+          before: beforeId || beforeName || null,
+          after: nextId,
+        });
+      } catch (auditErr) {
+        // eslint-disable-next-line no-console
+        console.warn("[k48] audit companion failed", auditErr);
+      }
+      buOriginalRef.current = nextId;
+      // Keep the denormalized draft in sync so any subsequent free-
+      // text bindings don't step on the new value.
+      setDraft((d) => ({ ...d, category: nextCat.name }));
+      originalRef.current = { ...originalRef.current, category: nextCat.name };
+      // K48 · Moved-to indicator — only render when the new bucket
+      // differs from the bucket the modal is currently drilled into.
+      const currentLc = String(currentBucket || "").trim().toLowerCase();
+      const newLc = String(nextCat.name || "").trim().toLowerCase();
+      if (currentLc && newLc && currentLc !== newLc) {
+        setMovedTo(nextCat.name);
+      } else {
+        setMovedTo(null);
+      }
+      onEdited?.(row, "income_category_id", beforeId, nextId);
+      setFaded(true);
+      setTimeout(() => setFaded(false), 300);
+    } catch (e) {
+      setBuCategoryId(beforeId);
+      const detail = e?.data?.detail;
+      const msg = typeof detail === "string" ? detail
+        : detail?.error || detail?.message || e?.message || "Save failed";
+      setSaveErr(msg);
+      toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <RowShell
       faded={faded}
@@ -402,8 +542,63 @@ function IncomeRow({ row, tile, onEdited, onOpenFull }) {
       <td style={{ padding: "6px 10px", minWidth: 200 }}>
         <Input {...bindText("description")} />
       </td>
-      <td style={{ padding: "6px 10px" }}>
-        <Input {...bindText("category")} style={{ maxWidth: 140 }} />
+      <td
+        style={{ padding: "6px 10px" }}
+        data-testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-bu-cell`}
+      >
+        {isRevenueVariant ? (
+          isLocked ? (
+            <LockedCell
+              testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-bu-locked`}
+            >
+              {(() => {
+                const hit = incomeCategories.find((c) => c.id === buCategoryId);
+                return hit?.name || row.category || "—";
+              })()}
+            </LockedCell>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <Select
+                value={buCategoryId || undefined}
+                onValueChange={commitBusinessUnit}
+                disabled={saving}
+              >
+                <SelectTrigger
+                  className="h-8 text-sm"
+                  style={{ maxWidth: 160 }}
+                  data-testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-bu-trigger`}
+                >
+                  <SelectValue placeholder="Select…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {incomeCategories.map((c) => (
+                    <SelectItem
+                      key={c.id}
+                      value={c.id}
+                      data-testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-bu-option-${c.id}`}
+                    >
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {movedTo ? (
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: colors.muted,
+                    fontStyle: "italic",
+                  }}
+                  data-testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-bu-moved`}
+                >
+                  Moved to {movedTo}
+                </span>
+              ) : null}
+            </div>
+          )
+        ) : (
+          <Input {...bindText("category")} style={{ maxWidth: 140 }} />
+        )}
       </td>
       <td style={{ padding: "6px 10px", fontSize: 12 }}>
         {row.service_category || "—"}
@@ -980,6 +1175,25 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
   const [lastBulk, setLastBulk] = useState(null);
   /* K41c — bump to force a re-fetch after undo restores rows. */
   const [reloadKey, setReloadKey] = useState(0);
+  /* K48 · Feb-2026 — tenant-scoped income_categories drive the
+   * Business Unit dropdown in the revenue-by-category drill-down.
+   * Fetch once when the modal opens on that variant; empty list on
+   * failure so the fallback locked-chip rendering still works. */
+  const [incomeCategories, setIncomeCategories] = useState([]);
+  useEffect(() => {
+    if (variant !== "income-by-category") return undefined;
+    let cancelled = false;
+    api.get("/income-categories?include_archived=false")
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r?.items) ? r.items : [];
+        setIncomeCategories(list.map((c) => ({
+          id: c.id, name: c.name, color: c.color,
+        })));
+      })
+      .catch(() => { if (!cancelled) setIncomeCategories([]); });
+    return () => { cancelled = true; };
+  }, [variant]);
 
   const url = useMemo(() => {
     if (variant === "data-integrity") {
@@ -1202,7 +1416,8 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: `2px solid ${colors.border}` }}>
-              {["DATE", "CUSTOMER", "INVOICE #", "DESCRIPTION", "CATEGORY",
+              {["DATE", "CUSTOMER", "INVOICE #", "DESCRIPTION",
+                 variant === "income-by-category" ? "BUSINESS UNIT" : "CATEGORY",
                  "SERVICE UNIT", "QTY", "UNIT PRICE", "EXTENDED",
                  "INVOICE TOTAL", "STATUS", ""].map((h) => (
                 <th key={h}
@@ -1219,6 +1434,9 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
                 key={`${r.invoice_id}-${r.line_index ?? "x"}`}
                 row={r}
                 tile={variant}
+                variant={variant}
+                incomeCategories={incomeCategories}
+                currentBucket={variant === "income-by-category" ? params?.category : null}
                 onOpenFull={onOpenFullEdit}
               />
             ))}

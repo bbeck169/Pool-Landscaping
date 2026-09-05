@@ -155,38 +155,39 @@ export default function CustomersList() {
   const [q, setQ] = useState("");
   const [tag, setTag] = useState("");
   const [scope, setScope] = useState("all"); // all | waitlist | unscheduled
-  // Feb 2026 · Customers list sort dropdown. Persists across
-  // refreshes via localStorage under the ``customers.sortBy`` key so
-  // an operator who prefers "Oldest → Newest" doesn't have to
-  // re-select on every visit. Default is ``created_desc`` — matches
-  // the backend default and the product ask (newest first out of
-  // the box). Unknown / legacy persisted values fall back to the
-  // default so a stale storage entry never puts the UI in an
-  // undefined state.
-  const _SORT_STORAGE_KEY = "customers.sortBy";
+  // Feb 2026 · Customers list sort dropdown.
+  //
+  // K49 · Feb-2026 — Default changed from ``created_desc``
+  // (Newest → Oldest) to ``last_name_asc`` (Last Name A-Z). Also
+  // dropped the ``customers.sortBy`` localStorage persistence so
+  // this dropdown obeys the K40 "reset to defaults on every mount"
+  // rule (Customers page filter defaults were the last hold-out).
+  // Explicit ``?sort=`` URL params still win — see the initializer
+  // below (bookmark-honor exception, matches the ``?tab=`` /
+  // ``?status=`` behaviour above).
   const _SORT_OPTIONS = [
+    // K49 default — surfaced first so the dropdown menu opens on
+    // the currently-selected value.
+    { value: "last_name_asc", label: "Last Name A-Z" },
     { value: "created_desc", label: "Newest → Oldest" },
     { value: "created_asc", label: "Oldest → Newest" },
-    // Feb 2026 · alphabetical options. Backend supports name_asc /
-    // name_desc with a stable ``_id`` tiebreaker. Existing
-    // ``customers.sortBy`` localStorage key auto-picks up the new
-    // values once _SORT_VALUES sees them.
+    // Feb 2026 · alphabetical options — backend supports name_asc /
+    // name_desc with a stable ``_id`` tiebreaker.
     { value: "name_asc",   label: "Name A → Z" },
     { value: "name_desc",  label: "Name Z → A" },
   ];
   const _SORT_VALUES = new Set(_SORT_OPTIONS.map((o) => o.value));
   const [sortBy, setSortBy] = useState(() => {
+    // K49 · Feb-2026 — honour an explicit ``?sort=`` URL param
+    // (bookmark exception), otherwise fall to the K49 default. No
+    // localStorage read — see the K40 rule.
     try {
-      const raw = localStorage.getItem(_SORT_STORAGE_KEY);
-      return raw && _SORT_VALUES.has(raw) ? raw : "created_desc";
-    } catch {
-      return "created_desc";
-    }
+      const raw = new URLSearchParams(window.location.search)
+        .get("sort");
+      if (raw && _SORT_VALUES.has(raw)) return raw;
+    } catch { /* URL parse failure — fall through */ }
+    return "last_name_asc";
   });
-  useEffect(() => {
-    try { localStorage.setItem(_SORT_STORAGE_KEY, sortBy); }
-    catch { /* localStorage unavailable — best-effort */ }
-  }, [sortBy]);
   // Phase G4a · Feb-2026 — Portal-activation dropdown filter.
   // Options: all (default, no filter) | activated | not_activated.
   // Stacks with the segmented cohort tabs so operators can chase
