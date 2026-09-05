@@ -414,19 +414,21 @@ export default function InvoicesList() {
         />
       </div>
 
-      {/* Filters */}
+      {/* Filters — Phase K52.1 · Feb-2026: navy chrome strip. */}
       <div
         className="rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center"
-        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        style={{ backgroundColor: colors.nav.bg, border: `1px solid ${colors.nav.border}` }}
+        data-testid="invoices-filters"
+        data-k52-navy-strip="true"
       >
         <div className="relative flex-1 min-w-[220px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: colors.muted }} />
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: colors.nav.fgMuted }} />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search title, customer…"
-            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
-            style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm focus:ring-2 placeholder:text-white/70"
+            style={{ backgroundColor: "rgba(255,255,255,0.10)", border: `1px solid ${colors.nav.border}`, color: colors.nav.fg }}
             data-testid="inv-search"
           />
         </div>
@@ -434,7 +436,7 @@ export default function InvoicesList() {
           value={status}
           onChange={(e) => setStatus(e.target.value)}
           className="text-xs font-semibold px-3 py-2 rounded-lg"
-          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary, border: `1px solid ${colors.border}` }}
+          style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg, border: `1px solid ${colors.nav.border}` }}
           data-testid="inv-filter-status"
         >
           <option value="">All statuses</option>
@@ -446,9 +448,13 @@ export default function InvoicesList() {
           onClick={() => setLateFeeFilter(!hasLateFee)}
           className="text-xs font-semibold px-3 py-2 rounded-lg transition"
           style={{
-            backgroundColor: hasLateFee ? "#FEE2E2" : colors.surfaceSecondary,
-            color: hasLateFee ? "#B91C1C" : colors.onSurfaceSecondary,
-            border: `1px solid ${hasLateFee ? "#FCA5A5" : colors.border}`,
+            // Phase K52.1 · Feb-2026 — "Has late fee" is a filter
+            // state chip.  Active = gradient (matches K52 active
+            // affordance).  Idle = transparent w/ white outline.
+            background: hasLateFee ? colors.gradient.css : "transparent",
+            color: colors.nav.fg,
+            border: `1px solid ${hasLateFee ? "transparent" : colors.nav.fgMuted}`,
+            textShadow: hasLateFee ? colors.gradient.textShadow : undefined,
           }}
           data-testid="inv-filter-late-fee"
         >
@@ -459,7 +465,7 @@ export default function InvoicesList() {
           value={cardFilter}
           onChange={(e) => setCardFilter(e.target.value)}
           className="text-xs font-semibold px-3 py-2 rounded-lg"
-          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary, border: `1px solid ${colors.border}` }}
+          style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg, border: `1px solid ${colors.nav.border}` }}
           data-testid="inv-filter-card"
         >
           <option value="any">Card on file: Any</option>
@@ -478,7 +484,7 @@ export default function InvoicesList() {
                 if (v) toggleCategory(v);
               }}
               className="text-xs font-semibold px-3 py-2 rounded-lg"
-              style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary, border: `1px solid ${colors.border}` }}
+              style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg, border: `1px solid ${colors.nav.border}` }}
               data-testid="inv-filter-category-select"
             >
               <option value="">Add category…</option>
@@ -494,7 +500,13 @@ export default function InvoicesList() {
               <span
                 key={c}
                 className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold"
-                style={{ backgroundColor: "#DBEAFE", color: "#1E40AF" }}
+                style={{
+                  // Phase K52.1 · Feb-2026 — selected-category chip
+                  // reads as an active filter state → K52 gradient.
+                  background: colors.gradient.css,
+                  color: colors.gradient.fg,
+                  textShadow: colors.gradient.textShadow,
+                }}
                 data-testid={`inv-category-chip-${c}`}
               >
                 {c}
@@ -502,7 +514,7 @@ export default function InvoicesList() {
                   type="button"
                   onClick={() => toggleCategory(c)}
                   aria-label={`Remove ${c}`}
-                  className="text-blue-800"
+                  className="text-white/90"
                   data-testid={`inv-category-chip-remove-${c}`}
                 >
                   <XIcon size={11} />
@@ -514,7 +526,7 @@ export default function InvoicesList() {
                 type="button"
                 onClick={clearCategories}
                 className="text-xs font-semibold underline"
-                style={{ color: colors.muted }}
+                style={{ color: colors.nav.fgMuted }}
                 data-testid="inv-category-clear"
               >
                 Clear

@@ -120,48 +120,53 @@ function TimersTab({ isAdmin }) {
 
   return (
     <div data-testid="timers-tab">
+      {/* Filter strip — Phase K52.1 · Feb-2026: navy chrome strip. */}
       <div className="flex flex-wrap gap-3 items-end mb-4 p-4 rounded-2xl"
-              style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
-        <label className="text-sm">
-          <div className="text-xs opacity-70 mb-1">From</div>
+              style={{ background: colors.nav.bg, border: `1px solid ${colors.nav.border}` }}
+              data-testid="timers-filters"
+              data-k52-navy-strip="true">
+        <label className="text-sm" style={{ color: colors.nav.fg }}>
+          <div className="text-xs mb-1" style={{ color: colors.nav.fgMuted }}>From</div>
           <input type="date" value={filters.date_from}
                   onChange={(e) => setFilters((f) => ({ ...f, date_from: e.target.value }))}
                   data-testid="jt-filter-from"
                   className="px-3 py-2 rounded-lg text-sm"
-                  style={{ background: colors.background,
-                              border: `1px solid ${colors.border}`,
-                              color: colors.onSurface }} />
+                  style={{ background: colors.nav.bg,
+                              border: `1px solid ${colors.nav.border}`,
+                              color: colors.nav.fg,
+                              colorScheme: "dark" }} />
         </label>
-        <label className="text-sm">
-          <div className="text-xs opacity-70 mb-1">To</div>
+        <label className="text-sm" style={{ color: colors.nav.fg }}>
+          <div className="text-xs mb-1" style={{ color: colors.nav.fgMuted }}>To</div>
           <input type="date" value={filters.date_to}
                   onChange={(e) => setFilters((f) => ({ ...f, date_to: e.target.value }))}
                   data-testid="jt-filter-to"
                   className="px-3 py-2 rounded-lg text-sm"
-                  style={{ background: colors.background,
-                              border: `1px solid ${colors.border}`,
-                              color: colors.onSurface }} />
+                  style={{ background: colors.nav.bg,
+                              border: `1px solid ${colors.nav.border}`,
+                              color: colors.nav.fg,
+                              colorScheme: "dark" }} />
         </label>
-        <label className="text-sm flex-1 min-w-[160px]">
-          <div className="text-xs opacity-70 mb-1">Tech id</div>
+        <label className="text-sm flex-1 min-w-[160px]" style={{ color: colors.nav.fg }}>
+          <div className="text-xs mb-1" style={{ color: colors.nav.fgMuted }}>Tech id</div>
           <input value={filters.tech_id} onChange={(e) => setFilters((f) => ({ ...f, tech_id: e.target.value }))}
                   placeholder="Filter by tech id"
                   data-testid="jt-filter-tech"
-                  className="w-full px-3 py-2 rounded-lg text-sm"
-                  style={{ background: colors.background,
-                              border: `1px solid ${colors.border}`,
-                              color: colors.onSurface }} />
+                  className="w-full px-3 py-2 rounded-lg text-sm placeholder:text-white/70"
+                  style={{ background: "rgba(255,255,255,0.10)",
+                              border: `1px solid ${colors.nav.border}`,
+                              color: colors.nav.fg }} />
         </label>
-        <label className="text-sm flex-1 min-w-[160px]">
-          <div className="text-xs opacity-70 mb-1">Customer id</div>
+        <label className="text-sm flex-1 min-w-[160px]" style={{ color: colors.nav.fg }}>
+          <div className="text-xs mb-1" style={{ color: colors.nav.fgMuted }}>Customer id</div>
           <input value={filters.customer_id}
                   onChange={(e) => setFilters((f) => ({ ...f, customer_id: e.target.value }))}
                   placeholder="Filter by customer id"
                   data-testid="jt-filter-customer"
-                  className="w-full px-3 py-2 rounded-lg text-sm"
-                  style={{ background: colors.background,
-                              border: `1px solid ${colors.border}`,
-                              color: colors.onSurface }} />
+                  className="w-full px-3 py-2 rounded-lg text-sm placeholder:text-white/70"
+                  style={{ background: "rgba(255,255,255,0.10)",
+                              border: `1px solid ${colors.nav.border}`,
+                              color: colors.nav.fg }} />
         </label>
         <Button onClick={downloadCsv} testid="jt-export-csv" variant="secondary">
           Export CSV

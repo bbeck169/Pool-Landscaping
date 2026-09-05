@@ -1001,31 +1001,34 @@ export default function CustomersList() {
         </div>
       ) : null}
 
-      {/* Filter row */}
+      {/* Filter row — Phase K52.1 · Feb-2026: navy chrome strip. */}
       <div
         className="rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center"
-        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        style={{ backgroundColor: colors.nav.bg, border: `1px solid ${colors.nav.border}` }}
+        data-testid="customers-filters"
+        data-k52-navy-strip="true"
       >
         <div className="relative flex-1 min-w-[220px]">
           <Search
             size={16}
             className="absolute left-3 top-1/2 -translate-y-1/2"
-            style={{ color: colors.muted }}
+            style={{ color: colors.nav.fgMuted }}
           />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search name, email, phone, address…"
-            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
+            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm focus:ring-2 placeholder:text-white/70"
             style={{
-              backgroundColor: colors.surfaceSecondary,
-              border: `1px solid ${colors.border}`,
+              backgroundColor: "rgba(255,255,255,0.10)",
+              border: `1px solid ${colors.nav.border}`,
+              color: colors.nav.fg,
             }}
             data-testid="customers-search"
           />
         </div>
         <div className="flex items-center gap-1">
-          <Filter size={14} style={{ color: colors.muted }} />
+          <Filter size={14} style={{ color: colors.nav.fgMuted }} />
           {[
             { k: "all", label: "All" },
             { k: "unscheduled", label: "Unscheduled" },
@@ -1036,9 +1039,13 @@ export default function CustomersList() {
               onClick={() => setScope(s.k)}
               className="text-xs font-semibold px-3 py-1.5 rounded-full transition"
               style={{
-                backgroundColor: scope === s.k ? colors.brandTertiary : colors.surfaceSecondary,
-                color: scope === s.k ? colors.onBrandTertiary : colors.onSurfaceSecondary,
-                border: `1px solid ${scope === s.k ? colors.brandTertiary : colors.border}`,
+                // Phase K52.1 · Feb-2026 — scope is a filter-state
+                // chip → active = K52 gradient, idle = transparent
+                // w/ white outline (matches K52 Slice A pattern).
+                background: scope === s.k ? colors.gradient.css : "transparent",
+                color: colors.nav.fg,
+                border: `1px solid ${scope === s.k ? "transparent" : colors.nav.fgMuted}`,
+                textShadow: scope === s.k ? colors.gradient.textShadow : undefined,
               }}
               data-testid={`customers-scope-${s.k}`}
             >
@@ -1051,9 +1058,9 @@ export default function CustomersList() {
           onChange={(e) => setTag(e.target.value)}
           className="text-xs font-semibold px-3 py-1.5 rounded-lg"
           style={{
-            backgroundColor: colors.surfaceSecondary,
-            color: colors.onSurfaceSecondary,
-            border: `1px solid ${colors.border}`,
+            backgroundColor: colors.nav.bg,
+            color: colors.nav.fg,
+            border: `1px solid ${colors.nav.border}`,
           }}
           data-testid="customers-filter-tag"
         >
@@ -1070,9 +1077,9 @@ export default function CustomersList() {
           onChange={(e) => setSortBy(e.target.value)}
           className="text-xs font-semibold px-3 py-1.5 rounded-lg"
           style={{
-            backgroundColor: colors.surfaceSecondary,
-            color: colors.onSurfaceSecondary,
-            border: `1px solid ${colors.border}`,
+            backgroundColor: colors.nav.bg,
+            color: colors.nav.fg,
+            border: `1px solid ${colors.nav.border}`,
           }}
           aria-label="Sort customers by"
           data-testid="customers-filter-sort"
@@ -1093,9 +1100,9 @@ export default function CustomersList() {
           onChange={(e) => setPortalStatus(e.target.value)}
           className="text-xs font-semibold px-3 py-1.5 rounded-lg"
           style={{
-            backgroundColor: colors.surfaceSecondary,
-            color: colors.onSurfaceSecondary,
-            border: `1px solid ${colors.border}`,
+            backgroundColor: colors.nav.bg,
+            color: colors.nav.fg,
+            border: `1px solid ${colors.nav.border}`,
           }}
           aria-label="Filter customers by portal activation status"
           data-testid="customers-filter-portal-status"

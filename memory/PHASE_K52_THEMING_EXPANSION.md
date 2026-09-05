@@ -327,3 +327,141 @@ active-item update depend on K52 being live.
 * K50 Slice B job-status shading map.
 * Row-action `DropdownMenu` usages (kebab menus etc.) — Slice B
   scoped only to CategoryDropdown + shadcn `<Select>`.
+
+---
+
+## K52 Design Principles (adjudicated grey areas — Feb-2026)
+
+These decisions are now **codified**, not TODOs.  Any future patch
+that contradicts one of these must call it out explicitly.
+
+1. **`colors.brand` solid = legacy inline buttons (deliberate).**
+   371 native `<button style={{ backgroundColor: colors.brand }}>`
+   consumers stay on the solid brand color.  Rationale: shadcn
+   `Button` is the canonical primary; those inline buttons are
+   secondary/contextual actions that don't need to compete with
+   the primary's visual weight.  **Do NOT migrate them** to the
+   K52 gradient.
+
+2. **shadcn `Button` primitive = canonical for the K52 gradient.**
+   The `default` variant is the SINGLE opt-in for the gradient
+   look.  Consumers wanting the gradient use `<Button>`; consumers
+   wanting a solid primary use the existing inline pattern.
+   Neither is deprecated.
+
+3. **`brandGradientCss` (sky→green) vs `colors.gradient.css`
+   (green→sky) = intentionally distinct palettes.**  The two
+   gradients coexist.  `brandGradientCss` is retained on the
+   ~30 legacy consumers that already use it.  `colors.gradient.css`
+   is the K52+ signature.  **Do NOT repoint** `brandGradientCss`
+   to the K52 palette.  If the two ever appear side-by-side and
+   read as inconsistent, revisit — but no pre-emptive migration.
+
+4. **CategoryDropdown active-row-inside-popover = K50 white pill
+   (deliberate).**  When a menu item inside the top-nav popover
+   matches the current route, it renders as a white pill with
+   navy text — NOT the K52 gradient.  Rationale: 6 sibling rows
+   share the popover; a gradient there would fight the surrounding
+   items and dilute the "top-nav is active" affordance the
+   trigger's own gradient already carries.
+
+5. **Calendar/Grid toggle = K50 white pill state-selector
+   (deliberate).**  The view-mode toggle on Schedule is action-
+   shaped but state-selecting; it retains its 2-state look
+   (white pill on navy for the active view mode).  Rationale:
+   distinguishes VIEW selectors from FILTER chips (which paint
+   the K52 gradient when active) and from ACTION buttons (which
+   paint the K52 gradient via shadcn `Button`).
+
+---
+
+## K52.1 · Filter row navy sweep across list-view pages
+
+**Adjudication**: Following the K52 ship, user chose option (a) —
+sweep the navy filter-strip pattern across every list-view page
+that has a full-width filter strip.  Paint-only pass; no filter
+LOGIC changed.
+
+### Swept pages (5)
+
+| Page | File | Strip testid | Notes |
+| --- | --- | --- | --- |
+| **Customers** (`/customers`) | `pages/customers/CustomersList.jsx` | `customers-filters` | Scope chips (All / Unscheduled / Waitlist) treated as filter-state chips → active paints the K52 gradient (was `colors.brandTertiary` teal-mint). Tag / Sort / Portal-status selects all navy. |
+| **Quotes** (`/quotes`) | `pages/quotes/QuotesList.jsx` | `quotes-filters` | Search + status select navy. |
+| **Invoices** (`/invoices`) | `pages/invoices/InvoicesList.jsx` | `invoices-filters` | Search + status + card-on-file selects navy. "Has late fee" toggle promoted from red-tint to gradient-when-active. Selected-category chips promoted from blue-tint (`#DBEAFE`) to gradient (matches active filter-state affordance). |
+| **Leads** (`/leads`) | `pages/leads/LeadsDashboardPage.jsx` | `leads-filters` | Was a bare flex row; wrapped in a proper K52 navy strip. Search + source + status selects navy. |
+| **Job Timers** (`/timers`) | `pages/timers/JobTimersPage.jsx` | `timers-filters` | 2 date inputs opt into `colorScheme: "dark"` so the native calendar icon inverts white. 2 text inputs use the K52 `rgba(255,255,255,0.10)` tinted-card treatment (matches CalendarSchedule search input). |
+
+### Plus K52 (already shipped) — 2 strips on `pages/schedule/CalendarSchedule.jsx`:
+* `calendar-filters` (filter toolbar)
+* `calendar-presets` (range preset row)
+
+**Grand total**: 7 filter strips app-wide, all reachable via a
+single selector `[data-k52-navy-strip="true"]`.
+
+### Skipped pages (with reason)
+
+| Page | Reason |
+| --- | --- |
+| **Jobs** (`/jobs`) | Route redirects to `/schedule` → covered by K52 Slice A. |
+| **Payments** | No dedicated `/payments` list page; payments render inside the customer detail view (not a list-page filter strip). |
+| **Estimates** (`/estimator`) | The page only has a single-control `CustomerFilterBar` (a customer-scoping dropdown), not a full filter strip.  The `CustomerFilterBar` component sits in its own row above the table and doesn't warrant a wrapping navy strip.  Ambiguous surface — flagged for your call before painting. |
+| **Pool Service Report** (`/reports/pool-service`) | The filter controls (week picker + Refresh + Export CSV) are embedded inline in the page header, not a distinct filter strip.  Painting them navy would recolour the whole header.  Ambiguous surface — flagged for your call. |
+| **Reports Hub** (`/reports`) | No filter strip; just KPI cards and drilldown links. |
+| **Customers cohort tabs** (Active / Inactive / Muted / All at top of `/customers`) | This is a segmented view selector (like Calendar/Grid on Schedule).  Per Design Principle §5, view-selectors keep their K50 white pill.  Not part of the filter strip. |
+
+### Unusual layouts (flagged, not painted)
+
+1. **Estimator** — single-dropdown filter, not a strip.  Adjudicate:
+   (a) leave as-is (my default), (b) wrap the `CustomerFilterBar`
+   in a navy strip anyway for consistency.
+2. **Pool Service Report** — week picker + Refresh + Export CSV
+   embedded in the page header.  Adjudicate: (a) leave as-is (my
+   default), (b) extract the trio into a navy strip below the
+   header, (c) paint the header itself navy.
+
+### Tests
+
+New assertions in `test/k52-theming.test.js` under `K52.1 · Filter
+row navy sweep`:
+
+* One assertion per swept page — filter strip carries
+  `data-k52-navy-strip="true"` + `colors.nav.bg` background.
+* Regression guards on each page for the pre-K52 tokens that must
+  not resurface (`colors.surface` / `colors.surfaceSecondary` /
+  `colors.onSurfaceSecondary` / `#FEE2E2` / `#DBEAFE` / `background:
+  "#fff"`).
+* Marker-selector sweep — every swept page carries at least one
+  `data-k52-navy-strip="true"` attribute; CalendarSchedule carries
+  exactly 2 (filter toolbar + preset row).
+
+**Test count**: K52 suite grew from 16 → 22 (+6 K52.1 tests).
+
+### Regression sweep
+
+**205/205 pass** across:
+* K52 (16 K52 + 6 K52.1 = 22)
+* K50 (22)
+* K51 (4)
+* K41 / K41b / K41c / K48 / K49 (86)
+* Sibling nav / logo / customer-list / invoice suites (71)
+
+**Pre-existing failure** (NOT a K52.1 regression, confirmed via
+git-stash):
+* `feb2026-customers-tag-filter-dropdown.test.jsx :: "URL sync
+  effect still lives in the page (unchanged surface)"` — 1
+  assertion on `CustomersList.jsx`'s inline `rowTags` snippet
+  that predates my K52.1 changes.  Same failure reproduces on
+  `HEAD~` (before K52.1).  Not touched.
+
+### Files changed (K52.1 delta only)
+
+| File | Change |
+| --- | --- |
+| `frontend/src/pages/customers/CustomersList.jsx` | Filter strip → navy K52; scope chips promoted to gradient-when-active |
+| `frontend/src/pages/quotes/QuotesList.jsx` | Filter strip → navy K52 |
+| `frontend/src/pages/invoices/InvoicesList.jsx` | Filter strip → navy K52; late-fee toggle + category chips promoted to gradient-when-active |
+| `frontend/src/pages/leads/LeadsDashboardPage.jsx` | Bare flex row → proper navy K52 strip |
+| `frontend/src/pages/timers/JobTimersPage.jsx` | Filter strip → navy K52; date inputs opt into dark colorScheme |
+| `frontend/src/test/k52-theming.test.js` | +6 K52.1 assertions (one per swept page + marker sweep) |
+| `memory/PHASE_K52_THEMING_EXPANSION.md` | This section |

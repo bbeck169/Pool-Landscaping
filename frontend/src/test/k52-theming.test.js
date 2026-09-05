@@ -28,6 +28,12 @@ const BUSINESS_OS = read("src/pages/os/BusinessOS.jsx");
 const BUTTON      = read("src/components/ui/button.jsx");
 const SELECT      = read("src/components/ui/select.jsx");
 const CAL_SCHED   = read("src/pages/schedule/CalendarSchedule.jsx");
+// K52.1 · Filter row navy sweep — swept pages.
+const CUSTOMERS   = read("src/pages/customers/CustomersList.jsx");
+const QUOTES      = read("src/pages/quotes/QuotesList.jsx");
+const INVOICES    = read("src/pages/invoices/InvoicesList.jsx");
+const LEADS       = read("src/pages/leads/LeadsDashboardPage.jsx");
+const TIMERS      = read("src/pages/timers/JobTimersPage.jsx");
 
 
 /* ══════════════════════════════════════════════════════════════════ */
@@ -291,5 +297,127 @@ describe("K52 · Slice D — Active nav item = gradient", () => {
     expect(lightBlock).not.toMatch(/linear-gradient/);
     expect(navyBlock).not.toMatch(/colors\.gradient/);
     expect(lightBlock).not.toMatch(/colors\.gradient/);
+  });
+});
+
+
+/* ══════════════════════════════════════════════════════════════════ */
+/* K52.1 — Filter row navy sweep across list-view pages               */
+/* ══════════════════════════════════════════════════════════════════ */
+
+/**
+ * Contract per swept page: the filter strip container is marked
+ * ``data-k52-navy-strip="true"`` and its inline ``style`` prop
+ * carries ``backgroundColor: colors.nav.bg`` (or ``background:
+ * colors.nav.bg``).  Two assertions per page — that's the
+ * paint-only pass contract; deeper input/select recolouring is
+ * covered by the source-level ``colors.nav.fg`` /
+ * ``colors.nav.border`` refs already present in each file's diff.
+ */
+function assertNavyStripPresent(sourceText, pageLabel) {
+  const idx = sourceText.indexOf('data-k52-navy-strip="true"');
+  expect(idx, `${pageLabel} — filter strip marker present`).toBeGreaterThan(-1);
+  // Scan ~800 chars preceding the marker (React attributes on JSX
+  // wrap onto multiple lines; the ``style`` prop typically opens
+  // ~4–8 lines above the marker attribute).
+  const block = sourceText.slice(Math.max(0, idx - 800), idx + 80);
+  expect(block, `${pageLabel} — filter strip paints navy`).toMatch(
+    /(?:background|backgroundColor):\s*colors\.nav\.bg/
+  );
+}
+
+describe("K52.1 · Filter row navy sweep", () => {
+  it("CustomersList filter strip is navy K52", () => {
+    assertNavyStripPresent(CUSTOMERS, "CustomersList");
+    // Scope chips (All / Unscheduled / Waitlist) are filter-state
+    // chips → active paints the K52 gradient (matches K52 Slice A
+    // preset-chip pattern).  Regression guard against the pre-K52
+    // ``colors.brandTertiary`` teal-mint active fill.
+    expect(CUSTOMERS).toMatch(/scope\s*===\s*s\.k\s*\?\s*colors\.gradient\.css\s*:\s*"transparent"/);
+    expect(CUSTOMERS).not.toMatch(/scope\s*===\s*s\.k\s*\?\s*colors\.brandTertiary/);
+  });
+
+  it("QuotesList filter strip is navy K52", () => {
+    assertNavyStripPresent(QUOTES, "QuotesList");
+    // Search input + status select both resolve to
+    // ``colors.nav.*`` tokens.
+    expect(QUOTES).toMatch(/data-testid="quotes-search"/);
+    expect(QUOTES).toMatch(/data-testid="quotes-filter-status"/);
+    // Regression guard — pre-K52 ``colors.surfaceSecondary`` /
+    // ``colors.onSurfaceSecondary`` on the strip's controls MUST
+    // be gone.
+    const stripStart = QUOTES.indexOf('data-testid="quotes-filters"');
+    const stripEnd = QUOTES.indexOf("</div>", stripStart);
+    const strip = QUOTES.slice(stripStart, stripEnd);
+    expect(strip).not.toMatch(/colors\.surfaceSecondary/);
+    expect(strip).not.toMatch(/colors\.onSurfaceSecondary/);
+  });
+
+  it("InvoicesList filter strip is navy K52", () => {
+    assertNavyStripPresent(INVOICES, "InvoicesList");
+    // ``Has late fee`` toggle is a filter-state chip: active paints
+    // the K52 gradient.
+    expect(INVOICES).toMatch(/hasLateFee\s*\?\s*colors\.gradient\.css\s*:\s*"transparent"/);
+    // Selected-category chips also render on the gradient.  Use a
+    // simpler forward-scan pattern — the chip's testid uses JSX
+    // string interpolation which makes an inline regex tricky.
+    const catChipIdx = INVOICES.indexOf("inv-category-chip-");
+    expect(catChipIdx).toBeGreaterThan(-1);
+    const catChipBlock = INVOICES.slice(Math.max(0, catChipIdx - 800), catChipIdx);
+    expect(catChipBlock).toMatch(/background:\s*colors\.gradient\.css/);
+    // Regression guard — pre-K52 red-fee-tint (``#FEE2E2``) and
+    // blue-category-tint (``#DBEAFE``) fills on chips MUST be gone.
+    const stripStart = INVOICES.indexOf('data-testid="invoices-filters"');
+    const stripEnd = INVOICES.indexOf('data-testid="inv-search"');
+    // The whole filter strip ends after the category chip block —
+    // scan forward past that too.
+    const bigStrip = INVOICES.slice(stripStart, stripStart + 5000);
+    expect(stripStart).toBeGreaterThan(-1);
+    expect(stripEnd).toBeGreaterThan(stripStart);
+    expect(bigStrip).not.toMatch(/backgroundColor:\s*"#FEE2E2"/);
+    expect(bigStrip).not.toMatch(/backgroundColor:\s*"#DBEAFE"/);
+  });
+
+  it("LeadsDashboardPage filter strip is navy K52 (was a bare flex row)", () => {
+    assertNavyStripPresent(LEADS, "LeadsDashboardPage");
+    // Pre-K52.1 rendering was a raw ``<div className="flex …">``
+    // with white ``background: "#fff"`` inputs.  Regression guard.
+    const stripStart = LEADS.indexOf('data-testid="leads-filters"');
+    const stripEnd = LEADS.indexOf("</div>", stripStart + 100);
+    const strip = LEADS.slice(stripStart, Math.max(stripStart + 4000, stripEnd));
+    expect(stripStart).toBeGreaterThan(-1);
+    expect(strip).not.toMatch(/background:\s*"#fff"/);
+    // Fields still render — search + source + status selects.
+    expect(strip).toMatch(/data-testid="lead-search-input"/);
+    expect(strip).toMatch(/data-testid="lead-filter-source-select"/);
+    expect(strip).toMatch(/data-testid="lead-filter-status-select"/);
+  });
+
+  it("JobTimersPage filter strip is navy K52", () => {
+    assertNavyStripPresent(TIMERS, "JobTimersPage");
+    // Two ``<input type="date">`` fields carry ``colorScheme: "dark"``
+    // so the native calendar icon inverts to white on the navy strip.
+    const stripStart = TIMERS.indexOf('data-testid="timers-filters"');
+    const stripEnd = TIMERS.indexOf('Export CSV', stripStart);
+    const strip = TIMERS.slice(stripStart, stripEnd + 50);
+    const darkSchemeMatches = strip.match(/colorScheme:\s*"dark"/g) || [];
+    expect(darkSchemeMatches.length, "both date inputs opt into dark colorScheme").toBeGreaterThanOrEqual(2);
+    // Text inputs paint the tinted-white card treatment (matches
+    // CalendarSchedule search input).
+    expect(strip).toMatch(/background:\s*"rgba\(255,255,255,0\.10\)"/);
+  });
+
+  it("Ships the K52.1 marker on every swept page — one selector for the tester", () => {
+    // Sanity — one selector (``[data-k52-navy-strip="true"]``)
+    // reaches all 6 filter strips (CalendarSchedule + 5 K52.1
+    // pages).  Any future filter-strip refactor that drops the
+    // marker fails this test.
+    const swept = [CAL_SCHED, CUSTOMERS, QUOTES, INVOICES, LEADS, TIMERS];
+    swept.forEach((src, i) => {
+      expect(src.match(/data-k52-navy-strip="true"/g)?.length || 0, `page ${i} carries at least one K52.1 marker`).toBeGreaterThanOrEqual(1);
+    });
+    // CalendarSchedule ships TWO strips (filter toolbar + preset
+    // row) — the marker attribute appears twice there.
+    expect(CAL_SCHED.match(/data-k52-navy-strip="true"/g).length).toBe(2);
   });
 });

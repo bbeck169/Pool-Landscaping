@@ -184,20 +184,28 @@ export default function LeadsDashboardPage() {
         </p>
       </div>
 
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
+      {/* Filter strip — Phase K52.1 · Feb-2026: promoted from a
+          bare flex row to a proper navy K52 strip. */}
+      <div
+        className="rounded-2xl p-3 mb-4 flex items-center gap-2 flex-wrap"
+        style={{ backgroundColor: colors.nav.bg, border: `1px solid ${colors.nav.border}` }}
+        data-testid="leads-filters"
+        data-k52-navy-strip="true"
+      >
         <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg"
-             style={{ border: `1px solid ${colors.border}`, background: "#fff" }}>
-          <Search size={14} color={colors.muted} />
+             style={{ border: `1px solid ${colors.nav.border}`, background: "rgba(255,255,255,0.10)" }}>
+          <Search size={14} color={colors.nav.fgMuted} />
           <input value={filters.search}
                  onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
                  placeholder="Search name, email, phone"
-                 className="outline-none text-sm bg-transparent w-56"
+                 className="outline-none text-sm bg-transparent w-56 placeholder:text-white/70"
+                 style={{ color: colors.nav.fg }}
                  data-testid="lead-search-input" />
         </div>
         <select value={filters.source}
                 onChange={(e) => setFilters((f) => ({ ...f, source: e.target.value }))}
                 className="text-sm px-2 py-1.5 rounded-lg outline-none"
-                style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+                style={{ border: `1px solid ${colors.nav.border}`, background: colors.nav.bg, color: colors.nav.fg }}
                 data-testid="lead-filter-source-select">
           <option value="">All sources</option>
           <option value="chat_widget">Chat widget</option>
@@ -211,7 +219,7 @@ export default function LeadsDashboardPage() {
         <select value={filters.status}
                 onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
                 className="text-sm px-2 py-1.5 rounded-lg outline-none"
-                style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+                style={{ border: `1px solid ${colors.nav.border}`, background: colors.nav.bg, color: colors.nav.fg }}
                 data-testid="lead-filter-status-select">
           <option value="">All statuses</option>
           {LEAD_STATUS_OPTIONS.map((o) => (
@@ -220,7 +228,7 @@ export default function LeadsDashboardPage() {
             </option>
           ))}
         </select>
-        <div className="ml-auto text-xs" style={{ color: colors.muted }}>
+        <div className="ml-auto text-xs" style={{ color: colors.nav.fgMuted }}>
           {visible.length} of {rows.length}
         </div>
       </div>

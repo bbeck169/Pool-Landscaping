@@ -70,16 +70,18 @@ export default function QuotesList() {
 
       <div
         className="rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center"
-        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        style={{ backgroundColor: colors.nav.bg, border: `1px solid ${colors.nav.border}` }}
+        data-testid="quotes-filters"
+        data-k52-navy-strip="true"
       >
         <div className="relative flex-1 min-w-[220px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: colors.muted }} />
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: colors.nav.fgMuted }} />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search title, customer…"
-            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
-            style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm focus:ring-2 placeholder:text-white/70"
+            style={{ backgroundColor: "rgba(255,255,255,0.10)", border: `1px solid ${colors.nav.border}`, color: colors.nav.fg }}
             data-testid="quotes-search"
           />
         </div>
@@ -88,9 +90,9 @@ export default function QuotesList() {
           onChange={(e) => setStatus(e.target.value)}
           className="text-xs font-semibold px-3 py-2 rounded-lg"
           style={{
-            backgroundColor: colors.surfaceSecondary,
-            color: colors.onSurfaceSecondary,
-            border: `1px solid ${colors.border}`,
+            backgroundColor: colors.nav.bg,
+            color: colors.nav.fg,
+            border: `1px solid ${colors.nav.border}`,
           }}
           data-testid="quotes-filter-status"
         >
