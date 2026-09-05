@@ -3077,6 +3077,41 @@ async def startup():
             logger.warning(f"k44_perf_indexes migration crashed: {e}")
     asyncio.create_task(_bg_k44_perf_indexes())
 
+    # K49b · Feb-2026 — Backfill legacy ``customers`` docs missing a
+    # top-level ``id`` field.  Idempotent + sentinel-gated so it
+    # only pays for a full scan on the first clean boot; subsequent
+    # boots short-circuit via the ``migrations`` collection.  Bugs
+    # out to a warning if the DB is unreachable — never blocks
+    # startup.
+    async def _bg_k49b_customer_id_backfill():
+        try:
+            from migrations.k49b_customer_id_backfill import (
+                run as _k49b_run,
+            )
+            _k49b_boot = await _k49b_run(apply=True)
+            if _k49b_boot.get("status") == "skipped":
+                logger.info(
+                    "[migration] k49b_customer_id_backfill: "
+                    "skipped · sentinel-clean",
+                )
+            else:
+                _s = _k49b_boot.get("stats") or {}
+                logger.info(
+                    "[migration] k49b_customer_id_backfill: "
+                    "tenants=%s scanned=%s needing_backfill=%s "
+                    "applied=%s remaining=%s",
+                    _s.get("tenants"),
+                    _s.get("customers_scanned"),
+                    _s.get("customers_needing_backfill"),
+                    _s.get("customers_applied"),
+                    _s.get("customers_needing_backfill_after"),
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "k49b_customer_id_backfill migration crashed: %s", e,
+            )
+    asyncio.create_task(_bg_k49b_customer_id_backfill())
+
     # K15 · Feb-2026 — Jobs schedule/status/crew indexes (mobile
     # Schedule perf).  Idempotent + sentinel-guarded.
     async def _bg_k15_jobs_indexes():

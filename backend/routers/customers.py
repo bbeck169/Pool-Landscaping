@@ -515,8 +515,36 @@ async def list_customers(
                      {"merged_into": {"$exists": False}}],
         }]
     if search:
-        rx = {"$regex": search, "$options": "i"}
-        q["$or"] = [{"name": rx}, {"email": rx}, {"phone": rx}, {"address": rx}]
+        # K49b · Feb-2026 — token-wise multi-field search.
+        # ``last_name`` was promoted to a first-class sort key in K49
+        # and the customers list UI now renders the split
+        # ``last_name`` column, so callers routinely search a mix of
+        # tokens that live in different columns (e.g. searching
+        # ``"Kaylan Testcase"`` against a doc with
+        # ``name="Kaylan Testcase"`` + ``last_name="Testcase"``, or
+        # ``"K49b MissingIdFixture"`` against ``name="K49b Missing Id
+        # Fixture …"`` + ``last_name="MissingIdFixture"``).  The old
+        # single-regex-across-name/email/phone/address surface only
+        # matched the raw string against one field at a time and
+        # produced empty results for these split-field cases.
+        # New behaviour: split on whitespace, AND across tokens,
+        # each token matches ANY of the six searchable fields
+        # (``name`` / ``first_name`` / ``last_name`` / ``email`` /
+        # ``phone`` / ``address``).  Single-word searches are a
+        # strict superset of the old behaviour (still matches the
+        # same rows plus any first/last-name hits).
+        import re as _k49b_re
+        _tokens = [t for t in (search or "").split() if t.strip()]
+        if _tokens:
+            _search_and = []
+            for _tok in _tokens:
+                _rx = {"$regex": _k49b_re.escape(_tok), "$options": "i"}
+                _search_and.append({"$or": [
+                    {"name": _rx}, {"first_name": _rx},
+                    {"last_name": _rx}, {"email": _rx},
+                    {"phone": _rx}, {"address": _rx},
+                ]})
+            q["$and"] = q.get("$and", []) + _search_and
     if tag:
         q["tags"] = tag
     # Feb-2026 · P46 — multi-tag AND filter. When both singular and
@@ -750,6 +778,35 @@ async def list_customers(
         for _k, _v in list(_d.items()):
             if isinstance(_v, _dt_hotfix):
                 _d[_k] = _v.isoformat()
+
+    # K49b · Feb-2026 — drop legacy customer docs missing a top-level
+    # ``id`` field BEFORE they reach the response.  ``CustomerListItem``
+    # declares ``id: str`` (required), so a missing-id doc would 500 the
+    # endpoint at Pydantic response-validation time — even after the
+    # downstream ``d.get("id")`` guards prevent the earlier ``KeyError``.
+    # The ``k49b_customer_id_backfill`` migration populates
+    # ``id = str(_id)`` on boot; this filter is the transient guard
+    # for the window before the migration lands and for any future
+    # doc that slips in without an ``id``.  Emit one ``warning``
+    # per dropped row (breadcrumbs for the backfill audit — ``_id``
+    # is projected out on both the ``find()`` and aggregation paths,
+    # so identify by tenant + name shape).
+    _k49b_kept: List[dict] = []
+    for _d in docs:
+        if _d.get("id"):
+            _k49b_kept.append(_d)
+        else:
+            logger.warning(
+                "[k49b] dropping customer row missing top-level 'id' "
+                "(tenant=%s name=%r first=%r last=%r); backfill "
+                "migration will repair on next boot",
+                _d.get("tenant_id"),
+                _d.get("name"),
+                _d.get("first_name"),
+                _d.get("last_name"),
+            )
+    docs = _k49b_kept
+
     # If unscheduled=true, filter out customers who have any non-completed/cancelled job.
     if unscheduled:
         from utils import not_deleted_filter as _nd
@@ -759,13 +816,25 @@ async def list_customers(
                 {"customer_id": 1, "_id": 0},
             )]
         )
-        docs = [d for d in docs if d["id"] not in scheduled_ids]
+        docs = [d for d in docs if d.get("id") and d["id"] not in scheduled_ids]
+    # K49b · Feb-2026 — every downstream hydration block in this
+    # handler indexes ``d["id"]``.  A single legacy customer doc
+    # created without a top-level ``id`` field (mirrored ``_id`` but
+    # never populated) 500's the whole ``GET /api/customers``
+    # response with ``KeyError: 'id'`` on line 768 — including K49's
+    # new ``sort=last_name_asc`` path.  Guard once here, then reuse
+    # ``cust_ids`` (a de-duplicated list of valid customer ids)
+    # everywhere below so no downstream lookup can crash.
+    # The ``k49b_customer_id_backfill`` migration seeds
+    # ``id = str(_id)`` for these docs on boot; this guard keeps the
+    # endpoint safe in the window BEFORE the migration lands and
+    # for any future doc that slips in without an ``id``.
+    cust_ids = [d["id"] for d in docs if isinstance(d, dict) and d.get("id")]
     # Feb-2026 MP2 UI — augment each customer row with a
     # ``properties_count`` (active properties only) so the list can
     # render a chip without an N+1 fetch. Batched aggregation keeps
     # this cheap for tenants with thousands of customers.
     if docs:
-        cust_ids = [d["id"] for d in docs]
         try:
             pipeline = [
                 {"$match": {"tenant_id": tenant["id"],
@@ -778,7 +847,7 @@ async def list_customers(
         except Exception:
             counts = {}
         for d in docs:
-            d["properties_count"] = counts.get(d["id"], 0)
+            d["properties_count"] = counts.get(d.get("id"), 0)
 
     # ─────────────────────────────────────────────────────────────
     # Feb-2026 · P45 — hydrate ``next_scheduled_at`` (earliest upcoming
@@ -805,7 +874,10 @@ async def list_customers(
             p45_pipeline = [
                 {"$match": {
                     "tenant_id": tenant["id"],
-                    "customer_id": {"$in": [d["id"] for d in docs]},
+                    # K49b · Feb-2026 — reuse the guarded ``cust_ids``
+                    # so a doc with no top-level ``id`` never crashes
+                    # this hydration.
+                    "customer_id": {"$in": cust_ids},
                     "status": {"$in": ["pending", "scheduled"]},
                     "scheduled_date": {"$gte": today_utc_iso},
                     **_p45_nd(),
@@ -825,7 +897,7 @@ async def list_customers(
                               _p45_exc)
             next_map = {}
         for d in docs:
-            d["next_scheduled_at"] = next_map.get(d["id"])
+            d["next_scheduled_at"] = next_map.get(d.get("id"))
 
     # Phase 12 · Feb 2026 — augment each row with the derived card fields.
     tenant_default_require = bool(tenant.get("require_card_on_file_default", True))
