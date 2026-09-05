@@ -89,13 +89,24 @@ describe("K48 · DashboardDrillDownModal — Business Unit editor", () => {
     );
   });
 
-  it("locks the editor for paid / sent / partially_paid / refunded invoices", () => {
-    expect(MODAL).toMatch(/K48_LOCKED_STATUSES = new Set\(\[/);
-    expect(MODAL).toMatch(/"paid"[\s\S]{0,10}"sent"[\s\S]{0,20}"partially_paid"[\s\S]{0,20}"refunded"/);
-    // isLocked branch renders a LockedCell (K41 pattern) instead of
+  it("locks only terminal (void / cancelled) invoices; paid/sent stay editable", () => {
+    // K48 (revised 2026-02-XX) — Business Unit re-classification is
+    // money-neutral (subtotal / tax / total unchanged), so the
+    // dropdown stays editable on paid/sent/partially_paid/refunded
+    // rows.  We simply carry the backend's required confirmation
+    // flags automatically on the PATCH.  Only void / cancelled
+    // stay hard-locked (the backend rejects them even with
+    // confirmations).
+    expect(MODAL).toMatch(/K48_TERMINAL_STATUSES = new Set\(\["void", "cancelled"\]\)/);
+    expect(MODAL).toMatch(/K48_CONFIRM_SENT_STATUSES/);
+    expect(MODAL).toMatch(/K48_CONFIRM_PAID_STATUSES/);
+    // Terminal-branch renders a LockedCell (K41 pattern) instead of
     // the Select.  Chip text carries the -bu-locked testid.
     expect(MODAL).toMatch(/-bu-locked`/);
-    expect(MODAL).toMatch(/isLocked \? \(/);
+    expect(MODAL).toMatch(/k48Status\.isTerminal \? \(/);
+    // paid/sent rows carry the confirmation flags through to the PATCH.
+    expect(MODAL).toMatch(/confirm_edit_sent = true/);
+    expect(MODAL).toMatch(/confirm_edit_paid_invoice_number/);
   });
 
   it("saves via the existing K41 PATCH pipeline (no new endpoint)", () => {

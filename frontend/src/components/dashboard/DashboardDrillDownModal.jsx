@@ -295,19 +295,37 @@ const EDITABLE_INCOME_FIELDS = new Set([
   "description", "quantity", "unit_price", "category",
 ]);
 
-/* K48 · Feb-2026 — invoice status values that lock line-item edits.
- * Mirrors the K41 backend guard on PATCH /api/quotes/{iid}: paid /
- * sent invoices reject line-item mutations with a 409.  In the
- * revenue-by-category variant we surface this proactively by
- * swapping the Business Unit editor for a read-only chip so the
- * operator sees the lock BEFORE they attempt an edit. */
-const K48_LOCKED_STATUSES = new Set([
-  "paid", "sent", "partially_paid", "refunded",
+/* K48 · Feb-2026 — invoice status values that require an
+ * acknowledgement on the backend PATCH pipeline before a line-item
+ * mutation is accepted (K41 lock rule for extended / invoice_total).
+ * Business Unit re-classification is money-NEUTRAL — total /
+ * subtotal / tax are unchanged by a category-only edit — so the
+ * dropdown stays editable in the revenue-by-category drill-down
+ * even on ``paid`` / ``sent`` rows.  We simply carry the required
+ * confirmation flags (``confirm_edit_sent`` /
+ * ``confirm_edit_paid_invoice_number``) through to the PATCH.
+ *
+ * (Original K48 ship 2026-02-XX rendered a read-only chip here;
+ * verified by tester on preview 2026-02-XX and reverted because
+ * ~100% of rows in a revenue drill-down are paid, making the
+ * feature unusable.  New rule: always render the Select; hard-
+ * reject only ``void`` / ``cancelled`` where the backend refuses
+ * even with confirmations.)
+ */
+const K48_TERMINAL_STATUSES = new Set(["void", "cancelled"]);
+const K48_CONFIRM_SENT_STATUSES = new Set(["sent"]);
+const K48_CONFIRM_PAID_STATUSES = new Set([
+  "paid", "partially_paid", "refunded",
 ]);
-function _isLineItemLocked(row) {
+function _k48StatusFlags(row) {
   const s = String(row?.invoice_status || "").toLowerCase();
   const p = String(row?.payment_status || "").toLowerCase();
-  return K48_LOCKED_STATUSES.has(s) || K48_LOCKED_STATUSES.has(p);
+  const any = (set) => set.has(s) || set.has(p);
+  return {
+    isTerminal: any(K48_TERMINAL_STATUSES),
+    needsSentConfirm: any(K48_CONFIRM_SENT_STATUSES),
+    needsPaidConfirm: any(K48_CONFIRM_PAID_STATUSES),
+  };
 }
 
 function IncomeRow({
@@ -336,7 +354,7 @@ function IncomeRow({
    * of the destination bucket AFTER a successful save so the row can
    * stay in place with a "Moved to X" indicator (K48 default per
    * user brief). */
-  const isLocked = _isLineItemLocked(row);
+  const k48Status = _k48StatusFlags(row);
   const isRevenueVariant = variant === "income-by-category";
   const resolveInitialBuId = () => {
     const direct = (row?.income_category_id || "").trim();
@@ -446,7 +464,18 @@ function IncomeRow({
    * ``movedTo`` so the row stays visible with a "Moved to X" chip
    * until the modal is refreshed (user-approved default). */
   const commitBusinessUnit = async (nextId) => {
-    if (isLocked) return;
+    // K48 · Feb-2026 (revised) — Business Unit re-classification is
+    // money-NEUTRAL (subtotal / tax / total are unchanged by a
+    // category-only edit).  Allow the edit on ``paid`` / ``sent`` /
+    // ``partially_paid`` / ``refunded`` rows by carrying the
+    // backend's required confirmation flags automatically; hard-
+    // reject only ``void`` / ``cancelled`` (backend rejects even
+    // with confirmations).
+    if (k48Status.isTerminal) {
+      setSaveErr("Invoice is void/cancelled — cannot re-classify.");
+      toast.error("Invoice is void/cancelled — cannot re-classify.");
+      return;
+    }
     if (!nextId) return;
     if (nextId === buOriginalRef.current) return;
     if (row.line_item_id == null && row.line_index == null) {
@@ -482,7 +511,22 @@ function IncomeRow({
       target.income_category_id = nextId;
       target.category = nextCat.name;
       items[idx] = target;
-      await api.patch(`/quotes/${row.invoice_id}`, { line_items: items });
+      // K48 · Auto-carry the sent/paid confirmation flags the
+      // backend requires (see routers/invoice_edit.patch_invoice).
+      // Money-neutral re-classification is safe to auto-confirm.
+      const patchBody = { line_items: items };
+      if (k48Status.needsSentConfirm) {
+        patchBody.confirm_edit_sent = true;
+      }
+      if (k48Status.needsPaidConfirm) {
+        // Backend requires the caller to type the invoice_number
+        // back to prove they saw the paid warning.  For an
+        // automated money-neutral re-classification from the
+        // drill-down we echo the row's own invoice_number.
+        patchBody.confirm_edit_paid_invoice_number =
+          row.invoice_number || fetched?.invoice_number || "";
+      }
+      await api.patch(`/quotes/${row.invoice_id}`, patchBody);
       try {
         await api.post("/dashboard/drilldown/line-item-audit", {
           tile,
@@ -547,7 +591,7 @@ function IncomeRow({
         data-testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-bu-cell`}
       >
         {isRevenueVariant ? (
-          isLocked ? (
+          k48Status.isTerminal ? (
             <LockedCell
               testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-bu-locked`}
             >

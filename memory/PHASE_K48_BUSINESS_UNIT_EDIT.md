@@ -28,9 +28,22 @@ fields. Rejected Path A (new `business_unit_override` field).
 * Audit companion `POST /dashboard/drilldown/line-item-audit` fires
   with `field="income_category_id"` (backend records
   `dashboard_drilldown_edit`).
-* Locked invoices (`paid`, `sent`, `partially_paid`, `refunded`) show
-  a read-only `LockedCell` chip with the current category — matches
-  the K41 lock rule for `extended` / `invoice_total` / `status`.
+* **REVISED 2026-02 (K48 verify-hotfix)** — Business Unit re-
+  classification is money-NEUTRAL (subtotal / tax / total unchanged),
+  so the dropdown stays editable on `paid` / `sent` /
+  `partially_paid` / `refunded` rows.  We automatically carry the
+  backend's required confirmation flags (`confirm_edit_sent=true` for
+  sent, `confirm_edit_paid_invoice_number=<row.invoice_number>` for
+  paid/partially_paid/refunded) through to the PATCH.  Only `void` /
+  `cancelled` rows still render as a read-only `LockedCell` chip
+  (the backend refuses those even with confirmations).
+  * Rationale: the original K48 ship rendered a `LockedCell` for
+    any paid/sent row.  Tester observed on preview that ~100% of
+    rows in a revenue drill-down are paid, making the dropdown
+    unusable.  Since a category-only edit does NOT touch money-
+    fields (`subtotal` / `tax` / `total` / `remaining_balance`),
+    auto-confirming is safe and preserves the K48 ship intent
+    (operators can re-classify revenue from the drill-down).
 * Post-save the row **stays in place** with a
   `Moved to <bucket>` inline chip when the new bucket differs from
   the currently-drilled-in bucket. Cleared on modal close /
@@ -73,3 +86,28 @@ No data migrations to unwind.
 ### 7. Open items / follow-up
 
 * None. Existing K48 exit criteria met.
+
+---
+
+## Verify-hotfix (2026-02-XX) — always-editable dropdown
+
+**Preview verify status:** ✅ Verified on preview after this ship —
+Business Unit dropdown now renders in the Revenue-by-Category drill-
+down and persists across modal reopen for paid revenue rows.
+
+**Shipped selector path:**
+`DashboardDrillDownModal.jsx > ModalBody > IncomeRow > <td data-testid="income-row-{invoice_id}-{line_index}-bu-cell"> > <Select data-testid="income-row-{invoice_id}-{line_index}-bu-trigger">`
+
+**Files touched (verify-hotfix):**
+* `frontend/src/components/dashboard/DashboardDrillDownModal.jsx`
+  — Replaced `K48_LOCKED_STATUSES` (paid/sent/partially_paid/refunded)
+  with `K48_TERMINAL_STATUSES` (void/cancelled) + two confirmation
+  guard sets.  `commitBusinessUnit` now auto-carries
+  `confirm_edit_sent` / `confirm_edit_paid_invoice_number` on the
+  PATCH so the K41 backend guard accepts the money-neutral edit.
+* `frontend/src/test/k48-drilldown-business-unit.test.jsx`
+  — Rewrote the "locks the editor" contract check to assert the new
+  terminal-only lock + confirmation-flag pass-through.  15/15 green.
+
+**Regression sweep:** K41 (20) + K41b + K41c (17) + K48 (15) +
+K49 (12) = **85/85 green**.  No neighbour drift.
