@@ -31,6 +31,50 @@ export class ApiNetworkError extends Error {
 }
 
 /**
+ * K61.a.2 · Feb-2026 — Structured HTTP-error type.
+ *
+ * ``request()`` used to throw a plain ``Error`` with only the humanised
+ * message, forcing every catch site to do fragile substring matching
+ * on ``e.message`` (or the pre-K61 dead-code branch that reached for
+ * ``e.response.data.detail`` on the assumption the client was axios).
+ *
+ * ``ApiError`` attaches the HTTP ``status`` code (number) and the RAW
+ * parsed backend ``detail`` field (string / array / dict — whatever
+ * FastAPI + Pydantic emitted, unmodified) so callers can inspect the
+ * shape structurally:
+ *
+ *     try { await api.post(...); }
+ *     catch (e) {
+ *       if (e instanceof ApiError && e.status === 422 &&
+ *           typeof e.detail === "object" && e.detail !== null &&
+ *           (e.detail as any).detail === "chemistry_core_readings_missing") {
+ *         // structured branch — read e.detail.missing_labels etc.
+ *       }
+ *     }
+ *
+ * ``e.message`` retains the pre-K61 humanised string so every existing
+ * catch site that only reads the message keeps working unchanged.
+ */
+export class ApiError extends Error {
+  kind = "http" as const;
+  status: number;
+  /**
+   * Raw parsed backend ``detail`` field.  ``string`` for
+   * ``HTTPException(400, "…")`` sites, ``Array<{loc,msg,...}>`` for
+   * Pydantic 422 validation errors, or a plain object for structured
+   * business-rule raises (chemistry gate, customer merge, etc).
+   * ``null`` when the response body was empty / non-JSON.
+   */
+  detail: unknown;
+  constructor(msg: string, status: number, detail: unknown) {
+    super(msg);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/**
  * JWT soft-delete enforcement — register a callback that fires on 401.
  * The AuthProvider calls this on mount so the API layer can trigger logout
  * when the backend rejects a soft-deleted user's token.
@@ -117,6 +161,14 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
       logApi({ method: _method, path, status: res.status, ms: Date.now() - _t0, errorKind: "http" });
     }
     let msg: any = data?.detail;
+    // K61.a.2 · Feb-2026 — preserve the RAW parsed ``detail`` alongside
+    // the humanised message so downstream callers can inspect the
+    // structured shape (e.g. Close-job's chemistry gate reads
+    // ``detail.detail === "chemistry_core_readings_missing"`` and
+    // ``detail.missing_labels``).  ``rawDetail`` is stringified /
+    // truncated safely below only for the human message; the raw
+    // parsed value is attached to the thrown ``ApiError`` unchanged.
+    const rawDetail: any = data?.detail;
     // FastAPI ``HTTPException(detail=[{"msg": ..., "loc": ...}, ...])``
     // shape — Pydantic validation errors + explicit list raises.
     if (Array.isArray(msg)) {
@@ -148,7 +200,13 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
       }
     }
     if (typeof msg !== "string" || !msg) msg = `Request failed (${res.status})`;
-    throw new Error(msg);
+    // K61.a.2 · Feb-2026 — throw an ``ApiError`` so callers can inspect
+    // ``err.status`` (HTTP status code) and ``err.detail`` (raw parsed
+    // backend ``detail`` field) structurally, without relying on
+    // fragile message substring matching.  ``err.message`` retains the
+    // pre-K61 humanised string so every existing catch site keeps
+    // working unchanged.
+    throw new ApiError(msg, res.status, rawDetail);
   }
   logApi({ method: _method, path, status: res.status, ms: Date.now() - _t0 });
   return data;

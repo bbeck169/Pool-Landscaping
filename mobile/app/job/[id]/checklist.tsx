@@ -29,7 +29,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 
-import { api } from "@/src/api";
+import { api, ApiError } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
@@ -49,6 +49,10 @@ import GenericChecklistForm from "@/src/components/checklist/GenericChecklistFor
 import VisitRecapModal from "@/src/components/checklist/VisitRecapModal";
 import WaterBodyManager from "@/src/components/checklist/WaterBodyManager";
 import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/waterBodies";
+// K61.c · Feb-2026 — expand chemistry-abbreviation labels (FC, TA,
+// CYA, …) to human-readable full names when surfacing the "Missing
+// required readings" alert.  See ``@/src/lib/expandChemistryLabel``.
+import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
 import * as writeQueue from "@/src/services/writeQueue";
 import { submitOffline, cacheServiceReport } from "@/src/services/sync/offlineServiceLog";
@@ -229,12 +233,33 @@ export default function JobChecklistScreen() {
   }, [report?.id]);
 
   // ─── Autosave (debounced) ────────────────────────────────────────────
-  const flushSave = useCallback(async () => {
+  //
+  // K61.b.2 · Feb-2026 — ``flushSave`` now returns a truthful result
+  // envelope ``{ ok, queued?, error? }`` so callers (Save-draft,
+  // autosave debounce, close-job pre-flush) can react to the outcome
+  // instead of relying on the fire-and-forget catch-and-swallow pattern.
+  //
+  //   ``ok: true``               — persisted successfully to the server.
+  //   ``ok: true,  queued: true``— written to the local write-queue and
+  //                                 will sync on reconnect (offline path).
+  //   ``ok: false, error: "…"``  — HTTP failure (4xx/5xx) OR an
+  //                                 unexpected exception; ``error`` is
+  //                                 the humanised message ready to
+  //                                 surface to the user.
+  //   ``ok: true``               — early-return short-circuits (nothing
+  //                                 to save; treated as a benign no-op).
+  //
+  // Autosave callers can continue to ignore the return.  Save-draft
+  // now branches on ``ok`` and NEVER falsely claims success on failure
+  // (pre-K61 bug — it always showed an "Saved" alert regardless of
+  // whether the PATCH threw).
+  type FlushSaveResult = { ok: boolean; queued?: boolean; error?: string };
+  const flushSave = useCallback(async (): Promise<FlushSaveResult> => {
     // Read from the ref so a queued autosave timer sees the newest
     // report state — not the one closed over at scheduleAutosave time.
     const current = reportRef.current;
-    if (!current || current.submitted_at) return;
-    if (!dirtyRef.current || savingRef.current) return;
+    if (!current || current.submitted_at) return { ok: true };
+    if (!dirtyRef.current || savingRef.current) return { ok: true };
     savingRef.current = true;
     if (!savingShownAtRef.current) savingShownAtRef.current = Date.now();
     setSaveState("saving");
@@ -270,7 +295,10 @@ export default function JobChecklistScreen() {
           savingShownAtRef.current = 0;
           setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
         }, holdMs);
-        return;
+        // K61.b.2 · Feb-2026 — offline path is a truthful positive
+        // outcome; caller renders "Saved locally, will sync" so the
+        // tech knows the write is safe but not yet server-side.
+        return { ok: true, queued: true };
       }
       const { data: patched } = await offlineWrite({
         op_type: "service_report.patch",
@@ -289,9 +317,17 @@ export default function JobChecklistScreen() {
         savingShownAtRef.current = 0;
         setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
       }, holdMs);
-    } catch (e) {
+      // K61.b.2 · Feb-2026 — happy path.
+      return { ok: true };
+    } catch (e: any) {
       setSaveState("error");
       savingShownAtRef.current = 0;
+      // K61.b.2 · Feb-2026 — surface the humanised message to the
+      // caller so Save-draft can render a truthful error toast.
+      // Never falsely claim success.  The message defaults through
+      // ``api.ts`` (fetch-based ``ApiError``) or ``ApiNetworkError``
+      // → both attach a readable string to ``e.message``.
+      return { ok: false, error: String(e?.message || "Save failed. Try again.") };
     } finally {
       savingRef.current = false;
     }
@@ -352,10 +388,32 @@ export default function JobChecklistScreen() {
   }, [id, flushSave]);
 
   // ─── Save draft (explicit) ───────────────────────────────────────────
+  //
+  // K61.b.2 · Feb-2026 — Save-draft now branches on the ``flushSave``
+  // result envelope.  Pre-K61 this handler unconditionally showed
+  // "Saved" — even when the PATCH threw — because ``flushSave`` used
+  // to swallow errors internally.  That lied to the tech and hid data
+  // loss when the server 4xx'd a checklist payload.
+  //
+  //   ok && queued  →  "Saved locally, will sync"   (offline)
+  //   ok            →  "Saved · Draft saved."       (persisted server-side)
+  //   !ok           →  "Save failed · <error>"      (never mis-labels success)
+  //
   const saveDraft = async () => {
     dirtyRef.current = true;
-    await flushSave();
-    Alert.alert("Saved", "Draft saved.");
+    const result = await flushSave();
+    if (result.ok) {
+      if (result.queued) {
+        Alert.alert(
+          "Saved locally",
+          "You're offline — the draft is queued and will sync when your device reconnects.",
+        );
+      } else {
+        Alert.alert("Saved", "Draft saved.");
+      }
+    } else {
+      Alert.alert("Save failed", result.error || "Try again.");
+    }
   };
 
   // ─── Close job ───────────────────────────────────────────────────────
@@ -391,8 +449,23 @@ export default function JobChecklistScreen() {
             setSubmitting(true);
             try {
               // 1) Final PATCH — flush any pending edits.
+              //
+              // K61.b.2 · Feb-2026 — respect ``flushSave``'s result.
+              // If the pre-flush PATCH failed, do NOT proceed to
+              // submit — the submit would either 4xx on stale server
+              // state OR silently succeed with pre-flush data.  Bail
+              // out with a truthful error toast and let the tech
+              // retry after fixing whatever broke the PATCH.
               dirtyRef.current = true;
-              await flushSave();
+              const flushed = await flushSave();
+              if (!flushed.ok) {
+                Alert.alert(
+                  "Save failed",
+                  `${flushed.error || "Could not save your latest edits."}\n\nJob was not closed — please try again.`,
+                );
+                setSubmitting(false);
+                return;
+              }
 
               // 2) Submit / close.
               if (!online) {
@@ -462,11 +535,36 @@ export default function JobChecklistScreen() {
               }
               setRecapOpen(true);
             } catch (e: any) {
-              // Phase v · Handle 422 chemistry_core_readings_missing.
-              const detail = e?.response?.data?.detail;
-              if (detail === "chemistry_core_readings_missing" || e?.response?.status === 422) {
-                const missingLabels: string[] = e?.response?.data?.missing_labels || [];
-                // Map missing reading labels back to body indices for highlighting.
+              // K61.a.2 + K61.c · Feb-2026 — inspect the structured
+              // ``ApiError`` shape rather than fishing for the pre-K61
+              // axios-shaped ``e.response.data.detail`` fields (which
+              // never exist on the fetch-based client and made the
+              // whole branch dead code).  Structured chemistry-gate
+              // detection: ``err.status === 422 && err.detail?.detail
+              // === "chemistry_core_readings_missing"``.
+              //
+              // Missing-labels are surfaced BOTH visually (per-body
+              // ``highlightBodies`` for the ChemistryReadings section)
+              // AND textually (single Alert listing the labels).
+              // Labels get run through the K60 chemistry-label
+              // expander so techs see "Cyanuric Acid" instead of
+              // "CYA" in the alert copy.
+              const isApiErr = e instanceof ApiError;
+              const rawDetail: any = isApiErr ? e.detail : null;
+              const isChemistryGate =
+                isApiErr && e.status === 422 &&
+                rawDetail && typeof rawDetail === "object" &&
+                (rawDetail as any).detail === "chemistry_core_readings_missing";
+              if (isChemistryGate) {
+                const missingLabels: string[] = Array.isArray(rawDetail.missing_labels)
+                  ? rawDetail.missing_labels
+                  : [];
+                // Map missing reading labels back to body indices for
+                // inline field highlighting.  Pre-K61 code already
+                // wired up ``highlightBodies`` via
+                // ``missingRequiredReadings`` per body — this call
+                // was in place but never fired because the outer
+                // ``if`` was dead code.
                 const bodyHighlights: Record<number, string[]> = {};
                 const bodies = waterBodiesRef.current;
                 for (let bi = 0; bi < bodies.length; bi++) {
@@ -477,14 +575,24 @@ export default function JobChecklistScreen() {
                   }
                 }
                 setHighlightBodies(bodyHighlights);
-                const readableLabels = missingLabels.length > 0
-                  ? missingLabels.join(", ")
-                  : Object.values(bodyHighlights).flat().join(", ");
+                // Expand any short-form labels ("CYA" → "Cyanuric
+                // Acid").  Backend already returns most as readable
+                // strings — expander is idempotent on those.
+                const expanded = missingLabels.length > 0
+                  ? missingLabels.map(expandChemistryLabel).join(", ")
+                  : Object.values(bodyHighlights).flat().map(expandChemistryLabel).join(", ");
                 Alert.alert(
                   "Missing required readings",
-                  `Please fill in: ${readableLabels || "required chemistry fields"}.`,
+                  `Please fill in: ${expanded || "required chemistry fields"}.`,
                 );
+              } else if (isApiErr) {
+                // Non-chemistry HTTP failure — surface the real
+                // backend reason (already humanised via api.ts's
+                // detail-flattening), not "Something went wrong".
+                Alert.alert("Close failed", e.message || `Request failed (${e.status})`);
               } else {
+                // ApiNetworkError / unexpected — fall through to the
+                // generic message string.
                 Alert.alert("Close failed", e?.message || "Try again.");
               }
             } finally {
