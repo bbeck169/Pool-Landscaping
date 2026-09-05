@@ -546,23 +546,32 @@ function AppLayout() {
         className="flex-1 min-w-0 min-h-0 pb-20 md:pb-0"
         data-testid="app-main"
       >
-        {/* Mobile top bar (<md) */}
+        {/* Mobile top bar (<md). Phase K50 extension · Feb-2026 —
+            this bar is the CUSTOMER PORTAL top nav on mobile
+            viewports (customers never mount ``<AdminTopBar>``); on
+            admin it's the mobile-viewport chrome for a role that
+            otherwise runs the navy desktop chrome.  Painted with
+            the ``colors.nav`` navy token so every web nav surface
+            resolves through the same single source of truth. */}
         <header
           className="md:hidden px-4 py-3 flex items-center justify-between sticky top-0 z-30"
           style={{
-            backgroundColor: colors.surface,
-            borderBottom: `1px solid ${colors.border}`,
+            backgroundColor: colors.nav.bg,
+            borderBottom: `1px solid ${colors.nav.border}`,
           }}
         >
           <div className="flex items-center gap-2">
             {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") && (
               <button
                 onClick={() => setDrawerOpen(true)}
-                className="w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-200 ease-out hover:scale-[1.02] hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:scale-[1.02]"
+                className="w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-200 ease-out hover:scale-[1.02] hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:scale-[1.02]"
                 style={{
-                  backgroundColor: colors.surfaceSecondary,
-                  border: `1px solid ${colors.border}`,
-                  color: colors.onSurface,
+                  // Phase K50 extension — hamburger sits on navy;
+                  // render as transparent-with-white-border so the
+                  // icon reads without an extra chip surface.
+                  backgroundColor: "transparent",
+                  border: `1px solid ${colors.nav.border}`,
+                  color: colors.nav.fg,
                 }}
                 data-testid="mobile-nav-open"
                 aria-label="Open navigation"
@@ -572,16 +581,25 @@ function AppLayout() {
             )}
             {/* Feb-2026 UI Polish Addendum — logo wrapped in <Link to="/">
                 for one-tap dashboard return. Tenant override wins via
-                ``useTenantBrand``. */}
-            <BrandLogo variant="icon" testId="app-logo-icon-mobile" height={32} />
+                ``useTenantBrand``.  Phase K50 extension — the mobile
+                nav is now navy, so any dark-fill tenant logo would
+                disappear.  Apply an interim ``brightness(0) invert(1)``
+                CSS filter that flattens the logo to a white silhouette;
+                a proper white-asset swap is logged in Future Work. */}
+            <div
+              style={{ filter: "brightness(0) invert(1)" }}
+              data-testid="app-logo-mobile-white"
+            >
+              <BrandLogo variant="icon" testId="app-logo-icon-mobile" height={32} />
+            </div>
             <div>
               <div
                 className="text-sm font-semibold leading-none"
-                style={{ color: colors.onSurface }}
+                style={{ color: colors.nav.fg }}
               >
                 Pool & Landscaping
               </div>
-              <div className="text-[10px] uppercase tracking-wide" style={{ color: colors.muted }}>
+              <div className="text-[10px] uppercase tracking-wide" style={{ color: colors.nav.fgMuted }}>
                 {roleLabel}
               </div>
             </div>
@@ -590,9 +608,13 @@ function AppLayout() {
             onClick={onLogout}
             className="text-xs font-semibold px-3 py-1.5 rounded-md"
             style={{
-              color: colors.error,
-              border: `1px solid ${colors.border}`,
-              backgroundColor: colors.surfaceSecondary,
+              // Phase K50 extension — sign-out pill on navy.  Keep
+              // the "danger" affordance via a red-tinted background
+              // but white text/border so it reads clean against
+              // the navy header.
+              color: colors.nav.fg,
+              border: `1px solid ${colors.nav.border}`,
+              backgroundColor: "rgba(239, 68, 68, 0.35)",
             }}
             data-testid="shell-logout-button-mobile"
           >

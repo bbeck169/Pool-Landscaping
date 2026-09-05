@@ -71,20 +71,34 @@ export function BusinessOSLayout() {
     <div className="flex flex-col lg:flex-row gap-0" data-testid="business-os-layout">
       <aside
         className="lg:w-56 lg:min-h-[calc(100vh-0px)] p-4 lg:sticky lg:top-0"
-        style={{ borderRight: `1px solid ${colors.border}`, backgroundColor: colors.surface }}
+        style={{
+          // Phase K50 extension · Feb-2026 — full-width secondary
+          // sub-nav (moves user between /os/sprints, /os/huddles,
+          // /os/scorecards, …).  Qualifies as a menu bar under the
+          // K50 rule and is themed via the single ``colors.nav``
+          // token (no fresh hex).  Mobile drawer chrome remains
+          // deferred per the K50 extension brief.
+          borderRight: `1px solid ${colors.nav.border}`,
+          backgroundColor: colors.nav.bg,
+        }}
+        data-testid="os-subnav"
       >
         <div className="text-xs font-bold uppercase tracking-wider mb-3"
-             style={{ color: colors.muted }}>Business OS</div>
+             style={{ color: colors.nav.fgMuted }}>Business OS</div>
         <nav className="flex lg:flex-col gap-1 overflow-x-auto lg:overflow-visible">
           {OS_TABS.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
               end={to === "/os"}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold whitespace-nowrap"
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-colors duration-150 hover:bg-white/10"
               style={({ isActive }) => ({
-                backgroundColor: isActive ? colors.brandTertiary : "transparent",
-                color: isActive ? colors.onBrandTertiary : colors.onSurfaceSecondary,
+                // Active = white pill with navy text (mirrors the
+                // ``QuickNavRail`` + ``AdminTopBar`` category
+                // affordance so all three surfaces read as one
+                // family).  Idle = white on navy.
+                backgroundColor: isActive ? colors.nav.bgActive : "transparent",
+                color: isActive ? colors.nav.fgActive : colors.nav.fg,
               })}
               data-testid={`os-tab-${label.toLowerCase()}`}
             >

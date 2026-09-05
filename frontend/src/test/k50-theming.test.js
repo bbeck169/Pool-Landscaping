@@ -24,6 +24,7 @@ const read = (rel) => fs.readFileSync(path.resolve(process.cwd(), rel), "utf-8")
 const THEME = read("src/theme.js");
 const APP_LAYOUT = read("src/layouts/AppLayout.jsx");
 const TOP_BAR = read("src/layouts/AdminTopBar.jsx");
+const BUSINESS_OS = read("src/pages/os/BusinessOS.jsx");
 const CAL_SCHEDULE = read("src/pages/schedule/CalendarSchedule.jsx");
 const TODAY_SCHEDULE = read("src/pages/schedule/TodaySchedule.jsx");
 
@@ -83,6 +84,81 @@ describe("K50 · Slice A — Navy sidebar + top main menu", () => {
     const catBody = TOP_BAR.split("function CategoryDropdown(")[1].split("\nfunction ")[0];
     expect(catBody).not.toMatch(/hover:bg-sky-50/);
     expect(catBody).toMatch(/hover:bg-white\/10/);
+  });
+});
+
+
+/* ══════════════════════════════════════════════════════════════════ */
+/* Slice A extension — Portal top nav + secondary sub-nav strips      */
+/* ══════════════════════════════════════════════════════════════════ */
+
+describe("K50 · Slice A extension — Portal top nav + sub-nav strips", () => {
+  it("Mobile top-bar (portal top nav on mobile viewports) renders on ``colors.nav.bg``", () => {
+    // Phase K50 extension · Feb-2026 — customers never mount
+    // ``<AdminTopBar>``, so the ``md:hidden`` <header> in
+    // AppLayout is their top nav.  Themed via ``colors.nav`` so
+    // every web nav surface resolves through the same token.
+    const headerBlock = APP_LAYOUT.split('data-testid="mobile-nav-open"')[0];
+    // Read backwards to find the enclosing <header> style block.
+    const lastHeaderIdx = headerBlock.lastIndexOf("<header");
+    const header = APP_LAYOUT.slice(lastHeaderIdx).split("</header>")[0];
+    expect(header).toMatch(/backgroundColor:\s*colors\.nav\.bg/);
+    expect(header).toMatch(/borderBottom:\s*`1px solid \$\{colors\.nav\.border\}`/);
+    // Regression guard — the pre-extension white ``colors.surface``
+    // bg + light ``colors.border`` border must NOT reappear on this
+    // header (only ``AppLayout`` mobile <header> is asserted; other
+    // <header> occurrences in the file are unrelated modal headers).
+    expect(header).not.toMatch(/backgroundColor:\s*colors\.surface,[\s\S]{0,80}borderBottom:\s*`1px solid \$\{colors\.border\}`/);
+  });
+
+  it("Mobile top-bar sign-out + hamburger contrast tuned for navy", () => {
+    // Sign out button now uses ``colors.nav.fg`` (white) text with
+    // a red-tinted backdrop so the "danger" affordance still reads
+    // against the navy header.
+    expect(APP_LAYOUT).toMatch(/data-testid="shell-logout-button-mobile"/);
+    const signOutBlock = APP_LAYOUT.split('data-testid="shell-logout-button-mobile"')[0];
+    const lastBtnIdx = signOutBlock.lastIndexOf("<button");
+    const btn = APP_LAYOUT.slice(lastBtnIdx).split("</button>")[0];
+    expect(btn).toMatch(/color:\s*colors\.nav\.fg/);
+    expect(btn).toMatch(/border:\s*`1px solid \$\{colors\.nav\.border\}`/);
+  });
+
+  it("Mobile top-bar logo wrapped in an ``invert(1)`` filter for navy legibility", () => {
+    // Portal logo may be dark; interim ``brightness(0) invert(1)``
+    // flattens it to a white silhouette so it reads on navy.  A
+    // proper white-asset swap is tracked in Future Work.
+    expect(APP_LAYOUT).toMatch(/filter:\s*"brightness\(0\) invert\(1\)"/);
+    expect(APP_LAYOUT).toMatch(/data-testid="app-logo-mobile-white"/);
+  });
+
+  it("BusinessOS sub-nav aside renders on ``colors.nav.bg`` (full-width nav strip qualifies)", () => {
+    // Full-width secondary sub-nav that moves users between
+    // /os/sprints, /os/huddles, /os/scorecards, /os/leanboards,
+    // /os/sops, /os/roles.  Qualifies as a menu bar under the K50
+    // rule.  Filter/action toolbars in-page do NOT qualify and stay
+    // on their existing palette.
+    expect(BUSINESS_OS).toMatch(/backgroundColor:\s*colors\.nav\.bg,/);
+    expect(BUSINESS_OS).toMatch(/borderRight:\s*`1px solid \$\{colors\.nav\.border\}`/);
+    expect(BUSINESS_OS).toMatch(/data-testid="os-subnav"/);
+    // Active tab = white pill with navy text (matches
+    // ``QuickNavRail`` + ``CategoryDropdown`` active affordance so
+    // every nav surface reads as one family).
+    expect(BUSINESS_OS).toMatch(/backgroundColor:\s*isActive\s*\?\s*colors\.nav\.bgActive\s*:\s*"transparent"/);
+    expect(BUSINESS_OS).toMatch(/color:\s*isActive\s*\?\s*colors\.nav\.fgActive\s*:\s*colors\.nav\.fg/);
+    // Regression guard — no more ``brandTertiary`` / ``onBrandTertiary``
+    // active-state coupling in this strip.
+    expect(BUSINESS_OS).not.toMatch(/backgroundColor:\s*isActive\s*\?\s*colors\.brandTertiary/);
+    expect(BUSINESS_OS).not.toMatch(/color:\s*isActive\s*\?\s*colors\.onBrandTertiary/);
+  });
+
+  it("Sub-nav strips resolve through ``colors.nav`` — no fresh hex codes", () => {
+    // Regression guard against a future refactor that inlines the
+    // navy hex directly on the sub-nav.  Single-source-of-truth
+    // rule locked in.
+    const subnavBlock = BUSINESS_OS.split("data-testid=\"business-os-layout\"")[1]
+      .split("</aside>")[0];
+    expect(subnavBlock).not.toMatch(/#1B1F5C/i);
+    expect(subnavBlock).not.toMatch(/rgb\(27,\s*31,\s*92\)/);
   });
 });
 

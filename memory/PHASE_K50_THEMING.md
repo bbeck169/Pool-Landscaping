@@ -8,11 +8,11 @@ preview confirms navy chrome renders correctly on `/schedule`.
 
 ---
 
-## Slice A — Navy sidebar + top main menu (WEB ONLY)
+## Slice A — Navy sidebar + top main menu (WEB)
 
 ### Single-token source of truth
 `frontend/src/theme.js` — new `colors.nav` block replaces the pre-K50
-sky-tinted wash on the two desktop chrome surfaces the K50 brief called
+sky-tinted wash on every desktop chrome surface the K50 brief called
 out.  Every navy hex in the codebase now resolves through
 `colors.nav.*` — no hex hardcoding elsewhere (regression-guarded in
 `k50-theming.test.js`).
@@ -33,7 +33,7 @@ Contrast (WCAG AA / AAA):
 * `nav.fg` on `nav.bg` → **12.8 : 1** (AAA at all sizes).
 * `nav.fgActive` on `nav.bgActive` → **12.8 : 1** (AAA at all sizes).
 
-### Files touched (Slice A)
+### Files touched (Slice A — primary chrome, original ship)
 | File | Change |
 |---|---|
 | `frontend/src/theme.js` | Added the `nav` token block. |
@@ -42,22 +42,37 @@ Contrast (WCAG AA / AAA):
 | `frontend/src/test/rail-nav.test.jsx` | Rewrote the active-color assertion to expect the new white-pill / navy-text combo. |
 | `frontend/src/test/nav-hover-polish.test.jsx` | Rewrote the topbar-tint assertion to expect `colors.nav.bg`. |
 
-### Out-of-scope (unchanged per brief)
-* Mobile sidebar / drawer chrome — light palette retained.
-* Customer portal shell — untouched.
-* `AdminSidebar` group content (only rendered inside the mobile drawer)
-  — untouched; the drawer wrapper stays on the light palette so the
-  group content reads correctly.
+### Files touched (Slice A extension — Feb-2026, portal + sub-nav parity)
+Extended per the "apply navy to ALL menu bars" brief so every web nav
+surface resolves through the same `colors.nav` token.
+
+| File | Change |
+|---|---|
+| `frontend/src/layouts/AppLayout.jsx` | Mobile top-bar `<header>` (visible `md:hidden`, which IS the customer portal top nav on mobile viewports — customers never mount `<AdminTopBar>`) now renders `backgroundColor: colors.nav.bg`. Hamburger switched to transparent-with-white-border. Brand + role labels re-coloured to `nav.fg` / `nav.fgMuted`. Sign-out pill retains a red-tinted backdrop for danger affordance but flips text/border to `nav.fg` / `nav.border` so the affordance still reads against navy. Logo wrapped in an interim `filter: brightness(0) invert(1)` (see Future Work — proper white-asset swap). |
+| `frontend/src/pages/os/BusinessOS.jsx` | `BusinessOSLayout` sub-nav aside re-themed to `colors.nav.bg`. `NavLink` tabs render white icon/label on transparent (idle) and white pill with navy text (active), mirroring the `QuickNavRail` + `CategoryDropdown` affordance so every nav surface reads as one family.  Added `data-testid="os-subnav"` for regression scans. |
+| `frontend/src/test/k50-theming.test.js` | Added 5 new assertions covering the mobile-header navy bg, sign-out contrast tune, logo invert filter, BusinessOS sub-nav navy bg + white-pill active, and a regression guard against fresh hex codes in the sub-nav block. |
+
+### Out-of-scope (deferred per brief)
+* Mobile drawer chrome — user explicitly scoped mobile chrome unchanged.
+* `AdminSidebar` group content — only rendered inside the mobile
+  drawer (see `AppLayout.jsx:653`), so implicitly deferred with the
+  drawer.  If the drawer ever opens up, that pass would need a matching
+  navy re-theme of the sidebar group headers, pinned rows, and palette
+  trigger.
+* In-page section tabs (e.g. `pages/settings/ChemicalsPage.jsx` uses
+  `<Tabs>` for in-page section switching) — those aren't menu bars,
+  they're in-page tabs and stay on their existing palette.
+* Filter chip rows, status filter strips, action-only toolbars, table
+  headers, section titles, card headers — all remain on their existing
+  palette per the K50 judgement rule.
 
 ### Preview verification (live)
 ```
-[k50] side-nav       bg = rgb(27, 31, 92)   → #1B1F5C ✓
-[k50] admin-topbar   bg = rgb(27, 31, 92)   → #1B1F5C ✓
+[k50]       side-nav          bg = rgb(27, 31, 92)   → #1B1F5C ✓
+[k50]       admin-topbar      bg = rgb(27, 31, 92)   → #1B1F5C ✓
+[k50-ext]   os-subnav         bg = rgb(27, 31, 92)   → #1B1F5C ✓
+[k50-ext]   mobile-header     — locked in via source-body vitest (18/18 green)
 ```
-Screenshot: white "Operations" (category dropdown active) pill and
-white "Grid" pill sit cleanly on the navy chrome; right-side buttons
-(Add Customer / Sign out / notification bell / etc.) all read at
-sufficient contrast.
 
 ---
 
@@ -130,14 +145,14 @@ NOT add one.
 
 ### Web (vitest)
 ```
-✓ src/test/k50-theming.test.js               13/13
+✓ src/test/k50-theming.test.js               18/18
 ✓ src/test/rail-nav.test.jsx                  4/4
 ✓ src/test/nav-hover-polish.test.jsx          6/6
 ✓ src/test/k41-dashboard-drilldown-modal.test.jsx  20/20
 ✓ src/test/k48-drilldown-business-unit.test.jsx    16/16
 ✓ src/test/k49-customers-filter-defaults.test.jsx  12/12
 ================================================================
-Total (K41 + K48 + K49 + K50 + neighbours):  71/71 green
+Total (K41 + K48 + K49 + K50 + neighbours):  76/76 green
 ```
 
 ### Mobile (jest)
@@ -175,12 +190,21 @@ Either slice can be reverted without disturbing the other.
 ---
 
 ## Follow-ups (not shipped)
-* Mobile chrome navy parity (deferred per brief — user explicitly
-  scoped Slice A to web only).
-* AdminSidebar drawer content palette rework (would only matter if
-  the mobile drawer background is ever navy-ified).
+* **Proper white-fill logo asset** — mobile top-bar currently applies
+  `filter: brightness(0) invert(1)` to the tenant `BrandLogo` so a
+  dark-fill logo reads on navy.  Interim solution — the proper fix
+  is a `BrandLogo variant="icon-light"` asset with white/inverted
+  fills baked in.  Track down the tenant-brand asset pipeline and
+  cut a light variant.  No visual regression risk; the interim is
+  visually indistinguishable from an inverted-fill asset.
+* **Mobile drawer chrome navy parity** — deferred per brief (user
+  explicitly scoped mobile chrome unchanged).  If the drawer is ever
+  re-themed, `AdminSidebar` group headers, pinned rows, palette
+  trigger, and Dashboard NavLink pill all need to be re-coloured
+  against navy.  ~10 style hunks — same `colors.nav` token, no fresh
+  hex.
 * Optional: expose `colors.nav` as CSS variables (`--color-nav-bg`,
   etc.) on the `<html>` element so ad-hoc Tailwind arbitrary values
   can reference the token — currently every consumer imports
-  `colors` from `theme.js`, which is sufficient for the two shipped
-  surfaces.
+  `colors` from `theme.js`, which is sufficient for the three
+  shipped surfaces.
