@@ -1,32 +1,26 @@
 /**
  * Phase K39b · Feb-2026 — HERE adapter (react-native-here-explore).
  *
- * K45 · Feb-2026 AMENDMENT — Lazy-load fix for mobile white screen.
+ * Phase K45b · Feb-2026 AMENDMENT — Nuclear disable.
  *
- *   Previously this file called ``require("react-native-here-explore")``
- *   at **module scope**. Metro/EAS bundles both adapters regardless
- *   of the runtime ``EXPO_PUBLIC_MAPS_PROVIDER`` flag, so the require
- *   fired the moment any code path (including a Schedule screen with
- *   assigned jobs) imported ``@/src/lib/maps``. When the ``.aar`` /
- *   ``.xcframework`` binaries were not present on disk, native init
- *   inside the module's constructor threw before the JS render loop
- *   started — bypassing every React error boundary — and the app
- *   died with a silent white screen.
+ *   `react-native-here-explore` is NOT in `mobile/package.json`.
+ *   It is not installed under `node_modules`. The `.aar` /
+ *   `.xcframework` binaries were never dropped into
+ *   `mobile/heresdk/`. `EXPO_PUBLIC_HERE_ACCESS_KEY_ID` is empty in
+ *   every environment we ship to. The plugin registration was
+ *   removed from `mobile/app.config.js` in K45b.
  *
- *   K45 fix:
- *     1.  The ``require()`` now lives inside a lazy loader that runs
- *         **inside a component body** the first time a HERE adapter
- *         is actually rendered.
- *     2.  The result is memoized in module scope so the require only
- *         happens once per session.
- *     3.  Any failure (missing package, missing native binaries,
- *         constructor throw) is caught and short-circuits every
- *         export to the placeholder — no module-scope side effects.
- *     4.  ``@/src/lib/maps/index.ts`` no longer statically imports
- *         this file — it only lazy-``require()``s it when the
- *         resolver has decided ``provider === "here"``.  So on
- *         provider=google Metro can drop this file from the bundle
- *         if the tree-shaker is enabled.
+ *   In other words: HERE is disabled at every layer of the stack.
+ *
+ *   The K45 lazy-require refactor is preserved (defensive), but
+ *   `_loadHere()` now **hard-throws** an explanatory error so anyone
+ *   who accidentally routes traffic to this adapter gets a loud,
+ *   diagnosable failure rather than a silent placeholder. The
+ *   provider gate at `index.ts` catches the throw and downgrades
+ *   silently to the Google adapter — this file is defensive belt
+ *   for that suspenders.
+ *
+ *   To re-enable HERE later, see `mobile/heresdk/README.md`.
  */
 import React from "react";
 import { View, StyleSheet } from "react-native";
@@ -35,38 +29,20 @@ import { MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HereSDK = any;
 
-// Module-scope memoization for the lazy require.
-let _HERE: HereSDK | null = null;
-let _hereError: string | null = null;
-let _hereLoaded = false;
+const _DISABLED_MSG =
+  "HERE Maps adapter is not installed in this build. " +
+  "Add react-native-here-explore to package.json + drop the SDK " +
+  "binaries into mobile/heresdk/ + re-register the Expo config " +
+  "plugin in app.config.js to enable. See mobile/heresdk/README.md.";
 
-/**
- * K45 · Feb-2026 — Deferred loader for the HERE SDK.
- *
- * Called from inside a component render only. Every render past the
- * first no-ops (returns the memoized result). If the require throws
- * — either because the JS module is missing OR because native init
- * fails when binaries aren't linked — the error is captured and
- * every downstream export short-circuits to the placeholder branch.
- * Crucially, no code path in this module runs at import time.
- */
-function _loadHere(): HereSDK | null {
-  if (_hereLoaded) return _HERE;
-  _hereLoaded = true;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
-    _HERE = require("react-native-here-explore");
-  } catch (err) {
-    _HERE = null;
-    _hereError = (err as Error)?.message || "not-installed";
-    // eslint-disable-next-line no-console
-    console.warn(
-      "[K45/maps] HERE SDK failed to load — falling back to placeholder. " +
-        "Details: " +
-        _hereError,
-    );
-  }
-  return _HERE;
+// K45b · Hard-throw. Retained inside a function so no side effects
+// fire at module import time — the provider gate in `index.ts` only
+// invokes `_loadHere()` when it has committed to HERE mode, which
+// itself only happens when the runtime binary-presence check passes
+// (see `provider.ts` + `heresdkStatus.generated.ts`). Under normal
+// operation this function is never called.
+function _loadHere(): HereSDK {
+  throw new Error(_DISABLED_MSG);
 }
 
 function _placeholder(testID?: string) {
@@ -74,60 +50,29 @@ function _placeholder(testID?: string) {
     <View style={styles.wrap} testID={testID || "maps-here-fallback"}>
       <MapUnavailablePlaceholder
         provider="HERE"
-        message={
-          _hereError
-            ? "HERE SDK not installed. See mobile/heresdk/README.md."
-            : "HERE credentials missing. Contact your administrator."
-        }
+        message="HERE adapter disabled. See mobile/heresdk/README.md."
       />
     </View>
   );
 }
 
-// ``MapView`` — proxies to HERE's ``MapView`` (or ``NavigationMap``
-// depending on the SDK's exported name). We accept both to survive
-// minor SDK renames.
+// K45b · Every export short-circuits to the placeholder without
+// invoking `_loadHere()` (which would throw). The adapter is a
+// no-op renderer end-to-end. This keeps `index.ts`'s conditional
+// `require("./hereAdapter")` a safe operation even under an
+// unexpected `provider=here` runtime flip.
 export function MapView(props: any) {
-  const sdk = _loadHere();
-  if (!sdk) return _placeholder(props?.testID);
-  const Impl = sdk.MapView || sdk.NavigationMap || sdk.default;
-  if (!Impl) return _placeholder(props?.testID);
-  return <Impl {...props} />;
+  return _placeholder(props?.testID);
 }
-
-export function Marker(props: any) {
-  const sdk = _loadHere();
-  if (!sdk) return null;
-  const Impl = sdk.Marker;
-  if (!Impl) return null;
-  return <Impl {...props} />;
-}
-
-export function Polyline(props: any) {
-  const sdk = _loadHere();
-  if (!sdk) return null;
-  const Impl = sdk.Polyline;
-  if (!Impl) return null;
-  return <Impl {...props} />;
-}
-
-export function Polygon(props: any) {
-  const sdk = _loadHere();
-  if (!sdk) return null;
-  const Impl = sdk.Polygon;
-  if (!Impl) return null;
-  return <Impl {...props} />;
-}
-
-export function Circle(props: any) {
-  const sdk = _loadHere();
-  if (!sdk) return null;
-  const Impl = sdk.Circle;
-  if (!Impl) return null;
-  return <Impl {...props} />;
-}
-
+export function Marker(_props: any) { return null; }
+export function Polyline(_props: any) { return null; }
+export function Polygon(_props: any) { return null; }
+export function Circle(_props: any) { return null; }
 export const PROVIDER_GOOGLE = undefined;
+
+// Exposed for jest so the K45b guard suite can assert the hard-throw
+// contract without rendering.
+export const __k45b_loadHere = _loadHere;
 
 const styles = StyleSheet.create({
   wrap: { flex: 1 },

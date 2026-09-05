@@ -216,24 +216,19 @@ module.exports = {
         },
       ],
       "expo-asset",
-      // Phase K39b · Feb-2026 — HERE Maps plugin.  Registered ONLY
-      // when the HERE credentials env is set so devs building with
-      // ``EXPO_PUBLIC_MAPS_PROVIDER=google`` (the default) don't have
-      // to touch HERE at all.  Manual .aar / .xcframework drop docs
-      // in ``mobile/heresdk/README.md``.
-      ...(process.env.EXPO_PUBLIC_HERE_ACCESS_KEY_ID
-        ? [
-            [
-              "react-native-here-explore",
-              {
-                accessKeyId: process.env.EXPO_PUBLIC_HERE_ACCESS_KEY_ID,
-                // The secret is resolved at build time via an EAS
-                // secret — never plain env, never git.
-                accessKeySecret: process.env.HERE_ACCESS_KEY_SECRET || undefined,
-              },
-            ],
-          ]
-        : []),
+      // Phase K45b · Feb-2026 — HERE Maps plugin registration removed.
+      //
+      //   The `react-native-here-explore` JS dep is not in `package.json`
+      //   and never was during the K45 → K45b window; the .aar /
+      //   .xcframework binaries have never been dropped into
+      //   `mobile/heresdk/`; and `EXPO_PUBLIC_HERE_ACCESS_KEY_ID`
+      //   defaults to empty in every environment. Keeping a plugin
+      //   entry here — even guarded — is dead weight and a footgun
+      //   for anyone trying to re-enable HERE later. To re-enable,
+      //   follow `mobile/heresdk/README.md`:
+      //     1. `yarn add react-native-here-explore`
+      //     2. Drop the SDK binaries into `mobile/heresdk/`
+      //     3. Re-register the plugin here, guarded on the env key.
     ],
 
     /* ─── Extra ────────────────────────────────────────────── */

@@ -1,49 +1,68 @@
-# HERE Maps SDK — manual binary drop (mobile)
+# HERE Maps SDK · Currently DISABLED (K45b · Feb-2026)
 
-> Phase K39b · Feb-2026 — until `react-native-here-explore` fully proxies HERE's native SDK via the Expo config plugin, the raw binaries have to be dropped into this folder before an Android / iOS build. **Do NOT commit the binaries.** They're licensed artifacts and each dev / CI runner has to pull their own from developer.here.com.
+**Status:** HERE Maps support is disabled at the package.json and Expo
+config plugin level. The K45 lazy-require + `.MISSING` marker + runtime
+provider downgrade infrastructure is still in place as a belt for any
+future re-enable path — but `react-native-here-explore` is not
+installed and its plugin is not registered.
 
-## Prerequisites
+## Why disabled?
 
-1. Create a HERE **project** at [platform.here.com](https://platform.here.com).
-2. Inside the project, generate an **Access Key ID** + **Access Key Secret** pair. These map to the two env vars used by the app:
+- No environment we ship to has `EXPO_PUBLIC_HERE_ACCESS_KEY_ID` set.
+- The `.aar` / `.xcframework` native binaries have never been dropped
+  into this folder.
+- Keeping the JS dep and the Expo plugin registered — even guarded —
+  was diagnosed as a candidate for the K45b Android white-screen
+  regression. Expo autolinking picks up native modules on presence in
+  `package.json`, independent of whether any JS ever imports them. The
+  safer default is "not installed at all".
 
-| Variable | Where | Notes |
-| --- | --- | --- |
-| `EXPO_PUBLIC_HERE_ACCESS_KEY_ID` | plain env / EAS var | Public-safe identifier — embedded in the app bundle. |
-| `HERE_ACCESS_KEY_SECRET` | **EAS secret only** | Never plain env, never git. Used at build time by the config plugin to sign the SDK init request. |
-| `EXPO_PUBLIC_MAPS_PROVIDER` | plain env / EAS var | `"google"` (default) \| `"here"`. |
+## What's still here?
 
-## Drop procedure
+Everything K45 shipped except the JS dep itself:
 
-### Android
-1. Download `heresdk-explore-android-<VERSION>.aar` from developer.here.com → your project → SDK downloads → **HERE SDK for Android (Explore Edition)**.
-2. Drop it here: `mobile/heresdk/android/heresdk.aar`.
-3. Run `yarn expo prebuild --clean` — the config plugin registered in `app.config.js` links the `.aar` into the Android module tree via `settings.gradle`.
+- `mobile/scripts/heresdk-check.js` — postinstall hook that writes a
+  `.MISSING` marker and regenerates
+  `mobile/src/lib/maps/heresdkStatus.generated.ts` with the current
+  binary-presence state.
+- `mobile/src/lib/maps/heresdkStatus.generated.ts` — bundled constant
+  read by `provider.ts` for runtime `here → google` downgrade.
+- `mobile/src/lib/maps/hereAdapter.tsx` — a hard-throw sentinel that
+  keeps `index.ts`'s conditional `require("./hereAdapter")` safe.
+- `mobile/__tests__/k45b-here-removed.test.ts` — regression guard
+  that fails CI if HERE is quietly re-added.
 
-### iOS
-1. Download `heresdk-explore-ios-<VERSION>.xcframework.zip` from the same place.
-2. Unzip and drop the folder: `mobile/heresdk/ios/heresdk.xcframework/`.
-3. Run `yarn expo prebuild --clean` — the config plugin adds the framework to the Podfile as a `pod 'heresdk', :path => '...'` entry.
+## How to re-enable HERE (if we ever ship it for real)
 
-## `postinstall` guard
+1. `yarn add react-native-here-explore` (whichever version the SDK
+   drop is compatible with — pin exactly).
+2. Drop the native binaries:
+   - Android: `mobile/heresdk/android/heresdk.aar`
+   - iOS:     `mobile/heresdk/ios/heresdk.xcframework/`
+   (Both are shipped by HERE via their partner portal; do NOT commit
+   them.  Store in EAS secrets + drop at prebuild time.)
+3. Re-register the plugin in `mobile/app.config.js` (guarded on the
+   env key), example:
 
-`mobile/package.json` runs a tiny `postinstall` script that checks for the presence of the binaries above. If either is missing, the script prints:
+   ```js
+   ...(process.env.EXPO_PUBLIC_HERE_ACCESS_KEY_ID
+     ? [
+         [
+           "react-native-here-explore",
+           {
+             accessKeyId: process.env.EXPO_PUBLIC_HERE_ACCESS_KEY_ID,
+             accessKeySecret: process.env.HERE_ACCESS_KEY_SECRET,
+           },
+         ],
+       ]
+     : []),
+   ```
 
-```
-[K39b] HERE SDK binaries not present. HERE mode will render a
-       "Map unavailable" placeholder. Follow mobile/heresdk/README.md
-       to enable HERE tiles in a dev-client / EAS build.
-```
-
-The script exits **0** so `yarn install` never fails — this is intentional so contributors who only touch non-map code don't have to fight with HERE creds.
-
-## What still works without HERE creds
-
-- Google mode (`EXPO_PUBLIC_MAPS_PROVIDER=google`, the default) — react-native-maps runs unchanged.
-- HERE mode without the binaries — every map surface renders the K39b `MapUnavailablePlaceholder` (from `src/utils/mapsKey.tsx`) with the message "HERE SDK not installed. See mobile/heresdk/README.md." No crashes.
-
-## Cutover checklist (for K39c, later)
-
-1. Flip `EXPO_PUBLIC_MAPS_PROVIDER=here` on staging.
-2. Verify tile rendering + marker interactions on dev-client + TestFlight.
-3. Once green, remove the react-native-maps dependency.
+4. Restore `hereAdapter.tsx` to the K45 lazy-require implementation
+   (git history has the diff — search for `_loadHere` in the K45 ship
+   commit).
+5. Delete `mobile/__tests__/k45b-here-removed.test.ts` — it exists
+   only to enforce the current "disabled" state.
+6. Set `EXPO_PUBLIC_HERE_ACCESS_KEY_ID` in your EAS build environment
+   and cut a **new EAS build** (not OTA — package.json + native
+   manifest both changed).

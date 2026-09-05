@@ -39,13 +39,14 @@ describe("K45 · hereAdapter has no top-level require", () => {
         return !(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"));
       })
       .join("\n");
-    // The require call must appear inside a function body. We
-    // assert by locating it AFTER the ``_loadHere`` declaration.
-    const loaderIdx = stripped.indexOf("function _loadHere");
-    const requireIdx = stripped.indexOf('require("react-native-here-explore")');
-    expect(loaderIdx).toBeGreaterThan(-1);
-    expect(requireIdx).toBeGreaterThan(-1);
-    expect(requireIdx).toBeGreaterThan(loaderIdx);
+    // K45b · The K45 lazy `require("react-native-here-explore")` was
+    // removed entirely — the adapter is now a hard-throw sentinel
+    // (see `mobile/__tests__/k45b-here-removed.test.ts`). The
+    // invariant this test was originally guarding — "no require at
+    // module scope" — still holds trivially: the require was moved
+    // out AND then deleted. Belt-and-suspenders assert on the
+    // absence of the require call anywhere in the file.
+    expect(stripped).not.toMatch(/require\(["']react-native-here-explore["']\)/);
   });
 });
 
