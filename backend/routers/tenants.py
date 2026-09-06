@@ -1313,3 +1313,154 @@ async def patch_primary_app_domain(body: PrimaryAppDomainIn,
 # ══════════════════════════════════════════════════════════════
 # Feb-2026 · Item 6 — Business Card (digital vCard)
 # ══════════════════════════════════════════════════════════════
+
+
+
+# ══════════════════════════════════════════════════════════════
+# Phase I1.5.a · Feb-2026 — Tenant Theme Config
+#
+# Extends ``tenants`` collection with a ``theme`` sub-document of
+# shape ``{menu, rail, tiles, buttons, accents, preset}``. Each
+# slot is ``{mode: 'solid'|'gradient', solid?, gradient?}``.
+#
+# Sub-phase scope (I1.5.a): backend storage + API + preset
+# registry. Frontend editor UI, live preview + useTenantTheme hook
+# land in I1.5.b/c. Backwards compat: existing tenants that never
+# PUT a theme read the ``default`` preset expanded from GET without
+# an auto-write to Mongo.
+# ══════════════════════════════════════════════════════════════
+from services.theme import (  # noqa: E402
+    PRESETS as _THEME_PRESETS,
+    ThemeValidationError,
+    expand_default,
+    get_preset,
+    list_presets,
+    validate_theme_payload,
+)
+
+
+def _theme_admin_or_403(user: dict) -> None:
+    """Theme edits are admin-only (matches the settings/brand
+    editors). Managers + techs get 403 to prevent well-meaning-but-
+    breaking accidental resets."""
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin access required")
+
+
+@router.get(
+    "/tenants/me/theme",
+    tags=["tenants", "theme"],
+    operation_id="tenants.theme.read",
+    summary="Read the current tenant theme.",
+    responses={200: {"description": (
+        "Returns the tenant's persisted theme when set. When the "
+        "tenant has never called PUT, returns the ``default`` "
+        "preset **expanded** — no auto-write. Available to any "
+        "authenticated user in the tenant (so the shell can apply "
+        "CSS variables without an admin round-trip)."
+    )}},
+)
+async def get_tenant_theme(tenant: dict = Depends(get_current_tenant)):
+    theme = tenant.get("theme")
+    if not isinstance(theme, dict) or not theme:
+        return expand_default()
+    return theme
+
+
+@router.put(
+    "/tenants/me/theme",
+    tags=["tenants", "theme"],
+    operation_id="tenants.theme.replace",
+    summary="Replace the tenant theme (admin-only).",
+    responses={
+        200: {"description": "Theme persisted. Response echoes the "
+                              "sanitized theme."},
+        400: {"description": "Structural / solid-only / WCAG AA "
+                              "contrast violation. ``detail.code`` "
+                              "narrows the failure kind so the "
+                              "editor can highlight the offending "
+                              "slot."},
+        403: {"description": "Non-admin caller."},
+    },
+)
+async def put_tenant_theme(payload: dict,
+                             user: dict = Depends(get_current_user),
+                             tenant: dict = Depends(get_current_tenant)):
+    _theme_admin_or_403(user)
+    try:
+        clean = validate_theme_payload(payload)
+    except ThemeValidationError as e:
+        raise HTTPException(400, detail=e.as_detail())
+    await db.tenants.update_one(
+        {"id": tenant["id"]},
+        {"$set": {
+            "theme": clean,
+            "theme_updated_at": now_iso(),
+            "theme_updated_by": user.get("id"),
+        }},
+    )
+    return clean
+
+
+@router.get(
+    "/theme-presets",
+    tags=["tenants", "theme"],
+    operation_id="tenants.theme.listPresets",
+    summary="List all available theme presets.",
+    responses={200: {"description": (
+        "Returns ``{presets: [{key, name, theme}]}`` — 31 entries "
+        "(default + 30 verticals). Order is deterministic and "
+        "matches the in-code registry. Any authenticated caller "
+        "can read (used by the editor's preset picker)."
+    )}},
+)
+async def get_theme_presets(user: dict = Depends(get_current_user)):
+    return {"presets": list_presets()}
+
+
+class _ApplyPresetIn(BaseModel):
+    key: str
+
+
+@router.post(
+    "/tenants/me/theme/apply-preset",
+    tags=["tenants", "theme"],
+    operation_id="tenants.theme.applyPreset",
+    summary="Copy a preset into the tenant theme (admin-only).",
+    responses={
+        200: {"description": "Preset applied. Response echoes the "
+                              "new persisted theme."},
+        400: {"description": "Unknown preset key."},
+        403: {"description": "Non-admin caller."},
+    },
+)
+async def apply_theme_preset(body: _ApplyPresetIn,
+                              user: dict = Depends(get_current_user),
+                              tenant: dict = Depends(get_current_tenant)):
+    _theme_admin_or_403(user)
+    key = (body.key or "").strip()
+    if key not in _THEME_PRESETS:
+        raise HTTPException(400, detail={
+            "code": "UNKNOWN_PRESET",
+            "message": f"Preset {key!r} is not in the registry. "
+                        "Call GET /api/theme-presets for the "
+                        "canonical list.",
+            "key": key,
+        })
+    theme = get_preset(key)
+    # Second-pass validate: guards against any future preset edit
+    # that would slip past the module-import step.
+    try:
+        theme = validate_theme_payload(theme)
+    except ThemeValidationError as e:  # pragma: no cover — presets
+        # are locked by test_i15a_tenant_theme_endpoint.py.
+        raise HTTPException(500, detail=e.as_detail())
+    await db.tenants.update_one(
+        {"id": tenant["id"]},
+        {"$set": {
+            "theme": theme,
+            "theme_updated_at": now_iso(),
+            "theme_updated_by": user.get("id"),
+        }},
+    )
+    return theme

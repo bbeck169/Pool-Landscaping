@@ -1,49 +1,57 @@
 /**
- * useIsNarrow(breakpoint) — Phase Hygiene B · Feb-2026.
+ * Breakpoint hooks — Phase Hygiene B / Phase I1.5.a bonus · Feb-2026.
  *
- * A React hook that returns ``true`` when the viewport width is
- * strictly below ``breakpoint`` (px). Backed by the platform's
- * ``window.matchMedia`` + ``useSyncExternalStore`` so:
+ * Three hooks share the same ``window.matchMedia`` +
+ * ``useSyncExternalStore`` substrate so any caller pays exactly
+ * one media-query subscription per breakpoint:
  *
- *   • No JS ``resize`` listener needed — ``matchMedia`` covers every
- *     browser that ever fires resize plus the ones that don't
- *     (Mobile Safari in some contexts, embedded WebViews). This is
- *     the same K76.1 regression fix that motivated the extraction.
- *   • SSR-safe — the "getServerSnapshot" branch returns ``false``
- *     so pre-hydration render always assumes the wide layout. On
- *     mount the store re-subscribes and snaps to the real value.
- *   • JSDOM-safe — vitest boots without a real matchMedia; the
- *     hook falls back to ``false`` and stays deterministic.
+ *   • ``useIsNarrow(bp)``   — true when width < bp
+ *   • ``useIsWide(bp)``     — true when width >= bp
+ *   • ``useBreakpoint()``   — current Tailwind label:
+ *                              "base" | "sm" | "md" | "lg" | "xl" | "2xl"
  *
- * Usage:
+ * All three are SSR-safe (return the wide-layout defaults on the
+ * server) and JSDOM-safe (fall back to false / "base" when
+ * ``window.matchMedia`` isn't installed by the test harness).
  *
- *   const isNarrow = useIsNarrow(768);
- *   if (isNarrow) return <MobileGuard />;
- *   return <DesktopSurface />;
+ * The equivalent media query for the narrow branch is
+ * ``(max-width: {bp - 0.02}px)`` — the 0.02px shim matches
+ * Tailwind's default ``md:`` breakpoint (Tailwind uses
+ * ``@media (min-width: 768px)`` for ``md:``, so the NARROW branch
+ * is ``max-width: 767.98px``).
  *
- * The equivalent media query is ``(max-width: {breakpoint - 0.02}px)``
- * — the 0.02px shim matches Tailwind's default ``md:`` breakpoint
- * (Tailwind uses ``@media (min-width: 768px)`` for ``md:``, so the
- * NARROW branch is ``max-width: 767.98px``).
+ * ``useBreakpoint()`` uses Tailwind's canonical breakpoint pixel
+ * anchors (locked in ``use-breakpoint-hooks.test.jsx``):
  *
- * Callers must pass a stable numeric breakpoint. Passing a
- * different number on re-render will re-subscribe.
+ *   sm  ≥ 640px
+ *   md  ≥ 768px
+ *   lg  ≥ 1024px
+ *   xl  ≥ 1280px
+ *   2xl ≥ 1536px
+ *
+ * Any width below ``sm`` returns ``"base"``.
  */
 import { useSyncExternalStore } from "react";
 
 
-function _query(bp) {
+function _narrowQuery(bp) {
   const px = Math.max(0, Number(bp) || 0) - 0.02;
   return `(max-width: ${px}px)`;
 }
 
 
-function _subscribe(bp) {
+function _wideQuery(bp) {
+  const px = Math.max(0, Number(bp) || 0);
+  return `(min-width: ${px}px)`;
+}
+
+
+function _subscribeQuery(query) {
   return (cb) => {
     if (typeof window === "undefined" || !window.matchMedia) {
       return () => {};
     }
-    const mq = window.matchMedia(_query(bp));
+    const mq = window.matchMedia(query);
     if (mq.addEventListener) {
       mq.addEventListener("change", cb);
       return () => mq.removeEventListener("change", cb);
@@ -55,15 +63,15 @@ function _subscribe(bp) {
 }
 
 
-function _getSnapshot(bp) {
+function _matchesQuery(query) {
   return () => {
     if (typeof window === "undefined" || !window.matchMedia) return false;
-    return window.matchMedia(_query(bp)).matches;
+    return window.matchMedia(query).matches;
   };
 }
 
 
-function _getServerSnapshot() {
+function _falseServer() {
   // Assume wide layout on the server so hydration doesn't flash
   // the mobile fallback on desktop.
   return false;
@@ -71,10 +79,74 @@ function _getServerSnapshot() {
 
 
 export function useIsNarrow(breakpoint = 768) {
+  const q = _narrowQuery(breakpoint);
   return useSyncExternalStore(
-    _subscribe(breakpoint),
-    _getSnapshot(breakpoint),
-    _getServerSnapshot,
+    _subscribeQuery(q),
+    _matchesQuery(q),
+    _falseServer,
+  );
+}
+
+
+export function useIsWide(breakpoint = 768) {
+  const q = _wideQuery(breakpoint);
+  return useSyncExternalStore(
+    _subscribeQuery(q),
+    _matchesQuery(q),
+    _falseServer,
+  );
+}
+
+
+// Tailwind canonical anchors — do not reorder without updating the
+// contract test.
+const _TAILWIND_STEPS = [
+  ["2xl", 1536],
+  ["xl", 1280],
+  ["lg", 1024],
+  ["md", 768],
+  ["sm", 640],
+];
+
+
+function _subscribeAny(cb) {
+  if (typeof window === "undefined" || !window.matchMedia) {
+    return () => {};
+  }
+  const cleanups = _TAILWIND_STEPS.map(([, px]) => {
+    const mq = window.matchMedia(`(min-width: ${px}px)`);
+    if (mq.addEventListener) {
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    }
+    mq.addListener(cb);
+    return () => mq.removeListener(cb);
+  });
+  return () => cleanups.forEach((fn) => fn());
+}
+
+
+function _readBreakpoint() {
+  if (typeof window === "undefined" || !window.matchMedia) return "base";
+  for (const [label, px] of _TAILWIND_STEPS) {
+    if (window.matchMedia(`(min-width: ${px}px)`).matches) return label;
+  }
+  return "base";
+}
+
+
+function _serverBreakpoint() {
+  // Wide-layout assumption for SSR parity with useIsNarrow /
+  // useIsWide defaults.
+  return "lg";
+}
+
+
+export function useBreakpoint() {
+  return useSyncExternalStore(
+    _subscribeAny,
+    _readBreakpoint,
+    _serverBreakpoint,
   );
 }
 
