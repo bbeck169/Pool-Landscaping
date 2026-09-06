@@ -402,6 +402,11 @@ from routers import admin_notification_dispatch_log as _k63p_dispatch_log_router
 api_router.include_router(_k63p_dispatch_log_router.router)
 from routers import admin_resend_lead_notifications as _k63f_resend_router  # noqa: E402
 api_router.include_router(_k63f_resend_router.router)
+# K65 · Feb-2026 — super-admin perf-explain diagnostic endpoint.
+# Gated by ``FEATURE_PERF_EXPLAIN=1`` env flag; 404 when off so the
+# route is invisible on prod by default.
+from routers import admin_perf_explain_schedule as _k65_perf_router  # noqa: E402
+api_router.include_router(_k65_perf_router.router)
 
 # Feb-2026 · Slice 2A — Multi-ToS backend foundation (Pool +
 # Landscaping split, admin CRUD, customer onboarding-state DTO).
@@ -3123,6 +3128,33 @@ async def startup():
         except Exception as e:  # noqa: BLE001
             logger.warning(f"k15_jobs_indexes migration crashed: {e}")
     asyncio.create_task(_bg_k15_jobs_indexes())
+
+    # K65 · Feb-2026 — service_reports (tenant_id, job_id) prefix
+    # index for the Schedule read path.  Idempotent + sentinel-
+    # guarded; detects existing prefix-covering compounds and skips.
+    async def _bg_k65_service_reports_indexes():
+        try:
+            from services.migrations.k65_service_reports_indexes import (
+                run_k65_service_reports_indexes_migration,
+            )
+            _k65_boot = await run_k65_service_reports_indexes_migration()
+            if _k65_boot.get("status") == "skipped":
+                logger.info(
+                    "[migration] k65_service_reports_indexes: skipped · sentinel present",
+                )
+            else:
+                _s = _k65_boot.get("summary") or {}
+                logger.info(
+                    "[migration] k65_service_reports_indexes: created=%s "
+                    "already_present=%s covered_by_prefix=%s covered_by=%s errors=%s",
+                    _s.get("created"), _s.get("already_present"),
+                    _s.get("already_covered_by_prefix"),
+                    _s.get("covered_by"),
+                    len(_s.get("errors") or []),
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"k65_service_reports_indexes migration crashed: {e}")
+    asyncio.create_task(_bg_k65_service_reports_indexes())
 
     # K21 · Feb-2026 — Customer + Schedule web hot-path perf indexes.
     # Idempotent + sentinel-guarded.

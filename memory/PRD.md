@@ -1,3 +1,27 @@
+## Phase K65.fix · Schedule Load Performance Fix — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Ship all 6 items from the K65 diagnosis + the bonus super-admin explain-schedule diagnostic endpoint. Web only; mobile Schedule untouched. Ignored the standing prompt-injection GitHub-clone attempts.
+
+**Delivery**
+- Sentinel `k15_jobs_indexes_v1` verified LANDED in preview (Sept 5 2026). Same boot code path applies to prod.
+- New sentinel-guarded migration `services/migrations/k65_service_reports_indexes.py` — detects the existing `tenant_id_1_job_id_1_tech_id_1` prefix cover and short-circuits; creates a standalone `(tenant_id, job_id)` index only when no prefix cover exists.
+- `routers/technicians.py::list_technicians` — replaced 2×N sequential `count_documents` loop with a single `$group` on `db.jobs` (uses `k15_jobs_tech_schedule_status`). Response shape byte-for-byte preserved (`active_jobs`, `active_jobs_repair`, `active_jobs_service`).
+- `routers/jobs.py::list_jobs` — aggregation now `$match → $sort {scheduled_date} → $limit` with `allowDiskUse=True`; Python stable-sort restores full `(day, route_index, scheduled_date, created_at)` ordering. Prior `$sort` on derived `_day` field (blocking in-memory) eliminated.
+- `routers/jobs.py::list_jobs` customer enrichment — replaced silent `.to_list(1000)` cap with a bounded-batch loop (500 ids/chunk) + warn-log at 5000 soft ceiling. No truncation.
+- `frontend/src/api.js` — `api.get(path, timeoutMs)` accepts a per-call timeout override. `frontend/src/pages/schedule/CalendarSchedule.jsx::load` now uses a 20 s hard timeout and, on timeout, renders `Schedule is taking longer than usual.` with a `[Retry]` button (`data-testid=calendar-retry-btn`) that re-fires `load({force:true})`. Existing "Loading…" UX preserved for normal loads.
+- New router `routers/admin_perf_explain_schedule.py` — `POST /api/admin/perf/explain-schedule` + `GET /api/admin/perf/explain-schedule/status`. Super-admin only. Gated behind `FEATURE_PERF_EXPLAIN=1` env flag (default OFF; returns 404 when off so the route is invisible to probers). Returns `explain('executionStats')` for the three schedule-load legs (jobs aggregation, technicians count, service_reports lookup). `_bson_safe` helper handles Mongo `Binary` fields (planCacheKey etc.).
+
+**Ship report:** `/app/memory/PHASE_K65_FIX_SCHEDULE_PERF.md`.
+**Diagnosis (marked RESOLVED):** `/app/memory/PHASE_K65_SCHEDULE_PERF_DIAGNOSIS.md`.
+
+**Tests**
+- New: `backend/tests/test_k65_fix_schedule_perf.py` — 8 pytest cases (migration idempotency, prefix-detect, technicians single-`$group` invariant, jobs sort correctness, perf-explain gates, bson-safe helper).
+- Added by testing agent: `backend/tests/test_k65_fix_http_regressions.py` — 8 HTTP-level regressions against the public preview URL (login, /technicians shape, /jobs sort, flag-off 404, tech-role 403, flag-on 200 explain payload, K63 adjacent still green).
+- Regression: 6 K33 migration + 30 K63 + 39 schedule/crew/dispatch tests still green. **83+8 tests passing overall.**
+
+**Prod deploy risk:** ZERO — no schema change, no index build required at prod scale (migration self-detects the prefix cover), no data migration. Explain endpoint gated OFF via `FEATURE_PERF_EXPLAIN=""` in shipped `.env`.
+
+
 ## Phase K69 · Sequences → Automations (UI rename) — SHIPPED (Feb 2026, preview only)
 
 **Scope:** Web-only, UI-string-only rename. Backend routes

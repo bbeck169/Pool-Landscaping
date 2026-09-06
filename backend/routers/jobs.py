@@ -547,17 +547,48 @@ async def list_jobs(
     # to ``scheduled_date`` (time portion) + ``created_at`` for
     # untouched days.  ``$ifNull`` sends missing / null route indexes
     # to a large sentinel so they sink to the end within their day.
+    # K65.fix · Feb-2026 — index-covered sort + Python re-sort.
+    #
+    # Previous shape sorted on a derived ``_day`` field
+    # (``$substrCP`` of ``scheduled_date``), which no index covers →
+    # in-memory blocking sort before ``$limit`` on the entire match
+    # set. On Aquaterra prod scale (~3k rows in a 90-day admin
+    # window) that added 300–700 ms and risked the 100 MB sort
+    # memory ceiling.
+    #
+    # New shape sorts by ``scheduled_date`` directly — covered by
+    # both ``(tenant_id, scheduled_date)`` and
+    # ``k15_jobs_tech_schedule_status``. After ``to_list`` we
+    # stable-sort in Python by the same
+    # ``(_day, _ri, scheduled_date, created_at)`` tuple the
+    # aggregation used to compute. Python sort of ≤ 1000 rows
+    # costs < 2 ms and the Mongo side is now streamable +
+    # index-covered.
+    #
+    # ``allowDiskUse=True`` is added as a defense-in-depth guard so
+    # a future caller widening the window can't hard-error on a
+    # sort spill.
     pipeline: list[dict] = [
         {"$match": q},
-        {"$addFields": {
-            "_day": {"$substrCP": [{"$ifNull": ["$scheduled_date", ""]}, 0, 10]},
-            "_ri":  {"$ifNull": ["$route_index", 999999]},
-        }},
-        {"$sort": {"_day": 1, "_ri": 1, "scheduled_date": 1, "created_at": 1}},
+        {"$sort": {"scheduled_date": 1}},
         {"$limit": int(limit)},
-        {"$project": {"_id": 0, "_day": 0, "_ri": 0}},
+        {"$project": {"_id": 0}},
     ]
-    docs = await db.jobs.aggregate(pipeline).to_list(limit)
+    docs = await db.jobs.aggregate(pipeline, allowDiskUse=True).to_list(limit)
+    # In-Python re-sort to preserve the pre-K65.fix ordering
+    # contract: by DAY (YYYY-MM-DD prefix of scheduled_date),
+    # then by admin-assigned route_index, then by full scheduled_date
+    # (time portion), then by created_at.  Missing route_index
+    # sinks to the end within its day (999999 sentinel matches the
+    # prior aggregation ``$ifNull`` behaviour).
+    def _re_sort_key(d: dict) -> tuple:
+        sd = d.get("scheduled_date") or ""
+        day = sd[:10] if isinstance(sd, str) else ""
+        ri = d.get("route_index")
+        ri_val = ri if isinstance(ri, (int, float)) else 999999
+        ca = d.get("created_at") or ""
+        return (day, ri_val, sd, ca)
+    docs.sort(key=_re_sort_key)
     # Feb-2026 · P0 — bulk read-time cascade for the ``technician_name``
     # denorm. The list surface historically returned the stored value
     # verbatim; jobs stamped before the Feb-2026 write-side denorm fix
@@ -581,18 +612,51 @@ async def list_jobs(
         # schedule without opening the job.
         cids = list({d.get("customer_id") for d in docs if d.get("customer_id")})
         if cids:
-            custs = await db.customers.find(
-                {"id": {"$in": cids}, "tenant_id": tenant["id"]},
-                {"_id": 0, "id": 1, "notes": 1, "gate_code": 1, "is_vip": 1,
-                  "service_notes": 1,
-                  # Feb-2026 · Schedule map pins — surface the customer's
-                  # geocoded coords so the schedule map can render a pin
-                  # without an N+1 customer lookup. Both keys are aliased
-                  # to ``location_lat`` / ``location_lng`` on the job
-                  # payload below so consumers key on a single naming
-                  # convention regardless of source.
-                  "service_lat": 1, "service_lng": 1},
-            ).to_list(1000)
+            # K65.fix · Feb-2026 — bounded-batch customer enrichment.
+            #
+            # The previous ``.to_list(1000)`` silently capped the
+            # enrichment at 1000 customers.  At Aquaterra prod scale
+            # a 90-day admin schedule window can touch 1,100–1,800
+            # unique customers; the tail rows lost their
+            # gate_code / notes / VIP / coord enrichment WITHOUT
+            # any log or error signal.
+            #
+            # New shape iterates ``cids`` in chunks of 500 and
+            # concatenates. Batched projection = same Mongo cost as
+            # the old query for realistic tenants (both use the
+            # ``id`` index and stream through matched docs); the
+            # only cost is one extra round-trip per 500 customers,
+            # which is negligible next to the payload size.
+            #
+            # A warning is logged if the total unique customer
+            # count exceeds a soft ceiling (5,000) so ops sees a
+            # signal before the endpoint is asked to enrich a
+            # tenant-wide fan-out.
+            _CUST_CHUNK = 500
+            _CUST_SOFT_CEIL = 5000
+            if len(cids) > _CUST_SOFT_CEIL:
+                logger.warning(
+                    "[k65.fix] jobs.list customer enrichment exceeded "
+                    "soft ceiling: tenant=%s unique_customers=%d",
+                    tenant["id"], len(cids),
+                )
+            custs: list = []
+            for _i in range(0, len(cids), _CUST_CHUNK):
+                _chunk = cids[_i:_i + _CUST_CHUNK]
+                _rows = await db.customers.find(
+                    {"id": {"$in": _chunk}, "tenant_id": tenant["id"]},
+                    {"_id": 0, "id": 1, "notes": 1, "gate_code": 1,
+                      "is_vip": 1, "service_notes": 1,
+                      # Feb-2026 · Schedule map pins — surface the
+                      # customer's geocoded coords so the schedule
+                      # map can render a pin without an N+1 customer
+                      # lookup. Both keys are aliased to
+                      # ``location_lat`` / ``location_lng`` on the
+                      # job payload below so consumers key on a
+                      # single naming convention regardless of source.
+                      "service_lat": 1, "service_lng": 1},
+                ).to_list(len(_chunk))
+                custs.extend(_rows)
             cmap = {c["id"]: c for c in custs}
             for d in docs:
                 c = cmap.get(d.get("customer_id"))

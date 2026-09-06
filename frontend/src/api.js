@@ -153,7 +153,11 @@ async function request(path, options = {}, timeoutMs = 30000) {
 }
 
 export const api = {
-  get: (p) => request(p),
+  // K65.fix · Feb-2026 — ``get`` accepts an optional ``timeoutMs``
+  // override so hot-path callers (e.g. CalendarSchedule::load) can
+  // fail fast with an actionable retry banner instead of the
+  // default 30 s "Request timed out" copy.
+  get: (p, timeoutMs) => request(p, {}, timeoutMs),
   post: (p, body, timeoutMs) =>
     request(
       p,

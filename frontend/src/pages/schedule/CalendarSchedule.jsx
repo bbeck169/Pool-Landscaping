@@ -224,6 +224,12 @@ export default function CalendarSchedule() {
   const [techs, setTechs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // K65.fix · Feb-2026 — flag that flips when the last load() call
+  // aborted on the 20 s client-side hard timeout.  Drives the
+  // "[Retry]" affordance on the error banner so the user has a
+  // one-click path out of the stuck state instead of the previous
+  // infinite "Loading…".
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
 
   // Feb 2026 · Task B — Schedule perf. Cache the last fetched
   // ``[start,end]`` window so that intra-window date navigation
@@ -443,7 +449,13 @@ export default function CalendarSchedule() {
         }
       }
     }
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setLoadTimedOut(false);
+    // K65.fix · Feb-2026 — 20 s per-call hard timeout override on
+    // the /api/jobs leg (the other two calls already have a
+    // .catch → [] fallback).  A prod-scale schedule hang used to
+    // surface as an infinite "Loading…"; now it fails fast with an
+    // actionable "Retry" banner.
+    const SCHEDULE_LOAD_TIMEOUT_MS = 20000;
     try {
       // Phase F3.5 · Feb-2026 — trimmed the fetched schedule window
       // from ±60/+90 (150 days) to ±30/+60 (90 days). Same rendered
@@ -456,10 +468,13 @@ export default function CalendarSchedule() {
       const start = format(addDays(focus, -30), "yyyy-MM-dd");
       const end   = format(addDays(focus,  60), "yyyy-MM-dd");
       const [j, t, cr] = await Promise.all([
-        api.get(`/jobs?start=${start}&end=${end}${crewId ? `&crew_id=${encodeURIComponent(crewId)}` : ""}`),
-        api.get("/technicians").catch(() => []),
+        api.get(
+          `/jobs?start=${start}&end=${end}${crewId ? `&crew_id=${encodeURIComponent(crewId)}` : ""}`,
+          SCHEDULE_LOAD_TIMEOUT_MS,
+        ),
+        api.get("/technicians", SCHEDULE_LOAD_TIMEOUT_MS).catch(() => []),
         // Phase F6a · Feb-2026 — crew list for the "All crews" dropdown.
-        api.get("/crews").catch(() => []),
+        api.get("/crews", SCHEDULE_LOAD_TIMEOUT_MS).catch(() => []),
       ]);
       setRawJobs(Array.isArray(j) ? j : (j.items || j.data || []));
       setTechs(Array.isArray(t) ? t : (t.items || []));
@@ -468,7 +483,19 @@ export default function CalendarSchedule() {
       // in-window date navigation can skip the refetch above.
       fetchedRangeRef.current = { startISO: start, endISO: end };
     } catch (e) {
-      setError(e.message || "Failed to load schedule");
+      const msg = e?.message || "Failed to load schedule";
+      // K65.fix — the api.js wrapper stringifies AbortError as
+      // "Request timed out — check your connection and try again."
+      // Detect the timeout by prefix so the retry affordance
+      // shows up specifically for stalled backends (not for auth
+      // errors, 5xx, or malformed responses).
+      const isTimeout = /timed out/i.test(msg);
+      setLoadTimedOut(isTimeout);
+      setError(
+        isTimeout
+          ? "Schedule is taking longer than usual."
+          : msg,
+      );
     } finally {
       setLoading(false);
     }
@@ -1286,10 +1313,21 @@ export default function CalendarSchedule() {
       {error ? (
         <div
           data-testid="calendar-error"
-          className="rounded-xl px-3 py-2 mb-3 text-xs"
+          className="rounded-xl px-3 py-2 mb-3 text-xs flex items-center justify-between gap-3"
           style={{ background: "#FEE2E2", color: "#991B1B" }}
         >
-          {error}
+          <span>{error}</span>
+          {loadTimedOut ? (
+            <button
+              type="button"
+              data-testid="calendar-retry-btn"
+              onClick={() => load({ force: true })}
+              className="rounded-md px-2 py-1 text-xs font-medium"
+              style={{ background: "#991B1B", color: "#fff" }}
+            >
+              Retry
+            </button>
+          ) : null}
         </div>
       ) : null}
 

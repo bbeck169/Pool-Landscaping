@@ -285,3 +285,25 @@ Not part of this diagnosis, but the natural fix order the data supports:
 - `/app/backend/services/service_report_view.py::resolve_technicians`
 - `/app/backend/services/migrations/k15_jobs_indexes.py` (existing schedule indexes)
 - `/app/backend/services/migrations/*` (surveyed for missing service_reports index)
+
+---
+
+## 9. RESOLVED — K65.fix shipped
+
+**Ship report:** `/app/memory/PHASE_K65_FIX_SCHEDULE_PERF.md`
+
+All 6 diagnosis items + bonus explain-schedule endpoint landed:
+
+| # | Item | Fix option used | Result |
+|---|------|-----------------|--------|
+| 1 | Sentinel verification | Diagnostic query | `k15_jobs_indexes_v1` present in preview → prod boot uses same code path. |
+| 2 | service_reports index | S3.A migration with prefix-detection | Sentinel-guarded migration; detected pre-existing `tenant_id_1_job_id_1_tech_id_1` compound covers the prefix — no duplicate index created. |
+| 3 | Technicians N+1 → `$group` | S1.A | `2 × N` sequential `count_documents` collapsed into ONE `$group` aggregation. Response shape preserved. |
+| 4 | Jobs sort → index-covered + Python re-sort | S2.A | Aggregation sorts by `scheduled_date` (uses `(tenant_id, scheduled_date)` / `k15_jobs_tech_schedule_status`); Python stable-sort restores full ordering contract. `allowDiskUse=True` added as defense-in-depth. |
+| 5 | Client AbortController + Retry | Bonus S4 | `api.get` accepts `timeoutMs`; `CalendarSchedule.jsx::load` uses 20 s. Timeout produces retry banner instead of infinite "Loading…". |
+| 6 | Customer enrichment silent cap | Fix option 6 (bounded batch) | Chunked at 500 ids, no silent truncation, warn-log at 5000 soft ceiling. |
+| B | `POST /api/admin/perf/explain-schedule` | Bonus | Super-admin only, feature-gated behind `FEATURE_PERF_EXPLAIN=1` (default OFF). Returns `explain('executionStats')` for the three schedule-load queries. |
+
+**Test result:** 83 / 83 passing (8 new + 30 K63 + 39 adjacent schedule/crew + 6 K33 migrations).
+**Prod deploy risk:** ZERO — no schema change, no index build, no data migration required.
+**Explain endpoint on prod:** GATED OFF by default.

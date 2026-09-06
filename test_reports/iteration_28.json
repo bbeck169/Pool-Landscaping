@@ -1,0 +1,37 @@
+{
+  "summary": "Phase K65.fix backend-only regression pass. Verified all 6 review items + explain-endpoint gating over the public preview URL. Created new HTTP-level regression suite test_k65_fix_http_regressions.py (8 tests, all pass) and re-ran the existing local test_k65_fix_schedule_perf.py (8 tests, all pass). FEATURE_PERF_EXPLAIN reset to empty after flag-on flow.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/health", "issue": "Cold-start latency ~16s on preview — tests need >=30s timeout / retries. Not a K65.fix regression, but worth noting."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_k65_fix_http_regressions.py",
+    "/app/backend/tests/test_k65_fix_schedule_perf.py",
+    "/app/test_reports/pytest/k65_fix_http.xml",
+    "/app/test_reports/pytest/k65_fix_local.xml"
+  ],
+  "verified_review_items": [
+    "GET /api/technicians — 200, response shape preserved: every doc has active_jobs, active_jobs_repair, active_jobs_service and active_jobs == repair+service. Existing local test proves no count_documents fires and at most 1 aggregate call on the hot path.",
+    "GET /api/jobs?start=2026-01-01&end=2026-12-31 — 200, rows sorted correctly by (day, route_index, scheduled_date, created_at); verified with Python re-sort equality on live rows.",
+    "POST /api/admin/perf/explain-schedule with FEATURE_PERF_EXPLAIN empty — returns 404 for super_admin (body {} sent to bypass 422).",
+    "GET /api/admin/perf/explain-schedule/status — super_admin: 200 enabled=false when flag off; technician: 403; super_admin with flag on: 200 enabled=true.",
+    "Flag-on full flow — POST returns 200 with results.jobs_pipeline / results.technician_count / results.service_reports_lookup, each containing explain output (executionStats / queryPlanner / stages). Flag reset to empty afterwards via sed + supervisorctl restart backend.",
+    "K63 adjacent endpoints — GET /api/admin/notification-dispatch-log returns 200; POST /api/admin/leads/{bogus}/resend-notifications returns 404 (no 5xx regression)."
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "admin_perf_explain_schedule.py: POST body is a Pydantic model with all-optional fields but FastAPI still requires the body itself. Consider defaulting body: ExplainScheduleRequest = Body(default_factory=ExplainScheduleRequest) so callers can POST with no body and still get sensible defaults. Not a blocker.",
+    "The 404 shape returned when flag is off ('detail': 'Not Found') is fine but consider matching FastAPI's default 404 body precisely so it is truly indistinguishable from a missing route to probers."
+  ],
+  "updated_files": ["/app/backend/tests/test_k65_fix_http_regressions.py"],
+  "success_rate": {"backend": "100%", "frontend": "n/a"},
+  "test_credentials": "super@aquaterra.com / password123 (super_admin), mike@aquaterra.com / password123 (technician) — both work.",
+  "seed_data_creation": "None — tests only read.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "K65.fix ships clean. test_k65_fix_http_regressions.py toggles FEATURE_PERF_EXPLAIN via sed + supervisorctl restart backend (needs ~30s cold-start tolerance). If you re-add tests, note the POST body is required (send json={}).",
+  "rca of the issue": "n/a — no bugs. Two self-inflicted test iterations resolved: (1) initial login timeout due to 16s cold-start — added retry + 45s timeout; (2) POST /api/admin/perf/explain-schedule requires JSON body (422 otherwise) — send json={}; and the response payload nests legs under results.* not at top level."
+}

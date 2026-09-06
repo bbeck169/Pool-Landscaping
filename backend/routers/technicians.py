@@ -4,7 +4,7 @@
 # ``models`` name referenced in this file; add more here if new
 # handlers land, do NOT go back to the wildcard.
 from fastapi import APIRouter, HTTPException, Depends, Query
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime, timezone, timedelta
 
 from config import db, logger, EMERGENT_LLM_KEY
@@ -188,21 +188,67 @@ async def list_technicians(user: dict = Depends(get_current_user),
             if u.get("display_color_hex"):
                 color_by_uid[u["id"]] = u["display_color_hex"]
     for t in docs:
-        # active_jobs runs per-row — cheap on Mongo (indexed) and
-        # matches the prior contract the FE relies on.
-        _base_q = {"tenant_id": tid, "technician_id": t.get("id"),
-                    "status": {"$in": ["pending", "active"]}}
-        t["active_jobs"] = await db.jobs.count_documents(_base_q)
-        # Feb 2026 · Work-class counter split. One extra count on the
-        # repair sub-bucket; ``service`` is derived by subtraction so
-        # legacy jobs without ``work_class`` count as service (matches
-        # the read-time invariant in ``services/work_class.py``).
-        t["active_jobs_repair"] = await db.jobs.count_documents(
-            {**_base_q, "work_class": "repair"},
-        )
-        t["active_jobs_service"] = max(
-            0, t["active_jobs"] - t["active_jobs_repair"],
-        )
+        # K65.fix · Feb-2026 — moved out of this loop. See the bulk
+        # ``$group`` counters below; individual ``count_documents``
+        # calls used to run per-tech (2 × N sequential round-trips).
+        # The map lookup here is O(1) per tech.
+        pass
+    # K65.fix · Feb-2026 — collapse the per-tech N+1 into a single
+    # ``$group`` over ``db.jobs`` matching (tenant, technician IN
+    # <every-tech-in-the-response>, status IN [pending, active]).
+    # Groups by (technician_id, work_class) so we split ``repair``
+    # vs derived-``service`` in the same round-trip.  Uses the
+    # ``k15_jobs_tech_schedule_status`` covered index.  Non-fatal —
+    # counters default to 0 on aggregation failure so the pill
+    # still renders without breaking the endpoint.
+    #
+    # Response shape is preserved byte-for-byte with the pre-K65
+    # loop: every doc still carries ``active_jobs``,
+    # ``active_jobs_repair``, and ``active_jobs_service``.
+    tech_id_list = [t.get("id") for t in docs if t.get("id")]
+    counts_by_tid: Dict[str, Dict[str, int]] = {}
+    if tech_id_list:
+        try:
+            agg = db.jobs.aggregate([
+                {"$match": {
+                    "tenant_id": tid,
+                    "technician_id": {"$in": tech_id_list},
+                    "status": {"$in": ["pending", "active"]},
+                }},
+                {"$group": {
+                    "_id": {
+                        "tid": "$technician_id",
+                        # Legacy jobs without ``work_class`` count as
+                        # "service" — matches the read-time invariant
+                        # in ``services/work_class.py`` and preserves
+                        # the pre-K65 subtraction fallback.
+                        "wc": {"$ifNull": ["$work_class", "service"]},
+                    },
+                    "n": {"$sum": 1},
+                }},
+            ])
+            async for row in agg:
+                key = row.get("_id") or {}
+                _tid = key.get("tid")
+                _wc  = (key.get("wc") or "service").lower()
+                _n   = int(row.get("n") or 0)
+                if not _tid:
+                    continue
+                bucket = counts_by_tid.setdefault(_tid, {"repair": 0, "service": 0})
+                if _wc == "repair":
+                    bucket["repair"] += _n
+                else:
+                    bucket["service"] += _n
+        except Exception as _exc:  # noqa: BLE001
+            # Never break the endpoint on a counter aggregation glitch.
+            logger.warning("[k65.fix] technicians count aggregate failed: %s", _exc)
+            counts_by_tid = {}
+
+    for t in docs:
+        c = counts_by_tid.get(t.get("id")) or {"repair": 0, "service": 0}
+        t["active_jobs_repair"] = int(c.get("repair", 0))
+        t["active_jobs_service"] = int(c.get("service", 0))
+        t["active_jobs"] = t["active_jobs_repair"] + t["active_jobs_service"]
         if not t.get("display_color_hex") and t.get("user_id"):
             t["display_color_hex"] = color_by_uid.get(t["user_id"])
     return docs
