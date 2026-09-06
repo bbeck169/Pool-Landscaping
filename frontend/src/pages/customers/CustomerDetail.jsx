@@ -1028,6 +1028,7 @@ function Info({ label, value, preserveNewlines }) {
 function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
   const { user: authUser } = useAuth();
   const canImpersonate = authUser?.role === "super_admin" || authUser?.role === "admin";
+  const showCopyResetLink = canCopyResetLink(authUser?.role);
   const [busy, setBusy] = React.useState("");
   const [inviteLink, setInviteLink] = React.useState(null);
   const [tempPassword, setTempPassword] = React.useState(null);
@@ -1036,6 +1037,10 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
   const [resetModalOpen, setResetModalOpen] = React.useState(false);
   const [resetLinkModalOpen, setResetLinkModalOpen] = React.useState(false);
   const [resetLinkStatus, setResetLinkStatus] = React.useState(null);
+  // K30.copy-admin-link · Feb-2026 — separate confirm modal +
+  // clipboard-fallback modal state.
+  const [copyLinkModalOpen, setCopyLinkModalOpen] = React.useState(false);
+  const [copyFallback, setCopyFallback] = React.useState(null);
 
   const loadStatus = React.useCallback(async () => {
     try {
@@ -1189,6 +1194,21 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
         >
           Send reset link
         </Button>
+        {/* K30.copy-admin-link · Feb-2026 — super-admin-only
+            clipboard-copy action for cases where email delivery is
+            too slow (customer on the phone). Hidden entirely for
+            non-super-admins so it can't be mis-clicked. */}
+        {showCopyResetLink ? (
+          <Button
+            variant="ghost"
+            onClick={() => setCopyLinkModalOpen(true)}
+            disabled={busy === "portal-reset-link-copy"
+              || !(customer.email || status?.email)}
+            testid="cd-portal-reset-link-copy"
+          >
+            Copy reset link
+          </Button>
+        ) : null}
         {hasLogin ? (
           <>
             <Button
@@ -1306,6 +1326,58 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
           }
         }}
       />
+
+      {/* K30.copy-admin-link · Feb-2026 — confirm modal for the
+          super-admin clipboard-copy path. Deliberately shouts about
+          the security posture ("do not share by insecure channels")
+          because the operator is about to hold a bearer credential
+          in the browser clipboard for ~30 minutes. */}
+      <PortalResetLinkCopyConfirmModal
+        open={copyLinkModalOpen}
+        customer={customer}
+        email={status?.email || customer.email}
+        onClose={() => setCopyLinkModalOpen(false)}
+        onConfirm={async () => {
+          setCopyLinkModalOpen(false);
+          setBusy("portal-reset-link-copy");
+          try {
+            const r = await api.post(`/customers/${customer.id}/portal-reset-link-copy`);
+            const url = r?.reset_url || "";
+            let clipboardOk = false;
+            try {
+              if (navigator?.clipboard?.writeText && url) {
+                await navigator.clipboard.writeText(url);
+                clipboardOk = true;
+              }
+            } catch { /* fall through to fallback modal */ }
+            if (clipboardOk) {
+              onToast({
+                tone: "success",
+                message: `Link copied — expires in ${r?.token_ttl_minutes || 30} min`,
+              });
+            } else {
+              // Fall back to a modal that shows the URL so the
+              // operator can manually copy. This path is common in
+              // insecure contexts (http://) and Playwright.
+              setCopyFallback({ url, expires_at: r?.expires_at });
+            }
+            await onDone();
+            await loadStatus();
+          } catch (e) {
+            onToast({ tone: "error", message: e?.message || "Reset link copy failed" });
+          } finally {
+            setBusy("");
+          }
+        }}
+      />
+
+      <PortalResetLinkCopyFallbackModal
+        open={!!copyFallback}
+        url={copyFallback?.url || ""}
+        expiresAt={copyFallback?.expires_at || null}
+        onClose={() => setCopyFallback(null)}
+        onCopied={() => onToast({ tone: "success", message: "Link copied to clipboard" })}
+      />
     </div>
   );
 }
@@ -1317,6 +1389,7 @@ const PORTAL_EVENT_LABELS = {
   impersonation_started: "Admin viewed as customer",
   impersonation_ended: "Admin ended impersonation",
   admin_password_reset_triggered: "Admin sent reset link",
+  admin_password_reset_copied: "Admin copied reset link",
 };
 
 /**
@@ -1383,6 +1456,15 @@ function _k30MaskEmail(email) {
   return `${local[0]}***@${domain}`;
 }
 
+/**
+ * K30.copy-admin-link · Feb-2026 — Role gate for the clipboard-copy
+ * button. Exported so unit tests can assert the visibility contract
+ * without mounting the full CustomerDetail tree.
+ */
+export function canCopyResetLink(role) {
+  return role === "super_admin";
+}
+
 function PortalResetLinkConfirmModal({ open, customer, email, onClose, onConfirm }) {
   const masked = _k30MaskEmail(email);
   const name = (customer?.name || "this customer").trim();
@@ -1417,6 +1499,125 @@ function PortalResetLinkConfirmModal({ open, customer, email, onClose, onConfirm
           The customer sets their own password via the link — no temporary
           password is ever emailed.
         </p>
+      </div>
+    </Modal>
+  );
+}
+
+
+/**
+ * K30.copy-admin-link · Feb-2026 — Super-admin-only confirm modal
+ * for minting a fresh reset URL and copying it to the clipboard.
+ * Deliberately louder than the send-reset confirm modal — the
+ * operator is about to hold a bearer credential in their clipboard.
+ */
+export function PortalResetLinkCopyConfirmModal({ open, customer, email, onClose, onConfirm }) {
+  const name = (customer?.name || "this customer").trim();
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Copy password reset link"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}
+                    testid="portal-reset-link-copy-cancel">
+            Cancel
+          </Button>
+          <Button
+            onClick={onConfirm}
+            disabled={!email}
+            testid="portal-reset-link-copy-confirm"
+          >
+            Generate and copy
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3" data-testid="portal-reset-link-copy-modal-body">
+        <p className="text-sm" style={{ color: colors.onSurface }}>
+          Generate and copy a one-time reset link for <strong>{name}</strong>?
+        </p>
+        <p className="text-xs" style={{ color: colors.warning || colors.onSurfaceSecondary }}>
+          This link works for 30 minutes and gives portal access —
+          do <strong>not</strong> share by insecure channels
+          (public chat, unencrypted email, etc.). The link is
+          single-use and no email will be sent from this action.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+
+/**
+ * K30.copy-admin-link · Feb-2026 — Clipboard-permission fallback.
+ * Renders the raw reset URL in a readonly input with a "Copy"
+ * button so the operator can copy it manually when
+ * ``navigator.clipboard.writeText`` fails (insecure context,
+ * denied permission, headless browser).
+ */
+export function PortalResetLinkCopyFallbackModal({ open, url, expiresAt, onClose, onCopied }) {
+  const inputRef = React.useRef(null);
+  const copy = React.useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      onCopied && onCopied();
+    } catch {
+      // Last-resort — use the legacy document.execCommand path.
+      try {
+        if (inputRef.current) {
+          inputRef.current.select();
+          document.execCommand("copy");
+          onCopied && onCopied();
+        }
+      } catch { /* really cannot copy — user must select manually */ }
+    }
+  }, [url, onCopied]);
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Copy reset link"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}
+                    testid="portal-reset-link-copy-fallback-close">
+            Close
+          </Button>
+          <Button onClick={copy}
+                    testid="portal-reset-link-copy-fallback-copy">
+            Copy to clipboard
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3" data-testid="portal-reset-link-copy-fallback-body">
+        <p className="text-sm" style={{ color: colors.onSurface }}>
+          Your browser blocked clipboard access. Select the link
+          below and copy it manually, or click <strong>Copy to
+          clipboard</strong> to retry.
+        </p>
+        <input
+          ref={inputRef}
+          type="text"
+          value={url}
+          readOnly
+          onFocus={(e) => e.target.select()}
+          data-testid="portal-reset-link-copy-fallback-input"
+          className="w-full px-2 py-1 rounded text-xs font-mono"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+          }}
+        />
+        {expiresAt ? (
+          <p className="text-xs" style={{ color: colors.onSurfaceSecondary }}
+              data-testid="portal-reset-link-copy-fallback-expiry">
+            Expires at {new Date(expiresAt).toLocaleString()}.
+          </p>
+        ) : null}
       </div>
     </Modal>
   );

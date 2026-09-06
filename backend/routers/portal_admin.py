@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from config import db, logger, APP_PUBLIC_URL
-from utils import now_iso, new_id, require_admin, get_current_user, hash_password
+from utils import now_iso, new_id, require_admin, require_super_admin, get_current_user, hash_password
 from utils import not_deleted_filter as _nd
 from routers.tenants import get_current_tenant
 
@@ -451,6 +451,147 @@ async def portal_reset_link(cid: str,
     )
 
 
+# ─── K30.copy-admin-link · Feb-2026 · Super-admin clipboard-copy ──────
+#
+# Companion endpoint to ``portal_reset_link`` above. Same token
+# minting semantics (30-min TTL, prior tokens invalidated,
+# ``source="admin_reset_link_copy"``, portal user auto-provisioned)
+# but the *email is never sent* and the response body returns the
+# fully-qualified reset URL so a super-admin on the phone with the
+# customer can paste it directly into a text message / SMS / live
+# chat channel.
+#
+# Rationale for the stricter super_admin gate (vs the send path's
+# admin gate): the response body carries the token — a bearer
+# credential — in plaintext. Restricting to super_admin keeps the
+# blast radius narrow and matches how "impersonate" is gated.
+
+class PortalResetLinkCopyResp(BaseModel):
+    ok: bool = True
+    reset_url: str
+    expires_at: str
+    token_ttl_minutes: int = 30
+    provisioned_user: bool = False
+
+
+@router.post("/customers/{cid}/portal-reset-link-copy",
+              response_model=PortalResetLinkCopyResp)
+async def portal_reset_link_copy(cid: str,
+                                    user: dict = Depends(require_super_admin),
+                                    tenant: dict = Depends(get_current_tenant)):
+    """K30.copy-admin-link · Feb-2026 — Mint a fresh reset URL for a
+    customer and return it directly to the super-admin caller so it
+    can be copied to clipboard (never emailed on this path).
+
+    Behavioural parity with ``portal_reset_link`` for token
+    minting:
+
+    1. Tenant-scoped customer lookup (``deleted_at`` permitted,
+       same policy as the send path).
+    2. Auto-provision the ``role="customer"`` ``users`` row when
+       missing.
+    3. Invalidate prior unused tokens for the same user before
+       minting the new one.
+    4. New token row carries ``source="admin_reset_link_copy"`` so
+       audits can distinguish the copy path from the email path.
+
+    Deviations from the send path:
+
+    * ``require_super_admin`` (send path allows admin).
+    * NO email adapter call. Adapter code path is untouched.
+    * Response body includes the FULL ``reset_url`` and
+       ``expires_at``. The token value only appears here; it is
+       never logged.
+    * Audit event key is ``admin_password_reset_copied`` (send
+       path uses ``admin_password_reset_triggered``).
+    """
+    from datetime import datetime, timezone, timedelta
+    from routers.auth import _RESET_TTL_MINUTES
+
+    tid = tenant["id"]
+    cust = await db.customers.find_one({"id": cid, "tenant_id": tid}, {"_id": 0})
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+
+    email = (cust.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "Customer has no email on file")
+
+    existing = await db.users.find_one(
+        {"customer_id": cid, "tenant_id": tid, "role": "customer"},
+        {"_id": 0, "id": 1, "email": 1},
+    )
+    provisioned_user = False
+    if not existing:
+        await _upsert_customer_user(cid, tid, email, _random_password(16))
+        existing = await db.users.find_one(
+            {"customer_id": cid, "tenant_id": tid, "role": "customer"},
+            {"_id": 0, "id": 1, "email": 1},
+        )
+        provisioned_user = True
+
+    if not existing:  # pragma: no cover — defensive
+        raise HTTPException(500, "Failed to provision portal user")
+
+    await db.password_reset_tokens.update_many(
+        {"user_id": existing["id"], "used_at": None},
+        {"$set": {"invalidated_at": now_iso()}},
+    )
+    token = secrets.token_urlsafe(48)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=_RESET_TTL_MINUTES)
+    await db.password_reset_tokens.insert_one({
+        "id": new_id(),
+        "token": token,
+        "user_id": existing["id"],
+        "tenant_id": tid,
+        "email": email,
+        "expires_at": expires_at.isoformat(),
+        "used_at": None,
+        "invalidated_at": None,
+        "created_at": now_iso(),
+        "created_ip": None,
+        "source": "admin_reset_link_copy",
+        "actor_user_id": (user or {}).get("id"),
+    })
+
+    frontend_url = (APP_PUBLIC_URL or os.environ.get("FRONTEND_URL") or "").rstrip("/")
+    reset_url = f"{frontend_url}/reset-password?token={token}"
+
+    # IMPORTANT — never log the token value. Log only the audit
+    # metadata + masked recipient. The URL itself is returned to
+    # the caller (super-admin) only.
+    logger.info(
+        "[k30.copy] admin_password_reset_copied actor=%s cid=%s masked_to=%s provisioned=%s",
+        (user or {}).get("email"),
+        cid,
+        _mask_email_for_response(email),
+        provisioned_user,
+    )
+
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tid,
+            "event": "admin_password_reset_copied",
+            "actor_id": (user or {}).get("id"),
+            "actor_email": (user or {}).get("email"),
+            "target_customer_id": cid,
+            "target_email_masked": _mask_email_for_response(email),
+            "provisioned_user": provisioned_user,
+            "customer_soft_deleted": bool(cust.get("deleted_at")),
+            "created_at": now_iso(),
+        })
+    except Exception:  # pragma: no cover
+        logger.warning("[k30.copy] audit_logs insert failed")
+
+    return PortalResetLinkCopyResp(
+        reset_url=reset_url,
+        expires_at=expires_at.isoformat(),
+        token_ttl_minutes=_RESET_TTL_MINUTES,
+        provisioned_user=provisioned_user,
+    )
+
+
 # ─── K30.status-chip · Feb-2026 · latest reset-link status ─────────────
 #
 # Lightweight read endpoint powering the "Reset link" chip on the
@@ -626,7 +767,8 @@ async def portal_history(cid: str,
     lim = max(1, min(int(limit or 50), 500))
     events = ("portal_login", "portal_reset", "portal_revoke",
               "impersonation_started", "impersonation_ended",
-              "admin_password_reset_triggered")
+              "admin_password_reset_triggered",
+              "admin_password_reset_copied")
     rows = await db.audit_logs.find(
         {"tenant_id": tenant["id"],
           "target_customer_id": cid,

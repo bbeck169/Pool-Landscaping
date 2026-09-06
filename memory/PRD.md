@@ -1,3 +1,79 @@
+## Phase K30.copy-admin-link · Super-admin clipboard copy of reset URL — SHIPPED (Feb 2026)
+
+**Scope:** Backend + Web (mobile untouched). Standing order
+honored (bbeck169/Pool-Landscaping.git ignored).
+
+**Purpose** — Give super-admins a way to mint a fresh
+password-reset URL for a customer and copy it directly to their
+clipboard for phone-support scenarios where email deliverability
+would be too slow. Never emailed on this path.
+
+**Backend**
+- New endpoint `POST /api/customers/{cid}/portal-reset-link-copy`
+  in `portal_admin.py` gated by `require_super_admin` (stricter
+  than the send path's admin gate because the response body
+  carries a bearer credential).
+- Returns `{ok, reset_url, expires_at, token_ttl_minutes,
+  provisioned_user}`. Token source tag
+  `admin_reset_link_copy` distinguishes copy-path tokens from
+  send-path tokens in `password_reset_tokens`.
+- Audit event `admin_password_reset_copied` written on every
+  call; token value NEVER logged (grep-asserted in tests).
+- `portal_history` widens the surfaced-event list to include the
+  new event so the activity feed shows both send + copy actions.
+
+**Frontend**
+- `CustomerDetail.PortalAccessPanel` — new "Copy reset link"
+  button beside "Send reset link", gated by
+  `canCopyResetLink(role)` (new exported helper returning true
+  only for `super_admin`). Button is invisible for non-super
+  roles.
+- Confirm modal `PortalResetLinkCopyConfirmModal` warns about
+  bearer-credential handling before the operator commits.
+- Fallback modal `PortalResetLinkCopyFallbackModal` renders the
+  URL in a readonly input with a manual copy button when
+  `navigator.clipboard.writeText` is unavailable (insecure
+  context, denied permission, headless). Includes an
+  `execCommand("copy")` last-resort path.
+- `PORTAL_EVENT_LABELS` grows
+  `admin_password_reset_copied: "Admin copied reset link"`.
+
+**Tests**
+- Backend: 12 new tests in
+  `test_k30_copy_admin_link.py` — happy path, provisioning,
+  prior-token invalidation, audit-row shape, source marker,
+  status-chip refresh, history surfacing, regular-admin 403,
+  technician 403, unauth 401, 404 unknown, 400 no-email,
+  token-never-logged grep. All 17 pre-existing K30 backend tests
+  still green.
+- Frontend: 9 new Vitest tests in
+  `phase-k30-copy-admin-link.test.jsx` — role gate, confirm
+  modal, fallback modal.
+
+**Files changed** — 1 backend router (`portal_admin.py`), 1
+backend test file (new), 1 frontend page
+(`CustomerDetail.jsx`), 1 frontend test file (new), 1 new memory
+doc.
+
+**Delta vs send path** — same TTL / provisioning / tenant
+scoping / prior-token invalidation. Differs only in RBAC gate
+(super_admin vs admin), no email fired, response returns full
+URL, distinct audit event key, distinct token source tag.
+
+**Held**
+- K30.1 `/auth/login` soft-delete widening.
+- `APP_ENV=production` preview flag.
+- K62 density-selector follow-up.
+
+**Next action items**
+- R0.1+ prior-period delta column on Revenue by Customer
+  (approved smart follow-up).
+- K63 widget-forms notifications (awaiting user answers).
+- R1 Financial suite proper.
+
+---
+
+
 ## Phase K62 · Customers Page Pagination — SHIPPED (Feb 2026)
 
 **Scope:** Web only (mobile untouched). Standing order honored
