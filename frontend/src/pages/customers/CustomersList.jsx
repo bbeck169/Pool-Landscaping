@@ -131,10 +131,35 @@ export default function CustomersList() {
 
   const [rows, setRows] = useState(null);
   // Feb-2026 · P35 — server-side pagination. Page is URL-synced so
-  // refresh preserves position. Page size is fixed at 100 to match
-  // the phase brief; the response envelope drives ``total`` and
-  // ``totalPages``.
-  const _PAGE_SIZE = 100;
+  // refresh preserves position. Phase K62 · Feb-2026 — page size
+  // is now user-selectable (25 / 50 / 100, default 25), persisted
+  // per-user in localStorage and mirrored in the URL as ``?size=``
+  // so a direct-link with ``?page=3&size=50`` loads correctly. The
+  // response envelope still drives ``total`` and ``totalPages``.
+  const _K62_PAGE_SIZE_OPTIONS = [25, 50, 100];
+  const _K62_DEFAULT_PAGE_SIZE = 25;
+  const _K62_LS_KEY = "customers.pageSize";
+  const [pageSize, setPageSize] = useState(() => {
+    // Priority 1 — explicit ``?size=N`` URL param (deep-link honour).
+    try {
+      const fromRouter = parseInt(searchParams.get("size") || "", 10);
+      if (Number.isFinite(fromRouter) && _K62_PAGE_SIZE_OPTIONS.includes(fromRouter)) return fromRouter;
+    } catch { /* fall through */ }
+    // Also honour ``window.location.search`` for consumers that
+    // update the URL via ``history.replaceState`` (P46 city sync
+    // does this and could leak here on a follow-up navigation).
+    try {
+      const raw = parseInt(new URLSearchParams(window.location.search).get("size") || "", 10);
+      if (Number.isFinite(raw) && _K62_PAGE_SIZE_OPTIONS.includes(raw)) return raw;
+    } catch { /* fall through */ }
+    // Priority 2 — localStorage per-user preference.
+    try {
+      const raw = parseInt(localStorage.getItem(_K62_LS_KEY) || "", 10);
+      if (Number.isFinite(raw) && _K62_PAGE_SIZE_OPTIONS.includes(raw)) return raw;
+    } catch { /* fall through */ }
+    // Priority 3 — K62 default.
+    return _K62_DEFAULT_PAGE_SIZE;
+  });
   const [page, setPage] = useState(() => {
     const raw = parseInt(searchParams.get("page") || "1", 10);
     return Number.isFinite(raw) && raw >= 1 ? raw : 1;
@@ -360,7 +385,7 @@ export default function CustomersList() {
     if (includeMerged) params.set("include_merged", "true");
     // Feb-2026 · P35 — always request the paginated envelope.
     params.set("page", String(page));
-    params.set("page_size", String(_PAGE_SIZE));
+    params.set("page_size", String(pageSize));
     // Feb 2026 · Sort dropdown — passthrough. Backend defaults to
     // ``created_desc`` when omitted (same default as the UI) so
     // this line is defensive but strictly clarifies intent on the
@@ -437,7 +462,7 @@ export default function CustomersList() {
     loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
-       missingPhone, includeDeleted, includeMerged, page, city, selectedTags, sortBy, portalStatus]);
+       missingPhone, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
 
   // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
   // first invocation so hydrating chips from the URL on mount does
@@ -481,6 +506,28 @@ export default function CustomersList() {
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
+
+  // Phase K62 · Feb-2026 — URL + localStorage sync for the
+  // page-size selector. ``size=`` is dropped when it matches the
+  // K62 default (25) so a plain ``/customers`` URL stays tidy.
+  // The size change ALSO resets pagination to page 1 so the
+  // operator doesn't land on an empty page after enlarging /
+  // shrinking the window.
+  const _k62SizeInitRef = React.useRef(true);
+  useEffect(() => {
+    try { localStorage.setItem(_K62_LS_KEY, String(pageSize)); }
+    catch { /* SSR / private mode — silent */ }
+    const next = new URLSearchParams(searchParams);
+    if (pageSize !== _K62_DEFAULT_PAGE_SIZE) next.set("size", String(pageSize));
+    else next.delete("size");
+    setSearchParams(next, { replace: true });
+    if (_k62SizeInitRef.current) {
+      _k62SizeInitRef.current = false;
+      return;
+    }
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageSize]);
 
   useEffect(() => {
     // Feb-2026 · P40 — one-shot on mount is fine; the effect above
@@ -881,8 +928,8 @@ export default function CustomersList() {
         title="Customers"
         subtitle={
           total > 0
-            ? `Showing ${((page - 1) * _PAGE_SIZE + 1).toLocaleString()}-`
-              + `${Math.min(page * _PAGE_SIZE, total).toLocaleString()} of `
+            ? `Showing ${((page - 1) * pageSize + 1).toLocaleString()}-`
+              + `${Math.min(page * pageSize, total).toLocaleString()} of `
               + `${total.toLocaleString()}`
             : `${(filtered || []).length} shown`
         }
@@ -1373,8 +1420,10 @@ export default function CustomersList() {
             page={page}
             total_pages={totalPages}
             total={total}
-            page_size={_PAGE_SIZE}
+            page_size={pageSize}
             onPageChange={setPage}
+            pageSizeOptions={_K62_PAGE_SIZE_OPTIONS}
+            onPageSizeChange={setPageSize}
             testidPrefix="customers-pager-top"
           />
           <table className="w-full text-sm" data-testid="customers-table">
@@ -1723,8 +1772,10 @@ export default function CustomersList() {
             page={page}
             total_pages={totalPages}
             total={total}
-            page_size={_PAGE_SIZE}
+            page_size={pageSize}
             onPageChange={setPage}
+            pageSizeOptions={_K62_PAGE_SIZE_OPTIONS}
+            onPageSizeChange={setPageSize}
             testidPrefix="customers-pager-bottom"
           />
           </>

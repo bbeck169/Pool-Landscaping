@@ -52,10 +52,10 @@ vi.mock("sonner", () => ({
 import CustomersList from "@/pages/customers/CustomersList";
 
 
-function _mount(role = "admin") {
+function _mount(role = "admin", initialUrl = "/customers?size=100") {
   currentRole = role;
   return render(
-    <MemoryRouter initialEntries={["/customers"]}>
+    <MemoryRouter initialEntries={[initialUrl]}>
       <CustomersList />
     </MemoryRouter>,
   );
@@ -63,7 +63,7 @@ function _mount(role = "admin") {
 
 
 // Build a synthetic paginated envelope.
-function _envelope({ total, page, page_size = 100 }) {
+function _envelope({ total, page, page_size = 25 }) {
   const total_pages = total === 0 ? 0
     : Math.ceil(total / page_size);
   const from = (page - 1) * page_size + 1;
@@ -92,7 +92,7 @@ function _installRouter({ total = 250, mutedTotal = 4 } = {}) {
     // Parse the requested page.
     const url = new URL("http://x" + (path.startsWith("/") ? path : "/" + path));
     const p = parseInt(url.searchParams.get("page") || "1", 10) || 1;
-    const ps = parseInt(url.searchParams.get("page_size") || "100", 10) || 100;
+    const ps = parseInt(url.searchParams.get("page_size") || "25", 10) || 25;
     // Vary result set per tab / search.
     let effective = total;
     if (url.searchParams.get("is_muted") === "true") effective = mutedTotal;
@@ -172,14 +172,18 @@ describe("CustomersList · P35 pagination", () => {
     expect(ellipses.length).toBe(2);
   });
 
-  it("hides both pagers when total_pages < 2", async () => {
+  it("hides pager number-strip but keeps the size selector when total_pages < 2", async () => {
     _installRouter({ total: 5 });
     _mount("admin");
     // Wait for the first fetch to settle so state is populated.
     await waitFor(() =>
       expect(screen.getByTestId("customers-table")).toBeTruthy());
-    expect(screen.queryByTestId("customers-pager-top")).toBeNull();
-    expect(screen.queryByTestId("customers-pager-bottom")).toBeNull();
+    // K62 · Feb-2026 — pager wrapper still renders (now hosts the
+    // rows-per-page selector) but the numbered strip is hidden.
+    expect(screen.getByTestId("customers-pager-top")).toBeTruthy();
+    expect(screen.queryByTestId("customers-pager-top-next")).toBeNull();
+    expect(screen.queryByTestId("customers-pager-top-first")).toBeNull();
+    expect(screen.getByTestId("customers-pager-top-size-selector")).toBeTruthy();
   });
 
   it("changing tab resets page to 1", async () => {

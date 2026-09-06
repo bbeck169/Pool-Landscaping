@@ -1,3 +1,71 @@
+## Phase K62 · Customers Page Pagination — SHIPPED (Feb 2026)
+
+**Scope:** Web only (mobile untouched). Standing order honored
+(bbeck169/Pool-Landscaping.git ignored).
+
+**Context** — Customers list already had server-side pagination
+(P35, Feb-2026); there was no infinite scroll to remove. K62
+replaces the fixed `page_size=100` window with a user-selectable
+**25 / 50 / 100** (default **25**), persisted per-user in
+localStorage AND mirrored in the URL as `?size=` so deep-links
+like `/customers?page=3&size=50` load correctly. Adds « First /
+Last » bookend buttons around the existing Prev / strip / Next
+controls. Backend endpoint contract unchanged — `Union[List,
+Count, Page]` response_model already handled both shapes since
+P35.
+
+**Frontend**
+- `pages/customers/CustomersList.jsx` — `pageSize` state
+  hydrated from `?size=` URL param → `localStorage["customers.pageSize"]`
+  → K62 default (25). On change: writes localStorage, syncs URL
+  (dropped when equal to default), resets page cursor to 1.
+- `components/customers/CustomersPager.jsx` — added
+  `pageSizeOptions` + `onPageSizeChange` props, First / Last
+  buttons, "Rows [N ▼]" selector, and 1-page fallback that keeps
+  the size selector visible when the number strip is hidden.
+  Legacy callers (no size-selector props) keep the historical
+  "hide on 1 page" behavior.
+
+**Backend** — NO changes. Existing `/api/customers?page=&page_size=`
+(P35) already accepts 1..500 and returns
+`{items, total, page, page_size, total_pages}`. The 20+ internal
+bare-array callers (jobs / comms / quotes / estimator / workstream
+/ warranties / invoices / reviews / tracking / D2D / AI tools /
+finance) still get the un-paginated response verbatim.
+
+**Tests** — 23 / 23 pagination tests green:
+- 7 new unit — `phase-k62-customers-pager-unit.test.jsx`.
+- 9 new integration — `phase-k62-customers-page-size.test.jsx`.
+- 7 existing P35 tests updated in-place to preserve their
+  page-size arithmetic (mount with `?size=100`) + 1 assertion
+  flipped for the K62 "pager renders on 1-page result" change.
+  All still green.
+
+**Screenshot verified** — Aquaterra tenant · `super@aquaterra.com`:
+`Showing 1–25 of 32` header, size selector reads **25**, First /
+Last / Prev / Next / page-strip / Jump all render.
+
+**Perf note** — default 25 rows / page is ~40% fewer bytes over
+the wire vs the P35 baseline (100 rows). Power users can pin
+`100` once via the selector; localStorage keeps the choice.
+
+**Files changed** — 1 frontend page (`CustomersList.jsx`), 1
+frontend component (`CustomersPager.jsx`), 3 test files (1 new
+unit + 1 new integration + 1 existing P35 updated), 1 new memory
+doc.
+
+**Deferred / hold list (per user)**
+- R0.1 add-on (prior-period delta column on Revenue by Customer)
+  awaiting go-ahead.
+- K63 widget-forms notifications awaiting clarifications.
+
+**Next action items**
+- Phase K63 (widget-forms notifications) — pending user answers.
+- Phase R1 (Financial suite proper — P&L, cash flow, A/R aging).
+
+---
+
+
 ## Phase R0.1 · Revenue by Customer + Revenue by City — SHIPPED (Feb 2026)
 
 **Scope:** Backend + Web (mobile untouched). Standing order
