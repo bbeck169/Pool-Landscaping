@@ -314,3 +314,22 @@ Blast radius: 1 router + 1 test file + 1 CI env variable. Belt-and-braces: any s
 - `backend/routers/auth.py` — pass `audience="internal"` on password-reset email.
 - `backend/.env` — `FEATURE_CUSTOMER_EMAIL_KILL_SWITCH=off` (default; flip to `on` in prod to activate).
 - `backend/tests/test_k72_customer_email_kill_switch.py` — 20 pytest cases proving flag OFF (default), flag ON in every env, flag ON + audience=internal bypass, flag ON + allow_off_allowlist blocking for customer, and all truthy/falsy variants.
+
+---
+
+## RESOLVED · Fix shipped Feb-2026
+
+User adjudicated **Option C** (belt-and-braces) + APP_ENV=preview flip (K72.a) + broadcast-confirm modal (K72.1). All three shipped in one iteration. Details:
+
+- **K72.fix (Option C)** — See `/app/memory/PHASE_K72_FIX_MASS_MESSAGING_GUARDS.md`
+- **K72.a (APP_ENV preview flip)** — See `/app/memory/PHASE_K72_A_PREVIEW_APP_ENV.md`
+- **K72.1 (Broadcast confirm modal)** — See `/app/memory/PHASE_K72_1_BROADCAST_CONFIRM_MODAL.md`
+
+**Verification:**
+- `POST /api/mass-messaging/send` on the preview pod (this env) now returns HTTP 403 `K72_REAL_TENANT_NON_PROD_BLOCKED` — verified via curl.
+- `pytest tests/test_bug_g_mass_messaging_filters.py` returns 1 skipped, 0 collected — verified.
+- K72 kill switch remains available as the ultimate lever. Default OFF.
+
+**Awaiting user:**
+- Approve / edit the apology email draft (see section 5 above) and send from Resend to the 116 real recipients.
+- Once approved, resume K70 tile theming → R1 Financial suite proper.

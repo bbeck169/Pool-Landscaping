@@ -26,6 +26,7 @@ Guardrails:
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Any, Dict, List, Optional
 
@@ -687,6 +688,57 @@ async def send_broadcast(
     tenant: dict = Depends(get_current_tenant),
 ):
     _require_admin(user)
+    # ═══════════════════════════════════════════════════════════════
+    # Phase K72.fix · Feb-2026 — belt-and-braces broadcast guards.
+    #
+    # (1) CI hard-block: when ``CI_BLOCK_MASS_MESSAGING=1`` is set in
+    #     the environment, refuse EVERY /mass-messaging/send request
+    #     unconditionally. CI runners flip this on so a rogue test
+    #     can't fanout.
+    # (2) Real-tenant safety: when the target tenant is flagged
+    #     ``is_real=True`` (production tenants only) AND the current
+    #     ``APP_ENV`` is NOT ``production``, refuse the send. The
+    #     preview / staging pods can't accidentally blast prod
+    #     customers even if the pod were pointed at prod Mongo.
+    #
+    # These fire BEFORE the audience resolver so no customers are
+    # even loaded in a blocked run — zero risk of side effects.
+    # ═══════════════════════════════════════════════════════════════
+    if (os.environ.get("CI_BLOCK_MASS_MESSAGING") or "").strip() == "1":
+        logger.warning(
+            "[K72.fix] mass-messaging blocked by CI_BLOCK_MASS_MESSAGING "
+            "tenant=%s user=%s", tenant.get("id"), user.get("id"),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "K72_CI_MASS_MESSAGING_BLOCKED",
+                "message": ("Mass-messaging is disabled in this "
+                              "CI run via CI_BLOCK_MASS_MESSAGING=1."),
+            },
+        )
+    if tenant.get("is_real") is True:
+        app_env = (os.environ.get("APP_ENV") or "").strip().lower()
+        if app_env != "production":
+            logger.warning(
+                "[K72.fix] mass-messaging blocked — real tenant on "
+                "non-prod pod. tenant=%s app_env=%s user=%s",
+                tenant.get("id"), app_env, user.get("id"),
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "K72_REAL_TENANT_NON_PROD_BLOCKED",
+                    "message": ("Broadcast blocked: this tenant is "
+                                 "flagged is_real=true and the current "
+                                 "APP_ENV is not 'production'. A test "
+                                 "or preview pod cannot fire real-"
+                                 "customer broadcasts against a "
+                                 "production tenant."),
+                    "tenant_id": tenant.get("id"),
+                    "app_env": app_env or "(unset)",
+                },
+            )
     channels = _validate_channels(body.channels)
     audience_key = _validate_audience(body.audience)
     filters = _validate_filters(body.category_ids, body.service_days,

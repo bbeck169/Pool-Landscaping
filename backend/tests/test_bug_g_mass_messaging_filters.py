@@ -9,6 +9,22 @@ back **400 CONFIRM_TOKEN_FILTERS_MISMATCH** and the batch never ran.
 
 These tests pin the backend guard behavior + prove a filtered
 preview → filtered send round-trip now works.
+
+═══════════════════════════════════════════════════════════════════
+Phase K72 · Feb-2026 · P0 INCIDENT QUARANTINE
+═══════════════════════════════════════════════════════════════════
+This file authenticates against ``admin@aquaterra.com`` — the
+**production** Pool & Landscaping of Vistancia tenant — and fires
+``audience="all_active_customers"`` broadcasts through Resend to
+every active customer on the tenant. On 2026-08-31 20:59 UTC a
+single run of ``test_send_no_filters_still_works`` emitted 116
+"no-filter" emails to real customers, triggering the K72 emergency
+response.
+
+Do NOT un-quarantine this file until an ephemeral test tenant
+fixture is in place (Phase K72.fix Option A/C follow-up). Any
+future edit to this file MUST route through infra review.
+═══════════════════════════════════════════════════════════════════
 """
 import os
 import uuid
@@ -17,6 +33,18 @@ import pytest
 import requests
 from dotenv import dotenv_values
 from pymongo import MongoClient
+
+
+# Phase K72 · Feb-2026 — hard quarantine (see module docstring).
+# ``allow_module_level=True`` prevents pytest from importing (and
+# thus running any collection-time side effects) beyond this line.
+pytest.skip(
+    "K72 PRODUCTION-SAFETY QUARANTINE — this file fires real "
+    "customer broadcasts against the aquaterra prod tenant. Re-enable "
+    "only after wiring an ephemeral test-tenant fixture. See "
+    "/app/memory/PHASE_K72_FIX_MASS_MESSAGING_GUARDS.md.",
+    allow_module_level=True,
+)
 
 
 API = "http://localhost:8001/api"

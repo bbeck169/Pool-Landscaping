@@ -564,38 +564,174 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent data-testid="mass-messaging-confirm-modal">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm broadcast</AlertDialogTitle>
-            <AlertDialogDescription>
-              You are about to send to <b>{total}</b> customer
-              {total === 1 ? "" : "s"}. This can&apos;t be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="mass-messaging-confirm-cancel">
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleSend}
-              style={{ background: "#DC2626", color: "#fff" }}
-              data-testid="mass-messaging-confirm-send"
-            >
-              {sending ? "Sending…" : "Yes, send now"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
+          <K72BroadcastConfirmBody
+            total={total}
+            audience="all_active_customers"
+            subject={useCustom ? subject : (
+              templates.find((t) => t.id === templateId)?.subject || ""
+            )}
+            bodyPreview={useCustom
+              ? body
+              : (templates.find((t) => t.id === templateId)?.body || "")}
+            templateKey={useCustom ? "(custom message)"
+                                   : (templates.find(
+                                       (t) => t.id === templateId,
+                                     )?.name || templateId || "(none)")}
+            channels={chList}
+            onConfirm={handleSend}
+            onCancel={() => setConfirmOpen(false)}
+            sending={sending}
+          />
         </AlertDialogContent>
       </AlertDialog>
     </>
   );
 }
 
+
 /**
- * Phase 16 · Item 3 · Feb-2026 — Compact pill multi-select for the
- * three audience-filter axes. Renders a label above a row of
- * toggle-able chips; keeps parent state in sync via ``onChange``
- * with the current array of selected ids.  Empty selection is the
- * "no restriction" state and is intentionally the default.
+ * Phase K72.1 · Feb-2026 — Broadcast confirmation modal body.
+ *
+ * Fires the "big red button" confirmation flow whenever the operator
+ * is about to hit either:
+ *   * ``audience === "all_active_customers"`` (any size), OR
+ *   * more than **50 recipients** for any audience (safety threshold
+ *     for large targeted sends).
+ *
+ * Guard: the operator must type the tenant name (from
+ * ``localStorage.tenant_name``) exactly — case-sensitive — to unlock
+ * the send button. Cancel button is the default. Sub-50 targeted
+ * sends bypass the type-to-confirm step and get a simple one-click
+ * confirmation for parity with the pre-K72 flow.
  */
+function K72BroadcastConfirmBody({
+  total, audience, subject, bodyPreview, templateKey, channels,
+  onConfirm, onCancel, sending,
+}) {
+  const tenantName = (typeof window !== "undefined"
+                       ? (window.localStorage?.getItem?.("tenant_name") || "")
+                       : "").trim();
+  const isBroadcast = audience === "all_active_customers"
+                        || (total > 50);
+  const requiresTypeConfirm = isBroadcast && !!tenantName;
+  const [typed, setTyped] = React.useState("");
+  const typedOk = requiresTypeConfirm
+    ? typed.trim() === tenantName
+    : true;
+  const truncate = (s, n) => (s || "").length > n
+    ? `${(s || "").slice(0, n)}…`
+    : (s || "");
+  return (
+    <>
+      <AlertDialogHeader>
+        <AlertDialogTitle
+          data-testid="k72-broadcast-confirm-title"
+          style={{ color: isBroadcast ? "#B91C1C" : undefined }}
+        >
+          {isBroadcast ? "Confirm broadcast" : "Confirm send"}
+        </AlertDialogTitle>
+        <AlertDialogDescription>
+          {isBroadcast ? (
+            <span data-testid="k72-broadcast-blast-notice">
+              You&apos;re about to send to <b>{total}</b>{" "}
+              customer{total === 1 ? "" : "s"}.{" "}
+              <b>This cannot be undone.</b>
+            </span>
+          ) : (
+            <>You are about to send to <b>{total}</b>{" "}
+              customer{total === 1 ? "" : "s"}. This can&apos;t be
+              undone.</>
+          )}
+        </AlertDialogDescription>
+      </AlertDialogHeader>
+      <div
+        className="rounded-md px-3 py-2 text-xs space-y-1 my-2"
+        style={{ background: colors.surfaceSecondary,
+                  border: `1px solid ${colors.divider}` }}
+        data-testid="k72-broadcast-preview"
+      >
+        <div>
+          <b>Recipients:</b>{" "}
+          <span data-testid="k72-broadcast-total">{total}</span>
+        </div>
+        <div><b>Channels:</b> {(channels || []).join(", ") || "email"}</div>
+        <div>
+          <b>Template:</b>{" "}
+          <span data-testid="k72-broadcast-template">{templateKey}</span>
+        </div>
+        <div>
+          <b>Subject:</b>{" "}
+          <span data-testid="k72-broadcast-subject">
+            {truncate(subject, 140) || "(none)"}
+          </span>
+        </div>
+        <div style={{ whiteSpace: "pre-wrap" }}>
+          <b>Body preview:</b>{" "}
+          <span data-testid="k72-broadcast-body">
+            {truncate(bodyPreview, 240) || "(none)"}
+          </span>
+        </div>
+      </div>
+      {requiresTypeConfirm ? (
+        <div className="my-2">
+          <label
+            className="text-[11px] font-semibold block mb-1"
+            style={{ color: colors.muted }}
+            htmlFor="k72-typed-confirm-input"
+          >
+            Type <b>{tenantName}</b> to confirm this broadcast:
+          </label>
+          <input
+            id="k72-typed-confirm-input"
+            data-testid="k72-typed-confirm-input"
+            type="text"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            className="w-full px-2 py-1 rounded text-sm"
+            style={{ background: colors.surface,
+                      border: `1px solid ${
+                        typedOk ? "#16A34A" : "#DC2626"}` }}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {!typedOk ? (
+            <div className="text-[11px] mt-1"
+                  style={{ color: "#B91C1C" }}
+                  data-testid="k72-typed-confirm-hint">
+              Type the tenant name exactly. Case-sensitive.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <AlertDialogFooter>
+        <AlertDialogCancel
+          onClick={onCancel}
+          data-testid="mass-messaging-confirm-cancel"
+        >
+          Cancel
+        </AlertDialogCancel>
+        <AlertDialogAction
+          onClick={onConfirm}
+          disabled={!typedOk || sending}
+          style={{
+            background: (!typedOk || sending) ? "#9CA3AF" : "#DC2626",
+            color: "#fff",
+            cursor: (!typedOk || sending) ? "not-allowed" : "pointer",
+          }}
+          data-testid="mass-messaging-confirm-send"
+        >
+          {sending
+            ? "Sending…"
+            : isBroadcast
+              ? "Yes, send broadcast"
+              : "Yes, send now"}
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </>
+  );
+}
+
+
 function PillMultiSelect({ label, options, selectedIds, onChange, testid }) {
   const selectedSet = new Set(selectedIds);
   const toggle = (id) => {
