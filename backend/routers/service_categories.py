@@ -50,6 +50,16 @@ _DEFAULTS = [
     # ``service_category_id``. Kept lowercase-insensitive against user-
     # defined equivalents (e.g. "Pool Chemicals") in ``ensure_defaults``.
     "Chemicals",
+    # Phase K71 · Feb-2026 — additive seed names for the K71 inline
+    # line-item editor dropdown. Each row is idempotent — a case-
+    # insensitive dupe of an existing tenant category is skipped.
+    "Equipment Install",
+    "Chemical Treatment",
+    "Inspection",
+    "Landscape",
+    "Hardscape",
+    "Lighting",
+    "Other",
 ]
 
 

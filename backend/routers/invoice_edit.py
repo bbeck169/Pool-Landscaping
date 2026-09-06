@@ -105,10 +105,24 @@ def _validate_line_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             except (TypeError, ValueError):
                 raise HTTPException(400,
                                     f"line_items[{i}].tax_rate must be numeric")
+        # Phase K71 · Feb-2026 — long_description cap + K71 taxonomy
+        # keys carried through untouched. Cap at 500 chars per spec.
+        if "long_description" in li and li["long_description"] is not None:
+            ld = li["long_description"]
+            if not isinstance(ld, str):
+                raise HTTPException(
+                    400, f"line_items[{i}].long_description must be a string")
+            if len(ld) > 500:
+                raise HTTPException(
+                    400,
+                    f"line_items[{i}].long_description exceeds 500 characters"
+                )
+            row["long_description"] = ld
         # Preserve any extra client fields (e.g. item_id) untouched.
         for k, v in li.items():
             if k not in row and k not in ("description", "quantity",
-                                            "unit_price", "tax_rate"):
+                                            "unit_price", "tax_rate",
+                                            "long_description"):
                 row[k] = v
         cleaned.append(row)
     return cleaned
@@ -224,6 +238,13 @@ async def patch_invoice(
         from routers.income_categories import validate_line_item_categories
         await validate_line_item_categories(inv.get("tenant_id") or "",
                                               provided["line_items"])
+        # Phase K71 · Feb-2026 — Two-taxonomy validation for K71 line
+        # items. Legacy items grandfathered (skipped when neither
+        # K71 field is present).
+        from routers.income_categories import validate_line_item_k71_categories
+        await validate_line_item_k71_categories(
+            inv.get("tenant_id") or "", provided["line_items"],
+        )
 
     # ── Invoice number uniqueness within tenant ──────────────────
     tenant_id = inv.get("tenant_id")

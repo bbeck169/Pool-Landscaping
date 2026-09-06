@@ -108,7 +108,9 @@ def test_admin_can_crud_categories():
         r = requests.get(f"{API}/income-categories",
                           headers={"Authorization": f"Bearer {tok}"}, timeout=15)
         assert r.status_code == 200, r.text
-        assert len(r.json()["items"]) == 6
+        # Phase K71 · Feb-2026 — seed count is now 14 (6 pre-K71 + 8
+        # K71 additive defaults).
+        assert len(r.json()["items"]) == 14
         # Create.
         r = requests.post(f"{API}/income-categories",
                           json={"name": "TEST_Salt", "description": "d",
@@ -173,8 +175,14 @@ def test_seed_defaults_on_first_access():
                           headers={"Authorization": f"Bearer {tok}"}, timeout=15)
         assert r.status_code == 200
         names = {c["name"] for c in r.json()["items"]}
+        # Phase K71 · Feb-2026 — seed list expanded with 8 additive K71
+        # defaults; the pre-K71 6 defaults must still all be present.
         assert {"Pool", "Chemicals", "Landscaping", "Repair", "Late Fee",
-                 "Other"} == names
+                 "Other"}.issubset(names)
+        assert {"Service Revenue", "Product Sales",
+                 "Recurring Maintenance", "One-time Project",
+                 "Warranty Work", "Labor Income", "Materials",
+                 "Other Income"}.issubset(names)
     finally:
         _db.users.delete_one({"id": uid})
         _CACHE.pop(f"tok:{email}", None)

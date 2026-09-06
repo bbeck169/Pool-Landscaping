@@ -1,0 +1,52 @@
+{
+  "summary": "Phase K71 · Feb-2026 — Backend-only ROUTER round-trip pass over the public preview URL. Wrote /app/backend/tests/test_k71_line_item_router_api.py (11 tests) covering all 9 review items. 8/11 PASS, 3/11 FAIL — all three failures stem from the SAME real backend bug: the legacy-grandfather contract is broken on POST /api/quotes because Pydantic's LineItem defaults service_category_id + income_category_id to None, and the router's `.dict()` serialization always emits those keys, causing the K71 validator's presence-based rule (`\"service_category_id\" in li`) to treat EVERY line as K71-touched. The existing pure-helper suite test_k71_line_item_edit_categories.py (12 tests) still passes because it bypasses Pydantic and hands raw dicts to the validator — so this bug is only visible at the HTTP boundary.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/quotes (also affects PUT /api/quotes/{qid} + POST /api/quotes/{qid}/convert-to-job + PATCH /api/quotes/{id})",
+        "issue": "Legacy line-item grandfather is broken through the router. Sending {\"description\":\"x\", \"quantity\":1, \"unit_price\":10, \"category\":\"Pool\"} — no K71 fields — returns 400 {\"error_code\":\"k71_service_category_required\"}. Root cause: routers/quotes.py:363 `items = [li.dict() for li in body.line_items]` — Pydantic's `LineItem` model has `service_category_id: Optional[str] = None` and `income_category_id: Optional[str] = None`, so `.dict()` always emits those keys with None values. Validator at routers/income_categories.py:215 uses presence check `has_svc_field = \"service_category_id\" in li` → always True → validator treats every incoming line as K71-touched → requires both categories. Contradicts review request test #4 and the stated K71 contract 'Legacy lines (neither key present) are grandfathered'.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_k71_line_item_router_api.py",
+    "/app/backend/tests/test_k71_line_item_edit_categories.py",
+    "/app/test_reports/pytest/k71_router.xml"
+  ],
+  "verified_review_items": [
+    "GET /api/income-categories — additive seed includes all 8 K71 names (Service Revenue, Product Sales, Recurring Maintenance, One-time Project, Warranty Work, Labor Income, Materials, Other Income) alongside pre-K71 defaults. PASS.",
+    "GET /api/service-categories — additive seed includes 7 K71 names (Equipment Install, Chemical Treatment, Inspection, Landscape, Hardscape, Lighting, Other). PASS.",
+    "POST /api/quotes with valid svc+inc pair → 200. PASS.",
+    "POST /api/quotes with valid svc + blank income → 400 error_code=k71_income_category_required. PASS.",
+    "POST /api/quotes with bogus svc id → 400 error_code=k71_service_category_invalid. PASS.",
+    "POST /api/quotes legacy line item (no K71 fields) → SHOULD be 200 but returns 400 k71_service_category_required. FAIL — see critical bug.",
+    "PUT /api/quotes/{qid} with K71-touched line missing income → 400 k71_income_category_required. PASS.",
+    "PUT /api/quotes/{qid}/status?status=sent on a legacy-only quote — cannot verify PASS half because the CREATE step is blocked by the same grandfather bug.",
+    "POST /api/quotes/{qid}/convert-to-job on legacy quote — cannot verify because CREATE is blocked by the same bug.",
+    "PATCH /api/quotes/{id} with long_description=501 chars → 400 'exceeds 500 characters'. PASS.",
+    "GET /api/quotes/{id} echoes long_description + service_category_id + income_category_id verbatim. PASS."
+  ],
+  "action_items": [
+    "Fix the grandfather bug in routers/quotes.py::create_quote (line 363) and update_quote (line 542) — change `li.dict()` to `li.dict(exclude_unset=True)` so absent K71 fields stay absent through Pydantic, OR update validate_line_item_k71_categories() to treat None-valued keys as legacy (change `has_svc_field = \"service_category_id\" in li` to `has_svc_field = li.get(\"service_category_id\") is not None or li.get(\"service_category_id\") == \"\" (careful — empty-string must still be K71-touched per spec, so likely the first option is safer). Recommended: use `.dict(exclude_unset=True)` because it faithfully preserves the payload shape the K71 presence contract was written against.",
+    "After fix, re-run test_k71_line_item_router_api.py — the three failing tests (legacy_grandfathered, send_status_blocked, convert_to_job_legacy_ok) should all flip to PASS."
+  ],
+  "critical_code_review_comments": [
+    "routers/quotes.py:363 + 542 — `li.dict()` on a Pydantic model with Optional[str] fields ALWAYS emits every key (as None), which is incompatible with a validator that keys off `\"foo\" in payload`. Prefer `.dict(exclude_unset=True)` or `.dict(exclude_none=True)` when the downstream logic distinguishes 'absent' from 'null'.",
+    "routers/income_categories.py:214-217 — presence-based K71 detection is fragile against any upstream serializer that inserts default None keys. Consider a stronger contract: 'K71-touched iff the value is a non-None string (even empty)'. Would collapse to `has_svc_field = isinstance(li.get(\"service_category_id\"), str)` and eliminate the whole class of failures.",
+    "routers/quotes.py::update_quote (line 542) applies the same `li if isinstance(li, dict) else li.dict()` pattern — same latent bug for PUT payloads that go through the Pydantic model side.",
+    "The `_CLEANUP` dict in tests/conftest.py cleans quotes by `title: ^TEST_`, but our K71 tests use titles starting with 'K71 API test —'. Added explicit DELETE /api/invoices/{id} teardown in the new suite to compensate."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_k71_line_item_router_api.py (new)"
+  ],
+  "success_rate": {"backend": "73% (8/11)", "frontend": "n/a"},
+  "test_credentials": "admin@aquaterra.com / password123 (works). Also super@aquaterra.com / password123.",
+  "seed_data_creation": "Every created quote/invoice is registered in a module-scoped _CREATED_QUOTE_IDS list and DELETE /api/invoices/{id} is called on teardown. Titles are prefixed with 'K71 API test —' for easy manual cleanup if teardown ever fails.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Once the router serialization fix lands (recommend .dict(exclude_unset=True) at routers/quotes.py:363 and 542), re-run: `pytest backend/tests/test_k71_line_item_router_api.py -v` — all 11 should pass. The three currently-failing tests (test_create_quote_legacy_line_grandfathered, test_send_status_blocked_when_k71_gap, test_convert_to_job_legacy_quote_ok) target the CREATE step of legacy quotes; a fix at the model-serialization layer clears all three simultaneously. Also note: quotes-collection cleanup regex in conftest.py::_CLEANUP is `title: ^TEST_` — the new suite handles its own teardown via the /api/invoices/{id} delete endpoint since our titles start with 'K71 API test —'.",
+  "rca of the issue": "REPRODUCTION: `curl -X POST /api/quotes -d '{\"customer_id\":\"...\",\"title\":\"x\",\"doc_type\":\"quote\",\"line_items\":[{\"description\":\"leg\",\"quantity\":1,\"unit_price\":10,\"category\":\"Pool\"}]}' -H 'Authorization: Bearer <admin>'` → 400 `{\"error_code\":\"k71_service_category_required\"}`. EXPECTED: 200. CHAIN: (1) FastAPI parses the body as `QuoteIn` where `line_items: List[LineItem]`. (2) `LineItem` has `service_category_id: Optional[str] = None` + `income_category_id: Optional[str] = None`, so Pydantic v1/v2 both fill those defaults on the parsed instance. (3) `create_quote` calls `[li.dict() for li in body.line_items]` which serializes ALL fields including the None defaults. (4) `validate_line_item_k71_categories` uses `has_svc_field = \"service_category_id\" in li` — True for every incoming line — so `is_k71 = True`, then `svc_val = \"\"` (None fallthrough), then `if not svc_val: raise 400 k71_service_category_required`. MITIGATION: (A) `li.dict(exclude_unset=True)` at both call sites, or (B) tighten validator to `has_svc_field = isinstance(li.get(\"service_category_id\"), str)` and `has_inc_field = isinstance(li.get(\"income_category_id\"), str)` — the empty-string case (explicit K71-touched-but-missing) still triggers because empty string is a str."
+}

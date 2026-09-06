@@ -79,6 +79,12 @@ async def _build_line_items(job: Dict[str, Any]) -> tuple[List[Dict[str, Any]], 
                 # (finance reports, pricebook writeback fan-out).
                 "pricebook_item_id": src.get("pricebook_item_id"),
                 "category": src.get("category"),
+                # Phase K71 · Feb-2026 — invoice parity. Carry over the
+                # multi-line description + service/income category ids
+                # so the auto-invoice preserves K71 metadata end-to-end.
+                "long_description": src.get("long_description"),
+                "income_category_id": src.get("income_category_id"),
+                "service_category_id": src.get("service_category_id"),
                 "pricebook_writeback_flag": bool(
                     src.get("pricebook_writeback_flag")
                 ),

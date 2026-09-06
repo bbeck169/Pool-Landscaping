@@ -270,6 +270,16 @@ class LineItem(BaseModel):
     category: str = "Pool"
     # Feb-2026 · Income Category enforcement — optional per line.
     income_category_id: Optional[str] = None
+    # Phase K71 · Feb-2026 — Estimate line-item edit + Service/Income
+    # category parity. ``service_category_id`` mirrors the K71 dropdown
+    # in the inline line-item editor; ``long_description`` is the new
+    # multi-line secondary text shown under the bold item name (hidden
+    # on customer-facing PDF + portal). BOTH fields are required for
+    # NEW items typed after K71 ships; legacy grandfathered line items
+    # (missing both K71 fields) remain valid. Cap 500 chars enforced
+    # by the router.
+    service_category_id: Optional[str] = None
+    long_description: Optional[str] = None
     # Feb-2026 · PB1 · Price-book linkage — when the line was created
     # from a pricebook item, the id sticks so the profit report can
     # resolve the service_category + fall back to the current cost.

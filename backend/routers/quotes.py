@@ -371,6 +371,13 @@ async def create_quote(body: QuoteIn,
     if body.doc_type == "invoice":
         from routers.income_categories import validate_line_item_categories
         await validate_line_item_categories(tenant["id"], items)
+    # Phase K71 · Feb-2026 — Two-taxonomy validation for K71 line
+    # items (service + income category). Legacy items missing both
+    # K71 fields are grandfathered. Applied on both quotes AND
+    # invoices — invoices additionally run the legacy income guard
+    # above.
+    from routers.income_categories import validate_line_item_k71_categories
+    await validate_line_item_k71_categories(tenant["id"], items)
     # PB1 · Feb-2026 · Stamp immutable margin snapshots on every line.
     await _stamp_line_snapshots(items, tenant_id=tenant["id"])
     subtotal, tax, total = compute_totals(items, body.tax_rate)
@@ -572,6 +579,10 @@ async def update_quote(qid: str, body: QuoteUpdate,
                         new_li[k] = match[k]
         # Feb-2026 · Pricebook item_type enforcement.
         await _enforce_item_type_price_lock(tenant["id"], upd["line_items"])
+        # Phase K71 · Feb-2026 — K71 category two-taxonomy validation
+        # on every PUT that carries a line_items array.
+        from routers.income_categories import validate_line_item_k71_categories
+        await validate_line_item_k71_categories(tenant["id"], upd["line_items"])
         await _stamp_line_snapshots(upd["line_items"], tenant_id=tenant["id"])
     if "line_items" in upd or "tax_rate" in upd:
         items = upd.get("line_items", existing.get("line_items", []))
@@ -684,6 +695,21 @@ async def customer_quote_decision(qid: str,
         raise HTTPException(403, "Not allowed")
     if doc.get("doc_type") != "quote":
         raise HTTPException(400, "Only estimates can be approved or declined")
+    # Phase K71 · Feb-2026 — Save/Send gating on customer approval.
+    if decision == "approve":
+        from routers.income_categories import check_line_items_k71_gaps
+        gaps = check_line_items_k71_gaps(doc.get("line_items") or [])
+        if gaps:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "k71_missing_categories",
+                    "error_code": "k71_missing_categories",
+                    "line_indices": gaps,
+                    "message": ("Set Service + Income category on every "
+                                 "line item before approving."),
+                },
+            )
     status = "accepted" if decision == "approve" else "declined"
     upd = {"status": status}
     if status == "accepted":
@@ -744,6 +770,30 @@ async def schedule_from_estimate(qid: str, body: MaintBulkIn,
 async def update_quote_status(qid: str, status: str = Query(...),
                               user: dict = Depends(require_admin),
                               tenant: dict = Depends(get_current_tenant)):
+    # Phase K71 · Feb-2026 — Save/Send gating. Block draft→sent (and
+    # any transition into ``sent``) on a quote/estimate whose line
+    # items were touched by the K71 inline editor but are missing
+    # a required category. Invoice send is already covered by the
+    # create + PATCH validations upstream; only re-check for quotes
+    # here.
+    doc = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"_id": 0, "doc_type": 1, "line_items": 1},
+    )
+    if doc and (status or "").lower() in ("sent", "accepted", "approved"):
+        from routers.income_categories import check_line_items_k71_gaps
+        gaps = check_line_items_k71_gaps(doc.get("line_items") or [])
+        if gaps:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "k71_missing_categories",
+                    "error_code": "k71_missing_categories",
+                    "line_indices": gaps,
+                    "message": ("Set Service + Income category on every "
+                                 "line item before sending or approving."),
+                },
+            )
     await db.quotes.update_one(
         {"id": qid, "tenant_id": tenant["id"]}, {"$set": {"status": status}}
     )

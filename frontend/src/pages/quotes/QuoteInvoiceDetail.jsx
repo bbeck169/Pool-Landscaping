@@ -24,6 +24,7 @@ import PaymentForm from "@/components/PaymentForm";
 import { useAuth } from "@/auth";
 import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
+import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
 // Phase K47 · Feb-2026 — View-history card (admin/office/dispatcher
 // only; the component hides itself when the endpoint 403s).
 import InvoiceViewHistory from "@/components/invoices/InvoiceViewHistory";
@@ -488,45 +489,35 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
       >
         <h2 className="text-lg font-bold mb-3" style={{ color: colors.onSurface }}>Line items</h2>
-        <table className="w-full text-sm">
-          <thead>
-            <tr style={{ borderBottom: `1px solid ${colors.divider}` }}>
-              <th className="text-left px-2 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Description</th>
-              <th className="text-right px-2 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Qty</th>
-              <th className="text-right px-2 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Unit</th>
-              <th className="text-right px-2 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(doc.line_items || []).map((li, i) => (
-              <tr key={i} style={{
-                borderBottom: `1px solid ${colors.divider}`,
-                backgroundColor: li.is_late_fee ? "#FFF7ED" : undefined,
-              }}
-                  data-testid={li.is_late_fee ? "line-item-late-fee" : undefined}>
-                <td className="px-2 py-2" style={{ color: colors.onSurface }}>
-                  <div className="flex items-center gap-2">
-                    <span>{li.description}</span>
-                    {li.is_late_fee ? (
-                      <span
-                        className="px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide"
-                        style={{ backgroundColor: "#FEE2E2", color: "#B91C1C" }}
-                        data-testid="late-fee-chip"
-                      >
-                        Late fee
-                      </span>
-                    ) : null}
-                  </div>
-                </td>
-                <td className="px-2 py-2 text-right" style={{ color: colors.onSurfaceSecondary }}>{li.quantity}</td>
-                <td className="px-2 py-2 text-right" style={{ color: colors.onSurfaceSecondary }}>{money(li.unit_price)}</td>
-                <td className="px-2 py-2 text-right font-semibold" style={{ color: colors.onSurface }}>
-                  {money((li.quantity || 0) * (li.unit_price || 0))}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <K71LineItemsEditor
+          doc={doc}
+          canEdit={
+            isStaff
+            && String(doc.status || "").toLowerCase() === "draft"
+            && !(doc.payment_status === "paid")
+          }
+          onLinesUpdated={async (nextLines) => {
+            // PUT /quotes/{id} — server recomputes totals and enforces
+            // K71 two-taxonomy validation on any touched line.
+            try {
+              await api.put(`/quotes/${id}`, { line_items: nextLines });
+              setToast({ tone: "success", message: "Line item saved" });
+              await load();
+              return true;
+            } catch (e) {
+              setToast({ tone: "error",
+                          message: e?.data?.detail?.message
+                                    || e?.message
+                                    || "Save failed" });
+              return false;
+            }
+          }}
+          onError={(msg) => setToast({ tone: "error",
+                                          message: typeof msg === "string"
+                                                    ? msg
+                                                    : (msg?.message
+                                                        || "Save failed") })}
+        />
         <div className="mt-4 flex justify-end">
           <div className="w-64 space-y-1 text-sm">
             <div className="flex justify-between"><span style={{ color: colors.muted }}>Subtotal</span><span>{money(doc.subtotal)}</span></div>

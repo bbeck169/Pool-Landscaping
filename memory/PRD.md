@@ -16359,3 +16359,25 @@ Both events are joined by `undone_from_batch_id` → `bulk_batch_id` for the ful
 
 ### Follow-ups (deferred)
 - None inside K41c scope.
+
+---
+
+## Phase K71 · Feb-2026 — Estimate Line Item Edit + Description + Service/Income Categories — SHIPPED
+
+**Delivered**
+- LineItem model now carries `long_description` (optional, ≤500 chars) + `service_category_id` alongside existing `income_category_id`.
+- Both `service_categories` + `income_categories` seed lists extended additive-merge case-insensitive with the K71 starter names (Service seed +7, Income seed +8).
+- NEW `K71LineItemsEditor` component replaces the static line-items table on `QuoteInvoiceDetail`: column rename Description→Item, bold item + secondary muted `long_description`, pencil inline edit (draft only, admin/super), Service + Income category pickers, top-red banner + inline errors when a K71-touched line is missing a category.
+- Save/Send/Approve/Convert gating on quotes via new `validate_line_item_k71_categories` + `check_line_items_k71_gaps` helpers. Legacy lines (neither K71 field is a string) grandfathered.
+- Convert-to-invoice parity: `billing.convert_quote_to_job` now copies quote line items into `job.line_items[]` and `services/auto_invoice.py::_build_line_items` preserves the three new fields end-to-end.
+- Settings CRUD UI at `/settings/service-categories` and `/settings/income-categories` already wired — user hits the enriched seed lists directly.
+
+**Tests**
+- Backend: `tests/test_k71_line_item_edit_categories.py` (12 unit) + `tests/test_k71_line_item_router_api.py` (11 router round-trip) — all 23 pass.
+- Frontend: `test/k71-line-items-editor.test.jsx` (8 vitest) — all pass.
+- Regression: updated `test_income_categories.py` for new seed count (14) + additive-merge assertion. `test_admin_can_crud_categories`, `test_seed_defaults_on_first_access`, `test_uniqueness_within_tenant` all green.
+
+**Backlog for K71 follow-up (P2)**
+- Bulk recategorize UI for legacy line items (per user directive: deferred).
+- R0.1 Revenue-by-Service-Type chart now has the `service_category_id` field it needs.
+

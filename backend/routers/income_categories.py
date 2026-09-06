@@ -42,6 +42,18 @@ router = APIRouter()
 
 _DEFAULTS = [
     "Pool", "Chemicals", "Landscaping", "Repair", "Late Fee", "Other",
+    # Phase K71 · Feb-2026 — additive seed names for the K71 inline
+    # line-item editor income-category dropdown. Additive-merged
+    # case-insensitively per tenant, so an existing "Pool" stays,
+    # and only names not already present are inserted.
+    "Service Revenue",
+    "Product Sales",
+    "Recurring Maintenance",
+    "One-time Project",
+    "Warranty Work",
+    "Labor Income",
+    "Materials",
+    "Other Income",
 ]
 
 
@@ -65,11 +77,21 @@ def _auto_color(name: str) -> str:
 # Seed on first access
 # ═══════════════════════════════════════════════════════════════════
 async def ensure_defaults_for_tenant(tenant_id: str) -> None:
-    """Idempotent — seeds the 6 default categories only if none exist."""
+    """Idempotent — additive seed. Phase K71 · Feb-2026: switched
+    from the pre-K71 "only if count == 0" behaviour to a case-
+    insensitive additive merge (mirroring ``service_categories.
+    ensure_defaults_for_tenant``). Any DEFAULT names that aren't
+    already present on the tenant get inserted. Names already used
+    (case-insensitive) are skipped so operator-renamed rows stay
+    intact."""
     if not tenant_id:
         return
-    existing = await db.income_categories.count_documents({"tenant_id": tenant_id})
-    if existing > 0:
+    existing = await db.income_categories.find(
+        {"tenant_id": tenant_id}, {"_id": 0, "name": 1},
+    ).to_list(500)
+    have = {(r.get("name") or "").strip().lower() for r in existing}
+    missing = [n for n in _DEFAULTS if n.lower() not in have]
+    if not missing:
         return
     now = _now()
     docs = [
@@ -79,17 +101,19 @@ async def ensure_defaults_for_tenant(tenant_id: str) -> None:
             "description": "",
             "color": _auto_color(name),
             "is_archived": False,
-            "sort_order": i,
+            "sort_order": _DEFAULTS.index(name),
             "tenant_id": tenant_id,
             "created_at": now,
             "created_by_user_id": "system:seed",
             "updated_at": now,
         }
-        for i, name in enumerate(_DEFAULTS)
+        for name in missing
     ]
     await db.income_categories.insert_many(docs)
-    logger.info("[income_categories] seeded %d defaults for tenant=%s",
-                len(docs), tenant_id)
+    logger.info(
+        "[income_categories] seeded %d defaults for tenant=%s (missing=%s)",
+        len(docs), tenant_id, missing,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -146,6 +170,141 @@ async def validate_line_item_categories(
                 "available_categories": available,
             },
         )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase K71 · Feb-2026 — Line-item Service + Income category
+# enforcement for the estimate / quote / invoice inline editor.
+#
+# Two-taxonomy validation with legacy grandfathering:
+#   * NEW line items (any line whose payload mentions EITHER
+#     ``service_category_id`` OR ``income_category_id`` — even as
+#     an empty string) MUST resolve BOTH to active tenant rows.
+#   * LEGACY line items (neither K71 field present in the payload)
+#     are grandfathered and skipped.
+#
+# The K71 write path (frontend inline editor) always sends both
+# fields for lines it just added/edited, so the presence-based rule
+# cleanly separates "user is using K71" from "untouched legacy row".
+# ═══════════════════════════════════════════════════════════════════
+async def validate_line_item_k71_categories(
+    tenant_id: str, line_items: List[Dict[str, Any]],
+) -> None:
+    """K71 gate — enforces service+income category pairs on NEW/edited
+    line items. Legacy items (missing both K71 fields) pass silently."""
+    from routers.service_categories import ensure_defaults_for_tenant \
+        as _ensure_svc_defaults
+    await ensure_defaults_for_tenant(tenant_id)
+    await _ensure_svc_defaults(tenant_id)
+
+    inc_cats = await db.income_categories.find(
+        {"tenant_id": tenant_id, "is_archived": False},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(500)
+    inc_ids = {c["id"] for c in inc_cats}
+    inc_names = {(c.get("name") or "").strip().lower() for c in inc_cats}
+
+    svc_cats = await db.service_categories.find(
+        {"tenant_id": tenant_id, "is_archived": False},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(500)
+    svc_ids = {c["id"] for c in svc_cats}
+    svc_names = {(c.get("name") or "").strip().lower() for c in svc_cats}
+
+    for idx, li in enumerate(line_items or []):
+        # Phase K71 · Feb-2026 — K71-touched detection is str-typed
+        # rather than presence-based. Pydantic's ``LineItem`` model
+        # emits ``service_category_id: None`` / ``income_category_id:
+        # None`` for legacy payloads via ``.dict()`` even when the
+        # caller omitted them, so a naive ``"field" in li`` check
+        # falsely flags every incoming line as K71. Treating the
+        # field as K71 iff the value is a string (empty string still
+        # counts — that is an operator who cleared the field via
+        # inline edit and must be blocked) sidesteps the whole
+        # serializer default problem.
+        svc_raw = li.get("service_category_id")
+        inc_raw = li.get("income_category_id")
+        has_svc_field = isinstance(svc_raw, str)
+        has_inc_field = isinstance(inc_raw, str)
+        is_k71 = has_svc_field or has_inc_field
+        if not is_k71:
+            # Legacy grandfathered — skip validation entirely.
+            continue
+
+        svc_val = svc_raw.strip() if isinstance(svc_raw, str) else ""
+        inc_val = inc_raw.strip() if isinstance(inc_raw, str) else ""
+
+        if not svc_val:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "service_category_required",
+                    "error_code": "k71_service_category_required",
+                    "field": f"line_items[{idx}].service_category_id",
+                    "line_index": idx,
+                    "message": ("Service category is required for this "
+                                 "line item. Set it in the inline editor."),
+                },
+            )
+        if svc_val not in svc_ids and svc_val.lower() not in svc_names:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "service_category_invalid",
+                    "error_code": "k71_service_category_invalid",
+                    "field": f"line_items[{idx}].service_category_id",
+                    "line_index": idx,
+                    "attempted": svc_val,
+                },
+            )
+
+        if not inc_val:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "income_category_required",
+                    "error_code": "k71_income_category_required",
+                    "field": f"line_items[{idx}].income_category_id",
+                    "line_index": idx,
+                    "message": ("Income category is required for this "
+                                 "line item. Set it in the inline editor."),
+                },
+            )
+        if inc_val not in inc_ids and inc_val.lower() not in inc_names:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "income_category_invalid",
+                    "error_code": "k71_income_category_invalid",
+                    "field": f"line_items[{idx}].income_category_id",
+                    "line_index": idx,
+                    "attempted": inc_val,
+                },
+            )
+
+
+def check_line_items_k71_gaps(line_items: List[Dict[str, Any]]) -> List[int]:
+    """Read-side helper used by send/approve/convert gates.
+
+    Returns the indices of line items whose K71 metadata was set
+    once (either category field present) but is now missing/empty —
+    i.e. items that WERE touched by the K71 editor but violate the
+    "both required" rule. Legacy grandfathered items (neither field
+    present) return no indices.
+    """
+    gaps: List[int] = []
+    for idx, li in enumerate(line_items or []):
+        svc_raw = li.get("service_category_id")
+        inc_raw = li.get("income_category_id")
+        has_svc = isinstance(svc_raw, str)
+        has_inc = isinstance(inc_raw, str)
+        if not (has_svc or has_inc):
+            continue
+        svc_val = svc_raw.strip() if isinstance(svc_raw, str) else ""
+        inc_val = inc_raw.strip() if isinstance(inc_raw, str) else ""
+        if not svc_val or not inc_val:
+            gaps.append(idx)
+    return gaps
 
 
 # ═══════════════════════════════════════════════════════════════════

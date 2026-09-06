@@ -125,6 +125,21 @@ async def convert_quote_to_job(qid: str, body: dict,
     if q.get("decision") not in ("approved",) and q.get("status") not in ("approved",):
         # Allow anyway with a warning — some flows mark approval on status.
         pass
+    # Phase K71 · Feb-2026 — Convert-to-job/invoice parity gate. Block
+    # if any K71-touched line item is missing a required category.
+    from routers.income_categories import check_line_items_k71_gaps
+    gaps = check_line_items_k71_gaps(q.get("line_items") or [])
+    if gaps:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "k71_missing_categories",
+                "error_code": "k71_missing_categories",
+                "line_indices": gaps,
+                "message": ("Set Service + Income category on every "
+                             "line item before converting."),
+            },
+        )
     cust = await db.customers.find_one(
         {"id": q["customer_id"], "tenant_id": tenant["id"]}, {"_id": 0}
     ) or {}
@@ -137,6 +152,24 @@ async def convert_quote_to_job(qid: str, body: dict,
     line_summary = ", ".join(
         li.get("description", "") for li in (q.get("line_items") or [])
     )[:200]
+
+    # Phase K71 · Feb-2026 — Copy quote line items into job.line_items[]
+    # so the auto-invoice pipeline preserves K71 metadata (long
+    # description, service_category_id, income_category_id) end-to-end
+    # via ``services/auto_invoice.py::_build_line_items``.
+    job_line_items = []
+    for li in (q.get("line_items") or []):
+        job_line_items.append({
+            "description": li.get("description"),
+            "long_description": li.get("long_description"),
+            "quantity": li.get("quantity"),
+            "unit_price": li.get("unit_price"),
+            "category": li.get("category"),
+            "income_category_id": li.get("income_category_id"),
+            "service_category_id": li.get("service_category_id"),
+            "item_id": li.get("item_id"),
+            "pricebook_item_id": li.get("pricebook_item_id"),
+        })
 
     job = {
         "id": new_id(),
@@ -152,6 +185,7 @@ async def convert_quote_to_job(qid: str, body: dict,
         "scheduled_date": body.get("scheduled_date"),
         "notes": (body.get("notes") or "") + ("\n" + line_summary if line_summary else ""),
         "price": q.get("total", 0),
+        "line_items": job_line_items,
         "status": "scheduled",
         "photos": [],
         "quote_id": qid,
