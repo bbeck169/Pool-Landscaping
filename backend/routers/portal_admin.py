@@ -451,6 +451,98 @@ async def portal_reset_link(cid: str,
     )
 
 
+# ─── K30.status-chip · Feb-2026 · latest reset-link status ─────────────
+#
+# Lightweight read endpoint powering the "Reset link" chip on the
+# Portal Access panel. Reads only the LATEST row in
+# ``password_reset_tokens`` for the customer's linked ``users`` row
+# and classifies it into one of four states. Never returns the
+# token value itself — the chip is purely a UX signal for the
+# front-office ("did the customer click it yet?").
+
+class PortalResetLinkStatusResp(BaseModel):
+    status: str  # "none" | "issued" | "used" | "expired"
+    issued_at: Optional[str] = None
+    used_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    source: Optional[str] = None  # "admin_reset_link" | "forgot_password" | None
+
+
+@router.get("/customers/{cid}/portal-reset-link-status",
+            response_model=PortalResetLinkStatusResp)
+async def portal_reset_link_status(cid: str,
+                                     user: dict = Depends(require_admin),
+                                     tenant: dict = Depends(get_current_tenant)):
+    """K30.status-chip · Feb-2026 — Return the state of the LATEST
+    ``password_reset_tokens`` row for this customer's portal user.
+
+    Contract:
+
+    * ``none``     — no reset token has ever been minted for this
+                      customer's user row (or no user row exists).
+    * ``issued``   — a token exists, ``used_at`` is null, and
+                      ``expires_at`` is in the future.
+    * ``used``     — the latest token has ``used_at`` set (customer
+                      completed the reset).
+    * ``expired``  — the latest token has ``used_at`` null AND
+                      ``expires_at`` is in the past (or the row
+                      carries ``invalidated_at`` and no newer token
+                      exists).
+
+    Never returns the raw ``token`` — the chip is metadata only.
+    """
+    from datetime import datetime, timezone
+
+    if not await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1}
+    ):
+        raise HTTPException(404, "Customer not found")
+
+    cust_user = await db.users.find_one(
+        {"customer_id": cid, "tenant_id": tenant["id"], "role": "customer"},
+        {"_id": 0, "id": 1},
+    )
+    if not cust_user:
+        return PortalResetLinkStatusResp(status="none")
+
+    row = await db.password_reset_tokens.find_one(
+        {"user_id": cust_user["id"], "tenant_id": tenant["id"]},
+        {"_id": 0, "token": 0},  # NEVER return the token value
+        sort=[("created_at", -1)],
+    )
+    if not row:
+        return PortalResetLinkStatusResp(status="none")
+
+    if row.get("used_at"):
+        return PortalResetLinkStatusResp(
+            status="used",
+            issued_at=row.get("created_at"),
+            used_at=row.get("used_at"),
+            expires_at=row.get("expires_at"),
+            source=row.get("source"),
+        )
+
+    # Not used — decide between issued and expired.
+    exp_raw = row.get("expires_at")
+    is_expired = bool(row.get("invalidated_at"))
+    if not is_expired and exp_raw:
+        try:
+            exp_dt = (exp_raw if isinstance(exp_raw, datetime)
+                       else datetime.fromisoformat(exp_raw))
+            if exp_dt.tzinfo is None:
+                exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+            is_expired = exp_dt < datetime.now(timezone.utc)
+        except Exception:  # pragma: no cover — fail closed as expired
+            is_expired = True
+
+    return PortalResetLinkStatusResp(
+        status="expired" if is_expired else "issued",
+        issued_at=row.get("created_at"),
+        expires_at=row.get("expires_at"),
+        source=row.get("source"),
+    )
+
+
 @router.post("/customers/{cid}/portal-revoke")
 async def portal_revoke(cid: str, user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
@@ -533,7 +625,8 @@ async def portal_history(cid: str,
         raise HTTPException(404, "Customer not found")
     lim = max(1, min(int(limit or 50), 500))
     events = ("portal_login", "portal_reset", "portal_revoke",
-              "impersonation_started", "impersonation_ended")
+              "impersonation_started", "impersonation_ended",
+              "admin_password_reset_triggered")
     rows = await db.audit_logs.find(
         {"tenant_id": tenant["id"],
           "target_customer_id": cid,

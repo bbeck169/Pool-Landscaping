@@ -1035,15 +1035,19 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
   const [history, setHistory] = React.useState([]);
   const [resetModalOpen, setResetModalOpen] = React.useState(false);
   const [resetLinkModalOpen, setResetLinkModalOpen] = React.useState(false);
+  const [resetLinkStatus, setResetLinkStatus] = React.useState(null);
 
   const loadStatus = React.useCallback(async () => {
     try {
-      const [s, h] = await Promise.all([
+      const [s, h, rl] = await Promise.all([
         api.get(`/customers/${customer.id}/portal-status`),
         api.get(`/customers/${customer.id}/portal-history?limit=25`),
+        api.get(`/customers/${customer.id}/portal-reset-link-status`)
+          .catch(() => null),
       ]);
       setStatus(s || null);
       setHistory((h && h.events) || []);
+      setResetLinkStatus(rl || null);
     } catch (_e) {
       // Non-fatal — panel still renders with the legacy customer.has_login flag.
     }
@@ -1145,6 +1149,8 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
               ) : (
                 <Chip label="Revoked" tone="danger" testid="portal-status-revoked" />
               )}
+              {" "}
+              <PortalResetLinkChip data={resetLinkStatus} />
             </div>
             <div className="mt-1" style={{ color: colors.onSurfaceSecondary }}>
               {status?.last_portal_login_at ? (
@@ -1160,6 +1166,8 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
         ) : (
           <div style={{ color: colors.onSurfaceSecondary }}>
             No portal login yet. Send an invite (auto-generated password) or create one manually.
+            {" "}
+            <PortalResetLinkChip data={resetLinkStatus} />
           </div>
         )}
       </div>
@@ -1308,7 +1316,59 @@ const PORTAL_EVENT_LABELS = {
   portal_revoke: "Admin revoked access",
   impersonation_started: "Admin viewed as customer",
   impersonation_ended: "Admin ended impersonation",
+  admin_password_reset_triggered: "Admin sent reset link",
 };
+
+/**
+ * K30.status-chip · Feb-2026 — chip that reflects the latest row in
+ * ``password_reset_tokens`` for this customer. Tone map:
+ *   issued  → info    (fresh link out, awaiting click)
+ *   used    → success (customer completed the reset)
+ *   expired → warning (link went cold without being clicked)
+ *   none    → chip is hidden entirely
+ */
+function _k30RelativeTime(iso) {
+  if (!iso) return null;
+  try {
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const diff = Math.max(0, now - then);
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  } catch {
+    return null;
+  }
+}
+
+function PortalResetLinkChip({ data }) {
+  if (!data || !data.status || data.status === "none") return null;
+  const status = data.status;
+  const tone =
+    status === "issued" ? "brand"
+      : status === "used" ? "success"
+      : status === "expired" ? "warning"
+      : "neutral";
+  const ts = status === "used" ? data.used_at : data.issued_at;
+  const rel = _k30RelativeTime(ts);
+  const labelBase =
+    status === "issued" ? "Reset link issued"
+      : status === "used" ? "Reset link used"
+      : status === "expired" ? "Reset link expired"
+      : `Reset link ${status}`;
+  const label = rel ? `${labelBase} · ${rel}` : labelBase;
+  return (
+    <Chip
+      label={label}
+      tone={tone}
+      testid={`portal-reset-link-chip-${status}`}
+    />
+  );
+}
 
 /**
  * K30 · Feb-2026 — Admin confirmation modal for the tokenized
