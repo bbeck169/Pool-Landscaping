@@ -75,12 +75,70 @@ async def kpi(
     period: Optional[str] = Query("mtd"),
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
+    # R0.1 · grouped-metric filters (ignored by scalar metrics).
+    lens: Optional[str] = Query("invoiced"),
+    service_type: Optional[str] = Query(None),
+    tech_id: Optional[str] = Query(None),
+    limit: Optional[int] = Query(None, ge=1, le=1000),
+    offset: Optional[int] = Query(0, ge=0),
     user: dict = Depends(require_report_reader),
     tenant: dict = Depends(get_current_tenant),
 ):
     metric: Metric = get_metric(metric_key)   # 404 for unknown key
     p = resolve_period(period, start, end)
     tenant_id = tenant["id"]
+
+    if metric.is_grouped:
+        # Normalized filter set — becomes part of the cache key so
+        # a lens flip / filter change misses the cache correctly.
+        if lens not in ("invoiced", "collected"):
+            raise HTTPException(400, "lens must be 'invoiced' or 'collected'")
+        filters = {
+            "lens": lens,
+            "service_type": (service_type or "").strip() or None,
+            "tech_id": (tech_id or "").strip() or None,
+            "limit": limit,
+            "offset": offset or 0,
+        }
+        cache_key = report_cache.make_key(
+            tenant_id, "kpi", metric.key, p.key, p.start, p.end,
+            filters["lens"], filters.get("service_type") or "-",
+            filters.get("tech_id") or "-",
+            str(filters.get("limit") or "-"),
+            str(filters.get("offset") or 0),
+        )
+        hit = report_cache.get(cache_key)
+        if hit is not None:
+            return {**hit, "cached": True}
+        engine = AggregationEngine(db, tenant_id)
+        try:
+            grouped = await metric.compute_grouped(engine, p, filters)
+        except HTTPException:
+            raise
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("[reports] grouped metric %s failed: %s", metric.key, exc)
+            raise HTTPException(500, f"metric compute failed: {metric.key}") from exc
+        payload = {
+            "key": metric.key,
+            "label": metric.label,
+            "format": metric.format,
+            "direction": metric.direction,
+            "description": metric.description,
+            "is_grouped": True,
+            "period": p.as_dict(),
+            "lens": filters["lens"],
+            "filters_applied": {
+                "service_type": filters.get("service_type"),
+                "tech_id": filters.get("tech_id"),
+                "limit": filters.get("limit"),
+                "offset": filters.get("offset") or 0,
+            },
+            "total": float(grouped.get("total") or 0.0),
+            "row_count": int(grouped.get("row_count") or len(grouped.get("rows") or [])),
+            "rows": grouped.get("rows") or [],
+        }
+        report_cache.set(cache_key, payload)
+        return {**payload, "cached": False}
 
     cache_key = report_cache.make_key(
         tenant_id, "kpi", metric.key, p.key, p.start, p.end,
@@ -102,6 +160,7 @@ async def kpi(
         "format": metric.format,
         "direction": metric.direction,
         "description": metric.description,
+        "is_grouped": False,
         "period": p.as_dict(),
         "value": float(raw.get("value") or 0.0),
         "prior_value": float(raw.get("prior_value") or 0.0),

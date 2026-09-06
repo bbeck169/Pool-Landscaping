@@ -45,13 +45,20 @@ class Metric:
     ``compute(engine, period)``. Using plain class attributes
     (not dataclass fields) so ``@register_metric`` can instantiate
     each subclass with a bare no-arg constructor while still
-    inheriting the parent defaults."""
+    inheriting the parent defaults.
+
+    Phase R0.1 · Feb-2026 — ``is_grouped=True`` metrics emit a
+    ``{total, rows, lens, filters_applied}`` envelope instead of
+    the scalar ``{value, prior_value, delta_pct, sparkline}``
+    envelope. Router dispatches on this flag.
+    """
 
     key: str = ""
     label: str = ""
     format: str = "number"
     direction: str = "up_is_good"
     description: str = ""
+    is_grouped: bool = False   # R0.1 · flip on for group-by metrics
 
     async def compute(self, engine, period) -> dict:
         """Override in subclasses. Must return a dict with at least
@@ -62,11 +69,20 @@ class Metric:
         """
         raise NotImplementedError
 
+    async def compute_grouped(self, engine, period, filters: dict) -> dict:
+        """R0.1 hook — grouped metrics override THIS instead of
+        ``compute``. Must return ``{total, rows, ...}``. ``filters``
+        is a caller-owned dict of already-normalized query params
+        (``lens``, ``service_type``, ``tech_id``, ``limit``,
+        ``offset``). Never called on scalar metrics."""
+        raise NotImplementedError
+
     # Convenience for consumers that just want a dict.
     def to_public(self) -> dict:
         return {"key": self.key, "label": self.label,
                 "format": self.format, "direction": self.direction,
-                "description": self.description}
+                "description": self.description,
+                "is_grouped": self.is_grouped}
 
 
 REGISTRY: dict[str, Metric] = {}

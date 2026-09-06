@@ -6,6 +6,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { KpiCard } from "@/components/reports/KpiCard";
 import { PeriodPicker } from "@/components/reports/PeriodPicker";
+import FinancialTab from "@/pages/reports/FinancialTab";
 
 /**
  * Phase R0 · Feb-2026 — Reporting suite shell.
@@ -92,7 +93,13 @@ export default function ReportsSuite() {
         })}
       </nav>
 
-      {tab === "overview" ? <OverviewTab /> : <ComingSoonTab phase={TABS.find((t) => t.key === tab)?.phase} />}
+      {tab === "overview" ? (
+        <OverviewTab />
+      ) : tab === "financial" ? (
+        <FinancialTab />
+      ) : (
+        <ComingSoonTab phase={TABS.find((t) => t.key === tab)?.phase} />
+      )}
     </div>
   );
 }

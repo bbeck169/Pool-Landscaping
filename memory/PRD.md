@@ -1,3 +1,96 @@
+## Phase R0.1 · Revenue by Customer + Revenue by City — SHIPPED (Feb 2026)
+
+**Scope:** Backend + Web (mobile untouched). Standing order
+honored (bbeck169/Pool-Landscaping.git ignored).
+
+**Grouped metrics on the R0 registry** — R0.1 extends the metric
+registry with a `GroupedMetric` base so grouped-row aggregations
+(customer / city / crew / service-line) can be added the same way
+scalar KPIs are. Two live metrics ship:
+- `revenue_by_customer` — sum(revenue) grouped by customer_id,
+  invoiced vs collected lens.
+- `revenue_by_city` — sum(revenue) grouped by
+  `customers.service_address.city`, invoiced vs collected lens,
+  `"(unknown)"` fallback for customers without a service address.
+
+**Backend**
+- New shared helpers in `services/reporting/metrics/_revenue_shared.py`
+  (tenant guard + lens selector + service_type / tech_id filters +
+  city fallback). Both metric files stay ~40 lines each.
+- `services/reporting/registry.py` grows a `GroupedMetric` base
+  whose `compute()` returns
+  `{lens, total, row_count, rows: [...]}`.
+- Router `routers/reports_kpi.py` extended: same
+  `/api/reports/kpi/{metric_key}` path accepts
+  `?lens=&service_type=&tech_id=&limit=` for grouped metrics.
+- Cache key adds `lens|service_type|tech_id` so filter flips don't
+  collide with the R0 scalar cache.
+- **37 backend tests green** (existing 50 + new
+  `test_r01_revenue_grouped.py`).
+
+**Frontend — new Financial tab on `/reports/suite`**
+- `pages/reports/FinancialTab.jsx` owns the shared filter toolbar
+  (Period · Lens · Service Type · Technician). Filter state lives
+  in the URL so a customer drill-down + back navigation preserves
+  the exact report state.
+- `components/reports/RevenueByCustomerPanel.jsx` — top-20
+  horizontal bar chart + table below (25/page paginator when
+  "Show all" is toggled). Row click drills down to
+  `/customers/{id}`.
+- `components/reports/RevenueByCityPanel.jsx` — same UX except
+  city rows are intentionally non-interactive (no
+  `/customers?city=…` URL exists yet; see the R0.1 ship doc for
+  rationale).
+- `components/reports/LensToggle.jsx` — Invoiced / Collected pill.
+- `components/reports/HorizontalBarChart.jsx` — `react-apexcharts`
+  wrapper; memoized options avoid the StrictMode-triggered
+  `beforeMount` NPE.
+- `components/reports/downloadCsv.js` — zero-dep client-side CSV
+  helper (BOM + CRLF + RFC-4180 escapes). **Legacy exports NOT
+  touched** — R0.1 exports are net-new.
+- ApexCharts palette sourced exclusively from `theme.js`.
+
+**URL contract** (`FinancialTab`):
+```
+?period=mtd|qtd|ytd|last_30d|custom
+&start=YYYY-MM-DD&end=YYYY-MM-DD           # custom only
+&lens=invoiced|collected
+&service_type=<value>
+&tech_id=<value>
+&show_all_customers=1                       # optional
+&show_all_cities=1                          # optional
+```
+
+**Vitest** — 5 new files, **22/22 green**:
+- `reports-lens-toggle.test.jsx`
+- `reports-download-csv.test.jsx`
+- `reports-horizontal-bar-chart.test.jsx`
+- `reports-revenue-by-customer-panel.test.jsx`
+- `reports-revenue-by-city-panel.test.jsx`
+
+**Files changed** — 3 new backend files, 1 backend router edit,
+1 backend test file, 6 new frontend files, 1 ReportsSuite edit,
+5 new frontend test files, 1 new memory doc.
+
+**Screenshot verified** — Financial tab renders both charts,
+tables, and toolbar for `super@aquaterra.com` / Aquaterra tenant
+against the current MTD data set.
+
+**Deferred to R1 / follow-ups**
+- Customer bar-click drill-down works but table row-click is the
+  guaranteed path.
+- Custom period does not persist between reloads.
+- Server-side streaming export if a tenant grows past ~50k
+  invoices in a single period.
+
+**Next action items**
+- Phase K62: Customers page pagination (25/50/100, default 25;
+  convert infinite scroll).
+- Phase R1: Financial suite proper (P&L / cash flow / A/R aging).
+
+---
+
+
 ## Phase R0 · Reporting Suite Foundation — SHIPPED (Feb 2026)
 
 **Scope:** Backend + Web (mobile untouched). Standing order honored
