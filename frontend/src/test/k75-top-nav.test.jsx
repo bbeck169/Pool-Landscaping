@@ -183,19 +183,22 @@ describe("K76 · AdminTopBar · admin surface (category dropdowns)", () => {
     expect(wrap.querySelector('[data-testid="admin-topbar-finance"]')).toBeTruthy();
   });
 
-  it("right cluster preserves order — SignOut LEFT of UniversalMenu", () => {
+  it("right cluster preserves order — SignOut LEFT of UniversalMenu (wide branch)", () => {
     mount("admin");
-    const signOut = screen.getByTestId("header-signout");
-    const umenu = screen.getByTestId("umenu-stub");
-    // DOM order (compareDocumentPosition): 4 == FOLLOWING → umenu is after signOut.
+    const wide = screen.getByTestId("admin-topbar-wide-wrap");
+    const signOut = wide.querySelector('[data-testid="header-signout"]');
+    const umenu = wide.querySelector('[data-testid="umenu-stub"]');
+    expect(signOut).toBeTruthy();
+    expect(umenu).toBeTruthy();
     expect(signOut.compareDocumentPosition(umenu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("Add Customer + Settings sprocket + Sign Out all render in admin wide-wrap", () => {
     mount("admin");
-    expect(screen.getByTestId("topbar-add-customer-btn")).toBeTruthy();
-    expect(screen.getByTestId("header-settings-sprocket")).toBeTruthy();
-    expect(screen.getByTestId("header-signout")).toBeTruthy();
+    const wide = screen.getByTestId("admin-topbar-wide-wrap");
+    expect(wide.querySelector('[data-testid="topbar-add-customer-btn"]')).toBeTruthy();
+    expect(wide.querySelector('[data-testid="header-settings-sprocket"]')).toBeTruthy();
+    expect(wide.querySelector('[data-testid="header-signout"]')).toBeTruthy();
   });
 });
 
@@ -228,10 +231,11 @@ describe("K76 · AdminTopBar · technician surface (fixed strip)", () => {
     expect(screen.queryByTestId("topbar-add-customer-btn")).toBeNull();
   });
 
-  it("technicians STILL see Sign Out + inline UniversalMenu (right cluster)", () => {
+  it("technicians STILL see Sign Out + inline UniversalMenu (right cluster in wide-wrap)", () => {
     mount("technician");
-    expect(screen.getByTestId("header-signout")).toBeTruthy();
-    expect(screen.getByTestId("umenu-stub")).toBeTruthy();
+    const wide = screen.getByTestId("admin-topbar-wide-wrap");
+    expect(wide.querySelector('[data-testid="header-signout"]')).toBeTruthy();
+    expect(wide.querySelector('[data-testid="umenu-stub"]')).toBeTruthy();
   });
 });
 
@@ -278,6 +282,76 @@ describe("K76 · AdminTopBar · DOM shell contract", () => {
   it("does NOT re-import BrandLogo (dedupe fix preserved)", () => {
     expect(TOPBAR_SRC).not.toMatch(/<BrandLogo\b/);
     expect(TOPBAR_SRC).not.toMatch(/import\s+BrandLogo\s+from/);
+  });
+});
+
+
+describe("K76.1 · mobile-web breakpoint collapse (CSS-driven, always in DOM)", () => {
+  it("both narrow-wrap and wide-wrap render simultaneously; CSS decides visibility", () => {
+    mount("admin");
+    // The desktop wide-wrap AND the mobile narrow-wrap are both in
+    // the DOM at all times — Tailwind's ``md:`` breakpoint (768px)
+    // toggles ``display`` on each. This is the K76.1 regression
+    // fix: the JS ``resize``-listener approach was unreliable in
+    // some mobile browsers.
+    expect(screen.getByTestId("admin-topbar-wide-wrap")).toBeTruthy();
+    expect(screen.getByTestId("admin-topbar-narrow-wrap")).toBeTruthy();
+  });
+
+  it("narrow-wrap carries ``md:hidden`` (visible <768px only)", () => {
+    mount("admin");
+    const narrow = screen.getByTestId("admin-topbar-narrow-wrap");
+    expect(narrow.className).toMatch(/\bmd:hidden\b/);
+  });
+
+  it("wide-wrap carries ``hidden md:flex`` (hidden <768px, flex >=768px)", () => {
+    mount("admin");
+    const wide = screen.getByTestId("admin-topbar-wide-wrap");
+    expect(wide.className).toMatch(/\bhidden\b/);
+    expect(wide.className).toMatch(/\bmd:flex\b/);
+  });
+
+  it("mobile menu trigger renders inside the narrow-wrap on the admin surface", () => {
+    mount("admin");
+    const narrow = screen.getByTestId("admin-topbar-narrow-wrap");
+    const trigger = narrow.querySelector('[data-testid="admin-topbar-mobile-trigger"]');
+    expect(trigger).toBeTruthy();
+  });
+
+  it("mobile menu trigger renders inside the narrow-wrap on the tech surface too", () => {
+    mount("technician");
+    const narrow = screen.getByTestId("admin-topbar-narrow-wrap");
+    const trigger = narrow.querySelector('[data-testid="admin-topbar-mobile-trigger"]');
+    expect(trigger).toBeTruthy();
+  });
+
+  it("data-narrow attribute reflects matchMedia state (jsdom default: false)", () => {
+    mount("admin");
+    // jsdom's matchMedia always returns matches=false unless mocked,
+    // so data-narrow="0" on default render.
+    const bar = screen.getByTestId("admin-topbar");
+    expect(bar.getAttribute("data-narrow")).toBe("0");
+  });
+
+  it("data-narrow flips to '1' when matchMedia reports a narrow viewport", () => {
+    const orig = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((q) => ({
+      matches: q.includes("max-width: 767"),
+      media: q,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    try {
+      mount("admin");
+      const bar = screen.getByTestId("admin-topbar");
+      expect(bar.getAttribute("data-narrow")).toBe("1");
+    } finally {
+      window.matchMedia = orig;
+    }
   });
 });
 

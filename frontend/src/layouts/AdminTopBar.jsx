@@ -324,29 +324,34 @@ export default function AdminTopBar() {
   // via ``visible`` instead.
   const fixedItems = topNavForRole(_role);
 
-  // Phase 44 · Fix A (attempt 3) — bulletproof responsive gate.
-  const [vw, setVw] = React.useState(() =>
-    typeof window !== "undefined" ? window.innerWidth : 1024);
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    const on = () => setVw(window.innerWidth);
-    on();
-    window.addEventListener("resize", on);
-    let mq;
-    if (window.matchMedia) {
-      mq = window.matchMedia("(max-width: 767.98px)");
-      if (mq.addEventListener) mq.addEventListener("change", on);
-      else mq.addListener(on);
-    }
-    return () => {
-      window.removeEventListener("resize", on);
-      if (mq) {
-        if (mq.removeEventListener) mq.removeEventListener("change", on);
-        else mq.removeListener(on);
-      }
-    };
-  }, []);
-  const isNarrow = vw < 768;
+  // K76.1 · Feb-2026 — mobile-web breakpoint collapse regression fix.
+  // The prior JS ``resize``-listener approach was unreliable in some
+  // mobile browsers (Mobile Safari fires ``resize`` only on orientation
+  // change; embedded WebViews sometimes never fire it at all), which
+  // left the desktop wide-wrap rendered below 768px. Switching to a
+  // pure CSS media-query gate via Tailwind's ``md:`` breakpoint (768px
+  // threshold) — both branches are always in the DOM, CSS decides
+  // which one is visible. No hydration timing, no event-listener race,
+  // works in every real browser + jsdom (where the width is exposed
+  // via ``matchMedia``).  A ``useSyncExternalStore`` mirror on
+  // ``matchMedia("(max-width: 767.98px)")`` is retained so vitest
+  // snapshots can still assert the branch selection deterministically.
+  const isNarrow = React.useSyncExternalStore(
+    (cb) => {
+      if (typeof window === "undefined" || !window.matchMedia) return () => {};
+      const mq = window.matchMedia("(max-width: 767.98px)");
+      if (mq.addEventListener) mq.addEventListener("change", cb);
+      else mq.addListener(cb);
+      return () => {
+        if (mq.removeEventListener) mq.removeEventListener("change", cb);
+        else mq.removeListener(cb);
+      };
+    },
+    () => (typeof window !== "undefined" && window.matchMedia
+      ? window.matchMedia("(max-width: 767.98px)").matches
+      : false),
+    () => false,
+  );
 
   if (!_role) return null;
 
@@ -363,7 +368,6 @@ export default function AdminTopBar() {
         borderColor: colors.nav.border,
       }}
       data-testid="admin-topbar"
-      data-vw={vw}
       data-narrow={isNarrow ? "1" : "0"}
     >
       {!hasAnyNav ? (
@@ -380,36 +384,40 @@ export default function AdminTopBar() {
           <SignOutButton />
           <UniversalMenu variant="inline" />
         </div>
-      ) : isNarrow ? (
-        <div
-          className="px-4 h-11 flex items-center justify-between"
-          data-testid="admin-topbar-narrow-wrap"
-        >
-          <MobileMenu visible={visible} fixedItems={fixedItems} />
-          <div className="flex items-center gap-2">
-            <AddCustomerButton />
-            <CreditsBudgetChip />
-            <SettingsSprocket />
-            <SignOutButton />
-            <UniversalMenu variant="inline" />
-          </div>
-        </div>
       ) : (
-        <div
-          className="flex items-center gap-1 px-4 h-11 overflow-x-auto"
-          data-testid="admin-topbar-wide-wrap"
-        >
-          {hasAdminNav
-            ? visible.map((g) => <CategoryDropdown key={g.key} group={g} />)
-            : fixedItems.map((it) => <TopNavChip key={it.key} item={it} />)}
-          <div className="ml-auto shrink-0 flex items-center gap-2">
-            <AddCustomerButton />
-            <CreditsBudgetChip />
-            <SettingsSprocket />
-            <SignOutButton />
-            <UniversalMenu variant="inline" />
+        <>
+          {/* Narrow (<768px) — hamburger + right cluster. CSS-gated so */}
+          {/* mobile browsers that don't fire resize still see it. */}
+          <div
+            className="md:hidden px-4 h-11 flex items-center justify-between"
+            data-testid="admin-topbar-narrow-wrap"
+          >
+            <MobileMenu visible={visible} fixedItems={fixedItems} />
+            <div className="flex items-center gap-2">
+              <AddCustomerButton />
+              <CreditsBudgetChip />
+              <SettingsSprocket />
+              <SignOutButton />
+              <UniversalMenu variant="inline" />
+            </div>
           </div>
-        </div>
+          {/* Wide (>=768px) — inline categories or fixed strip. */}
+          <div
+            className="hidden md:flex items-center gap-1 px-4 h-11 overflow-x-auto"
+            data-testid="admin-topbar-wide-wrap"
+          >
+            {hasAdminNav
+              ? visible.map((g) => <CategoryDropdown key={g.key} group={g} />)
+              : fixedItems.map((it) => <TopNavChip key={it.key} item={it} />)}
+            <div className="ml-auto shrink-0 flex items-center gap-2">
+              <AddCustomerButton />
+              <CreditsBudgetChip />
+              <SettingsSprocket />
+              <SignOutButton />
+              <UniversalMenu variant="inline" />
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

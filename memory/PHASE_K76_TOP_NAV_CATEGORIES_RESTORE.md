@@ -122,3 +122,59 @@ the Add-Pin modal's "Primary" group (K75 Step B contract preserved).
   untouched.
 - Existing K74 Solid Navy Tiles (Dashboard + ReportsHub) untouched.
 - Tech routes unchanged.
+
+## K76.1 — Mobile-Web Breakpoint Collapse Regression Fix
+
+**Date:** Feb-2026 (same session as K76)
+**Trigger:** `e1_tester` reported Test 7 failure — the mobile-web
+breakpoint (<768px) did not collapse the top nav into a Menu trigger
+(verified on tech nav @ `mike@aquaterra.com`, admin nav same component
+family, same bug).
+
+**Root cause:** the K76 rewrite used a JS `window.innerWidth` state
+tracked via a `resize` listener. Mobile Safari fires `resize` only on
+orientation change; embedded WebViews sometimes never fire it at all.
+So the desktop wide-wrap stayed rendered below 768px in real mobile
+browsers even though the initial `useState(() => window.innerWidth)`
+seed picked up the correct value on some hardware.
+
+**Fix:** swap the JS-driven gate for pure CSS via Tailwind's `md:`
+breakpoint (768px).  Both branches are now always in the DOM; CSS
+decides which one is visible via `display`:
+
+- `admin-topbar-narrow-wrap` — className `md:hidden` (visible <768px only).
+- `admin-topbar-wide-wrap` — className `hidden md:flex` (visible >=768px only).
+
+A `useSyncExternalStore` mirror on `matchMedia("(max-width: 767.98px)")`
+is retained so vitest snapshots can still assert branch selection
+deterministically and the root `<div>` carries a `data-narrow` attribute
+that flips in real time when the browser's media-query state changes.
+
+**Files touched (K76.1 only):** `frontend/src/layouts/AdminTopBar.jsx` —
+rewrote the responsive gate + wrapped narrow/wide branches in a
+fragment so both render simultaneously. Test file
+`frontend/src/test/k75-top-nav.test.jsx` — added a `K76.1 · mobile-web
+breakpoint collapse` describe block (7 tests) covering: (a) both
+branches in DOM simultaneously, (b) className asserts (`md:hidden` on
+narrow, `hidden md:flex` on wide), (c) mobile-trigger inside narrow-wrap
+for admin AND tech surfaces, (d) `data-narrow` reflects matchMedia
+state (default 0, flips to 1 when `matchMedia` reports narrow via a
+mock). Also scoped the "right cluster order" and "Add Customer +
+Sprocket + SignOut" tests to the wide-wrap via `querySelector` so the
+now-duplicated testids don't ambiguate them.
+
+**Verification (K76.1):**
+- **Vitest** `k75-top-nav.test.jsx` — **33/33 pass** ✅
+- **ESLint** frontend — 0 errors ✅
+- **ImportValidator** frontend + mobile — 0 findings ✅
+- **Live preview** at `super@aquaterra.com`, viewport `400 × 800`:
+  - `innerWidth=400` · `matchMedia(<768) = True`
+  - `admin-topbar-wide-wrap` computed `display: none` ✅
+  - `admin-topbar-narrow-wrap` computed `display: flex` ✅
+  - `admin-topbar-mobile-trigger` computed `display: flex` ✅
+  - Screenshot at `/tmp/k76_1_narrow_after.png` — hamburger "Menu"
+    trigger visible on left, right cluster (+Add Customer / 3228c /
+    sprocket / Sign out) on right, K74 navy bar preserved.
+- **Live preview** at `super@aquaterra.com`, viewport `1280 × 800`:
+  - Previous K76 behaviour unchanged — 6 category dropdowns inline.
+
