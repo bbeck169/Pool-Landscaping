@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { HorizontalBarChart } from "./HorizontalBarChart";
 import { downloadCsv } from "./downloadCsv";
 import { formatCurrency } from "./formatters";
+import { DeltaCell } from "./DeltaCell";
 
 const PAGE_SIZE = 25;
 const TOP_N_DEFAULT = 20;
@@ -60,6 +61,17 @@ export function RevenueByCustomerPanel({ filters, params, setParams }) {
   React.useEffect(() => { fetchRows(); }, [fetchRows]);
 
   const rows = data?.rows || [];
+  // R0.1+ · Feb-2026 — Prior-period columns are driven purely by
+  // what the API returns. When ``include_prior=false`` (or the
+  // caller is a legacy consumer that shipped before R0.1+), the
+  // response omits the prior fields and the table falls back to
+  // the pre-delta three-column layout.
+  const priorEnabled = !!data?.filters_applied?.include_prior;
+  const priorWindowStart = data?.prior_period?.start || "";
+  const priorWindowEnd = data?.prior_period?.end || "";
+  const priorTooltip = priorEnabled
+    ? `Prior window: ${priorWindowStart} → ${priorWindowEnd}`
+    : "";
   const chartRows = rows.slice(0, TOP_N_DEFAULT).map((r) => ({
     label: r.customer_name || "(unnamed)",
     value: r.revenue,
@@ -79,10 +91,34 @@ export function RevenueByCustomerPanel({ filters, params, setParams }) {
   };
 
   const exportCsv = () => {
+    // R0.1+ · Feb-2026 — CSV mirrors the on-screen table so the
+    // downloaded file shows Prior Revenue + Δ alongside current.
+    // When ``include_prior=false`` the response omits those keys
+    // and the CSV falls back to the pre-R0.1+ column set.
+    const priorEnabled = !!data?.filters_applied?.include_prior;
+    const priorWindow = data?.prior_period
+      ? `${data.prior_period.start} → ${data.prior_period.end}`
+      : "";
+    const headers = priorEnabled
+      ? ["Customer", "Customer ID", "Revenue (USD)",
+          `Prior Revenue (USD) [${priorWindow}]`,
+          "Delta (USD)", "Delta (%)",
+          "Invoices in period"]
+      : ["Customer", "Customer ID", "Revenue (USD)", "Invoices in period"];
+    const body = rows.map((r) => {
+      const base = [r.customer_name, r.customer_id, r.revenue.toFixed(2)];
+      if (priorEnabled) {
+        base.push(Number(r.prior_revenue || 0).toFixed(2));
+        base.push(Number(r.delta_abs || 0).toFixed(2));
+        base.push(r.delta_pct == null ? "" : Number(r.delta_pct).toFixed(2));
+      }
+      base.push(r.invoice_count);
+      return base;
+    });
     downloadCsv(
       `revenue-by-customer-${filters.period || "mtd"}-${filters.lens || "invoiced"}.csv`,
-      ["Customer", "Customer ID", "Revenue (USD)", "Invoices in period"],
-      rows.map((r) => [r.customer_name, r.customer_id, r.revenue.toFixed(2), r.invoice_count]),
+      headers,
+      body,
     );
   };
 
@@ -148,15 +184,31 @@ export function RevenueByCustomerPanel({ filters, params, setParams }) {
               <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>
                 Revenue
               </th>
+              {priorEnabled ? (
+                <>
+                  <th
+                    className="text-right px-3 py-2 font-semibold cursor-help"
+                    style={{ color: colors.onSurfaceSecondary }}
+                    title={priorTooltip}
+                    data-testid="revenue-by-customer-prior-header"
+                  >
+                    Prior Revenue
+                  </th>
+                  <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}
+                        data-testid="revenue-by-customer-delta-header">
+                    Δ vs Prior
+                  </th>
+                </>
+              ) : null}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={3} className="px-3 py-6 text-center text-xs" style={{ color: colors.onSurfaceSecondary }}>Loading…</td></tr>
+              <tr><td colSpan={priorEnabled ? 5 : 3} className="px-3 py-6 text-center text-xs" style={{ color: colors.onSurfaceSecondary }}>Loading…</td></tr>
             ) : error ? (
-              <tr><td colSpan={3} className="px-3 py-6 text-center text-xs" style={{ color: colors.error }}>{error}</td></tr>
+              <tr><td colSpan={priorEnabled ? 5 : 3} className="px-3 py-6 text-center text-xs" style={{ color: colors.error }}>{error}</td></tr>
             ) : pageRows.length === 0 ? (
-              <tr><td colSpan={3} className="px-3 py-6 text-center text-xs" style={{ color: colors.onSurfaceSecondary }}
+              <tr><td colSpan={priorEnabled ? 5 : 3} className="px-3 py-6 text-center text-xs" style={{ color: colors.onSurfaceSecondary }}
                        data-testid="revenue-by-customer-empty">
                 No matching customers for the current filter set
               </td></tr>
@@ -177,6 +229,23 @@ export function RevenueByCustomerPanel({ filters, params, setParams }) {
                 <td className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurface }}>
                   {formatCurrency(r.revenue)}
                 </td>
+                {priorEnabled ? (
+                  <>
+                    <td className="text-right px-3 py-2" style={{ color: colors.onSurfaceSecondary }}
+                        data-testid={`revenue-by-customer-prior-${r.customer_id}`}>
+                      {formatCurrency(r.prior_revenue || 0)}
+                    </td>
+                    <td className="text-right px-3 py-2"
+                        data-testid={`revenue-by-customer-delta-${r.customer_id}`}>
+                      <DeltaCell
+                        deltaAbs={r.delta_abs}
+                        deltaPct={r.delta_pct}
+                        priorRevenue={r.prior_revenue}
+                        testid={`revenue-by-customer-delta-cell-${r.customer_id}`}
+                      />
+                    </td>
+                  </>
+                ) : null}
               </tr>
             ))}
           </tbody>

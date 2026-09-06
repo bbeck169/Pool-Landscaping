@@ -1,3 +1,79 @@
+## Phase R0.1+ · Prior-Period Delta on Revenue by Customer — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Backend + Web (mobile untouched). Standing order
+honored (bbeck169/Pool-Landscaping.git ignored). Preview-only —
+user must redeploy to push to https://app.plofv.com.
+
+**Backend**
+- `services/reporting/metrics/revenue_by_customer.py` rewritten
+  to run a second `$group` pipeline on `p.prior_start →
+  p.prior_end` (narrowed to the customer set returned by the
+  current window so the prior pipeline never over-scans). Each
+  row is enriched with `prior_revenue`, `delta_abs`,
+  `delta_pct` (`None` when prior is 0 → "New" case).
+- `routers/reports_kpi.py` — new `include_prior: bool = True`
+  query param (forced to False for non-customer grouped
+  metrics). Response envelope gains a top-level `prior_period:
+  {start, end}` block regardless of the flag so the FE can label
+  the comparison window either way. Cache-key bumped
+  (`prior=1_r01plus_v2` vs `prior=0`) so pre-R0.1+ cache entries
+  never collide with the new shape.
+- Revenue by City deliberately UNCHANGED.
+
+**Web**
+- New `components/reports/DeltaCell.jsx` renders the tone-coloured
+  Δ chip. Tone rules (asserted in Vitest, no CSS inspection
+  required): New pill when prior=0 + current≠0, up when
+  delta>0, down when delta<0, neutral em-dash when null/zero.
+- `RevenueByCustomerPanel.jsx` — conditionally renders two new
+  columns (Prior Revenue with tooltip on the header showing the
+  prior-window range from the API, Δ vs Prior via
+  `<DeltaCell>`). CSV export mirrors the table with a prior-
+  window range embedded in the Prior Revenue header.
+- Bar chart stays single-series (visual complexity minimized).
+- Show All + Top 20 default preserved; pagination unaffected.
+
+**Null-prior UI decision** — "New" pill (over `—`). A customer
+that had zero revenue in the prior window and non-zero in the
+current window is a *new* revenue source for the tenant this
+period — genuinely useful growth-radar signal.
+
+**Tests**
+- Backend: 10 new tests in `test_r01_plus_prior_period_delta.py`
+  (envelope, per-row math, back-compat, cache-key bump,
+  mtd/qtd/ytd/last_30d prior length parity, custom-range math,
+  city-metric non-regression). All 37 pre-existing R0.1 + R0
+  backend tests still green.
+- Frontend: 12 new Vitest tests across two files
+  (`reports-delta-cell.test.jsx` 6, `reports-revenue-by-customer-prior.test.jsx`
+  6). All 11 pre-existing R0.1 frontend tests still green.
+
+**Files changed** — 2 backend files (metric rewrite + router),
+1 backend test file (new), 1 frontend component (new
+`DeltaCell.jsx`), 1 frontend panel edit
+(`RevenueByCustomerPanel.jsx`), 2 frontend test files (new), 1
+new memory doc.
+
+**Screenshot verified** — Aquaterra tenant, MTD/invoiced: 7 rows
+all render "New" chips (prior window empty), Prior Revenue
+tooltip reads "Prior window: 2026-08-26 → 2026-09-01".
+
+**Held**
+- Revenue by City prior-period column (deferred by design).
+- Chart second series (deferred by design).
+- K30.1, APP_ENV production preview flag, K62 density selector,
+  K30 keyboard shortcut.
+
+**Next action items**
+- K63 widget-forms notifications — awaiting full K63 brief from
+  user.
+- R1 Financial suite proper (P&L, cash flow, A/R aging).
+- Redeploy to push R0.1+ backend + FE to production
+  (https://app.plofv.com).
+
+---
+
+
 ## Phase K30.copy-admin-link · Super-admin clipboard copy of reset URL — SHIPPED (Feb 2026)
 
 **Scope:** Backend + Web (mobile untouched). Standing order

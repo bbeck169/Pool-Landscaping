@@ -81,6 +81,10 @@ async def kpi(
     tech_id: Optional[str] = Query(None),
     limit: Optional[int] = Query(None, ge=1, le=1000),
     offset: Optional[int] = Query(0, ge=0),
+    # R0.1+ · Prior-period enrichment. Default TRUE so the UI gets
+    # the delta columns without opt-in; legacy callers can pass
+    # ``include_prior=false`` for the pre-R0.1+ response shape.
+    include_prior: Optional[bool] = Query(True),
     user: dict = Depends(require_report_reader),
     tenant: dict = Depends(get_current_tenant),
 ):
@@ -93,19 +97,31 @@ async def kpi(
         # a lens flip / filter change misses the cache correctly.
         if lens not in ("invoiced", "collected"):
             raise HTTPException(400, "lens must be 'invoiced' or 'collected'")
+        # R0.1+ · ``revenue_by_customer`` opts into the delta
+        # enrichment by default; every other grouped metric
+        # (currently ``revenue_by_city``) stays scalar-only to keep
+        # this phase surgical.
+        _prior_enabled = bool(include_prior) and metric.key == "revenue_by_customer"
         filters = {
             "lens": lens,
             "service_type": (service_type or "").strip() or None,
             "tech_id": (tech_id or "").strip() or None,
             "limit": limit,
             "offset": offset or 0,
+            "include_prior": _prior_enabled,
         }
+        # R0.1+ · Cache-key version bump. The response envelope
+        # gained a ``prior_period`` block + per-row prior fields, so
+        # any pre-existing cached entry would return the wrong
+        # shape. Tag the key with ``r01plus_v2`` when prior is on
+        # so pre-delta hits never collide.
         cache_key = report_cache.make_key(
             tenant_id, "kpi", metric.key, p.key, p.start, p.end,
             filters["lens"], filters.get("service_type") or "-",
             filters.get("tech_id") or "-",
             str(filters.get("limit") or "-"),
             str(filters.get("offset") or 0),
+            "prior=1_r01plus_v2" if _prior_enabled else "prior=0",
         )
         hit = report_cache.get(cache_key)
         if hit is not None:
@@ -126,12 +142,22 @@ async def kpi(
             "description": metric.description,
             "is_grouped": True,
             "period": p.as_dict(),
+            # R0.1+ · Explicit ``prior_period`` block so the FE can
+            # show a tooltip on the "Prior Revenue" header without
+            # duplicating shift logic. Present regardless of the
+            # ``include_prior`` flag so a caller can still label
+            # the comparison window if they later opt in.
+            "prior_period": {
+                "start": p.prior_start,
+                "end": p.prior_end,
+            },
             "lens": filters["lens"],
             "filters_applied": {
                 "service_type": filters.get("service_type"),
                 "tech_id": filters.get("tech_id"),
                 "limit": filters.get("limit"),
                 "offset": filters.get("offset") or 0,
+                "include_prior": filters.get("include_prior") or False,
             },
             "total": float(grouped.get("total") or 0.0),
             "row_count": int(grouped.get("row_count") or len(grouped.get("rows") or [])),
