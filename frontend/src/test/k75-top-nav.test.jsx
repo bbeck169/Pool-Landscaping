@@ -1,23 +1,30 @@
 /**
- * Phase K75 · Feb-2026 — Web Nav Revert · Step A contract tests.
+ * Phase K76 · Feb-2026 — Web nav category-restore contract tests.
  *
  * Locks:
- *   1. ``nav/topNavRegistry.js`` exports the 7-item admin fixed
- *      set in the exact spec order (Dashboard, Schedule, Customers,
- *      Estimates, Invoices, Reports, Settings) with the K75 icons.
- *   2. Technicians get the 6-item tech-flavored set (Schedule, D2D,
- *      Time Clock, Tools, Training, Profile).
- *   3. Customer / customer_portal receive an empty list — that role
- *      mounts its own <UniversalMenu> in <AppLayout>.
- *   4. ``AdminTopBar`` DOM contract: three testid branches remain
- *      (tech-wrap, narrow-wrap, wide-wrap) and each carries the
- *      right-cluster order Sign Out → <UniversalMenu inline>.
- *   5. Source-lint: the retired 6-inline-category-dropdowns layout
- *      is GONE — the top bar no longer emits the K64-era
- *      ``admin-topbar-{group.key}`` testid pattern for six triggers.
- *   6. Every K75 chip resolves through the K64 canonical
- *      ``colors.nav.bgActiveNavy`` for active + hover (no
- *      brandGradient re-introduction on the top nav surfaces).
+ *   1. ``nav/topNavRegistry.js`` still exports the 6-item
+ *      ``TECH_TOP_NAV`` in the K75 order (Schedule, D2D, Time
+ *      Clock, Tools, Training, Profile). ``ADMIN_TOP_NAV`` is
+ *      GONE — admin/manager/super_admin render category dropdowns
+ *      via ``useVisibleGroups()`` instead of a fixed strip.
+ *   2. ``topNavForRole`` returns [] for admin/manager/super_admin
+ *      (they use the category dropdowns) and the tech set for
+ *      technicians.
+ *   3. Customer / customer_portal receive an empty list — that
+ *      role mounts its own <UniversalMenu> in <AppLayout>.
+ *   4. ``AdminTopBar`` DOM contract: three testid branches
+ *      preserved (tech-wrap, narrow-wrap, wide-wrap) and each
+ *      carries the right-cluster order Sign Out →
+ *      <UniversalMenu inline>.
+ *   5. Admin surface renders one ``admin-topbar-{group.key}``
+ *      trigger per visible ``ADMIN_NAV_V2`` category (the
+ *      pre-K75 pattern) — NOT the K75 7-fixed-items strip and
+ *      NOT a "More" dropdown.
+ *   6. K64 canonical preserved — ``colors.nav.bgActiveNavy`` on
+ *      both active + hover for chip states AND category
+ *      triggers. NO ``brandGradient`` on top-nav surfaces.
+ *   7. K52 canonical navy popover marker preserved on category
+ *      panels (grep-lock: ``data-k52-navy-popover``).
  */
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
@@ -53,20 +60,35 @@ vi.mock("@/hooks/usePermissions", () => ({
 vi.mock("@/components/NotificationBell", () => ({ default: () => null }));
 vi.mock("@/components/AIDock/CreditsBudgetChip", () => ({ default: () => null }));
 vi.mock("@/layouts/UniversalMenu", () => ({ default: () => <span data-testid="umenu-stub" /> }));
-// Give the ADMIN_NAV_V2 mock a single 1-entry group so ``visible.length``
-// is > 0 and the "More" trigger renders.
+// Give the ADMIN_NAV_V2 mock three groups so category dropdowns
+// render for the admin surface. Every entry passes RBAC because
+// ``usePermissions.can`` is mocked to always return true.
 vi.mock("@/nav/adminNav", () => ({
-  ADMIN_NAV_V2: [{
-    key: "ops",
-    label: "Ops",
-    icon: () => null,
-    entries: [{ to: "/dashboard", feature: "dashboard", label: "Dashboard" }],
-  }],
+  ADMIN_NAV_V2: [
+    {
+      key: "finance",
+      label: "Finance",
+      icon: () => null,
+      entries: [{ to: "/invoices", feature: "invoices", label: "Invoices" }],
+    },
+    {
+      key: "operations",
+      label: "Operations",
+      icon: () => null,
+      entries: [{ to: "/schedule", feature: "jobs", label: "Schedule" }],
+    },
+    {
+      key: "reports",
+      label: "Reports",
+      icon: () => null,
+      entries: [{ to: "/reports", feature: "reports", label: "Reports Hub" }],
+    },
+  ],
 }));
 
 
 import AdminTopBar from "@/layouts/AdminTopBar";
-import { ADMIN_TOP_NAV, TECH_TOP_NAV, topNavForRole, showMoreDropdownForRole } from "@/nav/topNavRegistry";
+import { TECH_TOP_NAV, topNavForRole } from "@/nav/topNavRegistry";
 
 
 const TOPBAR_SRC = fs.readFileSync(
@@ -79,39 +101,21 @@ const REGISTRY_SRC = fs.readFileSync(
 );
 
 
-describe("K75 · topNavRegistry — role-scoped fixed item sets", () => {
-  it("ADMIN_TOP_NAV declares the 7 spec items in exact order", () => {
-    expect(ADMIN_TOP_NAV.map((i) => i.key)).toEqual([
-      "dashboard", "schedule", "customers",
-      "estimates", "invoices", "reports", "settings",
-    ]);
-  });
-
-  it("ADMIN_TOP_NAV routes point at the K75-spec targets", () => {
-    const byKey = Object.fromEntries(ADMIN_TOP_NAV.map((i) => [i.key, i.to]));
-    expect(byKey.dashboard).toBe("/");
-    expect(byKey.schedule).toBe("/schedule");
-    expect(byKey.customers).toBe("/customers");
-    expect(byKey.estimates).toBe("/estimates");
-    expect(byKey.invoices).toBe("/invoices");
-    expect(byKey.reports).toBe("/reports");
-    expect(byKey.settings).toBe("/settings");
-  });
-
+describe("K76 · topNavRegistry — role-scoped fixed item sets", () => {
   it("TECH_TOP_NAV declares the 6 tech-flavored items in order", () => {
     expect(TECH_TOP_NAV.map((i) => i.key)).toEqual([
       "schedule", "d2d", "time-clock", "tools", "training", "profile",
     ]);
   });
 
-  it("topNavForRole gates admin / super_admin / manager to the 7-item set", () => {
-    for (const r of ["admin", "super_admin", "manager"]) {
-      expect(topNavForRole(r)).toBe(ADMIN_TOP_NAV);
-    }
-  });
-
   it("topNavForRole returns the tech set for technicians", () => {
     expect(topNavForRole("technician")).toBe(TECH_TOP_NAV);
+  });
+
+  it("topNavForRole returns [] for admin / super_admin / manager (they use category dropdowns)", () => {
+    for (const r of ["admin", "super_admin", "manager"]) {
+      expect(topNavForRole(r)).toEqual([]);
+    }
   });
 
   it("topNavForRole returns [] for customer / customer_portal / unknown", () => {
@@ -120,23 +124,17 @@ describe("K75 · topNavRegistry — role-scoped fixed item sets", () => {
     }
   });
 
-  it("showMoreDropdownForRole gates the 'More' trigger to admin+/manager", () => {
-    expect(showMoreDropdownForRole("admin")).toBe(true);
-    expect(showMoreDropdownForRole("super_admin")).toBe(true);
-    expect(showMoreDropdownForRole("manager")).toBe(true);
-    expect(showMoreDropdownForRole("technician")).toBe(false);
-    expect(showMoreDropdownForRole("customer")).toBe(false);
-  });
-
-  it("registry source references the K75 icon set on the admin item list", () => {
-    // Source-lint: catches an accidental icon swap that would drift
-    // the top nav away from the K75 spec.
-    for (const iconName of [
-      "LayoutDashboard", "CalendarDays", "Users",
-      "FileText", "Receipt", "BarChart3", "SettingsIcon",
-    ]) {
-      expect(REGISTRY_SRC).toContain(iconName);
-    }
+  it("registry export shape — ADMIN_TOP_NAV retained ONLY for K75 Step B pin picker; showMoreDropdownForRole is GONE", () => {
+    // K76 walked back the fixed strip for the top nav, but the
+    // pin picker (K75 Step B) still surfaces the 7 shortcuts as
+    // a "Primary" bundle. Keep the export but the K75 "More"
+    // gate must be gone.
+    expect(REGISTRY_SRC).toMatch(/export\s+const\s+ADMIN_TOP_NAV\s*=/);
+    expect(REGISTRY_SRC).not.toMatch(/\bshowMoreDropdownForRole\b/);
+    // Comment guardrail — the export must be documented as
+    // legacy-for-pin-picker only, so a future contributor can't
+    // wire it back into a top-nav fixed strip by accident.
+    expect(REGISTRY_SRC).toMatch(/pin\s+picker/i);
   });
 });
 
@@ -151,28 +149,38 @@ function mount(role, initial = "/") {
 }
 
 
-describe("K75 · AdminTopBar · admin surface", () => {
-  it("renders the 7 fixed items with the K75 testid pattern", () => {
+describe("K76 · AdminTopBar · admin surface (category dropdowns)", () => {
+  it("renders one category dropdown trigger per visible ADMIN_NAV_V2 group", () => {
+    mount("admin");
+    for (const key of ["finance", "operations", "reports"]) {
+      expect(screen.getByTestId(`admin-topbar-${key}`)).toBeTruthy();
+    }
+  });
+
+  it("does NOT render the K75 7-fixed-items strip on the admin surface", () => {
     mount("admin");
     for (const key of [
       "dashboard", "schedule", "customers",
       "estimates", "invoices", "reports", "settings",
     ]) {
-      expect(screen.getByTestId(`top-nav-${key}`)).toBeTruthy();
+      // K75 ``top-nav-{key}`` chips are retired for admin.
+      // (``schedule`` / ``reports`` etc. still exist as ``admin-topbar-{group.key}``
+      // category triggers — different testid pattern.)
+      expect(screen.queryByTestId(`top-nav-${key}`)).toBeNull();
     }
   });
 
-  it("renders the 'More' dropdown trigger when categories are visible", () => {
+  it("does NOT render the K75 'More' dropdown trigger", () => {
     mount("admin");
-    expect(screen.getByTestId("top-nav-more-trigger")).toBeTruthy();
+    expect(screen.queryByTestId("top-nav-more-trigger")).toBeNull();
   });
 
   it("mounts inside admin-topbar-wide-wrap on default (>=768px) viewports", () => {
     mount("admin");
     const wrap = screen.getByTestId("admin-topbar-wide-wrap");
     expect(wrap).toBeTruthy();
-    // Every fixed chip is a descendant of the wide-wrap.
-    expect(wrap.querySelector('[data-testid="top-nav-dashboard"]')).toBeTruthy();
+    // Every category trigger is a descendant of the wide-wrap.
+    expect(wrap.querySelector('[data-testid="admin-topbar-finance"]')).toBeTruthy();
   });
 
   it("right cluster preserves order — SignOut LEFT of UniversalMenu", () => {
@@ -192,7 +200,7 @@ describe("K75 · AdminTopBar · admin surface", () => {
 });
 
 
-describe("K75 · AdminTopBar · technician surface", () => {
+describe("K76 · AdminTopBar · technician surface (fixed strip)", () => {
   it("renders the 6 tech-flavored items with the K75 testid pattern", () => {
     mount("technician");
     for (const key of [
@@ -203,14 +211,14 @@ describe("K75 · AdminTopBar · technician surface", () => {
     }
   });
 
-  it("technicians do NOT see the admin-only fixed items", () => {
+  it("technicians do NOT see any admin category dropdown triggers", () => {
     mount("technician");
-    for (const key of ["dashboard", "customers", "estimates", "invoices", "reports", "settings"]) {
-      expect(screen.queryByTestId(`top-nav-${key}`)).toBeNull();
+    for (const key of ["finance", "operations", "reports"]) {
+      expect(screen.queryByTestId(`admin-topbar-${key}`)).toBeNull();
     }
   });
 
-  it("technicians do NOT see the 'More' dropdown trigger", () => {
+  it("technicians do NOT see the retired 'More' dropdown trigger", () => {
     mount("technician");
     expect(screen.queryByTestId("top-nav-more-trigger")).toBeNull();
   });
@@ -228,7 +236,7 @@ describe("K75 · AdminTopBar · technician surface", () => {
 });
 
 
-describe("K75 · AdminTopBar · DOM shell contract", () => {
+describe("K76 · AdminTopBar · DOM shell contract", () => {
   it("root container carries data-testid=admin-topbar + colors.nav.bg", () => {
     // Source-lint: sticky navy bar contract preserved.
     expect(TOPBAR_SRC).toMatch(/data-testid="admin-topbar"/);
@@ -274,27 +282,40 @@ describe("K75 · AdminTopBar · DOM shell contract", () => {
 });
 
 
-describe("K75 · retired legacy dropdowns — grep-lock", () => {
-  it("the pre-K75 six inline CategoryDropdown testids are RETIRED", () => {
-    // The pre-K75 top bar rendered one testid per ADMIN_NAV_V2
-    // category (``admin-topbar-{group.key}``). K75 folds them into
-    // a single "More" dropdown so the retired pattern must be gone.
-    expect(TOPBAR_SRC).not.toMatch(/data-testid=\{`admin-topbar-\$\{group\.key\}`\}/);
-    expect(TOPBAR_SRC).not.toMatch(/data-testid=\{`admin-topbar-\$\{group\.key\}-menu`\}/);
-    // The QuickAccessRow strip (Phase 55) was retired for admin
-    // long before K75 — grep-lock the negative.
-    expect(TOPBAR_SRC).not.toMatch(/data-testid="admin-topbar-quick-access"/);
-    // The K75 "More" trigger is what replaces the six inline
-    // triggers — assert its presence in the source.
-    expect(TOPBAR_SRC).toContain('data-testid="top-nav-more-trigger"');
+describe("K76 · category dropdowns — restoration grep-lock", () => {
+  it("renders the ``admin-topbar-${group.key}`` trigger pattern (pre-K75)", () => {
+    // K76 restores the pre-K75 category-trigger testid shape.
+    expect(TOPBAR_SRC).toMatch(/data-testid=\{\s*`admin-topbar-\$\{group\.key\}`\s*\}/);
+    expect(TOPBAR_SRC).toMatch(/data-testid=\{\s*`admin-topbar-\$\{group\.key\}-menu`\s*\}/);
   });
 
-  it("K64 active/hover canonical preserved — colors.nav.bgActiveNavy on chip states", () => {
-    // The top-nav chips read the K64 canonical for both active +
-    // hover states. brandGradient is NOT reintroduced.
+  it("the K75 'More' dropdown trigger is GONE from the source", () => {
+    expect(TOPBAR_SRC).not.toContain('data-testid="top-nav-more-trigger"');
+    expect(TOPBAR_SRC).not.toMatch(/\bMoreDropdown\b/);
+  });
+
+  it("the K75 7-fixed-items ADMIN_TOP_NAV wiring is GONE from the top bar source", () => {
+    // The K76 top bar renders ``CategoryDropdown`` per visible
+    // group instead of iterating over ``fixedItems`` for admin.
+    // ``fixedItems.map(...TopNavChip)`` still exists — but only
+    // for the technician branch; admin never reaches it.
+    expect(TOPBAR_SRC).not.toMatch(/\bADMIN_TOP_NAV\b/);
+    expect(TOPBAR_SRC).not.toMatch(/\bshowMoreDropdownForRole\b/);
+  });
+
+  it("K52 canonical navy popover marker preserved on category panels", () => {
+    // Grep-lock: the pre-K75 popover-styling contract still
+    // annotates the K76 category-dropdown content nodes.
+    expect(TOPBAR_SRC).toContain('data-k52-navy-popover="true"');
+  });
+
+  it("K64 active/hover canonical preserved — colors.nav.bgActiveNavy on chip AND category states", () => {
+    // The top-nav chips + category triggers read the K64 canonical
+    // for both active + hover states. brandGradient is NOT
+    // reintroduced on top-nav surfaces.
     expect(TOPBAR_SRC).toMatch(/colors\.nav\.bgActiveNavy/);
     // The only ``gradients.navyToGreen.css`` remaining is on the
-    // AddCustomerButton (out of K75 scope — its green→navy CTA
+    // AddCustomerButton (out of K76 scope — its green→navy CTA
     // predates K64 and is untouched).
     const addBtnIdx = TOPBAR_SRC.indexOf("topbar-add-customer-btn");
     const gradientIdx = TOPBAR_SRC.indexOf("gradients.navyToGreen.css");

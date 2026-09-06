@@ -1,15 +1,24 @@
 /**
- * Phase K75 · Feb-2026 — Web top navigation bar.
+ * Phase K76 · Feb-2026 — Web top navigation bar.
  *
- * Reshelled from the Phase 44 category-dropdowns-row layout. The
- * top bar now renders a role-appropriate FIXED item set (see
- * ``nav/topNavRegistry.js``) plus, for admin / super_admin /
- * manager, a single "More" dropdown that houses the six
- * ``ADMIN_NAV_V2`` categories so deep pages remain reachable in
- * ≤ 2 clicks.
+ * Walks back the K75 7-fixed-items + "More" dropdown shape. The
+ * top bar now renders the ``ADMIN_NAV_V2`` category dropdowns
+ * directly (Finance / AI Employees / Marketing / Operations /
+ * Customers / Reports / Communications / Reviews) for admin /
+ * super_admin / manager — matching the pre-K75 AdminTopBar
+ * layout. The left Quick Access rail (K75 Step B) already covers
+ * the seven high-frequency shortcuts that K75's fixed strip
+ * duplicated, so a separate fixed strip is redundant.
  *
- * Shell contract preserved (locked by ``header-cleanup-bell-cluster``
- * and friends):
+ * Role scoping:
+ *   • admin / super_admin / manager  → ``CategoryDropdown`` per
+ *     visible group. No fixed items, no "More" dropdown.
+ *   • technician                     → 6 fixed chips from
+ *     ``TECH_TOP_NAV``.
+ *   • customer / customer_portal     → right-cluster only (mounts
+ *     its own ``<UniversalMenu>`` via ``<AppLayout>``).
+ *
+ * Shell contract preserved (locked by ``k75-top-nav`` + friends):
  *   • Three DOM branches — ``admin-topbar-tech-wrap`` (no fixed
  *     items → customer / no-role only), ``admin-topbar-narrow-wrap``
  *     (<768px viewport), ``admin-topbar-wide-wrap`` (default).
@@ -17,9 +26,11 @@
  *     AddCustomerButton · CreditsBudgetChip · SettingsSprocket ·
  *     SignOutButton · UniversalMenu (variant='inline'). Sign-out
  *     sits to the LEFT of the bell + hamburger cluster.
- *   • Root bar carries ``colors.nav.bg`` (K50 navy chrome).
- *   • Active + hover state on every top-nav chip renders
- *     ``colors.nav.bgActiveNavy`` (K64 canonical). No brandGradient.
+ *   • Root bar carries ``colors.nav.bg`` (K50 navy chrome, K74
+ *     solid ``#1B1F5C``).
+ *   • Active + hover state on every top-nav chip / category
+ *     trigger renders ``colors.nav.bgActiveNavy`` (K64 canonical).
+ *     No ``brandGradient`` on top nav surfaces.
  *   • No BrandLogo — the side-rail crown in ``AppLayout`` is the
  *     single source of truth for the desktop brand mark.
  */
@@ -27,7 +38,7 @@ import React, { useMemo } from "react";
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, MenuIcon, LogOut, Plus as PlusIcon } from "lucide-react";
 import { ADMIN_NAV_V2 } from "@/nav/adminNav";
-import { topNavForRole, showMoreDropdownForRole } from "@/nav/topNavRegistry";
+import { topNavForRole } from "@/nav/topNavRegistry";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAuth } from "@/auth";
 import { colors, gradients } from "@/theme";
@@ -49,10 +60,10 @@ import {
 
 
 /**
- * K75 · Feb-2026 — same ``ADMIN_NAV_V2`` filter that used to drive
- * the six inline dropdowns. Retained verbatim (RBAC / feature-flag /
- * hard-rule semantics) because the "More" dropdown still surfaces
- * these categories.
+ * K76 · Feb-2026 — same ``ADMIN_NAV_V2`` filter used by the pre-K75
+ * top bar (retained byte-for-byte from K75 for RBAC / feature-flag /
+ * hard-rule parity). Returns [] for non-admin roles so the tech +
+ * customer branches short-circuit.
  */
 function useVisibleGroups() {
   const { can, effectiveRole } = usePermissions();
@@ -90,10 +101,9 @@ function useVisibleGroups() {
 
 
 /**
- * K75 · fixed top-nav chip. Renders a NavLink with the K64 active +
- * hover treatment (both = ``colors.nav.bgActiveNavy``) so the top
- * bar's visual language matches the left rail and the sub-nav
- * pills sitewide.
+ * K76 · fixed top-nav chip. Renders a NavLink with the K64 active +
+ * hover treatment (both = ``colors.nav.bgActiveNavy``). Used for
+ * the technician's 6-item fixed strip.
  */
 function TopNavChip({ item }) {
   const { key, to, label, Icon, end } = item;
@@ -132,63 +142,64 @@ function TopNavChip({ item }) {
 
 
 /**
- * K75 · "More" dropdown — houses the six ``ADMIN_NAV_V2`` categories
- * under a single trigger so the top nav's 7 fixed items don't
- * amputate reach to the ~130 deep admin pages. Panel matches the
- * K52 Slice B navy popover styling (see ``CategoryDropdown`` in
- * pre-K75 history — this is the same treatment, wider panel).
+ * K76 · category dropdown trigger. One per ``ADMIN_NAV_V2`` group.
+ * Renders the group label with a chevron; opening the trigger
+ * surfaces a K52-canonical navy popover (the ``data-k52-navy-popover``
+ * marker is preserved for the popover-styling grep-lock).
+ *
+ * Hover / open state = solid ``colors.nav.bgActiveNavy`` (K64
+ * canonical). NO ``brandGradient`` and NO green-tinted pill.
  */
-function MoreDropdown({ visible }) {
+function CategoryDropdown({ group }) {
+  const CatIcon = group.icon;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="group inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold whitespace-nowrap transition-all duration-200 ease-out will-change-transform hover:scale-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:scale-[1.02]"
-        style={{ color: colors.nav.fg, background: "transparent" }}
+        className="group inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold whitespace-nowrap transition-all duration-200 ease-out will-change-transform hover:scale-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:scale-[1.02] data-[state=open]:!bg-[color:var(--nav-bg-active-navy)]"
+        style={{
+          color: colors.nav.fg,
+          background: "transparent",
+          // Expose the K64 canonical as a CSS var so the
+          // ``data-[state=open]`` selector can lock it in without a
+          // JS handler racing the Radix state.
+          "--nav-bg-active-navy": colors.nav.bgActiveNavy,
+        }}
         onMouseEnter={(e) => { e.currentTarget.style.background = colors.nav.bgActiveNavy; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-        data-testid="top-nav-more-trigger"
+        onMouseLeave={(e) => {
+          if (e.currentTarget.getAttribute("data-state") !== "open") {
+            e.currentTarget.style.background = "transparent";
+          }
+        }}
+        data-testid={`admin-topbar-${group.key}`}
+        aria-label={group.label}
       >
-        <span>More</span>
+        {CatIcon ? <CatIcon size={16} className="opacity-90" /> : null}
+        <span>{group.label}</span>
         <ChevronDown size={14} className="opacity-70 transition-transform duration-200 group-hover:translate-y-[1px]" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="min-w-[320px] max-h-[70vh] overflow-y-auto p-1 border-0 shadow-xl [&_[role=menuitem]]:text-white [&_[role=menuitem]]:cursor-pointer [&_[role=menuitem]:focus]:bg-[#2A2F7A] [&_[role=menuitem]:focus]:text-white [&_[role=menuitem]:hover]:bg-[#2A2F7A] [&_[role=menuitem]:hover]:text-white [&_[data-radix-menu-label]]:text-white/72 [&_[role=separator]]:bg-white/10"
+        className="min-w-[280px] max-h-[70vh] overflow-y-auto p-1 border-0 shadow-xl [&_[role=menuitem]]:text-white [&_[role=menuitem]]:cursor-pointer [&_[role=menuitem]:focus]:bg-[#2A2F7A] [&_[role=menuitem]:focus]:text-white [&_[role=menuitem]:hover]:bg-[#2A2F7A] [&_[role=menuitem]:hover]:text-white [&_[data-radix-menu-label]]:text-white/72 [&_[role=separator]]:bg-white/10"
         style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg }}
-        data-testid="top-nav-more-menu"
+        data-testid={`admin-topbar-${group.key}-menu`}
         data-k52-navy-popover="true"
       >
-        {visible.map((g, i, arr) => {
-          const CatIcon = g.icon;
-          return (
-            <React.Fragment key={g.key}>
-              <DropdownMenuLabel
-                className="text-[11px] uppercase tracking-wider flex items-center gap-1.5"
-                style={{ color: colors.nav.fgMuted }}
-              >
-                {CatIcon ? <CatIcon size={12} className="opacity-80" /> : null}
-                {g.label}
-              </DropdownMenuLabel>
-              {g.noSub.map((e) => <EntryItem key={e.to} e={e} />)}
-              {g.noSub.length > 0 && Object.keys(g.bySub).length > 0 ? (
-                <DropdownMenuSeparator />
-              ) : null}
-              {Object.entries(g.bySub).map(([sub, entries], j, subArr) => (
-                <React.Fragment key={sub}>
-                  <DropdownMenuLabel
-                    className="text-[10px] uppercase tracking-wider pl-4"
-                    style={{ color: colors.nav.fgMuted }}
-                  >
-                    {sub}
-                  </DropdownMenuLabel>
-                  {entries.map((e) => <EntryItem key={e.to} e={e} />)}
-                  {j < subArr.length - 1 ? <DropdownMenuSeparator /> : null}
-                </React.Fragment>
-              ))}
-              {i < arr.length - 1 ? <DropdownMenuSeparator /> : null}
-            </React.Fragment>
-          );
-        })}
+        {group.noSub.map((e) => <EntryItem key={e.to} e={e} />)}
+        {group.noSub.length > 0 && Object.keys(group.bySub).length > 0 ? (
+          <DropdownMenuSeparator />
+        ) : null}
+        {Object.entries(group.bySub).map(([sub, entries], j, subArr) => (
+          <React.Fragment key={sub}>
+            <DropdownMenuLabel
+              className="text-[10px] uppercase tracking-wider pl-4"
+              style={{ color: colors.nav.fgMuted }}
+            >
+              {sub}
+            </DropdownMenuLabel>
+            {entries.map((e) => <EntryItem key={e.to} e={e} />)}
+            {j < subArr.length - 1 ? <DropdownMenuSeparator /> : null}
+          </React.Fragment>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -202,7 +213,7 @@ function EntryItem({ e }) {
   return (
     <DropdownMenuItem
       asChild
-      data-testid={`top-nav-more-link-${e.to.replace(/^\/+/, "").replace(/\//g, "-") || "root"}`}
+      data-testid={`top-nav-cat-link-${e.to.replace(/^\/+/, "").replace(/\//g, "-") || "root"}`}
       data-active={active ? "true" : "false"}
       style={active ? {
         backgroundColor: colors.nav.bgActive,
@@ -219,10 +230,15 @@ function EntryItem({ e }) {
 
 
 /**
- * Narrow-viewport "Menu" trigger — flattens the K75 fixed items +
- * the six ADMIN_NAV_V2 categories into a single dropdown so the
- * <768px shell reaches every page in one tap. Mirrors the pre-K75
- * mobile menu behaviour byte-for-byte.
+ * Narrow-viewport "Menu" trigger — flattens the admin category
+ * dropdowns OR the technician's fixed strip into a single
+ * dropdown so the <768px shell reaches every page in one tap.
+ *
+ * For admin/manager/super_admin: ``visible.length > 0`` and
+ * ``fixedItems.length === 0``, so this renders the categories only.
+ *
+ * For technician: ``visible.length === 0`` and
+ * ``fixedItems.length > 0``, so this renders the fixed strip only.
  */
 function MobileMenu({ visible, fixedItems }) {
   return (
@@ -262,7 +278,6 @@ function MobileMenu({ visible, fixedItems }) {
                 </DropdownMenuItem>
               );
             })}
-            {visible.length > 0 ? <DropdownMenuSeparator /> : null}
           </>
         ) : null}
         {visible.map((g) => {
@@ -273,7 +288,7 @@ function MobileMenu({ visible, fixedItems }) {
                 data-testid={`admin-topbar-mobile-${g.key}`}
                 className="flex items-center gap-2"
               >
-                <CatIcon size={14} className="opacity-80" />
+                {CatIcon ? <CatIcon size={14} className="opacity-80" /> : null}
                 <span>{g.label}</span>
               </DropdownMenuSubTrigger>
               <DropdownMenuPortal>
@@ -304,9 +319,10 @@ export default function AdminTopBar() {
   const { effectiveRole } = usePermissions();
   const _role = effectiveRole || _auth?.user?.role || "";
 
-  // K75 · Feb-2026 — fixed items sourced from the role registry.
+  // K76 · Feb-2026 — fixed items ONLY populate for the technician
+  // role now. Admin/manager/super_admin render category dropdowns
+  // via ``visible`` instead.
   const fixedItems = topNavForRole(_role);
-  const showMore = showMoreDropdownForRole(_role) && visible.length > 0;
 
   // Phase 44 · Fix A (attempt 3) — bulletproof responsive gate.
   const [vw, setVw] = React.useState(() =>
@@ -334,6 +350,11 @@ export default function AdminTopBar() {
 
   if (!_role) return null;
 
+  // Admin surface = category dropdowns; tech surface = fixed strip.
+  const hasAdminNav = visible.length > 0;
+  const hasTechNav = fixedItems.length > 0;
+  const hasAnyNav = hasAdminNav || hasTechNav;
+
   return (
     <div
       className="sticky top-0 z-30 w-full border-b backdrop-blur-[2px]"
@@ -345,8 +366,8 @@ export default function AdminTopBar() {
       data-vw={vw}
       data-narrow={isNarrow ? "1" : "0"}
     >
-      {fixedItems.length === 0 ? (
-        // No fixed items for this role (customer / customer_portal /
+      {!hasAnyNav ? (
+        // No nav for this role (customer / customer_portal /
         // unknown). Right-cluster only — the customer portal mounts
         // its own <UniversalMenu> via <AppLayout>, so this branch
         // rarely renders in production but is kept for defensive
@@ -378,8 +399,9 @@ export default function AdminTopBar() {
           className="flex items-center gap-1 px-4 h-11 overflow-x-auto"
           data-testid="admin-topbar-wide-wrap"
         >
-          {fixedItems.map((it) => <TopNavChip key={it.key} item={it} />)}
-          {showMore ? <MoreDropdown visible={visible} /> : null}
+          {hasAdminNav
+            ? visible.map((g) => <CategoryDropdown key={g.key} group={g} />)
+            : fixedItems.map((it) => <TopNavChip key={it.key} item={it} />)}
           <div className="ml-auto shrink-0 flex items-center gap-2">
             <AddCustomerButton />
             <CreditsBudgetChip />

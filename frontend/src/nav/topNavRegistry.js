@@ -1,67 +1,68 @@
 /**
- * Phase K75 · Feb-2026 — role-scoped top-nav registry.
+ * Phase K76 · Feb-2026 — role-scoped top-nav registry.
  *
- * The Feb-2026 sidebar-pivot moved the 7 primary IA links to a
- * horizontal top bar. K75 restores a role-appropriate FIXED item
- * set on the top nav so operators reach the highest-frequency
- * pages in one tap regardless of what they've pinned to the left
- * rail:
+ * K76 walks back the K75 fixed-strip for admin / super_admin /
+ * manager: the top nav renders the six ``ADMIN_NAV_V2`` category
+ * dropdowns directly (Finance / AI Employees / Marketing /
+ * Operations / Customers / Reports / Communications / Reviews) —
+ * matching the pre-K75 ``AdminTopBar`` layout. The left Quick
+ * Access rail (K75 Step B) already covers the seven high-frequency
+ * shortcuts (Dashboard / Schedule / Customers / Estimates /
+ * Invoices / Reports / Settings), so a separate fixed strip is
+ * redundant.
  *
- *   • admin / super_admin / manager  → 7 items (Dashboard,
- *     Schedule, Customers, Estimates, Invoices, Reports, Settings)
- *     PLUS a "More" dropdown that houses the six ``ADMIN_NAV_V2``
- *     categories (Directory / Financial / Marketing / AI Tools /
- *     D2D / Finance) so deep pages remain reachable.
- *   • technician                     → 6 items (Schedule, D2D,
- *     Time Clock, Tools, Training, Profile). No "More" dropdown.
- *   • customer / customer_portal     → EMPTY — the customer portal
- *     mounts its own <UniversalMenu> instead. Return `[]` so
- *     ``<AdminTopBar>`` short-circuits to the tech-wrap branch
- *     (right-cluster only).
+ * Role scoping:
+ *   • admin / super_admin / manager  → category dropdowns via
+ *     ``useVisibleGroups()`` in ``AdminTopBar`` (no fixed strip,
+ *     no "More" dropdown — every category is directly visible).
+ *   • technician                     → 6 fixed items (Schedule,
+ *     D2D, Time Clock, Tools, Training, Profile). ``TECH_TOP_NAV``
+ *     stays byte-for-byte from K75.
+ *   • customer / customer_portal     → EMPTY — the customer
+ *     portal mounts its own ``<UniversalMenu>`` instead.
  *
- * Consumers:
- *   - ``layouts/AdminTopBar.jsx``   — renders ``fixedItems`` inline.
- *   - ``test/k75-top-nav.test.jsx`` — grep-locks the registry shape.
- *
- * Design tokens: every rendered chip uses ``colors.nav.fg`` on the
- * K50 navy chrome, ``colors.nav.bgActiveNavy`` for both active and
- * hover (K64 canonical). NO brandGradient — see K64 spec.
+ * Design tokens: every rendered chip / category trigger uses
+ * ``colors.nav.fg`` on the K50 navy chrome and
+ * ``colors.nav.bgActiveNavy`` (K64 canonical) for BOTH active
+ * and hover states. NO ``brandGradient`` reintroduction on the
+ * top nav surfaces — see K76 spec.
  */
 import {
-  LayoutDashboard,
   CalendarDays,
-  Users,
-  FileText,
-  Receipt,
-  BarChart3,
-  Settings as SettingsIcon,
   DoorOpen,
   Clock,
   LayoutGrid,
   GraduationCap,
   UserCircle,
+  LayoutDashboard,
+  Users,
+  FileText,
+  Receipt,
+  BarChart3,
+  Settings as SettingsIcon,
 } from "lucide-react";
 
 
-// K75 · admin / super_admin / manager — 7 fixed items.
-// Route notes:
-//   - ``/`` is the admin dashboard (App.js: ``<Route index element={<AdminDashboard/>} />``).
-//   - ``/estimates`` exists as a real route that redirects to
-//     ``/quotes`` (label stays "Estimates" per K75 spec).
-//   - ``/settings`` is the consolidated Settings Hub — the same
-//     surface the sprocket button in the right cluster links to.
+/**
+ * K76 · legacy admin "Primary" bundle — retained ONLY for the
+ * K75 Step B ``pinRegistry.js`` which surfaces these 7 high-
+ * frequency shortcuts as the pin picker's top group. K76 walked
+ * back their rendering as a fixed top-nav strip, but the pin
+ * picker still uses them as an ordered "Primary" collection so
+ * users have a curated set to pin quickly.
+ */
 export const ADMIN_TOP_NAV = [
-  { key: "dashboard", to: "/",          label: "Dashboard", Icon: LayoutDashboard, end: true },
-  { key: "schedule",  to: "/schedule",  label: "Schedule",  Icon: CalendarDays },
-  { key: "customers", to: "/customers", label: "Customers", Icon: Users },
-  { key: "estimates", to: "/estimates", label: "Estimates", Icon: FileText },
-  { key: "invoices",  to: "/invoices",  label: "Invoices",  Icon: Receipt },
-  { key: "reports",   to: "/reports",   label: "Reports",   Icon: BarChart3 },
-  { key: "settings",  to: "/settings",  label: "Settings",  Icon: SettingsIcon },
+  { key: "dashboard", to: "/",          label: "Dashboard",  Icon: LayoutDashboard,  end: true },
+  { key: "schedule",  to: "/schedule",  label: "Schedule",   Icon: CalendarDays },
+  { key: "customers", to: "/customers", label: "Customers",  Icon: Users },
+  { key: "estimates", to: "/estimates", label: "Estimates",  Icon: FileText },
+  { key: "invoices",  to: "/invoices",  label: "Invoices",   Icon: Receipt },
+  { key: "reports",   to: "/reports",   label: "Reports",    Icon: BarChart3 },
+  { key: "settings",  to: "/settings",  label: "Settings",   Icon: SettingsIcon },
 ];
 
 
-// K75 · technician — 6 fixed items.
+// K76 · technician — 6 fixed items (unchanged from K75).
 // Route notes (mirrors the pre-K75 ``TECH_NAV`` in ``AppLayout.jsx``):
 //   - ``/schedule``          — tech home / today's route.
 //   - ``/d2d``               — door-to-door canvassing dashboard.
@@ -80,20 +81,16 @@ export const TECH_TOP_NAV = [
 ];
 
 
-/** Return the K75 fixed top-nav item list for the given role. */
+/**
+ * Return the K76 fixed top-nav item list for the given role.
+ *
+ * For admin / super_admin / manager this returns an empty array —
+ * the top bar renders the ``ADMIN_NAV_V2`` category dropdowns
+ * directly via ``useVisibleGroups()`` in ``AdminTopBar`` instead
+ * of a static fixed set. Kept as a function (not a constant) so
+ * consumers can branch on role without importing ``ADMIN_NAV_V2``.
+ */
 export function topNavForRole(role) {
-  if (["admin", "super_admin", "manager"].includes(role)) return ADMIN_TOP_NAV;
   if (role === "technician") return TECH_TOP_NAV;
   return [];
-}
-
-
-/**
- * Only admin / super_admin / manager see the "More" dropdown — it
- * exposes the six ``ADMIN_NAV_V2`` categories so deep pages remain
- * reachable in ≤ 2 clicks. Technicians rely on ``/tech/tools`` for
- * their long-tail routes; customers use ``UniversalMenu``.
- */
-export function showMoreDropdownForRole(role) {
-  return ["admin", "super_admin", "manager"].includes(role);
 }
