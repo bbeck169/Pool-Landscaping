@@ -19,8 +19,10 @@ import asyncio
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi import BackgroundTasks
 
+from config import db
 from services.lead_notifications import (
     send_lead_alert_notifications,
     _send_lead_alert_sms,
@@ -28,6 +30,22 @@ from services.lead_notifications import (
     build_sms_body,
     build_email_html,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_k63_idempotency_table():
+    """K63 added a ``lead_notification_dispatches`` guard that
+    short-circuits the adapter on repeat (tenant, lead, target,
+    channel) triples. These P18 tests reuse a small set of module-
+    level lead + tenant ids across every scenario — without a wipe
+    they'd start returning ``call_count == 0`` on the second run."""
+    async def _wipe():
+        await db.lead_notification_dispatches.delete_many({
+            "tenant_id": {"$regex": "^t-"},
+        })
+    asyncio.get_event_loop().run_until_complete(_wipe())
+    yield
+    asyncio.get_event_loop().run_until_complete(_wipe())
 
 
 def _run(bg: BackgroundTasks) -> None:

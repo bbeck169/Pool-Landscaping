@@ -260,24 +260,30 @@ function QuickNavRail({ role }) {
               "hover:scale-[1.02] focus-visible:scale-[1.02]",
               isActive
                 ? "shadow-[0_1px_2px_rgba(0,0,0,0.15)]"
-                : "hover:bg-white/10",
+                : "",
             ].join(" ")
           }
           style={({ isActive }) => ({
-            // Phase K52 Slice D · Feb-2026 — active state renders on
-            // the K52 signature gradient (emerald→sky).  Idle state
-            // keeps the K50 transparent-on-navy treatment (icon +
-            // label in white via ``colors.nav.fg``, hover overlay
-            // via the ``hover:bg-white/10`` class above).  Legacy
-            // ``colors.nav.bgActive`` / ``fgActive`` white-pill
-            // pattern is preserved on the shadcn ``DropdownMenu``
-            // active row (see AdminTopBar.jsx :: EntryItem) but is
-            // NO LONGER used on the nav rail itself.
-            background: isActive ? colors.gradient.css : "transparent",
-            color: isActive ? colors.gradient.fg : colors.nav.fg,
-            border: `1px solid ${isActive ? "transparent" : "transparent"}`,
-            textShadow: isActive ? colors.gradient.textShadow : undefined,
+            // Phase K64 · Feb-2026 — rail nav active + hover both
+            // render as ``colors.nav.bgActiveNavy`` (lighter-navy
+            // solid). Replaces the K52 mint-green gradient on this
+            // surface. Idle state keeps a transparent-on-navy
+            // treatment; hover overlay handled via
+            // ``onMouseEnter`` / ``onMouseLeave`` below so the
+            // hover value matches the active value exactly.
+            background: isActive ? colors.nav.bgActiveNavy : "transparent",
+            color: colors.nav.fg,
+            border: `1px solid transparent`,
           })}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = colors.nav.bgActiveNavy;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background =
+              e.currentTarget.getAttribute("aria-current") === "page"
+                ? colors.nav.bgActiveNavy
+                : "transparent";
+          }}
           data-testid={`rail-nav-${key}`}
           aria-label={label}
           title={label}

@@ -115,24 +115,21 @@ describe("Vertical quick-nav rail (sidebar pivot)", () => {
     expect(screen.queryByTestId("rail-nav-estimates")).toBeNull();
   });
 
-  it("active-route rail item picks up the K52 signature gradient (Slice D promoted from K50 white pill)", () => {
+  it("active-route rail item paints the K64 lighter-navy solid (replaces the K52 gradient)", () => {
     mount("super_admin", "/invoices");
     const link = screen.getByTestId("rail-nav-invoices");
-    // Phase K52 Slice D · Feb-2026 — active state is now the K52
-    // signature gradient (emerald→sky) instead of the K50 white pill.
-    // ``colors.gradient.css`` renders as
-    // ``linear-gradient(90deg, #22C55E 0%, #7DD3FC 100%)`` inline —
-    // React normalises the hexes and keeps the linear-gradient
-    // token verbatim on ``style.background``.
+    // Phase K64 · Feb-2026 — active state is now
+    // ``colors.nav.bgActiveNavy`` (#303AA0) — a lighter-navy solid.
+    // Hover and active render identical backgrounds; the K52
+    // mint-green gradient has been retired on the main nav
+    // surfaces only. Other gradient consumers (badges, sub-nav
+    // filter pills) are intentionally unchanged.
     const style = link.getAttribute("style") || "";
-    // Gradient background present with both stops.
-    expect(style).toMatch(/linear-gradient\(90deg,\s*#22C55E\s*0%,\s*#7DD3FC\s*100%\)/i);
-    // Label text stays white on the gradient.
+    expect(style).toMatch(/background:\s*rgb\(48,\s*58,\s*160\)|#303AA0/i);
+    // Label text stays white on the solid.
     expect(style).toMatch(/color:\s*(rgb\(255,\s*255,\s*255\)|#FFFFFF|white)/i);
-    // Regression guard — the K50 solid ``rgb(27, 31, 92)`` navy is
-    // NOT painted as the active pill background (only the parent
-    // <aside> carries the navy chrome).
-    expect(style).not.toMatch(/background(-color)?:\s*rgb\(27,\s*31,\s*92\)/i);
+    // Regression guard — no lingering mint gradient on the rail.
+    expect(style).not.toMatch(/linear-gradient.*#22C55E/i);
   });
 
   it("horizontal quick-nav row is no longer rendered (pivot complete)", () => {

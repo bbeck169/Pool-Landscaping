@@ -106,24 +106,21 @@ function CategoryDropdown({ group }) {
       <DropdownMenuTrigger
         className="group inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold whitespace-nowrap transition-all duration-200 ease-out will-change-transform hover:scale-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:scale-[1.02]"
         style={{
-          // Phase K52 Slice D · Feb-2026 — active category renders on
-          // the K52 signature gradient (replaces the K50 white pill).
-          // Idle state keeps the K50 white-on-navy hover.  The
-          // trigger's ``hover:bg-white/10`` class is only applied
-          // when NOT active — otherwise it fights the gradient — so
-          // we drive the hover overlay through the inline
-          // ``backgroundImage`` above and let the class handle idle.
+          // Phase K64 · Feb-2026 — active + hover both render as
+          // ``colors.nav.bgActiveNavy`` (lighter-navy solid) instead
+          // of the K52 mint gradient. Idle state keeps
+          // ``colors.nav.bg``. Hover state is applied inline in the
+          // mouse handlers below (unified with active); the
+          // ``hover:bg-white/10`` Tailwind class was dropped because
+          // it was fighting the new solid.
           color: colors.nav.fg,
-          background: active ? colors.gradient.css : undefined,
-          textShadow: active ? colors.gradient.textShadow : undefined,
+          background: active ? colors.nav.bgActiveNavy : undefined,
         }}
         onMouseEnter={(e) => {
-          if (active) e.currentTarget.style.background = colors.gradient.cssHover;
-          else e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.10)";
+          e.currentTarget.style.background = colors.nav.bgActiveNavy;
         }}
         onMouseLeave={(e) => {
-          if (active) e.currentTarget.style.background = colors.gradient.css;
-          else e.currentTarget.style.backgroundColor = "";
+          e.currentTarget.style.background = active ? colors.nav.bgActiveNavy : "";
         }}
         data-testid={`admin-topbar-${group.key}`}
         data-active={active ? "true" : "false"}

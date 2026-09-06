@@ -255,27 +255,30 @@ describe("K52 · Slice C — Gradient primary Button", () => {
 
 
 /* ══════════════════════════════════════════════════════════════════ */
-/* Slice D — Active nav = gradient                                    */
+/* Slice D — Active nav = gradient  (K64: main nav uses solid navy)  */
 /* ══════════════════════════════════════════════════════════════════ */
 
-describe("K52 · Slice D — Active nav item = gradient", () => {
-  it("QuickNavRail active rail item paints ``colors.gradient.css`` (K50 white pill retired)", () => {
-    expect(APP_LAYOUT).toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css\s*:\s*"transparent"/);
-    expect(APP_LAYOUT).toMatch(/color:\s*isActive\s*\?\s*colors\.gradient\.fg\s*:\s*colors\.nav\.fg/);
-    expect(APP_LAYOUT).toMatch(/textShadow:\s*isActive\s*\?\s*colors\.gradient\.textShadow/);
+describe("K52 · Slice D — Active nav item styling (K64 supersedes on main-nav surfaces)", () => {
+  it("QuickNavRail active rail item paints ``colors.nav.bgActiveNavy`` (K64 replaced K52 gradient)", () => {
+    // Phase K64 · Feb-2026 — main-nav rail now uses a lighter-navy
+    // solid for BOTH hover and active. K52 gradient retained on
+    // BusinessOS sub-nav + non-nav consumers (see below).
+    expect(APP_LAYOUT).toMatch(/background:\s*isActive\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*"transparent"/);
+    expect(APP_LAYOUT).toMatch(/color:\s*colors\.nav\.fg,/);
+    expect(APP_LAYOUT).not.toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css/);
   });
 
-  it("AdminTopBar CategoryDropdown trigger active state paints the gradient (was white pill)", () => {
+  it("AdminTopBar CategoryDropdown trigger active state paints ``colors.nav.bgActiveNavy`` (K64 replaced K52 gradient)", () => {
     const cat = TOP_BAR.split("function CategoryDropdown(")[1]
       .split("\nfunction ")[0];
-    expect(cat).toMatch(/background:\s*active\s*\?\s*colors\.gradient\.css\s*:\s*undefined/);
-    expect(cat).toMatch(/textShadow:\s*active\s*\?\s*colors\.gradient\.textShadow/);
-    // Idle text stays white — gradient supplies both bg AND fg on
-    // active, so the K50 ``fgActive`` swap is retired on the trigger.
+    expect(cat).toMatch(/background:\s*active\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*undefined/);
+    // Idle text stays white.
     expect(cat).toMatch(/color:\s*colors\.nav\.fg,/);
     // Regression guard — pre-K52 ``bgActive`` white pill on the
     // trigger MUST NOT resurface.
-    expect(cat).not.toMatch(/backgroundColor:\s*active\s*\?\s*colors\.nav\.bgActive/);
+    expect(cat).not.toMatch(/backgroundColor:\s*active\s*\?\s*colors\.nav\.bgActive[^N]/);
+    // Regression guard — K52 gradient no longer paints the trigger.
+    expect(cat).not.toMatch(/colors\.gradient\.css/);
   });
 
   it("BusinessOS sub-nav active tab paints the gradient (was white pill)", () => {

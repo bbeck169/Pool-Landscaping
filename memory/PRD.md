@@ -1,3 +1,105 @@
+## Phase K64 · Active/Hover Nav Color Unification — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Web only. Standing order honored
+(bbeck169/Pool-Landscaping.git ignored). Preview-only — user must
+redeploy to push to https://app.plofv.com.
+
+**Delivery**
+- Added ``colors.nav.bgActiveNavy = "#303AA0"`` in
+  ``frontend/src/theme.js`` — a lighter-navy solid, ~18% L over
+  ``nav.bg`` in HSL. WCAG AAA (7.4:1) with white text.
+- Retired the K52 mint-green gradient on the two main-nav surfaces:
+  * ``layouts/AppLayout.jsx`` :: ``QuickNavRail`` (left rail).
+  * ``layouts/AdminTopBar.jsx`` :: ``CategoryDropdown`` (top nav).
+- Both surfaces now paint the SAME ``bgActiveNavy`` for BOTH hover
+  AND active. ``onMouseEnter``/``onMouseLeave`` handlers unified.
+- Non-nav gradient consumers left untouched (badges, filter pills,
+  BusinessOS sub-nav) — see ``PHASE_K64_NAV_ACTIVE_HOVER_UNIFY.md``.
+
+**Tests**
+- 12 new vitest cases in
+  ``test/k64-nav-active-hover-unify.test.jsx`` (green).
+- Updated K52 Slice D + rail-nav tests to expect the new solid;
+  BusinessOS sub-nav test unchanged (still on the gradient).
+- 58 total green vitest cases across K52, K63, K63.polish, K64.
+
+**Screenshot verification (preview)**
+- ``/schedule`` route: rail "Schedule" active + top-nav
+  "Operations" active — both paint ``rgb(48, 58, 160)``.
+- Hovered idle items (Dashboard rail, Finance top-nav) paint the
+  same ``rgb(48, 58, 160)``. Hover ≡ active.
+
+**Bonus flag noted (not fixed):** the Schedule "Request failed
+(404)" banner the user screenshotted could NOT be reproduced from
+my preview probe (0 /api 404s during mount cycle). Queued as
+**K65-candidate** for a follow-up diagnosis.
+
+**Follow-ups**
+- Batch redeploy: R0.1+ + K63 + K63.polish + K64 → prod.
+- Then R1 (Financial suite proper) — index migration
+  ``quotes(tenant_id, customer_id, paid_at/created_at)`` folded in.
+- K65 · Schedule 404 diagnosis.
+
+---
+
+## Phase K63.polish · Notification Dispatch Log API + Last-Notified-At Chip — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Backend + Web (mobile untouched). Standing order
+honored (bbeck169/Pool-Landscaping.git ignored). Preview-only —
+user must redeploy to push to https://app.plofv.com.
+
+**Delivery**
+- New read-only endpoint
+  ``GET /api/admin/notification-dispatch-log`` in
+  ``routers/admin_notification_dispatch_log.py``. Query params
+  ``lead_id`` / ``recipient`` / ``channel`` / ``status`` / ``since`` /
+  ``limit`` (default 50, clamp 200). ``require_admin`` gate;
+  tenant-scoped via acting user's token. Newest-first.
+- Response derived from the ``audit_logs`` rows the K63 dispatcher
+  already writes — no changes to the dispatcher itself.
+- ``LeadAlertsSettings.jsx`` gains a **"Last activity"** column
+  with a chip driven by a pure ``pickChip(latestRow, nowMs)``
+  function (5 states: none / success / neutral / warning / danger).
+- Clicking a chip opens a ``DispatchLogModal`` showing the last 20
+  dispatch rows for that recipient (channel, status, lead-id
+  prefix, error or provider_message_id).
+
+**Tests**
+- 17 pytest cases in
+  ``test_k63_polish_dispatch_log.py`` (role gate, filter matrix,
+  limit clamp, invalid values, tenant isolation, empty result,
+  newest-first order). All green.
+- 10 vitest cases in ``k63-polish-dispatch-log.test.jsx`` (chip
+  tone selection for every state + source-body contract on the
+  page). All green.
+
+**Canary verification**
+Query on preview backend at ship time for the tester's canary
+lead ``cf2e0a99-4ba3-4044-949c-2f6ca737e191`` in tenant
+AquaTerra:
+
+- ``audit_logs`` (K63 dispatch trail) → **0 rows.**
+- ``lead_notification_dispatches`` (K63 idempotency table) →
+  **0 rows.**
+
+**⚠️ The canary lead's dispatch fan-out never fired.** That's
+neither ``status=sent`` nor ``status=failed`` — the dispatcher was
+NOT invoked for this lead. Most likely: the widget-form endpoint
+the tester exercised is a sixth ingress path missing the
+``send_lead_alert_notifications`` wiring (the dispatcher is
+currently wired at ``lead_requests.py``, ``marketing.py`` ×2,
+``marketing_forms.py``, and ``widget_chat.py``). Queued as
+**K63.canary-diagnosis** — ask the tester which endpoint they
+submitted to before wiring the sixth ingress.
+
+**Follow-ups**
+- K63.canary-diagnosis — trace the missing ingress path.
+- Index migration ``quotes(tenant_id, customer_id, paid_at/created_at)``
+  — folded into R1 kickoff.
+
+---
+
+
 ## Phase K63 · Widget Forms → Leads Data Parity + Per-Tenant Notification Recipients — SHIPPED (Feb 2026, preview only)
 
 **Scope:** Backend + Web (mobile untouched). Standing order

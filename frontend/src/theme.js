@@ -110,6 +110,15 @@ export const colors = {
     bg: "#1B1F5C",
     bgHover: "#2A2F7A",
     bgActive: "#FFFFFF",     // legacy pill active — retained for portal preview; K52 primary chrome uses ``gradient.css`` instead
+    // Phase K64 · Feb-2026 — lighter-navy solid used by the main
+    // admin nav (left rail + top-nav category dropdowns) for
+    // BOTH hover and active states. Replaces the K52 mint-green
+    // gradient on the main-nav surfaces only. Other gradient
+    // consumers (badge chips, sub-nav filter pills, CTAs) are
+    // intentionally untouched — they keep resolving through
+    // ``colors.gradient.*``. Contrast: white on ``#303AA0`` →
+    // ~7.4 : 1 (WCAG AAA).
+    bgActiveNavy: "#303AA0",
     fg: "#FFFFFF",
     fgActive: "#1B1F5C",     // legacy pill text — retained for portal preview
     fgMuted: "rgba(255, 255, 255, 0.72)",
