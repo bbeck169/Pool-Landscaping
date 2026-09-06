@@ -88,6 +88,27 @@ export default function ReportsHub() {
         <DateRangePicker />
       </div>
 
+      {/* Phase R0 · Feb-2026 — quick-access hero pointing at the new
+          tabbed Reports Suite shell. Legacy tile grid stays live
+          below during the R-series rollout. */}
+      <Link
+        to="/reports/suite"
+        className="block rounded-2xl p-4 mb-6"
+        style={{ background: brandGradientCss, color: "#fff" }}
+        data-testid="reports-hub-suite-link"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-wide opacity-90">New · Phase R0</div>
+            <div className="text-lg font-bold mt-1">Open the new Reports Suite</div>
+            <div className="text-xs opacity-90 mt-1">
+              Tabbed KPI dashboards · MTD · QTD · YTD · Custom range · R1–R7 dashboards land here
+            </div>
+          </div>
+          <ChevronRight size={22} />
+        </div>
+      </Link>
+
       {/* Preview KPI strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {[

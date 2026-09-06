@@ -303,6 +303,7 @@ import JobTimersPage from "@/pages/timers/JobTimersPage";
 import ChemicalCostReportPage from "@/pages/reports/ChemicalCostReportPage";
 import RepairCalculatorPage from "@/pages/ops/RepairCalculatorPage";
 import ReportsHub from "@/pages/reports/ReportsHub";
+import ReportsSuite from "@/pages/reports/ReportsSuite";
 import BusinessSummary from "@/pages/reports/BusinessSummary";
 import Forecast from "@/pages/reports/Forecast";
 import CustomerRetentionReport from "@/pages/reports/CustomerRetentionReport";
@@ -1032,6 +1033,12 @@ export default function App() {
 
             {/* Phase 6 — Finance + Reports */}
             <Route path="reports" element={<AdminOnly><ReportsHub /></AdminOnly>} />
+            {/* Phase R0 · Feb-2026 — new tabbed Reports Suite shell.
+                R1–R7 dashboards hang off this route. Legacy
+                ReportsHub tile grid stays live at ``/reports``
+                during the R-series rollout; migration will happen
+                once R5 (Overview) is fully wired. */}
+            <Route path="reports/suite" element={<AdminOnly><ReportsSuite /></AdminOnly>} />
             <Route path="reports/business-summary" element={<AdminOnly><BusinessSummary /></AdminOnly>} />
             <Route path="reports/forecast" element={<AdminOnly><Forecast /></AdminOnly>} />
             <Route path="reports/customer-retention" element={<AdminOnly><CustomerRetentionReport /></AdminOnly>} />

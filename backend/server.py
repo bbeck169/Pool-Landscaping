@@ -385,6 +385,13 @@ from routers import chemical_cost_report as _feb2026_chem_costs  # noqa: E402
 api_router.include_router(_feb2026_chem_costs.router)
 api_router.include_router(_p37d_gps_audit_report.router)
 
+# Phase R0 · Feb-2026 — Reporting suite foundation.
+# ``/api/reports/kpi/{metric_key}`` powered by the metric registry
+# in ``services.reporting``. R1–R7 will drop new metrics into
+# ``services/reporting/metrics/`` without touching server.py.
+from routers import reports_kpi as _r0_reports_kpi  # noqa: E402
+api_router.include_router(_r0_reports_kpi.router)
+
 # Feb-2026 · Slice 2A — Multi-ToS backend foundation (Pool +
 # Landscaping split, admin CRUD, customer onboarding-state DTO).
 # Registered adjacent to the legacy single-ToS router so both
