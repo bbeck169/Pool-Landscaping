@@ -2160,6 +2160,26 @@ async def startup():
         await _idx_boot()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[Phase13-W2] session index create failed: {e}")
+    # Phase R1 · Feb-2026 — Financial Suite reporting indexes.
+    # Idempotent (see ``services/reporting/indexes.py``). Skipped
+    # in prod when ``RUN_STARTUP_INDEXES=false``; ops re-runs via
+    # ``python -m scripts.ensure_indexes`` (which imports and
+    # calls the same ``services.reporting.indexes.ensure_indexes``
+    # entry point).
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
+        from services.reporting.indexes import ensure_indexes as _r1_idx
+        _r1_summary = await _r1_idx(db)
+        logger.info(
+            "[R1-indexes] created=%d already=%d failed=%d elapsed_ms=%d",
+            len(_r1_summary.get("created", [])),
+            len(_r1_summary.get("already", [])),
+            len(_r1_summary.get("failed", [])),
+            int(_r1_summary.get("elapsed_ms") or 0),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[R1-indexes] boot pass failed: {e}")
     # Phase 51a · Feb 2026 — Walkie-Talkie indexes + tenant bootstrap.
     # Feb-2026 · D2 — the ``_walkie_ensure_indexes`` +
     # ``ensure_live_session_indexes`` sub-calls are skipped in prod

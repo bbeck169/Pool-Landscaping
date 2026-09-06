@@ -163,6 +163,17 @@ async def kpi(
             "row_count": int(grouped.get("row_count") or len(grouped.get("rows") or [])),
             "rows": grouped.get("rows") or [],
         }
+        # R1 · Feb-2026 — forward metric-specific auxiliary fields
+        # so consumers (FE + CSV export) don't have to re-derive
+        # them. Only surface keys the metric explicitly populated;
+        # unknown keys pass through as-is so future metrics can
+        # extend the envelope without another router edit.
+        for _aux in (
+            "net_terms_days", "as_of", "granularity", "summary",
+            "no_costs_recorded", "scope",
+        ):
+            if _aux in grouped and grouped[_aux] is not None:
+                payload[_aux] = grouped[_aux]
         report_cache.set(cache_key, payload)
         return {**payload, "cached": False}
 
@@ -203,3 +214,166 @@ async def kpi_registry_list(user: dict = Depends(require_report_reader)):
     render the KPI grid without hard-coding metric metadata.
     R1+ metrics will surface here automatically on registration."""
     return {"metrics": [m.to_public() for m in REGISTRY.values()]}
+
+
+# ═══════════════════════════════════════════════════════════════
+# Phase R1 · Feb-2026 — CSV export endpoint.
+#
+# Reuses the same metric registry as ``/reports/kpi/{key}`` so
+# every registered metric — R0, R0.1, R1, and every future phase —
+# gets a CSV export for free. The metric-specific column order is
+# picked here (via ``_csv_columns_for``) so the export contract
+# lives in one place; the metric compute functions stay
+# transport-agnostic.
+# ═══════════════════════════════════════════════════════════════
+from fastapi.responses import Response  # noqa: E402
+from services.reporting.exports import (  # noqa: E402
+    render_scalar_csv,
+    render_rows_csv,
+)
+
+
+# Per-metric preferred column order for CSV. Metrics not in this
+# map fall back to the union of keys on row #0 (sorted).
+_CSV_COLUMNS = {
+    "revenue_by_customer": [
+        "customer_id", "customer_name", "revenue",
+        "prior_revenue", "delta_abs", "delta_pct",
+        "invoice_count", "line_item_count",
+    ],
+    "revenue_by_city": [
+        "city", "state", "revenue", "customer_count", "invoice_count",
+    ],
+    "revenue_by_service_type": [
+        "service_category_name", "service_category_id",
+        "revenue", "invoice_count", "line_item_count",
+    ],
+    "pnl_line_items": [
+        "label", "value", "prior_value",
+        "delta_abs", "delta_pct", "format",
+    ],
+    "cashflow_by_period": [
+        "bucket", "invoiced", "collected",
+        "net", "running_balance",
+    ],
+    "ar_aging": [
+        "bucket", "amount", "invoice_count",
+    ],
+    "ar_aging_by_customer": [
+        "customer_id", "customer_name",
+        "total_outstanding", "invoice_count", "oldest_days_overdue",
+    ],
+    "unpaid_invoices": [
+        "invoice_number", "customer_name", "customer_id",
+        "total", "amount_paid", "balance",
+        "created_at", "due_date", "effective_due_date",
+        "days_overdue", "payment_status", "status", "partial",
+    ],
+}
+
+
+def _csv_columns_for(metric_key: str, rows: list) -> list:
+    if metric_key in _CSV_COLUMNS:
+        return _CSV_COLUMNS[metric_key]
+    if not rows:
+        return []
+    return sorted(rows[0].keys())
+
+
+@router.get("/reports/kpi/{metric_key}/export.csv")
+async def kpi_csv_export(
+    metric_key: str,
+    period: Optional[str] = Query("mtd"),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    lens: Optional[str] = Query("invoiced"),
+    service_type: Optional[str] = Query(None),
+    tech_id: Optional[str] = Query(None),
+    limit: Optional[int] = Query(None, ge=1, le=10000),
+    offset: Optional[int] = Query(0, ge=0),
+    include_prior: Optional[bool] = Query(True),
+    user: dict = Depends(require_report_reader),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Stream the metric's current envelope as an Excel-friendly
+    CSV. Bypasses the response cache — a manual export should
+    reflect the freshest possible read."""
+    metric: Metric = get_metric(metric_key)
+    p = resolve_period(period, start, end)
+    tenant_id = tenant["id"]
+    tenant_name = tenant.get("name") or tenant.get("slug") or tenant_id
+    engine = AggregationEngine(db, tenant_id)
+
+    filters_applied = {
+        "period": p.key,
+        "start": p.start,
+        "end": p.end,
+    }
+
+    if metric.is_grouped:
+        if lens not in ("invoiced", "collected"):
+            raise HTTPException(400,
+                                "lens must be 'invoiced' or 'collected'")
+        filters = {
+            "lens": lens,
+            "service_type": (service_type or "").strip() or None,
+            "tech_id": (tech_id or "").strip() or None,
+            "limit": limit,
+            "offset": offset or 0,
+            "include_prior": bool(include_prior),
+        }
+        try:
+            grouped = await metric.compute_grouped(engine, p, filters)
+        except HTTPException:
+            raise
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("[reports.csv] grouped metric %s failed: %s",
+                           metric.key, exc)
+            raise HTTPException(500,
+                                f"metric compute failed: {metric.key}") from exc
+        rows = grouped.get("rows") or []
+        columns = _csv_columns_for(metric.key, rows)
+        filters_applied.update({k: v for k, v in filters.items()
+                                if v not in (None, "", 0, False)})
+        body = render_rows_csv(
+            metric_label=metric.label,
+            period_label=p.label,
+            period_start=p.start,
+            period_end=p.end,
+            columns=columns,
+            rows=rows,
+            total=float(grouped.get("total") or 0.0),
+            tenant_name=tenant_name,
+            filters_applied=filters_applied,
+        )
+    else:
+        try:
+            raw = await metric.compute(engine, p)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("[reports.csv] scalar metric %s failed: %s",
+                           metric.key, exc)
+            raise HTTPException(500,
+                                f"metric compute failed: {metric.key}") from exc
+        body = render_scalar_csv(
+            metric_label=metric.label,
+            period_label=p.label,
+            period_start=p.start,
+            period_end=p.end,
+            value=float(raw.get("value") or 0.0),
+            prior_value=float(raw.get("prior_value") or 0.0),
+            delta_pct=raw.get("delta_pct"),
+            sparkline=raw.get("sparkline"),
+            tenant_name=tenant_name,
+            filters_applied=filters_applied,
+        )
+
+    safe_key = metric.key.replace("_", "-")
+    filename = f"{safe_key}__{p.key}__{p.start}_{p.end}.csv"
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )

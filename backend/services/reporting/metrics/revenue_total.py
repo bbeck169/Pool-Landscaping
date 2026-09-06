@@ -1,28 +1,38 @@
 """Phase R0 · Feb-2026 — ``revenue_total`` KPI.
 
 Sums ``amount_paid`` across ``quotes`` documents that are (a) not
-soft-deleted, (b) marked ``payment_status="paid"``, and (c) whose
-``paid_date`` (falling back to ``created_at``) lies inside the
-selected period. Sparkline granularity is chosen based on the
-period length so a YTD KPI doesn't render 12 months of daily
-points.
+soft-deleted, (b) marked ``payment_status="paid"`` (or have
+``amount_paid > 0``), and (c) whose payment date lies inside the
+selected period.
 
-R1 will layer additional revenue metrics on top of the same
-aggregation engine; this file is the reference shape all future
-metrics should copy.
+R1 fix · Feb-2026
+-----------------
+Originally this metric queried a ``paid_date`` field the live
+schema doesn't populate (the real field is ``paid_at``). The
+metric silently fell through to a ``created_at``-in-range
+fallback and bucketed on invoice-creation rather than payment
+date.
+
+The paid-window resolution moved to the shared
+``services.reporting.paid_date`` helper — the same helper is
+used by every R1 metric so the KPI reconciles with the P&L,
+cash-flow, and unpaid-invoices reports byte-for-byte.
+
+Reconciliation note (see PHASE_R1_A_FINANCIAL_BACKEND.md §5):
+numbers may shift for tenants where a paid invoice's ``paid_at``
+lies in a different calendar bucket than its ``created_at``. The
+delta is documented in the R1.a ship report.
 """
 from __future__ import annotations
 
 from ..aggregation import AggregationEngine
+from ..paid_date import PAID_STATUS_FILTER, build_paid_window_filter
 from ..registry import Metric, register_metric
 
 
-PAID_FILTER = {
-    "$or": [
-        {"amount_paid": {"$gt": 0}},
-        {"payment_status": "paid"},
-    ],
-}
+# Kept as an alias for any external caller. New code imports
+# ``PAID_STATUS_FILTER`` from ``services.reporting.paid_date``.
+PAID_FILTER = PAID_STATUS_FILTER
 
 
 def _pick_granularity(start: str, end: str) -> str:
@@ -41,16 +51,15 @@ def _pick_granularity(start: str, end: str) -> str:
 
 async def _sum_paid(engine: AggregationEngine, start: str, end: str) -> float:
     """Sum of ``amount_paid`` on paid ``quotes`` in [start, end)."""
-    date_window = {"$or": [
-        {"paid_date": {"$gte": start, "$lt": end}},
-        {"$and": [
-            {"paid_date": {"$in": [None, ""]}},
-            {"created_at": {"$gte": start, "$lt": end}},
-        ]},
+    combined = {"$and": [
+        PAID_STATUS_FILTER,
+        build_paid_window_filter(start, end),
     ]}
-    combined = {"$and": [PAID_FILTER, date_window]}
     return await engine.sum_field("quotes", combined, "amount_paid") \
-        or await engine.sum_field("quotes", {"$and": [{"payment_status": "paid"}, date_window]}, "total")
+        or await engine.sum_field("quotes", {"$and": [
+            {"payment_status": "paid"},
+            build_paid_window_filter(start, end),
+        ]}, "total")
 
 
 @register_metric
@@ -63,7 +72,6 @@ class RevenueTotal(Metric):
                     "period, tenant-scoped and soft-delete safe.")
 
     async def compute(self, engine: AggregationEngine, period) -> dict:
-        # Period-over-period + sparkline in parallel-safe sequence.
         cur = await _sum_paid(engine, period.start, period.end)
         prior = await _sum_paid(engine, period.prior_start, period.prior_end)
         delta_pct = None
@@ -71,19 +79,14 @@ class RevenueTotal(Metric):
             delta_pct = round(((cur - prior) / prior) * 100.0, 2)
 
         gran = _pick_granularity(period.start, period.end)
-        # Sparkline uses the SAME filter shape as the sum so drift is impossible.
-        date_window = {"$or": [
-            {"paid_date": {"$gte": period.start, "$lt": period.end}},
-            {"$and": [
-                {"paid_date": {"$in": [None, ""]}},
-                {"created_at": {"$gte": period.start, "$lt": period.end}},
-            ]},
+        combined = {"$and": [
+            PAID_STATUS_FILTER,
+            build_paid_window_filter(period.start, period.end),
         ]}
-        combined = {"$and": [PAID_FILTER, date_window]}
-        # ``bucket_by_date`` needs one date field; fall back to created_at
-        # since paid_date may be sparse on historic rows.
+        # Sparkline: bucket by ``paid_at`` when present so a
+        # payment-date view is consistent with the scalar value.
         buckets = await engine.bucket_by_date(
-            "quotes", combined, "created_at",
+            "quotes", combined, "paid_at",
             granularity=gran, value_field="amount_paid",
         )
         sparkline = [{"t": b.t, "v": b.v} for b in buckets]

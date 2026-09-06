@@ -30,20 +30,24 @@ from __future__ import annotations
 from typing import Optional
 
 from ..aggregation import AggregationEngine
+from ..paid_date import build_paid_window_filter
 
 
 def build_lens_filter(lens: str, start: str, end: str) -> dict:
-    """Return the shared invoice filter for a lens + window."""
+    """Return the shared invoice filter for a lens + window.
+
+    R1 · Feb-2026 — the ``collected`` branch now delegates to the
+    shared ``build_paid_window_filter`` helper so R0.1's
+    Revenue-by-Customer / Revenue-by-City metrics reconcile with
+    R0's ``revenue_total`` and R1's P&L / cashflow / unpaid
+    metrics byte-for-byte. Semantic equivalence preserved: the
+    helper's cascade (``paid_at → paid_date → created_at``) is a
+    strict superset of the previous local logic.
+    """
     if lens == "collected":
         return {"$and": [
             {"payment_status": "paid"},
-            {"$or": [
-                {"paid_at": {"$gte": start, "$lt": end}},
-                {"$and": [
-                    {"paid_at": {"$in": [None, ""]}},
-                    {"created_at": {"$gte": start, "$lt": end}},
-                ]},
-            ]},
+            build_paid_window_filter(start, end),
         ]}
     # Default: invoiced.
     return {"created_at": {"$gte": start, "$lt": end}}

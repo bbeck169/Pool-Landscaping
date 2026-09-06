@@ -594,6 +594,11 @@ class TenantSettingsUpdate(BaseModel):
     # Defaults to America/Phoenix (Vistancia, AZ — no-DST) elsewhere in
     # the codebase; this update endpoint is the only way to change it.
     timezone: Optional[str] = None
+    # Phase R1 · Feb-2026 — net-terms in days for AR aging + unpaid
+    # invoices reporting. Nullable; defaults to 30 when unset (locked
+    # in ``services/reporting/paid_date.build_effective_due_date_expr``
+    # and ``ar_aging._resolve_net_terms``).
+    net_terms_days: Optional[int] = None
 
 
 class RepairIn(BaseModel):
