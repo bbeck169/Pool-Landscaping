@@ -279,6 +279,25 @@ export default function LeadDetail() {
                   <div data-testid="lead-address">{lead.service_address || lead.address}</div>
                 </div>
               )}
+              {/* K63 · Feb-2026 — Data-parity fill-in.  Widget forms
+                  already persist ``city``, ``state``, ``zip``,
+                  ``company_name`` onto ``leads`` but the pre-K63
+                  detail view never surfaced them, so the ops team
+                  had to open the raw lead record to see the full
+                  intake. These four lines fix that. */}
+              {(lead.city || lead.state || lead.zip) ? (
+                <div className="flex items-start gap-2 text-xs text-slate-500 ml-6"
+                      data-testid="lead-city-state-zip">
+                  {[lead.city, lead.state, lead.zip].filter(Boolean).join(", ")}
+                </div>
+              ) : null}
+              {lead.company_name ? (
+                <div className="flex items-center gap-2 text-xs text-slate-500"
+                      data-testid="lead-company-name">
+                  <User size={12} className="text-slate-500" />
+                  {lead.company_name}
+                </div>
+              ) : null}
               <div className="flex items-center gap-2 text-xs text-slate-500">
                 <Calendar size={12} /> Created {lead.created_at?.slice(0, 10) || "—"}
               </div>

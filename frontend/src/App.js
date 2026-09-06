@@ -282,6 +282,7 @@ import {
 } from "@/pages/tracking/EquipmentTrackerPages";
 import NotificationsPage from "@/pages/notifications/NotificationsPage";
 import NotificationPrefs from "@/pages/settings/NotificationPrefs";
+import LeadAlertsSettings from "@/pages/settings/LeadAlertsSettings";
 // StripeReconciliation page removed in Phase LZ4 (Feb 2026);
 // Stripe SDK is retired. Import + route deleted.
 import {
@@ -857,6 +858,7 @@ export default function App() {
             <Route path="tasks" element={<AdminOnly><TasksPage /></AdminOnly>} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="settings/notifications" element={<NotificationPrefs />} />
+            <Route path="settings/notifications/lead-alerts" element={<AdminOnly><LeadAlertsSettings /></AdminOnly>} />
             {/* Stripe reconciliation route removed in Phase LZ4 (Feb 2026). */}
 
             {/* Phase 15A — CSAT admin */}

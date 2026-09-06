@@ -392,6 +392,13 @@ api_router.include_router(_p37d_gps_audit_report.router)
 from routers import reports_kpi as _r0_reports_kpi  # noqa: E402
 api_router.include_router(_r0_reports_kpi.router)
 
+# Phase K63 · Feb-2026 — per-tenant Lead Alert recipient CRUD.
+# Backs the new Settings → Notifications → Lead Alerts page and
+# is consumed by ``services.lead_notifications`` when a widget
+# form submission fans out email + SMS notifications.
+from routers import tenant_lead_notifications as _k63_lead_notif_router  # noqa: E402
+api_router.include_router(_k63_lead_notif_router.router)
+
 # Feb-2026 · Slice 2A — Multi-ToS backend foundation (Pool +
 # Landscaping split, admin CRUD, customer onboarding-state DTO).
 # Registered adjacent to the legacy single-ToS router so both

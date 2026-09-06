@@ -111,34 +111,112 @@ def build_email_html(*, lead: Dict[str, Any], app_url: str) -> str:
     )
 
 
+async def _already_dispatched(*, tenant_id: str, lead_id: str,
+                                    target: str, channel: str) -> bool:
+    """K63 · Feb-2026 — idempotency check for the notification
+    dispatcher.  Returns True if the same (lead, target, channel)
+    triple has already been dispatched for this tenant so a widget
+    double-submit doesn't spam recipients."""
+    row = await db.lead_notification_dispatches.find_one({
+        "tenant_id": tenant_id, "lead_id": lead_id,
+        "target": target, "channel": channel,
+    }, {"_id": 0, "id": 1})
+    return row is not None
+
+
+async def _record_dispatch(*, tenant_id: str, lead_id: str,
+                                target: str, channel: str) -> None:
+    """K63 · Feb-2026 — pin the (lead, target, channel) triple with
+    an ``insert_one`` (unique key). Backfilled BEFORE the async
+    send so a fast second submit sees the marker even if the
+    RingCentral / Resend call is still in flight."""
+    from utils import new_id, now_iso
+    try:
+        await db.lead_notification_dispatches.insert_one({
+            "id": new_id(), "tenant_id": tenant_id,
+            "lead_id": lead_id, "target": target,
+            "channel": channel, "created_at": now_iso(),
+        })
+    except Exception:  # pragma: no cover — race with parallel POST
+        pass
+
+
 async def _send_lead_alert_sms(*, to: str, body: str,
-                                 tenant_id: str, lead_id: str) -> None:
-    """Fire-and-forget SMS delivery.  Swallows every adapter failure —
-    a broken RingCentral SDK must NEVER 500 the lead-create request."""
+                                    tenant_id: str, lead_id: str) -> None:
+    """Fire-and-forget SMS delivery. Swallows every adapter failure.
+
+    K63 · Feb-2026 — writes audit rows so ops can inspect the
+    dispatch outcome. ``lead_notification_sent`` on success,
+    ``lead_notification_failed`` on any exception. Audit rows never
+    include the raw message body (PII-safe)."""
+    from utils import new_id, now_iso
     try:
         from services.sms.rc_adapter import send as _send_sms
-        await _send_sms(
+        result = await _send_sms(
             to=to, body=body, category="transactional",
             tenant_id=tenant_id, customer_id=None,
         )
-        logger.info(f"[p18-bg] lead alert SMS sent to={to} lead={lead_id}")
+        message_id = None
+        if isinstance(result, dict):
+            message_id = result.get("id") or result.get("message_id")
+        await db.audit_logs.insert_one({
+            "id": new_id(), "tenant_id": tenant_id,
+            "event": "lead_notification_sent",
+            "channel": "sms", "lead_id": lead_id,
+            "target": to, "message_id": message_id,
+            "created_at": now_iso(),
+        })
+        logger.info(f"[k63] lead alert SMS sent to={to} lead={lead_id}")
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"[p18-bg] lead alert SMS failed to={to} err={e}")
+        logger.warning(f"[k63] lead alert SMS failed to={to} err={e}")
+        try:
+            await db.audit_logs.insert_one({
+                "id": new_id(), "tenant_id": tenant_id,
+                "event": "lead_notification_failed",
+                "channel": "sms", "lead_id": lead_id,
+                "target": to, "error": str(e)[:500],
+                "created_at": now_iso(),
+            })
+        except Exception:  # pragma: no cover
+            pass
 
 
 async def _send_lead_alert_email(*, to: str, subject: str, html: str,
                                     tenant_id: str, lead_id: str) -> None:
-    """Fire-and-forget email delivery.  Swallows every adapter failure."""
+    """Fire-and-forget email delivery. Same audit contract as the SMS
+    twin — success + failure both audited via ``lead_notification_*``
+    events. Never raises."""
+    from utils import new_id, now_iso
     try:
         from services.email.resend_adapter import send as _send_email
-        await _send_email(
+        result = await _send_email(
             to=to, subject=subject, html=html,
             category="transactional",
             tenant_id=tenant_id, customer_id=None,
         )
-        logger.info(f"[p18-bg] lead alert email sent to={to} lead={lead_id}")
+        message_id = None
+        if isinstance(result, dict):
+            message_id = result.get("id") or result.get("message_id")
+        await db.audit_logs.insert_one({
+            "id": new_id(), "tenant_id": tenant_id,
+            "event": "lead_notification_sent",
+            "channel": "email", "lead_id": lead_id,
+            "target": to, "message_id": message_id,
+            "created_at": now_iso(),
+        })
+        logger.info(f"[k63] lead alert email sent to={to} lead={lead_id}")
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"[p18-bg] lead alert email failed to={to} err={e}")
+        logger.warning(f"[k63] lead alert email failed to={to} err={e}")
+        try:
+            await db.audit_logs.insert_one({
+                "id": new_id(), "tenant_id": tenant_id,
+                "event": "lead_notification_failed",
+                "channel": "email", "lead_id": lead_id,
+                "target": to, "error": str(e)[:500],
+                "created_at": now_iso(),
+            })
+        except Exception:  # pragma: no cover
+            pass
 
 
 async def _is_contact_muted_in_tenant(
@@ -214,8 +292,27 @@ async def send_lead_alert_notifications(
             "muted_suppressed_customer_id": muted_cid,
         }
 
-    sms_recips = list(tenant.get("lead_alert_sms_recipients") or [])
-    email_recips = list(tenant.get("lead_alert_email_recipients") or [])
+    sms_recips_legacy = list(tenant.get("lead_alert_sms_recipients") or [])
+    email_recips_legacy = list(tenant.get("lead_alert_email_recipients") or [])
+    # K63 · Feb-2026 — read the rich recipient list (opt-in toggles
+    # per channel). Falls back to the legacy flat lists when the new
+    # field isn't set so pre-K63 tenants keep working.
+    rich_recips = list(tenant.get("lead_notification_recipients") or [])
+    sms_recips: list[str] = []
+    email_recips: list[str] = []
+    if rich_recips:
+        for r in rich_recips:
+            if not isinstance(r, dict):
+                continue
+            phone = (r.get("phone") or "").strip()
+            email = (r.get("email") or "").strip()
+            if phone and r.get("sms_opt_in"):
+                sms_recips.append(phone)
+            if email and r.get("email_opt_in"):
+                email_recips.append(email)
+    else:
+        sms_recips = [x for x in sms_recips_legacy if isinstance(x, str) and x.strip()]
+        email_recips = [x for x in email_recips_legacy if isinstance(x, str) and x.strip()]
     # Feb-2026 · Fire the ``new_lead`` sequence trigger unconditionally
     # (BEFORE the early-return for tenants without alert config).
     # Sequence enrolment is a separate concern from lead alerts and
@@ -249,12 +346,34 @@ async def send_lead_alert_notifications(
 
     for phone in sms_recips:
         if isinstance(phone, str) and phone.strip():
+            # K63 · Feb-2026 — idempotency guard. Skip the fan-out
+            # when the same (lead_id, target, channel) triple has
+            # already been dispatched (handles widget double-submits
+            # + retry storms without spamming recipients).
+            if await _already_dispatched(
+                tenant_id=tenant_id, lead_id=lead_id,
+                target=phone.strip(), channel="sms",
+            ):
+                continue
+            await _record_dispatch(
+                tenant_id=tenant_id, lead_id=lead_id,
+                target=phone.strip(), channel="sms",
+            )
             background_tasks.add_task(
                 _send_lead_alert_sms, to=phone.strip(),
                 body=sms_body, tenant_id=tenant_id, lead_id=lead_id,
             )
     for addr in email_recips:
         if isinstance(addr, str) and addr.strip():
+            if await _already_dispatched(
+                tenant_id=tenant_id, lead_id=lead_id,
+                target=addr.strip(), channel="email",
+            ):
+                continue
+            await _record_dispatch(
+                tenant_id=tenant_id, lead_id=lead_id,
+                target=addr.strip(), channel="email",
+            )
             background_tasks.add_task(
                 _send_lead_alert_email, to=addr.strip(),
                 subject=subject, html=html,

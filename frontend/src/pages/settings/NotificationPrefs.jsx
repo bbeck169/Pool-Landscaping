@@ -305,6 +305,33 @@ export default function NotificationPrefs() {
       </div>
 
       <PortalChatSmsBridgeCard />
+
+      {/* K63 · Feb-2026 — link to the tenant-scoped Lead Alerts
+          recipient CRUD page. Admin-only; keeps per-user matrix
+          separate from the tenant-wide widget-form fan-out list. */}
+      <div
+        className="mt-6 rounded-2xl p-4 flex items-center justify-between"
+        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        data-testid="k63-lead-alerts-link-card"
+      >
+        <div>
+          <div className="text-sm font-bold flex items-center gap-2" style={{ color: colors.onSurface }}>
+            <Bell size={14} style={{ color: colors.brand }} /> Lead Alerts (widget forms)
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: colors.muted }}>
+            Manage the list of admins who receive an email + SMS ping
+            when the public widget forms create a new lead.
+          </div>
+        </div>
+        <button
+          onClick={() => nav("/settings/notifications/lead-alerts")}
+          className="px-3 py-2 rounded-lg text-sm font-semibold"
+          style={{ backgroundColor: colors.brand, color: "#fff" }}
+          data-testid="k63-lead-alerts-open"
+        >
+          Manage recipients
+        </button>
+      </div>
     </div>
   );
 }

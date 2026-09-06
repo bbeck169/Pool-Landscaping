@@ -1,3 +1,59 @@
+## Phase K63 · Widget Forms → Leads Data Parity + Per-Tenant Notification Recipients — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Backend + Web (mobile untouched). Standing order
+honored (bbeck169/Pool-Landscaping.git ignored). Preview-only —
+user must redeploy to push to https://app.plofv.com.
+
+**Delivery**
+- Step 0 audit table locked in
+  `/app/memory/PHASE_K63_WIDGET_FORMS_NOTIFICATIONS.md`. Only gap
+  was widget `message` field never rendering on `/leads/{id}`.
+- Step 1 fix: `LeadDetail.jsx` renders a Notes card for
+  `lead.message` when non-empty.
+- Step 2: `routers/tenant_lead_notifications.py` exposes
+  `GET/PUT /api/tenants/{tid}/settings/lead-notifications` gated
+  on `require_admin` (admin, super_admin, owner). Cap of 10
+  recipients enforced at the write boundary; email + E.164 phone
+  validation; per-recipient opt-in-requires-target rule; lazy
+  migration from legacy P18 flat lists on first GET.
+- UI: `frontend/src/pages/settings/LeadAlertsSettings.jsx`
+  mounted at `/settings/notifications/lead-alerts` inside
+  `<AdminOnly>`. Row-level validation, `X/10 recipients` counter,
+  Add button disabled at 10, Save gated on dirty + all rows valid.
+  `NotificationPrefs.jsx` links to the new page via a "Manage
+  recipients" card.
+- Step 3: `services/lead_notifications.py` reads the rich list
+  first (legacy list ignored when rich is set), gates each channel
+  by per-recipient opt-in, and pins every dispatch in the new
+  `lead_notification_dispatches` collection for idempotency. Every
+  BackgroundTask writes an `audit_logs` row
+  (`lead_notification_sent` / `lead_notification_failed`) — PII-safe.
+
+**Tests**
+- 13 pytest cases across
+  `test_k63_tenant_lead_notifications.py` +
+  `test_k63_dispatcher_idempotency.py` (green).
+- 10 vitest source-contract cases in
+  `test/k63-lead-alerts-settings.test.jsx` (green).
+- All pre-existing P18 tests still green.
+
+**UI verification**
+- Playwright screenshot at
+  `/settings/notifications/lead-alerts` renders the recipient
+  table with 2 lazy-migrated rows from the legacy P18 flat lists,
+  `2/10 recipients` counter, Add + Save controls.
+
+**Follow-ups**
+- Index migration `quotes(tenant_id, customer_id, paid_at/created_at)`
+  → queued for R1 kickoff (Option B).
+- R0.1+ prod redeploy — safe to push after K63 QA sign-off. User
+  triggers the deploy.
+- Deferred: Web `ServiceReport.jsx` fallback surfaces raw JSON via
+  `alert()`; K30.1 auth soft-delete gate; APP_ENV=production
+  preview flag; K62 density selector; K30 keyboard shortcut; R0.1+
+  chart second series.
+
+
 ## Phase R0.1+ · Prior-Period Delta on Revenue by Customer — SHIPPED (Feb 2026, preview only)
 
 **Scope:** Backend + Web (mobile untouched). Standing order
