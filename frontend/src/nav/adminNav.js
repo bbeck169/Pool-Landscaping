@@ -76,15 +76,17 @@ export const ADMIN_NAV_V2 = [
     { to: "/marketing/calendar",    label: "Marketing Calendar", icon: CalendarDays,feature: "marketing", subsection: "Studio" },
     { to: "/marketing/performance", label: "Performance",      icon: BarChart3,    feature: "marketing", subsection: "Studio" },
     { to: "/marketing/brand",       label: "Brand Memory",     icon: Palette,      feature: "marketing", subsection: "Studio" },
-    // Sequences
-    { to: "/admin/marketing/sequences",   label: "Sequences",        icon: Workflow,     feature: "marketing", subsection: "Sequences & Templates" },
-    { to: "/admin/marketing/review-requests", label: "Review Requests", icon: StarIcon,   feature: "marketing", subsection: "Sequences & Templates" },
-    { to: "/admin/marketing/analytics",   label: "Analytics",         icon: BarChart3,    feature: "marketing", subsection: "Sequences & Templates" },
-    { to: "/admin/marketing/suppressions", label: "Suppressions",     icon: Shield,       feature: "marketing", subsection: "Sequences & Templates" },
-    { to: "/marketing/templates",   label: "Templates",        icon: FileText,     feature: "marketing", subsection: "Sequences & Templates" },
-    { to: "/notifications",         label: "Notifications",    icon: BellIcon,     feature: "marketing", subsection: "Sequences & Templates" },
-    { to: "/settings/notifications", label: "Notification Prefs", icon: BellIcon,    feature: "marketing", subsection: "Sequences & Templates" },
-    { to: "/tasks",                 label: "Tasks",            icon: CheckSquare,  feature: "marketing", subsection: "Sequences & Templates" },
+    // Automations (K69 rename · Feb-2026 — UI string only; API
+    // route ``/api/marketing/sequences`` and internal collection
+    // names are unchanged for backwards compat).
+    { to: "/admin/marketing/automations",   label: "Automations",        icon: Workflow,     feature: "marketing", subsection: "Automations & Templates" },
+    { to: "/admin/marketing/review-requests", label: "Review Requests", icon: StarIcon,   feature: "marketing", subsection: "Automations & Templates" },
+    { to: "/admin/marketing/analytics",   label: "Analytics",         icon: BarChart3,    feature: "marketing", subsection: "Automations & Templates" },
+    { to: "/admin/marketing/suppressions", label: "Suppressions",     icon: Shield,       feature: "marketing", subsection: "Automations & Templates" },
+    { to: "/marketing/templates",   label: "Templates",        icon: FileText,     feature: "marketing", subsection: "Automations & Templates" },
+    { to: "/notifications",         label: "Notifications",    icon: BellIcon,     feature: "marketing", subsection: "Automations & Templates" },
+    { to: "/settings/notifications", label: "Notification Prefs", icon: BellIcon,    feature: "marketing", subsection: "Automations & Templates" },
+    { to: "/tasks",                 label: "Tasks",            icon: CheckSquare,  feature: "marketing", subsection: "Automations & Templates" },
     // Reviews & public
     { to: "/marketing/reviews",     label: "Reviews",          icon: StarIcon,     feature: "marketing", subsection: "Reviews & Public" },
     { to: "/csat",                  label: "CSAT / NPS",       icon: Sparkles,     feature: "marketing", subsection: "Reviews & Public" },

@@ -58,7 +58,7 @@ export function MarketingHub() {
     { to: "/marketing/calendar", label: "Content Calendar", icon: CalIcon, sub: "Schedule + publish" },
     { to: "/marketing/scheduling", label: "Scheduling Slots", icon: RefreshCw, sub: "Recurring post cadence" },
     { to: "/marketing/performance", label: "Performance", icon: TrendingUp, sub: "Engagement + reach" },
-    { to: "/marketing/sequences", label: "Sequences", icon: Users, sub: "Automation flows" },
+    { to: "/marketing/automations", label: "Automations", icon: Users, sub: "Automation flows" },
     { to: "/marketing/templates", label: "Templates", icon: Layers, sub: "Campaign + email + SMS" },
     { to: "/marketing/template-library", label: "Template Library", icon: Layers, sub: "Editable email + SMS store (M3)" },
     { to: "/marketing/segments", label: "Segments", icon: Layers, sub: "Audience builder (M4)" },
@@ -72,7 +72,7 @@ export function MarketingHub() {
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto" data-testid="marketing-hub">
       <h1 className="text-3xl md:text-4xl font-bold mb-1" style={{ color: colors.onSurface }}>Marketing Studio</h1>
-      <p className="text-sm mb-6" style={{ color: colors.muted }}>AI-powered campaign, post, sequence, and content workflows.</p>
+      <p className="text-sm mb-6" style={{ color: colors.muted }}>AI-powered campaign, post, automation, and content workflows.</p>
       <TemplatesFeatureHint />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {tiles.map((t) => (

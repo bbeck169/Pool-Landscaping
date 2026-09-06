@@ -1,3 +1,121 @@
+## Phase K69 · Sequences → Automations (UI rename) — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Web-only, UI-string-only rename. Backend routes
+(`/api/marketing/sequences`), DB collections
+(`db.marketing_sequences`), and internal code identifiers are
+unchanged for backwards compat. Standing order honored
+(bbeck169/Pool-Landscaping.git ignored). Preview-only.
+
+**Delivery**
+- Route rename in `App.js`: new
+  `/marketing/automations`, `/marketing/automations/new`,
+  `/marketing/automations/:id`, and `/admin/marketing/automations`.
+- 301-equivalent `<Navigate replace>` redirects added from every
+  old `/marketing/sequences*` and `/admin/marketing/sequences`
+  path. Param-aware `SequenceIdRedirect` helper preserves the
+  lead id in the URL on redirect.
+- Admin nav item + subsection renamed to "Automations" and
+  "Automations & Templates" (`nav/adminNav.js`).
+- User-facing copy renamed across:
+  `MarketingPages`, `MarketingSequencesPage`, `SequencePages`,
+  `MarketingAnalyticsPage`, `MarketingFormsPage`,
+  `MarketingSuppressionsPage`, `MarketingSegmentsPage`,
+  `CommsPages`, `CsatPages`, `AiOpsPages`, `TriggerBuilder`.
+- QA `data-testid` values kept unchanged so existing test
+  harnesses still target the same elements.
+
+**Audit report shipped**
+- `/app/memory/CURRENT_SEQUENCES_AUDIT.md` — full feature-surface
+  snapshot: 16 canonical triggers + 2 non-event enrolment surfaces,
+  linear-form editor (no canvas), email + SMS steps only, 42 test
+  docs live (0 active), 789 marketing templates (644 system) —
+  plus a 13-item gap list vs GoHighLevel Workflows for the future
+  parity rebuild.
+
+**Tests**
+- 11 vitest cases in `test/k69-sequences-to-automations.test.jsx`
+  (route wiring, redirects, nav labels, page copy) — green.
+- Regression: 55 sequence-adjacent vitest still green (system-
+  template badge, trigger builder, three-items crew channel etc.).
+
+**Preview verification**
+- Direct `GET /marketing/sequences` redirects to
+  `/marketing/automations` and renders H1 "Automations" +
+  "New automation" CTA + counter "42 automations". Confirmed with
+  Playwright screenshot.
+
+**Follow-ups**
+- GHL-parity Automations rebuild — post-R1, driven by the
+  `CURRENT_SEQUENCES_AUDIT.md` gap list.
+- Prod redeploy batches K69 with the K63 stack.
+
+---
+
+## Phase K63.finalize · All ingress paths wired + resend endpoint — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Backend + Web. K63 is now feature-complete —
+every runtime lead-insertion path either fires the dispatcher
+or has a documented intentional exclusion.
+
+**Delivery**
+- Wired `send_lead_alert_notifications` into the four remaining
+  ingress paths:
+  * `routers/portal_referrals.py` — customer-portal referral
+    submission (added `BackgroundTasks` to handler).
+  * `routers/property.py` — property-lookup / virtual-bid lead
+    capture (added `BackgroundTasks` to handler).
+  * `routers/d2d.py` — door-to-door `interested`/`sold` capture
+    across all three call sites (`POST /api/d2d/knocks`,
+    `PUT /api/d2d/knocks/{id}`, `POST /api/d2d/knocks/{id}/convert`)
+    via a new optional `background_tasks` arg on `_sync_lead`.
+  * `routers/ringcentral.py` — inbound RC missed-call webhook.
+    Webhook has no FastAPI-injected `BackgroundTasks`, so a local
+    instance is created and drained inline (RC tolerates
+    multi-second latency and the path only fires on unknown
+    callers, so cost is naturally low).
+- `server.py:1777` verdict — intentionally NOT wired. It's the
+  RC nightly contact-book sync (`source: "rc-contact-sync"`),
+  a bulk contact-import cron that could import hundreds of rows
+  per run. Documented in-code + in the K63 ingress inventory.
+- New endpoint `POST /api/admin/leads/{id}/resend-notifications`
+  in `routers/admin_resend_lead_notifications.py`:
+  * `require_admin` (admin, super_admin, owner).
+  * Tenant-scoped (404 on cross-tenant).
+  * Clears the `lead_notification_dispatches` rows for the
+    (tenant, lead) pair to bypass idempotency, then invokes the
+    dispatcher.
+  * Writes `audit_logs.event = "lead_notification_resent"` with
+    the actor identity.
+- Frontend: "Resend alerts" button on `LeadDetail` (admin-only).
+  Confirmation modal warns about the idempotency bypass; result
+  panel renders every dispatched (channel, recipient) pair with
+  full test-id coverage.
+
+**Tests**
+- 8 pytest cases in `test_k63_finalize_resend_and_ingress.py`
+  (role gate, 404, idempotency bypass, actor audit, D2D ingress
+  smoke) — green.
+- 5 vitest cases in `k63-finalize-lead-resend.test.jsx` (admin
+  gate, dialog, endpoint POST, per-row result, idempotency copy)
+  — green.
+- Regression: full K63 pytest suite = 49 green (11 tenant lead
+  notifs + 2 dispatcher extras + 17 K63.polish + 8 P18 dispatcher
+  + 3 K63.ingress-fix + 8 K63.finalize).
+
+**Full ingress inventory (10 runtime paths + intentional
+exclusions)** now stored in
+`/app/memory/PHASE_K63_WIDGET_FORMS_NOTIFICATIONS.md`.
+
+**Follow-ups**
+- Batch redeploy: R0.1+ + K63 + K63.polish + K64 +
+  K63.dispatcher-ingress-fix + K63.finalize + K69 → prod, per
+  user queue.
+- Then K65 diagnosis (schedule-load perf) → K66 → K67 → K68 →
+  K63.test-dispatch → K65 fix → R1.
+
+---
+
+
 ## Phase K63.dispatcher-ingress-fix · public-leads endpoint wired + canary backfilled — SHIPPED (Feb 2026, preview only)
 
 **Scope:** Backend only. Standing order honored

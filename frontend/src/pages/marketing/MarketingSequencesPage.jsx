@@ -66,10 +66,10 @@ export default function MarketingSequencesPage() {
       <div className="flex items-start justify-between mb-4 flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: colors.onSurface }}>
-            Sequences
+            Automations
           </h1>
           <p className="text-sm mt-1" style={{ color: colors.muted }}>
-            {rows.length} sequence{rows.length === 1 ? "" : "s"} — automate multi-step email & SMS follow-ups triggered by system events.
+            {rows.length} automation{rows.length === 1 ? "" : "s"} — automate multi-step email & SMS follow-ups triggered by system events.
           </p>
         </div>
         <button
@@ -78,7 +78,7 @@ export default function MarketingSequencesPage() {
           style={{ background: brandGradientCss }}
           data-testid="sequence-create-btn"
         >
-          <Plus size={16} /> New sequence
+          <Plus size={16} /> New automation
         </button>
       </div>
 
@@ -93,7 +93,7 @@ export default function MarketingSequencesPage() {
               No sequences yet
             </div>
             <div className="text-xs mt-1" style={{ color: colors.muted }}>
-              Click "New sequence" to build your first drip.
+              Click "New automation" to build your first drip.
             </div>
           </div>
         ) : (
@@ -330,7 +330,7 @@ function SequenceEditor({ initial, onClose, onSaved }) {
   const del = async () => {
     if (!initial?.id) return;
     const ok = await mustConfirm({
-      title: "Deactivate this sequence?",
+      title: "Deactivate this automation?",
       description: "Every active enrolment is halted immediately. No further steps will fire.",
       tone: "danger", confirmText: "Deactivate", requireTypeConfirm: true,
     });
@@ -355,7 +355,7 @@ function SequenceEditor({ initial, onClose, onSaved }) {
              style={{ borderBottom: `1px solid ${colors.divider}` }}>
           <div>
             <div className="text-xs" style={{ color: colors.muted }}>
-              {isNew ? "New sequence" : "Edit sequence"}
+              {isNew ? "New automation" : "Edit automation"}
             </div>
             <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
               {name || "Untitled"}
@@ -379,7 +379,7 @@ function SequenceEditor({ initial, onClose, onSaved }) {
           {tab === "editor" ? (
             <>
               <input type="text" value={name} onChange={(e) => setName(e.target.value)}
-                     placeholder="Sequence name"
+                     placeholder="Automation name"
                      className="w-full px-3 py-2 rounded-lg text-sm outline-none"
                      style={{ backgroundColor: colors.surface, color: colors.onSurface,
                               border: `1px solid ${colors.border}` }}

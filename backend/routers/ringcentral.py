@@ -491,6 +491,33 @@ async def _handle_telephony_event(body: Dict[str, Any]) -> None:
             )
         except Exception:
             pass
+        # Phase K63.finalize · Feb-2026 — inbound RingCentral call
+        # from an unknown number is a live new-lead ingress; wire
+        # the K63 fan-out. Webhook has no BackgroundTasks handle
+        # from FastAPI, so we instantiate a local one and drain
+        # inline. Adapter calls happen INSIDE those tasks so they
+        # still block the webhook's return until each recipient
+        # SMS + email finishes — but RC's webhook client tolerates
+        # multi-second latency and this path only fires when the
+        # caller isn't a known customer, so cost is naturally low.
+        try:
+            from fastapi import BackgroundTasks as _RC_BG
+            from services.lead_notifications import send_lead_alert_notifications
+            _bg = _RC_BG()
+            _tenant_doc = await db.tenants.find_one(
+                {"id": rc_tenant_id}, {"_id": 0},
+            ) or {}
+            await send_lead_alert_notifications(
+                lead=rc_lead, tenant=_tenant_doc,
+                background_tasks=_bg,
+            )
+            for _t in list(_bg.tasks):
+                try:
+                    await _t()
+                except Exception as _e:  # pragma: no cover
+                    logger.warning(f"[k63] rc-inbound bg task failed: {_e}")
+        except Exception as _e:  # pragma: no cover
+            logger.warning(f"[k63] rc-inbound dispatch failed: {_e}")
 
 
 async def _fetch_telephony_session_detail(session_id: Optional[str]) -> Optional[Dict[str, Any]]:

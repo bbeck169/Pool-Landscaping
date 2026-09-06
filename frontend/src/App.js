@@ -422,6 +422,15 @@ function EstimateAliasRedirect() {
   return <Navigate to={`/estimator/${id}`} replace />;
 }
 
+// Phase K69 · Feb-2026 — /marketing/sequences/:id → /marketing/
+// automations/:id. The rename is UI-string-only so we redirect
+// stale bookmarks without changing the backend route
+// (``/api/marketing/sequences``) or the underlying doc collection.
+function SequenceIdRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/marketing/automations/${id}`} replace />;
+}
+
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
   if (loading) return null;
@@ -813,7 +822,8 @@ export default function App() {
             <Route path="marketing/segments" element={<AdminOnly><MarketingSegmentsPage /></AdminOnly>} />
             {/* Feb-2026 · Phase B · Marketing Content Studio. */}
             <Route path="marketing/content-studio" element={<AdminOnly><ContentStudioPage /></AdminOnly>} />
-            <Route path="admin/marketing/sequences" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
+            <Route path="admin/marketing/sequences" element={<Navigate to="/admin/marketing/automations" replace />} />
+            <Route path="admin/marketing/automations" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
             <Route path="admin/marketing/review-requests" element={<AdminOnly><MarketingReviewRequestsPage /></AdminOnly>} />
             <Route path="admin/marketing/analytics" element={<AdminOnly><MarketingAnalyticsPage /></AdminOnly>} />
             {/* Phase H6 · Feb-2026 — Monthly analytics dashboard (Soshie moderation, charge-template usage, drift alerts, manual-post conversion). */}
@@ -826,9 +836,12 @@ export default function App() {
             <Route path="admin/leads/:id" element={<AdminOnly><LeadDetail /></AdminOnly>} />
             <Route path="portal/preferences" element={<PortalPreferences />} />
             <Route path="marketing/reviews" element={<AdminOnly><Reviews /></AdminOnly>} />
-            <Route path="marketing/sequences" element={<AdminOnly><SequencesList /></AdminOnly>} />
-            <Route path="marketing/sequences/new" element={<AdminOnly><SequenceNew /></AdminOnly>} />
-            <Route path="marketing/sequences/:id" element={<AdminOnly><SequenceDetail /></AdminOnly>} />
+            <Route path="marketing/sequences" element={<Navigate to="/marketing/automations" replace />} />
+            <Route path="marketing/sequences/new" element={<Navigate to="/marketing/automations/new" replace />} />
+            <Route path="marketing/sequences/:id" element={<SequenceIdRedirect />} />
+            <Route path="marketing/automations" element={<AdminOnly><SequencesList /></AdminOnly>} />
+            <Route path="marketing/automations/new" element={<AdminOnly><SequenceNew /></AdminOnly>} />
+            <Route path="marketing/automations/:id" element={<AdminOnly><SequenceDetail /></AdminOnly>} />
             <Route path="marketing/before-after" element={<AdminOnly><BeforeAfterStudio /></AdminOnly>} />
             <Route path="marketing/directories" element={<AdminOnly><DirectoriesHub /></AdminOnly>} />
             <Route path="marketing/directories/nap-profile" element={<AdminOnly><NapProfilePage /></AdminOnly>} />

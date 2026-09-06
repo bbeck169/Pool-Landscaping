@@ -12,8 +12,9 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "@/api";
 import { toast } from "sonner";
+import { useAuth } from "@/auth";
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
-import { Phone, Mail, MapPin, Calendar, User, CheckCircle2, XCircle, MessageSquarePlus, AlertTriangle, ChevronLeft, RefreshCw } from "lucide-react";
+import { Phone, Mail, MapPin, Calendar, User, CheckCircle2, XCircle, MessageSquarePlus, AlertTriangle, ChevronLeft, RefreshCw, Bell } from "lucide-react";
 
 // Phase 34 · Task CC · Feb 2026 — canonical snake_case status enum.
 // Values MUST match backend `_CANONICAL_STATUSES` in routers/leads.py.
@@ -77,6 +78,68 @@ function TimelineEntry({ ev }) {
   );
 }
 
+// Phase K63.finalize · Feb-2026 — resend confirmation modal for the
+// K63 lead-alert refire button on this page.
+function ResendNotificationsDialog({ leadId, busy, result, onClose, onConfirm }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          data-testid="resend-notifications-dialog"
+          onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-lg max-w-lg w-full p-5"
+            onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold mb-1">Resend lead alerts</h3>
+        <p className="text-sm text-slate-600 mb-3">
+          Refire the K63 SMS + email fan-out for lead
+          <span className="font-mono ml-1">{leadId?.slice(0, 8)}</span> to every
+          opted-in recipient. This <b>bypasses idempotency</b> —
+          recipients who already received an alert for this lead
+          will get another one.
+        </p>
+        {result ? (
+          <div className="text-xs bg-emerald-50 border border-emerald-200 rounded p-3 mb-3"
+                 data-testid="resend-notifications-result">
+            <div className="font-semibold text-emerald-900 mb-1">
+              Queued · SMS: {result.sms_queued || 0} · Email: {result.email_queued || 0}
+            </div>
+            {(result.dispatched || []).length > 0 ? (
+              <ul className="text-emerald-800 space-y-0.5">
+                {(result.dispatched || []).map((d, i) => (
+                  <li key={i} data-testid={`resend-notifications-row-${i}`}>
+                    <span className="uppercase font-mono">{d.channel}</span>
+                    <span className="mx-1">→</span>
+                    <span className="font-mono">{d.recipient}</span>
+                    <span className="ml-2 text-emerald-700">({d.status})</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-emerald-700">
+                No opted-in recipients configured. Add some in
+                Settings → Notifications → Lead Alerts.
+              </div>
+            )}
+          </div>
+        ) : null}
+        <div className="mt-3 flex justify-end gap-2">
+          <button onClick={onClose}
+                    className="px-3 py-1.5 rounded border border-slate-300 text-sm"
+                    data-testid="resend-notifications-cancel">
+            {result ? "Close" : "Cancel"}
+          </button>
+          {!result && (
+            <button onClick={onConfirm} disabled={busy}
+                      className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-sm disabled:opacity-50"
+                      data-testid="resend-notifications-confirm">
+              {busy ? "Sending…" : "Resend now"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function CloseLostDialog({ open, onConfirm, onClose, busy }) {
   const [reason, setReason] = useState("");
   if (!open) return null;
@@ -113,10 +176,15 @@ function CloseLostDialog({ open, onConfirm, onClose, busy }) {
 export default function LeadDetail() {
   const { id } = useParams();
   const nav = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = ["admin", "super_admin", "owner"].includes(user?.role);
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
   const [noteText, setNoteText] = useState("");
   const [conversion, setConversion] = useState(null);
+  const [resendOpen, setResendOpen] = useState(false);
+  const [resendBusy, setResendBusy] = useState(false);
+  const [resendResult, setResendResult] = useState(null);
   const [lostOpen, setLostOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -212,11 +280,44 @@ export default function LeadDetail() {
           <ChevronLeft size={16} /> Back
         </button>
         <div className="flex-1" />
+        {isAdmin && (
+          <button
+            onClick={() => { setResendResult(null); setResendOpen(true); }}
+            className="inline-flex items-center gap-1 px-2 py-1 border border-slate-300 rounded text-xs hover:bg-slate-50"
+            data-testid="lead-resend-notifications-btn"
+            title="Refire the K63 lead-alert fan-out (SMS + email) for this lead"
+          >
+            <Bell size={12} /> Resend alerts
+          </button>
+        )}
         <button onClick={load}
                   className="inline-flex items-center gap-1 px-2 py-1 border border-slate-300 rounded text-xs hover:bg-slate-50">
           <RefreshCw size={12} /> Refresh
         </button>
       </div>
+
+      {resendOpen && (
+        <ResendNotificationsDialog
+          leadId={id}
+          busy={resendBusy}
+          result={resendResult}
+          onClose={() => setResendOpen(false)}
+          onConfirm={async () => {
+            setResendBusy(true);
+            try {
+              const r = await api.post(`/admin/leads/${id}/resend-notifications`);
+              setResendResult(r);
+              toast.success(
+                `Resend queued — ${r.sms_queued || 0} SMS + ${r.email_queued || 0} email`,
+              );
+            } catch (e) {
+              toast.error(e?.message || "Resend failed");
+            } finally {
+              setResendBusy(false);
+            }
+          }}
+        />
+      )}
 
       {conversion?.customer_id && (
         <div className="mb-4 rounded-lg bg-emerald-50 border border-emerald-200 p-3 flex items-center justify-between"

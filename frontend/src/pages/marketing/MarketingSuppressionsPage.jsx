@@ -62,7 +62,7 @@ export default function MarketingSuppressionsPage() {
             Suppression list
           </h1>
           <p className="text-sm mt-1" style={{ color: colors.muted }}>
-            {total} active suppression{total === 1 ? "" : "s"}. Every marketing/review-request/sequence send checks this list before delivery.
+            {total} active suppression{total === 1 ? "" : "s"}. Every marketing/review-request/automation send checks this list before delivery.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -188,7 +188,7 @@ export default function MarketingSuppressionsPage() {
                         style={inputStyle}>
                   <option value="">All (channel-level opt-out)</option>
                   <option value="review_requests">Review requests</option>
-                  <option value="sequences">Sequences</option>
+                  <option value="sequences">Automations</option>
                   <option value="campaigns">Campaigns</option>
                 </select>
               </Field>

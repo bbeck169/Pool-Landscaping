@@ -355,7 +355,7 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
               </div>
               <div>
                 <label className="block text-[10px] font-bold uppercase mb-1"
-                       style={{ color: colors.muted }}>Drip sequence (M5)</label>
+                       style={{ color: colors.muted }}>Drip automation (M5)</label>
                 <select value={submitCfg.drip_sequence_id || ""}
                         onChange={(e) => setSubmitCfg({
                           ...submitCfg,

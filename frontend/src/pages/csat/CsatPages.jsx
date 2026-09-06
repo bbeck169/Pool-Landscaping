@@ -57,7 +57,7 @@ export function CsatDashboard() {
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto" data-testid="csat-dashboard">
       <H title="Customer Satisfaction"
-         sub="NPS & CSAT survey responses. Detractors auto-open a follow-up task; promoters enroll in the review-request sequence."
+         sub="NPS & CSAT survey responses. Detractors auto-open a follow-up task; promoters enroll in the review-request automation."
       />
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <Tile testId="csat-tile-nps" label="NPS" value={s.nps_score ?? 0}

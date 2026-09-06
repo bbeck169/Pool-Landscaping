@@ -350,7 +350,7 @@ export function CommsTemplatesLibrary() {
         onClose={() => setConfirmOpen(false)}
         onConfirm={doBulkDelete}
         title={`Delete ${selectedCount} template${selectedCount === 1 ? "" : "s"}?`}
-        description="Templates used by an active drip sequence will be locked and skipped — archive them from the drip instead."
+        description="Templates used by an active drip automation will be locked and skipped — archive them from the drip instead."
         confirmLabel={busy ? "Deleting…" : `Delete ${selectedCount}`}
         busy={busy}
       />

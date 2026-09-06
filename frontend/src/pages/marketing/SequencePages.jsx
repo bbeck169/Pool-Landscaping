@@ -18,13 +18,13 @@ export function SequencesList() {
     <div className="p-4 md:p-8 max-w-4xl mx-auto" data-testid="sequences-list">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold" style={{ color: colors.onSurface }}>Sequences</h1>
+          <h1 className="text-2xl md:text-3xl font-bold" style={{ color: colors.onSurface }}>Automations</h1>
           <p className="text-xs mt-0.5" style={{ color: colors.muted }}>Automated multi-step flows triggered by events.</p>
         </div>
         <Link to="/marketing/sequences/new"
               className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg"
               style={{ backgroundColor: colors.brand, color: "#fff" }} data-testid="new-seq-btn">
-          <Plus size={14} /> New sequence
+          <Plus size={14} /> New automation
         </Link>
       </div>
       {rows.map((s) => (
@@ -57,7 +57,7 @@ const TRIGGERS = ["customer_created", "job_completed", "invoice_created",
 export function SequenceNew() {
   const nav = useNavigate();
   const [form, setForm] = useState({
-    name: "New Sequence", trigger: "customer_created",
+    name: "New Automation", trigger: "customer_created",
     steps: [{ delay_days: 0, action_type: "email", template_slug: "welcome-email", notes: "" }],
     active: true,
   });
@@ -73,7 +73,7 @@ export function SequenceNew() {
                 style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
           <ArrowLeft size={16} />
         </button>
-        <h1 className="text-2xl md:text-3xl font-bold" style={{ color: colors.onSurface }}>New Sequence</h1>
+        <h1 className="text-2xl md:text-3xl font-bold" style={{ color: colors.onSurface }}>New Automation</h1>
       </div>
       <Card className="p-5 space-y-3">
         <label>

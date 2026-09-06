@@ -249,11 +249,11 @@ export default function MarketingAnalyticsPage() {
 
           {/* Top tables */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <TopTable title="Top sequences"
+            <TopTable title="Top automations"
                        testid="analytics-top-sequences-table"
                        rows={overview.top_sequences}
                        cols={[
-                         { key: "name", label: "Sequence" },
+                         { key: "name", label: "Automation" },
                          { key: "enrolments", label: "Enrolments" },
                          { key: "completion_rate", label: "Completion", fmt: fmtPct },
                        ]} />

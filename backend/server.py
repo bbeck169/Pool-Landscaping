@@ -400,6 +400,8 @@ from routers import tenant_lead_notifications as _k63_lead_notif_router  # noqa:
 api_router.include_router(_k63_lead_notif_router.router)
 from routers import admin_notification_dispatch_log as _k63p_dispatch_log_router  # noqa: E402
 api_router.include_router(_k63p_dispatch_log_router.router)
+from routers import admin_resend_lead_notifications as _k63f_resend_router  # noqa: E402
+api_router.include_router(_k63f_resend_router.router)
 
 # Feb-2026 · Slice 2A — Multi-ToS backend foundation (Pool +
 # Landscaping split, admin CRUD, customer onboarding-state DTO).

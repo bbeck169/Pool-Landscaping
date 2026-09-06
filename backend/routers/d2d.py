@@ -1,12 +1,12 @@
 """D2D Sales router (tenant-scoped)."""
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from typing import Optional
 import time
 import re
 import httpx
 
-from config import db, OPENWEB_NINJA_API_KEY
+from config import db, OPENWEB_NINJA_API_KEY, logger
 from utils import now_iso, new_id, get_current_user, require_admin, require_zillow_access
 from routers.tenants import get_current_tenant
 from models import D2DKnockIn, D2DKnockUpdate
@@ -28,7 +28,8 @@ def _require_sales(user: dict):
         raise HTTPException(403, "Not allowed")
 
 
-async def _sync_lead(knock: dict, tenant_id: str):
+async def _sync_lead(knock: dict, tenant_id: str,
+                       background_tasks: Optional[BackgroundTasks] = None):
     """Mirror interested/sold knocks into the shared Leads pipeline (source Door-to-door)."""
     if knock.get("disposition") not in LEAD_DISPOS:
         return knock.get("lead_id")
@@ -60,6 +61,23 @@ async def _sync_lead(knock: dict, tenant_id: str):
         )
     except Exception:
         pass
+    # Phase K63.finalize · Feb-2026 — door-to-door knocks that
+    # dispose ``interested``/``sold`` are true new-lead events and
+    # deserve the K63 fan-out. Callers pass ``background_tasks`` in
+    # via the handler signature; if a caller path omits it we
+    # gracefully skip the dispatch (never blocks the knock write).
+    if background_tasks is not None:
+        try:
+            tenant_doc = await db.tenants.find_one(
+                {"id": tenant_id}, {"_id": 0},
+            ) or {}
+            from services.lead_notifications import send_lead_alert_notifications
+            await send_lead_alert_notifications(
+                lead=lead_doc, tenant=tenant_doc,
+                background_tasks=background_tasks,
+            )
+        except Exception as _e:  # pragma: no cover
+            logger.warning(f"[k63] d2d dispatch failed: {_e}")
     await db.d2d_knocks.update_one(
         {"id": knock["id"], "tenant_id": tenant_id},
         {"$set": {"lead_id": lead_id}},
@@ -69,6 +87,7 @@ async def _sync_lead(knock: dict, tenant_id: str):
 
 @router.post("/d2d/knocks")
 async def create_knock(body: D2DKnockIn,
+                       background_tasks: BackgroundTasks,
                        user: dict = Depends(get_current_user),
                        tenant: dict = Depends(get_current_tenant)):
     _require_sales(user)
@@ -81,7 +100,7 @@ async def create_knock(body: D2DKnockIn,
                   "created_at": now_iso(), "updated_at": now_iso()})
     await db.d2d_knocks.insert_one(knock)
     knock.pop("_id", None)
-    knock["lead_id"] = await _sync_lead(knock, tenant["id"])
+    knock["lead_id"] = await _sync_lead(knock, tenant["id"], background_tasks)
     return knock
 
 
@@ -279,6 +298,7 @@ async def _get_owned_knock(kid: str, user: dict, tenant_id: str):
 
 @router.put("/d2d/knocks/{kid}")
 async def update_knock(kid: str, body: D2DKnockUpdate,
+                       background_tasks: BackgroundTasks,
                        user: dict = Depends(get_current_user),
                        tenant: dict = Depends(get_current_tenant)):
     _require_sales(user)
@@ -292,7 +312,7 @@ async def update_knock(kid: str, body: D2DKnockUpdate,
             {"id": kid, "tenant_id": tenant["id"]}, {"$set": upd}
         )
     knock = await db.d2d_knocks.find_one({"id": kid, "tenant_id": tenant["id"]}, {"_id": 0})
-    knock["lead_id"] = await _sync_lead(knock, tenant["id"])
+    knock["lead_id"] = await _sync_lead(knock, tenant["id"], background_tasks)
     return knock
 
 
@@ -312,6 +332,7 @@ async def delete_knock(kid: str,
 
 @router.post("/d2d/knocks/{kid}/convert")
 async def convert_knock(kid: str,
+                        background_tasks: BackgroundTasks,
                         user: dict = Depends(get_current_user),
                         tenant: dict = Depends(get_current_tenant)):
     """Turn a door-to-door lead into a customer and mark it converted."""
@@ -320,7 +341,7 @@ async def convert_knock(kid: str,
     knock = await _get_owned_knock(kid, user, tenant["id"])
     if knock.get("disposition") not in LEAD_DISPOS:
         raise HTTPException(400, "Only interested/sold doors can convert to a customer")
-    lead_id = await _sync_lead(knock, tenant["id"])
+    lead_id = await _sync_lead(knock, tenant["id"], background_tasks)
     lead = await db.leads.find_one({"id": lead_id, "tenant_id": tenant["id"]}, {"_id": 0})
     cust = await _ensure_customer_from_lead(lead, tenant["id"])
     await db.leads.update_one(

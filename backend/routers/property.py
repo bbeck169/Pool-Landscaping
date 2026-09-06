@@ -1,5 +1,5 @@
 import httpx
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends, Query
 from fastapi.responses import JSONResponse
 from typing import Optional, List, Any, Dict
 from pydantic import BaseModel, Field
@@ -177,6 +177,7 @@ class SaveIn(BaseModel):
 
 @router.post("/property/save")
 async def save_property(body: SaveIn,
+                        background_tasks: BackgroundTasks,
                         user: dict = Depends(require_zillow_access),
                         tenant: dict = Depends(get_current_tenant)):
     now = now_iso()
@@ -218,6 +219,19 @@ async def save_property(body: SaveIn,
             )
         except Exception:
             pass
+        # Phase K63.finalize · Feb-2026 — virtual-bid lead capture
+        # is an admin-initiated inbound conversion, but it qualifies
+        # as a "new lead the ops team should know about" — wire the
+        # K63 fan-out with the same fire-and-forget contract.
+        try:
+            from services.lead_notifications import send_lead_alert_notifications
+            await send_lead_alert_notifications(
+                lead=lead, tenant=tenant,
+                background_tasks=background_tasks,
+            )
+        except Exception as _e:  # pragma: no cover
+            from config import logger as _lg
+            _lg.warning(f"[k63] property/save dispatch failed: {_e}")
         lead_id = lead["id"]
         lead_created = True
 

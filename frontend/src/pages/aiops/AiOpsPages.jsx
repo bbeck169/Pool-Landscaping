@@ -207,7 +207,7 @@ export function TasksPage() {
   };
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" data-testid="tasks-page">
-      <H title="Tasks" subtitle="Manual + system-created (sequence escalations)"
+      <H title="Tasks" subtitle="Manual + system-created (automation escalations)"
          right={<button onClick={() => setCreating(true)} className="px-3 py-2 rounded-lg text-sm font-semibold"
                         style={{ backgroundColor: colors.brand, color: "#fff" }} data-testid="task-new">
                   <Plus size={14} className="inline mr-1" /> New task

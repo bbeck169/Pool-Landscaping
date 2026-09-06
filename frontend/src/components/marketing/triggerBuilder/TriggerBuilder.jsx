@@ -138,7 +138,7 @@ export function TriggerBuilder({
       dirtyToastedRef.current = true;
       try {
         toast("Unsaved changes — draft auto-saved locally.", {
-          description: "Save the sequence to publish these changes.",
+          description: "Save the automation to publish these changes.",
           duration: 4000,
         });
       } catch { /* toast host missing in tests — silent */ }

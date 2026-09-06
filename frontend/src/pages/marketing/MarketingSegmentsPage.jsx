@@ -189,7 +189,7 @@ function SegmentEditor({ initial, onClose, onSaved }) {
     if (!initial?.id) return;
     const ok = await mustConfirm({
       title: "Deactivate this segment?",
-      description: "Existing enrolments halt. Sequences using this segment will no-op.",
+      description: "Existing enrolments halt. Automations using this segment will no-op.",
       tone: "danger", confirmText: "Deactivate", requireTypeConfirm: true,
     });
     if (!ok) return;

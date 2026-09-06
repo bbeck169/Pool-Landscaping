@@ -208,27 +208,52 @@ alert.
 | 3 | `routers/marketing.py:241`                | Marketing landing-page capture (line 247)      | ✅ |
 | 4 | `routers/marketing_forms.py:697`          | Marketing forms submit (line 523)              | ✅ |
 | 5 | `routers/widget_chat.py:212`              | Widget-chat lead capture (line 356)            | ✅ |
-| 6 | `routers/leads.py:1264`                   | **`POST /api/public/leads` (widget form)**     | ✅ **NEW — this phase** |
+| 6 | `routers/leads.py:1264`                   | **`POST /api/public/leads` (widget form)**     | ✅ NEW — K63.dispatcher-ingress-fix |
+| 7 | `routers/portal_referrals.py:225`         | Customer-portal referral submission            | ✅ **NEW — K63.finalize** |
+| 8 | `routers/property.py:208`                 | Property-lookup lead conversion (virtual bid)  | ✅ **NEW — K63.finalize** |
+| 9 | `routers/d2d.py`                          | Door-to-door canvasser capture (`interested` / `sold` dispositions on `POST /api/d2d/knocks`, `PUT /api/d2d/knocks/{id}`, `POST /api/d2d/knocks/{id}/convert`) | ✅ **NEW — K63.finalize** |
+| 10 | `routers/ringcentral.py:481`             | Inbound RC missed-call → auto lead             | ✅ **NEW — K63.finalize** (webhook: local `BackgroundTasks()` drained inline) |
 | — | `routers/leads.py:316`                    | `POST /api/leads` — admin manual create        | ❌ intentional (admin-created leads don't need to alert the admin who just typed them) |
-| — | `routers/portal_referrals.py:225`         | Customer-portal referral submission            | ❌ needs review — may want K63 fan-out |
-| — | `routers/property.py:208`                 | Property-lookup lead conversion                | ❌ needs review |
-| — | `routers/d2d.py:50`                       | Door-to-door canvasser capture                 | ❌ needs review |
-| — | `routers/ringcentral.py:481`              | Inbound RC missed-call → auto lead             | ❌ needs review — the missed-call agent probably already notifies Brian via RC directly, but K63 wants to see it too |
-| — | `server.py:1777`                          | Legacy fallback insert path                    | ❌ likely dead code — grep the callers before touching |
+| — | `server.py:1777`                          | RC nightly contact-book sync                   | ❌ intentional — this is a bulk contact-import cron (source `rc-contact-sync`) that could import hundreds of rows per run; treating them as new-lead events would flood recipient phones. Documented as "data sync, not customer ingress" in a code comment at the call site. |
 | — | `seed.py:573`                             | Seed data (not runtime)                        | N/A |
 
-K63.dispatcher-ingress-fix scope is only #6 (the confirmed canary
-ingress). The six "❌ needs review" rows are candidates for a
-follow-up **K63.ingress-fix-2** — user must decide which are
-truly widget-form-equivalent inbound and which are admin/agent
-paths that shouldn't self-notify.
+Every runtime ingress is now wired or has a documented intentional
+exclusion. **K63 is complete.**
 
 ### Tests
 
 | File | Cases | Green |
 |------|-------|-------|
-| `test_k63_ingress_fix_public_leads.py` | 3 (dispatch fires + response shape locked, idempotent refire, empty-recipient no-op) | ✅ |
+| `test_k63_ingress_fix_public_leads.py` | 3 | ✅ |
+| `test_k63_finalize_resend_and_ingress.py` | 8 (resend endpoint + D2D ingress smoke) | ✅ |
 | Regression: `test_k63_tenant_lead_notifications.py` + `test_k63_dispatcher_idempotency.py` + `test_k63_polish_dispatch_log.py` + `test_lead_alert_notifications.py` | 38 | ✅ |
 
-Total K63 pytest count after this phase: **41 green**.
+Total K63 pytest count after all phases: **49 green**.
+
+---
+
+## Phase K63.finalize — Resend endpoint + LeadDetail button
+
+### New endpoint
+
+`POST /api/admin/leads/{lead_id}/resend-notifications` — refire
+the K63 lead-alert fan-out for a single lead.
+
+* Role gate: `require_admin` (admin, super_admin, owner).
+* Tenant-scoped: 404 if the lead isn't in the acting user's tenant.
+* Bypasses idempotency by clearing every matching
+  `lead_notification_dispatches` row for the (tenant, lead) pair
+  before invoking the dispatcher.
+* Writes an audit row: `event = "lead_notification_resent"` with
+  `actor_id`, `actor_role`, `actor_email`, `sms_queued`,
+  `email_queued`, `idempotency_rows_cleared` so the K63.polish
+  drill-down modal surfaces who triggered the retry.
+
+### Frontend — LeadDetail "Resend alerts" button
+
+* Admin-only (admin / super_admin / owner) via `useAuth`.
+* Confirmation modal explicitly calls out that idempotency is
+  bypassed — recipients WILL receive a duplicate.
+* Result panel renders every dispatched (channel, recipient) pair.
+* `data-testid` on every element for Playwright / QA drives.
 

@@ -20,7 +20,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, validator
 
 from config import db, logger
@@ -157,6 +157,7 @@ async def _duplicate_lookup(tenant_id: str, phone: str, email: str) -> bool:
 @router.post("/customer-portal/referrals", status_code=201)
 async def create_customer_referral(
     body: ReferralIn,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ):
     if user.get("role") != "customer":
@@ -236,6 +237,21 @@ async def create_customer_referral(
         )
     except Exception:
         pass
+    # Phase K63.finalize · Feb-2026 — customer-portal referrals are
+    # a live inbound path (customer submitted a friend's contact),
+    # so they qualify for the K63 SMS + email fan-out just like the
+    # widget-form ingresses. Fire-and-forget via BackgroundTasks.
+    try:
+        tenant_doc = await db.tenants.find_one(
+            {"id": tenant_id}, {"_id": 0},
+        ) or {}
+        from services.lead_notifications import send_lead_alert_notifications
+        await send_lead_alert_notifications(
+            lead=lead_doc, tenant=tenant_doc,
+            background_tasks=background_tasks,
+        )
+    except Exception as _e:
+        logger.warning(f"[k63] portal-referral dispatch failed: {_e}")
 
     referral_doc = {
         "id": referral_id,
