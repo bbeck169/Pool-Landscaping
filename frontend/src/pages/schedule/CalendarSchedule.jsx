@@ -36,6 +36,10 @@ import { runBulkNavigateRoute } from "../../lib/googleMapsRoute";
 
 import { api } from "@/api";
 import { colors, font } from "@/theme";
+// Phase K73 · Feb-2026 — crew-hued deterministic palette for
+// schedule map pins + calendar events. Replaces the pre-K73 flat
+// 10-color hash palette while keeping ``display_color_hex`` wins.
+import { crewHuedColorFromTech, groupByCrewForLegend } from "@/lib/crewPalette";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import { useAuth } from "@/auth";
 // Feb-2026 · Phase 1 — Tech "On my way" SMS CTA.
@@ -544,19 +548,25 @@ export default function CalendarSchedule() {
     });
   }, [rawJobs, q, techId, status, service, crewId, crewMemberIds]);
 
-  // Phase 21 · Feb 2026 · Addition B — build the tech-id → color map
-  // from the techs list. Techs without a ``display_color_hex`` get
-  // the deterministic hash-based fallback so every event carries a
-  // stable color even when no admin picks one.
+  // Phase K73 · Feb-2026 — build tech-id → color map using the
+  // crew-hued palette (crew hue + individual saturation). Falls
+  // back to the flat ``hashedTechColor`` for callers/tests that
+  // don't provide crews.
   const techColorMap = useMemo(() => {
     const m = new Map();
+    // First: build tech_id → crew_id index so the palette gets
+    // the crew context per tech.
+    const crewByTechId = new Map();
+    for (const c of crews) {
+      for (const tid of c.tech_ids || []) crewByTechId.set(tid, c.id);
+    }
     for (const t of techs) {
       const id = t.id || t.user_id;
       if (!id) continue;
-      m.set(id, t.display_color_hex || hashedTechColor(id));
+      m.set(id, crewHuedColorFromTech(t, crewByTechId.get(id) || null));
     }
     return m;
-  }, [techs]);
+  }, [techs, crews]);
 
   const events = useMemo(
     () => {
@@ -1352,7 +1362,7 @@ export default function CalendarSchedule() {
         {/* Phase 21 · Feb 2026 · Addition B — tech color legend.
             Scrollable when many techs. Only rendered when at least
             one active tech has a color (explicit or hashed fallback). */}
-        <TechColorLegend techs={techs} techColorMap={techColorMap} />
+        <TechColorLegend techs={techs} techColorMap={techColorMap} crews={crews} />
         <DnDCalendar
           localizer={localizer}
           events={events}
@@ -2201,32 +2211,36 @@ function GridPanel({
  * active tech to their display color. Only shows techs with any
  * indication of activity so it doesn't clutter with archived users.
  */
-function TechColorLegend({ techs, techColorMap }) {
-  const active = React.useMemo(() => {
-    return (techs || [])
-      .filter((t) => t?.name && (t.active !== false))
-      .map((t) => {
-        const id = t.id || t.user_id;
-        return {
-          id,
-          name: t.name,
-          color: techColorMap.get(id) || hashedTechColor(id),
-          isExplicit: !!t.display_color_hex,
-          // Feb 2026 · Work-class counter — carried through so the
-          // legend shows the tech's active-job load + repair
-          // breakdown next to their name. All three fields default
-          // to 0 for legacy payloads (backend guarantees them on
-          // /api/technicians post-Feb-2026).
-          activeJobs: Number(t.active_jobs) || 0,
-          activeJobsRepair: Number(t.active_jobs_repair) || 0,
-          activeJobsService: Number(t.active_jobs_service) || 0,
-        };
+function TechColorLegend({ techs, techColorMap, crews = [] }) {
+  // Phase K73 · Feb-2026 — group legend rows by crew so the
+  // crew-hued palette becomes self-documenting (crew badge on
+  // the left → members with saturation variants on the right).
+  // Filter down to active techs and merge in the work-class
+  // counter fields the pre-K73 legend surfaced.
+  const activeTechs = React.useMemo(() => (
+    (techs || []).filter((t) => t?.name && (t.active !== false))
+  ), [techs]);
+  const workLoadById = React.useMemo(() => {
+    const m = new Map();
+    for (const t of activeTechs) {
+      const id = t.id || t.user_id;
+      if (!id) continue;
+      m.set(id, {
+        activeJobs: Number(t.active_jobs) || 0,
+        activeJobsRepair: Number(t.active_jobs_repair) || 0,
+        activeJobsService: Number(t.active_jobs_service) || 0,
       });
-  }, [techs, techColorMap]);
-  if (active.length === 0) return null;
+    }
+    return m;
+  }, [activeTechs]);
+  const groups = React.useMemo(
+    () => groupByCrewForLegend(activeTechs, crews),
+    [activeTechs, crews],
+  );
+  if (groups.length === 0) return null;
   return (
     <div
-      className="flex items-center gap-3 overflow-x-auto pb-2 mb-2"
+      className="flex items-center gap-4 overflow-x-auto pb-2 mb-2"
       style={{ borderBottom: `1px solid ${colors.border}` }}
       data-testid="calendar-tech-legend"
     >
@@ -2236,58 +2250,75 @@ function TechColorLegend({ techs, techColorMap }) {
       >
         Techs
       </span>
-      {active.map((t) => (
-        <span
-          key={t.id}
-          className="inline-flex items-center gap-1.5 shrink-0"
-          data-testid={`calendar-tech-legend-item-${t.id}`}
-          data-color={t.color}
-          data-explicit={t.isExplicit ? "1" : "0"}
-          title={t.isExplicit ? `${t.name} (${t.color})` : `${t.name} (fallback color)`}
+      {groups.map((g) => (
+        <div
+          key={g.crewId || "solo"}
+          className="flex items-center gap-2 shrink-0"
+          data-testid={`calendar-tech-legend-crew-${g.crewId || "solo"}`}
         >
           <span
-            className="w-3 h-3 rounded-sm"
+            className="text-[10px] font-bold uppercase tracking-wider shrink-0 px-1.5 py-0.5 rounded"
             style={{
-              backgroundColor: t.color,
-              border: t.isExplicit ? "none" : `1px dashed ${colors.border}`,
+              backgroundColor: colors.surfaceSecondary,
+              color: colors.onSurface,
             }}
-          />
-          <span className="text-xs" style={{ color: colors.onSurface }}>{t.name}</span>
-          {/* Feb 2026 · Per-tech work-class counter. Renders when
-              the tech has ≥1 active job. Shows total on left,
-              repair breakdown after a middot when repairs > 0.
-              testids always exist so the tester can assert the
-              presence + parse the numeric spans. */}
-          {t.activeJobs > 0 ? (
-            <span
-              className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md ml-0.5"
-              style={{
-                background: colors.surfaceSecondary,
-                color: colors.onSurface,
-              }}
-              data-testid={`calendar-tech-legend-count-${t.id}`}
-              data-total={t.activeJobs}
-              data-service={t.activeJobsService}
-              data-repair={t.activeJobsRepair}
-            >
-              <span data-testid={`calendar-tech-legend-count-total-${t.id}`}>
-                {t.activeJobs}
-              </span>
-              {t.activeJobsRepair > 0 ? (
-                <>
-                  <span aria-hidden="true" className="opacity-60"> · </span>
+          >
+            {g.crewName}
+          </span>
+          {g.techs.map((t) => {
+            const load = workLoadById.get(t.id) || { activeJobs: 0, activeJobsRepair: 0, activeJobsService: 0 };
+            const color = techColorMap.get(t.id) || t.colorHex;
+            return (
+              <span
+                key={t.id}
+                className="inline-flex items-center gap-1.5 shrink-0"
+                data-testid={`calendar-tech-legend-item-${t.id}`}
+                data-color={color}
+                data-explicit={t.isExplicit ? "1" : "0"}
+                data-crew-id={g.crewId || ""}
+                title={t.isExplicit ? `${t.name} (${color})` : `${t.name} (${g.crewName} · saturation variant)`}
+              >
+                <span
+                  className="w-3 h-3 rounded-sm"
+                  style={{
+                    backgroundColor: color,
+                    border: t.isExplicit ? "none" : `1px dashed ${colors.border}`,
+                  }}
+                />
+                <span className="text-xs" style={{ color: colors.onSurface }}>{t.name}</span>
+                {load.activeJobs > 0 ? (
                   <span
-                    data-testid={`calendar-tech-legend-count-repair-${t.id}`}
-                    style={{ color: "#DC2626" }}
-                    title={`${t.activeJobsRepair} repair${t.activeJobsRepair === 1 ? "" : "s"}`}
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md ml-0.5"
+                    style={{
+                      background: colors.surfaceSecondary,
+                      color: colors.onSurface,
+                    }}
+                    data-testid={`calendar-tech-legend-count-${t.id}`}
+                    data-total={load.activeJobs}
+                    data-service={load.activeJobsService}
+                    data-repair={load.activeJobsRepair}
                   >
-                    {t.activeJobsRepair}R
+                    <span data-testid={`calendar-tech-legend-count-total-${t.id}`}>
+                      {load.activeJobs}
+                    </span>
+                    {load.activeJobsRepair > 0 ? (
+                      <>
+                        <span aria-hidden="true" className="opacity-60"> · </span>
+                        <span
+                          data-testid={`calendar-tech-legend-count-repair-${t.id}`}
+                          style={{ color: "#DC2626" }}
+                          title={`${load.activeJobsRepair} repair${load.activeJobsRepair === 1 ? "" : "s"}`}
+                        >
+                          {load.activeJobsRepair}R
+                        </span>
+                      </>
+                    ) : null}
                   </span>
-                </>
-              ) : null}
-            </span>
-          ) : null}
-        </span>
+                ) : null}
+              </span>
+            );
+          })}
+        </div>
       ))}
     </div>
   );

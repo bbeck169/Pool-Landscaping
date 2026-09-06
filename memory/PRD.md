@@ -16638,3 +16638,68 @@ backend + 162 frontend, 0 fail, 0 skipped.**
 - Reminder cadence — deferred post-R7 per user direction.
 - GHL-parity Automations rebuild — user's 5 scoping answers
   still open.
+
+---
+
+## Phase K73 — Schedule Role Gating + Color Route Pins (SHIPPED · Feb 2026)
+
+**Audit correction:** the R1.c ship report §5 flagged a
+`GET /api/jobs` PII leak. Re-audit with the CORRECT comparison
+(`job.technician_id` vs `user.technician_id`, not `user.id`)
+showed **no leak on any of the audited endpoints**. Full
+findings in `/app/memory/K73_INCIDENT_SUMMARY.md`.
+
+**Delivered anyway:**
+- Permanent, unquarantinable contract test suite
+  (`backend/tests/test_k73_tech_scope_contract.py`, 11 tests)
+  locking in the current correct tech-scope behavior across
+  `/api/jobs`, `/api/jobs/{id}`, `/api/schedule/today`,
+  `/api/schedule/day`, and 5 admin-only gates.
+- Crew-hued deterministic map palette in
+  `frontend/src/lib/crewPalette.js` — crew hue + individual
+  saturation, 12-slice HSL wheel with 25° readability
+  guardrail. `display_color_hex` still wins.
+- `CalendarSchedule::TechColorLegend` reworked to group techs
+  by crew with per-crew badges + "Solo" bucket for un-crewed
+  techs.
+- Mobile hits the same `/api/*` routes — server-side scoping
+  covers mobile for free.
+- Zero code changes to `scope_jobs_query` — K65.fix compound
+  index perf preserved.
+
+**Tests:** 11 new backend contract + 12 new frontend palette +
+regression = **82 backend, 120 frontend, 0 fail, 0 skipped.**
+
+**Adjacent finding (queued as K73.5):**
+`GET /api/customers` is tenant-scoped but not tech-scoped.
+Product decision needed.
+
+**Files of record:**
+- `backend/tests/test_k73_tech_scope_contract.py`
+- `frontend/src/lib/crewPalette.js`
+- `frontend/src/test/k73-crew-palette.test.js`
+- `frontend/src/pages/schedule/CalendarSchedule.jsx` (palette wire-in)
+- `memory/PHASE_K73_SCHEDULE_ROLE_GATING_COLOR_PINS.md`
+- `memory/K73_INCIDENT_SUMMARY.md`
+
+**Next actions (in order):**
+1. **K74** — solid navy tile swap
+   (`#1B1F5C` on dashboard chip + Reports full bg). ~30 min.
+2. **K74.1** — Schedule job-tile background lighten. Locate the
+   `colors.schedule.tileBg` (or equivalent) mint/green token in
+   `frontend/src/theme.js`, lighten 30-40% (~`#EAF7F0` target)
+   without leaving the pale-green family. Apply on both web
+   (`frontend/`) and Expo mobile (`mobile/`). Preserve every
+   other tile element (navy heading, VIP yellow badge,
+   status chips, OPEN pill, gate call-out). Add a vitest
+   pinning the new token value. Screenshot before/after.
+3. **R2** — Operations Reporting Suite (mirrors R1 shape).
+4. R3 → R7 sequential.
+5. K73.5 Customer Read Scope (adjacent finding above).
+6. K74.5 Audit-log the 403s from `scope_jobs_query`.
+
+**Held / user-owned:**
+- Reminder cadence R1.b+ — deferred post-R7.
+- Email PDF to customer (R1.c enhancement) — deferred post-R7.
+- K72.b apology dispatch — user-owned, script staged.
+- GHL-parity Automations — user's 5 scoping answers open.
