@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Beaker, Sparkles, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { api } from "@/api";
-import { colors } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { PageHeader, Button, Skeleton, TextInput, EmptyState, Modal, Toast } from "@/components/ui-kit";
 
 const READINGS = [
@@ -110,8 +110,14 @@ export default function CustomerChemistry() {
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center text-white"
               style={{
-                background:
-                  "linear-gradient(135deg, #0284C7 0%, #16A34A 100%)",
+                // K67 · Feb-2026 — swap the sky-600 stop for menu
+                // navy via the canonical gradients.navyToGreen token.
+                // Keep the 135deg direction (icon-plate diagonal) —
+                // K67 constraint is "direction unchanged".
+                background: gradients.navyToGreen.css.replace(
+                  "90deg",
+                  "135deg",
+                ),
               }}
             >
               <Sparkles size={18} />

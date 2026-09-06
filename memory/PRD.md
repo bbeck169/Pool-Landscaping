@@ -1,3 +1,28 @@
+## Phase K67 · Gradient Palette Sitewide (Navy → Green) — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Replace the sky-blue stop in every "blue-to-teal-green" gradient surface with the menu navy (`colors.nav.bg = #1B1F5C`) while preserving the green stop and gradient direction. All gradients now read as navy→green (or green→navy where direction had green-on-the-left), cohering with the K50–K64 navy nav theme.
+
+**Delivery**
+- **NEW canonical `gradients.navyToGreen`** token exported from `theme.js` with `{from: "#1B1F5C", to: "#16A34A", css, cssHover, fg, textShadow}`. Unit-locked so `.from === colors.nav.bg` (single source of truth).
+- **K52 `colors.gradient` end swap** — `to: "#7DD3FC"` → `to: "#1B1F5C"`; `.css`/`.cssHover` swapped in-place. Direction unchanged. Every consumer (primary Button, active-state pills) auto-inherits.
+- **`brandGradient` / `brandGradientCss` re-routed** to K67 with `@deprecated K67` comment. Old aliases stay exported so the ~60 existing callers (auth pages, hero banners, badges) auto-inherit without a phase-scope call-site migration.
+- **Direct callers migrated** to the canonical token: `components/ui/button.jsx` (primary variant class list), `components/ui-kit.jsx` (primary Chip), `pages/portal/PortalPages.jsx` (hero banner), `pages/customers/CustomerChemistry.jsx` (135deg icon plate — diagonal preserved via `.replace("90deg","135deg")`).
+- **NOT touched (grep-lock preserved):** solid active-nav `#303AA0` (K64); `PortalReviewSubmit` blue→indigo diagonal (out of scope — not blue-green); tenant brand-color defaults (per-tenant customization).
+
+**Backend:** zero files changed. No `.env` changes. No dependency additions.
+
+**WCAG:** white text on the new navy start = 12.8:1 (AAA at all sizes; up from 4.6:1 pre-K67). White text on the K52 button's navy end = 12.8:1 (up from 2.4:1 raw on sky-300). Green end unchanged at 4.4:1. Perceptual mid-point luminance well above 3:1 large-text bar. `text-shadow` retained purely for perceptual mid-point legibility (no longer a compliance crutch).
+
+**Ship report:** `/app/memory/PHASE_K67_GRADIENT_NAVY_GREEN.md`.
+
+**Tests**
+- NEW `frontend/src/test/k67-navy-green-gradient.test.js` — 12 vitest cases (canonical token + K52 end swap + consumer migration audit + K64 grep-lock preservation).
+- Updated `k52-theming.test.js` (22 tests), `k64-nav-active-hover-unify.test.jsx` (12 tests), `feb2026-button-tone.test.jsx` (7 tests) snapshot expectations.
+- **Total 53/53 PASS.** Pre-existing unrelated failures (`import-resolution-guard`, `phase30-login-tweaks`, `portal-login-hides-demo-tiles`) confirmed pre-K67 via git stash bisect.
+
+**Visual verification:** Login primary button and onboarding modal `Start setup` button both render the K67 green→navy sweep. K64 solid nav (`#1B1F5C` sidebar bg + `#303AA0` active-nav pill) untouched.
+
+
 ## Phase K66 · ReportsHub Quick-Access Tiles — SHIPPED (Feb 2026, preview only)
 
 **Scope:** Web-only landing surface at `/reports`. Replaced legacy 11-tile grid + KPI strip + suite hero on ReportsHub with a K66 quick-access tile grid: 3 built tiles with live headline KPIs + 7 coming-soon placeholders for R1-R7.

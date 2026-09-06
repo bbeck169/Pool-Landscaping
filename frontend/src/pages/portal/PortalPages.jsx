@@ -12,7 +12,7 @@ import {
   Plus,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, money } from "@/theme";
+import { colors, money, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 import InvoiceView from "@/components/InvoiceView";
 import EstimateView from "@/components/EstimateView";
@@ -172,7 +172,7 @@ export function PortalInvoices() {
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-invoices" data-tour-id="invoices-list">
       <PageHeader title="My Invoices" subtitle="Pay online, download receipts." />
-      <div className="rounded-2xl p-5 mb-4" style={{ background: "linear-gradient(90deg, #0284C7, #16A34A)", color: "#fff" }}>
+      <div className="rounded-2xl p-5 mb-4" style={{ background: gradients.navyToGreen.css, color: "#fff" }}>
         <div className="text-sm opacity-85">Total outstanding</div>
         <div className="text-3xl font-bold mt-1" data-testid="port-outstanding">{money(total)}</div>
       </div>

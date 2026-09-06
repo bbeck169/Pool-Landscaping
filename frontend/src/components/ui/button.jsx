@@ -26,11 +26,18 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // K52 primary — signature emerald→sky gradient with a
-        // subtle text-shadow so white body copy still passes the
-        // manual eye check on the ``#7DD3FC`` (sky-300) end.
+        // K52 primary — signature action gradient.
+        // K67 · Feb-2026 — swapped the sky-300 end (#7DD3FC) for
+        // the menu navy (#1B1F5C) so the primary CTA reads as
+        // green → navy instead of green → sky, cohering with the
+        // K50–K64 navy nav theme. Direction unchanged; green stop
+        // untouched. White text now sits on ~12.8:1 contrast at
+        // the navy end (up from ~2.4:1 raw on sky-300), so the
+        // ``text-shadow`` patch below is retained purely for
+        // legibility over the perceptual mid-point (green-to-navy
+        // luminance dip).
         default:
-          "text-white shadow bg-[linear-gradient(90deg,_#22C55E_0%,_#7DD3FC_100%)] hover:bg-[linear-gradient(90deg,_#34D673_0%,_#93DDFD_100%)] active:brightness-95 [text-shadow:0_1px_2px_rgba(0,0,0,0.25)]",
+          "text-white shadow bg-[linear-gradient(90deg,_#22C55E_0%,_#1B1F5C_100%)] hover:bg-[linear-gradient(90deg,_#34D673_0%,_#2A2F7A_100%)] active:brightness-95 [text-shadow:0_1px_2px_rgba(0,0,0,0.25)]",
         // K54 destructive — solid #DC2626 / white / #B91C1C hover /
         // #EF4444 focus ring. ``disabled:opacity-55`` is inherited
         // from the base cva above so no override needed here.

@@ -41,24 +41,24 @@ const TIMERS      = read("src/pages/timers/JobTimersPage.jsx");
 /* ══════════════════════════════════════════════════════════════════ */
 
 describe("K52 · Theme tokens", () => {
-  it("exports the ``colors.gradient`` block with the locked values", () => {
+  it("exports the ``colors.gradient`` block with the locked values (K67 · navy end)", () => {
     expect(colors.gradient).toBeDefined();
-    expect(colors.gradient.from).toBe("#22C55E");   // emerald-500
-    expect(colors.gradient.to).toBe("#7DD3FC");     // sky-300
+    expect(colors.gradient.from).toBe("#22C55E");   // emerald-500 (unchanged)
+    expect(colors.gradient.to).toBe("#1B1F5C");     // K67 · menu navy (was #7DD3FC sky-300)
     expect(colors.gradient.css)
-      .toBe("linear-gradient(90deg, #22C55E 0%, #7DD3FC 100%)");
+      .toBe("linear-gradient(90deg, #22C55E 0%, #1B1F5C 100%)");
     expect(colors.gradient.cssHover)
-      .toBe("linear-gradient(90deg, #34D673 0%, #93DDFD 100%)");
+      .toBe("linear-gradient(90deg, #34D673 0%, #2A2F7A 100%)");
     expect(colors.gradient.fg).toBe("#FFFFFF");
     expect(colors.gradient.fgHover).toBe("#FFFFFF");
     expect(colors.gradient.textShadow).toBe("0 1px 2px rgba(0, 0, 0, 0.25)");
   });
 
-  it("``theme.js`` keeps the K50 nav block intact + adds the K52 gradient block inline", () => {
+  it("``theme.js`` keeps the K50 nav block intact + adds the K52 gradient block inline (K67 · navy end)", () => {
     // Guards against a scatter-refactor moving gradient tokens
     // out of ``theme.js``.  Single source of truth is the K52 rule.
-    expect(THEME).toMatch(/gradient:\s*\{[\s\S]{0,600}from:\s*"#22C55E"[\s\S]{0,400}to:\s*"#7DD3FC"/);
-    expect(THEME).toMatch(/css:\s*"linear-gradient\(90deg,\s*#22C55E\s*0%,\s*#7DD3FC\s*100%\)"/);
+    expect(THEME).toMatch(/gradient:\s*\{[\s\S]{0,900}from:\s*"#22C55E"[\s\S]{0,600}to:\s*"#1B1F5C"/);
+    expect(THEME).toMatch(/css:\s*"linear-gradient\(90deg,\s*#22C55E\s*0%,\s*#1B1F5C\s*100%\)"/);
     expect(THEME).toMatch(/textShadow:\s*"0 1px 2px rgba\(0,\s*0,\s*0,\s*0\.25\)"/);
     // K50 tokens preserved.
     expect(THEME).toMatch(/nav:\s*\{[\s\S]{0,400}bg:\s*"#1B1F5C"/);
@@ -194,12 +194,13 @@ describe("K52 · Slice B — Popover panel navy", () => {
 /* ══════════════════════════════════════════════════════════════════ */
 
 describe("K52 · Slice C — Gradient primary Button", () => {
-  it("shadcn Button ``default`` variant paints the K52 signature gradient", () => {
+  it("shadcn Button ``default`` variant paints the K52 signature gradient (K67 · navy end)", () => {
     // Both stops present verbatim in the variant class list.
-    expect(BUTTON).toMatch(/default:[^,]*bg-\[linear-gradient\(90deg,_#22C55E_0%,_#7DD3FC_100%\)\]/);
-    // Hover uses the +8% brightness gradient.
-    expect(BUTTON).toMatch(/hover:bg-\[linear-gradient\(90deg,_#34D673_0%,_#93DDFD_100%\)\]/);
-    // White text + subtle text-shadow for legibility on the sky end.
+    expect(BUTTON).toMatch(/default:[^,]*bg-\[linear-gradient\(90deg,_#22C55E_0%,_#1B1F5C_100%\)\]/);
+    // Hover uses the +8% brightness gradient (navy hover = colors.nav.bgHover).
+    expect(BUTTON).toMatch(/hover:bg-\[linear-gradient\(90deg,_#34D673_0%,_#2A2F7A_100%\)\]/);
+    // White text + subtle text-shadow for legibility over the
+    // perceptual mid-point (green → navy luminance dip).
     expect(BUTTON).toMatch(/text-white/);
     expect(BUTTON).toMatch(/text-shadow:0_1px_2px_rgba\(0,0,0,0\.25\)/);
     // Focus ring uses the emerald end of the gradient as accent.
@@ -210,6 +211,12 @@ describe("K52 · Slice C — Gradient primary Button", () => {
     // NOT resurface on the ``default`` variant.
     const defBlock = BUTTON.split("default:")[1].split("destructive:")[0];
     expect(defBlock).not.toMatch(/bg-primary\b/);
+    // K67 grep-lock — the deprecated sky-300 stop must not
+    // resurface in the ACTIVE variant class list (comments
+    // explaining the K67 swap may still name #7DD3FC / #93DDFD
+    // for context; scope the assertion to the class list itself).
+    expect(defBlock).not.toMatch(/bg-\[[^\]]*#7DD3FC/);
+    expect(defBlock).not.toMatch(/bg-\[[^\]]*#93DDFD/);
   });
 
   it("``destructive`` variant is NOT gradient-ified (danger stays flat red)", () => {

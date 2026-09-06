@@ -1,5 +1,5 @@
 import React from "react";
-import { colors } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 // Compact chip used for tags, status pills, small filters.
 export function Chip({ label, tone = "neutral", onClose, testid }) {
@@ -186,9 +186,10 @@ export function Button({ children, variant = "primary", tone, className = "", te
     primary: toneBg
       ? { background: toneBg, color: toneOnBg }
       : {
-          background:
-            "linear-gradient(90deg, #0284C7 0%, #16A34A 100%)",
-          color: "#fff",
+          // K67 · Feb-2026 — resolved via the canonical navy → green
+          // token so ui-kit consumers inherit the palette shift.
+          background: gradients.navyToGreen.css,
+          color: gradients.navyToGreen.fg,
         },
     ghost: {
       background: colors.surfaceSecondary,

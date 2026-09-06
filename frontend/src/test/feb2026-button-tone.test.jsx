@@ -42,7 +42,9 @@ describe("Button · Feb-2026 tone prop", () => {
       || bg.includes(`rgb(${hexToRgbTuple(h).join(", ")})`);
     // Either the raw gradient (Chrome/real browser path) or a
     // decomposed pair (jsdom style parser) is acceptable.
-    expect(has("#0284C7") || has("#16A34A")).toBe(true);
+    // K67 · Feb-2026 — start stop swapped from sky-600 (#0284C7)
+    // to menu navy (#1B1F5C); the green-600 end stop is unchanged.
+    expect(has("#1B1F5C") || has("#16A34A")).toBe(true);
     expect(el.getAttribute("data-tone")).toBe("primary");
   });
 

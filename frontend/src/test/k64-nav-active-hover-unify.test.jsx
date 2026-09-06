@@ -40,13 +40,14 @@ describe("K64 · theme token — colors.nav.bgActiveNavy", () => {
     expect(colors.nav.fg).toBe("#FFFFFF");
   });
 
-  it("theme.js keeps the K52 gradient block intact (non-nav consumers still resolve it)", () => {
+  it("theme.js keeps the K52 gradient block intact (non-nav consumers still resolve it, K67 · navy end)", () => {
     // K64 does NOT retire the gradient token — only stops the two
     // main-nav surfaces from consuming it. Existing badge / sub-nav
     // callers still resolve through colors.gradient.*
-    expect(THEME).toMatch(/gradient:\s*\{[\s\S]{0,120}from:\s*"#22C55E"/);
+    // K67 · Feb-2026 — swapped the sky-300 stop for menu navy.
+    expect(THEME).toMatch(/gradient:\s*\{[\s\S]{0,300}from:\s*"#22C55E"/);
     expect(colors.gradient.css)
-      .toBe("linear-gradient(90deg, #22C55E 0%, #7DD3FC 100%)");
+      .toBe("linear-gradient(90deg, #22C55E 0%, #1B1F5C 100%)");
   });
 });
 

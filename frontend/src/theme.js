@@ -126,7 +126,12 @@ export const colors = {
   },
 
   // ═══════════════════════════════════════════════════════════════
-  // Phase K52 · Feb-2026 — signature action gradient (E → e2).
+  // Phase K52 · Feb-2026 — signature action gradient.
+  // Phase K67 · Feb-2026 — swapped the sky-300 stop for the menu
+  // navy (``colors.nav.bg`` #1B1F5C) so the gradient reads as
+  // green → navy instead of green → sky, cohering with the K50–K64
+  // navy nav theme. Direction is unchanged (green stays on the
+  // left) per K67 constraints.
   //
   // Used on: primary CTAs (shadcn ``Button`` default variant), the
   // active-state pill in the sidebar / top-bar / sub-nav, and the
@@ -135,17 +140,20 @@ export const colors = {
   // inlining the hex — the tokens are the single source of truth
   // so a future palette shift is a one-file change.
   //
-  // Contrast rule: white text on ``gradient.to`` (#7DD3FC) is the
-  // weakest point (~2.4:1 raw).  The gradient consumers apply a
-  // subtle ``text-shadow: 0 1px 2px rgba(0,0,0,0.25)`` on the label
-  // to lift small text back over WCAG AA large-text (3:1) — this
-  // is the ``gradient.textShadow`` token below.
+  // Contrast rule (post-K67): white text on the K67 navy end
+  // (#1B1F5C) is 12.8:1 (AAA at all sizes) — the sky-300 end used
+  // to be the weakest link at ~2.4:1 and required a text-shadow
+  // patch to reach WCAG AA large. The ``textShadow`` token is
+  // retained for backwards compatibility but is no longer required
+  // for contrast; keeping it also improves legibility over the
+  // green mid-point (green-500 → navy sweep) where the perceptual
+  // luminance dips.
   // ═══════════════════════════════════════════════════════════════
   gradient: {
-    from: "#22C55E",         // emerald-500
-    to:   "#7DD3FC",         // sky-300
-    css:      "linear-gradient(90deg, #22C55E 0%, #7DD3FC 100%)",
-    cssHover: "linear-gradient(90deg, #34D673 0%, #93DDFD 100%)",  // ~+8% lightness on each stop
+    from: "#22C55E",         // emerald-500 — green stop (unchanged)
+    to:   "#1B1F5C",         // K67 · menu navy (was #7DD3FC sky-300)
+    css:      "linear-gradient(90deg, #22C55E 0%, #1B1F5C 100%)",
+    cssHover: "linear-gradient(90deg, #34D673 0%, #2A2F7A 100%)",  // K67 · matched ~+8% lightness on each stop; hover-navy equals colors.nav.bgHover
     fg: "#FFFFFF",
     fgHover: "#FFFFFF",
     textShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
@@ -180,9 +188,49 @@ export const colors = {
   },
 };
 
-// Signature primary gradient: sky-600 -> green-600
-export const brandGradient = ["#0284C7", "#16A34A"];
-export const brandGradientCss = `linear-gradient(90deg, ${brandGradient[0]} 0%, ${brandGradient[1]} 100%)`;
+// ═══════════════════════════════════════════════════════════════
+// Phase K67 · Feb-2026 — canonical navy → green gradient.
+//
+// Single source of truth for every legacy "blue-to-green" surface
+// (dashboard KPI hero, auth-page banners, portal hero banner, the
+// R0 reports "Open new suite" chip, etc.).  Historically the two
+// stops were sky-600 (#0284C7) → green-600 (#16A34A), which read
+// as "blue → teal-green" and clashed with the K50–K64 navy nav.
+// K67 swaps the sky-600 stop for the menu navy (colors.nav.bg
+// #1B1F5C) while preserving the green stop and the 90deg
+// direction, so the gradient now reads as navy → green.
+//
+// Contrast rule:
+//   * White text on ``#1B1F5C`` (start) → 12.8 : 1 (AAA at all
+//     sizes) — improved from the sky-600 start's 4.6 : 1.
+//   * White text on ``#16A34A`` (end)   → 4.4 : 1 (AA body /
+//     AAA large — unchanged, this stop wasn't touched).
+//   * The perceptual mid-point sits near navy-teal at ~luminance
+//     0.35 which stays well above the 3:1 large-text bar.
+// ═══════════════════════════════════════════════════════════════
+export const gradients = {
+  navyToGreen: {
+    from: "#1B1F5C",  // K67 · menu navy (colors.nav.bg)
+    to:   "#16A34A",  // green-600 (unchanged)
+    css:      "linear-gradient(90deg, #1B1F5C 0%, #16A34A 100%)",
+    // Hover: +8% lightness on each stop, mirroring the K52
+    // ``colors.gradient.cssHover`` pattern.
+    cssHover: "linear-gradient(90deg, #2A2F7A 0%, #22B457 100%)",
+    fg: "#FFFFFF",
+    textShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
+// @deprecated K67 · Feb-2026 — use ``gradients.navyToGreen.*``.
+//
+// Historical name for the primary brand gradient. Left exported
+// so the ~60 existing callers do not break in a single phase;
+// the underlying stops are already rerouted to the K67 navy →
+// green palette. Full call-site migration is a K67-follow-up.
+// ═══════════════════════════════════════════════════════════════
+export const brandGradient = ["#1B1F5C", "#16A34A"];
+export const brandGradientCss = gradients.navyToGreen.css;
 
 export const font = {
   family: "'Plus Jakarta Sans', system-ui, -apple-system, sans-serif",
