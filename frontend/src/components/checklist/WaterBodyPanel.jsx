@@ -31,7 +31,7 @@ import {
   READING_REQUIRED,
   WATER_BODY_TYPES,
   missingRequiredReadings,
-} from "@/lib/waterBodies";
+} from "../../lib/waterBodies";
 
 const c = {
   border: "#E2E8F0", muted: "#64748B",

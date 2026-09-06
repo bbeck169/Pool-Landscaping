@@ -30,7 +30,7 @@ import JobNotesCallout from "@/components/schedule/JobNotesCallout";
 import OnMyWayButton from "@/components/schedule/OnMyWayButton";
 import ScheduleMap from "@/pages/schedule/ScheduleMap";
 // Phase K50 · Feb-2026 — Schedule job-card status background shading.
-import { jobStatusColor as k50JobStatusColor } from "@/lib/jobStatus";
+import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
 import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, StickyNote, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide } from "lucide-react";
 
 const GOOGLE_LIBS = ["places"];

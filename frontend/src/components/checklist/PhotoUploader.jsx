@@ -12,7 +12,7 @@
 import React, { useRef, useState } from "react";
 import { Camera, X, Loader2 } from 'lucide-react';
 import { api } from "@/api";
-import { compressImageIfNeeded } from "@/lib/imageCompress";
+import { compressImageIfNeeded } from "../../lib/imageCompress";
 
 const colors = {
   brand: "#0EA5E9",

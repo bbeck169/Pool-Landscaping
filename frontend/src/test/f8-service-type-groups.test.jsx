@@ -9,7 +9,7 @@ import {
   classifyServiceType,
   POOL_KEYWORDS,
   LANDSCAPE_KEYWORDS,
-} from "@/lib/serviceTypeGroups";
+} from "../lib/serviceTypeGroups";
 
 describe("F8 · classifyServiceType widened vocab", () => {
   // Pool group — includes the newly-added tokens.

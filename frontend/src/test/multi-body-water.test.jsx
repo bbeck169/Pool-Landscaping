@@ -31,7 +31,7 @@ import {
   makeEmptyBody,
   validateBodies,
   missingRequiredReadings,
-} from "@/lib/waterBodies";
+} from "../lib/waterBodies";
 
 
 // ══════════════════════════════════════════════════════════════════════

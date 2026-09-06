@@ -25,7 +25,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button, Modal, Toast } from "@/components/ui-kit";
 import { Pencil, History, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
-import { formatCompletedAt } from "@/lib/dateTimeFormat";
+import { formatCompletedAt } from "../../lib/dateTimeFormat";
 
 
 // Client-side mirror of ``services.edit_window.EDIT_WINDOW_HOURS``.

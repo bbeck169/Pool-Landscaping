@@ -28,7 +28,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 // Feb-2026 · Services / Repairs countdown pills (shared classifier
 // with the mobile tech Schedule screen — see ``mobile/lib/jobCategory``).
 import JobCountPill from "@/components/JobCountPill";
-import { computePillCounts } from "@/lib/jobCategory";
+import { computePillCounts } from "../../lib/jobCategory";
 // Feb-2026 · Workstream inline job edit — reuses the exact modal
 // the Schedule page's Pencil affordance opens. Do NOT fork.
 import ScheduleJobEditModal from "@/pages/schedule/ScheduleJobEditModal";
@@ -72,7 +72,7 @@ function humanDate(iso) {
 // portal-service-history / job-edit-panel surface renders the same
 // exact "Mon D, YYYY · h:mm AM/PM" string.  Re-exported here as a
 // named alias so existing K12 imports keep working.
-import { formatCompletedAt } from "@/lib/dateTimeFormat";
+import { formatCompletedAt } from "../../lib/dateTimeFormat";
 export { formatCompletedAt };
 
 // ── Sub-components ─────────────────────────────────────────────────

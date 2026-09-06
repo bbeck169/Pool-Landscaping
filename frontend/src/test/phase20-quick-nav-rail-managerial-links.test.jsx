@@ -79,12 +79,17 @@ describe("QuickNavRail — P20 managerial links", () => {
     // Guardrail — if the shipped rail drifts, this test's mirror will
     // stop reflecting the real UX. This assertion pins the exact
     // count so a future edit that changes the rail forces a mirror update.
+    // Phase K75 · Step B · Feb-2026 — the pre-K75 hard-coded
+    // ``QUICK_NAV_RAIL`` array in ``AppLayout.jsx`` was retired;
+    // the seed defaults now live in ``@/nav/defaultQuickPins.js``
+    // and drive the rail through ``useQuickPins``. This
+    // source-lint follows the entries to the new home.
     const fs = require("fs");
     const path = require("path");
     const src = fs.readFileSync(
-      path.resolve("src/layouts/AppLayout.jsx"), "utf8");
+      path.resolve("src/nav/defaultQuickPins.js"), "utf8");
     // Every mirror entry's ``key: "..."`` must appear verbatim
-    // inside the QUICK_NAV_RAIL literal.
+    // inside the ``ADMIN_DEFAULTS_RAW`` literal.
     for (const item of QUICK_NAV_RAIL_MIRROR) {
       expect(src).toContain(`key: "${item.key}"`);
     }

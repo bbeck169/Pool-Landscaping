@@ -26,7 +26,7 @@ import React, { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { UploadCloud, X, FileText, Video as VideoIcon, Image as ImageIcon } from "lucide-react";
 import { uploadFile, deleteFile } from "@/api/files";
-import { compressImageIfNeeded } from "@/lib/imageCompress";
+import { compressImageIfNeeded } from "../../lib/imageCompress";
 
 const MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
 

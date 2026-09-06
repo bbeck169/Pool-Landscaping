@@ -1,46 +1,45 @@
 /**
- * Feb-2026 · QuickNavRail — Leads sidebar quick-link.
+ * Feb-2026 · QuickPinsRail — Leads sidebar quick-link.
  *
- * Locks:
- *   - The rail source declares a "leads" entry with the /leads route
- *     and the UserPlus icon (matches ``nav/adminNav.js`` convention).
- *   - Position: between ``customers`` and ``estimates`` — sales-
- *     pipeline group cohesion.
- *   - Role gate: super_admin / admin / manager only.  Technicians
- *     and customer_portal do NOT see this item.
- *   - Testid follows the rail's ``rail-nav-{key}`` pattern
- *     (``rail-nav-leads``).
+ * Phase K75 · Step B · Feb-2026 — the pre-K75 hard-coded rail
+ * array moved from ``AppLayout.jsx`` → ``nav/defaultQuickPins.js``
+ * where the shared seed lives. Per-role gating is now enforced by
+ * ``defaultQuickPinsForRole(role)`` — the P20-era ``roles: [...]``
+ * per-item filter was retired (an admin-only seed lists the admin
+ * items; the tech seed lists only tech items).
  */
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
+import { defaultQuickPinsForRole } from "@/nav/defaultQuickPins";
+
 const SRC = fs.readFileSync(
-  path.resolve(__dirname, "../layouts/AppLayout.jsx"),
+  path.resolve(__dirname, "../nav/defaultQuickPins.js"),
   "utf-8",
 );
 
 
-describe("QuickNavRail · Leads sidebar quick-link", () => {
-  it("registers the /leads route with the UserPlus icon", () => {
+describe("QuickPinsRail · Leads sidebar quick-link (K75 · Step B — source of truth in defaultQuickPins.js)", () => {
+  it("registers the /leads route with the user_plus iconKey", () => {
+    // Source of truth is the ``ADMIN_DEFAULTS_RAW`` literal.
     expect(SRC).toMatch(
-      /key:\s*"leads"[\s\S]{0,120}to:\s*"\/leads"[\s\S]{0,120}Icon:\s*UserPlus/,
+      /key:\s*"leads"[\s\S]{0,120}to:\s*"\/leads"[\s\S]{0,120}iconKey:\s*"user_plus"/,
     );
   });
 
-  it("gates the item to super_admin / admin / manager only", () => {
-    // The rail entry's ``roles`` array must not include technician
-    // or customer — those roles must not see the Leads shortcut.
-    const leadsMatch = SRC.match(
-      /key:\s*"leads"[\s\S]{0,300}?roles:\s*\[([^\]]+)\]/,
-    );
-    expect(leadsMatch, "leads entry not found").toBeTruthy();
-    const roles = leadsMatch[1];
-    expect(roles).toContain("super_admin");
-    expect(roles).toContain("admin");
-    expect(roles).toContain("manager");
-    expect(roles).not.toContain("technician");
-    expect(roles).not.toContain("customer");
+  it("gates the item to admin / super_admin / manager (tech + customer never see it)", () => {
+    const adminPins = defaultQuickPinsForRole("admin");
+    const managerPins = defaultQuickPinsForRole("manager");
+    const superPins = defaultQuickPinsForRole("super_admin");
+    const techPins = defaultQuickPinsForRole("technician");
+    const customerPins = defaultQuickPinsForRole("customer");
+
+    for (const pins of [adminPins, managerPins, superPins]) {
+      expect(pins.some((p) => p.to === "/leads"), "admin+ should see /leads").toBe(true);
+    }
+    expect(techPins.some((p) => p.to === "/leads"), "tech should NOT see /leads").toBe(false);
+    expect(customerPins.some((p) => p.to === "/leads"), "customer should NOT see /leads").toBe(false);
   });
 
   it("sits between customers and estimates in the rail order", () => {
@@ -57,7 +56,16 @@ describe("QuickNavRail · Leads sidebar quick-link", () => {
     expect(occurrences).toHaveLength(1);
   });
 
-  it("imports UserPlus from lucide-react", () => {
-    expect(SRC).toMatch(/UserPlus,?\s*\n[\s\S]{0,80}from\s*"lucide-react"/);
+  it("iconKey resolves through the K75 whitelist", () => {
+    const pins = defaultQuickPinsForRole("admin");
+    const leads = pins.find((p) => p.to === "/leads");
+    expect(leads).toBeTruthy();
+    expect(leads.iconKey).toBe("user_plus");
+    // ``Icon`` was hydrated by ``resolveIcon`` — it's a lucide
+    // component (ForwardRef object with a ``render`` fn), not
+    // undefined.
+    expect(leads.Icon).toBeTruthy();
+    expect(typeof leads.Icon === "function" || typeof leads.Icon === "object")
+      .toBe(true);
   });
 });

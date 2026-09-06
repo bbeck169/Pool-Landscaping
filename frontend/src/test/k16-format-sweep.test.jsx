@@ -7,7 +7,7 @@ let _origTZ;
 beforeAll(() => { _origTZ = process.env.TZ; process.env.TZ = "America/Phoenix"; });
 afterAll(() => { process.env.TZ = _origTZ; });
 
-import { formatCompletedAt } from "@/lib/dateTimeFormat";
+import { formatCompletedAt } from "../lib/dateTimeFormat";
 
 describe("Phase K16 · formatCompletedAt", () => {
   it("renders 'Mon D, YYYY · h:mm AM/PM' for a valid ISO", () => {

@@ -37,10 +37,8 @@ describe("SubscriptionCancelModal", () => {
     render(<SubscriptionCancelModal row={row}
                                       onClose={() => {}} onDone={() => {}} />);
     expect(screen.getByTestId("subscriptions-cancel-modal")).toBeTruthy();
-    // eslint-disable-next-line testing-library/no-node-access
     expect(document.querySelector("input[type=\"text\"]")).toBeNull();
     // The two radios ARE the only inputs — assert exactly two.
-    // eslint-disable-next-line testing-library/no-node-access
     const inputs = document.querySelectorAll("input");
     expect(inputs.length).toBe(2);
     expect(Array.from(inputs).every((i) => i.type === "radio")).toBe(true);

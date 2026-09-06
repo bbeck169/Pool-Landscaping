@@ -52,6 +52,10 @@ const APP_LAYOUT_SRC = fs.readFileSync(
   path.resolve(__dirname, "..", "layouts", "AppLayout.jsx"),
   "utf-8",
 );
+const QUICK_PINS_RAIL_SRC = fs.readFileSync(
+  path.resolve(__dirname, "..", "components", "nav", "QuickPinsRail.jsx"),
+  "utf-8",
+);
 const ADMIN_TOPBAR_SRC = fs.readFileSync(
   path.resolve(__dirname, "..", "layouts", "AdminTopBar.jsx"),
   "utf-8",
@@ -62,12 +66,15 @@ const ADMIN_SIDEBAR_SRC = fs.readFileSync(
 );
 
 describe("Feb-2026 UI polish · menu chrome + hover states", () => {
-  it("QuickNavRail items ship the hover-scale motion class", () => {
-    // The rail item must carry both `hover:scale-[1.02]` AND a
-    // transition modifier so the motion animates smoothly.
-    expect(APP_LAYOUT_SRC).toMatch(/hover:scale-\[1\.02\]/);
-    expect(APP_LAYOUT_SRC).toMatch(/transition-all/);
-    expect(APP_LAYOUT_SRC).toMatch(/focus-visible:ring/);
+  it("QuickPinsRail items ship the hover-scale motion class (K75 · Step B refactor)", () => {
+    // Phase K75 · Step B · Feb-2026 — the rail moved from an inline
+    // ``QuickNavRail`` in AppLayout to a dedicated
+    // ``components/nav/QuickPinsRail.jsx`` component that hydrates
+    // its item list from ``useQuickPins``. The Feb-2026 hover-scale
+    // motion contract migrates with it.
+    expect(QUICK_PINS_RAIL_SRC).toMatch(/hover:scale-\[1\.02\]/);
+    expect(QUICK_PINS_RAIL_SRC).toMatch(/transition-all/);
+    expect(QUICK_PINS_RAIL_SRC).toMatch(/focus-visible:ring/);
   });
 
   it("AppLayout side-nav aside carries a subtle brand tint", () => {

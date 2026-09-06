@@ -12,7 +12,7 @@
  */
 import React from "react";
 import { toast } from "sonner";
-import { Map, useMap } from "@/lib/maps";
+import { Map, useMap } from "../../lib/maps";
 import { RefreshCw, Trash2, MapPin, X, Save, PenTool } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";

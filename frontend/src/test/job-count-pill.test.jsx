@@ -6,7 +6,7 @@ import React from "react";
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import { classifyJob, computePillCounts } from "@/lib/jobCategory";
+import { classifyJob, computePillCounts } from "../lib/jobCategory";
 import JobCountPill from "@/components/JobCountPill";
 
 

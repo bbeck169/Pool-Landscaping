@@ -17,12 +17,13 @@ import { colors } from "@/theme";
 import {
   jobStatusColor,
   K50_JOB_STATUS_BG,
-} from "@/lib/jobStatus";
+} from "../lib/jobStatus";
 
 const read = (rel) => fs.readFileSync(path.resolve(process.cwd(), rel), "utf-8");
 
 const THEME = read("src/theme.js");
 const APP_LAYOUT = read("src/layouts/AppLayout.jsx");
+const QUICK_PINS_RAIL_SRC = read("src/components/nav/QuickPinsRail.jsx");
 const TOP_BAR = read("src/layouts/AdminTopBar.jsx");
 const BUSINESS_OS = read("src/pages/os/BusinessOS.jsx");
 const CAL_SCHEDULE = read("src/pages/schedule/CalendarSchedule.jsx");
@@ -64,25 +65,18 @@ describe("K50 · Slice A — Navy sidebar + top main menu", () => {
   // the K52 Slice D gradient pattern. Updated to enforce the K64
   // shape and to keep the K52 gradient regression guard so the
   // gradient can never sneak back in on this surface.
-  it("QuickNavRail active state — K64 canonical: solid-navy active pill (was gradient in K52 Slice D)", () => {
-    // K64 canonical active state: ``colors.nav.bgActiveNavy``
-    // solid navy. Idle stays transparent so the parent <aside>
-    // navy shows through; icon/label render in white via
-    // ``colors.nav.fg``.
-    expect(APP_LAYOUT).toMatch(/background:\s*isActive\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*"transparent"/);
-    // Regression guard — the K52 gradient MUST NOT reappear on
-    // this surface (design owner adjudication · R1.c).
-    expect(APP_LAYOUT).not.toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css/);
-    // Regression guard — no lingering ``sky-50`` / ``sky-600``
-    // hover classes on rail items.
-    const railBody = APP_LAYOUT.split("function QuickNavRail(")[1].split("\nfunction ")[0];
-    expect(railBody).not.toMatch(/hover:bg-sky-50/);
-    expect(railBody).not.toMatch(/group-hover:text-sky-600/);
-    // Regression guard — K50 white-pill pattern MUST NOT
-    // reappear on the rail; the ``colors.nav.bgActive`` token is
-    // still exported but reserved for the shadcn DropdownMenu
-    // active row.
-    expect(railBody).not.toMatch(/isActive\s*\?\s*colors\.nav\.bgActive[^N]/);
+  it("QuickPinsRail active state — K64 canonical: solid-navy active pill (K75 · Step B refactor of the pre-K75 QuickNavRail source-body)", () => {
+    // Phase K75 · Feb-2026 — the pre-K75 inline ``QuickNavRail``
+    // moved to ``components/nav/QuickPinsRail.jsx``. The K64
+    // canonical still holds — active + hover both bind to
+    // ``colors.nav.bgActiveNavy``. Read the shipped rail source
+    // instead of AppLayout.jsx.
+    const railBody = QUICK_PINS_RAIL_SRC.split("function SortableRailPin(")[1].split("\nfunction ")[0];
+    expect(railBody).toMatch(/background:\s*isActive\s*\?\s*colors\.nav\.bgActiveNavy/);
+    // Regression guard — the K52 gradient MUST NOT reappear here.
+    expect(railBody).not.toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css/);
+    // Legacy K50 white-pill fallback must not resurface either.
+    expect(railBody).not.toMatch(/backgroundColor:\s*isActive\s*\?\s*colors\.nav\.bgActive[^N]/);
   });
 
   it("AdminTopBar wrapper renders on the ``nav.bg`` navy", () => {

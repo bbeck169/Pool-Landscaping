@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { Droplets, Trees, Info } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { classifyServiceType } from "@/lib/serviceTypeGroups";
+import { classifyServiceType } from "../../lib/serviceTypeGroups";
 
 /**
  * Small "Note" chip surfaced on Schedule / Route / Calendar job rows.

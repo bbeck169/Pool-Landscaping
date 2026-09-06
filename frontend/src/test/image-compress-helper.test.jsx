@@ -20,7 +20,7 @@ vi.mock("browser-image-compression", () => ({
   default: (...a) => __mock.compress(...a),
 }));
 
-import { compressImageIfNeeded } from "@/lib/imageCompress";
+import { compressImageIfNeeded } from "../lib/imageCompress";
 
 function mockFile(name, size, type) {
   const blob = new Blob([new Uint8Array(1)], { type });

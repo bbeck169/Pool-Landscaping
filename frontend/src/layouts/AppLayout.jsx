@@ -1,12 +1,17 @@
 import React from "react";
 import { NavLink, Outlet, useNavigate, Navigate, useLocation } from "react-router-dom";
-import MapsProviderGate from "@/lib/maps/MapsProviderGate";
+import MapsProviderGate from "../lib/maps/MapsProviderGate";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import AdminSidebar from "@/layouts/AdminSidebar";
 import AdminTopBar from "@/layouts/AdminTopBar";
 import UniversalMenu from "@/layouts/UniversalMenu";
+// K75 · Step B · Feb-2026 — user-editable Quick Access rail.
+// Replaces the inline ``<QuickNavRail>`` (retained below as
+// unused source in case a future revert needs it — grep-locked
+// negative in the K75 pytest contract).
+import QuickPinsRail from "@/components/nav/QuickPinsRail";
 // Feb-2026 UI Polish Addendum — brand logo (multi-tenant aware).
 // PLACEHOLDER — swap /app/frontend/public/brand/logo.png with the
 // real brand asset. See TD-08 in /app/memory/TECH_DEBT.md for the
@@ -54,7 +59,6 @@ import {
   DollarSign,
   Shield,
   Clock,
-  Timer,
   Sparkles,
   DoorOpen,
   Wand2,
@@ -63,7 +67,6 @@ import {
   LayoutGrid,
   GraduationCap,
   Film,
-  UserPlus,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -202,106 +205,16 @@ const CUSTOMER_NAV = [
 ];
 
 
-// Feb-2026 · Sidebar-pivot follow-up — 7-item vertical quick-nav rail
-// that replaces the removed horizontal QuickNavRow. Same order, same
-// icons, same role gating semantics as the previous QuickNavRow so
-// the ADMIN_NAV_V2 dropdowns in <AdminTopBar> keep serving the
-// "…More" surface for deep admin routes.
-const QUICK_NAV_RAIL = [
-  { key: "dashboard", to: "/",           label: "Dashboard",  Icon: LayoutDashboard, roles: ["super_admin", "admin", "manager", "technician"], end: true },
-  { key: "workstream", to: "/workstream", label: "Workstream", Icon: Wrench,         roles: ["super_admin", "admin", "manager"] },
-  { key: "schedule",   to: "/schedule",   label: "Schedule",   Icon: CalendarDays,   roles: ["super_admin", "admin", "manager", "technician"] },
-  { key: "invoices",   to: "/invoices",   label: "Invoices",   Icon: Receipt,        roles: ["super_admin", "admin", "manager"] },
-  { key: "payments",   to: "/payments",   label: "Payments",   Icon: CreditCard,     roles: ["super_admin", "admin", "manager"] },
-  { key: "customers",  to: "/customers",  label: "Customers",  Icon: Users,          roles: ["super_admin", "admin", "manager"] },
-  // Feb-2026 · Sidebar quick-link for Leads.  Placed adjacent to
-  // Customers to keep the sales-pipeline group together (matches
-  // ``nav/adminNav.js`` where /leads lives in the "Directory"
-  // subsection alongside /customers).  Same role gate as Customers /
-  // Estimates — techs and customer_portal never see this item.
-  { key: "leads",      to: "/leads",      label: "Leads",      Icon: UserPlus,       roles: ["super_admin", "admin", "manager"] },
-  { key: "estimates",  to: "/estimates",  label: "Estimates",  Icon: FileText,       roles: ["super_admin", "admin", "manager"] },
-  // Feb-2026 · P20 — three managerial quick-links.  Same role gate
-  // as the Invoices / Payments / Customers / Estimates cohort:
-  // techs / customers / dispatchers do NOT see these.
-  { key: "pool-report", to: "/admin/reports/pool-service",
-    label: "Pool Report", Icon: Waves, roles: ["super_admin", "admin", "manager"] },
-  { key: "time-clock",  to: "/landscape/time-clock",
-    label: "Time Clock",  Icon: Clock, roles: ["super_admin", "admin", "manager"] },
-  { key: "job-timers",  to: "/job-timers?t=avgtime",
-    label: "Job Timers",  Icon: Timer, roles: ["super_admin", "admin", "manager"] },
-];
-
-function QuickNavRail({ role }) {
-  const items = QUICK_NAV_RAIL.filter((n) => n.roles.includes(role));
-  if (items.length === 0) return null;
-  // Phase K75 · Feb-2026 — the rail now presents as a user-editable
-  // "Quick Access" pin list. Step A ships with the seeded defaults
-  // (same items as the pre-K75 hard-coded rail). Step B wires the
-  // add / remove / reorder UI + backend persistence via
-  // ``/api/users/me/quick-pins``.
-  return (
-    <nav
-      className="flex-1 flex flex-col items-stretch py-3 gap-1 overflow-y-auto"
-      data-testid="quick-nav-rail"
-      aria-label="Quick Access"
-    >
-      <div
-        className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-center"
-        style={{ color: colors.nav.fgMuted }}
-        data-testid="quick-nav-rail-header"
-      >
-        Quick Access
-      </div>
-      {items.map(({ key, to, label, Icon, end }) => (
-        <NavLink
-          key={key}
-          to={to}
-          end={end}
-          className={({ isActive }) =>
-            [
-              "group mx-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5",
-              "text-[10px] font-semibold",
-              "transition-all duration-200 ease-out will-change-transform",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40",
-              "hover:scale-[1.02] focus-visible:scale-[1.02]",
-              isActive
-                ? "shadow-[0_1px_2px_rgba(0,0,0,0.15)]"
-                : "",
-            ].join(" ")
-          }
-          style={({ isActive }) => ({
-            // Phase K64 · Feb-2026 — rail nav active + hover both
-            // render as ``colors.nav.bgActiveNavy`` (lighter-navy
-            // solid). Replaces the K52 mint-green gradient on this
-            // surface. Idle state keeps a transparent-on-navy
-            // treatment; hover overlay handled via
-            // ``onMouseEnter`` / ``onMouseLeave`` below so the
-            // hover value matches the active value exactly.
-            background: isActive ? colors.nav.bgActiveNavy : "transparent",
-            color: colors.nav.fg,
-            border: `1px solid transparent`,
-          })}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = colors.nav.bgActiveNavy;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background =
-              e.currentTarget.getAttribute("aria-current") === "page"
-                ? colors.nav.bgActiveNavy
-                : "transparent";
-          }}
-          data-testid={`rail-nav-${key}`}
-          aria-label={label}
-          title={label}
-        >
-          <Icon size={20} className="transition-colors duration-200" />
-          <span className="leading-none text-center transition-colors duration-200">{label}</span>
-        </NavLink>
-      ))}
-    </nav>
-  );
-}
+// Phase K75 · Step B · Feb-2026 — the pre-K75 hard-coded
+// ``QUICK_NAV_RAIL`` array + inline ``QuickNavRail`` function
+// were retired. The rail now renders ``<QuickPinsRail>`` from
+// ``@/components/nav/QuickPinsRail``, which hydrates its item
+// list from ``useQuickPins(role)`` — the K75 CRUD hook that
+// GETs / PUTs against ``/api/users/me/quick-pins`` and falls
+// back to the shared seed defaults in ``@/nav/defaultQuickPins``
+// on first-run. The seed defaults mirror the retired array
+// byte-for-byte so no user experiences a change until they
+// customise their own pins.
 
 function ProtectedShell() {
   const { user, loading } = useAuth();
@@ -563,7 +476,7 @@ function AppLayout() {
         >
           <BrandLogo variant="icon" testId="side-nav-logo" height={40} />
         </div>
-        <QuickNavRail role={effectiveRole || user.role} />
+        <QuickPinsRail role={effectiveRole || user.role} />
       </aside>
 
 

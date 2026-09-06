@@ -39,7 +39,7 @@ import { colors, font } from "@/theme";
 // Phase K73 · Feb-2026 — crew-hued deterministic palette for
 // schedule map pins + calendar events. Replaces the pre-K73 flat
 // 10-color hash palette while keeping ``display_color_hex`` wins.
-import { crewHuedColorFromTech, groupByCrewForLegend } from "@/lib/crewPalette";
+import { crewHuedColorFromTech, groupByCrewForLegend } from "../../lib/crewPalette";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import { useAuth } from "@/auth";
 // Feb-2026 · Phase 1 — Tech "On my way" SMS CTA.
@@ -78,7 +78,7 @@ import ScheduleMap from "@/pages/schedule/ScheduleMap";
 // Single source of truth: ``frontend/src/lib/jobStatus.js`` (web) +
 // ``mobile/src/lib/jobStatus.ts`` (mobile).  DO NOT inline the hex
 // codes here — extend the helper map if a new status is added.
-import { jobStatusColor as k50JobStatusColor } from "@/lib/jobStatus";
+import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
 
 
 // Feb-2026 · Schedule-UI · left-border indicator for status.

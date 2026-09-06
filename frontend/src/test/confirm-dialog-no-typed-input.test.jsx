@@ -110,7 +110,6 @@ describe("ConfirmDeleteDialog · never renders a text input, "
         onCancel={() => {}}
       />);
       expect(screen.queryByTestId("confirm-delete-type-input")).toBeNull();
-      // eslint-disable-next-line testing-library/no-node-access
       expect(document.querySelector("input[type=\"text\"]")).toBeNull();
       expect(screen.getByTestId("confirm-delete-confirm-btn")).not.toBeDisabled();
     },
@@ -148,7 +147,6 @@ describe("Global confirm dialog · `requireTypeConfirm` is a no-op", () => {
       );
       fireEvent.click(screen.getByTestId("trigger"));
       expect(screen.getByTestId("app-confirm-dialog")).toBeTruthy();
-      // eslint-disable-next-line testing-library/no-node-access
       expect(document.querySelector("input[type=\"text\"]")).toBeNull();
       // Confirm button enabled and fires on single click.
       const ok = screen.getByTestId("app-confirm-ok");

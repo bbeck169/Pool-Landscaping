@@ -11,7 +11,7 @@ import { colors, gradients } from "@/theme";
 import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer, Share2, Video, Upload } from "lucide-react";
 // Feb-2026 · Chemistry required-readings gate — shared with backend.
 import { missingCoreReadings } from "@/utils/chemistryGate";
-import { compressImageIfNeeded } from "@/lib/imageCompress";
+import { compressImageIfNeeded } from "../../lib/imageCompress";
 
 const AUTOSAVE_MS = 5000;
 const PHOTO_CAP = 10;

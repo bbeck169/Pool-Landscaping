@@ -12,7 +12,7 @@ import {
   crewHuedColor,
   crewHuedColorFromTech,
   groupByCrewForLegend,
-} from "@/lib/crewPalette";
+} from "../lib/crewPalette";
 
 // Helper — pull the hue out of an ``#RRGGBB`` hex.
 function _hueOf(hex) {

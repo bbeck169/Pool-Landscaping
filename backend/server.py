@@ -421,6 +421,11 @@ api_router.include_router(_tos_multi_router.router)
 # they share the /users/me + /admin/users/{id} URL space.
 from routers import auto_clockin as _auto_clockin_router  # noqa: E402
 api_router.include_router(_auto_clockin_router.router)
+# K75 · Step B · Feb-2026 — user quick-pin CRUD (GET/PUT
+# /api/users/me/quick-pins). Same /users/me URL space as the auto
+# clock-in self-PATCH so both surfaces live next to each other.
+from routers import quick_pins as _k75_quick_pins_router  # noqa: E402
+api_router.include_router(_k75_quick_pins_router.router)
 from routers import citations as _citations_router  # noqa: E402
 api_router.include_router(_citations_router.router)
 from routers import rank_tracker as _rank_tracker_router  # noqa: E402

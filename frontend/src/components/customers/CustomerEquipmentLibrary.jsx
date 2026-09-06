@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import { api } from "@/api";
-import { compressImageIfNeeded } from "@/lib/imageCompress";
+import { compressImageIfNeeded } from "../../lib/imageCompress";
 
 const c = {
   border: "#E2E8F0", muted: "#64748B", surface: "#F8FAFC",

@@ -36,7 +36,7 @@ import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const BLUE = "#2563EB";
 
-import { formatCompletedAt } from "@/lib/dateTimeFormat";
+import { formatCompletedAt } from "../../lib/dateTimeFormat";
 
 // Phase K16 · Feb-2026 — thin alias so existing call sites keep
 // their ``formatDateTime(x)`` signature.  Canonical implementation

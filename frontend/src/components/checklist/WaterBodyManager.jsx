@@ -39,7 +39,7 @@ import {
   MAX_BODIES,
   WATER_BODY_TYPES,
   makeEmptyBody,
-} from "@/lib/waterBodies";
+} from "../../lib/waterBodies";
 
 
 const c = {

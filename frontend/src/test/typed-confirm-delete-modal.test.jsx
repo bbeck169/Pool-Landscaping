@@ -102,7 +102,6 @@ describe("Single-click confirm · invoice-delete flow", () => {
     // Both the historic testid and any raw text input should be
     // absent.
     expect(screen.queryByTestId("id-delete-invoice-input")).toBeNull();
-    // eslint-disable-next-line testing-library/no-node-access
     expect(document.querySelector("input[type=\"text\"]")).toBeNull();
   });
 
@@ -135,7 +134,6 @@ describe("Single-click confirm · payment-delete flow", () => {
     render(<DeleteConfirmHarness testidPrefix="id-delete-payment"
                                    onConfirm={() => {}} />);
     expect(screen.queryByTestId("id-delete-payment-input")).toBeNull();
-    // eslint-disable-next-line testing-library/no-node-access
     expect(document.querySelector("input[type=\"text\"]")).toBeNull();
   });
 

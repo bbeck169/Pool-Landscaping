@@ -14,7 +14,7 @@
 // The backend guarantees positions are already tenant-scoped and 5-min
 // fresh — we do NOT re-filter here.
 import React from "react";
-import { AdvancedMarker, InfoWindow } from "@/lib/maps";
+import { AdvancedMarker, InfoWindow } from "../../lib/maps";
 import { colors } from "@/theme";
 
 function tintFor(staleness) {

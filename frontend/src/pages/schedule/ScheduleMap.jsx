@@ -23,7 +23,7 @@
  * point handles the fallback itself.
  */
 import React, { useMemo, useState, useCallback } from "react";
-import { Map, AdvancedMarker, InfoWindow } from "@/lib/maps";
+import { Map, AdvancedMarker, InfoWindow } from "../../lib/maps";
 import { colors } from "@/theme";
 
 // Deterministic fallback color for jobs whose technician has no

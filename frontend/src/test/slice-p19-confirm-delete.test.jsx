@@ -53,7 +53,6 @@ describe("ConfirmDeleteDialog · Feb-2026 · type-to-confirm removed", () => {
     />);
     expect(screen.queryByTestId("confirm-delete-type-input")).toBeNull();
     // No raw text input inside the dialog either.
-    // eslint-disable-next-line testing-library/no-node-access
     expect(document.querySelector("input[type=\"text\"]")).toBeNull();
     // Confirm still enabled from mount.
     const btn = screen.getByTestId("confirm-delete-confirm-btn");

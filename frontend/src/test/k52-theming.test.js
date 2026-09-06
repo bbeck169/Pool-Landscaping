@@ -23,6 +23,7 @@ const read = (rel) => fs.readFileSync(path.resolve(process.cwd(), rel), "utf-8")
 
 const THEME       = read("src/theme.js");
 const APP_LAYOUT  = read("src/layouts/AppLayout.jsx");
+const QUICK_PINS_RAIL = read("src/components/nav/QuickPinsRail.jsx");
 const TOP_BAR     = read("src/layouts/AdminTopBar.jsx");
 const BUSINESS_OS = read("src/pages/os/BusinessOS.jsx");
 const BUTTON      = read("src/components/ui/button.jsx");
@@ -269,13 +270,14 @@ describe("K52 · Slice C — Gradient primary Button", () => {
 /* ══════════════════════════════════════════════════════════════════ */
 
 describe("K52 · Slice D — Active nav item styling (K64 supersedes on main-nav surfaces)", () => {
-  it("QuickNavRail active rail item paints ``colors.nav.bgActiveNavy`` (K64 replaced K52 gradient)", () => {
-    // Phase K64 · Feb-2026 — main-nav rail now uses a lighter-navy
-    // solid for BOTH hover and active. K52 gradient retained on
-    // BusinessOS sub-nav + non-nav consumers (see below).
-    expect(APP_LAYOUT).toMatch(/background:\s*isActive\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*"transparent"/);
-    expect(APP_LAYOUT).toMatch(/color:\s*colors\.nav\.fg,/);
-    expect(APP_LAYOUT).not.toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css/);
+  it("QuickPinsRail active rail item paints ``colors.nav.bgActiveNavy`` (K64 replaced K52 gradient; K75 · Step B refactored rail into ``components/nav/QuickPinsRail.jsx``)", () => {
+    // Phase K75 · Step B · Feb-2026 — the pre-K75 inline
+    // ``QuickNavRail`` was retired; the rail source-body now
+    // lives in a dedicated component file. K64 canonical
+    // preserved verbatim on the new surface.
+    expect(QUICK_PINS_RAIL).toMatch(/background:\s*isActive\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*"transparent"/);
+    expect(QUICK_PINS_RAIL).toMatch(/color:\s*colors\.nav\.fg,/);
+    expect(QUICK_PINS_RAIL).not.toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css/);
   });
 
   it("AdminTopBar TopNavChip active state paints ``colors.nav.bgActiveNavy`` (K64 replaced K52 gradient; K75 refactored CategoryDropdown → TopNavChip)", () => {

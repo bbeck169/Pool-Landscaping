@@ -25,6 +25,7 @@ const read = (rel) =>
 
 const THEME       = read("src/theme.js");
 const APP_LAYOUT  = read("src/layouts/AppLayout.jsx");
+const QUICK_PINS_RAIL = read("src/components/nav/QuickPinsRail.jsx");
 const TOP_BAR     = read("src/layouts/AdminTopBar.jsx");
 
 
@@ -52,16 +53,20 @@ describe("K64 · theme token — colors.nav.bgActiveNavy", () => {
 });
 
 
-describe("K64 · AppLayout QuickNavRail source-body contract", () => {
+describe("K64 · QuickPinsRail source-body contract (K75 · Step B — rail moved out of AppLayout.jsx)", () => {
+  // Phase K75 · Step B · Feb-2026 — the pre-K75 inline
+  // ``QuickNavRail`` in AppLayout was retired; the rail now lives
+  // in ``components/nav/QuickPinsRail.jsx``. K64 canonical
+  // preserved on the new surface.
   it("active state binds background to nav.bgActiveNavy (no more K52 gradient)", () => {
-    expect(APP_LAYOUT).toMatch(
+    expect(QUICK_PINS_RAIL).toMatch(
       /background:\s*isActive\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*"transparent"/,
     );
     // Text stays white (idle or active).
-    expect(APP_LAYOUT).toMatch(/color:\s*colors\.nav\.fg,/);
+    expect(QUICK_PINS_RAIL).toMatch(/color:\s*colors\.nav\.fg,/);
     // Regression guard — the K52 gradient no longer paints the rail
     // active state.
-    expect(APP_LAYOUT).not.toMatch(
+    expect(QUICK_PINS_RAIL).not.toMatch(
       /background:\s*isActive\s*\?\s*colors\.gradient\.css/,
     );
   });
@@ -70,15 +75,12 @@ describe("K64 · AppLayout QuickNavRail source-body contract", () => {
     // The onMouseEnter handler force-paints bgActiveNavy so hover
     // ≡ active. onMouseLeave restores transparent for idle rows +
     // keeps bgActiveNavy for active rows.
-    expect(APP_LAYOUT).toMatch(
+    expect(QUICK_PINS_RAIL).toMatch(
       /onMouseEnter=\{\(e\) => \{\s*e\.currentTarget\.style\.background = colors\.nav\.bgActiveNavy;/,
     );
-    // Regression guard — the K52 white-on-hover overlay is no
-    // longer applied to the RAIL NavLink (removed from the
-    // conditional className branch). Other unrelated hover:bg-
-    // white/10 usages in AppLayout (e.g. mobile bottom bar) are
-    // untouched.
-    const railBlock = APP_LAYOUT.split("data-testid={`rail-nav-")[0].slice(-2000);
+    // Regression guard — no ``hover:bg-white/10`` overlay on the
+    // rail NavLink block.
+    const railBlock = QUICK_PINS_RAIL.split("data-testid={`rail-nav-")[0].slice(-2000);
     expect(railBlock).not.toMatch(/hover:bg-white\/10/);
   });
 });
@@ -135,8 +137,12 @@ describe("K64 · non-nav gradient consumers left untouched", () => {
   }
 
   it("no main-nav file leaks colors.gradient.* on the active/hover state", () => {
-    expect(APP_LAYOUT).not.toMatch(/colors\.gradient\.css/);
-    expect(APP_LAYOUT).not.toMatch(/colors\.gradient\.cssHover/);
+    // K75 · Step B — rail moved to QuickPinsRail; assert the new
+    // rail source is gradient-free. AppLayout retains gradient
+    // token references in unrelated non-nav surfaces
+    // (e.g. mobile bottom-nav badges) which are out of K64 scope.
+    expect(QUICK_PINS_RAIL).not.toMatch(/colors\.gradient\.css/);
+    expect(QUICK_PINS_RAIL).not.toMatch(/colors\.gradient\.cssHover/);
     // Phase K75 · Feb-2026 — CategoryDropdown retired; assert the
     // K75-refactored TopNavChip block instead.
     const chipBlock = TOP_BAR.split("function TopNavChip(")[1]
