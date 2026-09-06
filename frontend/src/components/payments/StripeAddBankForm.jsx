@@ -176,11 +176,11 @@ export default function StripeAddBankForm({
   const attachPath = isAdminMode
     ? "/payments/stripe/attach"
     : "/customer-portal/payment-methods/ach/attach";
-  const buildLinkSessionBody = () => (isAdminMode
+  const buildLinkSessionBody = React.useCallback(() => (isAdminMode
     ? { customer_id: customerId,
         payment_method_types: ["us_bank_account"] }
     : {}
-  );
+  ), [isAdminMode, customerId]);
   const buildAttachBody = (paymentMethodId) => (isAdminMode
     ? { customer_id: customerId,
         payment_method_id: paymentMethodId,
@@ -247,7 +247,7 @@ export default function StripeAddBankForm({
     };
     run();
     return () => { cancelled = true; };
-  }, [apiBase, authToken, linkSessionPath, customerId]);
+  }, [apiBase, authToken, linkSessionPath, customerId, isAdminMode, buildLinkSessionBody]);
 
   if (!publishableKey) {
     if (_effectivePubKeyLoading) {

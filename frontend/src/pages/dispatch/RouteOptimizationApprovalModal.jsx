@@ -23,7 +23,7 @@
 //                            parent can refetch its list + bell count
 import React from "react";
 import { toast } from "sonner";
-import { Route as RouteIcon, Check, X, ChevronDown, ChevronUp } from "lucide-react";
+import { Route as RouteIcon, Check, X } from "lucide-react";
 
 import { api } from "@/api";
 import { colors } from "@/theme";

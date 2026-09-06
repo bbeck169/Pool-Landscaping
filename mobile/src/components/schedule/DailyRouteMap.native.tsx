@@ -629,7 +629,7 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
         <View style={s.suggestionToast} testID="optimize-route-suggestion-toast">
           <Ionicons name="paper-plane-outline" size={14} color="#fff" />
           <Text style={s.suggestionText}>
-            Suggestion sent to dispatcher — you'll be notified when approved.
+            Suggestion sent to dispatcher — you&apos;ll be notified when approved.
           </Text>
         </View>
       ) : null}

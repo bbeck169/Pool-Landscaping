@@ -35,7 +35,6 @@ import { Plus } from "lucide-react";
 import PoolChecklistWizard from "@/components/checklist/PoolChecklistWizard";
 import WaterBodyPanel from "@/components/checklist/WaterBodyPanel";
 import {
-  BODY_TYPE_LABELS,
   MAX_BODIES,
   WATER_BODY_TYPES,
   makeEmptyBody,

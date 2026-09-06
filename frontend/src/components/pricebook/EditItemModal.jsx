@@ -27,7 +27,7 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { X, Plus, Pencil, Trash2, AlertTriangle, Check } from "lucide-react";
+import { Plus, Pencil, Trash2, AlertTriangle, Check } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -37,7 +37,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
-  Command, CommandInput, CommandList, CommandItem, CommandEmpty,
+  Command, CommandList, CommandItem, CommandEmpty,
 } from "@/components/ui/command";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { colors, money } from "@/theme";

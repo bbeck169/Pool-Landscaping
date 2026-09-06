@@ -70,7 +70,7 @@ export default function CustomerDeleteModal({
           {/* Body */}
           <ScrollView style={s.body} bounces={false}>
             <Text style={s.bodyText} testID="customer-delete-body">
-              Pick how you'd like to remove this customer:
+              Pick how you&apos;d like to remove this customer:
             </Text>
 
             <View style={s.bulletRow}>
@@ -90,7 +90,7 @@ export default function CustomerDeleteModal({
                 permanently removes the customer row. Jobs, invoices, and
                 service reports are{" "}
                 <Text style={s.bold}>not</Text> cascaded — they stay in place
-                with the customer's snapshotted name (or "Unknown Customer" if
+                with the customer&apos;s snapshotted name (or &quot;Unknown Customer&quot; if
                 the snapshot is missing). Blocked if the customer has any
                 unpaid invoice.
               </Text>

@@ -52,7 +52,7 @@ describe("Schedule · Edit button visibility (role gate)", () => {
 
 describe("Schedule · in-place mutate on save / delete", () => {
   it("mounts <ScheduleJobEditModal> wired to patchJobInPlace + removeJobInPlace", () => {
-    expect(scheduleSrc).toMatch(/import ScheduleJobEditModal from ["']@\/pages\/schedule\/ScheduleJobEditModal["']/);
+    expect(scheduleSrc).toMatch(/import\s+ScheduleJobEditModal\s+from\s+["']@\/pages\/schedule\/ScheduleJobEditModal["']/);
     expect(scheduleSrc).toMatch(/<ScheduleJobEditModal[\s\S]{0,700}open=\{!!editingJob\}/);
     // onSaved must mutate ``rawJobs`` in place, close modal, toast.
     expect(scheduleSrc).toMatch(

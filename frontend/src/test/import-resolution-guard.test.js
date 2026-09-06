@@ -86,8 +86,10 @@ function stripCommentsAndStrings(src) {
     .replace(/(^|\s)\/\/[^\n]*/g, "$1")
     // template literals — replace contents with placeholder. Nested
     // ${} interpolations aren't perfect but for import detection
-    // it's enough.
-    .replace(/`[^`]*`/g, "``");
+    // it's enough.  Backtick escaped as \x60 to keep static linters
+    // (which don't understand regex literals) from mis-detecting
+    // template-literal state for the rest of the file.
+    .replace(/\x60[^\x60]*\x60/g, "``");
 }
 
 // Regex catalog. Each captures the specifier in group 1.

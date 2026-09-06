@@ -119,7 +119,7 @@ function _defaultApiImpl(path) {
 
 // Location observer — captures the current URL so tests can assert
 // on ``?missing=`` persistence.
-function _LocationObserver({ onChange }) {
+function LocationObserver({ onChange }) {
   const loc = useLocation();
   React.useEffect(() => { onChange(loc); }, [loc, onChange]);
   return null;
@@ -131,7 +131,7 @@ function _mount(url = "/reports/uncategorized-items") {
   const view = render(
     <MemoryRouter initialEntries={[url]}>
       <UncategorizedItemsReport />
-      <_LocationObserver onChange={(l) => locations.push(l)} />
+      <LocationObserver onChange={(l) => locations.push(l)} />
     </MemoryRouter>,
   );
   return { ...view, locations };

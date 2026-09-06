@@ -21,8 +21,14 @@
 
 /** Frozen so downstream consumers can't mutate the shared map. */
 export const K50_JOB_STATUS_BG = Object.freeze({
-  open:        "#D6F5EE",  // light teal green — "active, not yet started"
-  scheduled:   "#D6F5EE",  // alias for ``open`` on the Schedule surface
+  // Phase K74.1 · Feb-2026 — lightened the mint/pale-green fill for
+  // the ``open`` / ``scheduled`` bucket from ``#D6F5EE`` → ``#EAF7F0``.
+  // Same mint-green family, ~10% lighter so the Schedule card body
+  // reads as calmer next to the navy service label, VIP-yellow chip,
+  // OPEN pill, and gate call-out yellow.  Web + mobile parity — mirror
+  // in ``mobile/src/lib/jobStatus.ts`` MUST match byte-for-byte.
+  open:        "#EAF7F0",  // light mint-green — "active, not yet started"
+  scheduled:   "#EAF7F0",  // alias for ``open`` on the Schedule surface
   in_progress: "#FEF3C7",  // light yellow (Tailwind yellow-100)
   completed:   "#FDECEC",  // soft pink
   cancelled:   "#FECACA",  // light red (Tailwind red-200) — deliberately

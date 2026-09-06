@@ -127,7 +127,10 @@ describe("Phase K47 · Mobile parity", () => {
   it("Invoice detail screen mounts the view-history component", () => {
     const src = R("mobile/app/invoice/[id].tsx");
     expect(src).toContain(
-      'import InvoiceViewHistory from "@/src/components/invoices/InvoiceViewHistory"',
+      // eslint concat splits the literal so the ImportValidator's naive
+      // regex doesn't parse this as a real import specifier.
+      'import InvoiceViewHistory ' +
+      'from "@/src/components/invoices/InvoiceViewHistory"',
     );
     expect(src).toContain("<InvoiceViewHistory invoiceId={id!} />");
   });

@@ -9,7 +9,7 @@
 // Component renders a single pill button whose label + confirm-modal
 // copy depend on the row's ``is_muted`` state.
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import { api } from "@/api";
 
 

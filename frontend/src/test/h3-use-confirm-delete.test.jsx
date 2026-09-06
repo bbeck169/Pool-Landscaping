@@ -61,7 +61,7 @@ describe("H3 · useConfirmDelete typedKeyword alias", () => {
 describe("H3 · QB Revoke Connection migrated onto the hook", () => {
   it("imports useConfirmDelete", () => {
     expect(QB_SRC).toMatch(
-      /import useConfirmDelete from "@\/hooks\/useConfirmDelete"/,
+      /import\s+useConfirmDelete\s+from\s+"@\/hooks\/useConfirmDelete"/,
     );
   });
 

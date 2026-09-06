@@ -284,7 +284,7 @@ export default function AdminCardCapturePanel({ customerId, onChange }) {
       );
       await load();
       onChange?.();
-    } catch (e) {
+    } catch (_e) {
       toast.error("Re-verify failed.");
     }
   };
@@ -341,7 +341,7 @@ export default function AdminCardCapturePanel({ customerId, onChange }) {
       setVerifyBusy(false);
       await load();
       onChange?.();
-    } catch (e) {
+    } catch (_e) {
       setVerifyError("Verification failed.");
       setVerifyBusy(false);
     }

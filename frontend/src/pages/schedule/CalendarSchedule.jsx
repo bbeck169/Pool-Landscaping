@@ -28,9 +28,8 @@ import "react-big-calendar/lib/css/react-big-calendar.css";
 // Feb-2026 · Schedule polish — amber-accented job-notes chip.
 import JobNotesCallout from "@/components/schedule/JobNotesCallout";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
-         CheckCircle2, Move as MoveIcon, ArrowUp, ArrowDown, FileText,
-         Save as SaveIcon, Star, Check, Trash2, Loader2, UsersRound,
-         Pencil, Key, StickyNote, Navigation2 } from "lucide-react";
+         CheckCircle2, Move as MoveIcon, ArrowUp, FileText, Star, Check, Trash2, Loader2, UsersRound,
+         Pencil, Key, Navigation2 } from "lucide-react";
 // Phase F1 · Feb-2026 — Bulk multi-stop "Navigate route" URL builder.
 import { runBulkNavigateRoute } from "../../lib/googleMapsRoute";
 
@@ -877,8 +876,8 @@ export default function CalendarSchedule() {
   // button).  ``orderController`` (declared above) auto-saves on
   // input blur, and the bulk modal saves on its own explicit
   // "Save order" click.  No local shift/save helpers needed here.
-  const shift = () => {};   // kept as a no-op for prop compatibility
-  const saveReorder = () => {}; // ditto
+  const _shift = () => {};   // kept as a no-op for prop compatibility
+  const _saveReorder = () => {}; // ditto
 
   return (
     // Feb-2026 · scroll-trap prevention convention — the outer
@@ -1956,7 +1955,7 @@ function GridPanel({
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {jobs.map((j, idx) => {
+          {jobs.map((j, _idx) => {
             const pill = STATUS_PILL[(j.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
             const svc = SERVICE_PALETTE(j.service_type);
             const isChecked = checked.has(j.id);

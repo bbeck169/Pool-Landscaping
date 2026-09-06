@@ -68,14 +68,14 @@ export default function RestoreCustomerButton({ customer, onRestored, onError, d
           <View style={s.card}>
             <Text style={s.title}>Restore this customer?</Text>
             <Text style={s.body}>
-              They'll appear in the active customer list again.
+              They&apos;ll appear in the active customer list again.
             </Text>
 
             {wasAnonymized ? (
               <View style={s.warning} testID={`restore-anonymized-warning-${customer.id}`}>
                 <Text style={s.warningText}>
                   <Text style={{ fontFamily: font.bold }}>Warning:</Text>{" "}
-                  This customer's personal information was previously scrubbed
+                  This customer&apos;s personal information was previously scrubbed
                   and cannot be recovered. Only the deletion state will be
                   restored — name, email, phone, and address will remain blank.
                 </Text>

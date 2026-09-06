@@ -11,9 +11,8 @@
  *   2. Filters row — date range + tech filter + refresh button.
  *   3. Recent events table — last 50 arrivals, newest first.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { RefreshCw, MapPin, AlertTriangle } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { RefreshCw, MapPin } from "lucide-react";
 import { api } from "@/api";
 import { PageHeader } from "@/components/ui-kit";
 import { colors } from "@/theme";
@@ -88,7 +87,7 @@ export default function GpsAutoStartAudit() {
       if (techId) qp.set("tech_id", techId);
       const r = await api.get(`/reports/gps-auto-start-audit?${qp}`);
       setData(r);
-    } catch (e) { setData(null); }
+    } catch (_e) { setData(null); }
     finally { setLoading(false); }
   }, [from, to, techId]);
 

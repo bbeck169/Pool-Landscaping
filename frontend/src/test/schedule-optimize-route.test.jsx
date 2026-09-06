@@ -58,7 +58,7 @@ beforeEach(() => {
 
 
 // ── Layer 1 · useNumberedOrder initialOrder seeding ───────────────
-function _Harness({ jobs, initialOrder }) {
+function Harness({ jobs, initialOrder }) {
   const ctrl = useNumberedOrder(jobs, { autoSave: false, initialOrder });
   return (
     <ul>
@@ -74,7 +74,7 @@ function _Harness({ jobs, initialOrder }) {
 
 describe("useNumberedOrder · initialOrder seeding", () => {
   it("without initialOrder — seeds by route_index (baseline)", () => {
-    render(<_Harness jobs={JOBS} initialOrder={null} />);
+    render(<Harness jobs={JOBS} initialOrder={null} />);
     expect(screen.getByTestId("draft-j-a").textContent).toBe("1");
     expect(screen.getByTestId("draft-j-b").textContent).toBe("2");
     expect(screen.getByTestId("draft-j-c").textContent).toBe("3");
@@ -82,7 +82,7 @@ describe("useNumberedOrder · initialOrder seeding", () => {
 
   it("with initialOrder — reseeds drafts against the optimized order", () => {
     // Optimizer says C, A, B is the best sequence.
-    render(<_Harness jobs={JOBS} initialOrder={["j-c", "j-a", "j-b"]} />);
+    render(<Harness jobs={JOBS} initialOrder={["j-c", "j-a", "j-b"]} />);
     expect(screen.getByTestId("draft-j-c").textContent).toBe("1");
     expect(screen.getByTestId("draft-j-a").textContent).toBe("2");
     expect(screen.getByTestId("draft-j-b").textContent).toBe("3");
@@ -90,7 +90,7 @@ describe("useNumberedOrder · initialOrder seeding", () => {
 
   it("jobs not present in initialOrder get a tail number", () => {
     // Optimizer knows about j-a and j-b only. j-c falls to the tail.
-    render(<_Harness jobs={JOBS} initialOrder={["j-b", "j-a"]} />);
+    render(<Harness jobs={JOBS} initialOrder={["j-b", "j-a"]} />);
     expect(screen.getByTestId("draft-j-b").textContent).toBe("1");
     expect(screen.getByTestId("draft-j-a").textContent).toBe("2");
     // j-c → initialOrder.length + 1 = 3.

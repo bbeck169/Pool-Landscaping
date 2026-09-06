@@ -71,7 +71,7 @@ describe("Header cleanup — single bell + cluster in row", () => {
     // Old gate was ``!== "admin"`` which matched super_admin /
     // manager / technician. New gate excludes ALL four roles so the
     // floating instance only ships for customer / customer_admin.
-    expect(APP).toMatch(/\!\s*\[\s*"admin",\s*"super_admin",\s*"manager",\s*"technician"\s*\]\.includes/);
+    expect(APP).toMatch(/!\s*\[\s*"admin",\s*"super_admin",\s*"manager",\s*"technician"\s*\]\.includes/);
   });
 
   it("UniversalMenu supports variant='inline' + defaults to 'floating'", () => {

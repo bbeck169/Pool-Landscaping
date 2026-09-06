@@ -14,7 +14,7 @@ const SRC = fs.readFileSync(
 
 describe("TenantsAdminPage · F5 widget-key rotate retrofit", () => {
   it("imports ArmToDelete", () => {
-    expect(SRC).toMatch(/import ArmToDelete from "@\/components\/ui\/ArmToDelete"/);
+    expect(SRC).toMatch(/import\s+ArmToDelete\s+from\s+"@\/components\/ui\/ArmToDelete"/);
   });
 
   it("no longer uses window.confirm for the rotate action", () => {
@@ -65,7 +65,7 @@ describe("H2 · Deactivate tenant retrofit (TenantsAdminPage)", () => {
     "utf-8",
   );
   it("imports TypedConfirmModal", () => {
-    expect(src).toMatch(/import TypedConfirmModal from "@\/components\/ui\/TypedConfirmModal"/);
+    expect(src).toMatch(/import\s+TypedConfirmModal\s+from\s+"@\/components\/ui\/TypedConfirmModal"/);
   });
   it("gates deactivate through requestToggleActive → typed slug confirm", () => {
     expect(src).toMatch(/requestToggleActive/);
@@ -85,7 +85,7 @@ describe("H2 · QB force-sync retrofit (QuickBooksIntegrationPage)", () => {
     "utf-8",
   );
   it("imports TypedConfirmModal", () => {
-    expect(src).toMatch(/import TypedConfirmModal from ".*TypedConfirmModal"/);
+    expect(src).toMatch(/import\s+TypedConfirmModal\s+from\s+".*TypedConfirmModal"/);
   });
   it("gates the force-full path behind h2ForceOpen state", () => {
     expect(src).toMatch(/setH2ForceOpen\(true\)/);
@@ -103,7 +103,7 @@ describe("H2 · Campaign cancel retrofit (M2Campaigns)", () => {
     "utf-8",
   );
   it("imports TypedConfirmModal", () => {
-    expect(src).toMatch(/import TypedConfirmModal from "@\/components\/ui\/TypedConfirmModal"/);
+    expect(src).toMatch(/import\s+TypedConfirmModal\s+from\s+"@\/components\/ui\/TypedConfirmModal"/);
   });
   it("gates the cancel POST behind h2CancelTarget state", () => {
     expect(src).toMatch(/setH2CancelTarget/);

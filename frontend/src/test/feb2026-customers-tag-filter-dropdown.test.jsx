@@ -76,7 +76,7 @@ describe("Feb-2026 P1 · Customers Tag filter dropdown", () => {
 
     it("renders a divider between system + rest sections", () => {
       // Uses colors.divider on a 1px inline height:1 spacer.
-      expect(src).toMatch(/height:\s*1[^\}]+colors\.divider/);
+      expect(src).toMatch(/height:\s*1[^}]+colors\.divider/);
     });
   });
 

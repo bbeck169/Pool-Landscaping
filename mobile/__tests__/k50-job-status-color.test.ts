@@ -12,8 +12,8 @@ import {
 
 describe("K50 · Slice B — Mobile Schedule card status background", () => {
   it("returns the exact hex for the K50 five statuses (parity with web)", () => {
-    expect(jobStatusColor("open")).toBe("#D6F5EE");
-    expect(jobStatusColor("scheduled")).toBe("#D6F5EE");
+    expect(jobStatusColor("open")).toBe("#EAF7F0");
+    expect(jobStatusColor("scheduled")).toBe("#EAF7F0");
     expect(jobStatusColor("in_progress")).toBe("#FEF3C7");
     expect(jobStatusColor("completed")).toBe("#FDECEC");
     expect(jobStatusColor("cancelled")).toBe("#FECACA");
@@ -27,15 +27,15 @@ describe("K50 · Slice B — Mobile Schedule card status background", () => {
     expect(jobStatusColor("canceled")).toBe("#FECACA");
   });
 
-  it("K57 · Feb-2026 — ``pending`` resolves to the ``open`` bucket (#D6F5EE)", () => {
+  it("K57 · Feb-2026 — ``pending`` resolves to the ``open`` bucket (#EAF7F0)", () => {
     // Parity with the web helper — see
     // ``frontend/src/test/k50-theming.test.js`` for the field-report
     // context.  Mobile is the surface where the bug was reported, so
     // this assertion is the primary regression gate.
-    expect(jobStatusColor("pending")).toBe("#D6F5EE");
+    expect(jobStatusColor("pending")).toBe("#EAF7F0");
     // Case-insensitivity — helper lowercases + trims input.
-    expect(jobStatusColor("Pending")).toBe("#D6F5EE");
-    expect(jobStatusColor("PENDING")).toBe("#D6F5EE");
+    expect(jobStatusColor("Pending")).toBe("#EAF7F0");
+    expect(jobStatusColor("PENDING")).toBe("#EAF7F0");
   });
 
   it("is case + whitespace insensitive", () => {
@@ -62,8 +62,8 @@ describe("K50 · Slice B — Mobile Schedule card status background", () => {
     // the parity gate.  The web values are hard-coded here as
     // literals to keep the mobile suite free of a web-app import.
     expect(K50_JOB_STATUS_BG).toEqual({
-      open: "#D6F5EE",
-      scheduled: "#D6F5EE",
+      open: "#EAF7F0",
+      scheduled: "#EAF7F0",
       in_progress: "#FEF3C7",
       completed: "#FDECEC",
       cancelled: "#FECACA",

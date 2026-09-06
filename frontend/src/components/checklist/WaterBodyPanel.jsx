@@ -183,7 +183,7 @@ export default function WaterBodyPanel({
   const bodyType = body?.type || "pool";
   const allowedReadings = READING_ALLOWLIST[bodyType] || [];
   const allowedChems = CHEMICAL_ALLOWLIST[bodyType] || [];
-  const requiredKeys = READING_REQUIRED[bodyType] || [];
+  const requiredKeys = useMemo(() => READING_REQUIRED[bodyType] || [], [bodyType]);
   const requiredSet = useMemo(() => new Set(requiredKeys), [requiredKeys]);
   const tint = BODY_TYPE_TINTS[bodyType] || BODY_TYPE_TINTS.other;
   const label = (body?.label || BODY_TYPE_LABELS[bodyType] || "Body");

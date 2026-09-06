@@ -31,7 +31,7 @@ import OnMyWayButton from "@/components/schedule/OnMyWayButton";
 import ScheduleMap from "@/pages/schedule/ScheduleMap";
 // Phase K50 · Feb-2026 — Schedule job-card status background shading.
 import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
-import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, StickyNote, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide } from "lucide-react";
+import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide } from "lucide-react";
 
 const GOOGLE_LIBS = ["places"];
 
@@ -954,7 +954,7 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
     if (s.has(id)) s.delete(id); else s.add(id);
     setChecked(s);
   };
-  const toggleExpand = (id) => {
+  const _toggleExpand = (id) => {
     const s = new Set(expanded);
     if (s.has(id)) s.delete(id); else s.add(id);
     setExpanded(s);
@@ -970,9 +970,9 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
         const bh = billableHours(j.scheduled_start, j.scheduled_end);
         const tone = cardStatusTone(j.status);
         const isChecked = checked.has(j.id);
-        const isExpanded = expanded.has(j.id);
+        const _isExpanded = expanded.has(j.id);
         const notesFull = combinedNotes(j);
-        const notesPreview = notesFull.length > 100 ? notesFull.slice(0, 100) + "…" : notesFull;
+        const _notesPreview = notesFull.length > 100 ? notesFull.slice(0, 100) + "…" : notesFull;
         const cityLine = [j.city, j.state, j.zip].filter(Boolean).join(", ");
         return (
           <div key={j.id || i}

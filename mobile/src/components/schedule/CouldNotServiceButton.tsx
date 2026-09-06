@@ -147,7 +147,7 @@ export function CouldNotServiceModal({ visible, jobId, onClose, onDone }: ModalP
         <View style={styles.header}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Ionicons name="warning-outline" size={18} color={AMBER} />
-            <Text style={styles.title}>Mark 'Could Not Service'</Text>
+            <Text style={styles.title}>Mark &apos;Could Not Service&apos;</Text>
           </View>
           <Pressable onPress={onClose} hitSlop={10} testID="cns-close">
             <Ionicons name="close" size={22} color={colors.muted} />

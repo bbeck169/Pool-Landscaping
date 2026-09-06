@@ -22,7 +22,7 @@ function _resolveAdapter(provider) {
 }
 
 const _dispatchComponent = (name) => {
-  const _wrapped = React.forwardRef(function _MapsDispatch(props, ref) {
+  const _wrapped = React.forwardRef(function MapsDispatch(props, ref) {
     const provider = useMapsProvider();
     const Adapter = _resolveAdapter(provider);
     const Impl = Adapter[name];

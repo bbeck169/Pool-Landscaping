@@ -52,7 +52,7 @@ import { api } from "@/api";
 import { colors, money } from "@/theme";
 
 /* ── helpers ─────────────────────────────────────────────────── */
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const _EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /* K41b — client-minted UUID v4 for bulk-batch idempotency. */
 function makeBulkBatchId() {
@@ -188,7 +188,7 @@ function AssignPicker({ kind, onSelect }) {
 
 function DataIntegrityRow({ row, refClass, onResolved, selected, onToggleSelect, faded: externalFaded }) {
   const [action, setAction] = useState(""); // "assign" | "delete"
-  const [target, setTarget] = useState(null);
+  const [_target, setTarget] = useState(null);
   const [busy, setBusy] = useState(false);
   const [faded, setFaded] = useState(false);
   const [err, setErr] = useState("");
@@ -1040,7 +1040,7 @@ function UndoBanner({ lastBulk, onUndone, onDismiss }) {
     if (!lastBulk) return undefined;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [lastBulk?.bulkBatchId]);
+  }, [lastBulk]);
 
   if (!lastBulk) return null;
   const msLeft = lastBulk.expiresAt - now;

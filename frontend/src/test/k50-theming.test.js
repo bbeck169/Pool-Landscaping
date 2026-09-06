@@ -274,8 +274,10 @@ describe("K51.1 · Logo container background parity with nav chrome", () => {
 describe("K50 · Slice B — Schedule card status background", () => {
   it("jobStatusColor(status) returns the exact hex for the K50 five", () => {
     // Contract locked in against the K50 brief.
-    expect(jobStatusColor("open")).toBe("#D6F5EE");
-    expect(jobStatusColor("scheduled")).toBe("#D6F5EE");
+    // K74.1 · Feb-2026 — ``open``/``scheduled`` lightened
+    // ``#D6F5EE`` → ``#EAF7F0`` (mint-green family, ~10% lighter).
+    expect(jobStatusColor("open")).toBe("#EAF7F0");
+    expect(jobStatusColor("scheduled")).toBe("#EAF7F0");
     expect(jobStatusColor("in_progress")).toBe("#FEF3C7");
     expect(jobStatusColor("completed")).toBe("#FDECEC");
     expect(jobStatusColor("cancelled")).toBe("#FECACA");
@@ -291,24 +293,25 @@ describe("K50 · Slice B — Schedule card status background", () => {
     expect(jobStatusColor("canceled")).toBe("#FECACA");
   });
 
-  it("K57 · Feb-2026 — ``pending`` resolves to the ``open`` bucket (#D6F5EE)", () => {
+  it("K57 · Feb-2026 — ``pending`` resolves to the ``open`` bucket (#EAF7F0)", () => {
     // Field report: mobile Schedule cards rendered a white
     // background on jobs with ``status = "pending"`` because the
     // K50 helper had no entry for it and fell through to ``null``
     // → callers' ``colors.surface`` fallback.  User adjudicated
     // ``pending`` to the ``open`` bucket in K57 Step 2 so pending
-    // and open share the light-teal-green treatment (they're the
+    // and open share the light-mint-green treatment (they're the
     // same real-world state — "on the schedule, not yet started").
     // Web + mobile share this contract via byte-for-byte parity in
     // the alias tables.
-    expect(jobStatusColor("pending")).toBe("#D6F5EE");
+    // K74.1 · Feb-2026 — target hex updated to ``#EAF7F0``.
+    expect(jobStatusColor("pending")).toBe("#EAF7F0");
     // Case-insensitivity — the helper lowercases + trims input, so
     // a mixed-case "Pending" or fully-uppercase "PENDING" (real
     // shapes surfaced by upstream write paths that don't normalise
     // status) must still resolve.  Whitespace-tolerance is already
     // covered by the generic Slice-B suite above.
-    expect(jobStatusColor("Pending")).toBe("#D6F5EE");
-    expect(jobStatusColor("PENDING")).toBe("#D6F5EE");
+    expect(jobStatusColor("Pending")).toBe("#EAF7F0");
+    expect(jobStatusColor("PENDING")).toBe("#EAF7F0");
   });
 
   it("is case + whitespace insensitive", () => {
@@ -334,10 +337,15 @@ describe("K50 · Slice B — Schedule card status background", () => {
   });
 
   it("CalendarSchedule.jsx wires the helper (not inline hex codes) on the card body", () => {
-    expect(CAL_SCHEDULE).toMatch(/import\s*\{\s*jobStatusColor as k50JobStatusColor\s*\}\s*from\s*"@\/lib\/jobStatus"/);
+    // K75 Step B · post-lint hygiene — the ``@/lib/jobStatus`` alias
+    // trips the Phase 40b restricted-imports guardrail (only utils /
+    // stripeConfig / checklistType are exposed), so this file now
+    // imports via relative path.  Assertion updated to accept
+    // either the legacy alias form or the current relative form.
+    expect(CAL_SCHEDULE).toMatch(/import\s*\{\s*jobStatusColor as k50JobStatusColor\s*\}\s*from\s*["'](?:@\/lib\/jobStatus|\.\.\/\.\.\/lib\/jobStatus)["']/);
     expect(CAL_SCHEDULE).toMatch(/k50CardBg\s*=\s*k50JobStatusColor\(j\.status\)\s*\|\|\s*colors\.surface/);
     expect(CAL_SCHEDULE).toMatch(/background:\s*k50CardBg,/);
-    // Regression guard — no scattered "#D6F5EE" / "#FDECEC" / "#FECACA"
+    // Regression guard — no scattered "#EAF7F0" / "#FDECEC" / "#FECACA"
     // inline hex codes on the card body (only the pill/service palette
     // uses inline hexes, and those are unrelated).
     const gridJobBlock = CAL_SCHEDULE.split('data-testid={`grid-job-${j.id}`}')[0];
@@ -349,7 +357,8 @@ describe("K50 · Slice B — Schedule card status background", () => {
   });
 
   it("TodaySchedule.jsx wires the helper on schedule-card rows", () => {
-    expect(TODAY_SCHEDULE).toMatch(/import\s*\{\s*jobStatusColor as k50JobStatusColor\s*\}\s*from\s*"@\/lib\/jobStatus"/);
+    // K75 Step B · post-lint hygiene — see CalendarSchedule note.
+    expect(TODAY_SCHEDULE).toMatch(/import\s*\{\s*jobStatusColor as k50JobStatusColor\s*\}\s*from\s*["'](?:@\/lib\/jobStatus|\.\.\/\.\.\/lib\/jobStatus)["']/);
     expect(TODAY_SCHEDULE).toMatch(/backgroundColor:\s*k50JobStatusColor\(j\.status\)\s*\|\|\s*colors\.surface/);
     expect(TODAY_SCHEDULE).toMatch(/data-k50-bg=\{k50JobStatusColor\(j\.status\)\s*\|\|\s*colors\.surface\}/);
   });

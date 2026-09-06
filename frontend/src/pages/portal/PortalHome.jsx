@@ -10,7 +10,6 @@ import CallNowButton from "@/pages/portal/CallNowButton";
 import ReferralSection from "@/pages/portal/ReferralSection";
 import MyReferralsSection from "@/pages/portal/MyReferralsSection";
 // Phase 30 · Feb-2026 — shared avatar components.
-import PersonaAvatar from "@/components/personas/PersonaAvatar";
 // Feb-2026 · AI Concierge avatar parity — reuse the SAME shared
 // <AIAvatar> the AI Employee Hub (``pages/aiops/AiOpsPages.jsx``)
 // and the internal AI Dock render for each persona. Guarantees

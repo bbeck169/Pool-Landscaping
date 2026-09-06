@@ -180,7 +180,7 @@ export function UnpaidInvoicesPanel({
                 {customerFocusId ? "This customer has no unpaid invoices" : "All caught up!"}
               </td></tr>
             ) : rows.map((r) => {
-              const balance = Number(r.balance ?? (Number(r.total || 0) - Number(r.amount_paid || 0)) ?? 0);
+              const balance = Number(r.balance ?? (Number(r.total || 0) - Number(r.amount_paid || 0)));
               const partial = !!r.partial;
               const badgeBg = partial ? "#FEF3C7"
                 : (r.days_overdue || 0) > 60 ? "#FEE2E2"

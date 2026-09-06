@@ -79,7 +79,7 @@ export default function InvoiceViewHistory({ invoiceId }: { invoiceId: string })
   if (err) {
     return (
       <View style={s.errCard} testID="invoice-view-history-error">
-        <Text style={s.errText}>Couldn't load view history — {err}</Text>
+        <Text style={s.errText}>Couldn&apos;t load view history — {err}</Text>
       </View>
     );
   }
@@ -120,7 +120,7 @@ export default function InvoiceViewHistory({ invoiceId }: { invoiceId: string })
 
       {view_count === 0 ? (
         <Text style={s.empty} testID="invoice-view-history-empty">
-          This invoice hasn't been opened yet.
+          This invoice hasn&apos;t been opened yet.
         </Text>
       ) : (
         <Text style={s.summary} testID="invoice-view-history-summary">

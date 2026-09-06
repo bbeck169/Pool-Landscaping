@@ -19,7 +19,7 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { RefreshCw, Globe, Loader2, Palette, MapPin,
+import { RefreshCw, Globe, Loader2, MapPin,
            MessageSquare } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";

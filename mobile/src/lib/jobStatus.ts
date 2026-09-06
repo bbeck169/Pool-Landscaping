@@ -8,8 +8,11 @@
 
 export const K50_JOB_STATUS_BG: Readonly<Record<string, string>> =
   Object.freeze({
-    open: "#D6F5EE",
-    scheduled: "#D6F5EE",
+    // Phase K74.1 · Feb-2026 — mint-green lightening; parity with
+    // ``frontend/src/lib/jobStatus.js``. ``open``/``scheduled`` moved
+    // from ``#D6F5EE`` → ``#EAF7F0``.  Web + mobile MUST match.
+    open: "#EAF7F0",
+    scheduled: "#EAF7F0",
     in_progress: "#FEF3C7",
     completed: "#FDECEC",
     cancelled: "#FECACA",

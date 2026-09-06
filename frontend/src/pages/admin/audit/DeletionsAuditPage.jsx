@@ -38,7 +38,7 @@ export default function DeletionsAuditPage() {
   const [endDate, setEndDate] = React.useState("");
   const [expanded, setExpanded] = React.useState(() => new Set());
   const [restoreTarget, setRestoreTarget] = React.useState(null);
-  const [restoreTypedText, setRestoreTypedText] = React.useState("");
+  const [_restoreTypedText, setRestoreTypedText] = React.useState("");
   const [restoreBusy, setRestoreBusy] = React.useState(false);
 
   const reload = React.useCallback(async () => {

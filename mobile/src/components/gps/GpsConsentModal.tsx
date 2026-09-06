@@ -74,10 +74,10 @@ export default function GpsConsentModal({ onDismiss, autoOpen }: GpsConsentModal
         <View style={styles.card} testID="gps-consent-modal">
           <Text style={styles.title}>Location tracking for auto-start</Text>
           <Text style={styles.body}>
-            To auto-start your job timer when you arrive at a customer's
-            site, we track your location while you're clocked in and
+            To auto-start your job timer when you arrive at a customer&apos;s
+            site, we track your location while you&apos;re clocked in and
             assigned to jobs. Location data is used only to trigger
-            timer starts and is stored in your job's audit log.
+            timer starts and is stored in your job&apos;s audit log.
           </Text>
           <Text style={styles.body}>
             You can revoke this any time from{" "}

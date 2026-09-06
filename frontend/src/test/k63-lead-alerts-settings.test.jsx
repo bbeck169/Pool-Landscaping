@@ -107,7 +107,7 @@ describe("App.js · K63 route wiring", () => {
 
   it("imports the LeadAlertsSettings page component", () => {
     expect(APP_SRC).toMatch(
-      /import LeadAlertsSettings from "@\/pages\/settings\/LeadAlertsSettings"/,
+      /import\s+LeadAlertsSettings\s+from\s+"@\/pages\/settings\/LeadAlertsSettings"/,
     );
   });
 });

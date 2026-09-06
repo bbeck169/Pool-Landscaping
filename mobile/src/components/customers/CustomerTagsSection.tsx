@@ -80,7 +80,7 @@ export default function CustomerTagsSection({
 
       {attached.length === 0 ? (
         <Text style={ss.empty} testID="customer-tags-section-empty">
-          No tags yet. Tap "+ Tag" below to attach one.
+          No tags yet. Tap &quot;+ Tag&quot; below to attach one.
         </Text>
       ) : (
         <View style={ss.chipRow}>

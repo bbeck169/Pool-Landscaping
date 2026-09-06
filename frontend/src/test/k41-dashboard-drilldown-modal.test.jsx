@@ -29,7 +29,7 @@ describe("K41 · DashboardDrillDownModal — component contract", () => {
   });
 
   it("wraps the modal body in the K37 PortalErrorBoundary with the K41 label", () => {
-    expect(MODAL).toMatch(/import PortalErrorBoundary from "@\/components\/errors\/PortalErrorBoundary"/);
+    expect(MODAL).toMatch(/import\s+PortalErrorBoundary\s+from\s+"@\/components\/errors\/PortalErrorBoundary"/);
     expect(MODAL).toMatch(/<PortalErrorBoundary[\s\S]{0,120}label="dashboard-drilldown"/);
   });
 

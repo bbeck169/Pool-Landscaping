@@ -36,11 +36,15 @@ export default function ReportsSuite() {
   // ReportsHub quick-access tiles can deep-link into a specific
   // tab. Falls back to "overview" for legacy callers.
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = React.useMemo(() => {
+  // K66 · Feb-2026 — accept a ``?tab=<key>`` URL hint so the
+  // ReportsHub quick-access tiles can deep-link into a specific
+  // tab. Falls back to "overview" for legacy callers.  Resolved
+  // once via a lazy state initializer — URL updates below drive
+  // ``setTab`` directly, so we don't need a hook re-run here.
+  const [tab, setTab] = React.useState(() => {
     const t = (searchParams.get("tab") || "").toLowerCase();
     return TABS.find((x) => x.key === t) ? t : "overview";
-  }, []); // resolve once on mount; URL updates below drive setTab
-  const [tab, setTab] = React.useState(initialTab);
+  });
 
   // Keep the URL in sync when the user switches tabs so a share /
   // reload preserves the active tab. Uses ``replace`` so the tab

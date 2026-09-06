@@ -304,7 +304,7 @@ function MediaCarousel({ items = [] }) {
 // inline pattern). If a third caller appears we should extract this
 // into ``components/media/ImageLightbox.jsx``.
 function ImageLightbox({ items, index, token, onIndexChange, onClose }) {
-  const total = items.length;
+  const _total = items.length;
   // Skip through videos on nav — the lightbox is images-only.
   const _imageIndices = items
     .map((it, i) => (it.kind === "video" ? -1 : i))
