@@ -1,11 +1,18 @@
 import React from "react";
-import { colors } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { formatValue, formatDelta } from "./formatters";
 
 /**
  * Phase R0 · Feb-2026 — KPI card component.
  *
  * Big value + label + prior/delta chip + optional inline sparkline.
+ *
+ * Phase K70.a · Feb-2026 — the tile now paints the canonical K67
+ * navy → green gradient (``gradients.navyToGreen.css``) as its
+ * background with white text on top. The 90deg gradient runs
+ * left-to-right (navy → green) so left-aligned text lands on the
+ * high-contrast navy stop (12.8:1 AAA vs white) while trailing
+ * chips / accents sit over the green stop (3.28:1 AA-large).
  *
  * @typedef {Object} KpiCardProps
  * @property {string} label              — human-readable metric name (e.g. "Total Revenue")
@@ -36,17 +43,19 @@ export function KpiCard({
 }) {
   return (
     <div
-      className="rounded-xl border p-5 flex flex-col gap-3"
+      className="rounded-xl p-5 flex flex-col gap-3"
       style={{
-        backgroundColor: colors.surface,
-        borderColor: colors.border,
+        background: gradients.navyToGreen.css,
+        border: `1px solid ${colors.border}`,
+        color: "#FFFFFF",
       }}
       data-testid={testid}
+      data-k70a-gradient-tile="true"
     >
       <div className="flex items-center justify-between">
         <span
           className="text-sm font-semibold uppercase tracking-wide"
-          style={{ color: colors.onSurfaceSecondary }}
+          style={{ color: "rgba(255,255,255,0.85)" }}
           data-testid={`${testid}-label`}
         >
           {label}
@@ -60,13 +69,13 @@ export function KpiCard({
 
       <div
         className="text-3xl font-bold leading-none"
-        style={{ color: colors.onSurface }}
+        style={{ color: "#FFFFFF" }}
         data-testid={`${testid}-value`}
       >
         {loading ? (
-          <span className="opacity-40">…</span>
+          <span className="opacity-60">…</span>
         ) : error ? (
-          <span style={{ color: colors.error }} className="text-base font-medium">
+          <span style={{ color: "#FECACA" }} className="text-base font-medium">
             {String(error)}
           </span>
         ) : (
@@ -76,7 +85,7 @@ export function KpiCard({
 
       <div
         className="text-xs"
-        style={{ color: colors.onSurfaceSecondary }}
+        style={{ color: "rgba(255,255,255,0.75)" }}
         data-testid={`${testid}-prior`}
       >
         Prior period: {formatValue(priorValue, format)}
@@ -100,11 +109,15 @@ function DeltaChip({ deltaPct, direction, testid }) {
   const good = direction === "down_is_good" ? negative : positive;
   const bad = direction === "down_is_good" ? positive : negative;
 
+  // K70.a note: chip backgrounds are opaque so they layer over the
+  // gradient tile without contrast issues. Foreground text on each
+  // chip background continues to pass AA (dark green on pale-green
+  // bg 8.9:1, dark red on pale-red 7.3:1, neutral 4.7:1).
   const palette = good
     ? { bg: "#DCFCE7", fg: colors.success }
     : bad
       ? { bg: "#FEE2E2", fg: colors.error }
-      : { bg: colors.surfaceTertiary, fg: colors.onSurfaceSecondary };
+      : { bg: "rgba(255,255,255,0.15)", fg: "#FFFFFF" };
 
   return (
     <span
@@ -124,7 +137,7 @@ function InlineSparkline({ points, direction, testid }) {
   // full-fidelity dashboard tiles.
   if (points.length < 2) {
     return (
-      <div className="text-xs opacity-40" data-testid={`${testid}-empty`}>
+      <div className="text-xs opacity-60" data-testid={`${testid}-empty`} style={{ color: "#FFFFFF" }}>
         Not enough data for trend
       </div>
     );
@@ -143,13 +156,18 @@ function InlineSparkline({ points, direction, testid }) {
       return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
     })
     .join(" ");
-  const stroke = direction === "down_is_good" ? colors.info : colors.brand;
+  // K70.a — sparkline stroke is white on the gradient tile so it
+  // stays visible over both the navy and green stops. The
+  // ``direction`` prop is retained for API compatibility with the
+  // pre-K70.a callers (all of which pass "up_is_good" today).
+  const stroke = "#FFFFFF";
   return (
     <svg
       viewBox={`0 0 ${w} ${h}`}
       className="w-full h-10"
       preserveAspectRatio="none"
       data-testid={testid}
+      data-direction={direction}
     >
       <path d={path} fill="none" stroke={stroke} strokeWidth={2} />
     </svg>

@@ -25,7 +25,7 @@ import {
   Droplet,
 } from "lucide-react";
 import { api } from "@/api";
-import { brandGradientCss, colors, money } from "@/theme";
+import { brandGradientCss, colors, gradients, money } from "@/theme";
 import { KPI_TONE_ROTATION, getAccentTone } from "@/utils/serviceLineTheme";
 import LiveWeatherWidget from "@/components/Weather/WeatherWidget";
 import MassMessagingCard from "@/components/mass-messaging/MassMessagingCard";
@@ -114,6 +114,15 @@ function KpiCard({ icon: Icon, label, value, onClick, testId, tone }) {
   // border on the 500 shade ties them together.  White text on
   // 500+ / dark text on 50 both pass WCAG AA (spot-checked in
   // ``feb2026-color-contrast.test.js``).
+  //
+  // Phase K70.a · Feb-2026 — the ICON CHIP now carries the K67
+  // navy → green gradient (``gradients.navyToGreen.css``) as a
+  // unifying signature accent across every tile. The pastel
+  // tone-driven background + colored left-border are preserved
+  // so tiles remain visually distinct at a glance; the gradient
+  // chip is the shared brand cue on top. White icon reads at
+  // AAA on the navy stop (12.8:1) and AA-large on the green stop
+  // (3.28:1) — see gradients.navyToGreen contrast note in theme.js.
   const palette = getAccentTone(tone);
   return (
     <button
@@ -129,7 +138,12 @@ function KpiCard({ icon: Icon, label, value, onClick, testId, tone }) {
     >
       <div
         className="w-10 h-10 rounded-xl flex items-center justify-center mb-3"
-        style={{ backgroundColor: palette[100], color: palette[600] }}
+        style={{
+          background: gradients.navyToGreen.css,
+          color: "#FFFFFF",
+        }}
+        data-testid={testId ? `${testId}-icon-chip` : undefined}
+        data-k70a-gradient-chip="true"
       >
         <Icon size={20} />
       </div>

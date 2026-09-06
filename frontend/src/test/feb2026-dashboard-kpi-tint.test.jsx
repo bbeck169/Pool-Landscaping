@@ -50,9 +50,35 @@ describe("Dashboard · KpiCard tone-driven palette", () => {
   });
 
   it("Icon wrapper reads palette[100] + palette[600]", () => {
-    expect(SRC).toMatch(
+    // Phase K70.a superseded the palette-driven icon chip: the
+    // chip is now the shared K67 navy → green gradient (see
+    // ``gradients.navyToGreen.css`` in theme.js). The
+    // tone-driven pastel BACKGROUND + colored left border are
+    // preserved (checked above), only the icon-chip fill moved.
+    // Assertion flipped so the old shape is explicitly forbidden;
+    // the new shape is asserted below in the K70.a contract test.
+    expect(SRC).not.toMatch(
       /backgroundColor:\s*palette\[100\][\s\S]{0,60}color:\s*palette\[600\]/,
     );
+  });
+
+  it("Phase K70.a — icon chip carries gradients.navyToGreen.css", () => {
+    // Import updated to include ``gradients``.
+    expect(SRC).toMatch(
+      /import\s*\{[^}]*\bgradients\b[^}]*\}\s*from\s*["']@\/theme["']/,
+    );
+    // Icon chip uses the canonical navy-green gradient.
+    expect(SRC).toMatch(
+      /background:\s*gradients\.navyToGreen\.css/,
+    );
+    // Icon color is white (reads at AAA on the navy stop, AA
+    // large on the green stop).
+    expect(SRC).toMatch(
+      /background:\s*gradients\.navyToGreen\.css[\s\S]{0,120}color:\s*["']#FFFFFF["']/,
+    );
+    // Every KpiCard tile exposes a data attribute the K70.a
+    // contract test can grep for without a full mount.
+    expect(SRC).toMatch(/data-k70a-gradient-chip="true"/);
   });
 
   it("All four dashboard KpiCard invocations declare a ``tone`` prop", () => {

@@ -16425,3 +16425,63 @@ Fix options A/B/C in `/app/memory/PHASE_K72_EMERGENCY_NO_FILTER_EMAIL_DIAG.md`. 
 **Blocked**
 K70 tile theming paused mid-flight (no code committed to K70). R1 Financial suite on hold. All other queued items on hold until K72 fix ships.
 
+
+
+---
+
+## Phase K72 · UPDATE Feb-2026 — Post-emergency shipments (K72.fix + K72.a + K72.1 + K72.b prep)
+
+Followed on from the K72 kill-switch triage above. All three sub-phases shipped in a single iteration; K72.b apology dispatch is prepped as a prod-only artifact awaiting user redeploy.
+
+**K72.fix (Option C — belt-and-braces guards) · SHIPPED**
+- `backend/routers/mass_messaging.py` gained CI hard-block (`CI_BLOCK_MASS_MESSAGING=1` → 403 `K72_CI_MASS_MESSAGING_BLOCKED`) + real-tenant non-prod block (403 `K72_REAL_TENANT_NON_PROD_BLOCKED` when `tenant.is_real=True` AND `APP_ENV != production`).
+- `backend/tests/test_bug_g_mass_messaging_filters.py` quarantined with a phase-K72 banner header + `pytest.skip` at top; documented condition for un-quarantine.
+- New backend tests: `test_k72_fix_mass_messaging_guards.py`.
+
+**K72.a (preview APP_ENV flip) · SHIPPED**
+- `backend/.env` → `APP_ENV=preview`. `services/comms_env_guard.guard_outbound` no longer short-circuits to `production_live` on this pod.
+
+**K72.1 (Broadcast confirm modal) · SHIPPED**
+- `frontend/src/components/mass-messaging/MassMessagingComposeDialog.jsx` — inline `K72BroadcastConfirmBody` component. Type-to-confirm gate: reads `localStorage.tenant_name`, requires case-sensitive typed match, red-destructive styling. Triggers on `audience="all_active_customers"` OR any targeted send with >50 recipients.
+- Contract tests: `frontend/src/test/k72-1-broadcast-confirm-modal.test.jsx` (7 assertions).
+
+**K72.b (Apology dispatch prep) · PREPPED — awaiting user prod redeploy**
+- `scripts/k72_apology_send.py` — one-shot dispatcher. Dry-run default; `--commit` requires `APP_ENV=production`, `FEATURE_CUSTOMER_EMAIL_KILL_SWITCH=off`, `RESEND_API_KEY` set. Parses recipient roster from section 3 of `PHASE_K72_EMERGENCY_NO_FILTER_EMAIL_DIAG.md` (114 real recipients after filtering fixtures — memo said `~113`, exact deterministic count is 114). Rate-limited to 5/sec. Idempotent via `db.k72_apology_dispatch` audit rows keyed by `dispatch_id="k72.b.apology.2026-02"`. Resend adapter called with `audience="customer"` (kill switch still governs) + `allow_off_allowlist=True`. First-name merged from `customers` by email (fallback `there`). `SUPPORT_PHONE=602-887-4400` hard-coded.
+- `memory/K72_APOLOGY_RUNBOOK.md` — operator brief with preflight, exact commands, post-flight, rollback, cost, kill-switch sequencing.
+- Local dry-run smoke: parsed 118 → 114 real recipients ✓, first-name merge OK (falls back to roster on preview since Mongo lacks prod customers) ✓, preflight refuses --commit outside production ✓.
+
+---
+
+## Phase K70.a · Feb-2026 — Dashboard / Reports Tile Theming — SHIPPED (preview)
+
+Resumed after K72 emergency. Tight scope; K70.b codemod queued next.
+
+**What shipped**
+- Dashboard `KpiCard` (`pages/admin/Dashboard.jsx`): icon chip now paints `gradients.navyToGreen.css` with white icon. Feb-2026 per-tone pastel background + colored left border **preserved** (per user directive B2).
+- Shared R0 `<KpiCard/>` (`components/reports/KpiCard.jsx`): full navy-green gradient tile background, white text throughout, sparkline stroke flipped to white, error text flipped to red-100.
+- ReportsHub `BuiltTile` (`pages/reports/ReportsHub.jsx`): full gradient background, white text, semi-transparent white icon chip, "Open report" CTA with **green-700 `#15803D` fill + 1px white outline + white text** (WCAG AA body 4.93:1 verified), hover darkens to `#166534`.
+- ReportsHub `ComingSoonTile`: **unchanged** — dashed border, `colors.surfaceSecondary`, "Coming soon" ribbon, `aria-disabled="true"`.
+- Test file `feb2026-dashboard-kpi-tint.test.jsx` amended: old `palette[100]/palette[600]` chip assertion flipped to absence; new gradient-chip assertions added.
+- New test file `k70a-tile-theming.test.jsx` (19 assertions) — source-lint contract on all K70.a-touched surfaces + K64 nav-navy grep-lock + WCAG lint.
+
+**Tests**
+- K70.a scope: 52 / 52 pass across 5 files.
+- Broader sweep (45 files, 565 tests): 8 pre-existing failures — verified pre-existing by stashing K70.a changes and reproducing identical failure set. Not K70.a-caused; separate P1 sweep candidate.
+
+**WCAG**
+- Green-700 CTA `#15803D` + white text: 4.93:1 → AA body ✓
+- CTA hover `#166534` + white text: 6.71:1 → AA body ✓
+- Icon-chip gradient stops: 12.8:1 (navy) / 3.28:1 (green) — icon = graphical/large ✓
+- All other touched surfaces meet AA per phase memo section 5.
+
+**Preserved**
+- K64 solid nav navy `#303AA0` (grep-lock verified).
+- K64 grep-lock strings (invoices late-fee badge, BusinessOS sub-nav, calendar preset, customers scope pill).
+- K30 / K61 / R0 / R0.1 / R0.1+ / K63 / K64 / K65 / K66 / K67 / K68 / K69 / K71 / K72 behavior.
+- Deprecated `brandGradient` / `brandGradientCss` aliases in `theme.js:232-233` — NOT touched (K70.b).
+
+**Queued next**
+K70.b alias retirement codemod (~73 non-test files + 10 test file mocks + `theme.js` alias exports + `k67-navy-green-gradient.test.js` flip to assert alias absence) → R1 Financial suite proper.
+
+**Held**
+K72.b apology dispatch — awaiting user prod redeploy + operator run per `memory/K72_APOLOGY_RUNBOOK.md`.

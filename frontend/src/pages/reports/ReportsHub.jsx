@@ -15,7 +15,7 @@ import {
   Lock,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors } from "@/theme";
+import { colors, gradients } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 import { formatValue, formatNumber } from "@/components/reports/formatters";
 
@@ -201,6 +201,12 @@ export default function ReportsHub() {
  * live headline KPI (formatted via the shared ``formatValue``
  * helper so tile numbers match the KpiCard component byte-for-byte),
  * and an "Open report" button.
+ *
+ * Phase K70.a · Feb-2026 — the tile now paints the canonical K67
+ * navy → green gradient (``gradients.navyToGreen.css``) as its
+ * background with white text on top. The "Open report" button
+ * uses green-700 (``#15803D``) fill + 1px white outline + white
+ * text so it reads at AA-body (4.9:1) on the gradient.
  */
 function BuiltTile({ tile }) {
   const { icon: Icon, title, description, to, kpi, renderKpi, kpiSubtitle } = tile;
@@ -211,17 +217,19 @@ function BuiltTile({ tile }) {
     <div
       className="rounded-2xl p-5 flex flex-col gap-4 transition"
       style={{
-        backgroundColor: colors.surface,
+        background: gradients.navyToGreen.css,
         border: `1px solid ${colors.border}`,
+        color: "#FFFFFF",
       }}
       data-testid={testIdRoot}
+      data-k70a-gradient-tile="true"
     >
       <div className="flex items-start gap-3">
         <div
           className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
           style={{
-            backgroundColor: colors.brandTertiary,
-            color: colors.onBrandTertiary,
+            backgroundColor: "rgba(255,255,255,0.18)",
+            color: "#FFFFFF",
           }}
         >
           <Icon size={20} />
@@ -229,13 +237,13 @@ function BuiltTile({ tile }) {
         <div className="flex-1 min-w-0">
           <div
             className="font-semibold text-sm"
-            style={{ color: colors.onSurface }}
+            style={{ color: "#FFFFFF" }}
           >
             {title}
           </div>
           <div
             className="text-xs mt-0.5"
-            style={{ color: colors.muted }}
+            style={{ color: "rgba(255,255,255,0.82)" }}
           >
             {description}
           </div>
@@ -245,7 +253,7 @@ function BuiltTile({ tile }) {
       <div>
         <div
           className="text-2xl md:text-3xl font-bold"
-          style={{ color: colors.onSurface }}
+          style={{ color: "#FFFFFF" }}
           data-testid={`${testIdRoot}-kpi`}
         >
           {renderKpi(kpi)}
@@ -253,7 +261,7 @@ function BuiltTile({ tile }) {
         {sub ? (
           <div
             className="text-xs mt-1"
-            style={{ color: colors.muted }}
+            style={{ color: "rgba(255,255,255,0.75)" }}
             data-testid={`${testIdRoot}-kpi-sub`}
           >
             {sub}
@@ -264,12 +272,20 @@ function BuiltTile({ tile }) {
       <div className="mt-auto">
         <Link
           to={to}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition hover:brightness-95"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition"
           style={{
-            backgroundColor: colors.brandTertiary,
-            color: colors.onBrandTertiary,
+            backgroundColor: "#15803D",
+            border: "1px solid #FFFFFF",
+            color: "#FFFFFF",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = "#166534";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "#15803D";
           }}
           data-testid={`${testIdRoot}-open`}
+          data-k70a-cta="true"
         >
           Open report
           <ChevronRight size={14} />
