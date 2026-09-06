@@ -1,3 +1,34 @@
+## Phase K75 · Web Nav Revert · Step A — SHIPPED (Feb 2026)
+
+**Scope (Step A):** Web-only nav re-shell. Horizontal top main nav (7 fixed items admin / 6 tech + single "More" dropdown that houses all six ADMIN_NAV_V2 categories → full ~130-page reach preserved). Vertical left rail rebranded "Quick Access" with the SEEDED pre-K75 items per role (Step A ships seed-only; Step B adds user-editable pins + backend persistence). Mobile bottom-nav / drawer / customer portal untouched.
+
+**Delivery**
+- NEW `nav/topNavRegistry.js` — `ADMIN_TOP_NAV` (Dashboard, Schedule, Customers, Estimates, Invoices, Reports, Settings) + `TECH_TOP_NAV` (Schedule, D2D, Time Clock, Tools, Training, Profile) + `topNavForRole()` + `showMoreDropdownForRole()`.
+- REWRITTEN `layouts/AdminTopBar.jsx` — six inline `CategoryDropdown` triggers folded into a single "More" dropdown; primary chips migrated to a K64-canonical NavLink-based `TopNavChip`; three DOM branches (`admin-topbar-tech-wrap`, `admin-topbar-narrow-wrap`, `admin-topbar-wide-wrap`) preserved; right cluster (Add Customer / Credits / Sprocket / Sign Out / UniversalMenu bell+hamburger) preserved verbatim; Sign Out LEFT of UniversalMenu in every branch.
+- MODIFIED `layouts/AppLayout.jsx` — "Quick Access" header label + `aria-label="Quick Access"` on the rail; item list, testids, and K64 active/hover styling unchanged (Step B will graft add/remove/reorder on top).
+- MOBILE-WEB `<768px`: top nav collapses to a "Menu" trigger flattening 7 fixed items + 6 categories under one sub-nested dropdown.
+
+**Retired:** Six inline `CategoryDropdown` triggers (`data-testid="admin-topbar-{group.key}"` pattern). No file deletion — replaced by "More" dropdown that surfaces the same six categories under one trigger. `QuickAccessRow` mount site (already retired pre-K75 for admin) grep-locked negative.
+
+**Non-negotiables · verified**
+- Right cluster preserved: Add Customer, Credits, Settings sprocket, Sign Out, UniversalMenu bell+hamburger.
+- K64 canonical (`colors.nav.bgActiveNavy`) on active + hover for every top-nav chip. No `brandGradient` reintroduction.
+- Mobile drawer (`AdminSidebar`) untouched.
+
+**Tests**
+- NEW `test/k75-top-nav.test.jsx` — 25 assertions (registry shape, admin/tech surfaces, DOM shell contract, legacy retirement grep-locks).
+- UPDATED `test/k50-theming.test.js` (Slice A), `test/k52-theming.test.js` (Slice B + D), `test/k64-nav-active-hover-unify.test.jsx` — `CategoryDropdown` source-lint blocks re-scoped to the K75 `TopNavChip` / `MoreDropdown` surfaces (K52 popover navy grep-lock via `data-k52-navy-popover="true"` preserved on the new MoreDropdown).
+- K75 + adjacent nav surface — **124 / 124 PASS** across 15 files: `k75-top-nav`, `header-cleanup-bell-cluster`, `header-signout-relocated`, `rail-nav`, `rail-nav-leads`, `phase20-quick-nav-rail-managerial-links`, `nav-hover-polish`, `k50-theming`, `k52-theming`, `k64-nav-active-hover-unify`, `settings-sprocket-visibility`, `sidebar-pricebook-shortcut`, `pricebook-suppliers-nav`, `phase54h-nav-wholesale-suppliers`, `brand-logo-single-instance`, `k52-1a-leads-mount`, `universal-menu-max-pins`, `queue-item-6-dashboard-nav`, `admin-sidebar-pinned-nav`.
+- Full-suite: 436 passed / 31 failed — all 31 pre-existing (verified via `git stash` against the untouched branch). Zero K75-introduced regressions.
+
+**Screenshots:** `/tmp/k75-dashboard.png`, `/tmp/k75-schedule.png`, `/tmp/k75-reports.png` — new top-nav shell (Dashboard · Schedule · Customers · Estimates · Invoices · Reports · Settings · More · [right cluster]) + left rail with "QUICK ACCESS" header + K64 canonical active pills all verified visually against `super@aquaterra.com` preview.
+
+**Step B queue (next):** Add-pin modal (role-appropriate registry picker) · Remove-pin (typed-confirm) · Drag-reorder (dnd-kit) · Backend `GET/PUT /api/users/me/quick-pins` (≤15 cap, iconKey whitelist, tenant/user scope) · Pytest contract `test_k75_quick_pins_endpoint.py` · Vitest CRUD `k75-quick-pin-rail.test.jsx`.
+
+**Ship report:** `/app/memory/PHASE_K75_NAV_REVERT.md`.
+
+
+
 ## Phase K74 · Solid Navy Tiles — SHIPPED (Feb 2026, preview only)
 
 **Scope:** Replace the K70.a navy → green gradient tile surfaces on Dashboard KpiCard icon chip AND ReportsHub BuiltTile background with solid navy (`#1B1F5C`). Per operator feedback — gradients read as busy against the pastel per-tone tile backgrounds preserved from K70.a. Green CTA + white text on Reports tiles preserved. Reports page canvas untouched (tiles only). Shared R0 KpiCard at `/reports/suite` + every other `gradients.navyToGreen` consumer OUT of K74 scope (still gradient).

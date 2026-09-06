@@ -147,14 +147,17 @@ describe("K52 · Slice A — Filter row navy (Schedule)", () => {
 /* ══════════════════════════════════════════════════════════════════ */
 
 describe("K52 · Slice B — Popover panel navy", () => {
-  it("CategoryDropdown popover renders on ``colors.nav.bg`` with white items + navy-hover", () => {
-    const dropdown = TOP_BAR.split("function CategoryDropdown(")[1]
+  it("MoreDropdown popover renders on ``colors.nav.bg`` with white items + navy-hover (K75-refactored)", () => {
+    // Phase K75 · Feb-2026 — CategoryDropdown was retired. The six
+    // inline category dropdowns fold into a single "More" dropdown
+    // whose popover carries the K52 Slice B navy chrome verbatim.
+    const dropdown = TOP_BAR.split("function MoreDropdown(")[1]
       .split("\nfunction ")[0];
     // Panel bg.
     expect(dropdown).toMatch(/backgroundColor:\s*colors\.nav\.bg/);
     // Item hover uses ``bgHover`` = ``#2A2F7A``.
     expect(dropdown).toMatch(/menuitem\]:hover\]:bg-\[#2A2F7A\]/);
-    // Marker for testers.
+    // Marker for testers (K52 grep-lock).
     expect(dropdown).toMatch(/data-k52-navy-popover="true"/);
     // Active row uses the K50 white-pill / navy-text pattern
     // (the K52 gradient is reserved for the nav SURFACES per Slice D).
@@ -275,16 +278,19 @@ describe("K52 · Slice D — Active nav item styling (K64 supersedes on main-nav
     expect(APP_LAYOUT).not.toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css/);
   });
 
-  it("AdminTopBar CategoryDropdown trigger active state paints ``colors.nav.bgActiveNavy`` (K64 replaced K52 gradient)", () => {
-    const cat = TOP_BAR.split("function CategoryDropdown(")[1]
+  it("AdminTopBar TopNavChip active state paints ``colors.nav.bgActiveNavy`` (K64 replaced K52 gradient; K75 refactored CategoryDropdown → TopNavChip)", () => {
+    // Phase K75 · Feb-2026 — CategoryDropdown was retired; the
+    // K64-canonical primary chip is now ``TopNavChip`` (NavLink).
+    const cat = TOP_BAR.split("function TopNavChip(")[1]
       .split("\nfunction ")[0];
-    expect(cat).toMatch(/background:\s*active\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*undefined/);
+    // K75: NavLink signature uses ``isActive``.
+    expect(cat).toMatch(/background:\s*isActive\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*"transparent"/);
     // Idle text stays white.
     expect(cat).toMatch(/color:\s*colors\.nav\.fg,/);
     // Regression guard — pre-K52 ``bgActive`` white pill on the
-    // trigger MUST NOT resurface.
-    expect(cat).not.toMatch(/backgroundColor:\s*active\s*\?\s*colors\.nav\.bgActive[^N]/);
-    // Regression guard — K52 gradient no longer paints the trigger.
+    // chip MUST NOT resurface.
+    expect(cat).not.toMatch(/backgroundColor:\s*isActive\s*\?\s*colors\.nav\.bgActive[^N]/);
+    // Regression guard — K52 gradient no longer paints the chip.
     expect(cat).not.toMatch(/colors\.gradient\.css/);
   });
 

@@ -92,21 +92,29 @@ describe("K50 · Slice A — Navy sidebar + top main menu", () => {
   });
 
   // R1.c · Feb-2026 — K64 canonical for the CategoryDropdown too.
-  it("CategoryDropdown triggers — K64 canonical: solid-navy active state (was gradient in K52 Slice D)", () => {
-    // K64 canonical: the active category trigger paints
+  //
+  // Phase K75 · Feb-2026 — CategoryDropdown was retired: the 6
+  // inline category triggers were folded into a single "More"
+  // dropdown and the primary IA links moved to a K64-canonical
+  // ``TopNavChip`` (NavLink-based). The K64 canonical still holds
+  // — the top-nav chip binds active + hover to
+  // ``colors.nav.bgActiveNavy``.
+  it("Top-nav chips — K64 canonical: solid-navy active state (K75-refactored surface)", () => {
+    // K64 canonical: the active top-nav chip paints
     // ``colors.nav.bgActiveNavy``. Idle color stays white via
     // ``colors.nav.fg``.
     expect(TOP_BAR).toMatch(/color:\s*colors\.nav\.fg,/);
-    expect(TOP_BAR).toMatch(/background:\s*active\s*\?\s*colors\.nav\.bgActiveNavy/);
+    // K75 · Feb-2026 — the chip uses ``isActive`` from NavLink.
+    expect(TOP_BAR).toMatch(/background:\s*isActive\s*\?\s*colors\.nav\.bgActiveNavy/);
     // Regression guard — the K52 gradient MUST NOT reappear on
-    // this surface.
-    expect(TOP_BAR).not.toMatch(/background:\s*active\s*\?\s*colors\.gradient\.css/);
+    // this surface (design owner adjudication · R1.c).
+    expect(TOP_BAR).not.toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css/);
     // Regression guard — no more ``hover:bg-sky-50`` on the
-    // trigger, and no lingering K50 ``bgActive`` white-pill
-    // fallback.
-    const catBody = TOP_BAR.split("function CategoryDropdown(")[1].split("\nfunction ")[0];
-    expect(catBody).not.toMatch(/hover:bg-sky-50/);
-    expect(catBody).not.toMatch(/backgroundColor:\s*active\s*\?\s*colors\.nav\.bgActive[^N]/);
+    // chip, and no lingering K50 ``bgActive`` white-pill
+    // fallback on the top-nav chip.
+    const chipBody = TOP_BAR.split("function TopNavChip(")[1].split("\nfunction ")[0];
+    expect(chipBody).not.toMatch(/hover:bg-sky-50/);
+    expect(chipBody).not.toMatch(/backgroundColor:\s*isActive\s*\?\s*colors\.nav\.bgActive[^N]/);
   });
 });
 

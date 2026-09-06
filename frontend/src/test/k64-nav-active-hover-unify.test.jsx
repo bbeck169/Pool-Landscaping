@@ -84,15 +84,18 @@ describe("K64 · AppLayout QuickNavRail source-body contract", () => {
 });
 
 
-describe("K64 · AdminTopBar CategoryDropdown source-body contract", () => {
-  const cat = TOP_BAR.split("function CategoryDropdown(")[1]
+describe("K64 · AdminTopBar top-nav chip source-body contract (K75-refactored)", () => {
+  // Phase K75 · Feb-2026 — CategoryDropdown was retired; the
+  // K64-canonical chip is now ``TopNavChip`` (NavLink-based).
+  const cat = TOP_BAR.split("function TopNavChip(")[1]
     .split("\nfunction ")[0];
 
   it("active state binds background to nav.bgActiveNavy", () => {
+    // K75: NavLink signature uses ``isActive``.
     expect(cat).toMatch(
-      /background:\s*active\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*undefined/,
+      /background:\s*isActive\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*"transparent"/,
     );
-    // No lingering K52 gradient on the trigger.
+    // No lingering K52 gradient on the chip.
     expect(cat).not.toMatch(/colors\.gradient\.css/);
     expect(cat).not.toMatch(/colors\.gradient\.cssHover/);
     expect(cat).not.toMatch(/colors\.gradient\.textShadow/);
@@ -100,12 +103,14 @@ describe("K64 · AdminTopBar CategoryDropdown source-body contract", () => {
 
   it("hover paints the same nav.bgActiveNavy solid (hover == active)", () => {
     expect(cat).toMatch(
-      /onMouseEnter=\{\(e\) => \{\s*e\.currentTarget\.style\.background = colors\.nav\.bgActiveNavy;\s*\}\}/,
+      /onMouseEnter=\{\(e\) => \{\s*e\.currentTarget\.style\.background = colors\.nav\.bgActiveNavy;/,
     );
     // Leave handler restores either bgActiveNavy (still active) or
-    // an empty string (idle). No white-overlay hack.
+    // transparent (idle). Uses ``aria-current`` since NavLink drives
+    // active state through that attribute; equivalent to the pre-K75
+    // ``active`` local variable.
     expect(cat).toMatch(
-      /onMouseLeave=\{\(e\) => \{\s*e\.currentTarget\.style\.background = active \? colors\.nav\.bgActiveNavy : "";\s*\}\}/,
+      /onMouseLeave=\{\(e\) => \{[\s\S]{0,200}e\.currentTarget\.style\.background =[\s\S]{0,200}colors\.nav\.bgActiveNavy[\s\S]{0,80}:\s*"transparent";/,
     );
   });
 });
@@ -132,8 +137,10 @@ describe("K64 · non-nav gradient consumers left untouched", () => {
   it("no main-nav file leaks colors.gradient.* on the active/hover state", () => {
     expect(APP_LAYOUT).not.toMatch(/colors\.gradient\.css/);
     expect(APP_LAYOUT).not.toMatch(/colors\.gradient\.cssHover/);
-    const catBlock = TOP_BAR.split("function CategoryDropdown(")[1]
+    // Phase K75 · Feb-2026 — CategoryDropdown retired; assert the
+    // K75-refactored TopNavChip block instead.
+    const chipBlock = TOP_BAR.split("function TopNavChip(")[1]
       .split("\nfunction ")[0];
-    expect(catBlock).not.toMatch(/colors\.gradient/);
+    expect(chipBlock).not.toMatch(/colors\.gradient/);
   });
 });

@@ -235,17 +235,24 @@ const QUICK_NAV_RAIL = [
 function QuickNavRail({ role }) {
   const items = QUICK_NAV_RAIL.filter((n) => n.roles.includes(role));
   if (items.length === 0) return null;
-  // Feb-2026 UI Polish Addendum — motion polish. Each rail item is a
-  // Tailwind-only surface now so hover / focus-visible motion +
-  // color shift work without fighting a style-prop override. The
-  // ``group`` class scopes the icon's color transition so the SVG
-  // adopts the sky-600 tint on hover along with the label.
+  // Phase K75 · Feb-2026 — the rail now presents as a user-editable
+  // "Quick Access" pin list. Step A ships with the seeded defaults
+  // (same items as the pre-K75 hard-coded rail). Step B wires the
+  // add / remove / reorder UI + backend persistence via
+  // ``/api/users/me/quick-pins``.
   return (
     <nav
       className="flex-1 flex flex-col items-stretch py-3 gap-1 overflow-y-auto"
       data-testid="quick-nav-rail"
-      aria-label="Primary navigation"
+      aria-label="Quick Access"
     >
+      <div
+        className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-center"
+        style={{ color: colors.nav.fgMuted }}
+        data-testid="quick-nav-rail-header"
+      >
+        Quick Access
+      </div>
       {items.map(({ key, to, label, Icon, end }) => (
         <NavLink
           key={key}
