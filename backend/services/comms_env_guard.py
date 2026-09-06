@@ -117,13 +117,35 @@ class GuardVerdict:
         }
 
 
-def guard_outbound(*, kind: str, to: str) -> GuardVerdict:
+def is_customer_email_kill_switch_on() -> bool:
+    """Phase K72 · Feb-2026 — Emergency customer-email kill switch.
+
+    Reads ``FEATURE_CUSTOMER_EMAIL_KILL_SWITCH`` from the environment
+    (default OFF). When ON, ``guard_outbound`` short-circuits every
+    ``audience="customer"`` send regardless of ``APP_ENV`` — the
+    switch is a P0 safety break for incident-response, unrelated to
+    the normal preview allow-list gate.
+
+    Truthy values: ``on``, ``true``, ``1``, ``yes``. Anything else
+    (including missing) reads as OFF.
+    """
+    val = (os.environ.get("FEATURE_CUSTOMER_EMAIL_KILL_SWITCH") or "")\
+        .strip().lower()
+    return val in ("on", "true", "1", "yes")
+
+
+def guard_outbound(*, kind: str, to: str,
+                     audience: str = "customer") -> GuardVerdict:
     """Decide whether an outbound comms call may hit the live provider.
 
     Rules
     -----
-    * ``APP_ENV=production`` → **never** blocked. The caller proceeds
-      to the live provider unchanged.
+    * **Phase K72 kill switch** — if
+      ``FEATURE_CUSTOMER_EMAIL_KILL_SWITCH`` is ON AND
+      ``audience="customer"``, the send is **always blocked**
+      regardless of ``APP_ENV``. Internal / admin-facing sends
+      (``audience="internal"``) pass through this check unchanged.
+    * ``APP_ENV=production`` → **never** blocked (post-kill-switch).
     * Any other ``APP_ENV`` → blocked, unless the recipient matches
       the corresponding allow-list env var:
         - ``COMMS_TEST_ALLOWLIST_EMAILS`` for ``kind="email"``
@@ -132,10 +154,30 @@ def guard_outbound(*, kind: str, to: str) -> GuardVerdict:
 
     The function ALSO emits a single INFO-level log line per blocked
     send with a ``[DRY-RUN preview]`` prefix so it's obvious in the
-    logs what would have gone out and to whom.
+    logs what would have gone out and to whom. The K72 kill-switch
+    block emits a distinct WARN-level line prefixed with
+    ``[K72 KILL-SWITCH]`` so ops can grep for it separately.
     """
     env = _app_env()
     normalized_to = (to or "").strip()
+    normalized_audience = (audience or "customer").strip().lower()
+
+    # Phase K72 · Feb-2026 — customer-facing outbound kill switch.
+    # Fires BEFORE the production-live short-circuit so it works in
+    # every environment during an incident.
+    if (normalized_audience == "customer"
+            and is_customer_email_kill_switch_on()):
+        logger.warning(
+            "[K72 KILL-SWITCH] customer_email_suppressed_kill_switch "
+            "kind=%s to=%s env=%s audience=%s",
+            kind, normalized_to, env, normalized_audience,
+        )
+        return GuardVerdict(
+            blocked=True,
+            reason="customer_email_suppressed_kill_switch",
+            to=normalized_to,
+            kind=kind,
+        )
 
     if env == "production":
         return GuardVerdict(blocked=False, reason="production_live",

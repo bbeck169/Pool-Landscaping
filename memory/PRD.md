@@ -16402,3 +16402,26 @@ Both events are joined by `undone_from_batch_id` → `bulk_batch_id` for the ful
 - `unscheduled` + `missing_card` filters run in Python post-filter — their counts drift when combined. Documented rather than fought.
 - Waitlist double-counts against Active by design (orthogonal tab UX).
 
+
+---
+
+## Phase K72 · Feb-2026 · EMERGENCY — "no-filter" Customer Email Diagnosis + Kill Switch — DIAGNOSED · KILL SWITCH SHIPPED (default OFF)
+
+**Incident summary**
+116 real customers on tenant `affdfbfa-88b9-4baa-ae45-2ef78531b6e4` (Pool & Landscaping of Vistancia) received email with subject/body "no-filter" from `cs@plofv.com` on 2026-08-31 20:59:33–57 UTC. Three replied confused: Michelle Moore, Scott Muir, Alan Chesebrough.
+
+**Root cause**
+`/app/backend/tests/test_bug_g_mass_messaging_filters.py::test_send_no_filters_still_works` authenticates against `admin@aquaterra.com` — which is the **production** tenant (no separate test tenant exists) — and POSTs `/api/mass-messaging/send` with `audience="all_active_customers", subject="no-filter", body="no-filter"`. The `APP_ENV=production` gate on the preview pod short-circuits the `guard_outbound` env check to `production_live`, so all 118 payloads flowed through Resend to real inboxes.
+
+**Kill switch (SHIPPED, default OFF)**
+- `FEATURE_CUSTOMER_EMAIL_KILL_SWITCH=on` in backend/.env → all `audience="customer"` sends short-circuit to a `dry_run` envelope regardless of `APP_ENV` (including production).
+- `audience="internal"` explicitly tagged on 6 admin/staff paths (K63 lead alerts, K30 password reset, daily/weekly digests, leads_side_effects internal notifications) so they keep flowing during a customer-comms incident.
+- Kill switch fires BEFORE the `APP_ENV=production` short-circuit AND before the K30 `allow_off_allowlist=True` bypass.
+- 20 pytest cases green.
+
+**Not yet fixed — user adjudicates**
+Fix options A/B/C in `/app/memory/PHASE_K72_EMERGENCY_NO_FILTER_EMAIL_DIAG.md`. Recommended: Option C (test-tenant guard on `/api/mass-messaging/send` + rewire the offending test to a synthetic tenant + CI-only mass-messaging block).
+
+**Blocked**
+K70 tile theming paused mid-flight (no code committed to K70). R1 Financial suite on hold. All other queued items on hold until K72 fix ships.
+

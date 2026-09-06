@@ -173,6 +173,10 @@ async def send_digest_for_tenant(tenant: Dict[str, Any]) -> Dict[str, Any]:
         category="transactional",
         idempotency_key=f"review-digest-{tid}-{datetime.now(_TENANT_TZ).date().isoformat()}",
         tenant_id=tid,
+        # Phase K72 · Feb-2026 — daily review digest goes to the
+        # tenant's admin/owner. Not customer-facing; bypass the
+        # K72 kill switch.
+        audience="internal",
     )
     status = result.get("provider_status") or "failed"
     try:

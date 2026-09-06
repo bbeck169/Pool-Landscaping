@@ -183,7 +183,8 @@ class RingCentralService:
         )
 
     async def send_sms(self, to: str, body: str,
-                        from_number: Optional[str] = None) -> Dict[str, Any]:
+                        from_number: Optional[str] = None,
+                        audience: str = "customer") -> Dict[str, Any]:
         """Phase 7A · Feb 2026 — send an SMS via RingCentral.
 
         Returns the RC response body PLUS a normalized envelope so the
@@ -221,7 +222,7 @@ class RingCentralService:
         try:
             from services.comms_env_guard import guard_outbound
 
-            verdict = guard_outbound(kind="sms", to=to)
+            verdict = guard_outbound(kind="sms", to=to, audience=audience)
         except Exception:  # pragma: no cover — never crash the sender
             verdict = None
         if verdict is not None and verdict.blocked:

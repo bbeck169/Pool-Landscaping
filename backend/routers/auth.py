@@ -392,6 +392,12 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
                 category="transactional",
                 tenant_id=user.get("tenant_id"),
                 customer_id=user.get("customer_id"),
+                # Phase K72 · Feb-2026 — user-initiated password reset
+                # is a transactional, self-triggered flow (the user
+                # clicked "forgot"). Bypasses the K72 customer-email
+                # kill switch so a customer trying to unlock their
+                # portal isn't collateral damage during an incident.
+                audience="internal",
             )
             # Always log the reset link (behind INFO) so ops can help
             # a stuck customer out-of-band, and so preview dry-run

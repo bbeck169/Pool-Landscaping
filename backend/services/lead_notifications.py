@@ -193,6 +193,11 @@ async def _send_lead_alert_email(*, to: str, subject: str, html: str,
             to=to, subject=subject, html=html,
             category="transactional",
             tenant_id=tenant_id, customer_id=None,
+            # Phase K72 · Feb-2026 — K63 lead-notification recipients
+            # are admin/staff users, not customers. Bypass the K72
+            # customer-email kill switch so lead alerts keep flowing
+            # during a customer-comms incident.
+            audience="internal",
         )
         message_id = None
         if isinstance(result, dict):

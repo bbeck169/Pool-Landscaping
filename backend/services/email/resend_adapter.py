@@ -166,6 +166,7 @@ class ResendEmailAdapter:
         from_name: Optional[str] = None,
         from_email: Optional[str] = None,
         allow_off_allowlist: bool = False,
+        audience: str = "customer",
     ) -> Dict[str, Any]:
         """Send an email through Resend.  Never raises; every failure
         path yields a status string the caller can persist verbatim.
@@ -185,6 +186,18 @@ class ResendEmailAdapter:
         are guarded by ``require_admin`` (or equivalent server-side
         auth) should set this to True — never propagate from a
         user-controlled request body.
+
+        Phase K72 · Feb-2026 — ``audience`` (default ``"customer"``)
+        marks whether the RECIPIENT is a customer or an internal
+        admin/staff/system user. When
+        ``FEATURE_CUSTOMER_EMAIL_KILL_SWITCH`` is ON, any send with
+        ``audience="customer"`` is short-circuited to a dry-run
+        (``comms_env_guard.guard_outbound`` enforces this before
+        ``APP_ENV`` is consulted). Internal senders (K63 lead
+        notifications, K30 password reset, staff invites, super-admin
+        alerts, admin digests) pass ``audience="internal"`` to
+        bypass the kill switch. Default is ``"customer"`` — safe:
+        an unaudited caller stays blocked when the switch is on.
         """
         addr = (to or "").strip()
         if not addr:
@@ -244,6 +257,24 @@ class ResendEmailAdapter:
         # from ``"mocked"`` (no API key) and ``"sent"`` (live delivery).
         # Phase K30 · Feb-2026 — admin-triggered sends bypass this
         # guard too. WARN log emitted so we can audit every bypass.
+        # Phase K72 · Feb-2026 — the customer-email kill switch is
+        # enforced BEFORE the allow_off_allowlist bypass so an admin-
+        # triggered customer-facing send (invoice email, etc.) is
+        # still suppressed when the flag is ON.
+        from services.comms_env_guard import (
+            guard_outbound as _k72_guard,
+            is_customer_email_kill_switch_on as _k72_flag_on,
+        )
+        if (audience == "customer") and _k72_flag_on():
+            verdict = _k72_guard(kind="email", to=addr,
+                                    audience=audience)
+            # guard_outbound returns blocked here by construction.
+            logger.warning(
+                "[K72 KILL-SWITCH] resend send SUPPRESSED to=%s "
+                "subject=%r cat=%s tenant=%s (allow_off_allowlist=%s)",
+                addr, subject, category, tenant_id, allow_off_allowlist,
+            )
+            return verdict.dry_run_response(provider="resend")
         if allow_off_allowlist:
             logger.warning(
                 "[resend] allow_off_allowlist=True — bypassing guard_outbound "
@@ -252,11 +283,11 @@ class ResendEmailAdapter:
             )
         else:
             from services.comms_env_guard import guard_outbound
-            verdict = guard_outbound(kind="email", to=addr)
+            verdict = guard_outbound(kind="email", to=addr, audience=audience)
             if verdict.blocked:
                 logger.info(
-                    "[DRY-RUN] resend send SKIPPED to=%s subject=%r cat=%s tenant=%s",
-                    addr, subject, category, tenant_id,
+                    "[DRY-RUN] resend send SKIPPED to=%s subject=%r cat=%s tenant=%s reason=%s",
+                    addr, subject, category, tenant_id, verdict.reason,
                 )
                 return verdict.dry_run_response(provider="resend")
 

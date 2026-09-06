@@ -149,6 +149,8 @@ async def _fire_internal_notification(lead: Dict[str, Any], cfg: Dict[str, Any],
             category="transactional",
             tenant_id=lead.get("tenant_id"),
             idempotency_key=f"lead-internal:{lid}:email",
+            # Phase K72 · Feb-2026 — internal admin notification.
+            audience="internal",
         )
         ok = (res or {}).get("provider_status") in ("sent", "mocked")
         await _log_row(
@@ -177,6 +179,8 @@ async def _fire_internal_notification(lead: Dict[str, Any], cfg: Dict[str, Any],
             category="transactional",
             tenant_id=lead.get("tenant_id"),
             idempotency_key=f"lead-internal:{lid}:sms",
+            # Phase K72 · Feb-2026 — internal admin SMS notification.
+            audience="internal",
         )
         ok = (res or {}).get("provider_status") in ("sent", "mocked")
         await _log_row(

@@ -137,7 +137,8 @@ class RingCentralSMSAdapter:
                     category: str = "marketing",
                     idempotency_key: Optional[str] = None,
                     tenant_id: Optional[str] = None,
-                    customer_id: Optional[str] = None) -> Dict[str, Any]:
+                    customer_id: Optional[str] = None,
+                    audience: str = "customer") -> Dict[str, Any]:
         """Send an SMS via RingCentral. Never raises.
 
         P0 Fix 2b · Feb 2026 — when ``idempotency_key`` is provided the
@@ -148,6 +149,15 @@ class RingCentralSMSAdapter:
         crash-restart, and any other caller re-issue.  A fresh send
         upserts the record with the returned RC message id so future
         retries hit the cache.
+
+        Phase K72 · Feb-2026 — ``audience`` (default ``"customer"``)
+        marks whether the RECIPIENT is a customer or an internal
+        admin/staff/system user. Consulted by
+        ``comms_env_guard.guard_outbound`` — the customer-email
+        kill-switch flag suppresses SMS just like it does email so
+        the tenant's outbound comms stream is fully paused during
+        an incident. Internal / admin SMS (staff alerts, on-call
+        pager, etc.) pass ``audience="internal"`` to bypass.
         """
         addr_e164 = normalize_phone_e164(to)
         if not addr_e164:
@@ -232,7 +242,7 @@ class RingCentralSMSAdapter:
         # the send. Prevents preview / dev / staging from firing SMS
         # at real customer phone numbers.
         from services.comms_env_guard import guard_outbound
-        verdict = guard_outbound(kind="sms", to=addr_e164)
+        verdict = guard_outbound(kind="sms", to=addr_e164, audience=audience)
         if verdict.blocked:
             logger.info(
                 "[DRY-RUN] rc-sms send SKIPPED to=%s cat=%s len=%d tenant=%s",

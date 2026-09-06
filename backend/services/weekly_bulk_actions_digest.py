@@ -222,6 +222,9 @@ async def send_weekly_digest_for_tenant(tenant: Dict[str, Any]) -> Dict[str, Any
                 html=html,
                 category="transactional",
                 tenant_id=tenant["id"],
+                # Phase K72 · Feb-2026 — recipient is tenant owner/
+                # admin. Bypasses the K72 customer-email kill switch.
+                audience="internal",
             )
             status = (result or {}).get("provider_status")
             if status == "dry_run":

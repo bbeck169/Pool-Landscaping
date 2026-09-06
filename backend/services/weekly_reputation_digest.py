@@ -150,6 +150,9 @@ async def send_weekly_for_tenant(tenant: Dict[str, Any]) -> Dict[str, Any]:
         category="transactional",
         idempotency_key=f"weekly-digest-{tenant['id']}-{datetime.now(timezone.utc).date().isoformat()}",
         tenant_id=tenant["id"],
+        # Phase K72 · Feb-2026 — recipient is the tenant's Resend
+        # owner (admin). Bypasses the K72 kill switch.
+        audience="internal",
     )
     status = result.get("provider_status") or "failed"
     try:
