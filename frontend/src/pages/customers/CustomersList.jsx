@@ -127,7 +127,7 @@ export default function CustomersList() {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
-  const [counts, setCounts] = useState({ active: null, inactive: null, waitlist: null });
+  const [counts, setCounts] = useState({ active: null, inactive: null, muted: null, waitlist: null, all: null });
 
   const [rows, setRows] = useState(null);
   // Feb-2026 · P35 — server-side pagination. Page is URL-synced so
@@ -400,6 +400,24 @@ export default function CustomersList() {
       setTotalPages(Number.isFinite(data?.total_pages)
         ? data.total_pages
         : (items.length ? 1 : 0));
+      // Phase K68 · Feb-2026 — consume the paginated envelope's
+      // ``counts_by_status`` block so the tab badges refresh in a
+      // single round-trip. Falls back to the legacy separate-fanout
+      // in ``loadCounts()`` when the server doesn't ship the block
+      // (e.g. stale API). Non-admin users only see ``active`` — we
+      // still overwrite for correctness (admin-only tabs are hidden
+      // upstream, so writing them is harmless).
+      const cbs = data?.counts_by_status;
+      if (cbs && typeof cbs === "object") {
+        setCounts({
+          active: Number.isFinite(cbs.active) ? cbs.active : 0,
+          inactive: Number.isFinite(cbs.inactive) ? cbs.inactive : 0,
+          muted: isAdmin && Number.isFinite(cbs.muted) ? cbs.muted : null,
+          waitlist: isAdmin && Number.isFinite(cbs.waitlist)
+            ? cbs.waitlist : null,
+          all: isAdmin && Number.isFinite(cbs.all) ? cbs.all : null,
+        });
+      }
       setSelected(new Set());
     } catch (e) {
       setToast({ tone: "error", message: e.message });
@@ -448,18 +466,31 @@ export default function CustomersList() {
         inactive: results[1]?.count ?? 0,
         muted: isAdmin ? (results[2]?.count ?? 0) : null,
         waitlist: isAdmin ? (results[3]?.count ?? 0) : null,
+        // Phase K68 · Feb-2026 — legacy fanout doesn't compute the
+        // "All" bucket; leave as-is when the primary envelope path
+        // hasn't populated it yet. This fallback branch fires only
+        // when the paginated envelope is missing ``counts_by_status``
+        // (older server).
+        all: isAdmin
+          ? ((results[0]?.count ?? 0)
+              + (results[1]?.count ?? 0)
+              + (isAdmin ? (results[2]?.count ?? 0) : 0))
+          : null,
       });
     } catch { /* silent — counts are advisory */ }
   };
 
   useEffect(() => {
     load();
-    // Feb-2026 · P40 — tab-count badges must refresh alongside every
-    // list refresh so a mute/activate/bulk action can't leave a
-    // stale "MUTED 4" chip while the envelope reports 7 rows. Counts
-    // are 3 cheap ``count_documents`` calls; running them on tab /
-    // filter / page changes is the durable "can't drift" fix.
-    loadCounts();
+    // Phase K68 · Feb-2026 — ``load()`` now populates the tab
+    // counts via the paginated envelope's ``counts_by_status``
+    // block, so the legacy 3-4-request fan-out in ``loadCounts()``
+    // is no longer invoked on every filter/tab/page change. The
+    // helper is retained as a defensive fallback for the rare
+    // callers that still trigger it directly (mutation paths
+    // below) — those callers keep their existing wiring so
+    // nothing regresses in the edge case where the envelope is
+    // missing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
        missingPhone, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
@@ -919,7 +950,7 @@ export default function CustomersList() {
     // ``GET /customers?waitlisted=true&count_only=true`` and stacks
     // as intersection with the G4a portal-activation filter.
     { k: "waitlist", label: "Waitlist", count: counts.waitlist, testid: "tab-waitlist", adminOnly: true },
-    { k: "all", label: "All", count: null, testid: "tab-all", adminOnly: true },
+    { k: "all", label: "All", count: counts.all, testid: "tab-all", adminOnly: true },
   ];
 
   return (

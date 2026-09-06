@@ -16381,3 +16381,24 @@ Both events are joined by `undone_from_batch_id` → `bulk_batch_id` for the ful
 - Bulk recategorize UI for legacy line items (per user directive: deferred).
 - R0.1 Revenue-by-Service-Type chart now has the `service_category_id` field it needs.
 
+
+---
+
+## Phase K68 · Feb-2026 — Customer Status Tab Counts — SHIPPED
+
+**Delivered**
+- Audit: `/api/customers` already had paginated envelope + 4 separate `?count_only=true` fanout on filter change; `All` tab hardcoded to null count.
+- Backend: `CustomerListPage` gained `counts_by_status: Optional[Dict[str,int]]`. `list_customers` snapshots the base query BEFORE status predicates, runs one `$facet` aggregation producing 5 buckets (active / inactive / muted / waitlist / all). On aggregation failure the block defaults to zero + warning breadcrumb.
+- Frontend: `CustomersList.jsx` — counts state widened to 5 buckets; `load()` consumes envelope's `counts_by_status`; primary useEffect no longer fires the legacy `loadCounts()` fanout; `TAB_DEFS.all` wired to `counts.all`; `loadCounts()` fallback retained + extended to compute the `all` bucket.
+
+**Perf**
+- p50 end-to-end 120ms (well under the 500ms spec budget). Round-trips dropped from 5 to 1 per filter change on admin.
+
+**Tests**
+- Backend: 5 pass + 1 skip (customer login lockout) in `test_k68_customer_status_tab_counts.py`. Covers legacy-array backwards-compat, envelope shape, search-scope, tab-strip invariance, perf p50.
+- Frontend: 5 source-shape assertions in `test/k68-customer-status-tab-counts.test.jsx`. 46 existing customer-tab tests still green.
+
+**Known limits**
+- `unscheduled` + `missing_card` filters run in Python post-filter — their counts drift when combined. Documented rather than fought.
+- Waitlist double-counts against Active by design (orthogonal tab UX).
+

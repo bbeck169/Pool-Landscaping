@@ -389,6 +389,13 @@ class CustomerListPage(BaseModel):
     page: int
     page_size: int
     total_pages: int
+    # Phase K68 · Feb-2026 — overlapping counts for the 5 tab
+    # buckets (active / inactive / muted / waitlist / all). Reflects
+    # the same search + city + tag + data-quality + portal-status
+    # filter surface the paginated ``total`` uses; the per-tab
+    # status predicates (waitlisted / is_active / is_muted) are
+    # applied on top of the shared base per bucket.
+    counts_by_status: Optional[Dict[str, int]] = None
 
 
 @router.get("/customers",
@@ -568,6 +575,22 @@ async def list_customers(
         }]
     if waitlisted is not None:
         q["waitlisted"] = bool(waitlisted)
+    # ═══════════════════════════════════════════════════════════════
+    # Phase K68 · Feb-2026 — Snapshot the query BEFORE the status-tab
+    # predicates (waitlisted / is_active / is_muted) are compounded
+    # in below so we can compute overlapping counts for the 5 tab
+    # buckets (active / inactive / muted / waitlist / all) in a
+    # single $facet aggregation. The snapshot strips whichever
+    # status predicate got applied so each tab count reflects the
+    # base search + data-quality filter surface only.
+    # Shallow-copy of the dict + list-copy of its ``$and`` is
+    # sufficient — individual predicates inside are read-only from
+    # here on.
+    # ═══════════════════════════════════════════════════════════════
+    _k68_base_q: dict = {k: v for k, v in q.items() if k not in ("$and",
+                                                                     "waitlisted")}
+    if q.get("$and"):
+        _k68_base_q["$and"] = list(q["$and"])
     # Phase 56.2 — active/inactive cohort filter. Rows created before the
     # `is_active` field existed default to active per Phase 34f semantics,
     # so a `True` filter must match {is_active: True} OR field-absent.
@@ -931,12 +954,87 @@ async def list_customers(
         # above; ``docs`` was already sliced by skip/limit at the DB.
         _total_pages = 0 if total == 0 else (
             (total + page_size - 1) // page_size)
+        # ═══════════════════════════════════════════════════════════
+        # Phase K68 · Feb-2026 — counts_by_status. Runs one $facet
+        # over the base query (search + city + tag + data-quality +
+        # portal-status), producing 5 overlapping counts. Wire the
+        # frontend at the same time so the K62 tab bar can drop
+        # its 3-4 legacy ``?count_only=true`` fanout.
+        #
+        # Bucket definitions (matches the tab-to-filter mapping the
+        # frontend already uses):
+        #   * active   — is_active∈{true, missing} AND is_muted!=true
+        #   * inactive — is_active=false AND is_muted!=true
+        #   * muted    — is_muted=true
+        #   * waitlist — waitlisted=true
+        #   * all      — the base query verbatim
+        #
+        # ``unscheduled`` and ``missing_card`` run in Python
+        # post-filter so their exclusion isn't reflected in the
+        # facet counts — those tabs are advisory (their totals may
+        # over-count vs the visible page). Documented in the K68
+        # memory doc.
+        # ═══════════════════════════════════════════════════════════
+        _k68_not_muted = {"$or": [{"is_muted": {"$ne": True}},
+                                        {"is_muted": {"$exists": False}}]}
+        _k68_facet = {
+            "active": [
+                {"$match": {"$and": [
+                    _k68_base_q,
+                    {"$or": [{"is_active": True},
+                                {"is_active": {"$exists": False}}]},
+                    _k68_not_muted,
+                ]}},
+                {"$count": "n"},
+            ],
+            "inactive": [
+                {"$match": {"$and": [
+                    _k68_base_q,
+                    {"is_active": False},
+                    _k68_not_muted,
+                ]}},
+                {"$count": "n"},
+            ],
+            "muted": [
+                {"$match": {"$and": [
+                    _k68_base_q, {"is_muted": True},
+                ]}},
+                {"$count": "n"},
+            ],
+            "waitlist": [
+                {"$match": {"$and": [
+                    _k68_base_q, {"waitlisted": True},
+                ]}},
+                {"$count": "n"},
+            ],
+            "all": [
+                {"$match": _k68_base_q},
+                {"$count": "n"},
+            ],
+        }
+        try:
+            _k68_facet_res = await db.customers.aggregate(
+                [{"$facet": _k68_facet}]
+            ).to_list(1)
+            _k68_row = _k68_facet_res[0] if _k68_facet_res else {}
+        except Exception as _k68_exc:  # noqa: BLE001
+            logger.warning("[k68] counts_by_status facet failed: %s",
+                              _k68_exc)
+            _k68_row = {}
+        counts_by_status = {
+            "active": (_k68_row.get("active") or [{}])[0].get("n", 0),
+            "inactive": (_k68_row.get("inactive") or [{}])[0].get("n", 0),
+            "muted": (_k68_row.get("muted") or [{}])[0].get("n", 0),
+            "waitlist": (_k68_row.get("waitlist") or [{}])[0].get("n", 0),
+            "all": (_k68_row.get("all") or [{}])[0].get("n", 0),
+        }
         return {
             "items": docs,
             "total": total,
             "page": page,
             "page_size": page_size,
             "total_pages": _total_pages,
+            "counts_by_status": counts_by_status,
         }
     return docs
 
