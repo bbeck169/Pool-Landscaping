@@ -142,3 +142,93 @@ File: `backend/services/lead_notifications.py`
 
 * **Index migration** `quotes(tenant_id, customer_id, paid_at/created_at)` — folded into R1 kickoff (Option B).
 * **R0.1+ prod redeploy** — safe to redeploy once this phase clears QA.
+
+---
+
+## Phase K63.dispatcher-ingress-fix · Feb-2026 — public-leads endpoint wired
+
+### Diagnosis
+
+The K63 canary lead
+(`cf2e0a99-4ba3-4044-949c-2f6ca737e191`) landed via
+`POST /api/public/leads` — the widget-form public intake in
+`routers/leads.py::public_lead_intake` — and this handler was NOT
+firing `send_lead_alert_notifications`. Result: the lead
+persisted but neither the `audit_logs` K63 trail nor the
+`lead_notification_dispatches` idempotency table got a row for
+it. This was the sixth ingress path the K63 core work missed.
+
+### Fix
+
+Added a fire-and-forget dispatch block after `apply_lead_post_create`
+in `public_lead_intake`:
+
+```python
+try:
+    full_tenant = await db.tenants.find_one(
+        {"id": tenant["id"]}, {"_id": 0},
+    ) or {}
+    from services.lead_notifications import send_lead_alert_notifications
+    await send_lead_alert_notifications(
+        lead=lead_doc, tenant=full_tenant,
+        background_tasks=background_tasks,
+    )
+except Exception as _e:
+    logger.warning(f"[k63] public-leads dispatch failed: {_e}")
+```
+
+The narrow `tenant` doc fetched earlier only carries
+`id + widget_allowed_domains` — we re-fetch the full document
+here so `send_lead_alert_notifications` gets the
+`lead_notification_recipients` list. The BackgroundTask hop keeps
+the response latency independent of Resend / RingCentral.
+
+### Canary backfill
+
+Ran the dispatcher directly against the canary lead once the fix
+was in:
+
+```
+counts: {'sms_queued': 1, 'email_queued': 1}
+audit rows after backfill: 2
+  lead_notification_sent email brian@plofv.com
+  lead_notification_sent sms   +16028874400
+```
+
+RingCentral returned HTTP 200 for the SMS and Resend confirmed
+the email — Brian's inbox + phone should now hold the canary
+alert.
+
+### Ingress inventory (every `db.leads.insert_one` call site)
+
+| # | File                                      | Endpoint / Path                                | K63 wired? |
+|---|-------------------------------------------|------------------------------------------------|:---:|
+| 1 | `routers/lead_requests.py:345`            | `POST /api/public/lead-request/{token}/submit` (dispatched at line 407) | ✅ |
+| 2 | `routers/marketing.py:175`                | Marketing lead-magnet capture (line 183)       | ✅ |
+| 3 | `routers/marketing.py:241`                | Marketing landing-page capture (line 247)      | ✅ |
+| 4 | `routers/marketing_forms.py:697`          | Marketing forms submit (line 523)              | ✅ |
+| 5 | `routers/widget_chat.py:212`              | Widget-chat lead capture (line 356)            | ✅ |
+| 6 | `routers/leads.py:1264`                   | **`POST /api/public/leads` (widget form)**     | ✅ **NEW — this phase** |
+| — | `routers/leads.py:316`                    | `POST /api/leads` — admin manual create        | ❌ intentional (admin-created leads don't need to alert the admin who just typed them) |
+| — | `routers/portal_referrals.py:225`         | Customer-portal referral submission            | ❌ needs review — may want K63 fan-out |
+| — | `routers/property.py:208`                 | Property-lookup lead conversion                | ❌ needs review |
+| — | `routers/d2d.py:50`                       | Door-to-door canvasser capture                 | ❌ needs review |
+| — | `routers/ringcentral.py:481`              | Inbound RC missed-call → auto lead             | ❌ needs review — the missed-call agent probably already notifies Brian via RC directly, but K63 wants to see it too |
+| — | `server.py:1777`                          | Legacy fallback insert path                    | ❌ likely dead code — grep the callers before touching |
+| — | `seed.py:573`                             | Seed data (not runtime)                        | N/A |
+
+K63.dispatcher-ingress-fix scope is only #6 (the confirmed canary
+ingress). The six "❌ needs review" rows are candidates for a
+follow-up **K63.ingress-fix-2** — user must decide which are
+truly widget-form-equivalent inbound and which are admin/agent
+paths that shouldn't self-notify.
+
+### Tests
+
+| File | Cases | Green |
+|------|-------|-------|
+| `test_k63_ingress_fix_public_leads.py` | 3 (dispatch fires + response shape locked, idempotent refire, empty-recipient no-op) | ✅ |
+| Regression: `test_k63_tenant_lead_notifications.py` + `test_k63_dispatcher_idempotency.py` + `test_k63_polish_dispatch_log.py` + `test_lead_alert_notifications.py` | 38 | ✅ |
+
+Total K63 pytest count after this phase: **41 green**.
+

@@ -1,3 +1,67 @@
+## Phase K63.dispatcher-ingress-fix · public-leads endpoint wired + canary backfilled — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Backend only. Standing order honored
+(bbeck169/Pool-Landscaping.git ignored). Preview-only — user
+must redeploy to push to https://app.plofv.com.
+
+**Diagnosis**
+- The K63 canary lead landed via `POST /api/public/leads` — a
+  handler in `routers/leads.py::public_lead_intake` that was NOT
+  wired to `send_lead_alert_notifications`. Sixth ingress path
+  identified.
+
+**Delivery**
+- Added the K63 fan-out call after `apply_lead_post_create` in
+  `public_lead_intake`. Re-fetches the full tenant document
+  (the earlier projection dropped
+  `lead_notification_recipients`) and delegates to the same
+  BackgroundTask helper the other five ingress paths use.
+- Fire-and-forget: a Resend / RingCentral outage cannot bound
+  the endpoint's response latency and cannot fail the insert.
+- Canary lead `cf2e0a99-4ba3-4044-949c-2f6ca737e191`
+  backfilled — RingCentral returned HTTP 200 for the SMS and
+  Resend confirmed the email. Brian's inbox + SMS should now
+  hold the canary alert.
+
+**Ingress inventory documented** — every `db.leads.insert_one`
+call site captured in the K63 markdown with wire status:
+
+| # | Ingress | Wired |
+|---|---------|:---:|
+| 1 | `POST /api/public/lead-request/{token}/submit` | ✅ |
+| 2 | Marketing lead-magnet capture | ✅ |
+| 3 | Marketing landing-page capture | ✅ |
+| 4 | Marketing forms submit | ✅ |
+| 5 | Widget-chat lead capture | ✅ |
+| 6 | **`POST /api/public/leads` (widget form)** | ✅ **NEW** |
+| — | Admin manual create (`POST /api/leads`) | ❌ intentional |
+| — | Customer-portal referrals | ❌ needs review — K63.ingress-fix-2 candidate |
+| — | Property-lookup conversion | ❌ needs review |
+| — | Door-to-door canvasser capture | ❌ needs review |
+| — | RingCentral missed-call → auto lead | ❌ needs review |
+| — | Legacy `server.py:1777` fallback | ❌ likely dead code |
+
+**Tests**
+- 3 new pytest cases in
+  `test_k63_ingress_fix_public_leads.py` (dispatch fires +
+  response shape locked, idempotent refire, empty-recipient
+  no-op) — green.
+- Regression: 41 K63 pytest total green (0 regressions).
+
+**Follow-ups**
+- **K63.ingress-fix-2** — user decision on which of the 6
+  remaining ingress paths should also fan out K63 alerts.
+  Recommendation: `d2d.py`, `portal_referrals.py`,
+  `ringcentral.py`, `property.py` all sound like widget-form-
+  equivalent inbound to me; admin `POST /api/leads` and the
+  `server.py:1777` legacy fallback probably should NOT.
+- Batch redeploy: R0.1+ + K63 + K63.polish + K64 +
+  K63.dispatcher-ingress-fix → prod.
+- Then K66 → K67 → K68 → K65 per user queue.
+
+---
+
+
 ## Phase K64 · Active/Hover Nav Color Unification — SHIPPED (Feb 2026, preview only)
 
 **Scope:** Web only. Standing order honored

@@ -1285,6 +1285,26 @@ async def public_lead_intake(body: PublicLeadIn,
         await apply_lead_post_create(lead_doc)
     except Exception as _e:  # pragma: no cover
         logger.warning(f"[public-leads] post-create side effects crashed: {_e}")
+    # Phase K63.dispatcher-ingress-fix · Feb-2026 — dispatch the
+    # rich per-tenant K63 recipient list (email + SMS fan-out).
+    # This is the sixth ingress path — the ``/api/public/leads``
+    # widget-form entry — that was missing the hook. Fire-and-
+    # forget via BackgroundTasks; a Resend / RingCentral outage
+    # cannot bound this handler's response latency and cannot
+    # fail the insert. The K63 idempotency table
+    # (``lead_notification_dispatches``) still gates repeat sends
+    # if the same lead is somehow re-submitted.
+    try:
+        full_tenant = await db.tenants.find_one(
+            {"id": tenant["id"]}, {"_id": 0},
+        ) or {}
+        from services.lead_notifications import send_lead_alert_notifications
+        await send_lead_alert_notifications(
+            lead=lead_doc, tenant=full_tenant,
+            background_tasks=background_tasks,
+        )
+    except Exception as _e:  # pragma: no cover
+        logger.warning(f"[k63] public-leads dispatch failed: {_e}")
     # If we captured a referrer, ALSO insert a referrals row in
     # ``pending_conversion`` so the admin dashboard reflects the
     # inbound pipeline. The paid-window transition happens on
