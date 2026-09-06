@@ -20,12 +20,13 @@ vi.mock("@/api", () => ({
     post: (...args) => postMock(...args),
   },
 }));
-vi.mock("@/theme", () => ({
-  colors: {
-    surface: "#fff", surfaceSecondary: "#fafafa", border: "#eee",
-    muted: "#666", onSurface: "#000", error: "#DC2626",
-  },
-}));
+// Phase Hygiene B · Feb-2026 — use importActual so transitive consumers
+// (e.g. @/components/ui-kit which reaches for ``gradients``) resolve
+// against the real theme module rather than a partial hand-rolled stub.
+vi.mock("@/theme", async () => {
+  const actual = await vi.importActual("@/theme");
+  return { ...actual };
+});
 
 // Silence sonner + capture toast calls.
 const toastSuccess = vi.fn();

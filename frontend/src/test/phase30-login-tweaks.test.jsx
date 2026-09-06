@@ -82,9 +82,15 @@ describe("Login page · Phase 30", () => {
     // future refactor can't silently regress back to the
     // build-time ``process.env.REACT_APP_PUBLIC_ENV`` gate that
     // leaked the tiles to production.
+    //
+    // Phase Hygiene B · Feb-2026 — install the spy BEFORE renderPage()
+    // so the mount-time api.get() call is captured. The prior order
+    // (spyOn → render) missed the mount fetch because mounting fires
+    // synchronously during renderPage().
     const api = (await import("@/api")).api;
     const spy = vi.spyOn(api, "get");
     renderPage();
+    await Promise.resolve();
     await Promise.resolve();
     expect(spy).toHaveBeenCalledWith("/config/public");
   });

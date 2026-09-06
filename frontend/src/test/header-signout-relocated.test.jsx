@@ -61,22 +61,32 @@ beforeEach(() => {
 
 
 describe("Sign-out relocated to AdminTopBar", () => {
+  // Phase Hygiene B · Feb-2026 — K76.1 flips branch selection from a
+  // JS resize-listener to a pure CSS ``md:`` gate. Both the narrow
+  // wrap (``md:hidden``) and wide wrap (``hidden md:flex``) render
+  // into the DOM in every environment — CSS decides visibility. In
+  // jsdom, CSS is not applied, so both branches produce a
+  // ``header-signout`` node. The test's contract is "exactly one
+  // instance is inside the topbar" which is still true; we simply
+  // pick the first match and assert it lives under ``admin-topbar``.
   it("renders the header-signout button in the topbar", () => {
     mount();
-    // Sign-out button lives INSIDE the topbar container.
     const topbar = screen.getByTestId("admin-topbar");
-    const btn = screen.getByTestId("header-signout");
+    const btns = screen.getAllByTestId("header-signout");
+    expect(btns.length).toBeGreaterThanOrEqual(1);
+    const btn = btns[0];
     expect(btn).toBeTruthy();
-    // The button must be a descendant of the topbar (asserts
-    // it's on the "top of page", not a stray render elsewhere).
-    expect(topbar.contains(btn)).toBe(true);
+    // Every rendered instance must live inside the topbar container.
+    btns.forEach((b) => expect(topbar.contains(b)).toBe(true));
     expect(btn.getAttribute("aria-label")).toBe("Sign out");
     expect(btn.textContent).toMatch(/Sign out/);
   });
 
   it("clicking header-signout calls useAuth().logout", () => {
     mount();
-    fireEvent.click(screen.getByTestId("header-signout"));
+    // Both narrow + wide branches render the button under K76.1's
+    // CSS gate; either instance triggers logout on click.
+    fireEvent.click(screen.getAllByTestId("header-signout")[0]);
     expect(logoutMock).toHaveBeenCalledTimes(1);
   });
 

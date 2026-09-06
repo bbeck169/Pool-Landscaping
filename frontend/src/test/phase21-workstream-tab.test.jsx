@@ -14,6 +14,24 @@ vi.mock("react-router-dom", async () => {
   return { ...actual, useNavigate: () => navigateMock };
 });
 
+// Phase Hygiene B · Feb-2026 — DispatchBoardPage now consumes useAuth
+// on mount (role gating for the workstream tab). Stub with a
+// super_admin so the tab renders and the test can drive its click.
+vi.mock("@/auth", () => ({
+  useAuth: () => ({
+    user: { id: "u-1", role: "super_admin", email: "a@x.com" },
+    loading: false,
+  }),
+}));
+vi.mock("@/hooks/usePermissions", () => ({
+  usePermissions: () => ({
+    can: () => true, cannot: () => false,
+    effectiveRole: "super_admin", role: "super_admin",
+    isAdmin: true, isAdminOrManager: true, canDo: () => true,
+  }),
+  Forbidden: () => null,
+}));
+
 // Stub away the heavy dispatch dependencies so the test only exercises
 // the tab strip render path.
 vi.mock("@/api", () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() } }));

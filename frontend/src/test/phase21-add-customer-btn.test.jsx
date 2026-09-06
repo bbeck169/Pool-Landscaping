@@ -66,10 +66,18 @@ beforeEach(() => {
 
 
 describe("AdminTopBar · AddCustomerButton", () => {
+  // Phase Hygiene B · Feb-2026 — K76.1 dual-render (see
+  // header-signout-relocated for the full rationale). Both narrow
+  // and wide branches always render into the DOM under jsdom, so
+  // the button testid resolves to two nodes when it's role-visible.
+  // Use ``getAllByTestId(...)[0]`` to keep the contract behaviorally
+  // identical (renders + navigates on click) without touching product.
   it("renders for admin and routes to /customers/new on click", () => {
     currentRole = "admin";
     renderBar();
-    const btn = screen.getByTestId("topbar-add-customer-btn");
+    const btns = screen.getAllByTestId("topbar-add-customer-btn");
+    expect(btns.length).toBeGreaterThanOrEqual(1);
+    const btn = btns[0];
     expect(btn).toBeInTheDocument();
     expect(btn.textContent).toMatch(/add customer/i);
     fireEvent.click(btn);
@@ -79,7 +87,9 @@ describe("AdminTopBar · AddCustomerButton", () => {
   it("renders for super_admin", () => {
     currentRole = "super_admin";
     renderBar();
-    expect(screen.getByTestId("topbar-add-customer-btn")).toBeInTheDocument();
+    const btns = screen.getAllByTestId("topbar-add-customer-btn");
+    expect(btns.length).toBeGreaterThanOrEqual(1);
+    expect(btns[0]).toBeInTheDocument();
   });
 
   it("is hidden for technician", () => {
