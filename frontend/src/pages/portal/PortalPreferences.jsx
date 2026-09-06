@@ -10,7 +10,7 @@ import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Save, Lock, ShieldCheck, MailX } from "lucide-react";
 import { api } from "@/api";
-import { brandGradientCss, colors } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 // Feb-2026 · P11b — App Store consumer-account guideline blockers 3 + 4.
@@ -193,7 +193,7 @@ export default function PortalPreferences() {
       <div className="mt-6 flex justify-end">
         <button onClick={save} disabled={busy}
                 className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
-                style={{ background: brandGradientCss }}
+                style={{ background: gradients.navyToGreen.css }}
                 data-testid="portal-preferences-save-btn">
           <Save size={14} /> {busy ? "Saving…" : "Save preferences"}
         </button>

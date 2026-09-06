@@ -4,7 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { Network, Plus, X, Sparkles } from 'lucide-react';
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 const INTENT_COLOR = {
   informational: "#2563EB", commercial: "#059669",
@@ -83,7 +83,7 @@ export default function TopicalMap() {
           )}
           <button onClick={() => setShowNew(true)}
                   className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold rounded-xl"
-                  style={{ background: brandGradientCss, color: "#fff" }}
+                  style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                   data-testid="topical-map-new">
             <Plus size={14}/> Generate
           </button>
@@ -202,7 +202,7 @@ export default function TopicalMap() {
                        console.log("Outline:", r);
                      }}
                     className="w-full py-2 text-sm font-bold rounded-lg flex items-center justify-center gap-1"
-                    style={{ background: brandGradientCss, color: "#fff" }}
+                    style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                     data-testid="topical-node-outline">
               <Sparkles size={14}/> Generate outline
             </button>
@@ -241,7 +241,7 @@ export default function TopicalMap() {
                       data-testid="topical-map-ctx" />
             <button onClick={create} disabled={busy}
                     className="w-full py-2 text-sm font-bold rounded-lg disabled:opacity-60"
-                    style={{ background: brandGradientCss, color: "#fff" }}
+                    style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                     data-testid="topical-map-generate">
               {busy ? "Generating…" : "Generate map"}
             </button>

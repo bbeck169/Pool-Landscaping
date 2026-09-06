@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams } from 'react-router-dom';
 import SignatureCanvas from "react-signature-canvas";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { CheckCircle2, Download, RotateCcw } from "lucide-react";
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
@@ -83,7 +83,7 @@ export default function PortalSignPage() {
             </div>
             <a href={`${BASE}/api/public/sign/${token}/pdf`} target="_blank" rel="noreferrer"
                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-white"
-               style={{ background: brandGradientCss }}
+               style={{ background: gradients.navyToGreen.css }}
                data-testid="sign-download-pdf">
               <Download size={16} /> Download signed PDF
             </a>
@@ -173,7 +173,7 @@ export default function PortalSignPage() {
 
             <button onClick={submit} disabled={submitting}
                     className="w-full py-3 rounded-xl font-bold text-white"
-                    style={{ background: brandGradientCss, opacity: submitting ? 0.7 : 1 }}
+                    style={{ background: gradients.navyToGreen.css, opacity: submitting ? 0.7 : 1 }}
                     data-testid="sign-submit">
               {submitting ? "Signing…" : "Sign now"}
             </button>

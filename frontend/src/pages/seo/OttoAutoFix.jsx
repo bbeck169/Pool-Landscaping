@@ -6,7 +6,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Sparkles, CheckCircle2, XCircle, Download, AlertTriangle, AlertCircle, Info } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 const SEV_ICON = {
   critical: <AlertCircle size={14} style={{ color: "#DC2626" }} />,
@@ -95,7 +95,7 @@ export default function OttoAutoFix() {
         <button onClick={generate}
                 disabled={generating}
                 className="px-4 py-2 text-sm font-bold rounded-xl disabled:opacity-60"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="otto-generate-btn">
           {generating ? "Generating…" : "Generate fixes"}
         </button>

@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import { Shield, Check, AlertTriangle } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /**
  * Feb-2026 · BUG E — global Terms of Service gate.
@@ -120,7 +120,7 @@ export default function TosGate() {
           className="px-5 py-4 flex items-center gap-3"
           style={{
             borderBottom: `1px solid ${colors.border}`,
-            background: brandGradientCss,
+            background: gradients.navyToGreen.css,
             color: "#fff",
           }}
         >
@@ -254,7 +254,7 @@ export default function TosGate() {
               onClick={onAgree}
               disabled={!checked || saving || !doc || !!docErr}
               className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ background: brandGradientCss }}
+              style={{ background: gradients.navyToGreen.css }}
               data-testid="tos-gate-agree-btn"
             >
               <Check size={15} />

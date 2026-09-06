@@ -212,6 +212,12 @@ export const gradients = {
   navyToGreen: {
     from: "#1B1F5C",  // K67 · menu navy (colors.nav.bg)
     to:   "#16A34A",  // green-600 (unchanged)
+    // K70.b · Feb-2026 — ``stops`` is the canonical replacement
+    // for the retired ``brandGradient`` array export. Consumers
+    // wiring Recharts strokes / bars / fills to the two brand
+    // endpoints reach for ``gradients.navyToGreen.stops[0]`` /
+    // ``[1]`` (navy start / green end respectively).
+    stops:    ["#1B1F5C", "#16A34A"],
     css:      "linear-gradient(90deg, #1B1F5C 0%, #16A34A 100%)",
     // Hover: +8% lightness on each stop, mirroring the K52
     // ``colors.gradient.cssHover`` pattern.
@@ -222,15 +228,19 @@ export const gradients = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// @deprecated K67 · Feb-2026 — use ``gradients.navyToGreen.*``.
+// K70.b · Feb-2026 — RETIRED.
 //
-// Historical name for the primary brand gradient. Left exported
-// so the ~60 existing callers do not break in a single phase;
-// the underlying stops are already rerouted to the K67 navy →
-// green palette. Full call-site migration is a K67-follow-up.
+// The deprecated ``brandGradient`` array export and
+// ``brandGradientCss`` string export were deleted in phase K70.b
+// after every non-test call site was migrated to the canonical
+// ``gradients.navyToGreen.*`` shape (73 non-test files, 201 css
+// sites + 18 array sites — see ``PHASE_K70_B_ALIAS_RETIREMENT.md``).
+//
+// The absence of these two identifiers is grep-locked by
+// ``test/k67-navy-green-gradient.test.js``. Do NOT re-add them —
+// import ``gradients`` from ``@/theme`` and reach for
+// ``gradients.navyToGreen.css`` / ``.stops`` directly.
 // ═══════════════════════════════════════════════════════════════
-export const brandGradient = ["#1B1F5C", "#16A34A"];
-export const brandGradientCss = gradients.navyToGreen.css;
 
 export const font = {
   family: "'Plus Jakarta Sans', system-ui, -apple-system, sans-serif",

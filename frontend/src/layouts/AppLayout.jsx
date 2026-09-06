@@ -30,7 +30,7 @@ import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 // exception surfaces a visible fallback card instead of blanking
 // the whole app.
 import PortalErrorBoundary from "@/components/errors/PortalErrorBoundary";
-import { brandGradientCss, colors, font } from "@/theme";
+import { colors, font, gradients } from "@/theme";
 import PaymentMethodPromptBanner from "@/components/portal/PaymentMethodPromptBanner";
 import {
   LayoutDashboard,
@@ -678,7 +678,7 @@ function AppLayout() {
                 <div className="flex items-center gap-2">
                   <div
                     className="w-8 h-8 rounded-lg flex items-center justify-center text-white"
-                    style={{ background: brandGradientCss }}
+                    style={{ background: gradients.navyToGreen.css }}
                   >
                     <FolderClock size={16} />
                   </div>

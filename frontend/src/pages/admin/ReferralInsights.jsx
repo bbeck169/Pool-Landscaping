@@ -4,7 +4,7 @@
 import React, { useEffect, useState } from 'react';
 import { Trophy, Trash2, Save, TrendingUp, Users, LineChart } from 'lucide-react';
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /** ── /admin/referrals/settings ────────────────────────────────────────── */
 export function ReferralTiers() {
@@ -122,7 +122,7 @@ export function ReferralTiers() {
 
       <button onClick={save} disabled={saving}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold disabled:opacity-60"
-              style={{ background: brandGradientCss, color: "#fff" }}
+              style={{ background: gradients.navyToGreen.css, color: "#fff" }}
               data-testid="tier-save">
         <Save size={14}/> {saving ? "Saving…" : "Save Tiers"}
       </button>
@@ -182,7 +182,7 @@ export default function ReferralAnalyticsV2() {
                 <span className="font-bold" style={{ color: colors.brand }}>{s.value}</span>
               </div>
               <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: colors.background }}>
-                <div className="h-full" style={{ width: `${(s.value / maxF) * 100}%`, background: brandGradientCss }} />
+                <div className="h-full" style={{ width: `${(s.value / maxF) * 100}%`, background: gradients.navyToGreen.css }} />
               </div>
             </div>
           ))}

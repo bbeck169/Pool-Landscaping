@@ -8,7 +8,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { LibraryBig, Search, FileText, Calculator, ClipboardList } from 'lucide-react';
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import {
   TEMPLATE_CATEGORIES,
   listDefinitions,
@@ -287,7 +287,7 @@ function EmptyState({ icon, title, body, testId }) {
       data-testid={testId}
     >
       <div className="inline-flex items-center justify-center w-12 h-12 rounded-full mb-3"
-           style={{ background: brandGradientCss, color: "#fff" }}>
+           style={{ background: gradients.navyToGreen.css, color: "#fff" }}>
         {icon}
       </div>
       <div className="text-base font-bold" style={{ color: colors.onSurface }}>{title}</div>

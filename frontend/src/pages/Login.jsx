@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth";
-import { brandGradientCss, colors, font } from "@/theme";
+import { colors, font, gradients } from "@/theme";
 import { PreviewDemoLogins } from "@/components/auth/PreviewDemoLogins";
 import { api } from "@/api";
 import { isPreviewOrDev } from "@/utils/env";
@@ -165,7 +165,7 @@ export default function Login({ variant = "staff" } = {}) {
       {/* Left hero panel */}
       <aside
         className="hidden md:flex md:w-1/2 lg:w-3/5 relative overflow-hidden"
-        style={{ background: brandGradientCss }}
+        style={{ background: gradients.navyToGreen.css }}
       >
         <div
           className="absolute inset-0 opacity-30"
@@ -335,7 +335,7 @@ export default function Login({ variant = "staff" } = {}) {
               type="submit"
               disabled={submitting}
               className="w-full py-3 rounded-xl text-white font-semibold text-base transition active:scale-[0.99] disabled:opacity-60"
-              style={{ background: brandGradientCss }}
+              style={{ background: gradients.navyToGreen.css }}
               data-testid="login-submit-button"
             >
               {submitting ? "Signing in…" : "Sign in →"}

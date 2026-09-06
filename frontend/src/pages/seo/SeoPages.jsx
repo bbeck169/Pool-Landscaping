@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { ArrowLeft, Search, Save, Sparkles, Calendar as CalIcon, MapPin, Star } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradient } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 function Card({ children, className = "", testId }) {
   return <div className={`rounded-2xl ${className}`}
@@ -73,7 +73,7 @@ export function SeoHub() {
           { l: "Next drip", v: schedule?.next_run ? (schedule.next_run || "").slice(0, 10) : "—" },
         ].map((k) => (
           <div key={k.l} className="rounded-2xl p-4"
-               style={{ background: `linear-gradient(135deg, ${brandGradient[0]}, ${brandGradient[1]})`, color: "#fff" }}
+               style={{ background: `linear-gradient(135deg, ${gradients.navyToGreen.stops[0]}, ${gradients.navyToGreen.stops[1]})`, color: "#fff" }}
                data-testid={`seo-kpi-${k.l.toLowerCase().replace(/\s+/g, "-")}`}>
             <div className="text-xs opacity-90">{k.l}</div>
             <div className="text-2xl font-bold mt-1">{k.v}</div>

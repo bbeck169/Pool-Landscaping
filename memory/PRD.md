@@ -16485,3 +16485,49 @@ K70.b alias retirement codemod (~73 non-test files + 10 test file mocks + `theme
 
 **Held**
 K72.b apology dispatch — awaiting user prod redeploy + operator run per `memory/K72_APOLOGY_RUNBOOK.md`.
+
+
+---
+
+## Phase K70.b · Feb-2026 — Alias Retirement Codemod — SHIPPED (preview)
+
+Pure code-hygiene refactor. Zero visual behavior change (K67 palette already lived in the canonical token; K70.b just kills the re-exports).
+
+**What retired**
+- `theme.js:232` `export const brandGradient = ["#1B1F5C", "#16A34A"]` → DELETED.
+- `theme.js:233` `export const brandGradientCss = gradients.navyToGreen.css` → DELETED.
+- The comment block above the aliases replaced with a K70.b tombstone banner.
+
+**What was added**
+- `gradients.navyToGreen.stops = ["#1B1F5C", "#16A34A"]` — canonical replacement for the retired array export. Recharts callers wire strokes / bars to `gradients.navyToGreen.stops[0]` / `[1]`.
+
+**Codemod (`/tmp/k70b_codemod.py`, applied)**
+- 73 non-test files rewritten (201 `brandGradientCss` sites + 18 array-form sites across 5 Recharts callers).
+- Import lists updated (alias name dropped, `gradients` injected when missing, multi-line vs single-line formatting preserved).
+- Idempotent: rerunning is a no-op.
+- One cosmetic side-effect: a comment in `PaymentMethodTiles.jsx:68` had `brandGradient` rewritten to `gradients.navyToGreen.stops`; grammar mildly awkward, factually accurate, left as-is.
+
+**Test file updates (7 files)**
+- `test/k67-navy-green-gradient.test.js` — namespace import + alias-absence assertion (`themeModule.not.toHaveProperty("brandGradient" / "brandGradientCss")` + theme.js source regex negative). New assertion locking `gradients.navyToGreen.stops` shape. User picked option A ("flip to assert absence").
+- 6 other test files — `vi.mock("@/theme")` stubs swapped from `brandGradientCss: "…"` to `gradients: { navyToGreen: { css: "…" } }`.
+
+**Tests**
+- K70.b directly-relevant suites (9 files, 87 tests): 85 pass · 2 fail (both pre-existing, in the K70.a-documented baseline failure set).
+- Broader sweep (45 files, 566 tests): 558 pass · 8 fail — identical fingerprint to K70.a baseline. Zero new regressions from K70.b.
+
+**Runtime verification**
+- Playwright + `getComputedStyle` on Login page primary CTA: `linear-gradient(90deg, rgb(27,31,92) 0%, rgb(22,163,74) 100%)` — exact match to K67 palette.
+- Estimator page renders clean. No white screens on any codemodded path.
+
+**Preserved**
+- K67 palette contract (all `gradients.navyToGreen.{from, to, css, cssHover, fg, textShadow}` untouched).
+- K64 solid nav navy `#303AA0`, K64 grep-lock strings.
+- K52 signature gradient with K67-swapped navy end.
+- K30 / K61 / R0 / R0.1 / R0.1+ / K63 / K64 / K65 / K66 / K67 / K68 / K69 / K70.a / K71 / K72 behavior.
+- K72 mass-messaging guards + K72.b apology dispatch prep untouched.
+
+**Unblocked**
+- R1 Financial Suite proper — now cleared to start. Strict R1 → R7 sequential per user directive.
+
+**Held**
+- K72.b apology dispatch — still awaiting user prod redeploy + operator run.

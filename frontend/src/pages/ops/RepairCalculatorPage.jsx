@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { api, api_base } from "@/api";
 import { TOKEN_KEY } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 
@@ -488,7 +488,7 @@ function AiCtaBar({ busy, onPhoto, onVoice, onPhotoDataUrl }) {
     <div
       className="rounded-xl p-3 mb-3 flex flex-wrap items-center gap-2"
       style={{
-        background: brandGradientCss,
+        background: gradients.navyToGreen.css,
         color: "#fff",
       }}
       data-testid="repair-calc-ai-cta-bar"
@@ -892,7 +892,7 @@ function EmailConfirmModal({ quote, customers, customerId, setCustomerId,
       >
         <div
           className="px-5 py-3 flex items-center justify-between"
-          style={{ background: brandGradientCss, color: "#fff" }}
+          style={{ background: gradients.navyToGreen.css, color: "#fff" }}
         >
           <h2 className="text-lg font-bold">Email this quote</h2>
           <button type="button" onClick={onClose}
@@ -1000,7 +1000,7 @@ function BeforeAfterRender({ photoDataUrl, afterRender, renderBusy,
           disabled={!canGenerate}
           title={tooltip}
           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ background: brandGradientCss }}
+          style={{ background: gradients.navyToGreen.css }}
           data-testid="repair-calc-generate-after-btn"
         >
           {renderBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}

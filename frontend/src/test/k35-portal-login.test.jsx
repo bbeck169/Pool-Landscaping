@@ -30,7 +30,7 @@ vi.mock("@/auth", () => ({
   useAuth: () => ({ isAuthenticated: false, login: async () => ({}) }),
 }));
 vi.mock("@/theme", () => ({
-  brandGradientCss: "",
+  gradients: { navyToGreen: { css: "" } },
   colors: { primary: "#000", muted: "#666" },
   font: { family: "system-ui, sans-serif" },
 }));

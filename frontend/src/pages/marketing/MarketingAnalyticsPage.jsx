@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import { Star, MousePointerClick, Mail, RefreshCw, Bot } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 const WINDOWS = [
   { value: "7d",  label: "Last 7 days"  },
@@ -119,7 +119,7 @@ export default function MarketingAnalyticsPage() {
           </button>
           <button onClick={askBuddy} disabled={aiBusy}
                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-bold text-white disabled:opacity-50"
-                  style={{ background: brandGradientCss }}
+                  style={{ background: gradients.navyToGreen.css }}
                   data-testid="analytics-ask-buddy-btn">
             <Bot size={13} /> {aiBusy ? "Asking Buddy…" : "Ask Buddy for a recap"}
           </button>

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /**
  * Feb-2026 · Marketing Slice M3 — Template library admin page.
@@ -73,7 +73,7 @@ export default function MarketingTemplatesLibraryPage() {
         <button
           onClick={() => setEditing({})}
           className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white"
-          style={{ background: brandGradientCss }}
+          style={{ background: gradients.navyToGreen.css }}
           data-testid="template-create-btn"
         >
           <Plus size={16} /> New template

@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Search, Plus, RefreshCw, AlertTriangle, AlertCircle, Info, ChevronRight, X, ArrowLeft } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 const STATUS_META = {
   queued:    { bg: "#FEF3C7", fg: "#92400E" },
@@ -70,7 +70,7 @@ export default function SeoAudits() {
           </button>
           <button onClick={() => setShowNew(true)}
                   className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold rounded-xl"
-                  style={{ background: brandGradientCss, color: "#fff" }}
+                  style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                   data-testid="seo-audits-new-btn">
             <Plus size={14}/> New Audit
           </button>
@@ -182,7 +182,7 @@ export default function SeoAudits() {
             </div>
             <button onClick={start} disabled={starting}
                     className="w-full py-2 rounded-lg text-sm font-bold disabled:opacity-60"
-                    style={{ background: brandGradientCss, color: "#fff" }}
+                    style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                     data-testid="seo-audits-new-submit">
               {starting ? "Starting…" : "Run audit"}
             </button>
@@ -265,7 +265,7 @@ export function SeoAuditDetail() {
         </button>
         <button onClick={rerun}
                 className="px-3 py-2 text-sm font-bold rounded-xl"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="seo-audit-rerun">
           Rerun
         </button>

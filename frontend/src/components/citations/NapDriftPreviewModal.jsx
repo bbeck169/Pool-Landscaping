@@ -1,7 +1,7 @@
 import React from "react";
 import { AlertTriangle, ExternalLink, X } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /**
  * Feb-2026 · Phase 22 — NAP drift preview modal.
@@ -60,7 +60,7 @@ export default function NapDriftPreviewModal({
           className="px-5 py-4 flex items-center gap-3"
           style={{
             borderBottom: `1px solid ${colors.border}`,
-            background: brandGradientCss,
+            background: gradients.navyToGreen.css,
             color: "#fff",
           }}
         >

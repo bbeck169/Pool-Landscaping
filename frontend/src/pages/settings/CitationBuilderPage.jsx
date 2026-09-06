@@ -7,7 +7,7 @@ import {
   BarChart3, Plus, Trash2,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 
 /**
@@ -873,7 +873,7 @@ function EditSheet({ row, onClose, onSave, onVerify, onSaveAnalytics, onSaveDupl
           className="px-5 py-4 flex items-center justify-between"
           style={{
             borderBottom: `1px solid ${colors.border}`,
-            background: brandGradientCss,
+            background: gradients.navyToGreen.css,
             color: "#fff",
           }}
         >

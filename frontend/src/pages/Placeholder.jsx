@@ -1,6 +1,6 @@
 import React from "react";
 import { useAuth } from "@/auth";
-import { brandGradientCss, colors } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { Info } from "lucide-react";
 
 /**
@@ -41,7 +41,7 @@ export default function Placeholder({ title, phase = 2, note }) {
       <div
         className="rounded-2xl p-6"
         style={{
-          background: brandGradientCss,
+          background: gradients.navyToGreen.css,
           color: "#fff",
         }}
       >

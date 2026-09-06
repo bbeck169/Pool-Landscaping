@@ -4,7 +4,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { CheckCircle2, XCircle, MessageSquare, Send, Upload, Download, Link as LinkIcon, BarChart2, Save, Trash2 } from "lucide-react";
 
 const Card = ({ children, className = "", testId }) => (
@@ -26,7 +26,7 @@ const Section = ({ title, subtitle, right, children, testId }) => (
 );
 const BtnPrimary = ({ children, testId, ...rest }) => (
   <button className="px-3 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50 flex items-center gap-1"
-          style={{ background: brandGradientCss }} data-testid={testId} {...rest}>{children}</button>
+          style={{ background: gradients.navyToGreen.css }} data-testid={testId} {...rest}>{children}</button>
 );
 const BtnGhost = ({ children, testId, ...rest }) => (
   <button className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
@@ -279,7 +279,7 @@ export function BulkUploadPage() {
                  data-testid="bulk-file-input"/>
           <button onClick={() => inputRef.current?.click()}
                   className="px-5 py-3 rounded-xl text-sm font-bold text-white"
-                  style={{ background: brandGradientCss }}
+                  style={{ background: gradients.navyToGreen.css }}
                   data-testid="bulk-choose-btn">
             <Upload size={14} className="inline mr-1"/> Choose CSV
           </button>

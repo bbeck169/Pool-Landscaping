@@ -13,7 +13,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/api";
-import { brandGradientCss, colors } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -51,7 +51,7 @@ export default function ForgotPassword() {
       >
         <div
           className="h-2 w-24 rounded-full mb-6"
-          style={{ background: brandGradientCss }}
+          style={{ background: gradients.navyToGreen.css }}
         />
         <h1
           className="text-2xl font-bold mb-2"
@@ -105,7 +105,7 @@ export default function ForgotPassword() {
               type="submit"
               disabled={busy}
               className="w-full py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-60"
-              style={{ background: brandGradientCss }}
+              style={{ background: gradients.navyToGreen.css }}
               data-testid="forgot-password-submit"
             >
               {busy ? "Sending…" : "Send reset link"}

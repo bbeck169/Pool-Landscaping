@@ -4,7 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { Eye, Plus, PlayCircle, Trash2, X } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 export default function LlmVisibility() {
   const [tab, setTab] = useState("queries");
@@ -55,7 +55,7 @@ export default function LlmVisibility() {
         <div className="flex gap-2">
           <button onClick={runScan} disabled={scanning}
                   className="flex items-center gap-1 px-3 py-2 text-sm font-bold rounded-xl disabled:opacity-60"
-                  style={{ background: brandGradientCss, color: "#fff" }}
+                  style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                   data-testid="llm-vis-run-scan">
             <PlayCircle size={14}/> {scanning ? "Scanning…" : "Run scan"}
           </button>
@@ -214,7 +214,7 @@ export default function LlmVisibility() {
                    data-testid="llm-vis-new-brand" />
             <button onClick={add}
                     className="w-full py-2 text-sm font-bold rounded-lg"
-                    style={{ background: brandGradientCss, color: "#fff" }}
+                    style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                     data-testid="llm-vis-new-submit">
               Add query
             </button>

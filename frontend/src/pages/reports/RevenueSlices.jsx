@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import { ArrowLeft, Search, Download } from "lucide-react";
 import { api } from "@/api";
-import { colors, money, brandGradient } from "@/theme";
+import { colors, money, gradients } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 
 // One reusable slice-report shell used by all 5 slice pages + Gross Sales + Invoiced Items.
@@ -117,7 +117,7 @@ function SliceShell({
                 <XAxis type="number" stroke={colors.muted} fontSize={11} />
                 <YAxis dataKey="label" type="category" stroke={colors.muted} fontSize={11} width={110} />
                 <Tooltip formatter={(v) => money(v)} />
-                <Bar dataKey="value" fill={brandGradient[0]} radius={[0, 6, 6, 0]} />
+                <Bar dataKey="value" fill={gradients.navyToGreen.stops[0]} radius={[0, 6, 6, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

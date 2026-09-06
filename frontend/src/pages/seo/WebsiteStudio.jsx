@@ -6,7 +6,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Plus, Sparkles, Eye, Download, FileText, X, Trash2 } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 const SECTION_TYPES = [
   "hero", "features", "benefits", "services",
@@ -69,7 +69,7 @@ export default function WebsiteStudio() {
         </div>
         <button onClick={() => setShowNew(true)}
                 className="px-4 py-2 text-sm font-bold rounded-xl flex items-center gap-2"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="studio-new-page-btn">
           <Plus size={14} /> New page
         </button>
@@ -170,7 +170,7 @@ export default function WebsiteStudio() {
             ))}
             <button onClick={create} disabled={creating || !form.title || !form.slug}
                     className="w-full py-3 text-sm font-bold rounded-xl disabled:opacity-50"
-                    style={{ background: brandGradientCss, color: "#fff" }}
+                    style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                     data-testid="studio-new-submit">
               {creating ? "Creating…" : "Create page"}
             </button>
@@ -302,7 +302,7 @@ export function WebsiteStudioEditor() {
         </div>
         <button onClick={autoFill} disabled={autofilling}
                 className="px-3 py-2 text-sm font-bold rounded-xl flex items-center gap-2 disabled:opacity-60"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="studio-auto-fill-btn">
           <Sparkles size={14} /> {autofilling ? "Filling…" : "AI Auto-Fill"}
         </button>

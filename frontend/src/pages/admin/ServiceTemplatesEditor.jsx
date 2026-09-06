@@ -5,7 +5,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import {
   Save, RotateCcw, Plus, Trash2, ClipboardCheck, FlaskConical, Beaker, Tag,
 } from "lucide-react";
@@ -118,7 +118,7 @@ export default function ServiceTemplatesEditor() {
           </button>
           <button onClick={save} disabled={!dirty || saving}
                   className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50 flex items-center gap-1"
-                  style={{ background: brandGradientCss }}
+                  style={{ background: gradients.navyToGreen.css }}
                   data-testid="tpl-save-btn">
             <Save size={13}/> {saving ? "Saving…" : "Save Changes"}
           </button>

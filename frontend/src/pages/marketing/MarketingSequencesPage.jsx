@@ -10,7 +10,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Plus, X as XIcon, Save, Trash2, Users, Play, Pause, ArrowUp, ArrowDown, Send, Eye, ChevronRight, Zap } from "lucide-react";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { TriggerBuilder } from "@/components/marketing/triggerBuilder/TriggerBuilder";
 import { buildTriggerPayload, clearDraft } from "@/components/marketing/triggerBuilder/helpers";
 
@@ -75,7 +75,7 @@ export default function MarketingSequencesPage() {
         <button
           onClick={() => setEditing({})}
           className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white"
-          style={{ background: brandGradientCss }}
+          style={{ background: gradients.navyToGreen.css }}
           data-testid="sequence-create-btn"
         >
           <Plus size={16} /> New automation
@@ -550,7 +550,7 @@ function SequenceEditor({ initial, onClose, onSaved }) {
             <button onClick={() => save({ activate: true })}
                     disabled={busy || !canSave}
                     className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
-                    style={{ background: brandGradientCss }}
+                    style={{ background: gradients.navyToGreen.css }}
                     data-testid="sequence-activate-toggle">
               <Play size={14} /> Save + Activate
             </button>
@@ -1024,7 +1024,7 @@ function EnrolModal({ sequenceId, segments, onClose, _onDone }) {
           </button>
           <button onClick={submit} disabled={busy || !canSubmit}
                   className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
-                  style={{ background: brandGradientCss }}
+                  style={{ background: gradients.navyToGreen.css }}
                   data-testid="sequence-enrol-submit">
             <Send size={14} /> {busy ? "Enroling…" : "Enrol"}
           </button>

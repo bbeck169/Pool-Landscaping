@@ -20,7 +20,7 @@
 import React, { useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { api } from "@/api";
-import { brandGradientCss, colors } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { Star, ExternalLink } from "lucide-react";
 
 async function _postRating(token, rating, comment) {
@@ -65,7 +65,7 @@ export default function PortalReviewSubmit() {
           data-testid="review-submit-page">
       <div className="w-full max-w-lg rounded-3xl p-8 shadow-xl"
            style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
-        <div className="h-2 w-24 rounded-full mb-6" style={{ background: brandGradientCss }} />
+        <div className="h-2 w-24 rounded-full mb-6" style={{ background: gradients.navyToGreen.css }} />
         {!result ? (
           <>
             <h1 className="text-2xl font-black mb-2" style={{ color: colors.onSurface }}
@@ -104,7 +104,7 @@ export default function PortalReviewSubmit() {
                           data-testid="review-text" />
               <button type="submit" disabled={busy || !rating}
                         className="w-full py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-60"
-                        style={{ background: brandGradientCss }}
+                        style={{ background: gradients.navyToGreen.css }}
                         data-testid="review-submit">
                 {busy ? "Sending…" : "Submit review"}
               </button>

@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { BookOpen, Search, Edit3, Save, Lock, X } from "lucide-react";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 import {
   listHandbookSections, getHandbookSection, updateHandbookSection,
@@ -173,7 +173,7 @@ export default function HandbookPage() {
                 </button>
                 <button onClick={saveEdit}
                   className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold text-white"
-                  style={{ background: brandGradientCss }} data-testid="handbook-edit-save">
+                  style={{ background: gradients.navyToGreen.css }} data-testid="handbook-edit-save">
                   <Save size={14} /> Save
                 </button>
               </div>

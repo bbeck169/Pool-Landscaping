@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Plus, Users, RefreshCcw, Trash2, X as XIcon, Save } from "lucide-react";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /**
  * Feb-2026 · Marketing Slice M4 — Segments admin page.
@@ -53,7 +53,7 @@ export default function MarketingSegmentsPage() {
         <button
           onClick={() => setEditing({})}
           className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white"
-          style={{ background: brandGradientCss }}
+          style={{ background: gradients.navyToGreen.css }}
           data-testid="segment-create-btn"
         >
           <Plus size={16} /> New segment

@@ -15,7 +15,7 @@ import React from "react";
 import { toast } from "sonner";
 import { Wand2, Copy, Trash2, CheckCircle, Download, Sparkles, Loader2, X } from "lucide-react";
 import { api, api_base } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -259,7 +259,7 @@ export default function GbpPostsPage() {
                     onClick={() => setComposer({ draft: r })}
                     title="Generate a branded image for this post"
                     className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md hover:brightness-95"
-                    style={{ background: brandGradientCss, color: "#fff" }}
+                    style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                     data-testid={`gbp-gen-image-btn-${r.id}`}
                   >
                     <Sparkles size={11} /> Generate branded image
@@ -489,7 +489,7 @@ function GbpImageComposerModal({ composer, onClose, onAttached }) {
           {preview?.url ? (
             <Button
               type="button" onClick={doAttach} disabled={busy}
-              style={{ background: brandGradientCss, color: "#fff" }}
+              style={{ background: gradients.navyToGreen.css, color: "#fff" }}
               data-testid="gbp-composer-attach-btn"
             >
               {busy ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
@@ -498,7 +498,7 @@ function GbpImageComposerModal({ composer, onClose, onAttached }) {
           ) : (
             <Button
               type="button" onClick={doGenerate} disabled={busy}
-              style={{ background: brandGradientCss, color: "#fff" }}
+              style={{ background: gradients.navyToGreen.css, color: "#fff" }}
               data-testid="gbp-composer-generate-btn"
             >
               {busy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}

@@ -24,7 +24,7 @@ import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, Li
 import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAuth } from "@/auth";
-import { brandGradientCss } from "@/theme";
+import { gradients } from "@/theme";
 import UniversalMenu from "@/layouts/UniversalMenu";
 import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
 // Feb-2026 · Consolidated Settings Hub — sprocket in header for admins.
@@ -470,7 +470,7 @@ function AddCustomerButton() {
       type="button"
       onClick={() => navigate("/customers/new")}
       className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-semibold text-white shadow-sm hover:brightness-95"
-      style={{ background: brandGradientCss }}
+      style={{ background: gradients.navyToGreen.css }}
       data-testid="topbar-add-customer-btn"
       aria-label="Add customer"
     >

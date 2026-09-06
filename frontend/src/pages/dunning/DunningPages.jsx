@@ -7,7 +7,7 @@ import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Save, RotateCcw, Send, Pause, Mail, MessageSquare, TrendingDown, Calendar } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /* ─── SETTINGS ──────────────────────────────────────────────────────── */
 export default function DunningSettings() {
@@ -83,7 +83,7 @@ export default function DunningSettings() {
         </button>
         <button onClick={save} disabled={saving}
                 className="px-4 py-2 text-sm font-bold rounded-xl flex items-center gap-1"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="dun-save">
           <Save size={14} /> {saving ? "Saving…" : "Save changes"}
         </button>

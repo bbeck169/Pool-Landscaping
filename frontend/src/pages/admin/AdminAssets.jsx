@@ -4,7 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { Wrench, Plus, X, Truck, PackageOpen, Hammer, Settings2 } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 const CATEGORIES = [
   { key: "", label: "All", icon: Settings2 },
@@ -76,7 +76,7 @@ export default function AdminAssets() {
         </div>
         <button onClick={() => setShowNew(true)}
                 className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold rounded-xl"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="admin-assets-new-btn">
           <Plus size={14}/> Add Asset
         </button>
@@ -168,7 +168,7 @@ export default function AdminAssets() {
                  data-testid="asset-new-tag"/>
           <button onClick={create}
                   className="w-full py-2 rounded-lg text-sm font-bold"
-                  style={{ background: brandGradientCss, color: "#fff" }}
+                  style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                   data-testid="asset-new-submit">
             Create
           </button>

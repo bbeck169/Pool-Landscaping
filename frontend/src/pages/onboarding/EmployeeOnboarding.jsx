@@ -5,7 +5,7 @@
 import React, { useEffect, useState } from 'react';
 import { ClipboardCheck, Plus, Trash2, X, CheckCircle2, Circle, Users2, FileEdit } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /** ── /admin/onboarding/templates ─────────────────────────────────────── */
 export function OnboardingTemplates() {
@@ -44,7 +44,7 @@ export function OnboardingTemplates() {
         </div>
         <button onClick={() => setShowNew(true)}
                 className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold rounded-xl"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="tmpl-new-btn">
           <Plus size={14}/> New Template
         </button>
@@ -144,7 +144,7 @@ export function OnboardingTemplates() {
             </button>
             <button onClick={create}
                     className="w-full py-2 rounded-lg text-sm font-bold"
-                    style={{ background: brandGradientCss, color: "#fff" }}
+                    style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                     data-testid="tmpl-new-submit">
               Create Template
             </button>
@@ -240,7 +240,7 @@ export function OnboardingQueue() {
                 </div>
                 <div className="w-full h-2 rounded-full overflow-hidden"
                      style={{ backgroundColor: colors.background }}>
-                  <div className="h-full" style={{ width: `${pct}%`, background: brandGradientCss }} />
+                  <div className="h-full" style={{ width: `${pct}%`, background: gradients.navyToGreen.css }} />
                 </div>
               </div>
             </div>

@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { useJsApiLoader } from "@react-google-maps/api";
 import { useAuth } from "@/auth";
 import { BulkReorderModal } from "@/pages/schedule/NumberedReorder";
@@ -520,7 +520,7 @@ export default function TodaySchedule() {
           {jobItems.length >= 2 && (
             <button onClick={handleOptimize} disabled={optimizing}
                     className="px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-1 disabled:opacity-60 transition-all"
-                    style={{ background: brandGradientCss, color: "#fff",
+                    style={{ background: gradients.navyToGreen.css, color: "#fff",
                              transform: optimizing ? "scale(0.98)" : "scale(1)" }}
                     data-testid="schedule-optimize-route">
               <RouteIcon size={14}/> {optimizing ? "Optimizing…" : "Optimize Route"}
@@ -606,7 +606,7 @@ export default function TodaySchedule() {
 
       {/* Summary bar */}
       <div className="rounded-2xl p-4 mb-6 flex items-center gap-6 flex-wrap"
-           style={{ background: brandGradientCss, color: "#fff" }}
+           style={{ background: gradients.navyToGreen.css, color: "#fff" }}
            data-testid="schedule-summary">
         {/* Feb 2026 · Work-class counter split. Shows the total as
             the main value so the summary bar stays glanceable, with a
@@ -656,7 +656,7 @@ export default function TodaySchedule() {
           </div>
           <button onClick={() => navigate("/jobs")}
                   className="px-4 py-2 rounded-xl text-white font-bold text-sm"
-                  style={{ background: brandGradientCss }}
+                  style={{ background: gradients.navyToGreen.css }}
                   data-testid="schedule-go-to-jobs">
             View all jobs
           </button>

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from 'react-router-dom';
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { Star } from 'lucide-react';
 
 /* ─── shared bits ────────────────────────────────────────────────── */
@@ -81,7 +81,7 @@ export function CsatDashboard() {
           <button key={f} onClick={() => setFilter(f)}
                   className="px-3 py-1.5 rounded-full text-xs font-semibold"
                   style={{
-                    background: filter === f ? brandGradientCss : colors.surface,
+                    background: filter === f ? gradients.navyToGreen.css : colors.surface,
                     color: filter === f ? "#fff" : colors.onSurface,
                     border: `1px solid ${filter === f ? "transparent" : colors.border}`,
                   }}
@@ -188,7 +188,7 @@ export function PublicCsat() {
   if (meta.responded_at || done) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6"
-           style={{ background: brandGradientCss }} data-testid="public-csat-thanks">
+           style={{ background: gradients.navyToGreen.css }} data-testid="public-csat-thanks">
         <Card className="p-10 max-w-md text-center">
           <div className="text-5xl mb-3">🎉</div>
           <div className="text-2xl font-bold mb-2" style={{ color: colors.onSurface }}>Thanks for your feedback!</div>
@@ -216,7 +216,7 @@ export function PublicCsat() {
 
   return (
     <div className="min-h-screen p-6 flex items-center justify-center"
-         style={{ background: brandGradientCss }} data-testid="public-csat-form">
+         style={{ background: gradients.navyToGreen.css }} data-testid="public-csat-form">
       <Card className="p-6 md:p-8 max-w-lg w-full">
         <div className="text-center mb-6">
           <div className="text-xs uppercase tracking-wide mb-1" style={{ color: colors.muted }}>Pool & Landscaping</div>
@@ -270,7 +270,7 @@ export function PublicCsat() {
 
         <button onClick={submit} disabled={submitting}
                 className="w-full py-3 rounded-xl font-bold text-white"
-                style={{ background: brandGradientCss, opacity: submitting ? 0.7 : 1 }}
+                style={{ background: gradients.navyToGreen.css, opacity: submitting ? 0.7 : 1 }}
                 data-testid="csat-submit">
           {submitting ? "Submitting…" : "Submit feedback"}
         </button>

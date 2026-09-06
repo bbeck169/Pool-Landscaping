@@ -8,7 +8,7 @@
 import React, { useMemo, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth";
-import { brandGradientCss, colors, font } from "@/theme";
+import { colors, font, gradients } from "@/theme";
 import {
   Search as SearchIcon, X as XIcon,
   CalendarDays, DoorOpen, Clock, MessageSquare,
@@ -144,7 +144,7 @@ export default function ToolsHub() {
       <div className="mb-6">
         <div
           className="inline-block text-xs font-semibold px-3 py-1 rounded-full mb-3"
-          style={{ background: brandGradientCss, color: "#fff" }}
+          style={{ background: gradients.navyToGreen.css, color: "#fff" }}
         >
           {isAdmin ? "Admin toolkit" : "Field toolkit"}
         </div>

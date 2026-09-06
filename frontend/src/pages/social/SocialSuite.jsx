@@ -5,7 +5,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { Facebook, Instagram, Twitter, Linkedin, Youtube, MapPin, Globe, Music2, Send, Sparkles, ImageIcon, Trash2, Copy, Save, Clock, Plug, ChevronLeft, ChevronRight, X, Upload, ShieldCheck, Link as LinkIcon, Target } from "lucide-react";
 
 const NETWORKS = [
@@ -40,7 +40,7 @@ const Section = ({ title, subtitle, right, children }) => (
 );
 const BtnPrimary = ({ children, testId, ...rest }) => (
   <button className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50 flex items-center gap-1"
-          style={{ background: brandGradientCss }} data-testid={testId} {...rest}>{children}</button>
+          style={{ background: gradients.navyToGreen.css }} data-testid={testId} {...rest}>{children}</button>
 );
 const BtnGhost = ({ children, testId, ...rest }) => (
   <button className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
@@ -518,7 +518,7 @@ export function LibraryPage() {
                    </button>
                  ))}
                  <label className="px-3 py-2 rounded-xl text-sm font-bold text-white flex items-center gap-1 cursor-pointer"
-                        style={{ background: brandGradientCss }}>
+                        style={{ background: gradients.navyToGreen.css }}>
                    <Upload size={14}/> Upload
                    <input type="file" multiple accept="image/*,video/*" className="hidden"
                           onChange={(e) => handleFiles([...e.target.files])}

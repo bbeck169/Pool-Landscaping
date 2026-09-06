@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { ChevronRight, ChevronLeft, ExternalLink, Sparkles, Rocket } from 'lucide-react';
 
 const STEPS = [
@@ -71,7 +71,7 @@ export default function OnboardingPage() {
           <div className="flex gap-2 justify-center">
             <button onClick={() => navigate("/")}
                     className="px-5 py-2.5 rounded-xl text-sm font-bold text-white"
-                    style={{ background: brandGradientCss }}
+                    style={{ background: gradients.navyToGreen.css }}
                     data-testid="onboarding-explore">Explore the dashboard</button>
             <button onClick={() => api.post("/onboarding/restart", {}).then(setState)}
                     className="px-5 py-2.5 rounded-xl text-sm font-semibold"
@@ -101,7 +101,7 @@ export default function OnboardingPage() {
       <div className="mb-6" data-testid="onboarding-progress">
         <div className="h-2 rounded-full overflow-hidden" style={{ backgroundColor: colors.surfaceSecondary }}>
           <div className="h-full transition-all duration-500"
-               style={{ width: `${pct}%`, background: brandGradientCss }} />
+               style={{ width: `${pct}%`, background: gradients.navyToGreen.css }} />
         </div>
         <div className="flex justify-between mt-2 text-[10px] uppercase tracking-wide" style={{ color: colors.muted }}>
           {STEPS.map((s, i) => (
@@ -137,14 +137,14 @@ export default function OnboardingPage() {
         {isLast ? (
           <button onClick={finish} disabled={saving}
                   className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white"
-                  style={{ background: brandGradientCss, opacity: saving ? 0.7 : 1 }}
+                  style={{ background: gradients.navyToGreen.css, opacity: saving ? 0.7 : 1 }}
                   data-testid="onboarding-finish">
             <Rocket size={14} /> Finish setup
           </button>
         ) : (
           <button onClick={advance} disabled={saving}
                   className="flex items-center gap-1 px-5 py-2.5 rounded-xl text-sm font-bold text-white"
-                  style={{ background: brandGradientCss, opacity: saving ? 0.7 : 1 }}
+                  style={{ background: gradients.navyToGreen.css, opacity: saving ? 0.7 : 1 }}
                   data-testid="onboarding-next">
             Continue <ChevronRight size={14} />
           </button>
@@ -402,7 +402,7 @@ export function OnboardingLoginModal() {
         <div className="flex gap-2">
           <button onClick={() => { close(); navigate("/onboarding"); }}
                   className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-white"
-                  style={{ background: brandGradientCss }}
+                  style={{ background: gradients.navyToGreen.css }}
                   data-testid="onboarding-modal-start">
             <Sparkles size={14} className="inline mr-1" /> Start setup
           </button>

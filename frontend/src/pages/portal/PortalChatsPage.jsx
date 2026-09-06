@@ -9,7 +9,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MessageSquare, Plus, Send, X, Paperclip } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 import { ChatAttachmentTile } from "@/components/chat/ChatAttachmentTile";
 
@@ -127,7 +127,7 @@ export default function PortalChatsPage() {
         {!isAdmin && (
           <button onClick={() => setShowNew(true)}
                   className="flex items-center gap-1 px-3 py-2 text-sm font-bold rounded-xl"
-                  style={{ background: brandGradientCss, color: "#fff" }}
+                  style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                   data-testid="portal-chats-new">
             <Plus size={13}/> New Message
           </button>
@@ -286,7 +286,7 @@ export default function PortalChatsPage() {
                       data-testid="chat-new-body" />
             <button onClick={createThread}
                     className="w-full py-2 text-sm font-bold rounded-lg"
-                    style={{ background: brandGradientCss, color: "#fff" }}
+                    style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                     data-testid="chat-new-submit">
               Send
             </button>

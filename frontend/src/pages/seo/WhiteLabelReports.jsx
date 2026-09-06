@@ -8,7 +8,7 @@ import {
   ArrowLeft, Plus, Download, Send, FileText, X, Sparkles,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /* ─── LIST ──────────────────────────────────────────────────────────── */
 export default function WhiteLabelReports() {
@@ -85,7 +85,7 @@ export default function WhiteLabelReports() {
         </div>
         <button onClick={openNew}
                 className="px-4 py-2 text-sm font-bold rounded-xl flex items-center gap-2"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="report-new-btn">
           <Plus size={14} /> New report
         </button>
@@ -211,7 +211,7 @@ export default function WhiteLabelReports() {
             </label>
             <button onClick={create} disabled={creating || !form.title}
                     className="w-full py-3 text-sm font-bold rounded-xl disabled:opacity-50"
-                    style={{ background: brandGradientCss, color: "#fff" }}
+                    style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                     data-testid="report-new-submit">
               {creating ? "Generating…" : "Generate report"}
             </button>
@@ -308,7 +308,7 @@ export function WhiteLabelReportDetail() {
         </button>
         <button onClick={() => setSendModal(true)}
                 className="px-3 py-2 text-sm font-bold rounded-xl flex items-center gap-1"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="report-send-btn">
           <Send size={14} /> Email
         </button>
@@ -428,7 +428,7 @@ export function WhiteLabelReportDetail() {
             )}
             <button onClick={send} disabled={sending || !to}
                     className="w-full py-3 text-sm font-bold rounded-xl disabled:opacity-50"
-                    style={{ background: brandGradientCss, color: "#fff" }}
+                    style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                     data-testid="report-send-submit">
               {sending ? "Sending…" : "Send report"}
             </button>

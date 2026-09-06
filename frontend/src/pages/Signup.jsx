@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth";
-import { brandGradientCss, colors, font } from "@/theme";
+import { colors, font, gradients } from "@/theme";
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -51,7 +51,7 @@ export default function Signup() {
         <div className="flex items-center gap-3 mb-6">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold"
-            style={{ background: brandGradientCss }}
+            style={{ background: gradients.navyToGreen.css }}
           >
             ~
           </div>
@@ -115,7 +115,7 @@ export default function Signup() {
             type="submit"
             disabled={submitting}
             className="w-full py-3 rounded-xl text-white font-semibold text-base transition active:scale-[0.99] disabled:opacity-60"
-            style={{ background: brandGradientCss }}
+            style={{ background: gradients.navyToGreen.css }}
             data-testid="signup-submit-button"
           >
             {submitting ? "Creating account…" : "Create account →"}

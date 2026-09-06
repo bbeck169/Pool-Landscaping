@@ -7,7 +7,7 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { X, Search, Users, Loader2, Send } from "lucide-react";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { searchCustomers, shareInstanceToPortal } from "@/api/templates";
 
 export default function SharePortalModal({ open, onClose, instanceId, onShared }) {
@@ -173,7 +173,7 @@ export default function SharePortalModal({ open, onClose, instanceId, onShared }
             onClick={doShare}
             disabled={!selected || sharing}
             className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
-            style={{ background: brandGradientCss }}
+            style={{ background: gradients.navyToGreen.css }}
             data-testid="share-portal-confirm"
           >
             {sharing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}

@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { api, api_base } from "@/api";
 import { useAuth } from "@/auth";
-import { brandGradientCss, colors, font } from "@/theme";
+import { colors, font, gradients } from "@/theme";
 import {
   Phone, Mail, Globe, Star, Copy, Share2, Download, IdCard, Loader2,
 } from "lucide-react";
@@ -155,7 +155,7 @@ export default function BusinessCard() {
         <div>
           <div
             className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1 rounded-full mb-3"
-            style={{ background: brandGradientCss, color: "#fff" }}
+            style={{ background: gradients.navyToGreen.css, color: "#fff" }}
           >
             <IdCard size={12} /> NFC-ready
           </div>
@@ -181,7 +181,7 @@ export default function BusinessCard() {
                 onClick={() => setMode(t.k)}
                 className="px-4 py-1.5 rounded-full text-xs font-semibold transition"
                 style={{
-                  background: active ? brandGradientCss : colors.surface,
+                  background: active ? gradients.navyToGreen.css : colors.surface,
                   color: active ? "#fff" : colors.onSurface,
                   border: `1px solid ${active ? "transparent" : colors.border}`,
                 }}
@@ -211,7 +211,7 @@ export default function BusinessCard() {
           >
             <div
               className="px-6 py-8 text-white"
-              style={{ background: brandGradientCss }}
+              style={{ background: gradients.navyToGreen.css }}
             >
               <div className="text-[11px] uppercase tracking-widest opacity-90 mb-1">
                 {showingPersonal ? "Your rep" : "Company"}
@@ -238,7 +238,7 @@ export default function BusinessCard() {
             <button
               onClick={() => downloadVcard(vcf, `${(view.name || "card").replace(/\s+/g, "_")}.vcf`)}
               className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition hover:brightness-95"
-              style={{ background: brandGradientCss, color: "#fff" }}
+              style={{ background: gradients.navyToGreen.css, color: "#fff" }}
               data-testid="card-download-vcf"
             >
               <Download size={14} /> Save contact

@@ -18,7 +18,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Sparkles, Loader2, Trash2, Copy as CopyIcon, Info, Wand2, ChevronRight } from "lucide-react";
 import { api, api_base } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 
 
@@ -118,7 +118,7 @@ export default function ContentStudioPage() {
       <header className="flex items-start gap-3">
         <div
           className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
-          style={{ background: brandGradientCss, color: "#fff" }}
+          style={{ background: gradients.navyToGreen.css, color: "#fff" }}
         >
           <Wand2 size={20} />
         </div>
@@ -205,7 +205,7 @@ export default function ContentStudioPage() {
           <button
             type="button" onClick={doGenerate} disabled={busy}
             className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-3 rounded-lg text-sm font-bold text-white disabled:opacity-60"
-            style={{ background: brandGradientCss }}
+            style={{ background: gradients.navyToGreen.css }}
             data-testid="content-studio-generate-btn"
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}

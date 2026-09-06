@@ -21,7 +21,7 @@ vi.mock("@/theme", () => ({
     brand: "#0EA5E9", brandTertiary: "#E0F2FE",
     onSurfaceSecondary: "#64748B",
   },
-  brandGradientCss: () => "",
+  gradients: { navyToGreen: { css: "" } },
   font: { regular: "", semibold: "", bold: "" },
 }));
 vi.mock("lucide-react", () => new Proxy({}, {

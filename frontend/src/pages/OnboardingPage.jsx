@@ -5,7 +5,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ClipboardList, CheckCircle2, Circle, Play, Loader2 } from "lucide-react";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import {
   getUserProgress, markTaskComplete, TASK_KIND_LABEL, taskDeepLink,
 } from "@/api/handbook";
@@ -44,7 +44,7 @@ export default function OnboardingPage() {
         <div className="p-8 text-sm" style={{ color: colors.muted }}>Loading…</div>
       ) : !prog ? null : (
         <>
-          <div className="rounded-2xl p-4 mb-4" style={{ background: brandGradientCss, color: "#fff" }} data-testid="onboarding-summary">
+          <div className="rounded-2xl p-4 mb-4" style={{ background: gradients.navyToGreen.css, color: "#fff" }} data-testid="onboarding-summary">
             <div className="text-3xl font-bold">{prog.complete} / {prog.total}</div>
             <div className="text-sm opacity-90">tasks complete · {Math.round(prog.pct)}%</div>
             <div className="w-full h-2 rounded-full mt-2" style={{ backgroundColor: "rgba(255,255,255,0.25)" }}>

@@ -4,7 +4,7 @@ import { Star, ChevronRight, ChevronDown, Search as SearchIcon, HelpCircle, Grip
 import { ADMIN_NAV_V2, NAV_FLAT, KEYBOARD_SHORTCUTS, SHORTCUT_TARGETS } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 // Feb-2026 · Drag-and-drop reordering of pinned nav items.
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor,
@@ -168,7 +168,7 @@ export default function AdminSidebar() {
             ].join(" ")
           }
           style={({ isActive }) => ({
-            background: isActive ? brandGradientCss : undefined,
+            background: isActive ? gradients.navyToGreen.css : undefined,
             color: isActive ? "#fff" : colors.onSurface,
             fontWeight: isActive ? 600 : 400,
           })}
@@ -221,7 +221,7 @@ export default function AdminSidebar() {
         <NavLink to={e.to}
                   className={() => "flex-1 flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm"}
                   style={({ isActive }) => ({
-                    background: isActive ? brandGradientCss : "transparent",
+                    background: isActive ? gradients.navyToGreen.css : "transparent",
                     color: isActive ? "#fff" : colors.onSurface,
                     fontWeight: isActive ? 600 : 400,
                   })}>
@@ -379,7 +379,7 @@ export default function AdminSidebar() {
       {/* Floating help */}
       <button onClick={() => setHelpOpen(true)}
               className="fixed bottom-4 right-4 z-40 w-9 h-9 rounded-full text-white flex items-center justify-center shadow-lg"
-              style={{ background: brandGradientCss }}
+              style={{ background: gradients.navyToGreen.css }}
               data-testid="nav-help-btn" title="Keyboard shortcuts">
         <HelpCircle size={17} />
       </button>

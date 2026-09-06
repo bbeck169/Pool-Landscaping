@@ -9,7 +9,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Save, Star, Ban, Mail, MessageSquare } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 const STATUS_STYLES = {
   queued:   { bg: "#FEF3C7", fg: "#92400E", label: "queued" },
@@ -259,7 +259,7 @@ export default function MarketingReviewRequestsPage() {
         <div className="mt-4 flex items-center justify-end gap-2">
           <button onClick={saveConfig} disabled={savingCfg}
                   className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
-                  style={{ background: brandGradientCss }}
+                  style={{ background: gradients.navyToGreen.css }}
                   data-testid="review-requests-save-btn">
             <Save size={14} /> {savingCfg ? "Saving…" : "Save"}
           </button>

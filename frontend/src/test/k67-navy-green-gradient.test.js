@@ -9,7 +9,8 @@
 import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
-import { colors, gradients, brandGradient, brandGradientCss } from "@/theme";
+import * as themeModule from "@/theme";
+const { colors, gradients } = themeModule;
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 
@@ -45,11 +46,27 @@ describe("K67 · Canonical gradients.navyToGreen token", () => {
     expect(gradients.navyToGreen.from).toBe(colors.nav.bg);
   });
 
-  it("brandGradient / brandGradientCss re-route to the K67 token", () => {
-    // Backwards-compat aliases. The ~60 existing callers of
-    // ``brandGradientCss`` auto-inherit the palette shift.
-    expect(brandGradient).toEqual(["#1B1F5C", "#16A34A"]);
-    expect(brandGradientCss).toBe(gradients.navyToGreen.css);
+  it("Phase K70.b · brandGradient / brandGradientCss aliases are RETIRED", () => {
+    // K67 originally shipped backward-compat aliases so ~60
+    // existing callers didn't break in a single phase. K70.b
+    // codemodded every non-test call site to the canonical
+    // ``gradients.navyToGreen.*`` shape and deleted the aliases
+    // from theme.js. This assertion locks the absence in place —
+    // do NOT re-add them.
+    expect(themeModule).not.toHaveProperty("brandGradient");
+    expect(themeModule).not.toHaveProperty("brandGradientCss");
+    // theme.js source contains no lingering ``export const
+    // brandGradient …`` / ``brandGradientCss …`` statements
+    // (comments that mention the retired names are fine).
+    expect(THEME).not.toMatch(/export\s+const\s+brandGradient\s*=/);
+    expect(THEME).not.toMatch(/export\s+const\s+brandGradientCss\s*=/);
+  });
+
+  it("Phase K70.b · canonical stops array is exported for Recharts callers", () => {
+    // The 5 chart pages that used ``brandGradient[N]`` migrated
+    // to ``gradients.navyToGreen.stops[N]``. Lock the shape.
+    expect(Array.isArray(gradients.navyToGreen.stops)).toBe(true);
+    expect(gradients.navyToGreen.stops).toEqual(["#1B1F5C", "#16A34A"]);
   });
 });
 

@@ -3,7 +3,7 @@
  */
 import React, { useEffect, useState, useRef } from "react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { Send, Sparkles } from "lucide-react";
 
 const Card = ({ children, className = "", testId }) => (
@@ -102,7 +102,7 @@ export function LanaChatPage() {
                data-testid="lana-input"/>
         <button onClick={send} disabled={busy || !input.trim()}
                 className="px-4 py-3 rounded-xl text-white font-bold flex items-center gap-1 disabled:opacity-50"
-                style={{ background: brandGradientCss }}
+                style={{ background: gradients.navyToGreen.css }}
                 data-testid="lana-send">
           <Send size={14}/> Send
         </button>

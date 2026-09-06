@@ -9,7 +9,7 @@
 import React, { useRef, useState, useEffect } from "react";
 import SignatureCanvas from "react-signature-canvas";
 import { X, Eraser, Check } from "lucide-react";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 export default function SignaturePadModal({
   open,
@@ -148,7 +148,7 @@ export default function SignaturePadModal({
             <button
               onClick={save}
               className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold text-white"
-              style={{ background: brandGradientCss }}
+              style={{ background: gradients.navyToGreen.css }}
               data-testid="signature-pad-save"
             >
               <Check size={14} /> Save signature

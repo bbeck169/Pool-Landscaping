@@ -7,7 +7,7 @@ import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate, useParams } from "react-router-dom";
 import { Sparkles, Plus, Trash2, Send, Download, ArrowLeft, Wrench, ChevronRight, CheckCircle2, AlertCircle } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 const STATUS_TONE = {
   draft:     { bg: "#FEF3C7", fg: "#92400E" },
@@ -59,7 +59,7 @@ export default function EstimatorList() {
         </button>
         <button onClick={() => nav("/admin/estimator/new")}
                 className="px-4 py-2 text-sm font-bold rounded-xl flex items-center gap-2"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="estimator-new-btn">
           <Plus size={14} /> New estimate
         </button>
@@ -285,7 +285,7 @@ export function EstimatorNew() {
 
         <button onClick={submit} disabled={busy}
                 className="w-full py-3 text-sm font-bold rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="estnew-submit">
           <Sparkles size={16} />
           {busy ? "Generating estimate (AI vision)…" : "Generate estimate"}
@@ -419,7 +419,7 @@ export function EstimatorDetail() {
         </button>
         <button onClick={convert} disabled={busy === "convert" || e.status === "converted"}
                 className="px-4 py-2 text-sm font-bold rounded-xl flex items-center gap-1 disabled:opacity-50"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="estdet-convert">
           <CheckCircle2 size={14} />
           {e.status === "converted" ? "Converted"
@@ -607,7 +607,7 @@ export function EstimatorDetail() {
               </button>
               <button onClick={sendEmail} disabled={busy === "send" || !emails.trim()}
                       className="flex-1 py-2 text-sm font-bold rounded-xl disabled:opacity-50"
-                      style={{ background: brandGradientCss, color: "#fff" }}
+                      style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                       data-testid="estdet-send-submit">
                 {busy === "send" ? "Sending…" : "Send"}
               </button>
@@ -684,7 +684,7 @@ export function EstimatorRates() {
         </button>
         <button onClick={save} disabled={saving}
                 className="px-4 py-2 text-sm font-bold rounded-xl"
-                style={{ background: brandGradientCss, color: "#fff" }}
+                style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                 data-testid="rates-save">
           {saving ? "Saving…" : "Save changes"}
         </button>

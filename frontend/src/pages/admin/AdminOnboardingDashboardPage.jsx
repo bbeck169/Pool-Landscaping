@@ -4,7 +4,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { Users, Filter } from "lucide-react";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { getOnboardingDashboard, getUserProgress } from "@/api/handbook";
 
 export default function AdminOnboardingDashboardPage() {
@@ -52,7 +52,7 @@ export default function AdminOnboardingDashboardPage() {
         <div className="p-8 text-sm" style={{ color: colors.muted }}>Loading…</div>
       ) : !data ? null : (
         <>
-          <div className="rounded-2xl p-4 mb-4" style={{ background: brandGradientCss, color: "#fff" }}>
+          <div className="rounded-2xl p-4 mb-4" style={{ background: gradients.navyToGreen.css, color: "#fff" }}>
             <div className="text-3xl font-bold">{Math.round(data.avg_pct)}%</div>
             <div className="text-sm opacity-90">average completion · {data.total_users} users</div>
           </div>

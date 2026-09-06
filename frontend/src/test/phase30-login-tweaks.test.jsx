@@ -20,7 +20,7 @@ vi.mock("@/auth", () => ({
   useAuth: () => ({ login: vi.fn(), me: async () => null }),
 }));
 vi.mock("@/theme", () => ({
-  brandGradientCss: "linear-gradient(#000,#111)",
+  gradients: { navyToGreen: { css: "linear-gradient(#000,#111)" } },
   colors: {
     brand: "#0f6ed1", muted: "#666", onSurface: "#111",
     surface: "#fff", surfaceSecondary: "#f5f5f5", border: "#ccc",

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { GoogleMap, Marker as GMarker, useJsApiLoader } from "@react-google-maps/api";
 import { api } from "@/api";
-import { colors, brandGradientCss, money } from "@/theme";
+import { colors, money, gradients } from "@/theme";
 import { CheckCircle2, XCircle, Download, User as UserIcon, Filter, RefreshCw, Calendar } from "lucide-react";
 
 /* Shared UI helpers */
@@ -13,7 +13,7 @@ const Card = ({ children, className = "", testId }) => (
 
 const BtnPrimary = ({ children, testId, ...rest }) => (
   <button className="px-3 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50 flex items-center gap-1"
-          style={{ background: brandGradientCss }} data-testid={testId} {...rest}>{children}</button>
+          style={{ background: gradients.navyToGreen.css }} data-testid={testId} {...rest}>{children}</button>
 );
 
 const BtnGhost = ({ children, testId, ...rest }) => (

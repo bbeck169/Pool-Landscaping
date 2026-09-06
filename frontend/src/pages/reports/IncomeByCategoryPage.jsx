@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { api } from "@/api";
-import { colors, money, brandGradient } from "@/theme";
+import { colors, money, gradients } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 
 // Simple donut: sum of arcs computed via SVG stroke-dasharray on stacked circles.
@@ -11,7 +11,7 @@ function Donut({ rows, size = 200 }) {
   const r = (size / 2) - 14;
   const c = 2 * Math.PI * r;
   const palette = [
-    brandGradient[0], brandGradient[1], "#F59E0B", "#8B5CF6",
+    gradients.navyToGreen.stops[0], gradients.navyToGreen.stops[1], "#F59E0B", "#8B5CF6",
     "#EC4899", "#06B6D4", "#65A30D", "#EF4444",
   ];
   let offset = 0;
@@ -63,7 +63,7 @@ export default function IncomeByCategory() {
   }, [start, end]);
 
   const palette = [
-    brandGradient[0], brandGradient[1], "#F59E0B", "#8B5CF6",
+    gradients.navyToGreen.stops[0], gradients.navyToGreen.stops[1], "#F59E0B", "#8B5CF6",
     "#EC4899", "#06B6D4", "#65A30D", "#EF4444",
   ];
 

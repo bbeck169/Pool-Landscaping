@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { Plus, Check, Ban, Save } from 'lucide-react';
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 // Phase F5 · Feb-2026 — ArmToDelete retrofit for the widget-key
@@ -103,7 +103,7 @@ export default function TenantsAdminPage() {
         </div>
         <button onClick={startCreate}
                 className="flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white"
-                style={{ background: brandGradientCss }}
+                style={{ background: gradients.navyToGreen.css }}
                 data-testid="tenants-new-btn"><Plus size={14}/> New tenant</button>
       </div>
 
@@ -133,7 +133,7 @@ export default function TenantsAdminPage() {
           <div className="flex gap-2 mt-4">
             <button onClick={submit}
                     className="flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white"
-                    style={{ background: brandGradientCss }}
+                    style={{ background: gradients.navyToGreen.css }}
                     data-testid="tf-submit">
               <Save size={14} /> {creating ? "Create" : "Save"}
             </button>
@@ -284,7 +284,7 @@ export function TenantBrandSettings() {
         <div className="mt-4 flex gap-2">
           <button onClick={save}
                   className="flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white"
-                  style={{ background: brandGradientCss }}
+                  style={{ background: gradients.navyToGreen.css }}
                   data-testid="brand-save"><Save size={14} /> Save brand</button>
         </div>
       </Card>
@@ -443,7 +443,7 @@ function WidgetConfigCard() {
       <div className="mt-4 flex justify-end">
         <button onClick={save} disabled={busy}
                 className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
-                style={{ background: brandGradientCss }}
+                style={{ background: gradients.navyToGreen.css }}
                 data-testid="tenant-widget-config-save-btn">
           <Save size={14} /> {busy ? "Saving…" : "Save allowed domains"}
         </button>

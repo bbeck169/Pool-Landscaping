@@ -1,6 +1,6 @@
 import React from "react";
 import { FilePlus2, LibraryBig } from "lucide-react";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { CATEGORY_LABEL } from "@/api/templates";
 
 /**
@@ -40,7 +40,7 @@ export default function TemplateCard({ definition, onCreate, busy = false }) {
         onClick={() => onCreate?.(definition.code)}
         disabled={busy}
         className="mt-auto inline-flex items-center justify-center gap-1 px-3 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
-        style={{ background: brandGradientCss }}
+        style={{ background: gradients.navyToGreen.css }}
         data-testid={`template-card-create-${definition.code}`}
       >
         <FilePlus2 size={14} /> New from template

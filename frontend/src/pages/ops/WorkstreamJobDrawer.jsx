@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, ExternalLink, Camera, ListChecks, FlaskConical, Beaker, AlertTriangle, StickyNote, Wrench, PenTool, Link2, Share2 } from 'lucide-react';
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /**
  * Right-side slide-in drawer showing the full field-report for a job.
@@ -236,7 +236,7 @@ export default function WorkstreamJobDrawer({ jobId, onClose, onShareToast, onPe
           {job && (
             <button onClick={() => { onClose(); navigate(`/jobs/${jobId}`); }}
                     className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-semibold text-white"
-                    style={{ background: brandGradientCss }}
+                    style={{ background: gradients.navyToGreen.css }}
                     data-testid="drawer-open-full">
               Open full job page <ExternalLink size={13} />
             </button>

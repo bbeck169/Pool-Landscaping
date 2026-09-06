@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import { ArrowLeft, TrendingUp, Layers, RefreshCw, AlertTriangle, Calendar as CalIcon } from "lucide-react";
 import { api } from "@/api";
-import { colors, money, brandGradient } from "@/theme";
+import { colors, money, gradients } from "@/theme";
 
 const RANGE_PRESETS = [
   { key: "today",    label: "Today" },
@@ -218,8 +218,8 @@ export default function Forecast() {
               <AreaChart data={series}>
                 <defs>
                   <linearGradient id="fcGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={brandGradient[0]} stopOpacity={0.4} />
-                    <stop offset="100%" stopColor={brandGradient[0]} stopOpacity={0.02} />
+                    <stop offset="0%" stopColor={gradients.navyToGreen.stops[0]} stopOpacity={0.4} />
+                    <stop offset="100%" stopColor={gradients.navyToGreen.stops[0]} stopOpacity={0.02} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke={colors.border} />
@@ -227,7 +227,7 @@ export default function Forecast() {
                        tickFormatter={(v) => v.slice(5)} />
                 <YAxis stroke={colors.muted} fontSize={11} />
                 <Tooltip formatter={(v) => money(v)} labelFormatter={(l) => `Week of ${l}`} />
-                <Area type="monotone" dataKey="amount" stroke={brandGradient[0]}
+                <Area type="monotone" dataKey="amount" stroke={gradients.navyToGreen.stops[0]}
                       strokeWidth={2} fill="url(#fcGrad)" />
               </AreaChart>
             </ResponsiveContainer>

@@ -6,7 +6,7 @@ import {
 } from "recharts";
 import { ArrowLeft, DollarSign, Clock, ListChecks, TrendingUp } from 'lucide-react';
 import { api } from "@/api";
-import { colors, money, brandGradient } from "@/theme";
+import { colors, money, gradients } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 
 function Card({ children, className = "", testId }) {
@@ -102,7 +102,7 @@ export default function BusinessSummary() {
                   <XAxis dataKey="label" stroke={colors.muted} fontSize={12} />
                   <YAxis stroke={colors.muted} fontSize={12} />
                   <Tooltip formatter={(v) => money(v)} />
-                  <Line type="monotone" dataKey="value" stroke={brandGradient[0]} strokeWidth={2} />
+                  <Line type="monotone" dataKey="value" stroke={gradients.navyToGreen.stops[0]} strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -142,7 +142,7 @@ export default function BusinessSummary() {
                     <XAxis dataKey="label" stroke={colors.muted} fontSize={11} />
                     <YAxis stroke={colors.muted} fontSize={11} />
                     <Tooltip formatter={(v) => money(v)} />
-                    <Bar dataKey="value" fill={brandGradient[1]} radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="value" fill={gradients.navyToGreen.stops[1]} radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

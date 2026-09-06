@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Bar, Area, AreaChart, ComposedChart, ReferenceDot, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend } from "recharts";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /* ─── shared bits ────────────────────────────────────────────────── */
 const H = ({ title, sub, right }) => (
@@ -51,7 +51,7 @@ export default function AnalyticsPage() {
           <button key={t.k} onClick={() => setTab(t.k)}
                   className="px-4 py-2 rounded-xl text-sm font-semibold transition"
                   style={{
-                    background: tab === t.k ? brandGradientCss : colors.surface,
+                    background: tab === t.k ? gradients.navyToGreen.css : colors.surface,
                     color: tab === t.k ? "#fff" : colors.onSurface,
                     border: `1px solid ${tab === t.k ? "transparent" : colors.border}`,
                   }}
@@ -126,7 +126,7 @@ function CustomerLTV() {
                data-testid={`ltv-row-${r.customer_id}`}>
             <div className="col-span-4 font-semibold truncate">
               <a href={`/customers/${r.customer_id}`} style={{ color: colors.onSurface }}>{r.customer_name}</a>
-              {r.vip && <span className="ml-2 text-[10px] font-bold text-white px-1.5 py-0.5 rounded" style={{ background: brandGradientCss }}>VIP</span>}
+              {r.vip && <span className="ml-2 text-[10px] font-bold text-white px-1.5 py-0.5 rounded" style={{ background: gradients.navyToGreen.css }}>VIP</span>}
             </div>
             <div className="col-span-2 text-right font-mono">{money(r.revenue)}</div>
             <div className="col-span-2 text-right">{r.invoice_count}</div>
@@ -195,7 +195,7 @@ function ChurnRisk() {
                     <span className="font-mono" style={{ color: colors.muted }}>{Math.round(v)}</span>
                   </div>
                   <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: colors.surfaceSecondary }}>
-                    <div className="h-full" style={{ width: `${Math.min(100, v * 2.5)}%`, background: brandGradientCss }} />
+                    <div className="h-full" style={{ width: `${Math.min(100, v * 2.5)}%`, background: gradients.navyToGreen.css }} />
                   </div>
                 </div>
               ))}

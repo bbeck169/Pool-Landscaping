@@ -65,7 +65,7 @@ const _getAuthToken = () => (
 //
 // Wave C · Feb-2026 — solid-green on-file tile.  Fill uses
 // ``colors.success`` (identical hex to ``colors.landscape[600]`` and
-// to the green endpoint of the ``brandGradient`` that the Create
+// to the green endpoint of the ``gradients.navyToGreen.stops`` that the Create
 // button ships with — theme.js line 24) so we stay on the same
 // palette without hardcoding a hex.  All labels, values, and
 // padlock glyphs turn white + bold; ghost boxes gain a translucent

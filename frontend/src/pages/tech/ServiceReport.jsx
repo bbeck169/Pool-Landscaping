@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer, Share2, Video, Upload } from "lucide-react";
 // Feb-2026 · Chemistry required-readings gate — shared with backend.
 import { missingCoreReadings } from "@/utils/chemistryGate";
@@ -390,7 +390,7 @@ export default function ServiceReport() {
       </button>
 
       <div className="rounded-2xl p-5 mb-5 text-white flex items-start justify-between gap-4 flex-wrap"
-           style={{ background: brandGradientCss }} data-testid="svc-report-header">
+           style={{ background: gradients.navyToGreen.css }} data-testid="svc-report-header">
         <div className="min-w-0">
           <div className="text-xs uppercase font-bold opacity-90 tracking-wider">
             {report.template} template
@@ -780,7 +780,7 @@ export default function ServiceReport() {
                       : undefined
                   }
                   className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
-                  style={{ background: (!isRepair && coreMissingLive.length > 0) ? colors.muted : brandGradientCss }}
+                  style={{ background: (!isRepair && coreMissingLive.length > 0) ? colors.muted : gradients.navyToGreen.css }}
                   data-testid={isRepair ? "id-repair-log-submit" : "svc-report-submit"}>
             <ShieldCheck size={14} className="inline mr-1"/>
             {submitting ? "Submitting…" : "Submit Report & Clock Out"}

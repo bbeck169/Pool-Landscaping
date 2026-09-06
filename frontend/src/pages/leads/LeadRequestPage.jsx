@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { Link2, MessageSquare, Mail, Copy, RefreshCw, X } from 'lucide-react';
 
 const Card = ({ children, className = "", testId }) => (
@@ -132,7 +132,7 @@ export default function LeadRequestPage() {
             </div>
             <button onClick={() => generate("link")} disabled={busy}
                     className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-white"
-                    style={{ background: brandGradientCss, opacity: busy ? 0.6 : 1 }}
+                    style={{ background: gradients.navyToGreen.css, opacity: busy ? 0.6 : 1 }}
                     data-testid="lr-generate-link">
               <Link2 size={14} /> Make Link to Copy
             </button>
@@ -150,7 +150,7 @@ export default function LeadRequestPage() {
                    data-testid="lr-sms-to" />
             <button onClick={() => generate("sms")} disabled={busy}
                     className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-white"
-                    style={{ background: brandGradientCss, opacity: busy ? 0.6 : 1 }}
+                    style={{ background: gradients.navyToGreen.css, opacity: busy ? 0.6 : 1 }}
                     data-testid="lr-generate-sms">
               <MessageSquare size={14} /> Request Via Text Message
             </button>
@@ -168,7 +168,7 @@ export default function LeadRequestPage() {
                    data-testid="lr-email-to" />
             <button onClick={() => generate("email")} disabled={busy}
                     className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-white"
-                    style={{ background: brandGradientCss, opacity: busy ? 0.6 : 1 }}
+                    style={{ background: gradients.navyToGreen.css, opacity: busy ? 0.6 : 1 }}
                     data-testid="lr-generate-email">
               <Mail size={14} /> Request Via Email
             </button>

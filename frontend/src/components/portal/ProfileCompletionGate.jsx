@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { UserCog, Check, AlertTriangle, Clock } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 /**
  * Feb-2026 · Customer self-serve profile-completion gate.
@@ -152,7 +152,7 @@ export default function ProfileCompletionGate() {
           className="px-5 py-4 flex items-center gap-3"
           style={{
             borderBottom: `1px solid ${colors.border}`,
-            background: brandGradientCss,
+            background: gradients.navyToGreen.css,
             color: "#fff",
           }}
         >
@@ -284,7 +284,7 @@ export default function ProfileCompletionGate() {
               type="submit"
               disabled={saving}
               className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ background: brandGradientCss }}
+              style={{ background: gradients.navyToGreen.css }}
               data-testid="profile-completion-submit"
             >
               <Check size={15} />

@@ -5,7 +5,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { Send, CheckCircle2, LogIn, RefreshCw } from 'lucide-react';
 
 const Card = ({ children, className = "", testId }) => (
@@ -27,7 +27,7 @@ const Section = ({ title, subtitle, right, children }) => (
 );
 const BtnPrimary = ({ children, testId, ...rest }) => (
   <button className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50 flex items-center gap-1"
-          style={{ background: brandGradientCss }} data-testid={testId} {...rest}>{children}</button>
+          style={{ background: gradients.navyToGreen.css }} data-testid={testId} {...rest}>{children}</button>
 );
 
 /* ───── Tech Huddle Page ─────────────────────────────────── */

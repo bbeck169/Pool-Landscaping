@@ -30,7 +30,7 @@ vi.mock("@/theme", () => ({
     onSurface: "#0F172A", muted: "#64748B",
     border: "#E5E7EB", brand: "#0EA5E9",
   },
-  brandGradientCss: "linear-gradient(180deg, #fff, #fff)",
+  gradients: { navyToGreen: { css: "linear-gradient(180deg, #fff, #fff)" } },
   font: { display: "sans-serif", body: "sans-serif" },
 }));
 

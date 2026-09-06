@@ -14,7 +14,7 @@ import { useNavigate, useParams, Link } from "react-router-dom";
 import {
   ArrowLeft, CheckCircle2, Copy, Download, Trash2, Save, Loader2, Lock, Send,
 } from "lucide-react";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 import {
   getInstance, getDefinition, updateInstance, finalizeInstance,
@@ -251,7 +251,7 @@ export default function TemplateFillPage() {
               <button
                 onClick={() => setConfirming("finalize")}
                 className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold text-white"
-                style={{ background: brandGradientCss }}
+                style={{ background: gradients.navyToGreen.css }}
                 data-testid="template-fill-finalize-btn"
               >
                 <CheckCircle2 size={14} /> Finalize
@@ -277,7 +277,7 @@ export default function TemplateFillPage() {
               <button
                 onClick={() => setShareOpen(true)}
                 className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold text-white"
-                style={{ background: brandGradientCss }}
+                style={{ background: gradients.navyToGreen.css }}
                 data-testid="template-fill-share-portal-btn"
               >
                 <Send size={14} /> Share to Customer Portal
@@ -437,7 +437,7 @@ function ConfirmModal({ title, body, confirmLabel, confirmDanger, onConfirm, onC
           <button
             onClick={onConfirm}
             className="px-3 py-2 rounded-xl text-sm font-bold text-white"
-            style={{ background: confirmDanger ? colors.error : brandGradientCss }}
+            style={{ background: confirmDanger ? colors.error : gradients.navyToGreen.css }}
             data-testid={`${testId}-confirm`}
           >
             {confirmLabel}

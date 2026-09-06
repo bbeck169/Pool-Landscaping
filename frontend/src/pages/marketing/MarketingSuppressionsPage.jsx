@@ -8,7 +8,7 @@
 import React, { useEffect, useState } from "react";
 import { Plus, Trash2, MailX, Ban, RefreshCw } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 
 export default function MarketingSuppressionsPage() {
@@ -93,7 +93,7 @@ export default function MarketingSuppressionsPage() {
           </button>
           <button onClick={() => setShowAdd(true)}
                   className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white"
-                  style={{ background: brandGradientCss }}
+                  style={{ background: gradients.navyToGreen.css }}
                   data-testid="admin-add-suppression-btn">
             <Plus size={14} /> Add
           </button>
@@ -206,7 +206,7 @@ export default function MarketingSuppressionsPage() {
               </button>
               <button onClick={add} disabled={busy || !form.address}
                       className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
-                      style={{ background: brandGradientCss }}>
+                      style={{ background: gradients.navyToGreen.css }}>
                 <Ban size={14} /> Add suppression
               </button>
             </div>

@@ -4,7 +4,7 @@
 import React, { useState } from "react";
 import { Gauge, Sparkles, X, ArrowRight } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 const LABEL_MAP = {
   readability:        "Readability",
@@ -127,7 +127,7 @@ export default function ContentScorer() {
 
           <button onClick={analyze} disabled={analyzing}
                   className="w-full py-2 text-sm font-bold rounded-lg disabled:opacity-60"
-                  style={{ background: brandGradientCss, color: "#fff" }}
+                  style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                   data-testid="content-scorer-analyze">
             {analyzing ? "Analyzing…" : "Analyze"}
           </button>
@@ -177,7 +177,7 @@ export default function ContentScorer() {
                          style={{ backgroundColor: colors.background }}>
                       <div className="h-full"
                            style={{ width: `${Math.min(100, v)}%`,
-                                    background: brandGradientCss }} />
+                                    background: gradients.navyToGreen.css }} />
                     </div>
                   </div>
                 ))}

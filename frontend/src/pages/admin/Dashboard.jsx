@@ -25,7 +25,7 @@ import {
   Droplet,
 } from "lucide-react";
 import { api } from "@/api";
-import { brandGradientCss, colors, gradients, money } from "@/theme";
+import { colors, gradients, money } from "@/theme";
 import { KPI_TONE_ROTATION, getAccentTone } from "@/utils/serviceLineTheme";
 import LiveWeatherWidget from "@/components/Weather/WeatherWidget";
 import MassMessagingCard from "@/components/mass-messaging/MassMessagingCard";
@@ -725,7 +725,7 @@ export default function AdminDashboard() {
                     className="h-full rounded-full transition-all"
                     style={{
                       width: `${Math.max(4, (s.value / max) * 100)}%`,
-                      background: brandGradientCss,
+                      background: gradients.navyToGreen.css,
                     }}
                   />
                 </div>

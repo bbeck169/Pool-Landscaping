@@ -4,7 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { MapPin, Play, Info } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors, gradients } from "@/theme";
 
 function rankColor(rank) {
   if (rank == null) return "#F3F4F6";
@@ -146,7 +146,7 @@ export default function RankHeatmap() {
           </div>
           <button onClick={start} disabled={starting}
                   className="w-full py-2 text-sm font-bold rounded-lg flex items-center justify-center gap-1 disabled:opacity-60 mt-2"
-                  style={{ background: brandGradientCss, color: "#fff" }}
+                  style={{ background: gradients.navyToGreen.css, color: "#fff" }}
                   data-testid="rank-heatmap-run">
             <Play size={14}/> {starting ? "Running…" : "Generate heatmap"}
           </button>

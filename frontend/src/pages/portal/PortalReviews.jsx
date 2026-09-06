@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Star, Send, ExternalLink, CheckCircle2, Sparkles } from "lucide-react";
 import { api } from "@/api";
-import { brandGradientCss, colors } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 
 /**
@@ -265,7 +265,7 @@ export default function PortalReviews() {
               type="submit"
               disabled={busy || rating < 1}
               className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
-              style={{ background: brandGradientCss }}
+              style={{ background: gradients.navyToGreen.css }}
               data-testid="portal-review-submit"
             >
               <Send size={14} /> {busy ? "Sending…" : "Submit review"}
@@ -417,7 +417,7 @@ function ReviewThankYou({ result, onReset }) {
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-bold text-white"
-            style={{ background: brandGradientCss }}
+            style={{ background: gradients.navyToGreen.css }}
             data-testid="portal-review-google-btn"
           >
             <ExternalLink size={16} /> Share on Google

@@ -4,7 +4,7 @@ import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Ac
 import { api } from "@/api";
 import { SUPPLIER_METADATA } from "@/pages/settings/supplier_metadata";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
-import { colors, money, brandGradientCss } from "@/theme";
+import { colors, money, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, Modal, Toast } from "@/components/ui-kit";
@@ -318,7 +318,7 @@ function Routes() {
          const techColor = j.technician_color_hex || null;
          return (
          <li key={j.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: colors.surfaceSecondary }} data-testid={`route-${j.id}`}>
-           <span className="w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center" style={{ background: brandGradientCss, color: "#fff" }}>{i + 1}</span>
+           <span className="w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center" style={{ background: gradients.navyToGreen.css, color: "#fff" }}>{i + 1}</span>
            <div className="flex-1">
              <div className="font-semibold text-sm"
                   data-testid={`ops-route-${j.id}-customer`}>
@@ -907,7 +907,7 @@ function TeamRoster() {
                 >
                   <div
                     className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold"
-                    style={{ background: brandGradientCss }}
+                    style={{ background: gradients.navyToGreen.css }}
                   >
                     {(r.name || "?")[0]}
                   </div>
