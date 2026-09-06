@@ -17,7 +17,7 @@ import React from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/react";
 
-vi.mock("@/api", () => ({ api: { patch: vi.fn() } }));
+vi.mock("@/api", () => ({ api: { patch: vi.fn(), get: vi.fn().mockResolvedValue({ items: [] }) } }));
 
 import { api } from "@/api";
 import MuteControl from "@/components/customers/MuteControl";

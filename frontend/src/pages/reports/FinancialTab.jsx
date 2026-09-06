@@ -7,6 +7,13 @@ import { PeriodPicker } from "@/components/reports/PeriodPicker";
 import { LensToggle } from "@/components/reports/LensToggle";
 import { RevenueByCustomerPanel } from "@/components/reports/RevenueByCustomerPanel";
 import { RevenueByCityPanel } from "@/components/reports/RevenueByCityPanel";
+// R1.b · Feb-2026 — five new financial subsections + overview strip.
+import OverviewStrip from "@/components/reports/OverviewStrip";
+import PnlPanel from "@/components/reports/PnlPanel";
+import CashFlowPanel from "@/components/reports/CashFlowPanel";
+import ArAgingPanel from "@/components/reports/ArAgingPanel";
+import RevenueByServiceTypePanel from "@/components/reports/RevenueByServiceTypePanel";
+import UnpaidInvoicesPanel from "@/components/reports/UnpaidInvoicesPanel";
 
 /**
  * Phase R0.1 · Feb-2026 — Financial tab.
@@ -79,6 +86,24 @@ export default function FinancialTab() {
   };
 
   const filters = { period, start, end, lens, service_type: serviceType, tech_id: techId };
+
+  // R1.b · Feb-2026 — drill-down state driven by the AR-aging "See
+  // invoices" affordance. Written to the URL as ``?customer_id=<id>``
+  // so back-nav preserves the drill.
+  const customerFocusId = params.get("customer_id") || "";
+  const focusCustomer = (cid) => {
+    const next = new URLSearchParams(params);
+    if (cid) next.set("customer_id", cid); else next.delete("customer_id");
+    setParams(next, { replace: true });
+    requestAnimationFrame(() => {
+      const el = document.getElementById("unpaid-invoices");
+      if (el && typeof el.scrollIntoView === "function") {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+  };
+  const clearFocus = () => focusCustomer("");
+  const onLensChange = (v) => setParam("lens", v);
 
   return (
     <div className="space-y-6" data-testid="financial-tab">
@@ -155,6 +180,28 @@ export default function FinancialTab() {
         ) : null}
       </div>
 
+      <div id="overview-strip">
+        <OverviewStrip filters={filters} />
+      </div>
+      <div id="pnl">
+        <PnlPanel filters={filters} />
+      </div>
+      <div id="cash-flow">
+        <CashFlowPanel filters={filters} />
+      </div>
+      <div id="ar-aging">
+        <ArAgingPanel filters={filters} onCustomerFocus={focusCustomer} />
+      </div>
+      <div id="revenue-by-service-type">
+        <RevenueByServiceTypePanel filters={filters} onLensChange={onLensChange} />
+      </div>
+      <div id="unpaid-invoices">
+        <UnpaidInvoicesPanel
+          filters={filters}
+          customerFocusId={customerFocusId}
+          onClearFocus={clearFocus}
+        />
+      </div>
       <div id="revenue-by-customer">
         <RevenueByCustomerPanel filters={filters} params={params} setParams={setParams} />
       </div>

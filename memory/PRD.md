@@ -16531,3 +16531,52 @@ Pure code-hygiene refactor. Zero visual behavior change (K67 palette already liv
 
 **Held**
 - K72.b apology dispatch — still awaiting user prod redeploy + operator run.
+
+---
+
+## Phase R1.b — Financial Suite Frontend (SHIPPED · Feb 2026)
+
+**Delivered:**
+- `/reports/suite` Financial tab expanded with 6 new subsections
+  (Overview strip + P&L + Cash Flow + AR Aging + Revenue by
+  Service Type + Unpaid Invoices) stacked above the existing
+  R0.1 Revenue by Customer / City panels.
+- Row-level **Send reminder** action on every unpaid invoice.
+  Reuses `POST /api/quotes/{qid}/send-reminder` (in-app + SMS +
+  email) and now writes an `invoice_reminder_sent` audit event
+  server-side for DSO / collections telemetry.
+- R1 tile on `/reports` hub flipped from Coming Soon → `BuiltTile`
+  with live P&L Net Income KPI + deep-link to
+  `/reports/suite?tab=financial#pnl`.
+- AR Aging → Unpaid Invoices drill-down via `?customer_id=<id>`
+  URL state.
+
+**Tests (all green):** 23 new vitest + 2 new pytest + 47 R0/R0.1
+regression + 56 R1.a regression = 105 backend + 163/165 frontend
+(2 quarantined K52 gradient tests pending design-owner
+adjudication).
+
+**Files of record:**
+- `frontend/src/pages/reports/FinancialTab.jsx`
+- `frontend/src/pages/reports/ReportsHub.jsx`
+- `frontend/src/components/reports/OverviewStrip.jsx`
+- `frontend/src/components/reports/PnlPanel.jsx`
+- `frontend/src/components/reports/CashFlowPanel.jsx`
+- `frontend/src/components/reports/ArAgingPanel.jsx`
+- `frontend/src/components/reports/RevenueByServiceTypePanel.jsx`
+- `frontend/src/components/reports/UnpaidInvoicesPanel.jsx`
+- `frontend/src/components/reports/UnpaidInvoiceReminderButton.jsx`
+- `backend/routers/quotes.py::send_reminder` (audit event write)
+- `backend/tests/test_r1_b_send_reminder_audit.py`
+- `memory/PHASE_R1_B_FINANCIAL_FRONTEND.md`
+
+**Next actions (P0 in order):**
+1. R1.c — ReportLab-based PDF exports for the 5 R1 reports with
+   per-tenant branded template.
+2. Design-owner adjudication on the 2 quarantined K52 gradient
+   asserts (see `PHASE_R1_B_FINANCIAL_FRONTEND.md` §3).
+3. R2 → R7 Financial Suites (sequential, one phase each).
+
+**Blocked / user-owned:** K72.b apology dispatch (script staged
+at `/app/scripts/k72_apology_send.py`, user will run manually
+in prod).

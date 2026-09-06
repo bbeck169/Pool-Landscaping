@@ -599,6 +599,19 @@ function PortalLoginCustomerLayout({
               Forgot password?
             </Link>
           </div>
+          {/* R1.b · Feb-2026 — signup affordance restored so the
+              customer-variant hides-demo-tiles regression guard
+              (``login-goto-signup``) stays green. */}
+          <div style={{ textAlign: "center", marginTop: 12, fontSize: 13,
+                          color: "#4b5563" }}>
+            New here?{" "}
+            <Link to="/signup"
+                    data-testid="login-goto-signup"
+                    style={{ color: "#2e7d32", fontWeight: 700,
+                              textDecoration: "none" }}>
+              Create an account
+            </Link>
+          </div>
         </div>
       </div>
     </div>

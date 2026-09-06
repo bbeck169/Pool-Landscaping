@@ -43,6 +43,9 @@ export default function ReportsHub() {
   const [revenueTotal, setRevenueTotal]     = useState({ loading: true });
   const [revenueByCust, setRevenueByCust]   = useState({ loading: true });
   const [revenueByCity, setRevenueByCity]   = useState({ loading: true });
+  // R1.b · Feb-2026 — Financial suite tile flip. Drives the R1
+  // tile's live headline KPI (P&L Net Income for the window).
+  const [pnlByPeriod, setPnlByPeriod]       = useState({ loading: true });
 
   useEffect(() => {
     let live = true;
@@ -73,6 +76,17 @@ export default function ReportsHub() {
         if (live) setRevenueByCity({ loading: false, data: r });
       } catch (e) {
         if (live) setRevenueByCity({ loading: false, error: e?.message || "Failed" });
+      }
+    })();
+    // R1.b · Feb-2026 — P&L Net Income headline for the Financial
+    // suite tile flip. Uses ``pnl_by_period`` (scalar) so we get a
+    // signed delta chip for free.
+    (async () => {
+      try {
+        const r = await api.get(`/reports/kpi/pnl_by_period${qs}`);
+        if (live) setPnlByPeriod({ loading: false, data: r });
+      } catch (e) {
+        if (live) setPnlByPeriod({ loading: false, error: e?.message || "Failed" });
       }
     })();
 
@@ -143,10 +157,33 @@ export default function ReportsHub() {
         return `${formatNumber(n)} cit${n === 1 ? "y" : "ies"}`;
       },
     },
+    // R1.b · Feb-2026 — Financial suite tile flip (was
+    // ``comingSoonTiles`` R1 before this phase).
+    {
+      key: "r1-financial",
+      icon: BarChart3,
+      title: "R1 · Financial Suite",
+      description: "P&L, cash flow, A/R aging & unpaid invoices.",
+      to: `/reports/suite${suiteQs}&tab=financial#pnl`,
+      kpi: pnlByPeriod,
+      renderKpi: (state) => {
+        if (state.loading) return "…";
+        if (state.error) return "—";
+        const v = state.data?.value;
+        const fmt = state.data?.format || "currency";
+        return formatValue(v, fmt);
+      },
+      kpiSubtitle: (state) => {
+        if (state.loading || state.error) return null;
+        const d = state.data?.delta_pct;
+        if (d === null || d === undefined) return "Net Income";
+        const sign = d > 0 ? "+" : "";
+        return `Net Income · ${sign}${Number(d).toFixed(1)}% vs prior`;
+      },
+    },
   ];
 
   const comingSoonTiles = [
-    { key: "r1", icon: BarChart3,      title: "R1 · Financial",           description: "Full P&L, cash flow, A/R aging.",             phase: "R1" },
     { key: "r2", icon: Activity,       title: "R2 · Operations",          description: "Jobs completed, tech utilization, chemistry.", phase: "R2" },
     { key: "r3", icon: Users2,         title: "R3 · Customers",           description: "LTV, churn, chemistry trends.",                phase: "R3" },
     { key: "r4", icon: Target,         title: "R4 · Sales",               description: "Funnel, win rate, source attribution.",        phase: "R4" },

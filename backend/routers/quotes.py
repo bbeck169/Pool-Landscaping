@@ -818,11 +818,36 @@ async def send_reminder(qid: str,
     await notify_customer(inv["customer_id"], title, body, sms=True)
     email_sent = await send_invoice_reminder_email(inv)
     count = int(inv.get("reminder_count") or 0) + 1
+    ts = now_iso()
     await db.quotes.update_one(
         {"id": qid, "tenant_id": tenant["id"]},
-        {"$set": {"last_reminder_at": now_iso(), "reminder_count": count}},
+        {"$set": {"last_reminder_at": ts, "reminder_count": count}},
     )
-    return {"ok": True, "email_sent": email_sent, "reminder_count": count, "last_reminder_at": now_iso()}
+    # R1.b · Feb-2026 — write an ``invoice_reminder_sent`` audit
+    # event so downstream DSO / collections dashboards can count
+    # the "touch" without re-scanning the quotes collection. Best-
+    # effort: audit failures do NOT surface as reminder failures.
+    try:
+        await db.audit_events.insert_one({
+            "id": new_id(),
+            "event_type": "invoice_reminder_sent",
+            "actor_user_id": user.get("id") or user.get("_id") or "unknown",
+            "tenant_id": tenant["id"],
+            "timestamp": ts,
+            "payload": {
+                "invoice_id": qid,
+                "invoice_number": inv.get("invoice_number"),
+                "customer_id": inv.get("customer_id"),
+                "customer_name": inv.get("customer_name"),
+                "balance": balance,
+                "email_sent": bool(email_sent),
+                "reminder_count": count,
+                "channel": "in_app+sms+email",
+            },
+        })
+    except Exception as e:
+        logger.warning(f"invoice_reminder_sent audit write failed: {e}")
+    return {"ok": True, "email_sent": email_sent, "reminder_count": count, "last_reminder_at": ts}
 
 
 @router.get("/invoices/overview")
