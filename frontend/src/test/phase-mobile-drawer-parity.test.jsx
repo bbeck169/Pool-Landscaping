@@ -160,7 +160,10 @@ const T2_STUB_ROUTES = [
   "/admin/comms/templates",
   "/admin/comms/automations",
   "/admin/comms/sends",
-  "/admin/tags",
+  // Phase Hygiene B · Feb-2026 — /admin/tags was promoted to a LIVE
+  // Task-1 mobile CRUD screen and no longer re-exports ComingSoonPage.
+  // Moved to T2_LIVE_ROUTES so the "still a stub" assertion doesn't
+  // falsely flag the polished page.
   "/admin/service-reports",
   "/admin/appointments",
   "/admin/referrals/analytics",
@@ -174,6 +177,7 @@ const T2_LIVE_ROUTES = [
   "/admin/chemicals",
   "/admin/diagnostics/errors",
   "/weather",
+  "/admin/tags",
 ];
 
 describe("T2 stub route files exist and re-export ComingSoonPage", () => {

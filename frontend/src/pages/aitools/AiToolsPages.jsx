@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { ZillowUsageChip } from "@/components/ZillowUsageChip";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
@@ -247,6 +248,13 @@ export function CadEditor() {
   const [_dragging, _setDragging] = useState(null);
   const [toast, setToast] = useState("");
   const canvasRef = useRef(null);
+  // Phase Hygiene B · Feb-2026 — mobile guard for the drawing surface
+  // migrated from an inline ``window.innerWidth < 768`` check (which
+  // was single-shot on render and never re-evaluated on orientation
+  // change / DevTools breakpoint swap) to the shared ``useIsNarrow``
+  // hook. Same 768px threshold, now backed by matchMedia so a rotate
+  // out of portrait immediately reveals the desktop editor.
+  const isNarrow = useIsNarrow(768);
 
   useEffect(() => {
     if (!id) return;
@@ -297,7 +305,7 @@ export function CadEditor() {
   if (!design) return <div className="p-8 text-sm" style={{ color: colors.onSurfaceSecondary }}>Loading design…</div>;
 
   // Mobile guard — the drawing surface is desktop/tablet only.
-  if (typeof window !== "undefined" && window.innerWidth < 768) {
+  if (isNarrow) {
     return (
       <div className="p-8 max-w-md mx-auto text-center" data-testid="cad-mobile-guard">
         <div className="text-4xl mb-3">🖥️</div>

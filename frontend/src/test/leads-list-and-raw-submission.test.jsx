@@ -52,8 +52,16 @@ describe("LeadsDashboardPage · list row polish", () => {
     );
     expect(addressCell, "address cell block not found").toBeTruthy();
     expect(addressCell[0]).toMatch(/truncate/);
+    // Phase Hygiene B · Feb-2026 — product built out the address
+    // cell to concatenate street + city/state + zip into a single
+    // hover tooltip (``[l.address || l.service_address, csz, zip]
+    // .filter(Boolean).join(" · ")``). Relax the regex to allow
+    // either the legacy plain ``title={l.address || l.service_address``
+    // form or the current array-join form; the contract is that
+    // ``title`` starts with the address / service_address fallback
+    // pair.
     expect(addressCell[0]).toMatch(
-      /title=\{l\.address\s*\|\|\s*l\.service_address/,
+      /title=\{\[?\s*l\.address\s*\|\|\s*l\.service_address/,
     );
   });
 

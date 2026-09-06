@@ -39,7 +39,23 @@ vi.mock("@/nav/adminNav", () => ({
   }],
 }));
 vi.mock("@/hooks/usePermissions", () => ({
-  usePermissions: () => ({ can: () => true, cannot: () => false }),
+  // Phase Hygiene B · Feb-2026 — AdminTopBar's ``useVisibleGroups``
+  // hook filters the nav array against ``effectiveRole`` and returns
+  // an empty visible list when the role isn't in
+  // ``{admin, super_admin, manager}``. Without an explicit
+  // ``effectiveRole`` here the wide+narrow branches both collapse
+  // to the ``!hasAnyNav`` tech-only fallback, which drops
+  // AddCustomerButton entirely. Return the role currently under
+  // test so the admin/super_admin branch keeps rendering.
+  usePermissions: () => ({
+    can: () => true,
+    cannot: () => false,
+    effectiveRole: currentRole,
+    role: currentRole,
+    isAdmin: currentRole === "admin" || currentRole === "super_admin",
+    isAdminOrManager: true,
+    canDo: () => true,
+  }),
 }));
 vi.mock("@/components/NotificationBell", () => ({
   default: () => null,

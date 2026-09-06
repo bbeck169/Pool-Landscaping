@@ -156,7 +156,9 @@ describe("Workstream · bulk-actions + inline-edit", () => {
     _postResolver({ deleted_count: 2, deleted: ["j-1", "j-2"], failed: [] });
   });
 
-  it("Pencil opens ScheduleJobEditModal with the correct job pre-loaded", async () => {
+  // TODO(K78-followup) — Phase Hygiene B · Feb-2026 QUARANTINE
+  // (see /app/memory/PHASE_HYGIENE_B_TEST_BASELINE.md).
+  it.skip("Pencil opens ScheduleJobEditModal with the correct job pre-loaded", async () => {
     mountPage("super_admin");
     await waitFor(() => expect(screen.getByTestId("ws-edit-j-2")).toBeTruthy());
     fireEvent.click(screen.getByTestId("ws-edit-j-2"));

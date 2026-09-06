@@ -33,7 +33,11 @@ describe("K42 · Schedule tech-filter dropdown", () => {
     // Regression guard: the dropdown must NOT switch to
     // /users?role=technician which would emit users.id and re-open
     // the K42 bug.
-    expect(SRC).toMatch(/api\.get\("\/technicians"\)/);
+    //
+    // Phase Hygiene B · Feb-2026 — schedule loader now passes an explicit
+    // timeout as the second arg to ``api.get`` — relax the regex to
+    // accept an optional trailing arg.
+    expect(SRC).toMatch(/api\.get\("\/technicians"(?:\s*,[^)]*)?\)/);
   });
 
   it("preserves the K42 rationale comment so a future refactor can't accidentally undo the fix", () => {

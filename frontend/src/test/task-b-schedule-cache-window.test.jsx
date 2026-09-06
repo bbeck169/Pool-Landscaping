@@ -82,7 +82,11 @@ describe("Task B · CalendarSchedule cache-window guard", () => {
   });
 
   it("keeps exactly ONE fetch call to /jobs?start=... in the module (no duplicate path)", () => {
-    const matches = SRC.match(/api\.get\(`\/jobs\?start=/g) || [];
+    // Phase Hygiene B · Feb-2026 — the ``api.get`` call was reflowed
+    // onto three lines so the URL template + numeric timeout argument
+    // could sit on their own lines. Allow optional whitespace/newline
+    // between ``api.get(`` and the ``/jobs?start=`` template.
+    const matches = SRC.match(/api\.get\(\s*`\/jobs\?start=/g) || [];
     expect(matches).toHaveLength(1);
   });
 

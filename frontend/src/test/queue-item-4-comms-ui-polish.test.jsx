@@ -133,8 +133,12 @@ describe("Queue Item 4 · Comms UI polish", () => {
         'import DemoAccountToggle from "@/components/comms/DemoAccountToggle"',
       );
       expect(src).toMatch(/<DemoAccountToggle[\s\S]*?recordType="user"/);
-      // The old empty-row colSpan (5) must have been bumped to 6.
-      expect(src).toContain('colSpan={6}');
+      // Phase Hygiene B · Feb-2026 — the empty-row colSpan tracks
+      // the visible column count, which now sits at 7 (Name, Email,
+      // Role, Department, Status, Comms, Actions). Contract: colSpan
+      // MUST equal the column count so a "no users" empty state
+      // spans the full table width.
+      expect(src).toContain('colSpan={7}');
       // "Comms" column header rendered.
       expect(src).toMatch(/>Comms</);
     });

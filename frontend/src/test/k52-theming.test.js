@@ -148,11 +148,13 @@ describe("K52 · Slice A — Filter row navy (Schedule)", () => {
 /* ══════════════════════════════════════════════════════════════════ */
 
 describe("K52 · Slice B — Popover panel navy", () => {
-  it("MoreDropdown popover renders on ``colors.nav.bg`` with white items + navy-hover (K75-refactored)", () => {
-    // Phase K75 · Feb-2026 — CategoryDropdown was retired. The six
-    // inline category dropdowns fold into a single "More" dropdown
-    // whose popover carries the K52 Slice B navy chrome verbatim.
-    const dropdown = TOP_BAR.split("function MoreDropdown(")[1]
+  it("CategoryDropdown popover renders on ``colors.nav.bg`` with white items + navy-hover (K76-restored)", () => {
+    // Phase Hygiene B · Feb-2026 — K76 reverted the K75 ``MoreDropdown``
+    // consolidation. The pre-K75 ``CategoryDropdown`` component is
+    // back and hosts the K52 Slice B navy chrome verbatim. Retarget
+    // the source split to the current function name so the contract
+    // still lands on the correct block.
+    const dropdown = TOP_BAR.split("function CategoryDropdown(")[1]
       .split("\nfunction ")[0];
     // Panel bg.
     expect(dropdown).toMatch(/backgroundColor:\s*colors\.nav\.bg/);

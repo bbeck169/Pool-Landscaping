@@ -81,18 +81,21 @@ describe("Phase 22 · Sub-item B — bell header padding", () => {
       ),
       "utf-8",
     );
-    // Every non-Complete pill must sit inside an ``isAdmin ? …`` gate.
-    for (const testid of [
-      'testID="grid-bulk-move"',
-      'testID="grid-bulk-delete"',
-      'testID="grid-bulk-reassign"',
-      'testID="grid-bulk-rearrange"',
-    ]) {
-      const idx = src.indexOf(testid);
-      expect(idx).toBeGreaterThan(-1);
-      // Look for ``isAdmin ?`` in the ~200 chars before the testid.
-      const window = src.substring(Math.max(0, idx - 400), idx);
-      expect(window.includes("isAdmin ?")).toBe(true);
+    // Phase Hygiene B · Feb-2026 — the bulk-action pill row was
+    // refactored from four literal testids into a single
+    // ``grid-action-${act.key}`` template driven by a data array
+    // where each row carries an ``adminOnly`` flag. The equivalent
+    // isAdmin gate now lives on the data-array iteration
+    // (``if (act.adminOnly && !isAdmin) return null;``). Assert
+    // both the new testid template + the gate + the four action
+    // keys (move / delete / assign / rearrange) are all present.
+    expect(src).toMatch(/testID=\{`grid-action-\$\{act\.key\}`\}/);
+    expect(src).toMatch(/if\s*\(act\.adminOnly\s*&&\s*!isAdmin\)\s*return\s+null;/);
+    for (const key of ["move", "delete", "assign", "rearrange"]) {
+      const rowRe = new RegExp(
+        `key:\\s*"${key}"[\\s\\S]{0,300}adminOnly:\\s*true`,
+      );
+      expect(src).toMatch(rowRe);
     }
   });
 });

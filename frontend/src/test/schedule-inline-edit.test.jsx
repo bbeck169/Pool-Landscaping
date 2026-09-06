@@ -100,16 +100,26 @@ describe("ScheduleJobEditModal · PUT /jobs/{id} + DELETE contract", () => {
   });
 
   it("exposes a work_class segmented picker with per-value testids (Feb 2026)", () => {
-    // Group container.
-    expect(modalSrc).toMatch(/data-testid=["']schedule-job-edit-work-class["']/);
-    // Two radio buttons keyed on the literal values.
-    expect(modalSrc).toMatch(/data-testid=\{`schedule-job-edit-work-class-\$\{opt\.value\}`\}/);
-    // Both literal values referenced in the options array.
-    expect(modalSrc).toMatch(/\{\s*value:\s*["']service["']\s*,\s*label:\s*["']Service["']\s*\}/);
-    expect(modalSrc).toMatch(/\{\s*value:\s*["']repair["']\s*,\s*label:\s*["']Repair["']\s*\}/);
+    // Phase Hygiene B · Feb-2026 — the picker was extracted into a
+    // shared ``WorkClassToggle`` component. The modal wires
+    // ``testIdPrefix="schedule-job-edit-work-class"`` into it and
+    // still seeds ``form.work_class`` from the incoming job, but
+    // the literal ``{value: "service"…}`` option array now lives
+    // inside ``components/jobs/WorkClassToggle.jsx``. Retarget the
+    // option assertions to that file so the contract still lands
+    // on the right block; keep the seeding assertion on the modal
+    // since that's where legacy-normalisation happens.
+    expect(modalSrc).toMatch(/testIdPrefix=["']schedule-job-edit-work-class["']/);
     // Initial state seeds work_class from the incoming job doc,
     // normalizing missing/legacy → "service".
     expect(modalSrc).toMatch(/\(job\?\.work_class === ["']repair["']\)\s*\?\s*["']repair["']\s*:\s*["']service["']/);
+
+    const togglePath = path.resolve(
+      __dirname, "../components/jobs/WorkClassToggle.jsx",
+    );
+    const toggleSrc = fs.readFileSync(togglePath, "utf-8");
+    expect(toggleSrc).toMatch(/value:\s*["']service["']/);
+    expect(toggleSrc).toMatch(/value:\s*["']repair["']/);
   });
 
   it("renders the address picker only when the customer has ≥2 properties (Feb 2026)", () => {

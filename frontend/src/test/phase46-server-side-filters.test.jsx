@@ -122,7 +122,12 @@ describe("CustomersList · P46 server-side filters", () => {
       const listCall = _listCalls().find((p) => p.includes("tags=Pool"));
       expect(listCall).toBeDefined();
       expect(listCall).toContain("page=1");
-      expect(listCall).toContain("page_size=100");
+      // Phase Hygiene B · Feb-2026 — the default ``pageSize`` is now
+      // 25 (``_K62_DEFAULT_PAGE_SIZE``), driven by localStorage. The
+      // contract is that ``page_size`` is on the wire; the specific
+      // value is a UX preference and not part of the P46 filter
+      // contract.
+      expect(listCall).toMatch(/page_size=\d+/);
     });
   });
 

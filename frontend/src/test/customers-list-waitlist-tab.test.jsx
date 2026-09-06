@@ -36,9 +36,13 @@ describe("CustomersList · H4 Waitlist cohort tab", () => {
   });
 
   it("wires the Waitlist count into the counts state", () => {
-    // Initial state includes a ``waitlist`` slot.
+    // Phase Hygiene B · Feb-2026 — the counts state carries more
+    // buckets than the H4 spec (``muted`` + ``all`` were folded in),
+    // and the initializer key order is not part of the contract.
+    // Relax the regex to just require ``waitlist: null`` inside the
+    // useState({...}) init block.
     expect(SRC).toMatch(
-      /useState\(\{\s*active:\s*null,\s*inactive:\s*null,\s*waitlist:\s*null\s*\}\)/,
+      /useState\(\{[^)]*waitlist:\s*null[^)]*\}\)/,
     );
     // TAB_DEFS reads counts.waitlist for the badge.
     expect(SRC).toMatch(

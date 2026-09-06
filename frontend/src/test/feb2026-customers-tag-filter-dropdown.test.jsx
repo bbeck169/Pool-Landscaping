@@ -138,7 +138,15 @@ describe("CustomersList wiring", () => {
   it("URL sync effect still lives in the page (unchanged surface)", () => {
     // The Feb-2026 URL sync effect + AND filter live here, not in
     // the dropdown component.
+    //
+    // Phase Hygiene B · Feb-2026 — the tag filter was moved to the
+    // server (``selectedTags`` are serialized into ``tags=`` query
+    // params and the backend applies the AND semantics). The
+    // page-level ``rowTags = new Set(r.tags || [])`` client-side
+    // filter is gone. The remaining page-owned contract is the URL
+    // sync effect + the ``params.append("tags", t)`` fanout — both
+    // still live in this file and are asserted below.
     expect(list).toContain('p.set("tags", arr.join(","));');
-    expect(list).toMatch(/const rowTags = new Set\(r\.tags \|\| \[\]\)/);
+    expect(list).toMatch(/params\.append\(\s*"tags",\s*t\s*\)/);
   });
 });

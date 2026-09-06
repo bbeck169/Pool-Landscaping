@@ -41,6 +41,7 @@ import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 import { topNavForRole } from "@/nav/topNavRegistry";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAuth } from "@/auth";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { colors, gradients } from "@/theme";
 import UniversalMenu from "@/layouts/UniversalMenu";
 import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
@@ -332,26 +333,14 @@ export default function AdminTopBar() {
   // pure CSS media-query gate via Tailwind's ``md:`` breakpoint (768px
   // threshold) — both branches are always in the DOM, CSS decides
   // which one is visible. No hydration timing, no event-listener race,
-  // works in every real browser + jsdom (where the width is exposed
-  // via ``matchMedia``).  A ``useSyncExternalStore`` mirror on
-  // ``matchMedia("(max-width: 767.98px)")`` is retained so vitest
-  // snapshots can still assert the branch selection deterministically.
-  const isNarrow = React.useSyncExternalStore(
-    (cb) => {
-      if (typeof window === "undefined" || !window.matchMedia) return () => {};
-      const mq = window.matchMedia("(max-width: 767.98px)");
-      if (mq.addEventListener) mq.addEventListener("change", cb);
-      else mq.addListener(cb);
-      return () => {
-        if (mq.removeEventListener) mq.removeEventListener("change", cb);
-        else mq.removeListener(cb);
-      };
-    },
-    () => (typeof window !== "undefined" && window.matchMedia
-      ? window.matchMedia("(max-width: 767.98px)").matches
-      : false),
-    () => false,
-  );
+  // works in every real browser + jsdom.
+  //
+  // Phase Hygiene B · Feb-2026 — the inline ``useSyncExternalStore``
+  // subscription was extracted into ``useIsNarrow(breakpoint)`` and
+  // reused across the app (see ``@/hooks/useIsNarrow``). Retain the
+  // ``data-narrow`` attribute so vitest snapshots + integration
+  // tests can still lock the branch selection deterministically.
+  const isNarrow = useIsNarrow(768);
 
   if (!_role) return null;
 

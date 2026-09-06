@@ -98,8 +98,12 @@ describe("Mobile RecurringJobs · form fields render with stable testIDs", () =>
 
   it("frequency ChipRow exposes weekly/biweekly/monthly options", () => {
     // FREQ_OPTS drives the frequency chip labels.
+    // Phase Hygiene B · Feb-2026 — the option set was extended to include
+    // ``quarterly`` + ``semi_annual`` for lower-cadence recurring jobs.
+    // The contract is that the three K73.5 options are still present;
+    // additional options are additive and don't break the sheet.
     expect(src).toMatch(
-      /FREQ_OPTS:\s*RecurringJob\["frequency"\]\[\]\s*=\s*\["weekly",\s*"biweekly",\s*"monthly"\]/,
+      /FREQ_OPTS:\s*RecurringJob\["frequency"\]\[\]\s*=\s*\[\s*"weekly",\s*"biweekly",\s*"monthly"/,
     );
   });
 

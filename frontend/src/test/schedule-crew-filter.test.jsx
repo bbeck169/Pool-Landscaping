@@ -22,7 +22,11 @@ describe("CalendarSchedule · F6a crew filter", () => {
   });
 
   it("fetches /crews alongside /technicians on load", () => {
-    expect(SRC).toMatch(/api\.get\("\/crews"\)/);
+    // Phase Hygiene B · Feb-2026 — schedule loader now passes an explicit
+    // timeout (``SCHEDULE_LOAD_TIMEOUT_MS``) as the second arg to
+    // ``api.get``.  Relax the regex to accept an optional trailing arg so
+    // this contract test doesn't fail on a purely mechanical hardening.
+    expect(SRC).toMatch(/api\.get\("\/crews"(?:\s*,[^)]*)?\)/);
   });
 
   it("passes crew_id into the schedule /jobs fetch when set", () => {
