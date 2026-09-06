@@ -16580,3 +16580,61 @@ adjudication).
 **Blocked / user-owned:** K72.b apology dispatch (script staged
 at `/app/scripts/k72_apology_send.py`, user will run manually
 in prod).
+
+---
+
+## Phase R1.c — Financial Suite PDF Exports + k50-Theming Fix (SHIPPED · Feb 2026)
+
+**Delivered:**
+- ReportLab-based branded PDF exports for every R1 metric via
+  `GET /api/reports/kpi/{metric_key}/export.pdf` (7 metric keys
+  covered including R1.c bonus: `pnl_by_period` scalar plus 6
+  grouped). Shared template with tenant logo, filter breadcrumb,
+  paginated LongTable body, and generated-timestamp footer.
+- SSRF-guarded logo fetch — allow-listed hosts only, silent
+  fallback to a text wordmark.
+- "Download PDF" button on every Financial-tab subsection
+  (PnL, Cash Flow, AR Aging, Revenue by Service Type, Unpaid
+  Invoices) via a new `downloadServerPdf` helper that preserves
+  the JWT session across the binary download.
+- k50-theming quarantines cleared under K64 canonical — active
+  nav state is `colors.nav.bgActiveNavy` in both `AppLayout`
+  QuickNavRail and `AdminTopBar` CategoryDropdown. K52 gradient
+  pattern regression-locked out.
+
+**Tests (all green):** 13 new pytest + 5 new vitest + 47 R0/R0.1
+regression + 56 R1.a regression + 2 R1.b regression = **118
+backend + 162 frontend, 0 fail, 0 skipped.**
+
+**⚠ K73 SECURITY AUDIT FINDING (READ-ONLY):**
+- `GET /api/jobs?limit=200` as tech `mike@aquaterra.com` returns
+  36 jobs — only 1 is his, **35 leak other techs' customer
+  names + addresses** (e.g., "Jennifer Carson, 12 Vistancia
+  Blvd, Peoria, AZ").
+- Tenant scoping works; tech-scope filter is missing.
+- **K73 is now P0 security fix, promoted ahead of R2.**
+- Audit was READ-ONLY — no K73 code changes shipped in R1.c.
+
+**Files of record:**
+- `backend/services/reporting/exports/pdf_export.py`
+- `backend/routers/reports_kpi.py` (PDF endpoint)
+- `backend/tests/test_r1_c_pdf_exports.py`
+- `frontend/src/components/reports/downloadServerPdf.js`
+- `frontend/src/test/reports-pdf-download-buttons.test.jsx`
+- `frontend/src/components/reports/{PnlPanel,CashFlowPanel,ArAgingPanel,RevenueByServiceTypePanel,UnpaidInvoicesPanel}.jsx` (PDF button wiring)
+- `frontend/src/test/k50-theming.test.js` (K64 canonical, quarantines cleared)
+- `memory/PHASE_R1_C_PDF_EXPORTS.md`
+
+**Next actions (P0 in order):**
+1. **K73** — Schedule role gating / tech-scope enforcement on
+   `/api/jobs` and Schedule map endpoints. **Promoted P0
+   security fix per §5 of the R1.c ship report.**
+2. R2 → R7 Financial Suites (sequential).
+3. K63.test-dispatch per-recipient button (P2).
+
+**Held / user-owned:**
+- K72.b apology dispatch — user will run
+  `/app/scripts/k72_apology_send.py` manually in prod.
+- Reminder cadence — deferred post-R7 per user direction.
+- GHL-parity Automations rebuild — user's 5 scoping answers
+  still open.

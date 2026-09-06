@@ -230,6 +230,8 @@ from fastapi.responses import Response  # noqa: E402
 from services.reporting.exports import (  # noqa: E402
     render_scalar_csv,
     render_rows_csv,
+    render_scalar_pdf,
+    render_rows_pdf,
 )
 
 
@@ -377,3 +379,131 @@ async def kpi_csv_export(
             "Cache-Control": "no-store",
         },
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+# Phase R1.c · Feb-2026 — PDF export endpoint.
+#
+# Mirrors ``/reports/kpi/{key}/export.csv`` for downloadable
+# branded PDFs. Reuses the same metric registry + column order so
+# every metric (R0 → R7) gets a PDF export for free.
+# ═══════════════════════════════════════════════════════════════
+
+
+def _resolve_tenant_logo(tenant: dict) -> Optional[str]:
+    """Pull a display-worthy logo URL for the branded PDF header.
+    Mirrors the resolution order used by
+    ``services.auto_visit_email`` / ``services.price_increase_email``
+    so tenant overrides win over the shared brand mark."""
+    if not tenant:
+        return None
+    if tenant.get("logo_url"):
+        return tenant["logo_url"]
+    card = ((tenant.get("settings") or {}).get("business_card") or {})
+    if card.get("logo_url"):
+        return card["logo_url"]
+    return "https://app.plofv.com/logo-full.png"
+
+
+@router.get("/reports/kpi/{metric_key}/export.pdf")
+async def kpi_pdf_export(
+    metric_key: str,
+    period: Optional[str] = Query("mtd"),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    lens: Optional[str] = Query("invoiced"),
+    service_type: Optional[str] = Query(None),
+    tech_id: Optional[str] = Query(None),
+    limit: Optional[int] = Query(None, ge=1, le=10000),
+    offset: Optional[int] = Query(0, ge=0),
+    include_prior: Optional[bool] = Query(True),
+    user: dict = Depends(require_report_reader),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Stream the metric's current envelope as a branded PDF.
+    Bypasses the response cache (fresh read every time)."""
+    metric: Metric = get_metric(metric_key)
+    p = resolve_period(period, start, end)
+    tenant_id = tenant["id"]
+    tenant_name = tenant.get("name") or tenant.get("slug") or tenant_id
+    tenant_logo = _resolve_tenant_logo(tenant)
+    engine = AggregationEngine(db, tenant_id)
+
+    filters_applied = {
+        "period": p.key,
+        "start": p.start,
+        "end": p.end,
+    }
+
+    if metric.is_grouped:
+        if lens not in ("invoiced", "collected"):
+            raise HTTPException(400,
+                                "lens must be 'invoiced' or 'collected'")
+        filters = {
+            "lens": lens,
+            "service_type": (service_type or "").strip() or None,
+            "tech_id": (tech_id or "").strip() or None,
+            "limit": limit,
+            "offset": offset or 0,
+            "include_prior": bool(include_prior),
+        }
+        try:
+            grouped = await metric.compute_grouped(engine, p, filters)
+        except HTTPException:
+            raise
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("[reports.pdf] grouped metric %s failed: %s",
+                           metric.key, exc)
+            raise HTTPException(500,
+                                f"metric compute failed: {metric.key}") from exc
+        rows = grouped.get("rows") or []
+        columns = _csv_columns_for(metric.key, rows)
+        filters_applied.update({k: v for k, v in filters.items()
+                                if v not in (None, "", 0, False)})
+        body = render_rows_pdf(
+            metric_label=metric.label,
+            period_label=p.label,
+            period_start=p.start,
+            period_end=p.end,
+            columns=columns,
+            rows=rows,
+            total=float(grouped.get("total") or 0.0),
+            tenant_name=tenant_name,
+            tenant_logo_url=tenant_logo,
+            filters_applied=filters_applied,
+        )
+    else:
+        try:
+            raw = await metric.compute(engine, p)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("[reports.pdf] scalar metric %s failed: %s",
+                           metric.key, exc)
+            raise HTTPException(500,
+                                f"metric compute failed: {metric.key}") from exc
+        body = render_scalar_pdf(
+            metric_label=metric.label,
+            period_label=p.label,
+            period_start=p.start,
+            period_end=p.end,
+            value=float(raw.get("value") or 0.0),
+            prior_value=float(raw.get("prior_value") or 0.0),
+            delta_pct=raw.get("delta_pct"),
+            sparkline=raw.get("sparkline"),
+            tenant_name=tenant_name,
+            tenant_logo_url=tenant_logo,
+            filters_applied=filters_applied,
+            format_hint=getattr(metric, "format", "currency"),
+        )
+
+    safe_key = metric.key.replace("_", "-")
+    filename = f"{safe_key}__{p.key}__{p.start}_{p.end}.pdf"
+    return Response(
+        content=body,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+

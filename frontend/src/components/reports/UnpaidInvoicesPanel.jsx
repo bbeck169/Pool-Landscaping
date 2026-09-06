@@ -3,8 +3,10 @@ import { Link } from "react-router-dom";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import { UnpaidInvoiceReminderButton } from "./UnpaidInvoiceReminderButton";
 import { downloadCsv } from "./downloadCsv";
+import { downloadServerPdf } from "./downloadServerPdf";
 import { formatCurrency } from "./formatters";
 
 function buildQuery(f) {
@@ -41,6 +43,18 @@ export function UnpaidInvoicesPanel({
   const [state, setState] = React.useState({ loading: true, rows: [] });
 
   const qs = buildQuery({ ...filters, customer_id: customerFocusId });
+
+  const [pdfBusy, setPdfBusy] = React.useState(false);
+  const downloadPdf = async () => {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    try { await downloadServerPdf(
+      `/reports/kpi/unpaid_invoices/export.pdf?${qs}&limit=500`,
+      `unpaid-invoices-${filters.period || "mtd"}.pdf`,
+    ); }
+    catch (e) { toast.error(e?.message || "PDF download failed"); }
+    finally { setPdfBusy(false); }
+  };
 
   const refetch = React.useCallback(async () => {
     setState({ loading: true, rows: state.rows || [] });
@@ -117,6 +131,14 @@ export function UnpaidInvoicesPanel({
             data-testid={`${testid}-export`}
           >
             Export CSV
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={downloadPdf}
+            disabled={pdfBusy}
+            data-testid={`${testid}-export-pdf`}
+          >
+            {pdfBusy ? "Preparing…" : "Download PDF"}
           </Button>
         </div>
       </header>

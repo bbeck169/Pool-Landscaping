@@ -59,36 +59,30 @@ describe("K50 · Slice A — Navy sidebar + top main menu", () => {
     expect(APP_LAYOUT).not.toMatch(/background:\s*\n?\s*"linear-gradient\(180deg,\s*rgba\(2,\s*132,\s*199,\s*0\.06\)/);
   });
 
-  // R1.b · Feb-2026 QUARANTINE:
-  //   K52 Slice D asserted an ``isActive ? colors.gradient.css :
-  //   "transparent"`` active state for QuickNavRail. A later phase
-  //   (K70-family theming pass) intentionally moved to
-  //   ``colors.nav.bgActiveNavy`` (solid lighter-navy) — see
-  //   src/layouts/AppLayout.jsx:274. The gradient-active pattern is
-  //   the older design. Rather than distort code to match a stale
-  //   test, we quarantine here with a TODO for the design owner to
-  //   adjudicate: keep the K70-family solid-navy active state
-  //   (delete the assertion), or roll back to gradient (restore the
-  //   test).
-  // TODO(R1.b flake-sweep): design owner to pick one; then either
-  //   delete this skip or restore the gradient in AppLayout.
-  it.skip("QuickNavRail active state — Phase K52 Slice D · Feb-2026 promoted from white pill to signature gradient", () => {
-    // K52 Slice D · Feb-2026 — active state now paints
-    // ``colors.gradient.css`` (emerald→sky) instead of the K50
-    // ``colors.nav.bgActive`` white pill.  Idle stays transparent
-    // (parent <aside> navy shows through); icon/label still render
-    // in white via ``colors.nav.fg``.
-    expect(APP_LAYOUT).toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css\s*:\s*"transparent"/);
-    expect(APP_LAYOUT).toMatch(/color:\s*isActive\s*\?\s*colors\.gradient\.fg\s*:\s*colors\.nav\.fg/);
-    // Regression guard — no lingering ``sky-50`` / ``sky-600`` hover
-    // classes on rail items.
+  // R1.c · Feb-2026 — K64 is canonical: user confirmed the
+  // ``colors.nav.bgActiveNavy`` solid-navy active state replaces
+  // the K52 Slice D gradient pattern. Updated to enforce the K64
+  // shape and to keep the K52 gradient regression guard so the
+  // gradient can never sneak back in on this surface.
+  it("QuickNavRail active state — K64 canonical: solid-navy active pill (was gradient in K52 Slice D)", () => {
+    // K64 canonical active state: ``colors.nav.bgActiveNavy``
+    // solid navy. Idle stays transparent so the parent <aside>
+    // navy shows through; icon/label render in white via
+    // ``colors.nav.fg``.
+    expect(APP_LAYOUT).toMatch(/background:\s*isActive\s*\?\s*colors\.nav\.bgActiveNavy\s*:\s*"transparent"/);
+    // Regression guard — the K52 gradient MUST NOT reappear on
+    // this surface (design owner adjudication · R1.c).
+    expect(APP_LAYOUT).not.toMatch(/background:\s*isActive\s*\?\s*colors\.gradient\.css/);
+    // Regression guard — no lingering ``sky-50`` / ``sky-600``
+    // hover classes on rail items.
     const railBody = APP_LAYOUT.split("function QuickNavRail(")[1].split("\nfunction ")[0];
     expect(railBody).not.toMatch(/hover:bg-sky-50/);
     expect(railBody).not.toMatch(/group-hover:text-sky-600/);
-    // Regression guard — K50 white-pill pattern MUST NOT reappear on
-    // the rail; the ``colors.nav.bgActive`` token is still exported
-    // but is reserved for the shadcn DropdownMenu active row.
-    expect(railBody).not.toMatch(/isActive\s*\?\s*colors\.nav\.bgActive/);
+    // Regression guard — K50 white-pill pattern MUST NOT
+    // reappear on the rail; the ``colors.nav.bgActive`` token is
+    // still exported but reserved for the shadcn DropdownMenu
+    // active row.
+    expect(railBody).not.toMatch(/isActive\s*\?\s*colors\.nav\.bgActive[^N]/);
   });
 
   it("AdminTopBar wrapper renders on the ``nav.bg`` navy", () => {
@@ -97,23 +91,22 @@ describe("K50 · Slice A — Navy sidebar + top main menu", () => {
     expect(TOP_BAR).not.toMatch(/backgroundColor:\s*"rgba\(2,\s*132,\s*199,\s*0\.045\)"/);
   });
 
-  // R1.b · Feb-2026 QUARANTINE — same K70-family design pass moved
-  // the CategoryDropdown active state from ``colors.gradient.css``
-  // (K52 Slice D expectation) to ``colors.nav.bgActiveNavy`` in
-  // src/layouts/AdminTopBar.jsx:117. Design-owner adjudication
-  // pending — see the sibling skip above.
-  it.skip("CategoryDropdown triggers — Phase K52 Slice D · Feb-2026: active state is signature gradient (was white pill)", () => {
-    // K52 Slice D · Feb-2026 — the active category trigger now
-    // paints ``colors.gradient.css``.  Idle color stays white via
-    // ``colors.nav.fg`` (the K50 ``fgActive`` swap is retired on
-    // the trigger — gradient supplies both bg AND fg here).
+  // R1.c · Feb-2026 — K64 canonical for the CategoryDropdown too.
+  it("CategoryDropdown triggers — K64 canonical: solid-navy active state (was gradient in K52 Slice D)", () => {
+    // K64 canonical: the active category trigger paints
+    // ``colors.nav.bgActiveNavy``. Idle color stays white via
+    // ``colors.nav.fg``.
     expect(TOP_BAR).toMatch(/color:\s*colors\.nav\.fg,/);
-    expect(TOP_BAR).toMatch(/background:\s*active\s*\?\s*colors\.gradient\.css\s*:\s*undefined/);
-    // Regression guard — no more ``hover:bg-sky-50`` on the trigger,
-    // and no lingering K50 ``bgActive`` white-pill fallback.
+    expect(TOP_BAR).toMatch(/background:\s*active\s*\?\s*colors\.nav\.bgActiveNavy/);
+    // Regression guard — the K52 gradient MUST NOT reappear on
+    // this surface.
+    expect(TOP_BAR).not.toMatch(/background:\s*active\s*\?\s*colors\.gradient\.css/);
+    // Regression guard — no more ``hover:bg-sky-50`` on the
+    // trigger, and no lingering K50 ``bgActive`` white-pill
+    // fallback.
     const catBody = TOP_BAR.split("function CategoryDropdown(")[1].split("\nfunction ")[0];
     expect(catBody).not.toMatch(/hover:bg-sky-50/);
-    expect(catBody).not.toMatch(/backgroundColor:\s*active\s*\?\s*colors\.nav\.bgActive/);
+    expect(catBody).not.toMatch(/backgroundColor:\s*active\s*\?\s*colors\.nav\.bgActive[^N]/);
   });
 });
 

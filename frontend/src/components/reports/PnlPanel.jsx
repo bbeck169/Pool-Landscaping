@@ -2,8 +2,10 @@ import React from "react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import { KpiCard } from "./KpiCard";
 import { downloadCsv } from "./downloadCsv";
+import { downloadServerPdf } from "./downloadServerPdf";
 import { formatCurrency, formatPercent } from "./formatters";
 
 /**
@@ -37,6 +39,17 @@ export function PnlPanel({ filters, testid = "pnl-panel" }) {
   const [rows, setRows] = React.useState({ loading: true });
 
   const qs = buildQuery(filters);
+
+  const pdfPath = `/reports/kpi/pnl_line_items/export.pdf?${qs}`;
+  const pdfFile = `pnl-${filters.period || "mtd"}.pdf`;
+  const [pdfBusy, setPdfBusy] = React.useState(false);
+  const downloadPdf = async () => {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    try { await downloadServerPdf(pdfPath, pdfFile); }
+    catch (e) { toast.error(e?.message || "PDF download failed"); }
+    finally { setPdfBusy(false); }
+  };
 
   React.useEffect(() => {
     let live = true;
@@ -82,6 +95,14 @@ export function PnlPanel({ filters, testid = "pnl-panel" }) {
           data-testid={`${testid}-export`}
         >
           Export CSV
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={downloadPdf}
+          disabled={pdfBusy}
+          data-testid={`${testid}-export-pdf`}
+        >
+          {pdfBusy ? "Preparing…" : "Download PDF"}
         </Button>
       </header>
 
