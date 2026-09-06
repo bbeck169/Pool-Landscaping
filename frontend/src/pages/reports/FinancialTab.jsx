@@ -155,8 +155,12 @@ export default function FinancialTab() {
         ) : null}
       </div>
 
-      <RevenueByCustomerPanel filters={filters} params={params} setParams={setParams} />
-      <RevenueByCityPanel filters={filters} params={params} setParams={setParams} />
+      <div id="revenue-by-customer">
+        <RevenueByCustomerPanel filters={filters} params={params} setParams={setParams} />
+      </div>
+      <div id="revenue-by-city">
+        <RevenueByCityPanel filters={filters} params={params} setParams={setParams} />
+      </div>
     </div>
   );
 }

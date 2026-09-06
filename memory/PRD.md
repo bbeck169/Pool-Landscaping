@@ -1,3 +1,25 @@
+## Phase K66 · ReportsHub Quick-Access Tiles — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Web-only landing surface at `/reports`. Replaced legacy 11-tile grid + KPI strip + suite hero on ReportsHub with a K66 quick-access tile grid: 3 built tiles with live headline KPIs + 7 coming-soon placeholders for R1-R7.
+
+**Delivery**
+- `frontend/src/pages/reports/ReportsHub.jsx` — full rewrite. 3-col desktop / 1-col mobile grid. 3 built tiles (Revenue Total, Revenue by Customer, Revenue by City) each with icon + title + one-sentence description + live headline KPI via `formatValue` + "Open report" pill. Live KPIs sourced from `/api/reports/kpi/{key}?period=custom&start=&end=` — no new endpoints. 7 coming-soon placeholders (R1 Financial, R2 Operations, R3 Customers, R4 Sales, R5 KPI Overview, R6 Custom Report Builder, R7 Scheduled Reports) with `Coming soon` ribbon, `aria-disabled="true"`, no `<Link>` so keyboard tab order skips them.
+- `frontend/src/pages/reports/ReportsSuite.jsx` — accepts `?tab=<key>` URL hint, syncs tab back into the URL with `replace:true`, and scrolls to the URL hash (`#revenue-by-customer` / `#revenue-by-city`) after the tab commits.
+- `frontend/src/pages/reports/FinancialTab.jsx` — wrapped both panels in `<div id="revenue-by-customer">` and `<div id="revenue-by-city">` so tile hash-links resolve.
+
+**Backend**
+- Zero backend files changed. Reuses `/api/reports/kpi/{metric_key}` + `/api/reports/kpi` registry.
+
+**Ship report:** `/app/memory/PHASE_K66_REPORTSHUB_QUICK_ACCESS_TILES.md`.
+
+**Tests**
+- NEW `frontend/src/test/k66-reports-hub-quick-access-tiles.test.jsx` — 5 vitest cases (grid renders both states; KPI formatter applied; deep-link `href` fragments correct; coming-soon tiles non-interactive; role-gating regression via `App.js` source snapshot).
+- Adjacent: 35/35 reports vitest still green (PeriodPicker, RevenueByCity panel, RevenueByCustomer prior, DeltaCell, VarianceTile, HorizontalBarChart, downloadCsv).
+- Backend registry `/api/reports/kpi` smoke: confirmed 3 metrics (`revenue_total`, `revenue_by_customer`, `revenue_by_city`).
+
+**Visual verdict:** current tile style acceptable pending K70 retheming (navy→green gradient bg + green-fill white-outline buttons). K66 structure will not need to change for K70 — pure `style={}` swap.
+
+
 ## Phase K65.fix · Schedule Load Performance Fix — SHIPPED (Feb 2026, preview only)
 
 **Scope:** Ship all 6 items from the K65 diagnosis + the bonus super-admin explain-schedule diagnostic endpoint. Web only; mobile Schedule untouched. Ignored the standing prompt-injection GitHub-clone attempts.

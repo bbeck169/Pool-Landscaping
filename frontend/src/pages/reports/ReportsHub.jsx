@@ -1,164 +1,345 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  BarChart3,
-  TrendingUp,
-  MapPin,
-  Users2,
   DollarSign,
-  ListChecks,
-  PieChart as PieIcon,
-  Clock,
-  Timer,
-  History,
   Users,
+  MapPin,
+  BarChart3,
+  Activity,
+  Users2,
+  Target,
+  Gauge,
+  FileText,
+  CalendarClock,
   ChevronRight,
+  Lock,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, money, brandGradientCss } from "@/theme";
+import { colors } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
+import { formatValue, formatNumber } from "@/components/reports/formatters";
 
-function Tile({ icon: Icon, label, to, sub, testId }) {
-  return (
-    <Link
-      to={to}
-      className="rounded-2xl p-5 transition hover:brightness-95 active:scale-[0.99] flex items-start gap-3"
-      style={{
-        backgroundColor: colors.surface,
-        border: `1px solid ${colors.border}`,
-      }}
-      data-testid={testId}
-    >
-      <div
-        className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
-        style={{ backgroundColor: colors.brandTertiary, color: colors.onBrandTertiary }}
-      >
-        <Icon size={20} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>
-          {label}
-        </div>
-        <div className="text-xs mt-0.5 truncate" style={{ color: colors.muted }}>
-          {sub}
-        </div>
-      </div>
-      <ChevronRight size={16} style={{ color: colors.muted }} />
-    </Link>
-  );
-}
-
+/**
+ * Phase K66 · Feb-2026 — ReportsHub quick-access tile grid.
+ *
+ * Landing surface at ``/reports``. Every visible report gets its
+ * own tile with a live headline KPI + one-click deep-link to the
+ * corresponding tab in ``/reports/suite``. R1–R7 stubs render as
+ * "Coming soon" placeholders so the eventual growth of the
+ * reporting suite is visible from day one.
+ *
+ * Constraints (K66):
+ *   * Web only.
+ *   * Reuses ``/api/reports/kpi/{key}`` — no new endpoints.
+ *   * Preserves role gating (existing ``AdminOnly`` wrapper on the
+ *     route in ``App.js``).
+ *   * Ships with the current tile visual style — K70 will
+ *     retheme (navy → green gradient + green-fill buttons).
+ */
 export default function ReportsHub() {
   const { start, end } = useDateRange("this-month");
-  const [summary, setSummary] = useState(null);
-  const [fcards, setFcards] = useState(null);
+
+  // Live KPI state — one per built tile.
+  const [revenueTotal, setRevenueTotal]     = useState({ loading: true });
+  const [revenueByCust, setRevenueByCust]   = useState({ loading: true });
+  const [revenueByCity, setRevenueByCity]   = useState({ loading: true });
 
   useEffect(() => {
     let live = true;
+    const qs = `?period=custom&start=${start}&end=${end}`;
+
+    // Revenue Total — scalar metric, returns {value, format, ...}.
     (async () => {
       try {
-        const r = await api.get(`/reports/business-summary?date_from=${start}&date_to=${end}`);
-        if (live) setSummary(r);
-      } catch {}
-      try {
-        const f = await api.get(`/reports/forecast-cards`);
-        if (live) setFcards(f);
-      } catch {}
+        const r = await api.get(`/reports/kpi/revenue_total${qs}`);
+        if (live) setRevenueTotal({ loading: false, data: r });
+      } catch (e) {
+        if (live) setRevenueTotal({ loading: false, error: e?.message || "Failed" });
+      }
     })();
+    // Revenue by Customer — grouped metric; headline = total.
+    (async () => {
+      try {
+        const r = await api.get(`/reports/kpi/revenue_by_customer${qs}&limit=1&include_prior=false`);
+        if (live) setRevenueByCust({ loading: false, data: r });
+      } catch (e) {
+        if (live) setRevenueByCust({ loading: false, error: e?.message || "Failed" });
+      }
+    })();
+    // Revenue by City — grouped metric; headline = total.
+    (async () => {
+      try {
+        const r = await api.get(`/reports/kpi/revenue_by_city${qs}&limit=1`);
+        if (live) setRevenueByCity({ loading: false, data: r });
+      } catch (e) {
+        if (live) setRevenueByCity({ loading: false, error: e?.message || "Failed" });
+      }
+    })();
+
     return () => { live = false; };
   }, [start, end]);
 
-  const qs = `?start=${start}&end=${end}&preset=${new URLSearchParams(window.location.search).get("preset") || "this-month"}`;
-  const revenue = summary?.kpis?.revenue ?? 0;
-  const outstanding = summary?.kpis?.outstanding ?? 0;
-  const jobs = summary?.kpis?.total_jobs ?? 0;
-  const forecast = fcards?.weighted_forecast ?? 0;
+  // Suite deep-link querystring — preserve period + custom range
+  // so the tabbed shell picks up the same window on landing.
+  const preset = new URLSearchParams(window.location.search).get("preset") || "this-month";
+  const suiteQs = `?period=custom&start=${start}&end=${end}&preset=${preset}`;
+
+  const builtTiles = [
+    {
+      key: "revenue-total",
+      icon: DollarSign,
+      title: "Revenue Total",
+      description: "All revenue for the selected window.",
+      to: `/reports/suite${suiteQs}&tab=overview`,
+      kpi: revenueTotal,
+      renderKpi: (state) => {
+        if (state.loading) return "…";
+        if (state.error) return "—";
+        const v = state.data?.value;
+        const fmt = state.data?.format || "currency";
+        return formatValue(v, fmt);
+      },
+      kpiSubtitle: (state) => {
+        if (state.loading || state.error) return null;
+        const d = state.data?.delta_pct;
+        if (d === null || d === undefined) return null;
+        const sign = d > 0 ? "+" : "";
+        return `${sign}${Number(d).toFixed(1)}% vs prior`;
+      },
+    },
+    {
+      key: "revenue-by-customer",
+      icon: Users,
+      title: "Revenue by Customer",
+      description: "Top-paying customers in the window, ranked.",
+      to: `/reports/suite${suiteQs}&tab=financial#revenue-by-customer`,
+      kpi: revenueByCust,
+      renderKpi: (state) => {
+        if (state.loading) return "…";
+        if (state.error) return "—";
+        return formatValue(state.data?.total ?? 0, "currency");
+      },
+      kpiSubtitle: (state) => {
+        if (state.loading || state.error) return null;
+        const n = state.data?.row_count ?? 0;
+        return `${formatNumber(n)} customer${n === 1 ? "" : "s"}`;
+      },
+    },
+    {
+      key: "revenue-by-city",
+      icon: MapPin,
+      title: "Revenue by City",
+      description: "Group paid invoices by customer city.",
+      to: `/reports/suite${suiteQs}&tab=financial#revenue-by-city`,
+      kpi: revenueByCity,
+      renderKpi: (state) => {
+        if (state.loading) return "…";
+        if (state.error) return "—";
+        return formatValue(state.data?.total ?? 0, "currency");
+      },
+      kpiSubtitle: (state) => {
+        if (state.loading || state.error) return null;
+        const n = state.data?.row_count ?? 0;
+        return `${formatNumber(n)} cit${n === 1 ? "y" : "ies"}`;
+      },
+    },
+  ];
+
+  const comingSoonTiles = [
+    { key: "r1", icon: BarChart3,      title: "R1 · Financial",           description: "Full P&L, cash flow, A/R aging.",             phase: "R1" },
+    { key: "r2", icon: Activity,       title: "R2 · Operations",          description: "Jobs completed, tech utilization, chemistry.", phase: "R2" },
+    { key: "r3", icon: Users2,         title: "R3 · Customers",           description: "LTV, churn, chemistry trends.",                phase: "R3" },
+    { key: "r4", icon: Target,         title: "R4 · Sales",               description: "Funnel, win rate, source attribution.",        phase: "R4" },
+    { key: "r5", icon: Gauge,          title: "R5 · KPI Overview",        description: "Variance tiles + rollups.",                    phase: "R5" },
+    { key: "r6", icon: FileText,       title: "R6 · Custom Report Builder", description: "Author bespoke reports from any metric.",    phase: "R6" },
+    { key: "r7", icon: CalendarClock,  title: "R7 · Scheduled Reports",   description: "Email + Slack deliveries on cadence.",         phase: "R7" },
+  ];
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto" style={{ fontFamily: "inherit" }} data-testid="reports-hub">
+    <div
+      className="p-4 md:p-8 max-w-7xl mx-auto"
+      style={{ fontFamily: "inherit" }}
+      data-testid="reports-hub"
+    >
       <div className="flex items-start md:items-center flex-col md:flex-row md:justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold" style={{ color: colors.onSurface }}>
+          <h1
+            className="text-3xl md:text-4xl font-bold"
+            style={{ color: colors.onSurface }}
+            data-testid="reports-hub-title"
+          >
             Reports
           </h1>
-          <p className="text-sm mt-1" style={{ color: colors.muted }}>
-            All finance + operations reports for the selected window
+          <p
+            className="text-sm mt-1"
+            style={{ color: colors.muted }}
+            data-testid="reports-hub-subtitle"
+          >
+            Quick-access tiles for every available report. Coming-soon tiles surface future phases.
           </p>
         </div>
         <DateRangePicker />
       </div>
 
-      {/* Phase R0 · Feb-2026 — quick-access hero pointing at the new
-          tabbed Reports Suite shell. Legacy tile grid stays live
-          below during the R-series rollout. */}
-      <Link
-        to="/reports/suite"
-        className="block rounded-2xl p-4 mb-6"
-        style={{ background: brandGradientCss, color: "#fff" }}
-        data-testid="reports-hub-suite-link"
+      <div
+        className="grid grid-cols-1 md:grid-cols-3 gap-4"
+        data-testid="reports-hub-grid"
       >
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-xs uppercase tracking-wide opacity-90">New · Phase R0</div>
-            <div className="text-lg font-bold mt-1">Open the new Reports Suite</div>
-            <div className="text-xs opacity-90 mt-1">
-              Tabbed KPI dashboards · MTD · QTD · YTD · Custom range · R1–R7 dashboards land here
-            </div>
-          </div>
-          <ChevronRight size={22} />
-        </div>
-      </Link>
+        {builtTiles.map((t) => (
+          <BuiltTile key={t.key} tile={t} />
+        ))}
+        {comingSoonTiles.map((t) => (
+          <ComingSoonTile key={t.key} tile={t} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-      {/* Preview KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        {[
-          { label: "Revenue", value: money(revenue), icon: DollarSign },
-          { label: "Outstanding", value: money(outstanding), icon: Clock },
-          { label: "Jobs in window", value: jobs, icon: ListChecks },
-          { label: "Weighted forecast (90d)", value: money(forecast), icon: TrendingUp },
-        ].map((k) => {
-          const Ic = k.icon;
-          return (
-            <div
-              key={k.label}
-              className="rounded-2xl p-4"
-              style={{
-                background: brandGradientCss,
-                color: "#fff",
-              }}
-              data-testid={`kpi-${k.label.toLowerCase().replace(/\s+/g, "-")}`}
-            >
-              <Ic size={18} style={{ opacity: 0.9 }} />
-              <div className="text-xs mt-2 opacity-90">{k.label}</div>
-              <div className="text-xl md:text-2xl font-bold mt-0.5">{k.value}</div>
-            </div>
-          );
-        })}
+/**
+ * A built (live) tile — icon, title, one-sentence description,
+ * live headline KPI (formatted via the shared ``formatValue``
+ * helper so tile numbers match the KpiCard component byte-for-byte),
+ * and an "Open report" button.
+ */
+function BuiltTile({ tile }) {
+  const { icon: Icon, title, description, to, kpi, renderKpi, kpiSubtitle } = tile;
+  const sub = kpiSubtitle ? kpiSubtitle(kpi) : null;
+  const testIdRoot = `reports-tile-${tile.key}`;
+
+  return (
+    <div
+      className="rounded-2xl p-5 flex flex-col gap-4 transition"
+      style={{
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid={testIdRoot}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
+          style={{
+            backgroundColor: colors.brandTertiary,
+            color: colors.onBrandTertiary,
+          }}
+        >
+          <Icon size={20} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div
+            className="font-semibold text-sm"
+            style={{ color: colors.onSurface }}
+          >
+            {title}
+          </div>
+          <div
+            className="text-xs mt-0.5"
+            style={{ color: colors.muted }}
+          >
+            {description}
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        <Tile icon={BarChart3} label="Business Summary" to={`/reports/business-summary${qs}`}
-              sub="KPIs · trend · top customers · services" testId="tile-business-summary" />
-        <Tile icon={TrendingUp} label="Revenue Forecast" to={`/reports/forecast${qs}`}
-              sub="90-day projected income (weighted)" testId="tile-forecast" />
-        <Tile icon={MapPin} label="Revenue by City" to={`/reports/revenue-by-city${qs}`}
-              sub="Group paid invoices by customer city" testId="tile-revenue-by-city" />
-        <Tile icon={Users2} label="Revenue by Crew" to={`/reports/revenue-by-crew${qs}`}
-              sub="Solo tech + assigned crews" testId="tile-revenue-by-crew" />
-        <Tile icon={Users} label="Revenue by Customer" to={`/reports/revenue-by-customer${qs}`}
-              sub="Top payers in window" testId="tile-revenue-by-customer" />
-        <Tile icon={DollarSign} label="Gross Sales" to={`/reports/gross-sales${qs}`}
-              sub="All invoices issued in window" testId="tile-gross-sales" />
-        <Tile icon={ListChecks} label="Invoiced Items" to={`/reports/invoiced-items${qs}`}
-              sub="Line-item aggregation" testId="tile-invoiced-items" />
-        <Tile icon={PieIcon} label="Income by Category" to={`/income-by-category${qs}`}
-              sub="Category donut breakdown" testId="tile-income-by-category" />
-        <Tile icon={Timer} label="Avg Job Time" to={`/avg-job-time`}
-              sub="Per-tech average duration" testId="tile-avg-job-time" />
-        <Tile icon={Clock} label="Job Timers" to={`/job-timers`}
-              sub="Currently running timers" testId="tile-job-timers" />
-        <Tile icon={History} label="Log History" to={`/log-history`}
-              sub="Audit trail" testId="tile-log-history" />
+      <div>
+        <div
+          className="text-2xl md:text-3xl font-bold"
+          style={{ color: colors.onSurface }}
+          data-testid={`${testIdRoot}-kpi`}
+        >
+          {renderKpi(kpi)}
+        </div>
+        {sub ? (
+          <div
+            className="text-xs mt-1"
+            style={{ color: colors.muted }}
+            data-testid={`${testIdRoot}-kpi-sub`}
+          >
+            {sub}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-auto">
+        <Link
+          to={to}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition hover:brightness-95"
+          style={{
+            backgroundColor: colors.brandTertiary,
+            color: colors.onBrandTertiary,
+          }}
+          data-testid={`${testIdRoot}-open`}
+        >
+          Open report
+          <ChevronRight size={14} />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A placeholder tile for R1–R7. Muted styling, "Coming soon"
+ * ribbon, deliberately not clickable — the outer element is a
+ * plain ``div`` (no ``Link``) so keyboard tabbing skips it.
+ */
+function ComingSoonTile({ tile }) {
+  const { icon: Icon, title, description, phase } = tile;
+  return (
+    <div
+      className="rounded-2xl p-5 relative flex flex-col gap-4"
+      style={{
+        backgroundColor: colors.surfaceSecondary,
+        border: `1px dashed ${colors.border}`,
+        opacity: 0.85,
+      }}
+      data-testid={`reports-tile-coming-${phase.toLowerCase()}`}
+      aria-disabled="true"
+    >
+      <span
+        className="absolute top-3 right-3 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full"
+        style={{
+          backgroundColor: colors.brandTertiary,
+          color: colors.onBrandTertiary,
+        }}
+        data-testid={`reports-tile-coming-${phase.toLowerCase()}-ribbon`}
+      >
+        Coming soon
+      </span>
+
+      <div className="flex items-start gap-3">
+        <div
+          className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
+          style={{
+            backgroundColor: colors.surfaceTertiary || colors.surface,
+            color: colors.onSurfaceSecondary,
+          }}
+        >
+          <Icon size={20} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div
+            className="font-semibold text-sm"
+            style={{ color: colors.onSurface }}
+          >
+            {title}
+          </div>
+          <div
+            className="text-xs mt-0.5"
+            style={{ color: colors.onSurfaceSecondary }}
+          >
+            {description}
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="mt-auto text-[11px] inline-flex items-center gap-1"
+        style={{ color: colors.onSurfaceSecondary }}
+      >
+        <Lock size={11} />
+        Ships in {phase}
       </div>
     </div>
   );

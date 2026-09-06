@@ -1,5 +1,5 @@
 import React from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useAuth } from "@/auth";
 import { api } from "@/api";
@@ -32,7 +32,43 @@ const READER_ROLES = ["super_admin", "admin", "owner", "manager"];
 export default function ReportsSuite() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const [tab, setTab] = React.useState("overview");
+  // K66 · Feb-2026 — accept a ``?tab=<key>`` URL hint so the
+  // ReportsHub quick-access tiles can deep-link into a specific
+  // tab. Falls back to "overview" for legacy callers.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = React.useMemo(() => {
+    const t = (searchParams.get("tab") || "").toLowerCase();
+    return TABS.find((x) => x.key === t) ? t : "overview";
+  }, []); // resolve once on mount; URL updates below drive setTab
+  const [tab, setTab] = React.useState(initialTab);
+
+  // Keep the URL in sync when the user switches tabs so a share /
+  // reload preserves the active tab. Uses ``replace`` so the tab
+  // change does not spam the history stack.
+  const handleTabChange = React.useCallback((key) => {
+    setTab(key);
+    const next = new URLSearchParams(searchParams);
+    if (key === "overview") next.delete("tab");
+    else next.set("tab", key);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  // K66 · When the tile deep-link includes a hash (e.g.
+  // ``#revenue-by-customer``), scroll to the anchor after the tab
+  // has painted. React-Router's <Link> doesn't scroll on hash by
+  // default when the pathname also changes, so we do it here.
+  React.useEffect(() => {
+    if (tab !== "financial") return;
+    const hash = window.location.hash.replace(/^#/, "");
+    if (!hash) return;
+    const el = document.getElementById(hash);
+    if (el && typeof el.scrollIntoView === "function") {
+      // rAF so React has committed the tab content first.
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, [tab]);
 
   React.useEffect(() => {
     if (authLoading) return;
@@ -78,7 +114,7 @@ export default function ReportsSuite() {
             <button
               key={t.key}
               type="button"
-              onClick={() => setTab(t.key)}
+              onClick={() => handleTabChange(t.key)}
               className="text-sm font-semibold px-4 py-2 -mb-px transition"
               style={{
                 color: isActive ? colors.brand : colors.onSurfaceSecondary,
