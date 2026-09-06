@@ -165,6 +165,7 @@ class ResendEmailAdapter:
         reply_to: Optional[str] = None,
         from_name: Optional[str] = None,
         from_email: Optional[str] = None,
+        allow_off_allowlist: bool = False,
     ) -> Dict[str, Any]:
         """Send an email through Resend.  Never raises; every failure
         path yields a status string the caller can persist verbatim.
@@ -175,6 +176,15 @@ class ResendEmailAdapter:
         is NOT in ``RESEND_VERIFIED_DOMAINS`` we log a WARNING and
         fall back to the environment default so delivery is not
         blocked while DNS verification is still pending.
+
+        Phase K30 · Feb-2026 — ``allow_off_allowlist`` (default False)
+        lets **admin-triggered** transactional sends bypass BOTH the
+        ``is_comm_allowed`` demo-account gate AND the
+        ``COMMS_TEST_ALLOWLIST_EMAILS`` env-guard so the message
+        actually leaves the preview environment. Only call-sites that
+        are guarded by ``require_admin`` (or equivalent server-side
+        auth) should set this to True — never propagate from a
+        user-controlled request body.
         """
         addr = (to or "").strip()
         if not addr:
@@ -193,26 +203,37 @@ class ResendEmailAdapter:
         # Only recipients flagged ``is_demo_account=True`` may receive
         # comms; everyone else silently no-ops with a
         # ``comms_suppression_log`` row. Fail-closed on any error.
-        try:
-            from services.comms.gate import is_comm_allowed
-            allowed = await is_comm_allowed(
-                recipient_identifier={
-                    "customer_id": customer_id,
-                    "email": addr,
-                },
-                comm_type="email",
-                tenant_id=tenant_id,
-                provider="resend",
-                trigger_action=category,
+        # Phase K30 · Feb-2026 — admin-triggered sends (with
+        # ``allow_off_allowlist=True``) bypass the gate. Log a WARN so
+        # the bypass is greppable in the audit stream — this must
+        # never fire from a user-controlled path.
+        if allow_off_allowlist:
+            logger.warning(
+                "[resend] allow_off_allowlist=True — bypassing is_comm_allowed gate "
+                "to=%s cat=%s tenant=%s customer_id=%s",
+                addr, category, tenant_id, customer_id,
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[resend] gate errored — failing closed: %s", exc)
-            allowed = False
-        if not allowed:
-            return {"provider": "resend",
-                    "provider_status": "suppressed_not_demo",
-                    "provider_response_id": None, "attempts": 0,
-                    "error": None}
+        else:
+            try:
+                from services.comms.gate import is_comm_allowed
+                allowed = await is_comm_allowed(
+                    recipient_identifier={
+                        "customer_id": customer_id,
+                        "email": addr,
+                    },
+                    comm_type="email",
+                    tenant_id=tenant_id,
+                    provider="resend",
+                    trigger_action=category,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[resend] gate errored — failing closed: %s", exc)
+                allowed = False
+            if not allowed:
+                return {"provider": "resend",
+                        "provider_status": "suppressed_not_demo",
+                        "provider_response_id": None, "attempts": 0,
+                        "error": None}
 
         # Phase 34 · Task L · Feb-2026 — outbound safety guard.
         # When ``APP_ENV != production`` (or when the recipient is not
@@ -221,14 +242,23 @@ class ResendEmailAdapter:
         # email a real customer from preview / dev / staging. The
         # returned envelope keeps ``provider_status="dry_run"`` distinct
         # from ``"mocked"`` (no API key) and ``"sent"`` (live delivery).
-        from services.comms_env_guard import guard_outbound
-        verdict = guard_outbound(kind="email", to=addr)
-        if verdict.blocked:
-            logger.info(
-                "[DRY-RUN] resend send SKIPPED to=%s subject=%r cat=%s tenant=%s",
-                addr, subject, category, tenant_id,
+        # Phase K30 · Feb-2026 — admin-triggered sends bypass this
+        # guard too. WARN log emitted so we can audit every bypass.
+        if allow_off_allowlist:
+            logger.warning(
+                "[resend] allow_off_allowlist=True — bypassing guard_outbound "
+                "env allowlist to=%s cat=%s tenant=%s",
+                addr, category, tenant_id,
             )
-            return verdict.dry_run_response(provider="resend")
+        else:
+            from services.comms_env_guard import guard_outbound
+            verdict = guard_outbound(kind="email", to=addr)
+            if verdict.blocked:
+                logger.info(
+                    "[DRY-RUN] resend send SKIPPED to=%s subject=%r cat=%s tenant=%s",
+                    addr, subject, category, tenant_id,
+                )
+                return verdict.dry_run_response(provider="resend")
 
         # 2. Graceful mocked mode — no API key set. Log + return.
         if not self.enabled:

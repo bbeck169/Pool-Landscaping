@@ -1034,6 +1034,7 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
   const [status, setStatus] = React.useState(null);
   const [history, setHistory] = React.useState([]);
   const [resetModalOpen, setResetModalOpen] = React.useState(false);
+  const [resetLinkModalOpen, setResetLinkModalOpen] = React.useState(false);
 
   const loadStatus = React.useCallback(async () => {
     try {
@@ -1168,6 +1169,18 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
           (``PortalInviteQuickAction``); this panel keeps only the
           advanced portal-access actions. */}
       <div className="flex flex-wrap gap-2">
+        {/* K30 · Feb-2026 — admin-triggered tokenized reset-link.
+            Always visible (independent of hasLogin) because the
+            endpoint auto-provisions the portal user row if missing.
+            Disabled only when the customer has no email on file. */}
+        <Button
+          variant="ghost"
+          onClick={() => setResetLinkModalOpen(true)}
+          disabled={busy === "portal-reset-link" || !(customer.email || status?.email)}
+          testid="cd-portal-reset-link"
+        >
+          Send reset link
+        </Button>
         {hasLogin ? (
           <>
             <Button
@@ -1255,6 +1268,36 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
           );
         }}
       />
+
+      {/* K30 · Feb-2026 — Confirm modal for the admin-triggered
+          tokenized reset-link. Deliberately separate from
+          PortalResetModal (which sends a raw temp password) so
+          each action is discoverable independently. */}
+      <PortalResetLinkConfirmModal
+        open={resetLinkModalOpen}
+        customer={customer}
+        email={status?.email || customer.email}
+        onClose={() => setResetLinkModalOpen(false)}
+        onConfirm={async () => {
+          setResetLinkModalOpen(false);
+          setBusy("portal-reset-link");
+          try {
+            const r = await api.post(`/customers/${customer.id}/portal-reset-link`);
+            onToast({
+              tone: "success",
+              message: r?.sent_to
+                ? `Reset link sent to ${r.sent_to} (expires in ${r.token_ttl_minutes || 30}m)`
+                : "Reset link sent",
+            });
+            await onDone();
+            await loadStatus();
+          } catch (e) {
+            onToast({ tone: "error", message: e?.message || "Reset link send failed" });
+          } finally {
+            setBusy("");
+          }
+        }}
+      />
     </div>
   );
 }
@@ -1267,8 +1310,59 @@ const PORTAL_EVENT_LABELS = {
   impersonation_ended: "Admin ended impersonation",
 };
 
-function PortalResetModal({ open, onClose, onSubmit }) {
-  const [mode, setMode] = React.useState("auto");
+/**
+ * K30 · Feb-2026 — Admin confirmation modal for the tokenized
+ * password reset LINK (distinct from PortalResetModal which sends a
+ * raw temp password). Shows a masked-email preview so the operator
+ * can double-check the recipient before firing the send.
+ */
+function _k30MaskEmail(email) {
+  if (!email || typeof email !== "string" || !email.includes("@")) return email || "";
+  const [local, domain] = email.split("@");
+  if (!local) return `***@${domain}`;
+  return `${local[0]}***@${domain}`;
+}
+
+function PortalResetLinkConfirmModal({ open, customer, email, onClose, onConfirm }) {
+  const masked = _k30MaskEmail(email);
+  const name = (customer?.name || "this customer").trim();
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Send password reset link"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} testid="portal-reset-link-cancel">
+            Cancel
+          </Button>
+          <Button
+            onClick={onConfirm}
+            disabled={!email}
+            testid="portal-reset-link-confirm"
+          >
+            Send reset link
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3" data-testid="portal-reset-link-modal-body">
+        <p className="text-sm" style={{ color: colors.onSurface }}>
+          Send <strong>{name}</strong> a password reset email at{" "}
+          <code data-testid="portal-reset-link-masked-email">{masked || "no email on file"}</code>?
+        </p>
+        <p className="text-xs" style={{ color: colors.onSurfaceSecondary }}>
+          The link expires in 30 minutes and is single-use. If the portal
+          account doesn't exist yet, it will be created automatically.
+          The customer sets their own password via the link — no temporary
+          password is ever emailed.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+function PortalResetModal({ open, onClose, onSubmit }) {  const [mode, setMode] = React.useState("auto");
   const [password, setPassword] = React.useState("");
   React.useEffect(() => {
     if (open) { setMode("auto"); setPassword(""); }

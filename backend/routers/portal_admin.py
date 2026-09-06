@@ -4,6 +4,7 @@
 
 Existing portal endpoints (`/me/*`, `/documents`, `/communications`, `/payments/checkout/{qid}`, `/setup-session`) are reused unchanged.
 """
+import os
 import secrets
 import string
 from datetime import datetime, timezone
@@ -270,6 +271,183 @@ async def _do_portal_provision(cid: str, tenant_id: str, actor: dict,
         login_url=login_url,
         password=password if not emailed else None,
         emailed=emailed,
+    )
+
+
+# ─── K30 · Feb-2026 · Admin-triggered tokenized password-reset link ────
+#
+# Sits alongside ``/customers/{cid}/portal-reset`` (which emails a
+# temp password) — this endpoint emits a SINGLE-USE opaque token
+# link into ``password_reset_tokens`` (30-min TTL, matches the
+# ``/auth/forgot-password`` self-serve flow) so the customer never
+# sees a raw password over email. Admin-only, tenant-scoped, and
+# uses the ``allow_off_allowlist=True`` bypass on the resend
+# adapter because admin-driven support actions must land in the
+# customer's inbox even from preview environments.
+
+class PortalResetLinkResp(BaseModel):
+    ok: bool = True
+    sent_to: str
+    token_ttl_minutes: int = 30
+    provisioned_user: bool = False
+
+
+def _mask_email_for_response(email: str) -> str:
+    """Return ``t***@example.com`` shape so audit/UI never echoes the
+    full address back through the admin response body."""
+    if not email or "@" not in email:
+        return email or ""
+    local, _, domain = email.partition("@")
+    if not local:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
+
+
+@router.post("/customers/{cid}/portal-reset-link", response_model=PortalResetLinkResp)
+async def portal_reset_link(cid: str,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    """K30 · Feb-2026 — Admin-triggered password-reset LINK.
+
+    Distinct from the pre-existing ``/portal-reset`` (temp password)
+    and ``/portal-invite`` (temp password) endpoints. Behaviour:
+
+    1. Tenant-scoped customer lookup — ``deleted_at`` is permitted
+       (per K30 policy Q2 the reset link may still be issued for a
+       soft-deleted customer, though login itself will remain
+       gated by ``routers.auth.login`` until the customer is
+       restored — see ``/customers/{cid}/restore``).
+    2. Auto-provision a ``role="customer"`` ``users`` row if one is
+       missing, reusing ``_upsert_customer_user`` with a random
+       throwaway password (the customer never learns it — they set
+       their own via the reset link).
+    3. Mint an opaque single-use token in ``password_reset_tokens``
+       (30-min TTL, invalidate prior unused tokens for the same
+       user — mirrors the ``/auth/forgot-password`` contract).
+    4. Send the reset-link email via the guarded Resend adapter with
+       ``allow_off_allowlist=True`` so admin-triggered support
+       actions leave preview environments.
+    5. Audit event ``admin_password_reset_triggered`` on
+       ``db.audit_logs`` with actor id + email, target customer id,
+       tenant id, masked recipient, and adapter outcome.
+
+    Response: ``{ok, sent_to (masked), token_ttl_minutes: 30,
+    provisioned_user: bool}``. Never leaks the full recipient email
+    or the token itself to the caller.
+    """
+    from routers.auth import _password_reset_email_html
+
+    tid = tenant["id"]
+    cust = await db.customers.find_one({"id": cid, "tenant_id": tid}, {"_id": 0})
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+
+    email = (cust.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "Customer has no email on file")
+
+    # Auto-provision the portal user row if missing.
+    existing = await db.users.find_one(
+        {"customer_id": cid, "tenant_id": tid, "role": "customer"},
+        {"_id": 0, "id": 1, "email": 1},
+    )
+    provisioned_user = False
+    if not existing:
+        await _upsert_customer_user(cid, tid, email, _random_password(16))
+        existing = await db.users.find_one(
+            {"customer_id": cid, "tenant_id": tid, "role": "customer"},
+            {"_id": 0, "id": 1, "email": 1},
+        )
+        provisioned_user = True
+
+    if not existing:
+        # Provisioning must have succeeded above; defensive guard.
+        raise HTTPException(500, "Failed to provision portal user")
+
+    # Mint the reset token — mirrors auth.forgot_password shape 1:1.
+    from datetime import datetime, timezone, timedelta
+    from routers.auth import _RESET_TTL_MINUTES
+
+    await db.password_reset_tokens.update_many(
+        {"user_id": existing["id"], "used_at": None},
+        {"$set": {"invalidated_at": now_iso()}},
+    )
+    token = secrets.token_urlsafe(48)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=_RESET_TTL_MINUTES)
+    await db.password_reset_tokens.insert_one({
+        "id": new_id(),
+        "token": token,
+        "user_id": existing["id"],
+        "tenant_id": tid,
+        "email": email,
+        "expires_at": expires_at.isoformat(),
+        "used_at": None,
+        "invalidated_at": None,
+        "created_at": now_iso(),
+        "created_ip": None,
+        "source": "admin_reset_link",
+        "actor_user_id": (user or {}).get("id"),
+    })
+
+    frontend_url = (APP_PUBLIC_URL or os.environ.get("FRONTEND_URL") or "").rstrip("/")
+    reset_link = f"{frontend_url}/reset-password?token={token}"
+
+    first_name = (
+        cust.get("first_name")
+        or (cust.get("name") or "").split(" ")[0]
+        or "there"
+    )
+    html = _password_reset_email_html(
+        first_name=first_name,
+        reset_link=reset_link,
+        expiry_minutes=_RESET_TTL_MINUTES,
+    )
+
+    send_outcome: dict = {"provider_status": "not_attempted"}
+    try:
+        from services.email.resend_adapter import send as _send_email
+        send_outcome = await _send_email(
+            to=email,
+            subject="Reset your password",
+            html=html,
+            category="transactional",
+            tenant_id=tid,
+            customer_id=cid,
+            allow_off_allowlist=True,
+        )
+        logger.info(
+            "[k30] admin_password_reset_triggered actor=%s cid=%s status=%s attempts=%s",
+            (user or {}).get("email"), cid,
+            send_outcome.get("provider_status"),
+            send_outcome.get("attempts"),
+        )
+    except Exception as exc:  # pragma: no cover — belt-and-braces
+        logger.warning("[k30] admin reset link send failed: %s", exc)
+        send_outcome = {"provider_status": "failed",
+                         "error": f"{type(exc).__name__}: {exc}"}
+
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tid,
+            "event": "admin_password_reset_triggered",
+            "actor_id": (user or {}).get("id"),
+            "actor_email": (user or {}).get("email"),
+            "target_customer_id": cid,
+            "target_email_masked": _mask_email_for_response(email),
+            "provisioned_user": provisioned_user,
+            "provider_status": send_outcome.get("provider_status"),
+            "provider_attempts": send_outcome.get("attempts"),
+            "customer_soft_deleted": bool(cust.get("deleted_at")),
+            "created_at": now_iso(),
+        })
+    except Exception:  # pragma: no cover
+        logger.warning("[k30] audit_logs insert failed")
+
+    return PortalResetLinkResp(
+        sent_to=_mask_email_for_response(email),
+        token_ttl_minutes=_RESET_TTL_MINUTES,
+        provisioned_user=provisioned_user,
     )
 
 
