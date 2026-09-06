@@ -115,14 +115,16 @@ function KpiCard({ icon: Icon, label, value, onClick, testId, tone }) {
   // 500+ / dark text on 50 both pass WCAG AA (spot-checked in
   // ``feb2026-color-contrast.test.js``).
   //
-  // Phase K70.a · Feb-2026 — the ICON CHIP now carries the K67
-  // navy → green gradient (``gradients.navyToGreen.css``) as a
-  // unifying signature accent across every tile. The pastel
-  // tone-driven background + colored left-border are preserved
-  // so tiles remain visually distinct at a glance; the gradient
-  // chip is the shared brand cue on top. White icon reads at
-  // AAA on the navy stop (12.8:1) and AA-large on the green stop
-  // (3.28:1) — see gradients.navyToGreen contrast note in theme.js.
+  // Phase K70.a · Feb-2026 — the icon chip carried a navy → green
+  // gradient across every tile as the shared brand cue.
+  //
+  // Phase K74 · Feb-2026 — that gradient is swapped for solid
+  // navy (``colors.tile.solidNavy`` == #1B1F5C, same value as
+  // ``colors.nav.bg``). The pastel tone-driven background +
+  // colored left-border are preserved so tiles remain visually
+  // distinct at a glance; the solid navy chip is the shared
+  // brand cue on top. White icon reads at AAA on ``#1B1F5C``
+  // (12.8:1) — see colors.tile.solidNavy contrast note in theme.js.
   const palette = getAccentTone(tone);
   return (
     <button
@@ -139,11 +141,11 @@ function KpiCard({ icon: Icon, label, value, onClick, testId, tone }) {
       <div
         className="w-10 h-10 rounded-xl flex items-center justify-center mb-3"
         style={{
-          background: gradients.navyToGreen.css,
+          backgroundColor: colors.tile.solidNavy,
           color: "#FFFFFF",
         }}
         data-testid={testId ? `${testId}-icon-chip` : undefined}
-        data-k70a-gradient-chip="true"
+        data-k74-solid-navy-chip="true"
       >
         <Icon size={20} />
       </div>

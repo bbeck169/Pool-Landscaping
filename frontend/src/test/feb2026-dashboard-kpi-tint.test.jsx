@@ -51,34 +51,45 @@ describe("Dashboard · KpiCard tone-driven palette", () => {
 
   it("Icon wrapper reads palette[100] + palette[600]", () => {
     // Phase K70.a superseded the palette-driven icon chip: the
-    // chip is now the shared K67 navy → green gradient (see
-    // ``gradients.navyToGreen.css`` in theme.js). The
-    // tone-driven pastel BACKGROUND + colored left border are
-    // preserved (checked above), only the icon-chip fill moved.
-    // Assertion flipped so the old shape is explicitly forbidden;
-    // the new shape is asserted below in the K70.a contract test.
+    // chip carried the shared K67 navy → green gradient.
+    // Phase K74 superseded that with solid navy
+    // (``colors.tile.solidNavy`` == #1B1F5C). The tone-driven
+    // pastel BACKGROUND + colored left border are preserved
+    // (checked above), only the icon-chip fill moved twice.
+    // Assertion flipped so the K70 palette-driven shape is
+    // explicitly forbidden; the K74 shape is asserted below.
     expect(SRC).not.toMatch(
       /backgroundColor:\s*palette\[100\][\s\S]{0,60}color:\s*palette\[600\]/,
     );
   });
 
-  it("Phase K70.a — icon chip carries gradients.navyToGreen.css", () => {
-    // Import updated to include ``gradients``.
+  it("Phase K74 — icon chip carries solid colors.tile.solidNavy (#1B1F5C)", () => {
+    // K74 · Feb-2026 — replaces the K70.a
+    // ``gradients.navyToGreen.css`` icon-chip background with
+    // the solid navy token ``colors.tile.solidNavy`` (== #1B1F5C).
+    // The icon glyph stays white (AAA @ 12.8:1 on navy).
+    //
+    // Icon chip uses the canonical solid navy token.
     expect(SRC).toMatch(
-      /import\s*\{[^}]*\bgradients\b[^}]*\}\s*from\s*["']@\/theme["']/,
+      /backgroundColor:\s*colors\.tile\.solidNavy/,
     );
-    // Icon chip uses the canonical navy-green gradient.
+    // Icon color is white (reads at AAA 12.8:1 on #1B1F5C).
     expect(SRC).toMatch(
-      /background:\s*gradients\.navyToGreen\.css/,
+      /backgroundColor:\s*colors\.tile\.solidNavy[\s\S]{0,120}color:\s*["']#FFFFFF["']/,
     );
-    // Icon color is white (reads at AAA on the navy stop, AA
-    // large on the green stop).
-    expect(SRC).toMatch(
-      /background:\s*gradients\.navyToGreen\.css[\s\S]{0,120}color:\s*["']#FFFFFF["']/,
-    );
-    // Every KpiCard tile exposes a data attribute the K70.a
+    // Every KpiCard tile exposes a K74 data attribute the
     // contract test can grep for without a full mount.
-    expect(SRC).toMatch(/data-k70a-gradient-chip="true"/);
+    expect(SRC).toMatch(/data-k74-solid-navy-chip="true"/);
+    // Negative: the K70.a gradient chip attribute is retired
+    // on Dashboard (the shared R0 KpiCard still uses gradient).
+    expect(SRC).not.toMatch(/data-k70a-gradient-chip="true"/);
+    // Negative: the icon chip inline style no longer reaches
+    // for ``gradients.navyToGreen.css``. (``gradients`` is still
+    // imported for the RevenueByService progress bar below.)
+    const startIdx = SRC.indexOf("function KpiCard(");
+    const endIdx = SRC.indexOf("function ReferralRevenueTile(");
+    const kpiCardSlice = SRC.slice(startIdx, endIdx);
+    expect(kpiCardSlice).not.toMatch(/background:\s*gradients\.navyToGreen\.css/);
   });
 
   it("All four dashboard KpiCard invocations declare a ``tone`` prop", () => {

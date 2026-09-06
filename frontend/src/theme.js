@@ -126,6 +126,28 @@ export const colors = {
   },
 
   // ═══════════════════════════════════════════════════════════════
+  // Phase K74 · Feb-2026 — solid navy tile surface.
+  //
+  // K70.a introduced a navy → green gradient on the Dashboard
+  // KpiCard icon chip and the ReportsHub BuiltTile background.
+  // K74 replaces both surfaces with a solid navy (``#1B1F5C``,
+  // same value as ``colors.nav.bg``) per operator feedback —
+  // gradients read as busy against the pastel per-tone tile
+  // backgrounds preserved from K70.a. The R0 shared KpiCard at
+  // ``/reports/suite`` and every other ``gradients.navyToGreen``
+  // consumer (primary CTA, RevenueByService progress bars, chart
+  // strokes, portal hero banner, etc.) are OUT of K74 scope and
+  // keep the gradient.
+  //
+  // Contrast rule:
+  //   * White glyph on ``#1B1F5C`` → 12.8 : 1 (AAA at all sizes).
+  //   * White text on ``#1B1F5C`` → 12.8 : 1 (AAA at all sizes).
+  // ═══════════════════════════════════════════════════════════════
+  tile: {
+    solidNavy: "#1B1F5C",
+  },
+
+  // ═══════════════════════════════════════════════════════════════
   // Phase K52 · Feb-2026 — signature action gradient.
   // Phase K67 · Feb-2026 — swapped the sky-300 stop for the menu
   // navy (``colors.nav.bg`` #1B1F5C) so the gradient reads as

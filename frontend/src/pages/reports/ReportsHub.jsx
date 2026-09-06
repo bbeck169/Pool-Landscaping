@@ -15,7 +15,7 @@ import {
   Lock,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, gradients } from "@/theme";
+import { colors } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 import { formatValue, formatNumber } from "@/components/reports/formatters";
 
@@ -239,11 +239,17 @@ export default function ReportsHub() {
  * helper so tile numbers match the KpiCard component byte-for-byte),
  * and an "Open report" button.
  *
- * Phase K70.a · Feb-2026 — the tile now paints the canonical K67
+ * Phase K70.a · Feb-2026 — the tile painted the canonical K67
  * navy → green gradient (``gradients.navyToGreen.css``) as its
- * background with white text on top. The "Open report" button
- * uses green-700 (``#15803D``) fill + 1px white outline + white
- * text so it reads at AA-body (4.9:1) on the gradient.
+ * background with white text on top.
+ *
+ * Phase K74 · Feb-2026 — that gradient is replaced with solid
+ * navy (``colors.tile.solidNavy`` == #1B1F5C). White text reads
+ * at AAA (12.8:1). The "Open report" button keeps its K70.a
+ * green-700 (``#15803D``) fill + 1px white outline + white text
+ * (WCAG AA body: 4.9:1) so the CTA still pops off the tile.
+ * ONLY the tile background changes — the page canvas is
+ * untouched (per K74 spec).
  */
 function BuiltTile({ tile }) {
   const { icon: Icon, title, description, to, kpi, renderKpi, kpiSubtitle } = tile;
@@ -254,12 +260,12 @@ function BuiltTile({ tile }) {
     <div
       className="rounded-2xl p-5 flex flex-col gap-4 transition"
       style={{
-        background: gradients.navyToGreen.css,
+        backgroundColor: colors.tile.solidNavy,
         border: `1px solid ${colors.border}`,
         color: "#FFFFFF",
       }}
       data-testid={testIdRoot}
-      data-k70a-gradient-tile="true"
+      data-k74-solid-navy-tile="true"
     >
       <div className="flex items-start gap-3">
         <div

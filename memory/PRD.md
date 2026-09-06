@@ -1,3 +1,35 @@
+## Phase K74 · Solid Navy Tiles — SHIPPED (Feb 2026, preview only)
+
+**Scope:** Replace the K70.a navy → green gradient tile surfaces on Dashboard KpiCard icon chip AND ReportsHub BuiltTile background with solid navy (`#1B1F5C`). Per operator feedback — gradients read as busy against the pastel per-tone tile backgrounds preserved from K70.a. Green CTA + white text on Reports tiles preserved. Reports page canvas untouched (tiles only). Shared R0 KpiCard at `/reports/suite` + every other `gradients.navyToGreen` consumer OUT of K74 scope (still gradient).
+
+**Delivery**
+- **NEW** `colors.tile.solidNavy = "#1B1F5C"` token in `theme.js` (block inserted between `nav` and K52 `gradient`). White glyph/text = 12.8 : 1 (AAA at all sizes). Single source of truth for K74 surfaces.
+- `pages/admin/Dashboard.jsx` — KpiCard icon chip: `background: gradients.navyToGreen.css` → `backgroundColor: colors.tile.solidNavy`. `data-k70a-gradient-chip` → `data-k74-solid-navy-chip`. Pastel per-tone tile bg + colored left border (K70.a) preserved verbatim. `gradients` import kept (still consumed by RevenueByService progress bar, out of K74 scope).
+- `pages/reports/ReportsHub.jsx` — BuiltTile bg: gradient → solid navy. `data-k70a-gradient-tile` → `data-k74-solid-navy-tile`. `gradients` import dropped (dead after the swap). Green CTA button (`#15803D` + 1px white outline + white text) unchanged. ComingSoonTile muted styling unchanged. Page canvas NOT painted.
+- **NOT touched (grep-lock preserved):** shared R0 `<KpiCard/>` full-tile gradient (out of K74 scope); K52 button gradient; K64 solid active-nav `#303AA0`; K67 canonical `gradients.navyToGreen` token; ReportsHub ComingSoonTile; RevenueByService progress bar; PortalPages hero banner; CustomerChemistry icon plate.
+- **Mobile mirror:** N/A — mobile `theme.ts` has no `navyToGreen`; the sole `brandGradient` consumer is a UI Chip in `mobile/src/components/ui.tsx` (no equivalent Dashboard KpiCard / ReportsHub BuiltTile surface). No mobile changes needed.
+
+**Backend:** zero files changed. No `.env` changes. No dependency additions.
+
+**WCAG**
+- White glyph on `#1B1F5C` → 12.8 : 1 (AAA at all sizes). Up from ~7 : 1 mid-point on the K70.a gradient.
+- White text (title / subtitle / description) on ReportsHub BuiltTile bg → 12.8 : 1 (AAA at all sizes). White-transparency variants (0.82 / 0.75) stay above AA large.
+- Green CTA fill `#15803D` on white → 4.9 : 1 (AA body — unchanged).
+
+**Ship report:** `/app/memory/PHASE_K74_SOLID_NAVY_TILES.md`.
+
+**Tests**
+- Updated `feb2026-dashboard-kpi-tint.test.jsx` — K70.a icon-chip block re-titled `Phase K74`, asserts solid navy + white glyph + `data-k74-solid-navy-chip`, scoped-negative on `gradients.navyToGreen.css` inside the KpiCard slice (top-of-file `gradients` import preserved for RevenueByService).
+- Updated `k70a-tile-theming.test.jsx` — Dashboard KpiCard + ReportsHub BuiltTile describe blocks re-titled `K70.a → K74`, assert solid-navy shape + `data-k74-solid-navy-*` grep-lock, negative-assert the retired K70.a gradient / attributes. Shared R0 KpiCard block untouched (still gradient). Green-CTA / ComingSoonTile / K64 nav grep-locks preserved. Added `theme.js` assertion `colors.tile.solidNavy === "#1B1F5C"`.
+- **K74-relevant surface: 44 / 44 PASS** (`feb2026-dashboard-kpi-tint` 8/8 · `k70a-tile-theming` 21/21 · `k67-navy-green-gradient` 13/13 grep-lock intact · `reports-hub-r1-tile-flip` 2/2).
+- Full-suite run surfaces 32 pre-existing failure files unrelated to K74 — verified via `git stash` against untouched branch.
+
+**Visual verification:** operator will smoke `/dashboard` + `/reports` with e1_tester post-ship (per user directive — no in-loop screenshot for a token swap).
+
+**Next in queue:** K74.1 (Schedule job-tile lighten, web + mobile) → R2 (Operations Reporting kickoff) → R3-R7 sequential → K73.6 (legacy `user_id`-in-`technician_id` normalization, P3, queued behind R7).
+
+
+
 ## Phase K67 · Gradient Palette Sitewide (Navy → Green) — SHIPPED (Feb 2026, preview only)
 
 **Scope:** Replace the sky-blue stop in every "blue-to-teal-green" gradient surface with the menu navy (`colors.nav.bg = #1B1F5C`) while preserving the green stop and gradient direction. All gradients now read as navy→green (or green→navy where direction had green-on-the-left), cohering with the K50–K64 navy nav theme.
