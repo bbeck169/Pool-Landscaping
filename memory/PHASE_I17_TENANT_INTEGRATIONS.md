@@ -112,3 +112,99 @@ Guardrails:
 * **I1.7.b** — SMS + Email BYO providers.
 * **I1.7.c** — AI + Maps + Calendars BYO providers.
 * **I1.7.d** — Square + PayPal + Authorize.net + Lumino payment providers under the same adapter.
+
+---
+
+# Phase I1.7.b · Feb-2026 — SMS + Email BYO providers
+
+Extends the I1.7.a adapter pattern to messaging.
+
+## Files shipped
+
+### Backend
+| File | Purpose |
+| --- | --- |
+| `backend/services/messaging/__init__.py` | Public entry points (`dispatch_sms`, `dispatch_email`, provider registries) |
+| `backend/services/messaging/models.py` | Shared Pydantic result types (`SmsResult`, `EmailResult`, `ConnectionHealth`, error classes) |
+| `backend/services/messaging/_helpers.py` | JSON-serialise + AES-encrypt provider configs; test-mode env flag checks |
+| `backend/services/messaging/dispatch.py` | Tenant-first dispatch shim + platform fallback with audit log to `platform_messaging_fallback_log` |
+| `backend/services/messaging/sms/base.py` | `SmsProvider` abstract |
+| `backend/services/messaging/sms/registry.py` | SMS provider registry / factory |
+| `backend/services/messaging/sms/twilio_provider.py` | Twilio adapter (send / status / webhook / probe) |
+| `backend/services/messaging/sms/textmagic_provider.py` | TextMagic adapter |
+| `backend/services/messaging/sms/ringcentral_provider.py` | RingCentral adapter (SDK-based, injectable factory for tests) |
+| `backend/services/messaging/email/base.py` | `EmailProvider` abstract |
+| `backend/services/messaging/email/registry.py` | Email provider registry / factory |
+| `backend/services/messaging/email/resend_provider.py` | Resend adapter |
+| `backend/services/messaging/email/sendgrid_provider.py` | SendGrid adapter |
+| `backend/services/messaging/email/postmark_provider.py` | Postmark adapter |
+| `backend/services/messaging/email/mailgun_provider.py` | Mailgun adapter (US + EU) |
+| `backend/services/messaging/email/smtp_provider.py` | Generic SMTP adapter (host / port / user / password / TLS) |
+| `backend/routers/tenant_integrations.py` | Extended: `PUT /tenants/me/integrations/{key}`, `GET …/schemas` |
+
+### Frontend
+| File | Purpose |
+| --- | --- |
+| `frontend/src/components/settings/TenantIntegrationsCard.jsx` | Now hosts a functional SMS card (Twilio / TextMagic / RingCentral) + Email card (Resend / SendGrid / Postmark / Mailgun / SMTP) with dynamic schema-driven forms, plus the yellow "stale" badge (>30d unused) |
+
+### Tests
+| File | Scope |
+| --- | --- |
+| `backend/tests/test_i17b_sms_adapter_interface.py` | ABC + registry contract for SMS |
+| `backend/tests/test_i17b_email_adapter_interface.py` | ABC + registry contract for Email |
+| `backend/tests/test_i17b_provider_registry.py` | Disjoint key-space + unknown-key error paths |
+| `backend/tests/test_i17b_secret_storage_extended.py` | Multi-field config roundtrip + plaintext-never-in-DB + rotation |
+| `backend/tests/test_i17b_sms_send_flow.py` | Each SMS provider send + probe under `SMS_TESTMODE_MOCK=true` |
+| `backend/tests/test_i17b_email_send_flow.py` | Each Email provider send + probe under `EMAIL_TESTMODE_MOCK=true` |
+| `backend/tests/test_i17b_fallback_platform_messaging.py` | Legacy fallback + audit log to `platform_messaging_fallback_log`; kill-switch when fallback disabled |
+| `backend/tests/test_i17b_role_gating.py` | Role gating on PUT save / test / delete; masked response body |
+| `frontend/src/test/i17b-sms-card.test.jsx` | SMS card UI contract (dropdown, form, save, test, role-gating) |
+| `frontend/src/test/i17b-email-card.test.jsx` | Email card UI contract |
+| `frontend/src/test/i17b-stale-badge.test.jsx` | Stale badge threshold (>30d) |
+
+## API Contract (public — new in I1.7.b)
+
+### `PUT /api/tenants/me/integrations/{provider_key}`
+Save (encrypt + persist) a messaging-provider config for the current tenant. Refuses `stripe` (use OAuth flow instead — 400).
+
+Request:
+```json
+{ "config": {"account_sid": "...", "auth_token": "...", "from_number": "+15551234567"},
+  "public_account_id": "AC..." /* optional; auto-picked from the first required non-secret field otherwise */ }
+```
+Response:
+```json
+{ "provider_key": "twilio", "saved": true, "connected_account_id_masked": "ACabc…1234" }
+```
+Validation errors return `400` with a message that names each missing field but NEVER echoes any provided value.
+
+### `GET /api/tenants/me/integrations/schemas`
+Returns the field schema for every SMS + Email provider so the UI can render dynamic forms.
+```json
+{
+  "sms":   [ { "provider_key": "twilio", "kind": "sms", "fields": [ { "name": "account_sid", "required": true, "secret": false, "label": "Twilio Account SID" }, ... ] }, ... ],
+  "email": [ ... ]
+}
+```
+
+## Env vars (new in I1.7.b)
+
+| Var | Purpose | Default |
+| --- | --- | --- |
+| `SMS_TESTMODE_MOCK` | Stub every SMS send / probe so pod tests never hit an SMS provider | `false` |
+| `EMAIL_TESTMODE_MOCK` | Same, for email providers | `false` |
+| `MESSAGING_PLATFORM_FALLBACK_ENABLED` | When a tenant has no messaging provider AND this is `true`, ``dispatch_*`` falls back to the legacy platform adapter | `true` |
+
+## Guardrails held
+* Plaintext credentials NEVER echoed in API responses (see `test_i17b_role_gating` + `test_i17b_secret_storage_extended`).
+* K72 kill switch + broadcast guards stay intact — the dispatch shim doesn't touch `services.comms_env_guard.guard_outbound`; existing send paths keep running the guard before dispatch.
+* Backward compat: every existing `services.comms_sms_adapter.send_sms` / `services.comms_email_adapter.send_email` callsite keeps working. Callers that want tenant-first routing migrate to `services.messaging.dispatch_sms/dispatch_email`.
+* 34 Hygiene B skips untouched; no new quarantines added.
+
+## Callsite migration status
+The dispatch shim (`services.messaging.dispatch`) is the go-forward entry point. Existing callsites (~40 across the codebase) keep working through the legacy adapter. Migration is scheduled as a follow-up sweep once I1.7.c/d land — batching the sweep avoids a giant blast-radius change while I1.7 is still being iterated.
+
+## Next phases
+* **I1.7.c** — AI + Maps + Calendars BYO providers.
+* **I1.7.d** — Square + PayPal + Authorize.net + Lumino payment providers.
+* **I1.7.e** (future) — Tenant-secret KEK rotation migration + callsite sweep to route every legacy `send_sms/send_email` through `dispatch_*`.

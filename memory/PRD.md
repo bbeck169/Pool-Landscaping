@@ -16893,3 +16893,22 @@ Shipped 2026-02-07.
 * **I1.7.c** — AI + Maps + Calendars BYO providers.
 * **I1.7.d** — Square + PayPal + Authorize.net + Lumino payment providers.
 * **I1.7.e** (future) — Tenant-secret KEK rotation migration endpoint (rewrap DEKs under a new KEK without asking tenants to reconnect).
+
+## Phase I1.7.b · Feb-2026 — SMS + Email BYO providers
+Shipped 2026-02-07.
+
+### What landed
+* `services/messaging/` — sibling of `services/payments/`. Two abstract adapter families (`SmsProvider`, `EmailProvider`) + 8 concrete providers (Twilio · TextMagic · RingCentral · Resend · SendGrid · Postmark · Mailgun · SMTP), a shared `dispatch_sms/dispatch_email` shim, and a `platform_messaging_fallback_log` audit collection.
+* `PUT /api/tenants/me/integrations/{key}` — encrypt + persist a multi-field provider config; refuses `stripe` (use OAuth flow instead). Missing-field errors name the fields but NEVER echo any provided values.
+* `GET /api/tenants/me/integrations/schemas` — surfaces every SMS + Email provider's field schema so the settings UI can render dynamic forms.
+* Frontend `TenantIntegrationsCard` now hosts a functional SMS card + Email card with dropdown-driven forms, "Save (rotate)" for connected rows, and the yellow **Stale · Nd** badge (>30 days without use).
+* Docs: `PHASE_I17_TENANT_INTEGRATIONS.md` (appended), `RUNBOOK_ADDING_SMS_PROVIDER.md`, `RUNBOOK_ADDING_EMAIL_PROVIDER.md`, `CONTRACT_TENANT_SECRET_AND_ADAPTERS.md` (renamed + extended).
+
+### Test coverage
+* Backend Pytest: 96/96 green (`test_i17a_*` + `test_i17b_*`).
+* Frontend Vitest: 18/18 green across `i17a-integrations-page`, `i17b-sms-card`, `i17b-email-card`, `i17b-stale-badge`.
+
+### Backlog uptake
+* **I1.7.c** — AI + Maps + Calendars BYO providers.
+* **I1.7.d** — Square + PayPal + Authorize.net + Lumino payment providers.
+* **I1.7.e** (future) — Callsite sweep migrating every legacy `send_sms/send_email` through `dispatch_*`; KEK-rotation migration endpoint.

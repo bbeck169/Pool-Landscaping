@@ -51,6 +51,68 @@ const _seedList = (overrides = []) => ({
 });
 
 
+const _seedSchemas = () => ({
+  sms: [
+    { provider_key: "twilio", kind: "sms", fields: [
+      { name: "account_sid", required: true, secret: false, label: "Twilio Account SID" },
+      { name: "auth_token",  required: true, secret: true,  label: "Auth Token" },
+      { name: "from_number", required: true, secret: false, label: "From number (E.164)" },
+    ]},
+    { provider_key: "textmagic", kind: "sms", fields: [
+      { name: "username", required: true, secret: false, label: "TextMagic username" },
+      { name: "api_key",  required: true, secret: true,  label: "API key" },
+    ]},
+    { provider_key: "ringcentral", kind: "sms", fields: [
+      { name: "server_url", required: true, secret: false, label: "Server URL" },
+      { name: "client_id",  required: true, secret: false, label: "App Client ID" },
+      { name: "client_secret", required: true, secret: true, label: "App Client Secret" },
+      { name: "jwt_token", required: true, secret: true, label: "JWT token" },
+      { name: "from_number", required: true, secret: false, label: "From number" },
+    ]},
+  ],
+  email: [
+    { provider_key: "resend", kind: "email", fields: [
+      { name: "api_key",   required: true, secret: true,  label: "Resend API key" },
+      { name: "from_addr", required: true, secret: false, label: "Default From address" },
+    ]},
+    { provider_key: "sendgrid", kind: "email", fields: [
+      { name: "api_key", required: true, secret: true, label: "SendGrid API key" },
+      { name: "from_addr", required: true, secret: false, label: "Verified sender address" },
+    ]},
+    { provider_key: "postmark", kind: "email", fields: [
+      { name: "server_token", required: true, secret: true, label: "Server API token" },
+      { name: "from_addr", required: true, secret: false, label: "Verified sender address" },
+    ]},
+    { provider_key: "mailgun", kind: "email", fields: [
+      { name: "api_key", required: true, secret: true, label: "Mailgun API key" },
+      { name: "domain", required: true, secret: false, label: "Sending domain" },
+      { name: "from_addr", required: true, secret: false, label: "Default From address" },
+    ]},
+    { provider_key: "smtp", kind: "email", fields: [
+      { name: "host", required: true, secret: false, label: "SMTP host" },
+      { name: "port", required: true, secret: false, label: "SMTP port" },
+      { name: "username", required: true, secret: false, label: "SMTP username" },
+      { name: "password", required: true, secret: true,  label: "SMTP password" },
+      { name: "from_addr", required: true, secret: false, label: "Default From address" },
+    ]},
+  ],
+});
+
+
+// Helper: install a single get() handler that routes both
+// /tenants/me/integrations and /tenants/me/integrations/schemas
+// to the given rows + default schemas.
+const _installListAndSchemasMock = (rowsFactory) => {
+  mockGet.mockImplementation(async (path) => {
+    if (path === "/tenants/me/integrations") return rowsFactory();
+    if (path === "/tenants/me/integrations/schemas") return _seedSchemas();
+    if (path === "/integrations/stripe/connect-link")
+      return { url: "https://connect.stripe.com/oauth/authorize?client_id=ca_x&state=abc", state: "abc" };
+    return {};
+  });
+};
+
+
 const _asAdmin = () => {
   window.localStorage.setItem("user", JSON.stringify({
     id: "user-i17a-admin", role: "admin", email: "admin@example.com",
@@ -97,25 +159,30 @@ afterEach(() => {
 describe("TenantIntegrationsCard · I1.7.a", () => {
   it("renders Stripe + coming-soon placeholders and loads the list", async () => {
     _asAdmin();
-    mockGet.mockResolvedValue(_seedList());
+    _installListAndSchemasMock(() => _seedList());
     render(<TenantIntegrationsCard />);
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integrations-card")).toBeTruthy(),
     );
     expect(screen.getByTestId("tenant-integration-stripe")).toBeTruthy();
-    ["sms", "email", "ai", "maps", "calendars", "storage"].forEach((k) => {
+    // SMS + Email are now real cards (I1.7.b) — status is "Not connected".
+    expect(screen.getByTestId("tenant-integration-sms-status").textContent)
+      .toMatch(/not connected/i);
+    expect(screen.getByTestId("tenant-integration-email-status").textContent)
+      .toMatch(/not connected/i);
+    // AI / Maps / Calendars / Storage remain coming-soon placeholders.
+    ["ai", "maps", "calendars", "storage"].forEach((k) => {
       expect(screen.getByTestId(`tenant-integration-${k}`)).toBeTruthy();
       expect(screen.getByTestId(`tenant-integration-${k}-status`).textContent)
         .toMatch(/coming soon/i);
     });
     expect(mockGet).toHaveBeenCalledWith("/tenants/me/integrations");
+    expect(mockGet).toHaveBeenCalledWith("/tenants/me/integrations/schemas");
   });
 
   it("connect-stripe hits the backend and redirects to the returned URL", async () => {
     _asAdmin();
-    mockGet
-      .mockResolvedValueOnce(_seedList())
-      .mockResolvedValueOnce({ url: "https://connect.stripe.com/oauth/authorize?client_id=ca_x&state=abc", state: "abc" });
+    _installListAndSchemasMock(() => _seedList());
     render(<TenantIntegrationsCard />);
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-stripe-connect")).toBeTruthy(),
@@ -144,7 +211,7 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
       error_log_count: 0,
       last_error: null,
     };
-    mockGet.mockResolvedValue(_seedList([connectedRow]));
+    _installListAndSchemasMock(() => _seedList([connectedRow]));
     const { container } = render(<TenantIntegrationsCard />);
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-stripe-summary")).toBeTruthy(),
@@ -159,7 +226,7 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
 
   it("test-connection posts and surfaces a success toast on ok=true", async () => {
     _asAdmin();
-    mockGet.mockResolvedValue(_seedList([{
+    _installListAndSchemasMock(() => _seedList([{
       provider_key: "stripe", connection_type: "oauth_stripe_connect",
       connected: true, last_4: "abcd",
       connected_account_id_masked: "acct_…1234",
@@ -186,14 +253,12 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
 
   it("disconnect calls DELETE and refreshes the list", async () => {
     _asAdmin();
-    mockGet
-      .mockResolvedValueOnce(_seedList([{
-        provider_key: "stripe", connection_type: "oauth_stripe_connect",
-        connected: true, last_4: "abcd",
-        connected_account_id_masked: "acct_…1234",
-        connected_status: "connected", error_log_count: 0,
-      }]))
-      .mockResolvedValueOnce(_seedList([]));
+    _installListAndSchemasMock(() => _seedList([{
+      provider_key: "stripe", connection_type: "oauth_stripe_connect",
+      connected: true, last_4: "abcd",
+      connected_account_id_masked: "acct_…1234",
+      connected_status: "connected", error_log_count: 0,
+    }]));
     mockDelete.mockResolvedValue({ removed: true, provider_key: "stripe" });
     render(<TenantIntegrationsCard />);
     await waitFor(() =>
@@ -210,7 +275,7 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
 
   it("managers see the Stripe card but no write buttons", async () => {
     _asManager();
-    mockGet.mockResolvedValue(_seedList());
+    _installListAndSchemasMock(() => _seedList());
     render(<TenantIntegrationsCard />);
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-stripe")).toBeTruthy(),

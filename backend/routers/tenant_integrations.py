@@ -64,6 +64,22 @@ from services.payments.tenant_base import (
 )
 from services.payments.tenant_registry import get_provider
 from services.payments.tenant_stripe import build_connect_link
+# Phase I1.7.b · Feb-2026 — SMS + Email BYO providers.
+from services.messaging._helpers import save_provider_config
+from services.messaging.email.registry import (
+    get_email_provider,
+    get_provider_field_schemas as _email_provider_field_schemas,
+    list_registered_email_provider_keys,
+)
+from services.messaging.models import (
+    InvalidProviderConfig,
+    UnknownMessagingProvider,
+)
+from services.messaging.sms.registry import (
+    get_sms_provider,
+    get_provider_field_schemas as _sms_provider_field_schemas,
+    list_registered_sms_provider_keys,
+)
 
 
 log = logging.getLogger("integrations")
@@ -109,6 +125,38 @@ class DeleteResponse(BaseModel):
     provider_key: str
 
 
+# ── Provider-key resolution across registries ───────────────────
+_SMS_KEYS = set(list_registered_sms_provider_keys())
+_EMAIL_KEYS = set(list_registered_email_provider_keys())
+
+
+def _kind_for(provider_key: str) -> str:
+    if provider_key in _SMS_KEYS:
+        return "sms"
+    if provider_key in _EMAIL_KEYS:
+        return "email"
+    return "payments"
+
+
+def _resolve_provider(provider_key: str):
+    """Return the concrete adapter for ``provider_key`` from whichever
+    registry knows it. Raises ``HTTPException(404)`` on unknown key.
+
+    Returns a tuple ``(kind, provider)`` where ``kind`` is
+    ``"payments" | "sms" | "email"`` so callers can pick the correct
+    ``test_connection`` signature.
+    """
+    kind = _kind_for(provider_key)
+    try:
+        if kind == "sms":
+            return kind, get_sms_provider(provider_key)
+        if kind == "email":
+            return kind, get_email_provider(provider_key)
+        return kind, get_provider(provider_key)
+    except (UnknownProvider, UnknownMessagingProvider):
+        raise HTTPException(status_code=404, detail=f"unknown provider: {provider_key}")
+
+
 # ── GET /tenants/me/integrations ─────────────────────────────────
 @router.get(
     "/tenants/me/integrations",
@@ -139,12 +187,12 @@ async def test_tenant_integration(
     tenant: Dict[str, Any] = Depends(get_current_tenant),
 ):
     _require_write_role(user)
-    try:
-        provider = get_provider(provider_key)
-    except UnknownProvider:
-        raise HTTPException(status_code=404, detail=f"unknown provider: {provider_key}")
+    kind, provider = _resolve_provider(provider_key)
     result = await provider.test_connection(tenant_id=tenant["id"])
-    return result
+    # SMS/Email ConnectionHealth is a sibling shape; convert to the
+    # payments ConnectionHealth Pydantic model (same fields) for a
+    # uniform response.
+    return ConnectionHealth(**result.model_dump())
 
 
 # ── DELETE /tenants/me/integrations/{key} ────────────────────────
@@ -161,6 +209,138 @@ async def delete_tenant_integration(
     _require_write_role(user)
     removed = await remove_secret(tenant["id"], provider_key)
     return DeleteResponse(removed=removed, provider_key=provider_key)
+
+
+# ── PUT /tenants/me/integrations/{key} (I1.7.b) ──────────────────
+class SaveIntegrationBody(BaseModel):
+    """Body for saving a tenant messaging-provider config.
+
+    ``config`` is the ``{field_name: value}`` dict matching the
+    provider's ``config_fields`` schema. Values include BOTH the
+    secret and public fields — everything ends up encrypted at rest.
+    """
+    config: Dict[str, Any]
+    # Optional public identifier stored on the row (e.g. Twilio
+    # ``account_sid``, SMTP ``username``) so the UI can display it
+    # without decrypting the blob.
+    public_account_id: Optional[str] = None
+
+
+class SaveIntegrationResponse(BaseModel):
+    provider_key: str
+    saved: bool
+    connected_account_id_masked: Optional[str] = None
+
+
+@router.put(
+    "/tenants/me/integrations/{provider_key}",
+    response_model=SaveIntegrationResponse,
+    operation_id="tenants.integrations.save",
+)
+async def save_tenant_integration(
+    provider_key: str,
+    body: SaveIntegrationBody,
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Save (encrypt + persist) a messaging-provider config for the
+    current tenant. Payment providers (``stripe``) use the OAuth
+    ``/connect-link → /callback`` flow instead — this endpoint
+    refuses the ``stripe`` key on purpose.
+    """
+    _require_write_role(user)
+    kind = _kind_for(provider_key)
+    if kind not in ("sms", "email"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"provider '{provider_key}' does not accept manual config "
+                   "(payment providers use the OAuth /connect-link flow).",
+        )
+    # Resolve the provider to grab its field schema.
+    _, provider = _resolve_provider(provider_key)
+    schema = getattr(provider, "config_fields", {}) or {}
+    # Pick a public account id automatically if the caller didn't
+    # supply one: prefer the first non-secret field's value.
+    pub = body.public_account_id
+    if not pub:
+        for name, meta in schema.items():
+            if meta.get("required") and not meta.get("secret"):
+                v = body.config.get(name)
+                if v is not None and str(v).strip():
+                    pub = str(v)
+                    break
+    try:
+        await save_provider_config(
+            tenant_id=tenant["id"], provider_key=provider_key,
+            config=body.config, schema=schema, public_account_id=pub,
+        )
+    except InvalidProviderConfig as e:
+        # ``str(e)`` only names the fields — never their values.
+        raise HTTPException(status_code=400, detail=str(e))
+    # Mask the public id for the response so the UI can render it.
+    masked = None
+    if pub:
+        masked = f"{pub[:5]}…{pub[-4:]}" if len(pub) > 8 else pub
+    return SaveIntegrationResponse(
+        provider_key=provider_key, saved=True,
+        connected_account_id_masked=masked,
+    )
+
+
+# ── GET /tenants/me/integrations/schemas (I1.7.b) ────────────────
+class ProviderFieldSchemaEntry(BaseModel):
+    name: str
+    required: bool
+    secret: bool
+    label: str
+
+
+class ProviderSchema(BaseModel):
+    provider_key: str
+    kind: str  # "sms" | "email"
+    fields: List[ProviderFieldSchemaEntry]
+
+
+class ProviderSchemasResponse(BaseModel):
+    sms: List[ProviderSchema]
+    email: List[ProviderSchema]
+
+
+def _to_field_entries(fields: Dict[str, Dict[str, Any]]) -> List[ProviderFieldSchemaEntry]:
+    out: List[ProviderFieldSchemaEntry] = []
+    for name, meta in fields.items():
+        out.append(ProviderFieldSchemaEntry(
+            name=name,
+            required=bool(meta.get("required", False)),
+            secret=bool(meta.get("secret", False)),
+            label=str(meta.get("label", name)),
+        ))
+    return out
+
+
+@router.get(
+    "/tenants/me/integrations/schemas",
+    response_model=ProviderSchemasResponse,
+    operation_id="tenants.integrations.schemas",
+)
+async def integrations_schemas(
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Return the field schemas for every SMS + Email provider so
+    the settings UI can render dynamic forms. NEVER echoes any
+    stored value — schemas describe the shape, not the data."""
+    _require_read_role(user)
+    sms_schemas = [
+        ProviderSchema(provider_key=k, kind="sms",
+                          fields=_to_field_entries(v))
+        for k, v in _sms_provider_field_schemas().items()
+    ]
+    email_schemas = [
+        ProviderSchema(provider_key=k, kind="email",
+                          fields=_to_field_entries(v))
+        for k, v in _email_provider_field_schemas().items()
+    ]
+    return ProviderSchemasResponse(sms=sms_schemas, email=email_schemas)
 
 
 # ── GET /integrations/stripe/connect-link ────────────────────────
