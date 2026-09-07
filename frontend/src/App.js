@@ -1,6 +1,11 @@
 import React from "react";
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/auth";
+// Phase I1.5.c · Feb-2026 — Tenant theme provider (CSS-var overlay).
+// Wraps the authenticated app so ``useTenantTheme()`` returns the
+// tenant-persisted palette and the DOM has ``--tenant-*`` vars set
+// on ``<html>`` for any consumer opting into the overlay.
+import { TenantThemeProvider } from "@/hooks/useTenantTheme";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import ScrollToTop from "@/components/ScrollToTop";
@@ -582,6 +587,7 @@ function RoleAwareIndex() {
 export default function App() {
   return (
     <AuthProvider>
+      <TenantThemeProvider>
       <PermissionsBridge>
       <RealtimeProvider>
       <ConfirmProvider>
@@ -1350,6 +1356,7 @@ export default function App() {
       </ConfirmProvider>
       </RealtimeProvider>
       </PermissionsBridge>
+      </TenantThemeProvider>
     </AuthProvider>
   );
 }

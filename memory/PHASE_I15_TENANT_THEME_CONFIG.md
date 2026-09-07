@@ -193,3 +193,132 @@ sections.
   the `useTenantTheme` hook + `theme.js` refactor).
 - Backwards-compat migration script + preset seed audit (I1.5.d).
 
+---
+
+## I1.5.c — `useTenantTheme` hook + `theme.js` refactor
+**Shipped:** Feb-2026 · **Status:** GREEN
+
+### What shipped
+
+**Client-side preset registry**
+- `frontend/src/theme/presets.js` — 31-entry mirror of the backend
+  registry (generated from `services/theme/presets.py` at ship
+  time to guarantee byte-perfect parity).
+- `getClientPreset(key)` returns a deep-cloned entry, falling back
+  to `default` on unknown keys.
+
+**Tenant CSS-var overlay**
+- `frontend/src/theme/tenantVars.js`:
+  - `TENANT_VAR_SPEC` — 16-slot spec mapping every backend slot
+    (`menu.bg`, `rail.text`, `tiles.border`, `accents.badge_bg` …)
+    to a `--tenant-<name>` CSS custom-property name.
+  - `writeTenantCssVars(el, theme)` writes both a solid `#hex` and
+    (for fill slots) a `-css` variant that carries the full
+    `linear-gradient(...)` string.
+  - `clearTenantCssVars(el)` — used on sign-out.
+  - `tenantCssVar(path, fallback, kind)` — returns
+    `"var(--tenant-<name>, <fallback>)"`.
+
+**`useTenantTheme` hook + `TenantThemeProvider`**
+- New file `frontend/src/hooks/useTenantTheme.jsx`.
+- Fetches `GET /api/tenants/me/theme` once on mount, exposes
+  `{ theme, isLoading, error, refetch, applyOverride }`.
+- **Auth-aware**: re-fetches when the auth-context `user.id`
+  transitions to non-null (fixes the login-race where the provider
+  mounts before a token exists → falls back to default → tenant
+  palette never lands until manual reload).
+- Clears CSS vars on sign-out so a stale palette never bleeds into
+  the login page.
+- Fallback contract: on any GET error → returns the client-side
+  `default` preset without throwing.
+- Consumers outside the provider get the default with
+  `isLoading=false`, no fetch (public routes work).
+- Fixes React 18 StrictMode double-mount bug where the `alive`
+  ref was flipped to `false` on the first synthetic unmount,
+  swallowing the post-mount refetch.
+
+**App-shell integration**
+- `App.js` — `<TenantThemeProvider>` wraps the tree inside
+  `<AuthProvider>` (public login route also renders inside it but
+  clears the overlay via the auth-null branch).
+- `settings/ThemeSettings.jsx` — save + apply-preset handlers call
+  `applyTenantThemeOverride(persisted)` (optimistic reskin) and
+  `refetchTenantTheme()` (authoritative reconcile) so the shell
+  reskins in place the instant PUT returns 200.
+
+**CSS overlay rules (`index.css`)**
+- Non-invasive `!important` overlay for K74/K74.1/K75/K67 data
+  attributes:
+  - `[data-k74-solid-navy-chip]`, `[data-k74-solid-navy-tile]`,
+    `[data-k74-1-schedule-tile]` → `--tenant-tiles-bg`
+  - `[data-k75-nav-active]` → `--tenant-menu-bg`
+  - `[data-k67-primary-cta]` → `--tenant-buttons-bg-css`
+    (gradient-capable via the `-css` variant)
+- Fallback in every rule = the historical hardcoded hex, so
+  consumers outside `<TenantThemeProvider>` (tests, public routes)
+  paint identically to pre-refactor pixels.
+
+**Consumer sweep**
+- **Zero consumer files touched.** Existing K64/K67/K70/K70a/K74/
+  K74.1/K75/K76 JSX unchanged → every source-grep regression test
+  passes verbatim. The reskin is a **stylesheet-only** concern.
+- `theme.js` static exports **unchanged** — `colors.nav.bg`,
+  `colors.tile.solidNavy`, `gradients.navyToGreen.css` etc. keep
+  returning literal hex strings (K67, K64, K70a/K74 unit tests
+  keep asserting on them verbatim).
+
+### Test suite
+- New:
+  - `test/use-tenant-theme-hook.test.jsx` — 5 specs: mount fetch,
+    refetch, GET-error fallback to default, `applyOverride`
+    optimism, out-of-provider default.
+  - `test/tenant-theme-css-vars.test.jsx` — 10 specs: writer
+    covers every spec slot, gradient `-css` variant, clear removes
+    every var, `tenantCssVar` shape, provider writes to
+    `documentElement`, refetch flips in place, override flips
+    without a GET.
+  - `test/theme-preset-parity.test.js` — 3 specs: key equality,
+    31-count, per-preset deep equal (via a Python subprocess that
+    imports the backend registry — no source-file regex fragility).
+- Bumped: `test/settings-nav-old-routes.test.jsx` from 4 → 5
+  canonical sidebar keys in I1.5.b (unchanged this sub-phase).
+
+### Test results
+- Backend: `tests/test_i15a_tenant_theme_endpoint.py` — **14/14 pass**
+  (9 I1.5.a + 5 I1.5.b preview).
+- Frontend suite: **472 files / 3725 tests passing / 34 pre-existing
+  Hygiene B skips** — zero new drift.
+- Live runtime verify (Playwright): CSS var `--tenant-menu-bg`
+  flips from `#0f172a` (default preset) → `#9d174d` (salon preset)
+  on the admin dashboard between preset applies. Screenshots at
+  `/tmp/reskin-default.png` and `/tmp/reskin-salon.png`.
+
+### Guardrail sweep
+- **No `brandGradient` alias** reintroduced.
+- **No new hardcoded hex regressions** — every new hex reference
+  lives inside `services/theme/presets.py`, `theme/presets.js`,
+  `theme/tenantVars.js` (defaults map), or an `index.css` CSS-var
+  fallback declaration. Pre-existing `#1B1F5C` hardcodings in
+  legacy consumer files (from prior K-phases) are untouched.
+- **All 34 pre-existing Hygiene B skips** stay put — no new
+  quarantines this sub-phase.
+- **Backend + frontend suites** both green.
+
+### Notes for I1 (industry profile) — smart enhancement uptake
+- The user-approved "Reset to industry default" button belongs in
+  Phase I1. Wire it in the theme editor header row (next to Save)
+  as a one-click `apply-preset` with `key = tenant.industry`. All
+  the plumbing is now in place — `applyTenantThemeOverride` +
+  `refetchTenantTheme` are already imported into
+  `ThemeSettings.jsx`. See PRD backlog.
+
+### Notes for I1.5.d (migration)
+- Any tenant with a persisted `theme` in Mongo already round-trips
+  through the validator (I1.5.a PUT guarantees). I1.5.d migration
+  can be a no-op for tenants without a `theme` field (they read
+  the `default` preset via the GET fallback).
+- The client-side registry generator is a one-liner (see the
+  `python <<'PY' ... > src/theme/presets.js` shell recipe). Bake
+  it into `scripts/dump-theme-presets.py` as I1.5.d cleanup so
+  future preset additions can't drift.
+

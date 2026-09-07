@@ -133,3 +133,55 @@ input.reorder-num-input {
     appearance: textfield;
 }
 
+
+/* ══════════════════════════════════════════════════════════════
+ * Phase I1.5.c · Feb-2026 — Tenant theme CSS-var overlay.
+ *
+ * These rules layer tenant-overridable colors on top of the
+ * existing K64/K67/K70/K74/K74.1 consumers *without* touching
+ * their inline styles. Every rule uses the ``!important`` flag so
+ * it wins the cascade against the React inline-style set by the
+ * consumer. Every ``var(--tenant-*)`` reference includes the
+ * historical hardcoded default as its fallback so tests that
+ * render outside ``<TenantThemeProvider>`` (jsdom, public routes)
+ * paint identically to the pre-refactor pixels.
+ *
+ * The corresponding source-grep regression tests (K64/K67/K70a/
+ * K74/K75/K76/feb2026-dashboard-kpi-tint) keep passing verbatim
+ * because the consumer JSX still contains
+ * ``backgroundColor: colors.tile.solidNavy`` etc. — the overlay
+ * is a stylesheet-only concern.
+ *
+ * When adding a new tenant-overridable surface: (1) mark the
+ * consumer's rendered element with a stable ``data-tenant-*``
+ * attribute, (2) add a rule below with the appropriate CSS var +
+ * historical hex fallback, (3) add the slot to
+ * ``TENANT_VAR_SPEC`` in ``src/theme/tenantVars.js`` if it isn't
+ * already there. No React changes required.
+ * ══════════════════════════════════════════════════════════════ */
+
+/* K74 · dashboard KPI chip + reports built-tile → tenant.tiles.bg */
+[data-k74-solid-navy-chip="true"],
+[data-k74-solid-navy-tile="true"] {
+    background-color: var(--tenant-tiles-bg, #1B1F5C) !important;
+}
+
+/* K74.1 · schedule tile bg (if present) → tenant.tiles.bg */
+[data-k74-1-schedule-tile="true"] {
+    background-color: var(--tenant-tiles-bg, #1B1F5C) !important;
+}
+
+/* K75 · top-nav active state → tenant.menu.bg */
+[data-k75-nav-active="true"] {
+    background-color: var(--tenant-menu-bg, #303AA0) !important;
+}
+
+/* Primary CTA / K52-K67 signature gradient — swap to
+ * tenant.buttons.bg (solid or gradient) via the ``-css`` variant.
+ * Fallback preserves the current K67 navy→green sweep. */
+[data-k67-primary-cta="true"] {
+    background: var(--tenant-buttons-bg-css,
+        linear-gradient(90deg, #22C55E 0%, #1B1F5C 100%))
+        !important;
+}
+

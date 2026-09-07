@@ -16795,3 +16795,58 @@ Product decision needed.
 - Email PDF to customer (R1.c enhancement) — deferred post-R7.
 - K72.b apology dispatch — user-owned, script staged.
 - GHL-parity Automations — user's 5 scoping answers open.
+
+
+---
+
+## Phase I1.5 · Tenant Theme Config — Progress Log
+
+**I1.5.a — Backend Theme storage + API + Preset Registry** — SHIPPED · Feb-2026
+  * `services/theme/` package (presets, validate, contrast); 31-preset
+    registry (default + 30 verticals); 4 endpoints (`GET/PUT /theme`,
+    `GET /theme-presets`, `POST /apply-preset`). WCAG AA guard,
+    text/small slots solid-only, no auto-write. `useIsWide` +
+    `useBreakpoint` sibling hooks landed as the FE bonus.
+    → 9 backend + 18 FE hook tests green.
+
+**I1.5.b — Frontend Theme Editor UI + Live Preview** — SHIPPED · Feb-2026
+  * New `/settings/theme` page (admin-only) with preset picker +
+    confirm modal, per-section shadcn Accordion, solid/gradient
+    toggle (hidden on solid-only slots), 400 ms-debounced `/preview`
+    validation with inline errors, live preview panel.
+  * New `POST /api/tenants/me/theme/preview` shadow endpoint
+    (collects every contrast failure at once, echoes
+    `computed_ratio`).
+    → 5 backend preview + 9 FE editor tests green.
+
+**I1.5.c — `useTenantTheme` hook + `theme.js` refactor** — SHIPPED · Feb-2026
+  * `hooks/useTenantTheme.jsx` + `<TenantThemeProvider>` — fetches
+    on mount, auth-aware refetch on login, `applyOverride`
+    optimism, GET-error fallback to client-side default preset.
+  * `theme/presets.js` — 31-entry client mirror generated from the
+    backend registry; parity locked by `test/theme-preset-parity.
+    test.js` (Python subprocess deep-equal).
+  * `theme/tenantVars.js` — CSS custom-property overlay
+    (`--tenant-<name>` + `-css` gradient variant),
+    `tenantCssVar(path, fallback)` helper.
+  * `index.css` — non-invasive `!important` overlay rules for K74/
+    K74.1/K75/K67 data attributes so existing consumers reskin
+    without any JSX changes. `theme.js` static exports unchanged
+    → every K64/K67/K70/K70a/K74/K75/K76 source-grep regression
+    test passes verbatim.
+  * Editor Save + Apply-Preset hook into `refetchTenantTheme` +
+    `applyTenantThemeOverride` for in-place reskin.
+    → 5 hook + 10 CSS-var + 3 parity tests green; runtime verify
+    via Playwright confirmed `--tenant-menu-bg` flips
+    `#0f172a → #9d174d` on default → salon preset apply.
+
+### Backlog uptake (approved for I1 phase)
+* **"Reset to industry default"** shortcut in the theme editor
+  header (next to Save): reads `tenant.industry` from I1 and
+  calls `apply-preset` with the matched key in one click. All
+  plumbing already in place — I1 just wires the button.
+
+### Awaiting user tester
+* Frontend reskin flow + regression sweep across K64/K67/K70/K74
+  surfaces on I1.5.c before dispatching I1.5.d.
+

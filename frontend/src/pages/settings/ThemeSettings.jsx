@@ -28,6 +28,12 @@ import { Palette, Loader2, RotateCcw, Save, AlertTriangle, Info } from "lucide-r
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { useIsWide } from "@/hooks/useIsNarrow";
+// Phase I1.5.c · Feb-2026 — After the editor saves or applies a
+// preset, invalidate the shared ``useTenantTheme`` cache so the
+// app-shell reskins in place without a reload. ``applyOverride``
+// gives us optimistic-update semantics (the CSS vars flip the
+// moment PUT returns 200, before the follow-up GET completes).
+import { useTenantTheme } from "@/hooks/useTenantTheme";
 import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -456,6 +462,12 @@ export default function ThemeSettings() {
   const [previewErrors, setPreviewErrors] = React.useState([]);
   const [saving, setSaving] = React.useState(false);
   const [applying, setApplying] = React.useState(false);
+  // Optimistic reskin trigger — see the import comment. ``refetch``
+  // is the authoritative post-save invalidation; ``applyOverride``
+  // is the pre-GET optimism so the app-shell reflects the new
+  // palette the instant PUT returns 200.
+  const { refetch: refetchTenantTheme,
+            applyOverride: applyTenantThemeOverride } = useTenantTheme();
 
   // Initial load.
   React.useEffect(() => {
@@ -514,6 +526,9 @@ export default function ThemeSettings() {
     try {
       const persisted = await api.put("/tenants/me/theme", state.working);
       dispatch({ type: "hydrate", theme: persisted });
+      // Optimistic reskin immediately, then reconcile via refetch.
+      applyTenantThemeOverride(persisted);
+      refetchTenantTheme();
       toast.success("Theme saved");
     } catch (e) {
       const detail = e?.data?.detail;
@@ -532,6 +547,8 @@ export default function ThemeSettings() {
         "/tenants/me/theme/apply-preset", { key: pendingPreset });
       dispatch({ type: "hydrate", theme: persisted });
       setPresetKey(pendingPreset);
+      applyTenantThemeOverride(persisted);
+      refetchTenantTheme();
       toast.success(`Applied preset: ${pendingPreset}`);
     } catch (e) {
       const detail = e?.data?.detail;
