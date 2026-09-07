@@ -80,6 +80,32 @@ from services.messaging.sms.registry import (
     get_provider_field_schemas as _sms_provider_field_schemas,
     list_registered_sms_provider_keys,
 )
+# Phase I1.7.c.1 · Feb-2026 — AI BYO providers.
+from services.ai import (
+    AIProviderUsage,
+    AIUsageResponse,
+    InvalidAIProviderConfig,
+    UnknownAIProvider,
+    get_ai_provider,
+    get_ai_provider_by_short_name,
+    get_provider_field_schemas as _ai_provider_field_schemas,
+    get_provider_model_options as _ai_provider_model_options,
+    list_registered_ai_provider_keys,
+    list_short_names as _ai_short_names,
+    short_name_for as _ai_short_name_for,
+)
+from services.ai._helpers import (
+    current_period_yyyymm as _ai_period,
+    save_provider_config as save_ai_provider_config,
+)
+from services.ai.usage import (
+    SOFT_WARN_RATIO as _AI_SOFT_WARN_RATIO,
+    _compute_status as _ai_compute_status,
+    get_all_usage_rows as _ai_get_all_usage_rows,
+    get_provider_meta as _ai_get_provider_meta,
+    remove_provider_meta as _ai_remove_provider_meta,
+    upsert_provider_meta as _ai_upsert_provider_meta,
+)
 
 
 log = logging.getLogger("integrations")
@@ -128,6 +154,7 @@ class DeleteResponse(BaseModel):
 # ── Provider-key resolution across registries ───────────────────
 _SMS_KEYS = set(list_registered_sms_provider_keys())
 _EMAIL_KEYS = set(list_registered_email_provider_keys())
+_AI_KEYS = set(list_registered_ai_provider_keys())
 
 
 def _kind_for(provider_key: str) -> str:
@@ -135,6 +162,8 @@ def _kind_for(provider_key: str) -> str:
         return "sms"
     if provider_key in _EMAIL_KEYS:
         return "email"
+    if provider_key in _AI_KEYS:
+        return "ai"
     return "payments"
 
 
@@ -143,8 +172,8 @@ def _resolve_provider(provider_key: str):
     registry knows it. Raises ``HTTPException(404)`` on unknown key.
 
     Returns a tuple ``(kind, provider)`` where ``kind`` is
-    ``"payments" | "sms" | "email"`` so callers can pick the correct
-    ``test_connection`` signature.
+    ``"payments" | "sms" | "email" | "ai"`` so callers can pick the
+    correct ``test_connection`` signature.
     """
     kind = _kind_for(provider_key)
     try:
@@ -152,8 +181,10 @@ def _resolve_provider(provider_key: str):
             return kind, get_sms_provider(provider_key)
         if kind == "email":
             return kind, get_email_provider(provider_key)
+        if kind == "ai":
+            return kind, get_ai_provider(provider_key)
         return kind, get_provider(provider_key)
-    except (UnknownProvider, UnknownMessagingProvider):
+    except (UnknownProvider, UnknownMessagingProvider, UnknownAIProvider):
         raise HTTPException(status_code=404, detail=f"unknown provider: {provider_key}")
 
 
@@ -239,6 +270,13 @@ async def delete_tenant_integration(
 ):
     _require_write_role(user)
     removed = await remove_secret(tenant["id"], provider_key)
+    # Phase I1.7.c.1 — AI provider metadata sidecar also needs cleanup.
+    if _kind_for(provider_key) == "ai":
+        short = _ai_short_name_for(provider_key) or provider_key
+        try:
+            await _ai_remove_provider_meta(tenant_id=tenant["id"], provider=short)
+        except Exception:
+            pass
     return DeleteResponse(removed=removed, provider_key=provider_key)
 
 
@@ -255,6 +293,12 @@ class SaveIntegrationBody(BaseModel):
     # ``account_sid``, SMTP ``username``) so the UI can display it
     # without decrypting the blob.
     public_account_id: Optional[str] = None
+    # Phase I1.7.c.1 — AI providers only. Cap semantics:
+    #   None => unlimited (default)
+    #   0    => block all (explicit kill-switch)
+    #   >0   => hard block at ``used >= cap`` (tokens_total).
+    # Ignored for non-AI providers.
+    monthly_token_cap: Optional[int] = None
 
 
 class SaveIntegrationResponse(BaseModel):
@@ -287,6 +331,46 @@ async def save_tenant_integration(
             detail=_friendly_unknown_provider_error(provider_key),
         )
     kind = _kind_for(provider_key)
+    if kind == "ai":
+        # I1.7.c.1 — AI providers accept the same body shape as
+        # messaging providers, PLUS optional ``default_model`` and
+        # ``monthly_token_cap`` (see ``SaveIntegrationBody``).
+        _, ai_provider = _resolve_provider(provider_key)
+        schema = getattr(ai_provider, "config_fields", {}) or {}
+        try:
+            await save_ai_provider_config(
+                tenant_id=tenant["id"], provider_key=provider_key,
+                config=body.config, schema=schema,
+                primary_secret_field=getattr(ai_provider, "primary_secret_field", None),
+            )
+        except InvalidAIProviderConfig as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        short = _ai_short_name_for(provider_key) or provider_key
+        # Persist the sidecar (cap + default_model) — plaintext so the
+        # cap-check on dispatch avoids a decrypt on every call.
+        cap = body.monthly_token_cap
+        if cap is not None:
+            try:
+                cap = int(cap)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="monthly_token_cap must be an integer or null",
+                )
+            if cap < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="monthly_token_cap must be >= 0 (null = unlimited, 0 = block all)",
+                )
+        default_model = body.config.get("default_model") if isinstance(body.config, dict) else None
+        await _ai_upsert_provider_meta(
+            tenant_id=tenant["id"], provider=short,
+            monthly_token_cap=cap, default_model=default_model,
+        )
+        return SaveIntegrationResponse(
+            provider_key=provider_key, saved=True,
+            connected_account_id_masked=None,
+        )
     if kind not in ("sms", "email"):
         # Every non-messaging key ends up here. ``stripe`` (payment
         # provider) uses OAuth; everything else is unknown.
@@ -343,13 +427,16 @@ class ProviderFieldSchemaEntry(BaseModel):
 
 class ProviderSchema(BaseModel):
     provider_key: str
-    kind: str  # "sms" | "email"
+    kind: str  # "sms" | "email" | "ai"
     fields: List[ProviderFieldSchemaEntry]
+    # I1.7.c.1 — models dropdown options (empty for non-AI providers).
+    models: List[str] = []
 
 
 class ProviderSchemasResponse(BaseModel):
     sms: List[ProviderSchema]
     email: List[ProviderSchema]
+    ai: List[ProviderSchema] = []
 
 
 def _to_field_entries(fields: Dict[str, Dict[str, Any]]) -> List[ProviderFieldSchemaEntry]:
@@ -386,7 +473,74 @@ async def integrations_schemas(
                           fields=_to_field_entries(v))
         for k, v in _email_provider_field_schemas().items()
     ]
-    return ProviderSchemasResponse(sms=sms_schemas, email=email_schemas)
+    ai_models_map = _ai_provider_model_options()
+    ai_schemas = [
+        ProviderSchema(provider_key=k, kind="ai",
+                          fields=_to_field_entries(v),
+                          models=ai_models_map.get(k, []))
+        for k, v in _ai_provider_field_schemas().items()
+    ]
+    return ProviderSchemasResponse(sms=sms_schemas, email=email_schemas, ai=ai_schemas)
+
+
+# ── GET /tenants/me/integrations/ai/usage (I1.7.c.1) ─────────────
+@router.get(
+    "/tenants/me/integrations/ai/usage",
+    response_model=AIUsageResponse,
+    operation_id="tenants.integrations.ai.usage",
+)
+async def get_tenant_ai_usage(
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Return per-provider monthly token usage + cap for the current
+    tenant. Includes rows for BOTH configured providers (with their
+    ``monthly_token_cap``) and any providers with usage rows this
+    period. Rows with ``pct_used >= 0.8`` surface a ``warn`` status;
+    rows at or above cap surface ``blocked`` — the FE renders these
+    in a progress bar (green / amber / red).
+    """
+    _require_read_role(user)
+    period = _ai_period()
+    tid = tenant["id"]
+    # Merge: any provider with metadata (configured) OR any provider
+    # with usage this month gets a row.
+    providers_present = set()
+    metas: Dict[str, Dict[str, Any]] = {}
+    for short in _ai_short_names():
+        m = await _ai_get_provider_meta(tenant_id=tid, provider=short)
+        if m:
+            providers_present.add(short)
+            metas[short] = m
+    usage_rows = await _ai_get_all_usage_rows(tenant_id=tid, period_yyyymm=period)
+    usage_by_short: Dict[str, Dict[str, Any]] = {
+        r["provider"]: r for r in usage_rows if r.get("provider")
+    }
+    providers_present.update(usage_by_short.keys())
+    out: List[AIProviderUsage] = []
+    for short in sorted(providers_present):
+        meta = metas.get(short) or {}
+        usage = usage_by_short.get(short) or {}
+        cap_raw = meta.get("monthly_token_cap")
+        cap = int(cap_raw) if cap_raw is not None else None
+        used = int(usage.get("tokens_total", 0) or 0)
+        pct = None
+        if cap is not None and cap > 0:
+            pct = round(used / cap, 4)
+        status_val = _ai_compute_status(used=used, cap=cap)
+        out.append(AIProviderUsage(
+            provider=short,
+            period_yyyymm=period,
+            tokens_prompt=int(usage.get("tokens_prompt", 0) or 0),
+            tokens_completion=int(usage.get("tokens_completion", 0) or 0),
+            tokens_total=used,
+            monthly_token_cap=cap,
+            default_model=meta.get("default_model"),
+            connected=short in metas,
+            pct_used=pct,
+            status=status_val,
+        ))
+    return AIUsageResponse(tenant_id=tid, period_yyyymm=period, providers=out)
 
 
 # ── GET /integrations/stripe/connect-link ────────────────────────

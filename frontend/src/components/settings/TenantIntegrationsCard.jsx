@@ -29,11 +29,17 @@ import { colors } from "@/theme";
 
 const STALE_DAYS = 30;
 const COMING_SOON = [
-  { key: "ai",        label: "AI provider",      desc: "OpenAI · Claude · Gemini. BYO API key or Emergent-managed." },
   { key: "maps",      label: "Maps provider",    desc: "Google Maps · Mapbox · OpenStreetMap." },
   { key: "calendars", label: "Calendar sync",    desc: "Google Calendar · Outlook · iCloud." },
   { key: "storage",   label: "Object storage",   desc: "S3 · GCS · Emergent-managed default." },
 ];
+
+// Phase I1.7.c.1 — AI provider display metadata (short_name → label).
+const AI_PROVIDER_LABELS = {
+  ai_openai:    { short: "openai",    label: "OpenAI",    desc: "Bring your own OpenAI API key (GPT-4o etc)." },
+  ai_anthropic: { short: "anthropic", label: "Anthropic", desc: "Bring your own Anthropic API key (Claude family)." },
+  ai_gemini:    { short: "gemini",    label: "Gemini",    desc: "Bring your own Google Gemini API key." },
+};
 
 
 function StatusPill({ tone = "neutral", children, testid }) {
@@ -406,11 +412,238 @@ function MessagingCard({
 
 
 /** ————————————————————————————————————————————————————————————
+ *  Section: AI provider card (OpenAI / Anthropic / Gemini) — new
+ *  in Phase I1.7.c.1. One card per provider with:
+ *    - api_key (secret) input
+ *    - default_model dropdown (schema.models[])
+ *    - monthly_token_cap input (empty = unlimited, 0 = block all)
+ *    - usage progress bar (green < 80% · amber 80–99% · red ≥ 100%)
+ *  ———————————————————————————————————————————————————————————— */
+function AICard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
+  const providerKey = schema.provider_key;      // e.g. "ai_openai"
+  const shortName = (AI_PROVIDER_LABELS[providerKey] || {}).short || providerKey;
+  const label = (AI_PROVIDER_LABELS[providerKey] || {}).label || providerKey;
+  const desc = (AI_PROVIDER_LABELS[providerKey] || {}).desc || "";
+
+  const isConnected = !!row?.connected;
+  const state = isConnected ? "connected" : "disconnected";
+  const stateLabel = isConnected ? "Connected" : "Not connected";
+  const busyKey = providerKey;
+
+  const [form, setForm] = useState({ default_model: schema.models?.[0] || "" });
+  const [capInput, setCapInput] = useState(
+    usage?.monthly_token_cap == null ? "" : String(usage.monthly_token_cap),
+  );
+
+  useEffect(() => {
+    if (usage?.default_model) {
+      setForm((prev) => ({ ...prev, default_model: usage.default_model }));
+    }
+    if (usage?.monthly_token_cap != null) {
+      setCapInput(String(usage.monthly_token_cap));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usage?.default_model, usage?.monthly_token_cap]);
+
+  const save = async () => {
+    setBusyFor(busyKey, "save");
+    try {
+      const body = {
+        config: {
+          api_key: form.api_key || "",
+          default_model: form.default_model || schema.models?.[0] || "",
+        },
+        monthly_token_cap: capInput === "" ? null : Number(capInput),
+      };
+      const r = await api.put(`/tenants/me/integrations/${providerKey}`, body);
+      if (r?.saved) toast.success(`${label} saved.`);
+      setForm((prev) => ({ ...prev, api_key: "" }));
+      await reload();
+    } catch (e) {
+      toast.error(e?.message || `${label} save failed`);
+    } finally { setBusyFor(busyKey, null); }
+  };
+
+  const remove = async () => {
+    if (typeof window !== "undefined" && window.confirm
+        && !window.confirm(`Disconnect ${label}? Your saved credentials will be permanently removed.`)) return;
+    setBusyFor(busyKey, "delete");
+    try {
+      const r = await api.delete(`/tenants/me/integrations/${providerKey}`);
+      if (r?.removed) toast.success(`${label} disconnected.`);
+      else toast(`${label} was not connected.`);
+      await reload();
+    } catch (e) { toast.error(e?.message || `${label} disconnect failed`); }
+    finally { setBusyFor(busyKey, null); }
+  };
+
+  // Usage progress bar colour: green < 80% · amber 80–99% · red ≥ 100%.
+  const pct = usage?.pct_used ?? 0;
+  const pctDisplay = usage?.monthly_token_cap == null
+    ? null
+    : Math.min(100, Math.round((pct || 0) * 100));
+  const barColor = usage?.status === "blocked" ? "#DC2626"
+    : usage?.status === "warn" ? "#F59E0B"
+    : "#16A34A";
+  const capLabel = usage?.monthly_token_cap == null
+    ? "Unlimited"
+    : usage.monthly_token_cap === 0
+    ? "Blocked (cap = 0)"
+    : `${(usage.tokens_total || 0).toLocaleString()} / ${usage.monthly_token_cap.toLocaleString()}`;
+
+  return (
+    <div
+      className="rounded-xl p-4 flex flex-col gap-3"
+      style={{ border: `1px solid ${colors.border}` }}
+      data-testid={`tenant-integration-${providerKey}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>{label}</div>
+            <StatusPill tone={state} testid={`tenant-integration-${providerKey}-status`}>{stateLabel}</StatusPill>
+            {isConnected && <StaleBadge lastUsedAt={row.last_used_at} providerKey={providerKey} />}
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>{desc}</div>
+        </div>
+      </div>
+
+      {isConnected && (
+        <div
+          className="rounded-lg px-3 py-2 text-xs space-y-1"
+          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+          data-testid={`tenant-integration-${providerKey}-summary`}
+        >
+          {row.last_4 && (
+            <div><span className="font-semibold">API key · last 4:</span>{" "}
+              <span className="font-mono" data-testid={`tenant-integration-${providerKey}-last4`}>••••{row.last_4}</span></div>
+          )}
+          {usage?.default_model && (
+            <div><span className="font-semibold">Default model:</span>{" "}
+              <span className="font-mono" data-testid={`tenant-integration-${providerKey}-model`}>{usage.default_model}</span></div>
+          )}
+        </div>
+      )}
+
+      {/* Usage progress bar */}
+      <div className="flex flex-col gap-1" data-testid={`tenant-integration-${providerKey}-usage`}>
+        <div className="flex items-center justify-between text-xs" style={{ color: colors.onSurfaceSecondary }}>
+          <span>Usage this month</span>
+          <span data-testid={`tenant-integration-${providerKey}-usage-label`}>{capLabel}</span>
+        </div>
+        <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: "#E5E7EB" }}>
+          {pctDisplay != null && (
+            <div
+              className="h-full transition-all"
+              style={{ width: `${pctDisplay}%`, backgroundColor: barColor }}
+              data-testid={`tenant-integration-${providerKey}-usage-bar`}
+            />
+          )}
+        </div>
+        {usage?.status === "warn" && (
+          <div className="text-[11px]" style={{ color: "#854D0E" }}
+               data-testid={`tenant-integration-${providerKey}-usage-warn`}>
+            ⚠︎ Soft warning · ≥ 80% of monthly cap consumed.
+          </div>
+        )}
+        {usage?.status === "blocked" && (
+          <div className="text-[11px]" style={{ color: "#991B1B" }}
+               data-testid={`tenant-integration-${providerKey}-usage-blocked`}>
+            ✕ Monthly cap reached · requests will return 429 until next month or you raise the cap.
+          </div>
+        )}
+      </div>
+
+      {canWrite && (
+        <div className="flex flex-col gap-2">
+          <label className="text-xs flex flex-col gap-1" style={{ color: colors.onSurfaceSecondary }}>
+            <span>API key<span style={{ color: "#991B1B" }}> *</span></span>
+            <input
+              type="password"
+              value={form.api_key ?? ""}
+              onChange={(e) => setForm((prev) => ({ ...prev, api_key: e.target.value }))}
+              autoComplete="off"
+              placeholder={isConnected ? "•••• (leave blank to keep current)" : "sk-…"}
+              className="rounded-lg px-2 py-1 text-sm"
+              style={{ border: `1px solid ${colors.border}`, backgroundColor: "white", color: colors.onSurface }}
+              data-testid={`tenant-integration-${providerKey}-field-api_key`}
+            />
+          </label>
+
+          <label className="text-xs flex flex-col gap-1" style={{ color: colors.onSurfaceSecondary }}>
+            <span>Default model</span>
+            <select
+              value={form.default_model || ""}
+              onChange={(e) => setForm((prev) => ({ ...prev, default_model: e.target.value }))}
+              className="rounded-lg px-2 py-1 text-sm"
+              style={{ border: `1px solid ${colors.border}`, backgroundColor: "white", color: colors.onSurface }}
+              data-testid={`tenant-integration-${providerKey}-model-select`}
+            >
+              {(schema.models || []).map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="text-xs flex flex-col gap-1" style={{ color: colors.onSurfaceSecondary }}>
+            <span>
+              Monthly token cap
+              <span className="italic" style={{ color: colors.onSurfaceSecondary }}> · empty = unlimited · 0 = block all</span>
+            </span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={capInput}
+              onChange={(e) => setCapInput(e.target.value)}
+              placeholder="Unlimited"
+              className="rounded-lg px-2 py-1 text-sm"
+              style={{ border: `1px solid ${colors.border}`, backgroundColor: "white", color: colors.onSurface }}
+              data-testid={`tenant-integration-${providerKey}-cap-input`}
+            />
+          </label>
+
+          <div className="flex items-center gap-2 flex-wrap mt-1">
+            <button
+              onClick={save}
+              disabled={!!busy[busyKey]}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+              style={{ backgroundColor: colors.brand, opacity: busy[busyKey] ? 0.6 : 1 }}
+              data-testid={`tenant-integration-${providerKey}-save`}
+            >
+              {busy[busyKey] === "save" ? "Saving…" : (isConnected ? "Save (rotate)" : "Save")}
+            </button>
+            {isConnected && (
+              <button
+                onClick={remove}
+                disabled={!!busy[busyKey]}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+                style={{ backgroundColor: "#FEE2E2", color: "#991B1B", opacity: busy[busyKey] ? 0.6 : 1 }}
+                data-testid={`tenant-integration-${providerKey}-disconnect`}
+              >
+                {busy[busyKey] === "delete" ? "Removing…" : "Disconnect"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {!canWrite && (
+        <span className="text-xs" style={{ color: colors.onSurfaceSecondary }}>
+          Ask an admin to connect this provider.
+        </span>
+      )}
+    </div>
+  );
+}
+
+
+/** ————————————————————————————————————————————————————————————
  *  Root component.
  *  ———————————————————————————————————————————————————————————— */
 export default function TenantIntegrationsCard() {
   const [rows, setRows] = useState(null);
-  const [schemas, setSchemas] = useState({ sms: [], email: [] });
+  const [schemas, setSchemas] = useState({ sms: [], email: [], ai: [] });
+  const [aiUsage, setAiUsage] = useState({});     // { openai: {...}, anthropic: {...}, gemini: {...} }
   const [busy, setBusy] = useState({});
   const [role, setRole] = useState("manager");
 
@@ -425,14 +658,22 @@ export default function TenantIntegrationsCard() {
 
   const load = useCallback(async () => {
     try {
-      const [listRes, schemaRes] = await Promise.all([
+      const [listRes, schemaRes, usageRes] = await Promise.all([
         api.get("/tenants/me/integrations"),
         api.get("/tenants/me/integrations/schemas"),
+        api.get("/tenants/me/integrations/ai/usage").catch(() => ({ providers: [] })),
       ]);
       const map = {};
       (listRes?.integrations || []).forEach((row) => { map[row.provider_key] = row; });
       setRows(map);
-      setSchemas({ sms: schemaRes?.sms || [], email: schemaRes?.email || [] });
+      setSchemas({
+        sms: schemaRes?.sms || [],
+        email: schemaRes?.email || [],
+        ai: schemaRes?.ai || [],
+      });
+      const usageByShort = {};
+      (usageRes?.providers || []).forEach((u) => { usageByShort[u.provider] = u; });
+      setAiUsage(usageByShort);
     } catch (e) {
       setRows({});
       toast.error(e?.message || "Failed to load integrations");
@@ -522,6 +763,20 @@ export default function TenantIntegrationsCard() {
           schemas={schemas.email} connectedRow={emailRow}
           canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
         />
+
+        {/* Phase I1.7.c.1 · Feb-2026 — AI BYO cards (OpenAI, Anthropic, Gemini). */}
+        {schemas.ai.map((s) => {
+          const short = (AI_PROVIDER_LABELS[s.provider_key] || {}).short || s.provider_key;
+          return (
+            <AICard
+              key={s.provider_key}
+              schema={s}
+              row={rows?.[s.provider_key]}
+              usage={aiUsage[short]}
+              canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
+            />
+          );
+        })}
 
         {COMING_SOON.map((p) => (
           <div

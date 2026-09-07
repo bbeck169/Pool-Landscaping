@@ -96,6 +96,20 @@ const _seedSchemas = () => ({
       { name: "from_addr", required: true, secret: false, label: "Default From address" },
     ]},
   ],
+  ai: [
+    { provider_key: "ai_openai", kind: "ai", models: ["gpt-4o-mini", "gpt-4o"], fields: [
+      { name: "api_key", required: true, secret: true, label: "OpenAI API Key" },
+      { name: "default_model", required: false, secret: false, label: "Default model" },
+    ]},
+    { provider_key: "ai_anthropic", kind: "ai", models: ["claude-3-5-sonnet-latest"], fields: [
+      { name: "api_key", required: true, secret: true, label: "Anthropic API Key" },
+      { name: "default_model", required: false, secret: false, label: "Default model" },
+    ]},
+    { provider_key: "ai_gemini", kind: "ai", models: ["gemini-1.5-flash"], fields: [
+      { name: "api_key", required: true, secret: true, label: "Google Gemini API Key" },
+      { name: "default_model", required: false, secret: false, label: "Default model" },
+    ]},
+  ],
 });
 
 
@@ -106,6 +120,8 @@ const _installListAndSchemasMock = (rowsFactory) => {
   mockGet.mockImplementation(async (path) => {
     if (path === "/tenants/me/integrations") return rowsFactory();
     if (path === "/tenants/me/integrations/schemas") return _seedSchemas();
+    if (path === "/tenants/me/integrations/ai/usage")
+      return { tenant_id: "tenant-i17a-vitest", period_yyyymm: "202602", providers: [] };
     if (path === "/integrations/stripe/connect-link")
       return { url: "https://connect.stripe.com/oauth/authorize?client_id=ca_x&state=abc", state: "abc" };
     return {};
@@ -170,8 +186,14 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
       .toMatch(/not connected/i);
     expect(screen.getByTestId("tenant-integration-email-status").textContent)
       .toMatch(/not connected/i);
-    // AI / Maps / Calendars / Storage remain coming-soon placeholders.
-    ["ai", "maps", "calendars", "storage"].forEach((k) => {
+    // AI is now a real card (I1.7.c.1) — Not connected default.
+    ["ai_openai", "ai_anthropic", "ai_gemini"].forEach((k) => {
+      expect(screen.getByTestId(`tenant-integration-${k}`)).toBeTruthy();
+      expect(screen.getByTestId(`tenant-integration-${k}-status`).textContent)
+        .toMatch(/not connected/i);
+    });
+    // Maps / Calendars / Storage remain coming-soon placeholders.
+    ["maps", "calendars", "storage"].forEach((k) => {
       expect(screen.getByTestId(`tenant-integration-${k}`)).toBeTruthy();
       expect(screen.getByTestId(`tenant-integration-${k}-status`).textContent)
         .toMatch(/coming soon/i);
