@@ -51,6 +51,7 @@ from routers.tenants import get_current_tenant
 from utils import get_current_user
 from services.secrets import (
     ConnectionSummary,
+    connection_summary as _connection_summary,
     list_connections,
     remove_secret,
     put_secret,
@@ -65,7 +66,10 @@ from services.payments.tenant_base import (
 from services.payments.tenant_registry import get_provider
 from services.payments.tenant_stripe import build_connect_link
 # Phase I1.7.b · Feb-2026 — SMS + Email BYO providers.
-from services.messaging._helpers import save_provider_config
+from services.messaging._helpers import (
+    load_provider_config as _load_messaging_config,
+    save_provider_config,
+)
 from services.messaging.email.registry import (
     get_email_provider,
     get_provider_field_schemas as _email_provider_field_schemas,
@@ -307,6 +311,66 @@ class SaveIntegrationResponse(BaseModel):
     connected_account_id_masked: Optional[str] = None
 
 
+async def _preserve_stored_secrets(
+    *, tenant_id: str, provider_key: str,
+    incoming_config: Dict[str, Any],
+    schema: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Fix-2026-02 · post-tester merge helper — preserve stored secrets
+    on partial edits.
+
+    Historically the PUT handler rejected any request whose ``config``
+    payload didn't include every ``required=True`` field. That broke
+    the natural "adjust the cap / model / from-number without
+    re-typing the api_key" gesture. This helper makes partial edits
+    UNIFORM across every provider (AI / SMS / Email):
+
+    * If the provider is **already connected** for this tenant, load
+      its stored decrypted config and merge the incoming payload on
+      top — incoming NON-BLANK values win, blanks preserve the
+      stored value. Validation still runs against the merged result,
+      so a genuinely-missing required field on an *unconnected*
+      provider still gets a 400/422.
+
+    * Only secret-shaped values are ever preserved from storage.
+      Non-secret fields on the incoming payload are taken at face
+      value; if they arrive blank AND are marked required, the
+      merged config surfaces that as a validation failure the way
+      it did before this patch.
+
+    ``incoming_config`` MAY be mutated in place. The helper returns
+    the merged dict for convenience.
+    """
+    stored = await _load_messaging_config(
+        tenant_id=tenant_id, provider_key=provider_key,
+    )
+    if not stored:
+        return incoming_config
+    merged: Dict[str, Any] = dict(stored)
+    for k, v in (incoming_config or {}).items():
+        if isinstance(v, str) and not v.strip():
+            # Blank string on a known field — preserve stored value
+            # if the field is marked ``secret=True``; otherwise keep
+            # the blank (lets tenants deliberately clear an optional
+            # non-secret field like ``default_model``).
+            meta = schema.get(k) or {}
+            if meta.get("secret"):
+                continue
+            merged[k] = v
+        elif v is None:
+            # ``None`` = "not provided"; preserve stored for secrets.
+            meta = schema.get(k) or {}
+            if meta.get("secret"):
+                continue
+            merged[k] = v
+        else:
+            merged[k] = v
+    # If the incoming payload omitted a secret field entirely and we
+    # have a stored value, ``merged`` already contains the stored
+    # value (via ``dict(stored)`` init) — nothing more to do.
+    return merged
+
+
 @router.put(
     "/tenants/me/integrations/{provider_key}",
     response_model=SaveIntegrationResponse,
@@ -337,10 +401,16 @@ async def save_tenant_integration(
         # ``monthly_token_cap`` (see ``SaveIntegrationBody``).
         _, ai_provider = _resolve_provider(provider_key)
         schema = getattr(ai_provider, "config_fields", {}) or {}
+        # Fix-2026-02 — preserve stored api_key on partial edits.
+        merged_config = await _preserve_stored_secrets(
+            tenant_id=tenant["id"], provider_key=provider_key,
+            incoming_config=dict(body.config or {}),
+            schema=schema,
+        )
         try:
             await save_ai_provider_config(
                 tenant_id=tenant["id"], provider_key=provider_key,
-                config=body.config, schema=schema,
+                config=merged_config, schema=schema,
                 primary_secret_field=getattr(ai_provider, "primary_secret_field", None),
             )
         except InvalidAIProviderConfig as e:
@@ -362,7 +432,7 @@ async def save_tenant_integration(
                     status_code=400,
                     detail="monthly_token_cap must be >= 0 (null = unlimited, 0 = block all)",
                 )
-        default_model = body.config.get("default_model") if isinstance(body.config, dict) else None
+        default_model = merged_config.get("default_model") if isinstance(merged_config, dict) else None
         await _ai_upsert_provider_meta(
             tenant_id=tenant["id"], provider=short,
             monthly_token_cap=cap, default_model=default_model,
@@ -388,20 +458,28 @@ async def save_tenant_integration(
     # Resolve the provider to grab its field schema.
     _, provider = _resolve_provider(provider_key)
     schema = getattr(provider, "config_fields", {}) or {}
+    # Fix-2026-02 — preserve stored secrets on partial edits so a
+    # tenant can e.g. change the twilio ``from_number`` without
+    # re-typing the auth token.
+    merged_config = await _preserve_stored_secrets(
+        tenant_id=tenant["id"], provider_key=provider_key,
+        incoming_config=dict(body.config or {}),
+        schema=schema,
+    )
     # Pick a public account id automatically if the caller didn't
     # supply one: prefer the first non-secret field's value.
     pub = body.public_account_id
     if not pub:
         for name, meta in schema.items():
             if meta.get("required") and not meta.get("secret"):
-                v = body.config.get(name)
+                v = merged_config.get(name)
                 if v is not None and str(v).strip():
                     pub = str(v)
                     break
     try:
         await save_provider_config(
             tenant_id=tenant["id"], provider_key=provider_key,
-            config=body.config, schema=schema, public_account_id=pub,
+            config=merged_config, schema=schema, public_account_id=pub,
             primary_secret_field=getattr(provider, "primary_secret_field", None),
         )
     except InvalidProviderConfig as e:

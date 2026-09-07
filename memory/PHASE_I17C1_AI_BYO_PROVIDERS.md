@@ -83,3 +83,66 @@ intentionally NOT rewired yet (I1.7.e follow-up).
 - **I1.7.c.2 / .c.3** — Maps + Calendars BYO (same registry pattern).
 - **429 mapping** — surface `TenantAIUsageCapExceeded` as HTTP 429 at every
   future callsite in I1.7.e.
+
+
+## Post-tester fix (2026-02) — Preserve-Stored-Secrets on partial edits
+
+**Bug reproduced by tester:** `PUT /tenants/me/integrations/ai_openai` with
+`{"config": {"default_model": "gpt-4o-mini"}, "monthly_token_cap": 0}`
+returned **400** (missing `api_key`) even when the provider was already
+connected. Impact: tenants couldn't adjust cap/model without re-typing
+the api_key, and the "cap = 0 kill-switch" flow was unreachable via the
+UI's "leave blank to keep current" affordance.
+
+**Fix** (backend, `routers/tenant_integrations.py`):
+
+Added a router-scoped helper `_preserve_stored_secrets(...)` invoked
+BEFORE validation on the `PUT /tenants/me/integrations/{provider_key}`
+handler for BOTH the AI branch AND the messaging (SMS/Email) branch. It:
+
+1. Loads the tenant's stored decrypted config for this `provider_key`
+   (empty return → no merge, incoming payload passes through unchanged).
+2. Merges incoming values on top of the stored dict. For fields marked
+   `secret=True`, blank/`None` incoming values PRESERVE the stored
+   value (so a blank api_key input rotates nothing). For non-secret
+   fields, blank/`None` incoming values propagate as-is — the tenant
+   remains able to clear an optional non-secret field explicitly.
+3. Validation runs against the MERGED result. Unconnected providers
+   with a missing required field still hit the pre-fix 400/422 path.
+
+**Contract (added to the integrations save contract):**
+
+> If a tenant already has a stored secret for `{provider_key}`, blank
+> or omitted `secret=True` fields on the PUT payload preserve the
+> stored value. Non-secret fields on the payload always win. This
+> makes cap/model/from-number/etc. edits possible without re-typing
+> the api_key or auth_token.
+
+**Tests added (all green):**
+- `test_cap_only_edit_preserves_stored_secret` — cap edit only, verifies
+  `last_4` unchanged, cap updated, adapter still decrypts the ORIGINAL
+  `api_key`.
+- `test_model_only_edit_preserves_stored_secret` — same shape for the
+  `default_model` field.
+- `test_missing_api_key_on_unconnected_provider_still_422` — regression
+  guard that unconnected providers still reject partial-config PUTs.
+- `test_cap_zero_via_edit_only_saves_and_blocks_dispatch` — end-to-end
+  kill-switch: cap-only edit → 0, `/usage` reports `status="blocked"`,
+  `dispatch_ai_completion` raises `TenantAIUsageCapExceeded` (no
+  platform fallback).
+- `test_messaging_partial_edit_preserves_secret_uniformly` — proves the
+  fix is uniform: connect twilio, PUT only `from_number`, stored
+  `auth_token` intact at rest.
+
+**Frontend tests added:**
+- `cap-only edit on connected provider posts PUT WITHOUT api_key` —
+  locks the UI contract that the blank `api_key` input is a preserve
+  signal.
+- `disconnect flips the card back to disconnected state` — locks the
+  post-DELETE reload → visual state flip that the tester found
+  inconclusive via browser-use.
+
+**Numbers post-fix:**
+- Backend I1.7 suite: **112/112 green** (17/17 in `test_i17c1_ai_byo_providers.py`).
+- Frontend I1.7 suite: **27/27 green** (9/9 in `i17c1-ai-byo-card.test.jsx`).
+- Tester's exact curl repro now returns `HTTP 200`.

@@ -453,3 +453,202 @@ def test_12_cap_zero_blocks_immediately():
     assert result.cap == 0
     assert result.used == 0
     _cleanup_tenant(TENANT_LOCAL)
+
+
+# ── Post-tester fix (2026-02) · preserve stored secrets on partial edit ──
+def _current_cipher(tid: str, pk: str) -> str:
+    row = _sync.tenant_secrets.find_one({"tenant_id": tid, "provider_key": pk})
+    return (row or {}).get("encrypted_blob", "")
+
+
+def test_cap_only_edit_preserves_stored_secret():
+    """Connected provider · PUT with only monthly_token_cap change →
+    200, ``last_4`` unchanged, cap updated, stored secret still
+    decrypts to the ORIGINAL api_key."""
+    tok = _login()
+    tid = _tenant_id(tok)
+    _cleanup_tenant(tid)
+    try:
+        marker = f"sk-original_{uuid.uuid4().hex}"[:32]
+        put1 = requests.put(
+            f"{API}/tenants/me/integrations/ai_openai",
+            headers=_hdrs(tok), timeout=15,
+            json={"config": {"api_key": marker, "default_model": "gpt-4o-mini"},
+                    "monthly_token_cap": 10000},
+        )
+        assert put1.status_code == 200, put1.text
+        lst_a = requests.get(f"{API}/tenants/me/integrations",
+                                headers=_hdrs(tok), timeout=15).json()
+        row_a = next(r for r in lst_a["integrations"] if r["provider_key"] == "ai_openai")
+        last4_before = row_a["last_4"]
+        # Edit ONLY the cap — no api_key in payload.
+        put2 = requests.put(
+            f"{API}/tenants/me/integrations/ai_openai",
+            headers=_hdrs(tok), timeout=15,
+            json={"config": {"default_model": "gpt-4o-mini"},
+                    "monthly_token_cap": 20000},
+        )
+        assert put2.status_code == 200, put2.text
+        assert put2.json()["saved"] is True
+        # last_4 must be identical → primary secret unchanged.
+        lst_b = requests.get(f"{API}/tenants/me/integrations",
+                                headers=_hdrs(tok), timeout=15).json()
+        row_b = next(r for r in lst_b["integrations"] if r["provider_key"] == "ai_openai")
+        assert row_b["last_4"] == last4_before
+        # Cap updated in sidecar / /usage response.
+        usage = requests.get(f"{API}/tenants/me/integrations/ai/usage",
+                                headers=_hdrs(tok), timeout=15).json()
+        oai = next(p for p in usage["providers"] if p["provider"] == "openai")
+        assert oai["monthly_token_cap"] == 20000
+        # Adapter still decrypts to the ORIGINAL api_key.
+        from services.ai._helpers import load_provider_config
+
+        async def _work(db):
+            return await load_provider_config(
+                tenant_id=tid, provider_key="ai_openai", db=db,
+            )
+        cfg = _drive(_work)
+        assert cfg["api_key"] == marker
+    finally:
+        _cleanup_tenant(tid)
+
+
+def test_model_only_edit_preserves_stored_secret():
+    """Same shape as cap-only, different mutable field: switch the
+    default_model without re-typing the api_key."""
+    tok = _login()
+    tid = _tenant_id(tok)
+    _cleanup_tenant(tid)
+    try:
+        marker = f"sk-model-orig_{uuid.uuid4().hex}"[:32]
+        r1 = requests.put(
+            f"{API}/tenants/me/integrations/ai_openai",
+            headers=_hdrs(tok), timeout=15,
+            json={"config": {"api_key": marker, "default_model": "gpt-4o-mini"},
+                    "monthly_token_cap": None},
+        )
+        assert r1.status_code == 200
+        r2 = requests.put(
+            f"{API}/tenants/me/integrations/ai_openai",
+            headers=_hdrs(tok), timeout=15,
+            json={"config": {"default_model": "gpt-4o"}},
+        )
+        assert r2.status_code == 200, r2.text
+        usage = requests.get(f"{API}/tenants/me/integrations/ai/usage",
+                                headers=_hdrs(tok), timeout=15).json()
+        oai = next(p for p in usage["providers"] if p["provider"] == "openai")
+        assert oai["default_model"] == "gpt-4o"
+        # Secret unchanged: adapter still decrypts to the ORIGINAL key.
+        from services.ai._helpers import load_provider_config
+
+        async def _work(db):
+            return await load_provider_config(
+                tenant_id=tid, provider_key="ai_openai", db=db,
+            )
+        cfg = _drive(_work)
+        assert cfg["api_key"] == marker
+    finally:
+        _cleanup_tenant(tid)
+
+
+def test_missing_api_key_on_unconnected_provider_still_422():
+    """Unconnected provider · no api_key in body → still refused
+    (400) — you can't 'connect' without a key."""
+    tok = _login()
+    tid = _tenant_id(tok)
+    _cleanup_tenant(tid)
+    try:
+        r = requests.put(
+            f"{API}/tenants/me/integrations/ai_anthropic",
+            headers=_hdrs(tok), timeout=15,
+            json={"config": {"default_model": "claude-3-5-sonnet-latest"},
+                    "monthly_token_cap": 5000},
+        )
+        assert r.status_code == 400, r.text
+        assert "api_key" in r.text
+    finally:
+        _cleanup_tenant(tid)
+
+
+def test_cap_zero_via_edit_only_saves_and_blocks_dispatch():
+    """End-to-end kill-switch flow: connect provider, then edit only
+    ``monthly_token_cap`` to 0 — the dispatcher must then hard-block
+    without any platform fallback."""
+    tok = _login()
+    tid = _tenant_id(tok)
+    _cleanup_tenant(tid)
+    try:
+        r1 = requests.put(
+            f"{API}/tenants/me/integrations/ai_openai",
+            headers=_hdrs(tok), timeout=15,
+            json={"config": {"api_key": "sk-killedZZ", "default_model": "gpt-4o-mini"},
+                    "monthly_token_cap": 10000},
+        )
+        assert r1.status_code == 200
+        # Cap-only edit → 0.
+        r2 = requests.put(
+            f"{API}/tenants/me/integrations/ai_openai",
+            headers=_hdrs(tok), timeout=15,
+            json={"config": {}, "monthly_token_cap": 0},
+        )
+        assert r2.status_code == 200, r2.text
+        # /usage shows blocked.
+        usage = requests.get(f"{API}/tenants/me/integrations/ai/usage",
+                                headers=_hdrs(tok), timeout=15).json()
+        oai = next(p for p in usage["providers"] if p["provider"] == "openai")
+        assert oai["monthly_token_cap"] == 0
+        assert oai["status"] == "blocked"
+        # Dispatcher must hard-block WITHOUT platform fallback.
+        from services.ai import (
+            dispatch_ai_completion, TenantAIUsageCapExceeded,
+        )
+
+        async def _work(db):
+            try:
+                return await dispatch_ai_completion(
+                    tenant_id=tid, system_prompt="s", user_text="u", db=db,
+                )
+            except TenantAIUsageCapExceeded as e:
+                return e
+        outcome = _drive(_work)
+        assert isinstance(outcome, TenantAIUsageCapExceeded)
+        assert outcome.cap == 0
+    finally:
+        _cleanup_tenant(tid)
+
+
+def test_messaging_partial_edit_preserves_secret_uniformly():
+    """Regression guard — the merge helper must apply uniformly to
+    SMS/Email providers, not just AI. Connect twilio, then PUT only
+    a new ``from_number`` → 200, auth_token unchanged at rest."""
+    tok = _login()
+    tid = _tenant_id(tok)
+    _sync.tenant_secrets.delete_many({"tenant_id": tid, "provider_key": "twilio"})
+    try:
+        r1 = requests.put(
+            f"{API}/tenants/me/integrations/twilio",
+            headers=_hdrs(tok), timeout=15,
+            json={"config": {"account_sid": "ACaaaaaaaaaaaaaa",
+                              "auth_token": "tok-original-XYZ99",
+                              "from_number": "+15551234567"}},
+        )
+        assert r1.status_code == 200, r1.text
+        # Edit ONLY the from_number.
+        r2 = requests.put(
+            f"{API}/tenants/me/integrations/twilio",
+            headers=_hdrs(tok), timeout=15,
+            json={"config": {"from_number": "+15559990000"}},
+        )
+        assert r2.status_code == 200, r2.text
+        # Stored auth_token still intact.
+        from services.messaging._helpers import load_provider_config
+
+        async def _work(db):
+            return await load_provider_config(
+                tenant_id=tid, provider_key="twilio", db=db,
+            )
+        cfg = _drive(_work)
+        assert cfg["auth_token"] == "tok-original-XYZ99"
+        assert cfg["from_number"] == "+15559990000"
+    finally:
+        _sync.tenant_secrets.delete_many({"tenant_id": tid, "provider_key": "twilio"})

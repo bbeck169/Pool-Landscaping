@@ -239,4 +239,94 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
     expect(screen.queryByTestId("tenant-integration-ai_openai-disconnect")).toBeNull();
     expect(screen.queryByTestId("tenant-integration-ai_openai-field-api_key")).toBeNull();
   });
+
+  // Post-tester fix (2026-02) — cap-only edit succeeds on a connected
+  // provider (api_key input left blank). Backend now preserves the
+  // stored secret uniformly; the FE must send the PUT with an EMPTY
+  // ``api_key`` so this path exercises the merge helper end-to-end.
+  it("cap-only edit on connected provider posts PUT WITHOUT api_key", async () => {
+    _asAdmin();
+    _mockRoutes(
+      [{
+        provider_key: "ai_openai", connection_type: "api_key",
+        connected: true, last_4: "ORIG",
+        connected_account_id_masked: null,
+        last_used_at: null, connected_status: "connected", error_log_count: 0,
+      }],
+      [{ provider: "openai", period_yyyymm: "202602",
+          tokens_prompt: 0, tokens_completion: 0, tokens_total: 0,
+          monthly_token_cap: 10000, default_model: "gpt-4o-mini",
+          connected: true, pct_used: 0, status: "ok" }],
+    );
+    mockPut.mockResolvedValue({ saved: true, provider_key: "ai_openai" });
+    render(<TenantIntegrationsCard />);
+    await waitFor(() =>
+      expect(screen.getByTestId("tenant-integration-ai_openai-cap-input")).toBeTruthy(),
+    );
+    // Change ONLY the cap — leave api_key blank on purpose.
+    const capInput = screen.getByTestId("tenant-integration-ai_openai-cap-input");
+    fireEvent.change(capInput, { target: { value: "50000" } });
+    fireEvent.click(screen.getByTestId("tenant-integration-ai_openai-save"));
+    await waitFor(() => expect(mockPut).toHaveBeenCalled());
+    const [path, body] = mockPut.mock.calls[0];
+    expect(path).toBe("/tenants/me/integrations/ai_openai");
+    // api_key must be blank (empty string) — merge helper preserves.
+    expect(body.config.api_key).toBe("");
+    expect(body.monthly_token_cap).toBe(50000);
+  });
+
+  // Post-tester follow-up (2026-02) — inconclusive disconnect visual
+  // flip. Lock in that click-disconnect → DELETE fired → reload
+  // fires → card renders with "Not connected" status after settle.
+  it("disconnect flips the card back to disconnected state", async () => {
+    _asAdmin();
+    // First call: connected. After DELETE: not connected.
+    let listCallCount = 0;
+    mockGet.mockImplementation(async (path) => {
+      if (path === "/tenants/me/integrations") {
+        listCallCount += 1;
+        return listCallCount === 1
+          ? {
+              tenant_id: "t", integrations: [{
+                provider_key: "ai_openai", connection_type: "api_key",
+                connected: true, last_4: "GONE",
+                connected_account_id_masked: null,
+                last_used_at: null, connected_status: "connected",
+                error_log_count: 0,
+              }],
+            }
+          : { tenant_id: "t", integrations: [] };
+      }
+      if (path === "/tenants/me/integrations/schemas")
+        return { sms: [], email: [], ai: _AI_SCHEMAS };
+      if (path === "/tenants/me/integrations/ai/usage")
+        return { tenant_id: "t", period_yyyymm: "202602",
+                  providers: listCallCount >= 2 ? [] : [
+                    { provider: "openai", period_yyyymm: "202602",
+                       tokens_prompt: 0, tokens_completion: 0, tokens_total: 0,
+                       monthly_token_cap: 10000, default_model: "gpt-4o-mini",
+                       connected: true, pct_used: 0, status: "ok" }] };
+      return {};
+    });
+    mockDelete.mockResolvedValue({ removed: true, provider_key: "ai_openai" });
+    render(<TenantIntegrationsCard />);
+    await waitFor(() =>
+      expect(screen.getByTestId("tenant-integration-ai_openai-status").textContent)
+        .toMatch(/connected/i),
+    );
+    // Confirm Connected chip is present pre-disconnect.
+    expect(screen.getByTestId("tenant-integration-ai_openai-status").textContent)
+      .not.toMatch(/not connected/i);
+    fireEvent.click(screen.getByTestId("tenant-integration-ai_openai-disconnect"));
+    await waitFor(() =>
+      expect(mockDelete).toHaveBeenCalledWith("/tenants/me/integrations/ai_openai"),
+    );
+    // After reload, card must flip to "Not connected".
+    await waitFor(() =>
+      expect(screen.getByTestId("tenant-integration-ai_openai-status").textContent)
+        .toMatch(/not connected/i),
+    );
+    // Disconnect button must be gone (unconnected UI).
+    expect(screen.queryByTestId("tenant-integration-ai_openai-disconnect")).toBeNull();
+  });
 });
