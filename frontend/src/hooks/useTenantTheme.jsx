@@ -151,6 +151,25 @@ export function TenantThemeProvider({ children, enabled = true }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, authKey]);
 
+  // Phase I1.5.c.fix.2 · Feb-2026 — belt-and-suspenders CSS-var
+  // writer. Every prior code path (mount fetch, refetch,
+  // applyOverride) already calls ``applyToDom`` inline, but this
+  // effect guarantees the DOM stays in sync with ``state.theme``
+  // on ANY future mutation path (StrictMode double-mount,
+  // component-tree-reparent, remote-hot-reload of the provider,
+  // future ``setState`` callers). Skipped when signed-out so the
+  // sign-out branch's ``clearTenantCssVars`` isn't immediately
+  // undone (empty CSS vars fall back to the ``#1B1F5C`` etc.
+  // fallbacks in ``index.css`` — matches the pre-refactor pixels
+  // on the login route).
+  React.useEffect(() => {
+    if (!enabled) return;
+    if (authKey === null) return;
+    if (typeof document === "undefined") return;
+    if (!state.theme) return;
+    writeTenantCssVars(document.documentElement, state.theme);
+  }, [enabled, authKey, state.theme]);
+
   const value = React.useMemo(() => ({
     ...state,
     refetch,

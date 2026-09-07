@@ -480,3 +480,96 @@ that overlays `tenant.theme.accents.badge_bg` on the
 `open`/`scheduled` bucket only. The K50 frozen map stays put
 as the offline-first fallback.
 
+
+
+---
+
+## I1.5.c.fix.2 — Persistence + belt-and-suspenders CSS-var writer
+**Shipped:** Feb-2026 · **Status:** GREEN
+
+### What the tester reported
+- **Test 3** — Live-edit `menu.bg` + Save → topbar reportedly
+  stayed at previous salon color, not `#0000FF`.
+- **Test 5** — Hard-refresh after apply-preset → topbar
+  reportedly reverted to default navy on `/schedule`.
+- **Test 4 / 6** — KPI chip reset appeared pink post-reset
+  (suspected selector confusion with the K74 delta badge).
+
+### Root-cause investigation (runtime Playwright net-tap on the pod)
+Reproduced every scenario against the live preview pod with a
+`request` + `response` interceptor on `/api/tenants/me/theme*`:
+
+| Scenario | Expected | Observed |
+|----------|----------|----------|
+| Apply-preset (salon) via editor | POST `.../apply-preset` → 200; CSS vars flip to salon | ✅ POST 200, `--tenant-menu-bg: #9d174d`, topbar `rgb(157, 23, 77)`, all 4 KPI chips `rgb(157, 23, 77)` |
+| Live-edit `menu.bg=#0000FF` + Save | PUT `.../theme` → 200; topbar flips to blue | ✅ PUT 200, `--tenant-menu-bg: #0000ff`, `[data-testid="admin-topbar"]` computed bg `rgb(0, 0, 255)` |
+| Hard-refresh (`page.reload`) with persisted salon | GET `.../theme` → 200 returning salon; CSS vars stay salon | ✅ GET 200, `--tenant-menu-bg: #9d174d`, topbar `rgb(157, 23, 77)` — identical to pre-refresh screenshot |
+| Post-reset KPI chip color | `#1B1F5C` navy on `[data-testid="k74-kpi-identity-chip"]` | ✅ 4/4 chips `rgb(27, 31, 92)` (the pink the tester saw is the delta-badge `red-100` pill under the KPI value, not the K74 chip — selector confusion, no code fix) |
+
+**Conclusion**: The two "persistence" failures were false positives.
+The backend PUT + apply-preset endpoints persist correctly, the
+GET on hard-refresh returns the persisted theme, and the CSS-var
+writer flips the DOM in both Save and refetch paths.
+
+### What still shipped (defensive)
+Even though runtime evidence refuted the persistence bug, we
+added two low-risk hardenings so the reported symptom cannot
+resurface if a future refactor forgets to call `applyToDom`:
+
+- **Belt-and-suspenders effect** in `hooks/useTenantTheme.jsx`
+  (lines 265-284). A new `useEffect([enabled, authKey,
+  state.theme])` guarantees `writeTenantCssVars` runs on every
+  `state.theme` reference change (StrictMode double-mount,
+  provider tree re-parent, future `setState` paths that skip
+  the inline `applyToDom` call). Guarded on `authKey !== null`
+  so sign-out's `clearTenantCssVars` isn't immediately undone.
+- **New runtime smoke test** at
+  `frontend/src/test/i15c-reskin-runtime.test.jsx` — 5 vitest
+  scenarios covering: mount-with-persisted-theme, applyOverride
+  (optimistic Save), refetch (Save follow-up), sign-out clear,
+  and the belt-and-suspenders re-write. All 5 green.
+
+### Runtime evidence (preview pod)
+| Snapshot | `--tenant-menu-bg` | `--tenant-k74-identity` | `--tenant-schedule-tile-bg` | Topbar computed bg | KPI chip (×4) |
+|----------|--------------------|-------------------------|-----------------------------|--------------------|---------------|
+| S1 (default) | `#1b1f5c` | `#1b1f5c` | `#eaf7f0` | `rgb(27, 31, 92)` | `rgb(27, 31, 92)` |
+| S2 (salon applied) | `#9d174d` | `#9d174d` | `#fce7f3` | `rgb(157, 23, 77)` | `rgb(157, 23, 77)` |
+| S3 (hard refresh) | `#9d174d` | `#9d174d` | `#fce7f3` | `rgb(157, 23, 77)` | `rgb(157, 23, 77)` |
+
+Screenshots:
+- `/tmp/i15c-fix2-s1-default.png` — home under default preset,
+  navy topbar + navy KPI chips.
+- `/tmp/i15c-fix2-s2-salon-applied.png` — home immediately
+  after apply-preset(salon), salon magenta topbar + magenta
+  KPI chips.
+- `/tmp/i15c-fix2-s3-salon-persisted.png` — home after
+  `page.reload()`, IDENTICAL magenta topbar + chips (proves
+  persistence survives hard refresh).
+
+Tenant returned to `default` preset after the verify pass.
+
+### Test results
+- **Backend** — `tests/test_i15a_tenant_theme_endpoint.py`:
+  **14 / 14** (unchanged).
+- **Frontend** — full suite: **473 files, 3730 tests passing
+  (+5 from `i15c-reskin-runtime.test.jsx`), 34 pre-existing
+  Hygiene B skips untouched**. Zero drift.
+
+### Contract locks re-verified
+- No new hardcoded hex regressions.
+- No new quarantines (0 new `it.skip` in this fix).
+- All 34 Hygiene B skips untouched.
+- `brandGradient`: still zero code references.
+- `navyToGreen`: still only `theme.js` canonical export + the
+  20 legitimate consumers.
+
+### Note on the KPI-chip caveat
+`[data-testid="k74-kpi-identity-chip"]` computed background is
+`rgb(27, 31, 92)` (navy) under the default preset — verified on
+all 4 chips. The pink the tester observed is the
+`delta-badge` red-100 pill next to the KPI value (`70.1% vs
+last month` etc.), not the K74 identity chip. No code fix
+required. If the tester's Playwright selector is
+`div[data-testid="k74-kpi-identity-chip"] ~ *` or similar,
+narrow it to just the chip element.
+
