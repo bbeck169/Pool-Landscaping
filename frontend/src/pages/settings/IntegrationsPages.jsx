@@ -5,6 +5,8 @@ import { colors } from "@/theme";
 // Feb-2026 · K55.a — SuperCool + HomeWorks integration surfaces
 // removed as part of the sunset (PHASE_K55_a_FRONTEND_REMOVAL.md).
 // Historical audit fields on data documents are preserved intact.
+// Phase I1.7.a · Feb-2026 — Tenant BYO integrations (Stripe Connect etc).
+import TenantIntegrationsCard from "@/components/settings/TenantIntegrationsCard";
 
 function Card({ children, testid, className = "" }) {
   return (
@@ -70,6 +72,13 @@ export function IntegrationsHub() {
         <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>Integrations</h1>
         <p className="text-sm" style={{ color: colors.onSurfaceSecondary }}>Wired third-party services · API keys are masked for security.</p>
       </div>
+
+      {/* Phase I1.7.a · Feb-2026 — Tenant BYO providers (Stripe Connect
+          Standard + placeholders for SMS / Email / AI / Maps / Calendars
+          / Storage). Rendered ABOVE the legacy env-based grid because
+          BYO is the go-forward story; the legacy grid stays visible
+          during the migration window. */}
+      <TenantIntegrationsCard />
 
       <Card testid="integrations-grid">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

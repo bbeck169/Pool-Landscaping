@@ -16872,3 +16872,24 @@ Product decision needed.
 * Frontend reskin flow + regression sweep across K64/K67/K70/K74
   surfaces on I1.5.c before dispatching I1.5.d.
 
+
+## Phase I1.7.a · Feb-2026 — Stripe Connect + Secret Storage + PaymentProvider adapter
+Shipped 2026-02-07.
+
+### What landed
+* AES-256-GCM `TenantSecret` store at `backend/services/secrets/` — plaintext never crosses the encryption boundary; `list_connections` returns only `last_4` + `connected_account_id_masked`.
+* Abstract `TenantPaymentProvider` in `services/payments/tenant_base.py` + registry (`tenant_registry.py`).
+* Concrete `StripeConnectProvider` (`services/payments/tenant_stripe.py`) implementing charge, refund, payment-intent, webhook-verify, connection-test, and OAuth `code → token` exchange. Platform-Stripe fallback preserved via `STRIPE_PLATFORM_FALLBACK_ENABLED=true` and audited to `platform_stripe_fallback_log`.
+* Router `routers/tenant_integrations.py` — `GET /tenants/me/integrations`, `POST …/{key}/test`, `DELETE …/{key}`, `GET /integrations/stripe/connect-link`, `GET /integrations/stripe/callback`, `POST /integrations/stripe/webhook`. Role gated (`admin/super_admin` write, `+manager` read).
+* Frontend `TenantIntegrationsCard` mounted at `/settings/integrations` above the legacy env-based grid. Live Stripe card (Connect / Test / Disconnect) plus six "Coming soon" placeholders (SMS, Email, AI, Maps, Calendars, Storage). Absorbs `?connect=success|error` bounce from the OAuth callback.
+* Docs: `PHASE_I17_TENANT_INTEGRATIONS.md`, `RUNBOOK_STRIPE_CONNECT_ONBOARDING.md`, `CONTRACT_TENANT_SECRET_AND_PAYMENT_PROVIDER.md`.
+
+### Test coverage
+* Backend Pytest: 44/44 green (`tests/test_i17a_*.py`).
+* Frontend Vitest: 6/6 green (`test/i17a-integrations-page.test.jsx`).
+
+### Backlog uptake (I1.7.b–d)
+* **I1.7.b** — SMS + Email BYO providers under the same adapter contract.
+* **I1.7.c** — AI + Maps + Calendars BYO providers.
+* **I1.7.d** — Square + PayPal + Authorize.net + Lumino payment providers.
+* **I1.7.e** (future) — Tenant-secret KEK rotation migration endpoint (rewrap DEKs under a new KEK without asking tenants to reconnect).

@@ -827,6 +827,15 @@ from routers import qbo_router as _p17_qbo_router  # noqa: E402
 api_router.include_router(_p17_qbo_router.router)
 _p17_qbo_router.log_boot()
 
+# Phase I1.7.a · Feb-2026 — Tenant Integrations foundation.
+# Endpoints: /api/tenants/me/integrations (GET/DELETE/test) +
+# /api/integrations/stripe/{connect-link,callback,webhook}.
+# Backed by services.secrets (AES-256-GCM at rest) +
+# services.payments.tenant_registry (Stripe Connect Standard).
+from routers import tenant_integrations as _i17a_tenant_integrations  # noqa: E402
+api_router.include_router(_i17a_tenant_integrations.router)
+
+
 for module in [notifications_router,
                # Feb 2026 · Customer Merge Phase 1 — MUST be registered
                # before ``customers`` so the static
