@@ -111,8 +111,18 @@ export default function EstimateView({
   const {
     company, bill_to, property_address, header, line_items, totals,
     notes, title, decision, accepted_at, declined_at, sent_at, sent_via,
-    as_customer,
+    as_customer, customer_view,
   } = data;
+
+  // Phase K79 · Feb-2026 — Grouped customer-facing view fork.
+  // The customer/portal caller renders the grouped rollup rows when
+  // ``customer_group_display`` is on. Admin/printable views keep the
+  // fully-itemized surface unchanged.
+  const showGrouped = Boolean(
+    as_customer
+    && customer_view
+    && customer_view.customer_group_display,
+  );
 
   const locked = decision === "accepted" || decision === "declined";
   const showAdminToolbar = isAdmin && !printable;
@@ -296,6 +306,42 @@ export default function EstimateView({
         ) : null}
 
         <div className="iv-lines-wrap ev-lines-wrap">
+          {showGrouped ? (
+            <table className="iv-lines"
+                    data-testid="estimate-grouped-lines-table">
+              <thead>
+                <tr>
+                  <th>Service</th>
+                  <th className="iv-num">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(customer_view.groups || []).length === 0 ? (
+                  <tr><td colSpan={2} className="iv-empty">
+                    No services on this estimate.
+                  </td></tr>
+                ) : (customer_view.groups || []).map((g, i) => (
+                  <tr key={g.category_id || `other-${i}`}
+                      data-testid={
+                        `estimate-grouped-row-${g.category_id || "other"}`
+                      }>
+                    <td>
+                      <div><b>{g.label}</b></div>
+                      {g.description ? (
+                        <div className="ev-group-desc"
+                              data-testid={
+                                `estimate-grouped-desc-${g.category_id || "other"}`
+                              }>
+                          {g.description}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="iv-num">{fmt(g.subtotal)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
           <table className="iv-lines" data-testid="estimate-line-items-table">
             <thead>
               <tr>
@@ -332,6 +378,7 @@ export default function EstimateView({
               ))}
             </tbody>
           </table>
+          )}
         </div>
 
         {notes ? (

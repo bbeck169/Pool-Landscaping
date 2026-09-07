@@ -25,6 +25,10 @@ import { useAuth } from "@/auth";
 import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
 import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
+// Phase K79 · Feb-2026 — Customer-facing grouped view controls
+// (checkbox + per-category description editor + preview modal).
+// Rendered on QUOTES only; invoices keep the itemized view.
+import K79CustomerViewSection from "@/components/quotes/K79CustomerViewSection";
 // Phase K47 · Feb-2026 — View-history card (admin/office/dispatcher
 // only; the component hides itself when the endpoint 403s).
 import InvoiceViewHistory from "@/components/invoices/InvoiceViewHistory";
@@ -491,6 +495,14 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           ) : null}
         </div>
       </div>
+
+      {/* Phase K79 · Feb-2026 — Customer-facing grouped view controls.
+          Quotes/estimates only (invoices keep the itemized customer
+          view — grouped rollup on invoices is future scope). Admin-
+          only surface. */}
+      {isStaff && !isInvoice ? (
+        <K79CustomerViewSection doc={doc} onDocRefresh={load} />
+      ) : null}
 
       {/* Line items */}
       <div

@@ -146,3 +146,11 @@
   font-size: 13px;
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.25);
 }
+
+/* Phase K79 · Feb-2026 — Grouped customer-facing rows. */
+.ev-group-desc {
+  font-size: 12px;
+  color: #6B7280;
+  margin-top: 2px;
+  white-space: pre-wrap;
+}

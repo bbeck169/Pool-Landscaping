@@ -121,6 +121,18 @@ async def _build_payload(est: dict, tenant: dict, *,
         line_items = _project_line_items_for_customer(line_items)
         totals = _project_totals_for_customer(totals)
 
+    # Phase K79 · Feb-2026 — Grouped customer-facing view. Populated on
+    # every payload so admin previews can render it too; the surface
+    # picks itemized vs grouped based on ``customer_group_display``.
+    # long_description is stripped by the helper (contract-tested in
+    # test_k79_group_lines_helper.py).
+    from services.quotes.customer_view import build_customer_view_payload
+    svc_cats: List[Dict[str, Any]] = await db.service_categories.find(
+        {"tenant_id": tenant["id"], "is_archived": False},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(500)
+    customer_view = build_customer_view_payload(est, svc_cats)
+
     return {
         "estimate_id": est.get("id"),
         "status": est.get("status") or "draft",
@@ -148,6 +160,9 @@ async def _build_payload(est: dict, tenant: dict, *,
         "totals": totals,
         "notes": (est.get("notes") or "").strip() or None,
         "as_customer": as_customer,
+        # K79 grouped preview — always included so the admin toolbar's
+        # "Preview customer view" can render without a second call.
+        "customer_view": customer_view,
     }
 
 
@@ -462,12 +477,79 @@ async def changes_via_token(body: RequestChangesIn, token: str = Query(...)):
 
 
 # ══════════════════════════════════════════════════════════════════
+# Phase K79 · Feb-2026 — Grouped customer-facing view endpoint.
+# Single aggregation helper (services.quotes.customer_view) powers:
+#   * this authenticated admin/customer preview endpoint
+#   * the magic-link public variant below
+#   * the embedded ``customer_view`` block inside ``_build_payload``
+#   * the customer-facing PDF fork in ``estimate_pdf``
+# ══════════════════════════════════════════════════════════════════
+@router.get("/quotes/{qid}/customer-view")
+async def quote_customer_view(qid: str,
+                                user: dict = Depends(get_current_user),
+                                tenant: dict = Depends(get_current_tenant)):
+    """Return the grouped customer-facing payload for a quote (auth).
+
+    When ``customer_group_display`` is False the payload still returns
+    (with ``groups=[…]``) so the caller can decide to render itemized
+    vs grouped. Truth of "which mode to render" is
+    ``payload.customer_group_display``.
+    """
+    role = user.get("role") or ""
+    if role == "technician":
+        raise HTTPException(403, "Not allowed")
+    est = await _load_estimate(qid, tenant["id"])
+    if not est:
+        raise HTTPException(404, "Quote not found")
+    if role == "customer" and est.get("customer_id") != user.get("customer_id"):
+        raise HTTPException(404, "Quote not found")
+    return await _build_customer_view_only(est, tenant)
+
+
+@router.get("/portal/quotes/via-token/customer-view")
+async def quote_customer_view_via_token(token: str = Query(...)):
+    """Return the grouped customer-facing payload via magic-link.
+
+    Same signing/verification path as
+    ``GET /api/portal/estimates/via-token``.
+    """
+    ctx = await _load_est_from_token(token)
+    return await _build_customer_view_only(ctx["est"], ctx["tenant"])
+
+
+async def _build_customer_view_only(est: dict, tenant: dict) -> Dict[str, Any]:
+    """Return ONLY the grouped customer-view payload (no admin fields).
+
+    Deliberately narrow surface — safe to expose via magic-link.
+    Uses :func:`services.quotes.customer_view.build_customer_view_payload`
+    which enforces the ``long_description``-scrubbed contract.
+    """
+    from services.quotes.customer_view import build_customer_view_payload
+    svc_cats = await db.service_categories.find(
+        {"tenant_id": tenant["id"], "is_archived": False},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(500)
+    cv = build_customer_view_payload(est, svc_cats)
+    cv["quote_id"] = est.get("id")
+    cv["title"] = est.get("title") or ""
+    return cv
+
+
+# ══════════════════════════════════════════════════════════════════
 # PDF
 # ══════════════════════════════════════════════════════════════════
 @router.get("/estimates/{eid}/pdf")
 async def estimate_pdf(eid: str,
+                        internal: bool = False,
                         user: dict = Depends(get_current_user),
                         tenant: dict = Depends(get_current_tenant)):
+    """Render an estimate PDF.
+
+    Phase K79 · Feb-2026 — When the quote has ``customer_group_display``
+    on AND the caller is a customer (or an admin who omitted
+    ``?internal=1``), the PDF renders the grouped view. Admins can
+    always fetch the fully-itemized "Internal PDF" with ``?internal=1``.
+    """
     role = user.get("role") or ""
     if role == "technician":
         raise HTTPException(403, "Not allowed")
@@ -476,7 +558,8 @@ async def estimate_pdf(eid: str,
         raise HTTPException(404, "Estimate not found")
     if role == "customer" and est.get("customer_id") != user.get("customer_id"):
         raise HTTPException(404, "Estimate not found")
-    payload = await _build_payload(est, tenant, as_customer=(role == "customer"))
+    is_customer_view = (role == "customer") or (not internal)
+    payload = await _build_payload(est, tenant, as_customer=is_customer_view)
 
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors as rlcolors
@@ -549,26 +632,56 @@ async def estimate_pdf(eid: str,
         story.append(Paragraph(f"<b>{payload['title']}</b>", styles["Heading3"]))
     story.append(Spacer(1, 12))
 
-    # Line items — admin PDF shows all columns; customer PDF trimmed.
+    # Line items — Phase K79 · Feb-2026 — three modes:
+    #   1. Admin internal PDF (?internal=1)     → all columns, itemized
+    #   2. Customer PDF, grouped view enabled   → grouped rows
+    #   3. Customer PDF, grouped view disabled  → itemized 4-column
     is_customer_pdf = payload["as_customer"]
-    if is_customer_pdf:
+    grouped_mode = (
+        is_customer_pdf
+        and bool(est.get("customer_group_display"))
+    )
+    if grouped_mode:
+        cv = payload.get("customer_view") or {}
+        headers = ["Service", "Description", "Subtotal"]
+        colw = [2.0 * inch, 3.5 * inch, 1.5 * inch]
+        rows = [headers]
+        for g in cv.get("groups") or []:
+            rows.append([
+                Paragraph(f"<b>{g.get('label') or '—'}</b>",
+                            styles["Normal"]),
+                Paragraph(g.get("description") or "", styles["Normal"]),
+                f"{float(g.get('subtotal') or 0):.2f}",
+            ])
+        if len(rows) == 1:
+            rows.append([Paragraph("No services", styles["Normal"]),
+                          "", "0.00"])
+    elif is_customer_pdf:
         headers = ["Description", "Qty/Hr", "Visits", "Total"]
         colw = [4.0 * inch, 1.0 * inch, 1.0 * inch, 1.5 * inch]
+        rows = [headers]
+        for li in payload["line_items"]:
+            base = [
+                Paragraph(li.get("description") or "—", styles["Normal"]),
+                f"{li.get('qty_hr') or li.get('quantity') or 0:g}",
+                f"{li.get('visits') or 1:g}",
+                f"{float(li.get('total') or 0):.2f}",
+            ]
+            rows.append(base)
     else:
         headers = ["Description", "Cost/Rate", "Qty/Hr", "Visits", "Margin %", "Total"]
         colw = [3.0 * inch, 0.9 * inch, 0.7 * inch, 0.7 * inch, 0.8 * inch, 1.0 * inch]
-    rows = [headers]
-    for li in payload["line_items"]:
-        base = [
-            Paragraph(li.get("description") or "—", styles["Normal"]),
-            f"{li.get('qty_hr') or li.get('quantity') or 0:g}",
-            f"{li.get('visits') or 1:g}",
-        ]
-        if not is_customer_pdf:
-            base.insert(1, f"{float(li.get('cost_rate') or li.get('unit_price') or 0):.2f}")
-            base.append(f"{float(li.get('margin_pct') or 0):.2f}")
-        base.append(f"{float(li.get('total') or 0):.2f}")
-        rows.append(base)
+        rows = [headers]
+        for li in payload["line_items"]:
+            base = [
+                Paragraph(li.get("description") or "—", styles["Normal"]),
+                f"{float(li.get('cost_rate') or li.get('unit_price') or 0):.2f}",
+                f"{li.get('qty_hr') or li.get('quantity') or 0:g}",
+                f"{li.get('visits') or 1:g}",
+                f"{float(li.get('margin_pct') or 0):.2f}",
+                f"{float(li.get('total') or 0):.2f}",
+            ]
+            rows.append(base)
     lt = Table(rows, colWidths=colw)
     lt.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),

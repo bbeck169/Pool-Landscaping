@@ -1,3 +1,48 @@
+## Phase K79 · Grouped Customer-Facing Estimate Line Items — SHIPPED (Feb 2026)
+
+**Scope**: Estimates only (invoices out of scope). Rolls line items up by K71 `service_category_id` for customer-facing surfaces (email link, portal, PDF). Admin view stays fully itemized.
+
+**Delivery**
+- **Schema**: `customer_group_display: bool` (default `true` for new quotes, `false` after backfill) + `customer_group_descriptions: Dict[service_category_id, str]` on `db.quotes`. Both live on the doc (not per-line).
+- **Aggregation helper**: `backend/services/quotes/customer_view.py` — pure functions `group_lines_for_customer()` + `build_customer_view_payload()`. Groups by `service_category_id` in first-appearance order; ungrouped lines bucket into "Other" at the tail; `long_description` NEVER read (contract-tested).
+- **Endpoints**: `GET /api/quotes/{qid}/customer-view` (bearer auth) + `GET /api/portal/quotes/via-token/customer-view` (magic-link). `GET /estimates/{eid}/full` now embeds a `customer_view` block. `GET /estimates/{eid}/pdf` forks 3 modes: admin internal PDF (`?internal=1`, 6-col itemized), customer grouped, customer itemized fallback. `POST /quotes` seeds `customer_group_display=true`. `PUT /quotes/{id}` accepts both new fields.
+- **Admin editor** (`<K79CustomerViewSection>`): checkbox + per-service-category description editor (250-char cap, one row per unique category in `line_items`) + "Preview customer view" button (`<K79CustomerViewPreview>` modal renders grouped rendering with WIP state — admin sees pending description text before saving).
+- **Customer surfaces**: `<EstimateView>` renders grouped rows when `as_customer && customer_view.customer_group_display`. Portal quote view + email link pick it up automatically.
+- **Migration**: `scripts/k79_customer_group_display_migration.py` — idempotent, writes audit doc to `migration_runs`. **Run on preview**: 124 existing quotes backfilled to `false`; follow-up run reported `status: noop`.
+
+**Long-description contract locked at 4 layers**: helper never reads it · helper test asserts scrub · endpoint test asserts scrub · Vitest asserts scrub in both grouped + itemized preview modes.
+
+**Tests**
+- Backend: `test_k79_group_lines_helper.py` (12), `test_k79_customer_view_endpoint.py` (9), `test_k79_migration.py` (1) — **22/22 pass**. K71 regression (23) — **all green**.
+- Frontend: `test/k79-customer-group-toggle.test.jsx` (8), `test/k79-customer-view-preview.test.jsx` (8) — **16/16 pass**.
+- Full frontend suite: **479 files pass · 3790 tests pass · 34 Hygiene B skips untouched** (delta from K80.a = +16 = exact K79 additions).
+
+**Files touched**
+- NEW: `services/quotes/__init__.py`, `services/quotes/customer_view.py`, `scripts/k79_customer_group_display_migration.py`, 3 backend test files, `components/quotes/K79CustomerViewSection.jsx`, `components/quotes/K79CustomerViewPreview.jsx`, 2 frontend test files.
+- Modified: `models.py` (+2 fields on `QuoteIn`/`QuoteUpdate`), `routers/quotes.py` (seed defaults), `routers/estimate_viewer.py` (2 new endpoints + payload embed + PDF fork), `components/EstimateView.jsx` (grouped fork), `components/EstimateView.css` (+`.ev-group-desc`), `pages/quotes/QuoteInvoiceDetail.jsx` (mount section on quotes+staff).
+
+**Guardrails held**
+- Admin view stays fully itemized (`?internal=1` PDF unchanged, editor unchanged).
+- `long_description` never on customer surfaces.
+- Backward compat: 124 existing quotes on preview keep itemized view until admin toggles on.
+- No changes to I1.5 / I1.7.a / I1.7.b / K80.a code.
+- 34 Hygiene B skips untouched.
+- K80.a "+ Add line" + trash icons still render on same page (verified in screenshot).
+
+**Screenshots**
+- `/tmp/k79_1_admin_section.png` — customer-view section with toggle ON + Pool + Landscaping description editors + Preview button; K80.a affordances still visible below.
+- `/tmp/k79_1b_desc_typed.png` — same with "Weekly service package with chemistry balance." typed into Pool (46/250 counter).
+- `/tmp/k79_2_preview_modal.png` — preview modal open showing "GROUPED LAYOUT (ON)", Pool $220.00 with WIP description, Landscaping $200.00, total footer $420.00.
+
+**Ship report**: `/app/memory/PHASE_K79_GROUPED_CUSTOMER_ESTIMATE_VIEW.md`
+
+**Queued behind**
+- **K80.b** — server-side status gate on `PUT /api/quotes/{id}` mirroring PATCH triad.
+- **I1.7.c** — AI BYO providers + Maps + Calendars.
+
+---
+
+
 ## Phase K80.a · Add + Delete Line-Item Affordances on `K71LineItemsEditor` — SHIPPED (Feb 2026)
 
 **Scope**: Frontend only. Close the K80-recon feature gap: staff could not add lines to a saved estimate/quote, and could not delete lines from a saved doc through the K71 surface. K80.b (server-side status gating on `PUT /quotes/{id}`) is deliberately queued as a separate phase.

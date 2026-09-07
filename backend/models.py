@@ -333,6 +333,12 @@ class QuoteIn(BaseModel):
     # BOTH quotes and invoices (same collection family). Enables
     # per-batch rollback.
     import_batch_id: Optional[str] = None
+    # Phase K79 · Feb-2026 — Grouped customer-facing estimate view.
+    # NEW quotes default to grouped-display ON; existing quotes are
+    # snapped to false by scripts/k79_customer_group_display_migration.py
+    # so they keep the itemized view their author designed.
+    customer_group_display: Optional[bool] = True
+    customer_group_descriptions: Optional[Dict[str, str]] = None
 
 
 class QuoteUpdate(BaseModel):
@@ -343,6 +349,12 @@ class QuoteUpdate(BaseModel):
     due_date: Optional[str] = None
     line_items: Optional[List[LineItem]] = None
     property_id: Optional[str] = None
+    # Phase K79 · Feb-2026 — Admin toggles the customer-facing grouped
+    # view and edits the optional per-category descriptions on the
+    # quote editor. Both fields are money-neutral (server totals do
+    # not recompute when either changes).
+    customer_group_display: Optional[bool] = None
+    customer_group_descriptions: Optional[Dict[str, str]] = None
 
 
 class TermsSettingsIn(BaseModel):

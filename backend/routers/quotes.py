@@ -410,6 +410,15 @@ async def create_quote(body: QuoteIn,
         "notes": body.notes,
         "terms": terms,
         "created_at": now_iso(),
+        # Phase K79 · Feb-2026 — NEW quotes default to grouped
+        # customer-facing display ON. Existing quotes are backfilled
+        # to false by scripts/k79_customer_group_display_migration.py
+        # so they keep the itemized view their author designed.
+        "customer_group_display": (
+            True if body.customer_group_display is None
+            else bool(body.customer_group_display)
+        ),
+        "customer_group_descriptions": body.customer_group_descriptions or {},
     }
     # Phase 56.18 — assign human-readable invoice number on birth for
     # docs typed as invoice (quotes don't get one; see routers/
