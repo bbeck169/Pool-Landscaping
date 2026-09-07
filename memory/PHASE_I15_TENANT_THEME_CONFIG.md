@@ -90,3 +90,106 @@ sections.
 - For I1 industry profile: `services.theme.presets.get_preset(key)`
   is the auto-apply entry point — pass the industry key and it
   returns a validated, deep-copied theme ready to persist.
+
+---
+
+## I1.5.b — Frontend Theme Editor UI in Settings + Live Preview
+**Shipped:** Feb-2026 · **Status:** GREEN
+
+### What shipped
+
+**Backend addition — shadow validate endpoint**
+- `POST /api/tenants/me/theme/preview` — admin-only, side-effect-free.
+  Returns `{valid, errors: [{code, path, message, computed_ratio?}]}`.
+  Unlike PUT (which raises on the first violation), preview collects
+  **every** contrast failure in one response so the editor can
+  highlight all offending slots at once.
+- New `preview_theme_payload()` + `_structural_validate()` helpers in
+  `backend/services/theme/validate.py` (structural pass raises
+  immediately, contrast pass accumulates errors).
+- `ThemeValidationError` extended with `computed_ratio` field —
+  echoed on 400 responses from PUT and on errors from the preview
+  endpoint so the editor UI can render the exact numeric ratio.
+- Backend tests: 5 new tests in
+  `tests/test_i15a_tenant_theme_endpoint.py` (`test_i15b_*`) —
+  **14/14 pass** total for the file.
+
+**Frontend — Theme editor page**
+- New page `frontend/src/pages/settings/ThemeSettings.jsx`.
+- Route `/settings/theme` registered in `App.js` under the existing
+  `<AdminOnly><SettingsHub /></AdminOnly>` block (managers/admins
+  reach it; techs 403).
+- New "Theme" entry in `layouts/SettingsHub.jsx` sidebar (5 canonical
+  entries: general, branding, **theme**, integrations, social).
+- Two-column responsive layout via `useIsWide(768)` (the hook
+  shipped in I1.5.a's bonus): editor left / live preview right on
+  ≥ md, stacked below.
+- Editor features:
+  - Preset picker (shadcn Select) + Apply-preset confirm modal
+    (shadcn AlertDialog) → `POST /apply-preset` with `{key}`.
+  - Per-section shadcn Accordion (menu expanded by default).
+  - Per-slot solid/gradient mode toggle **hidden** on solid-only
+    slots (menu.text, rail.text, tiles.text, tiles.border,
+    buttons.text, accents.text/link/focus_ring/badge_text).
+  - Solid mode: color picker + hex input with lowercase normalize
+    on blur.
+  - Gradient mode: two color pickers (from/to) + 0–360 angle Slider
+    + inline swatch + soft warning banner ("Contrast not
+    auto-checked on gradient — verify legibility visually").
+  - Debounced 400 ms POST to `/preview` on every change; inline
+    per-slot error surfaces + top-of-page summary lists every issue
+    (path + computed ratio).
+  - **Save** disabled when the working payload isn't dirty **or**
+    preview reports errors.
+  - **Discard changes** button — resets working state to server
+    state (dirty flag cleared).
+- Live preview panel renders sample nav, rail (3 pins), tiles row
+  (3 KPI tiles), buttons row (Primary CTA + Secondary + Delete), and
+  accents row (link + focus ring + badge) using the current editor
+  state — no server round-trip required to see changes.
+
+**Test suite**
+- New vitest `frontend/src/test/i15b-theme-editor.test.jsx` — 9/9
+  pass. Covers: 5-section render · solid-only toggle hiding ·
+  solid→gradient flip · color→preview live update ·
+  preset-enumeration · apply-preset modal + body shape · discard ·
+  save-disable-under-errors · save PUT body.
+- Adjusted `test/settings-nav-old-routes.test.jsx` from "4 canonical
+  keys" → "5 canonical keys" (added `theme`) — still green.
+
+### Test results
+- Backend: `tests/test_i15a_tenant_theme_endpoint.py` — **14/14 pass**
+  (9 from I1.5.a + 5 new I1.5.b preview tests).
+- Frontend suite: **469 files / 3707 tests passing / 34 pre-existing
+  Hygiene B skips** — zero new drift, zero new K78 tags.
+- Screenshot captured at `/tmp/theme-editor.png` — editor rendering
+  the default preset with menu expanded, live preview showing nav +
+  rail + tiles + buttons + link + focus ring + badge.
+
+### Contract locks
+- Live preview never persists — `POST /preview` is validation-only
+  (locked in `test_i15b_preview_never_persists`).
+- No `brandGradient` alias reintroduced anywhere.
+- Editor speaks the tester-confirmed backend contract verbatim:
+  snake_case slot names, lowercase hex, `{key}` on apply-preset.
+- Solid-only slots at both layers (validator + editor UI) — the
+  editor can't even *offer* a gradient mode toggle on them.
+
+### Notes for I1.5.c / I1.5.d
+- The editor loads via `api.get("/tenants/me/theme")` + presets via
+  `api.get("/theme-presets")` on mount and consumes the returned
+  theme directly — the future `useTenantTheme()` hook (I1.5.c) can
+  drop in as a cache in front of these calls without touching the
+  editor UI.
+- The editor currently doesn't refresh the app-shell colours on save
+  — that's I1.5.c's job (invalidate the `useTenantTheme` cache and
+  the shell's `theme.js` computed vars).
+- Gradient contrast is deliberately *unchecked* end-to-end (backend
+  skips, editor surfaces a warning). If a stricter mode is wanted
+  later, wire it through the existing `computed_ratio` field.
+
+### Deferred (out of I1.5.b scope)
+- App-shell wiring to consume the persisted theme (that's I1.5.c —
+  the `useTenantTheme` hook + `theme.js` refactor).
+- Backwards-compat migration script + preset seed audit (I1.5.d).
+

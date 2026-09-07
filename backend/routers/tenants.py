@@ -1335,6 +1335,7 @@ from services.theme import (  # noqa: E402
     expand_default,
     get_preset,
     list_presets,
+    preview_theme_payload,
     validate_theme_payload,
 )
 
@@ -1416,6 +1417,27 @@ async def put_tenant_theme(payload: dict,
 )
 async def get_theme_presets(user: dict = Depends(get_current_user)):
     return {"presets": list_presets()}
+
+
+@router.post(
+    "/tenants/me/theme/preview",
+    tags=["tenants", "theme"],
+    operation_id="tenants.theme.preview",
+    summary="Validate a theme payload without persisting (admin-only).",
+    responses={
+        200: {"description": (
+            "Returns ``{valid: bool, errors: [{code, path, message, "
+            "computed_ratio?}]}``. Never returns 400 for validation "
+            "failures — errors are surfaced in the body so the "
+            "editor can highlight every offending slot at once."
+        )},
+        403: {"description": "Non-admin caller."},
+    },
+)
+async def preview_tenant_theme(payload: dict,
+                                 user: dict = Depends(get_current_user)):
+    _theme_admin_or_403(user)
+    return preview_theme_payload(payload)
 
 
 class _ApplyPresetIn(BaseModel):

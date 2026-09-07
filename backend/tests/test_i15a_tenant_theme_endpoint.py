@@ -253,3 +253,91 @@ def test_i15a_presets_all_pass_aa():
         # Raises on any violation.
         clean = validate_theme_payload(theme)
         assert clean["preset"] == key, (key, clean["preset"])
+
+
+# ══════════════════════════════════════════════════════════════
+# Phase I1.5.b — Shadow preview endpoint
+# ══════════════════════════════════════════════════════════════
+def test_i15b_preview_returns_valid_for_good_theme():
+    tok = _login()
+    r = requests.post(f"{API}/tenants/me/theme/preview",
+                        json=_valid_theme(),
+                        headers=_hdrs(tok), timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["valid"] is True
+    assert body["errors"] == []
+
+
+def test_i15b_preview_reports_gradient_on_text_slot():
+    tok = _login()
+    theme = _valid_theme()
+    theme["menu"]["text"] = {
+        "mode": "gradient",
+        "gradient": {"from": "#000000", "to": "#ffffff", "angle": 90},
+    }
+    r = requests.post(f"{API}/tenants/me/theme/preview",
+                        json=theme,
+                        headers=_hdrs(tok), timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["valid"] is False
+    errs = body["errors"]
+    codes = [e["code"] for e in errs]
+    assert "GRADIENT_NOT_ALLOWED" in codes, errs
+
+
+def test_i15b_preview_collects_multiple_contrast_failures():
+    """The whole point of the preview endpoint: report every failing
+    contrast pair at once instead of forcing the admin to fix them
+    one at a time. Deliberately break two pairs and expect two
+    CONTRAST_FAIL entries."""
+    tok = _login()
+    theme = _valid_theme()
+    # Pair 1: tiles.text on tiles.bg (white on light gray → fails)
+    theme["tiles"]["bg"] = {"mode": "solid", "solid": "#ffffff"}
+    theme["tiles"]["text"] = {"mode": "solid", "solid": "#dddddd"}
+    # Pair 2: buttons.text on buttons.bg (also white on light)
+    theme["buttons"]["bg"] = {"mode": "solid", "solid": "#eeeeee"}
+    theme["buttons"]["text"] = {"mode": "solid", "solid": "#ffffff"}
+
+    r = requests.post(f"{API}/tenants/me/theme/preview",
+                        json=theme,
+                        headers=_hdrs(tok), timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["valid"] is False
+    contrast_errs = [e for e in body["errors"]
+                       if e["code"] == "CONTRAST_FAIL"]
+    assert len(contrast_errs) >= 2, body["errors"]
+    # computed_ratio must be present on every contrast error.
+    for e in contrast_errs:
+        assert "computed_ratio" in e
+        assert isinstance(e["computed_ratio"], (int, float))
+
+
+def test_i15b_preview_is_admin_only():
+    tok = _login(email="manager@aquaterra.com")
+    r = requests.post(f"{API}/tenants/me/theme/preview",
+                        json=_valid_theme(),
+                        headers=_hdrs(tok), timeout=15)
+    assert r.status_code == 403, r.text
+
+
+def test_i15b_preview_never_persists():
+    """Preview must be side-effect-free: even a valid payload must
+    not update tenant.theme."""
+    tok = _login()
+    tid = _get_tenant_id(tok)
+    _clear_theme(tid)
+    theme = _valid_theme()
+    theme["preset"] = f"TEST_i15b_no_persist_{uuid.uuid4().hex[:6]}"
+
+    r = requests.post(f"{API}/tenants/me/theme/preview",
+                        json=theme,
+                        headers=_hdrs(tok), timeout=15)
+    assert r.status_code == 200 and r.json()["valid"] is True
+
+    doc = _sync.tenants.find_one({"id": tid}, {"_id": 0, "theme": 1})
+    assert doc is not None
+    assert "theme" not in doc, "preview must not persist"

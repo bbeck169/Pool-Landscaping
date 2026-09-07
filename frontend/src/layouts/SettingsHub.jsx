@@ -19,6 +19,7 @@ import { colors } from "@/theme";
 import {
   Settings as SettingsIcon,
   ImageIcon,
+  Palette,
   Plug,
   Share2,
   ChevronRight,
@@ -42,6 +43,13 @@ const SECTIONS = [
     label: "Branding",
     Icon: ImageIcon,
     hint: "Logo upload, brand colours",
+  },
+  {
+    key: "theme",
+    to: "/settings/theme",
+    label: "Theme",
+    Icon: Palette,
+    hint: "Palette editor + presets · Phase I1.5",
   },
   {
     key: "integrations",

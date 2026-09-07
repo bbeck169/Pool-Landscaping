@@ -87,16 +87,21 @@ class ThemeValidationError(ValueError):
     Router lifts this into an HTTP 400 with the ``.message`` body.
     """
 
-    def __init__(self, code: str, message: str, path: str | None = None):
+    def __init__(self, code: str, message: str, path: str | None = None,
+                  computed_ratio: float | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.path = path
+        self.computed_ratio = computed_ratio
 
     def as_detail(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {"code": self.code, "message": self.message}
         if self.path:
             d["path"] = self.path
+        if self.computed_ratio is not None:
+            # Round to 2 dp — same precision the editor displays.
+            d["computed_ratio"] = round(self.computed_ratio, 2)
         return d
 
 
@@ -225,25 +230,69 @@ def _enforce_contrast(theme: Dict[str, Any]) -> None:
                 "for body text. Pick a darker text color or a lighter "
                 "background (or vice versa) and try again.",
                 path=fg_label,
+                computed_ratio=ratio,
             )
 
 
-# ── Public entry point ────────────────────────────────────────────
-def validate_theme_payload(payload: Any) -> Dict[str, Any]:
-    """Validate + normalize a theme payload for persistence.
+# ── Preview: multi-error collector ────────────────────────────────
+def preview_theme_payload(payload: Any) -> Dict[str, Any]:
+    """Non-fatal counterpart to ``validate_theme_payload`` for the
+    live-preview shadow endpoint.
 
-    Returns the sanitized theme dict (hex lowercased, angle float,
-    unknown keys stripped) on success. Raises
-    ``ThemeValidationError`` on any violation — router lifts into
-    HTTP 400.
+    Runs the structural pass first — if the shape is wrong we bail
+    immediately with a single structural error (there's no useful
+    contrast to compute against a malformed slot). Then, for a
+    well-shaped payload, iterates every contrast pair independently
+    so the editor can highlight *all* failing slots at once instead
+    of forcing an error → fix → re-submit → next error dance.
+
+    Returns ``{valid: bool, errors: [ThemeValidationError.as_detail]}``.
+    Never raises.
     """
+    errors: list[Dict[str, Any]] = []
+    # ── Pass 1: structural + solid-only. Single fatal error.
+    try:
+        clean = _structural_validate(payload)
+    except ThemeValidationError as e:
+        return {"valid": False, "errors": [e.as_detail()]}
+    # ── Pass 2: contrast — collect every failing pair.
+    for fg_path, bg_ref in CONTRAST_PAIRS:
+        fg = _resolve_solid(clean, fg_path)
+        if fg is None:
+            continue
+        if bg_ref.startswith("#"):
+            bg = bg_ref
+        else:
+            bg_path = tuple(bg_ref.split("."))
+            bg = _resolve_solid(clean, bg_path)
+            if bg is None:
+                continue
+        ratio = contrast_ratio(fg, bg)
+        if ratio < AA_MIN_RATIO:
+            fg_label = ".".join(fg_path)
+            errors.append({
+                "code": "CONTRAST_FAIL",
+                "path": fg_label,
+                "message": (
+                    f"Low contrast ({ratio:.2f}:1) between {fg_label} "
+                    f"({fg}) and {bg_ref} ({bg}). WCAG AA requires "
+                    f"≥ {AA_MIN_RATIO}:1 for body text."
+                ),
+                "computed_ratio": round(ratio, 2),
+            })
+    return {"valid": not errors, "errors": errors}
+
+
+def _structural_validate(payload: Any) -> Dict[str, Any]:
+    """Same as ``validate_theme_payload`` but stops before the
+    contrast pass — used by ``preview_theme_payload`` so we can
+    collect multiple contrast failures instead of raising on the
+    first."""
     if not isinstance(payload, dict):
         raise ThemeValidationError(
             "INVALID_PAYLOAD",
             "Theme payload must be a JSON object.",
         )
-    # Preset key is free-form (custom preset writes flow through
-    # ``apply-preset`` which is authoritative for registry keys).
     preset = payload.get("preset", "custom")
     if not isinstance(preset, str) or not preset:
         raise ThemeValidationError(
@@ -267,6 +316,19 @@ def validate_theme_payload(payload: Any) -> Dict[str, Any]:
                 path=name,
             )
         out[name] = _validate_section(name, payload[name])
+    return out
+
+
+# ── Public entry point ────────────────────────────────────────────
+def validate_theme_payload(payload: Any) -> Dict[str, Any]:
+    """Validate + normalize a theme payload for persistence.
+
+    Returns the sanitized theme dict (hex lowercased, angle float,
+    unknown keys stripped) on success. Raises
+    ``ThemeValidationError`` on any violation — router lifts into
+    HTTP 400.
+    """
+    out = _structural_validate(payload)
     _enforce_contrast(out)
     return out
 

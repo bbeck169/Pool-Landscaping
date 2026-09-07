@@ -15,6 +15,7 @@ identically because the router falls back to
 from .presets import PRESETS, get_preset, list_presets  # noqa: F401
 from .validate import (  # noqa: F401
     validate_theme_payload,
+    preview_theme_payload,
     ThemeValidationError,
     expand_default,
 )
