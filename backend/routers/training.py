@@ -55,18 +55,80 @@ def _is_admin(u: dict) -> bool:
     return _role(u) in ("admin", "super_admin")
 
 
+# Hotfix #4 · Feb-2026 — Trainings designation visibility.
+#
+# ``_TENANT_DESIGNATIONS`` is the set of specialities the tenant
+# currently recognises. Adding a new designation later (e.g.
+# ``"irrigation"``) is a single-line change here — the visibility
+# rule automatically stays correct.
+#
+# Terminology mapping between the brief and this codebase:
+#   brief `tech.designations`         → derived from ``user.department``
+#   brief `training.required_designations` → the module's ``department``
+#     field (`"pool"` | `"landscaping"` | `"both"`)
+_TENANT_DESIGNATIONS: tuple[str, ...] = ("pool", "landscaping")
+_UNIVERSAL_MODULE_TAG = "both"   # matches an "all designations" training
+
+# Two department naming conventions coexist in the users collection —
+# the canonical short form (``"pool"`` / ``"landscaping"``) and the
+# modern ``_tech`` suffix form (``"pool_tech"`` / ``"landscape_tech"``)
+# introduced by phase 41.1b's seed refactor. Training modules are
+# tagged with the canonical short form only, so we normalise on read.
+_DEPT_ALIASES: dict[str, str] = {
+    "pool_tech": "pool",
+    "landscape_tech": "landscaping",
+    "landscaper": "landscaping",   # historical
+}
+
+
+def _normalize_dept(raw: str) -> str:
+    d = (raw or "").lower().strip()
+    return _DEPT_ALIASES.get(d, d)
+
+
+def _user_designations(u: dict) -> set[str]:
+    """Return the *set* of designations the tech carries.
+
+    * scalar ``department = "pool"``       → ``{"pool"}``
+    * scalar ``department = "landscaping"`` → ``{"landscaping"}``
+    * scalar ``department = "both"``        → *every* tenant designation
+                                              (cross-trained tech)
+    * empty / unknown                        → ``set()``  (no designation)
+
+    ``pool_tech`` / ``landscape_tech`` seed-style values are aliased to
+    the canonical form so training visibility works regardless of which
+    naming convention the caller was seeded with.
+    """
+    d = _normalize_dept(_dept(u))
+    if not d:
+        return set()
+    if d == "both":
+        return set(_TENANT_DESIGNATIONS)
+    return {d}
+
+
 def _visible_departments(u: dict) -> Optional[List[str]]:
-    """Return the list of module departments the user is allowed to see,
-    or None to mean 'all departments'. Admins see all."""
+    """Departments this user is allowed to see. ``None`` = all.
+
+    Rule (hotfix #4):
+      * Admin / super_admin                            → all
+      * Tech whose designations cover EVERY tenant     → all
+        designation (superset rule — "both means all")
+      * Tech with one designation                      → that one + universal
+      * Tech with zero designations                    → universal-only
+    """
     if _is_admin(u):
         return None
-    d = _dept(u)
-    if d == "landscaping":
-        return ["landscaping", "both"]
-    if d == "pool":
-        return ["pool", "both"]
-    # Techs without a department default to pool (matches Phase 49.3 seed).
-    return ["pool", "both"]
+    tech = _user_designations(u)
+    tenant = set(_TENANT_DESIGNATIONS)
+    if tech and tech >= tenant:
+        # Superset — including the "both" cross-trained case and
+        # any future "every designation the tenant has" case.
+        return None
+    if not tech:
+        # Zero-designation tech: only untagged / universal trainings.
+        return [_UNIVERSAL_MODULE_TAG]
+    return sorted(tech | {_UNIVERSAL_MODULE_TAG})
 
 
 def _module_query(tenant_id: str, code: Optional[str] = None) -> dict:

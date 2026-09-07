@@ -3,6 +3,8 @@ import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { Link } from 'react-router-dom';
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { useAuth } from "@/auth";
+import { toast as sonnerToast } from "sonner";
 import MapView from "@/components/MapView";
 import { ZillowUsageChip } from "@/components/ZillowUsageChip";
 import PropertyMapUnavailable from "@/components/PropertyMapUnavailable";
@@ -154,6 +156,12 @@ export function D2dDashboard() {
    2. Canvassing map
    ═══════════════════════════════════════════════════════════════════ */
 export function D2dMap() {
+  const { user } = useAuth();
+  // Hotfix #3 · Feb-2026 · Part A — Hide the existing-customer
+  // panel/list (green pins on the map) from technicians while
+  // canvassing. Admin / super_admin / dispatcher keep them.
+  const canSeeCustomers = user?.role
+    && ["admin", "super_admin", "dispatcher"].includes(user.role);
   const [zip, setZip] = useState("85383");
   const [days, setDays] = useState(60);
   const [customers, setCustomers] = useState([]);
@@ -168,8 +176,17 @@ export function D2dMap() {
   const load = () => api.get("/d2d/knocks").then((r) => setKnocks(Array.isArray(r) ? r : []));
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    api.get("/customers").then((r) => setCustomers(Array.isArray(r) ? r : (r?.rows || [])));
-  }, []);
+    if (!canSeeCustomers) {
+      setCustomers([]);
+      return;
+    }
+    // Dedicated admin-only endpoint (defence-in-depth — the
+    // generic /customers endpoint is untouched so tech callers
+    // that need it for job-detail lookups keep working).
+    api.get("/d2d/customers-nearby")
+      .then((r) => setCustomers(Array.isArray(r) ? r : (r?.rows || [])))
+      .catch(() => setCustomers([]));
+  }, [canSeeCustomers]);
   const loadSold = React.useCallback(() => {
     setSold({ properties: [], error: null, loading: true });
     api.get(`/d2d/sold-leads?zip=${encodeURIComponent(zip)}&days=${days}`)
@@ -399,6 +416,103 @@ function LogKnockModal({ initial, onClose, onSaved }) {
 /* ═══════════════════════════════════════════════════════════════════
    3. Knocks list
    ═══════════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   Hotfix #3 · Feb-2026 · Part B — Inline Zillow property-data pull.
+   ═══════════════════════════════════════════════════════════════════ */
+function ZillowRowPanel({ knock, onCached }) {
+  const cached = knock.zillow_data || null;
+  const cachedFreshMs = 24 * 60 * 60 * 1000;
+  const isFresh = knock.zillow_fetched_at
+    && (Date.now() - new Date(knock.zillow_fetched_at).getTime()) < cachedFreshMs;
+  const [data, setData] = useState(isFresh ? cached : null);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(Boolean(isFresh && cached));
+
+  const pull = async () => {
+    setLoading(true);
+    try {
+      const r = await api.post(
+        `/d2d/prospects/${knock.id}/enrich-zillow`,
+      );
+      if (r && r.error === "zillow_not_configured") {
+        sonnerToast.error("Zillow API not configured — ask your admin.");
+      } else if (r && r.error === "zillow_rate_limited") {
+        sonnerToast.error(`Zillow rate limit hit (${r.used}/${r.cap}/hr).`);
+      } else {
+        setData(r);
+        setOpen(true);
+        onCached && onCached(knock.id, r);
+      }
+    } catch (e) {
+      // The api wrapper turns non-2xx into thrown Error; check
+      // the status via string match (backend puts "503" / "429"
+      // in the error msg).
+      const msg = String(e?.message || "");
+      if (msg.includes("503") || msg.toLowerCase().includes("not_configured")) {
+        sonnerToast.error("Zillow API not configured — ask your admin.");
+      } else if (msg.includes("429")) {
+        sonnerToast.error("Zillow rate limit hit. Try again in an hour.");
+      } else {
+        sonnerToast.error(`Zillow lookup failed. ${msg}`);
+      }
+    } finally { setLoading(false); }
+  };
+
+  const label = data
+    ? (loading ? "Refreshing…" : "Refresh Zillow data")
+    : (loading ? "Pulling…" : "Pull property data");
+  const fmtUsd = (n) => (typeof n === "number"
+    ? n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })
+    : "—");
+  const fmtInt = (n) => (typeof n === "number" ? n.toLocaleString() : "—");
+
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        onClick={pull}
+        disabled={loading}
+        className="text-xs font-semibold self-end px-2 py-1 rounded"
+        style={{ color: colors.brand, backgroundColor: colors.brandSurface || "#E0F2FE" }}
+        data-testid={`d2d-knock-zillow-btn-${knock.id}`}
+      >
+        {label}
+      </button>
+      {open && data && (
+        <div
+          className="rounded-lg p-3 text-xs space-y-1"
+          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface,
+                    border: `1px solid ${colors.border}` }}
+          data-testid={`d2d-knock-zillow-panel-${knock.id}`}
+        >
+          {data.image_url && <img alt="home" src={data.image_url}
+                                       className="rounded-md w-full max-h-32 object-cover" />}
+          <div><span className="font-semibold">Est. value:</span>{" "}
+            <span data-testid={`d2d-knock-zillow-value-${knock.id}`}>{fmtUsd(data.estimated_value)}</span></div>
+          <div><span className="font-semibold">Sqft:</span>{" "}
+            <span data-testid={`d2d-knock-zillow-sqft-${knock.id}`}>{fmtInt(data.sqft)}</span></div>
+          <div><span className="font-semibold">Bed / bath:</span>{" "}
+            {data.bed_count ?? "—"} bd · {data.bath_count ?? "—"} ba</div>
+          <div><span className="font-semibold">Year built:</span> {data.year_built || "—"}</div>
+          {data.lot_size_sqft && (
+            <div><span className="font-semibold">Lot:</span> {fmtInt(data.lot_size_sqft)} sqft</div>
+          )}
+          {data.cached && (
+            <div className="italic mt-1" style={{ color: colors.onSurfaceSecondary }}>
+              Cached · &lt;24h old
+            </div>
+          )}
+          {data.mock && (
+            <div className="italic" style={{ color: colors.onSurfaceSecondary }}>
+              Preview mock data (ZILLOW_TESTMODE_MOCK=true).
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 export function D2dKnocks() {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState("");
@@ -446,7 +560,18 @@ export function D2dKnocks() {
             {filtered.map((k) => (
               <tr key={k.id} className="border-t" style={{ borderColor: colors.border }} data-testid={`d2d-knock-row-${k.id}`}>
                 <td className="py-2 pr-2">{(k.created_at || "").slice(0, 10)}</td>
-                <td className="py-2 pr-2">{k.address || "—"}</td>
+                <td className="py-2 pr-2">
+                  <div>{k.address || "—"}</div>
+                  {k.address && (
+                    <ZillowRowPanel
+                      knock={k}
+                      onCached={(id, data) => setRows((prev) => (prev || []).map(
+                        (r) => r.id === id ? { ...r, zillow_data: data,
+                                                zillow_fetched_at: data?.last_fetched_at } : r,
+                      ))}
+                    />
+                  )}
+                </td>
                 <td className="py-2 pr-2">{k.tech_name}</td>
                 <td className="py-2 pr-2"><DispoChip k={k.disposition} /></td>
                 <td className="py-2 pr-2" style={{ color: colors.onSurfaceSecondary }}>{(k.notes || "").slice(0, 60)}</td>

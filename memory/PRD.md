@@ -1,3 +1,31 @@
+## Hotfix #4 · Trainings designation visibility — SHIPPED (Feb 2026)
+
+**Symptom**: Cross-trained techs (`department = "both"`) only saw a subset of training modules. Pool-only + landscaping-only modules were silently filtered out.
+
+**Fix** (`backend/routers/training.py`):
+- `_TENANT_DESIGNATIONS = ("pool", "landscaping")` — extendable in one line.
+- **Superset rule**: any tech whose designations cover every recognised tenant designation → sees ALL modules (future-proof for `irrigation`, etc.).
+- `_DEPT_ALIASES` normalises seed-drift naming (`pool_tech` → `pool`, `landscape_tech` → `landscaping`, `landscaper` → `landscaping`) so both naming conventions work.
+
+**Fixture drift fix (baseline)**: `test_training.py::TestDepartmentFilter::test_pool_tech_hidden_from_landscaping_module` had been red because `landscaper@aquaterra.com` is seeded as `department = "landscape_tech"` (phase 41.1b) while training-router recognised only `landscaping`. `_DEPT_ALIASES` closes that gap without touching the seed. Baseline is now **23 passed, 1 skipped** (skipped test is `TestTenantIsolation` — `admin@sunbelt.com` not seeded here).
+
+**Tests — 40 green** (14 hotfix backend + 23 baseline backend + 3 frontend vitest):
+- `backend/tests/test_trainings_designation_visibility_hotfix.py` — 14/14, incl. `test_tech_with_both_pool_and_landscaping_sees_all_trainings` + future-proof monkeypatch cases.
+- `backend/tests/test_training.py` — 23 pass, 1 skipped (sunbelt seed absent).
+- `frontend/src/test/trainings-designation-visibility-hotfix.test.jsx` — 3/3, guards against a future client-side department filter.
+
+**Frontend audit**: `frontend/src/pages/training/TrainingList.jsx` groups modules by department for presentation only; no client-side filter to strip. Vitest locks that in.
+
+**Mobile parity**: server-side rule → mobile inherits automatically. Handoff to `e1_expo_frontend_dev` covers `/app/mobile/app/(app)/tests/{index,[code],[code]/quiz}.tsx`.
+
+**Ship report**: `/app/memory/HOTFIX_TRAININGS_DESIGNATION_VISIBILITY.md`
+
+**Queued behind**: Phase I1.7.e — Callsite migration sweep (Messaging → AI → Maps → Calendars → Payments).
+
+---
+
+
+
 ## Phase K80.b · Server-side status gate on `PUT /api/quotes/{id}` — SHIPPED (Feb 2026)
 
 **Scope**: Backend security hardening. Closes the K80-recon gap: `PUT /api/quotes/{id}` had zero status gating while PATCH had gates. Any admin could curl-overwrite line items on sent/paid/voided docs.

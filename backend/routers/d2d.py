@@ -409,3 +409,145 @@ async def d2d_leaderboard(user: dict = Depends(get_current_user),
         r["rank"] = i + 1
         r["is_me"] = r["tech_id"] == me
     return reps
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Hotfix #3 · Feb-2026
+#   Part A — customers-nearby (admin-only) so the D2D map has a
+#            dedicated endpoint that techs cannot hit.
+#   Part B — Zillow property-data enrichment on prospects.
+# ═══════════════════════════════════════════════════════════════════
+from pydantic import BaseModel
+from services.enrichment.zillow import (
+    ZillowNotConfigured, ZillowRateLimited,
+    fetch_zillow_property, get_rate_limit_state,
+)
+
+
+def _require_admin_or_super(user: dict) -> None:
+    """403 for anything other than admin / super_admin.
+
+    Hotfix #3 · Part A — the existing-customers list panel on the
+    D2D map is admin-only. Techs get 403 even though they can still
+    hit the generic /customers endpoint (which they need for job
+    detail lookups elsewhere in the app).
+    """
+    if user.get("role") not in ("admin", "super_admin", "dispatcher"):
+        raise HTTPException(403, "Not allowed")
+
+
+@router.get("/d2d/customers-nearby")
+async def d2d_customers_nearby(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+    zip: Optional[str] = None,
+):
+    """List of existing customers (with lat/lng) to plot on the
+    D2D canvassing map. Admin-only — techs must not see the full
+    customer roster while canvassing.
+    """
+    _require_admin_or_super(user)
+    q: dict = {"tenant_id": tenant["id"]}
+    if zip:
+        q["postal_code"] = zip
+    cursor = db.customers.find(
+        q,
+        {"_id": 0, "id": 1, "name": 1, "address": 1,
+         "lat": 1, "lng": 1, "postal_code": 1},
+    ).limit(2000)
+    rows = await cursor.to_list(2000)
+    # Only keep rows the map can actually plot.
+    out = [r for r in rows
+            if isinstance(r.get("lat"), (int, float))
+            and isinstance(r.get("lng"), (int, float))]
+    return out
+
+
+class ZillowLookupIn(BaseModel):
+    address: str
+    force_refresh: bool = False
+
+
+@router.post("/d2d/zillow-lookup")
+async def d2d_zillow_lookup(
+    body: ZillowLookupIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Ad-hoc Zillow property lookup — no prospect record touched.
+
+    Auth: any authenticated user (super/admin/dispatcher/planner/tech).
+    The only gate is being logged in. Rate-limited to 100 req/hr
+    per tenant.
+    """
+    address = (body.address or "").strip()
+    if not address:
+        raise HTTPException(400, "address is required")
+    try:
+        prop = await fetch_zillow_property(address, tenant_id=tenant["id"])
+    except ZillowNotConfigured as e:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "zillow_not_configured", "message": str(e)},
+        )
+    except ZillowRateLimited as e:
+        state = await get_rate_limit_state(tenant["id"])
+        return JSONResponse(
+            status_code=429,
+            content={"error": "zillow_rate_limited",
+                       "message": str(e),
+                       "used": state["used"], "cap": state["cap"]},
+        )
+    return prop.model_dump()
+
+
+@router.post("/d2d/prospects/{prospect_id}/enrich-zillow")
+async def d2d_prospect_enrich_zillow(
+    prospect_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+    force_refresh: bool = False,
+):
+    """Fetch Zillow data for a D2D prospect and cache it on the
+    knock row (``zillow_data`` + ``zillow_fetched_at``).
+
+    ``prospect_id`` is the ``d2d_knocks._id`` — the codebase has no
+    separate ``prospects`` collection; the terminology is an alias
+    from the hotfix brief.
+    """
+    knock = await db.d2d_knocks.find_one(
+        {"id": prospect_id, "tenant_id": tenant["id"]},
+        {"_id": 0},
+    )
+    if not knock:
+        raise HTTPException(404, "prospect not found")
+    address = (knock.get("address") or "").strip()
+    if not address:
+        raise HTTPException(400, "prospect has no address to enrich")
+    try:
+        prop = await fetch_zillow_property(
+            address, tenant_id=tenant["id"], force_refresh=force_refresh,
+        )
+    except ZillowNotConfigured as e:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "zillow_not_configured", "message": str(e)},
+        )
+    except ZillowRateLimited as e:
+        state = await get_rate_limit_state(tenant["id"])
+        return JSONResponse(
+            status_code=429,
+            content={"error": "zillow_rate_limited",
+                       "message": str(e),
+                       "used": state["used"], "cap": state["cap"]},
+        )
+    payload = prop.model_dump()
+    await db.d2d_knocks.update_one(
+        {"id": prospect_id, "tenant_id": tenant["id"]},
+        {"$set": {
+            "zillow_data": payload,
+            "zillow_fetched_at": prop.last_fetched_at,
+            "updated_at": now_iso(),
+        }},
+    )
+    return payload
