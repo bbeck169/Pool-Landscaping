@@ -518,7 +518,36 @@ async def create_quote(body: QuoteIn,
     return doc
 
 
-@router.put("/quotes/{qid}")
+@router.put(
+    "/quotes/{qid}",
+    responses={
+        # Phase K80.b · Feb-2026 — Status-based mutation gate.
+        409: {
+            "description": (
+                "Status-locked: PUT is denied when the doc's status is "
+                "not draft (estimates also allow sent). Response body "
+                "shape: `{ error: 'status_locked', current_status, "
+                "doc_type, message }`."
+            ),
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": {
+                            "error": "status_locked",
+                            "current_status": "paid",
+                            "doc_type": "invoice",
+                            "message": (
+                                "This invoice is locked because its "
+                                "status is 'paid'. Only draft invoices "
+                                "accept full edits via PUT."
+                            ),
+                        }
+                    }
+                }
+            },
+        },
+    },
+)
 async def update_quote(qid: str, body: QuoteUpdate,
                        user: dict = Depends(require_admin),
                        tenant: dict = Depends(get_current_tenant)):
@@ -528,6 +557,24 @@ async def update_quote(qid: str, body: QuoteUpdate,
     )
     if not existing:
         raise HTTPException(404, "Not found")
+    # Phase K80.b · Feb-2026 — Status-based mutation gate. Refuse a PUT
+    # against a status that our product policy locks. The check runs
+    # BEFORE body parsing so we never waste validation cycles on a
+    # rejected write; audit-log fires before the 409 raises so denials
+    # are always observable in ``db.audit_logs``.
+    # NOTE: This is STRICTER than the existing PATCH gates (invoice
+    # 'sent' locks here but PATCH allows sent + confirm_edit_sent).
+    # PATCH policy is intentionally left alone in this phase — see
+    # /app/memory/PHASE_K80B_PUT_STATUS_GATE.md for the follow-up
+    # question on whether to align PATCH later.
+    from services.quotes.status_gate import (
+        assert_quote_mutable_for_put,
+        audit_put_denial,
+        is_quote_mutable_for_put,
+    )
+    if not is_quote_mutable_for_put(existing):
+        await audit_put_denial(db, quote=existing, actor=user)
+        assert_quote_mutable_for_put(existing)  # raises 409
     upd = {k: v for k, v in body.dict().items() if v is not None}
     # Phase 56.18 — invoice_number is IMMUTABLE once assigned. Reject
     # any attempt to overwrite (defensive; `QuoteUpdate` shouldn't

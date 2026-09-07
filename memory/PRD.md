@@ -1,3 +1,47 @@
+## Phase K80.b · Server-side status gate on `PUT /api/quotes/{id}` — SHIPPED (Feb 2026)
+
+**Scope**: Backend security hardening. Closes the K80-recon gap: `PUT /api/quotes/{id}` had zero status gating while PATCH had gates. Any admin could curl-overwrite line items on sent/paid/voided docs.
+
+**Product policy locked**: estimates allow PUT on `draft|sent` only; invoices allow PUT on `draft` only (stricter than PATCH — invoice `sent` now locks). Terminal statuses (accepted/declined/void/paid/partially_paid) block PUT with **409 status_locked**.
+
+**Delivery**
+- **New helper**: `backend/services/quotes/status_gate.py` exposing `is_quote_mutable_for_put()`, `assert_quote_mutable_for_put()` (raises `HTTPException(409)`), `denial_payload()`, `audit_put_denial()`. Whitelist-based (fail-closed on unknown statuses). Translates DB `doc_type: quote|invoice` → wire `doc_type: estimate|invoice` for a stable API vocabulary.
+- **Router change**: `PUT /api/quotes/{qid}` in `routers/quotes.py` invokes the gate immediately after the `find_one`, BEFORE body parsing. Audit log fires before the 409 raises so denials are always observable in `db.audit_logs` (event: `put_quote_status_denied`). PATCH gates in `routers/invoice_edit.py` **untouched**.
+- **OpenAPI**: `@router.put` decorator declares the 409 response with example body → surfaces on `GET /api/openapi.json`.
+- **Denial shape** (contract-locked): `{ error: "status_locked", current_status, doc_type, message }` under FastAPI's `detail` wrapper.
+
+**Tests — 12/12 green** (`test_k80b_put_quote_status_gate.py`):
+- 3 allowed cases: draft estimate, sent estimate, draft invoice.
+- 7 blocked cases: accepted/declined/void estimates + sent/partially_paid/paid/void invoices.
+- 1 denial-shape contract lock (all four keys present, non-empty, doc_type in {estimate,invoice}).
+- 1 audit-log write assertion (row keyed on quote_id).
+
+Adjacent regression: K71 (23) + K79 (22) + K80.b (12) = **57/57 green** run together. Frontend suite unchanged: **479 files pass · 3774 tests pass · 34 Hygiene B skips untouched** (K80.b is backend-only).
+
+**Files touched**
+- NEW: `backend/services/quotes/status_gate.py`, `backend/tests/test_k80b_put_quote_status_gate.py`.
+- Modified: `backend/routers/quotes.py` (gate invocation + OpenAPI 409 declaration on `PUT /quotes/{qid}`).
+
+**Guardrails held**
+- No changes to PATCH gates.
+- No changes to frontend, K71LineItemsEditor, K79 section, I1.5/I1.7.a/I1.7.b code.
+- 34 Hygiene B skips untouched.
+- Zero migrations, env changes, or DB indexes required.
+- Audit-log writes are best-effort (never convert a 409 into a 500).
+
+**Follow-ups flagged (not shipped in K80.b)**
+- **K80.c** (open question): should `PATCH /api/quotes/{id}` also lock invoice `sent` edits to match PUT? Currently PATCH allows sent+confirm and paid+typed-invoice-number. Product decision needed on whether ops staff actually use PATCH's confirm flow — if not, align.
+- Frontend K71 pencil visibility on `sent` estimates (backend now permits PUT there, frontend still hides the pencil). File a UX-alignment ticket if desired.
+- Observability: add a metrics counter for `put_quote_status_denied` when observability roadmap picks up.
+
+**Ship report**: `/app/memory/PHASE_K80B_PUT_STATUS_GATE.md`
+
+**Queued behind (unchanged)**
+- **I1.7.c** — AI BYO providers + Maps + Calendars.
+
+---
+
+
 ## Phase K79 · Grouped Customer-Facing Estimate Line Items — SHIPPED (Feb 2026)
 
 **Scope**: Estimates only (invoices out of scope). Rolls line items up by K71 `service_category_id` for customer-facing surfaces (email link, portal, PDF). Admin view stays fully itemized.
