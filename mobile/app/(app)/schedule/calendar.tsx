@@ -862,7 +862,9 @@ function GridView(props: any) {
 
       {/* Phase P18 — Consolidated bulk-action dropdown (was 3-row pill cluster).
           Single "Actions" button → dropdown list with all 6 options. */}
-      {canWrite ? (
+      {/* M1 hotfix — entire bulk-action strip hidden for tech role.
+          Techs keep per-job row actions (On my way, Could not service). */}
+      {isAdmin ? (
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs, marginBottom: spacing.sm }}>
           <Pressable
             onPress={() => setActionsOpen(true)}

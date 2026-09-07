@@ -1296,3 +1296,17 @@
 - **Files modified**: `app/(app)/schedule/calendar.tsx` (+8/-4 lines)
 - **Files created**: `__tests__/k32-tech-scoped-schedule.test.tsx` (6 tests)
 
+
+## Iteration 69 — Hotfix M1 + M2: Schedule bulk-action authz + row styling
+- **Commit**: 0d93c65d35fac767b09d68edc772b63dd8f62ac9
+- **Date**: 2026-09-07
+- **Changes**:
+  - M1: Bulk-action "Actions" dropdown fully unmounted for tech role (`isAdmin` gate)
+  - M2: OnMyWayButton → navy #1B1F5C fill, white text (both variants)
+  - M2: CouldNotServiceButton → red #DC2626 fill, white text (both variants)
+  - M2: NavigateJobButton → 44×44 navy pill, filled icon, removed dead import
+  - M2: JobNotesCallout → white bg with amber left-accent (was amber fill)
+  - Tests: 10 new (hotfix-m1-m2-schedule.test.tsx), 6 K32 regressions pass
+- **Files modified**: calendar.tsx, OnMyWayButton.tsx, CouldNotServiceButton.tsx, NavigateJobButton.tsx, JobNotesCallout.tsx
+- **Files created**: __tests__/hotfix-m1-m2-schedule.test.tsx
+

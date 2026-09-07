@@ -18,9 +18,10 @@ import React, { useState } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-const AMBER_BG = "#FEF3C7";
+/* M2 hotfix — white fill with amber left-accent (was amber fill). */
+const AMBER_BG = "#FFFFFF";
 const AMBER_ACCENT = "#F59E0B";
-const AMBER_BORDER = "#FDE68A";
+const AMBER_BORDER = "#E5E7EB";
 const AMBER_ICON = "#B45309";
 const TEXT_DARK = "#111827";
 const TEXT_MUTED = "#4B5563";

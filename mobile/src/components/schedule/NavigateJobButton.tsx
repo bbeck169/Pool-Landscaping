@@ -11,7 +11,9 @@ import React, { useRef } from "react";
 import { Pressable, StyleSheet, Alert, Animated } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { openNativeNavTo } from "@/src/utils/nativeNav";
-import { colors } from "@/src/theme";
+
+/* M2 hotfix — prominent filled navy pill for nav arrow (was faint gray). */
+const NAV_NAVY = "#1B1F5C";
 
 type Props = {
   job: {
@@ -105,9 +107,9 @@ export default function NavigateJobButton({ job }: Props) {
         accessibilityHint={disabled ? undefined : "Opens driving directions in maps app"}
       >
         <Ionicons
-          name="navigate-outline"
-          size={16}
-          color={disabled ? "#9CA3AF" : colors.brand}
+          name="navigate"
+          size={18}
+          color={disabled ? "#9CA3AF" : "#FFFFFF"}
         />
       </Pressable>
     </Animated.View>
@@ -116,15 +118,15 @@ export default function NavigateJobButton({ job }: Props) {
 
 const s = StyleSheet.create({
   btn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: "#EFF6FF",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: NAV_NAVY,
     alignItems: "center",
     justifyContent: "center",
   },
   btnDisabled: {
-    opacity: 0.45,
-    backgroundColor: "#F3F4F6",
+    opacity: 0.35,
+    backgroundColor: "#D1D5DB",
   },
 });

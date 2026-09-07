@@ -20,6 +20,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { font, fontSize, spacing, radius } from "@/src/theme";
 
+/* M2 hotfix — navy fill for "On my way" (was mint-green). */
+const NAVY = "#1B1F5C";
+
 const ALLOWED_ROLES = new Set(["technician", "manager", "admin", "super_admin"]);
 const COOLDOWN_MS = 10_000;
 const GEO_TIMEOUT_MS = 4_000;
@@ -150,9 +153,9 @@ export default function OnMyWayButton({
       hitSlop={6}
     >
       {busy ? (
-        <ActivityIndicator size={10} color="#065F46" />
+        <ActivityIndicator size={10} color="#FFFFFF" />
       ) : (
-        <Ionicons name="send" size={10} color="#065F46" />
+        <Ionicons name="send" size={10} color="#FFFFFF" />
       )}
       <Text style={s.compactLabel}>
         {busy ? "Sending" : cooldown ? "Sent" : "On my way"}
@@ -169,7 +172,7 @@ const s = StyleSheet.create({
     gap: spacing.sm,
     height: 44,
     borderRadius: radius.md,
-    backgroundColor: "#059669",
+    backgroundColor: NAVY,
     marginBottom: spacing.sm,
   },
   primaryLabel: {
@@ -187,9 +190,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: radius.sm,
-    backgroundColor: "#ECFDF5",
-    borderWidth: 1,
-    borderColor: "#A7F3D0",
+    backgroundColor: NAVY,
   },
   compactBtnDisabled: {
     opacity: 0.55,
@@ -197,6 +198,6 @@ const s = StyleSheet.create({
   compactLabel: {
     fontFamily: font.bold,
     fontSize: 10,
-    color: "#065F46",
+    color: "#FFFFFF",
   },
 });

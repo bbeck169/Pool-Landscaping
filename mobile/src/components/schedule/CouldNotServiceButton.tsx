@@ -34,6 +34,8 @@ const TERMINAL_STATUSES = new Set([
   "completed", "canceled", "cancelled", "skipped", "could_not_service",
 ]);
 const AMBER = "#D97706";
+/* M2 hotfix — red fill for "Could not service" trigger buttons. */
+const DANGER_RED = "#DC2626";
 
 
 function humanizeSmsReason(reason?: string | null): string | null {
@@ -275,7 +277,7 @@ export default function CouldNotServiceButton({
           style={styles.detailBtn}
           testID={testID || `could-not-service-btn-${jobId}`}
         >
-          <Ionicons name="warning-outline" size={16} color={AMBER} />
+          <Ionicons name="warning-outline" size={16} color="#FFFFFF" />
           <Text style={styles.detailLabel}>{label}</Text>
         </Pressable>
       ) : (
@@ -285,7 +287,7 @@ export default function CouldNotServiceButton({
           testID={testID || `could-not-service-btn-${jobId}`}
           hitSlop={6}
         >
-          <Ionicons name="warning-outline" size={10} color="#78350F" />
+          <Ionicons name="warning-outline" size={10} color="#FFFFFF" />
           <Text style={styles.compactLabel}>{label}</Text>
         </Pressable>
       )}
@@ -428,16 +430,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: radius.sm,
-    backgroundColor: "#FEF3C7",
-    borderWidth: 1,
-    borderColor: "#FCD34D",
+    backgroundColor: DANGER_RED,
     marginTop: spacing.xs,
     alignSelf: "flex-start",
   },
   compactLabel: {
     fontFamily: font.bold,
     fontSize: 10,
-    color: "#78350F",
+    color: "#FFFFFF",
   },
   detailBtn: {
     flexDirection: "row",
@@ -447,14 +447,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
     borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: "#FCD34D",
-    backgroundColor: "#FEF3C7",
+    backgroundColor: DANGER_RED,
     marginTop: spacing.sm,
   },
   detailLabel: {
     fontFamily: font.bold,
     fontSize: fontSize.base,
-    color: "#78350F",
+    color: "#FFFFFF",
   },
 });
