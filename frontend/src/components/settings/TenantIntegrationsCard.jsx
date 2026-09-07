@@ -29,7 +29,6 @@ import { colors } from "@/theme";
 
 const STALE_DAYS = 30;
 const COMING_SOON = [
-  { key: "maps",      label: "Maps provider",    desc: "Google Maps · Mapbox · OpenStreetMap." },
   { key: "calendars", label: "Calendar sync",    desc: "Google Calendar · Outlook · iCloud." },
   { key: "storage",   label: "Object storage",   desc: "S3 · GCS · Emergent-managed default." },
 ];
@@ -39,6 +38,14 @@ const AI_PROVIDER_LABELS = {
   ai_openai:    { short: "openai",    label: "OpenAI",    desc: "Bring your own OpenAI API key (GPT-4o etc)." },
   ai_anthropic: { short: "anthropic", label: "Anthropic", desc: "Bring your own Anthropic API key (Claude family)." },
   ai_gemini:    { short: "gemini",    label: "Gemini",    desc: "Bring your own Google Gemini API key." },
+};
+
+// Phase I1.7.c.2 — Maps provider display metadata (short_name → label).
+const MAPS_PROVIDER_LABELS = {
+  maps_google: { short: "google", label: "Google Maps",
+                  desc: "Bring your own Google Maps API key (Geocoding + Routes + Static Maps)." },
+  maps_mapbox: { short: "mapbox", label: "Mapbox",
+                  desc: "Bring your own Mapbox access token (Geocoding + Directions + Static Maps)." },
 };
 
 
@@ -638,12 +645,258 @@ function AICard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
 
 
 /** ————————————————————————————————————————————————————————————
+ *  Section: Maps provider card (Google Maps / Mapbox) — new in
+ *  Phase I1.7.c.2. Same shape as ``AICard`` — the differences are:
+ *    - Non-secret config fields (``region_bias`` / ``style``) come
+ *      from the ``schema.fields[]`` payload, not a fixed dropdown.
+ *    - Cap uses ``monthly_request_cap`` (request counter) instead
+ *      of the AI ``monthly_token_cap`` (token counter). Same
+ *      null / 0 / positive semantics.
+ *    - Usage row surfaces per-operation counters (geocode / route /
+ *      static_map) plus the rolled-up ``total`` — the progress bar
+ *      is against ``total``.
+ *  ———————————————————————————————————————————————————————————— */
+function MapsCard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
+  const providerKey = schema.provider_key;
+  const shortName = (MAPS_PROVIDER_LABELS[providerKey] || {}).short || providerKey;
+  const label = (MAPS_PROVIDER_LABELS[providerKey] || {}).label || providerKey;
+  const desc = (MAPS_PROVIDER_LABELS[providerKey] || {}).desc || "";
+
+  const isConnected = !!row?.connected;
+  const state = isConnected ? "connected" : "disconnected";
+  const stateLabel = isConnected ? "Connected" : "Not connected";
+  const busyKey = providerKey;
+
+  const nonSecretFields = (schema.fields || []).filter((f) => !f.secret);
+
+  const [form, setForm] = useState(() => {
+    const seed = {};
+    nonSecretFields.forEach((f) => { seed[f.name] = usage?.[f.name] ?? ""; });
+    return seed;
+  });
+  const [capInput, setCapInput] = useState(
+    usage?.monthly_request_cap == null ? "" : String(usage.monthly_request_cap),
+  );
+
+  useEffect(() => {
+    if (usage?.monthly_request_cap != null) {
+      setCapInput(String(usage.monthly_request_cap));
+    }
+    // Populate any non-secret fields from the usage sidecar (echoes
+    // the stored value the server sent back).
+    setForm((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      nonSecretFields.forEach((f) => {
+        if (usage && usage[f.name] != null && !next[f.name]) {
+          next[f.name] = usage[f.name];
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usage?.monthly_request_cap]);
+
+  const save = async () => {
+    setBusyFor(busyKey, "save");
+    try {
+      const config = { api_key: form.api_key || "" };
+      nonSecretFields.forEach((f) => { config[f.name] = form[f.name] ?? ""; });
+      const body = {
+        config,
+        monthly_request_cap: capInput === "" ? null : Number(capInput),
+      };
+      const r = await api.put(`/tenants/me/integrations/${providerKey}`, body);
+      if (r?.saved) toast.success(`${label} saved.`);
+      setForm((prev) => ({ ...prev, api_key: "" }));
+      await reload();
+    } catch (e) {
+      toast.error(e?.message || `${label} save failed`);
+    } finally { setBusyFor(busyKey, null); }
+  };
+
+  const remove = async () => {
+    if (typeof window !== "undefined" && window.confirm
+        && !window.confirm(`Disconnect ${label}? Your saved credentials will be permanently removed.`)) return;
+    setBusyFor(busyKey, "delete");
+    try {
+      const r = await api.delete(`/tenants/me/integrations/${providerKey}`);
+      if (r?.removed) toast.success(`${label} disconnected.`);
+      else toast(`${label} was not connected.`);
+      await reload();
+    } catch (e) { toast.error(e?.message || `${label} disconnect failed`); }
+    finally { setBusyFor(busyKey, null); }
+  };
+
+  const pct = usage?.pct_used ?? 0;
+  const pctDisplay = usage?.monthly_request_cap == null
+    ? null
+    : Math.min(100, Math.round((pct || 0) * 100));
+  const barColor = usage?.status === "blocked" ? "#DC2626"
+    : usage?.status === "warn" ? "#F59E0B"
+    : "#16A34A";
+  const capLabel = usage?.monthly_request_cap == null
+    ? "Unlimited"
+    : usage.monthly_request_cap === 0
+    ? "Blocked (cap = 0)"
+    : `${(usage.total || 0).toLocaleString()} / ${usage.monthly_request_cap.toLocaleString()}`;
+
+  return (
+    <div
+      className="rounded-xl p-4 flex flex-col gap-3"
+      style={{ border: `1px solid ${colors.border}` }}
+      data-testid={`tenant-integration-${providerKey}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>{label}</div>
+            <StatusPill tone={state} testid={`tenant-integration-${providerKey}-status`}>{stateLabel}</StatusPill>
+            {isConnected && <StaleBadge lastUsedAt={row.last_used_at} providerKey={providerKey} />}
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>{desc}</div>
+        </div>
+      </div>
+
+      {isConnected && (
+        <div
+          className="rounded-lg px-3 py-2 text-xs space-y-1"
+          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+          data-testid={`tenant-integration-${providerKey}-summary`}
+        >
+          {row.last_4 && (
+            <div><span className="font-semibold">API key · last 4:</span>{" "}
+              <span className="font-mono" data-testid={`tenant-integration-${providerKey}-last4`}>••••{row.last_4}</span></div>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-1" data-testid={`tenant-integration-${providerKey}-usage`}>
+        <div className="flex items-center justify-between text-xs" style={{ color: colors.onSurfaceSecondary }}>
+          <span>Usage this month</span>
+          <span data-testid={`tenant-integration-${providerKey}-usage-label`}>{capLabel}</span>
+        </div>
+        <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: "#E5E7EB" }}>
+          {pctDisplay != null && (
+            <div
+              className="h-full transition-all"
+              style={{ width: `${pctDisplay}%`, backgroundColor: barColor }}
+              data-testid={`tenant-integration-${providerKey}-usage-bar`}
+            />
+          )}
+        </div>
+        {usage && (
+          <div className="text-[11px]" style={{ color: colors.onSurfaceSecondary }}
+               data-testid={`tenant-integration-${providerKey}-usage-breakdown`}>
+            geocode {usage.geocode || 0} · route {usage.route || 0} · static {usage.static_map || 0}
+          </div>
+        )}
+        {usage?.status === "warn" && (
+          <div className="text-[11px]" style={{ color: "#854D0E" }}
+               data-testid={`tenant-integration-${providerKey}-usage-warn`}>
+            ⚠︎ Soft warning · ≥ 80% of monthly cap consumed.
+          </div>
+        )}
+        {usage?.status === "blocked" && (
+          <div className="text-[11px]" style={{ color: "#991B1B" }}
+               data-testid={`tenant-integration-${providerKey}-usage-blocked`}>
+            ✕ Monthly cap reached · requests will return 429 until next month or you raise the cap.
+          </div>
+        )}
+      </div>
+
+      {canWrite && (
+        <div className="flex flex-col gap-2">
+          <label className="text-xs flex flex-col gap-1" style={{ color: colors.onSurfaceSecondary }}>
+            <span>API key<span style={{ color: "#991B1B" }}> *</span></span>
+            <input
+              type="password"
+              value={form.api_key ?? ""}
+              onChange={(e) => setForm((prev) => ({ ...prev, api_key: e.target.value }))}
+              autoComplete="off"
+              placeholder={isConnected ? "•••• (leave blank to keep current)" : ""}
+              className="rounded-lg px-2 py-1 text-sm"
+              style={{ border: `1px solid ${colors.border}`, backgroundColor: "white", color: colors.onSurface }}
+              data-testid={`tenant-integration-${providerKey}-field-api_key`}
+            />
+          </label>
+
+          {nonSecretFields.map((f) => (
+            <label key={f.name} className="text-xs flex flex-col gap-1"
+                    style={{ color: colors.onSurfaceSecondary }}>
+              <span>{f.label}{f.required && <span style={{ color: "#991B1B" }}> *</span>}</span>
+              <input
+                type="text"
+                value={form[f.name] ?? ""}
+                onChange={(e) => setForm((prev) => ({ ...prev, [f.name]: e.target.value }))}
+                className="rounded-lg px-2 py-1 text-sm"
+                style={{ border: `1px solid ${colors.border}`, backgroundColor: "white", color: colors.onSurface }}
+                data-testid={`tenant-integration-${providerKey}-field-${f.name}`}
+              />
+            </label>
+          ))}
+
+          <label className="text-xs flex flex-col gap-1" style={{ color: colors.onSurfaceSecondary }}>
+            <span>
+              Monthly request cap
+              <span className="italic" style={{ color: colors.onSurfaceSecondary }}> · empty = unlimited · 0 = block all</span>
+            </span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={capInput}
+              onChange={(e) => setCapInput(e.target.value)}
+              placeholder="Unlimited"
+              className="rounded-lg px-2 py-1 text-sm"
+              style={{ border: `1px solid ${colors.border}`, backgroundColor: "white", color: colors.onSurface }}
+              data-testid={`tenant-integration-${providerKey}-cap-input`}
+            />
+          </label>
+
+          <div className="flex items-center gap-2 flex-wrap mt-1">
+            <button
+              onClick={save}
+              disabled={!!busy[busyKey]}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+              style={{ backgroundColor: colors.brand, opacity: busy[busyKey] ? 0.6 : 1 }}
+              data-testid={`tenant-integration-${providerKey}-save`}
+            >
+              {busy[busyKey] === "save" ? "Saving…" : (isConnected ? "Save (rotate)" : "Save")}
+            </button>
+            {isConnected && (
+              <button
+                onClick={remove}
+                disabled={!!busy[busyKey]}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+                style={{ backgroundColor: "#FEE2E2", color: "#991B1B", opacity: busy[busyKey] ? 0.6 : 1 }}
+                data-testid={`tenant-integration-${providerKey}-disconnect`}
+              >
+                {busy[busyKey] === "delete" ? "Removing…" : "Disconnect"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {!canWrite && (
+        <span className="text-xs" style={{ color: colors.onSurfaceSecondary }}>
+          Ask an admin to connect this provider.
+        </span>
+      )}
+    </div>
+  );
+}
+
+
+/** ————————————————————————————————————————————————————————————
  *  Root component.
  *  ———————————————————————————————————————————————————————————— */
 export default function TenantIntegrationsCard() {
   const [rows, setRows] = useState(null);
-  const [schemas, setSchemas] = useState({ sms: [], email: [], ai: [] });
+  const [schemas, setSchemas] = useState({ sms: [], email: [], ai: [], maps: [] });
   const [aiUsage, setAiUsage] = useState({});     // { openai: {...}, anthropic: {...}, gemini: {...} }
+  const [mapsUsage, setMapsUsage] = useState({}); // { google: {...}, mapbox: {...} }
   const [busy, setBusy] = useState({});
   const [role, setRole] = useState("manager");
 
@@ -658,10 +911,11 @@ export default function TenantIntegrationsCard() {
 
   const load = useCallback(async () => {
     try {
-      const [listRes, schemaRes, usageRes] = await Promise.all([
+      const [listRes, schemaRes, usageRes, mapsUsageRes] = await Promise.all([
         api.get("/tenants/me/integrations"),
         api.get("/tenants/me/integrations/schemas"),
         api.get("/tenants/me/integrations/ai/usage").catch(() => ({ providers: [] })),
+        api.get("/tenants/me/integrations/maps/usage").catch(() => ({ providers: [] })),
       ]);
       const map = {};
       (listRes?.integrations || []).forEach((row) => { map[row.provider_key] = row; });
@@ -670,10 +924,14 @@ export default function TenantIntegrationsCard() {
         sms: schemaRes?.sms || [],
         email: schemaRes?.email || [],
         ai: schemaRes?.ai || [],
+        maps: schemaRes?.maps || [],
       });
       const usageByShort = {};
       (usageRes?.providers || []).forEach((u) => { usageByShort[u.provider] = u; });
       setAiUsage(usageByShort);
+      const mapsByShort = {};
+      (mapsUsageRes?.providers || []).forEach((u) => { mapsByShort[u.provider] = u; });
+      setMapsUsage(mapsByShort);
     } catch (e) {
       setRows({});
       toast.error(e?.message || "Failed to load integrations");
@@ -773,6 +1031,20 @@ export default function TenantIntegrationsCard() {
               schema={s}
               row={rows?.[s.provider_key]}
               usage={aiUsage[short]}
+              canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
+            />
+          );
+        })}
+
+        {/* Phase I1.7.c.2 · Feb-2026 — Maps BYO cards (Google Maps, Mapbox). */}
+        {schemas.maps.map((s) => {
+          const short = (MAPS_PROVIDER_LABELS[s.provider_key] || {}).short || s.provider_key;
+          return (
+            <MapsCard
+              key={s.provider_key}
+              schema={s}
+              row={rows?.[s.provider_key]}
+              usage={mapsUsage[short]}
               canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
             />
           );

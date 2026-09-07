@@ -110,6 +110,29 @@ from services.ai.usage import (
     remove_provider_meta as _ai_remove_provider_meta,
     upsert_provider_meta as _ai_upsert_provider_meta,
 )
+# Phase I1.7.c.2 · Feb-2026 — Maps BYO providers.
+from services.maps import (
+    MapsProviderUsage,
+    MapsUsageResponse,
+    InvalidMapsProviderConfig,
+    UnknownMapsProvider,
+    get_maps_provider,
+    get_provider_field_schemas as _maps_provider_field_schemas,
+    list_registered_maps_provider_keys,
+    list_short_names as _maps_short_names,
+    short_name_for as _maps_short_name_for,
+)
+from services.maps._helpers import (
+    current_period_yyyymm as _maps_period,
+    save_provider_config as save_maps_provider_config,
+)
+from services.maps.usage import (
+    _compute_status as _maps_compute_status,
+    get_all_usage_rows as _maps_get_all_usage_rows,
+    get_provider_meta as _maps_get_provider_meta,
+    remove_provider_meta as _maps_remove_provider_meta,
+    upsert_provider_meta as _maps_upsert_provider_meta,
+)
 
 
 log = logging.getLogger("integrations")
@@ -159,6 +182,7 @@ class DeleteResponse(BaseModel):
 _SMS_KEYS = set(list_registered_sms_provider_keys())
 _EMAIL_KEYS = set(list_registered_email_provider_keys())
 _AI_KEYS = set(list_registered_ai_provider_keys())
+_MAPS_KEYS = set(list_registered_maps_provider_keys())
 
 
 def _kind_for(provider_key: str) -> str:
@@ -168,17 +192,12 @@ def _kind_for(provider_key: str) -> str:
         return "email"
     if provider_key in _AI_KEYS:
         return "ai"
+    if provider_key in _MAPS_KEYS:
+        return "maps"
     return "payments"
 
 
 def _resolve_provider(provider_key: str):
-    """Return the concrete adapter for ``provider_key`` from whichever
-    registry knows it. Raises ``HTTPException(404)`` on unknown key.
-
-    Returns a tuple ``(kind, provider)`` where ``kind`` is
-    ``"payments" | "sms" | "email" | "ai"`` so callers can pick the
-    correct ``test_connection`` signature.
-    """
     kind = _kind_for(provider_key)
     try:
         if kind == "sms":
@@ -187,8 +206,11 @@ def _resolve_provider(provider_key: str):
             return kind, get_email_provider(provider_key)
         if kind == "ai":
             return kind, get_ai_provider(provider_key)
+        if kind == "maps":
+            return kind, get_maps_provider(provider_key)
         return kind, get_provider(provider_key)
-    except (UnknownProvider, UnknownMessagingProvider, UnknownAIProvider):
+    except (UnknownProvider, UnknownMessagingProvider, UnknownAIProvider,
+             UnknownMapsProvider):
         raise HTTPException(status_code=404, detail=f"unknown provider: {provider_key}")
 
 
@@ -281,6 +303,13 @@ async def delete_tenant_integration(
             await _ai_remove_provider_meta(tenant_id=tenant["id"], provider=short)
         except Exception:
             pass
+    # Phase I1.7.c.2 — Maps provider metadata sidecar cleanup.
+    if _kind_for(provider_key) == "maps":
+        short = _maps_short_name_for(provider_key) or provider_key
+        try:
+            await _maps_remove_provider_meta(tenant_id=tenant["id"], provider=short)
+        except Exception:
+            pass
     return DeleteResponse(removed=removed, provider_key=provider_key)
 
 
@@ -303,6 +332,10 @@ class SaveIntegrationBody(BaseModel):
     #   >0   => hard block at ``used >= cap`` (tokens_total).
     # Ignored for non-AI providers.
     monthly_token_cap: Optional[int] = None
+    # Phase I1.7.c.2 — Maps providers only. Same semantics as above,
+    # but the counter is request-count instead of tokens. Ignored
+    # for non-Maps providers.
+    monthly_request_cap: Optional[int] = None
 
 
 class SaveIntegrationResponse(BaseModel):
@@ -441,6 +474,57 @@ async def save_tenant_integration(
             provider_key=provider_key, saved=True,
             connected_account_id_masked=None,
         )
+    if kind == "maps":
+        # I1.7.c.2 — Maps providers mirror the AI branch: reuse
+        # ``_preserve_stored_secrets``, share the cap-parse rules,
+        # persist metadata (cap + provider-specific extras like
+        # ``region_bias`` / ``style``) in ``tenant_maps_provider``.
+        _, maps_provider = _resolve_provider(provider_key)
+        schema = getattr(maps_provider, "config_fields", {}) or {}
+        merged_config = await _preserve_stored_secrets(
+            tenant_id=tenant["id"], provider_key=provider_key,
+            incoming_config=dict(body.config or {}),
+            schema=schema,
+        )
+        try:
+            await save_maps_provider_config(
+                tenant_id=tenant["id"], provider_key=provider_key,
+                config=merged_config, schema=schema,
+                primary_secret_field=getattr(maps_provider, "primary_secret_field", None),
+            )
+        except InvalidMapsProviderConfig as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        short = _maps_short_name_for(provider_key) or provider_key
+        cap = body.monthly_request_cap
+        if cap is not None:
+            try:
+                cap = int(cap)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="monthly_request_cap must be an integer or null",
+                )
+            if cap < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="monthly_request_cap must be >= 0 (null = unlimited, 0 = block all)",
+                )
+        # Non-secret extras (region_bias, style, …) surface in the
+        # sidecar so the settings UI can render them without a decrypt.
+        extras: Dict[str, Any] = {}
+        for name, meta in (schema or {}).items():
+            if not meta.get("secret"):
+                v = merged_config.get(name)
+                if v is not None:
+                    extras[name] = v
+        await _maps_upsert_provider_meta(
+            tenant_id=tenant["id"], provider=short,
+            monthly_request_cap=cap, extras=extras,
+        )
+        return SaveIntegrationResponse(
+            provider_key=provider_key, saved=True,
+            connected_account_id_masked=None,
+        )
     if kind not in ("sms", "email"):
         # Every non-messaging key ends up here. ``stripe`` (payment
         # provider) uses OAuth; everything else is unknown.
@@ -505,7 +589,7 @@ class ProviderFieldSchemaEntry(BaseModel):
 
 class ProviderSchema(BaseModel):
     provider_key: str
-    kind: str  # "sms" | "email" | "ai"
+    kind: str  # "sms" | "email" | "ai" | "maps"
     fields: List[ProviderFieldSchemaEntry]
     # I1.7.c.1 — models dropdown options (empty for non-AI providers).
     models: List[str] = []
@@ -515,6 +599,7 @@ class ProviderSchemasResponse(BaseModel):
     sms: List[ProviderSchema]
     email: List[ProviderSchema]
     ai: List[ProviderSchema] = []
+    maps: List[ProviderSchema] = []
 
 
 def _to_field_entries(fields: Dict[str, Dict[str, Any]]) -> List[ProviderFieldSchemaEntry]:
@@ -558,7 +643,15 @@ async def integrations_schemas(
                           models=ai_models_map.get(k, []))
         for k, v in _ai_provider_field_schemas().items()
     ]
-    return ProviderSchemasResponse(sms=sms_schemas, email=email_schemas, ai=ai_schemas)
+    maps_schemas = [
+        ProviderSchema(provider_key=k, kind="maps",
+                          fields=_to_field_entries(v))
+        for k, v in _maps_provider_field_schemas().items()
+    ]
+    return ProviderSchemasResponse(
+        sms=sms_schemas, email=email_schemas,
+        ai=ai_schemas, maps=maps_schemas,
+    )
 
 
 # ── GET /tenants/me/integrations/ai/usage (I1.7.c.1) ─────────────
@@ -619,6 +712,61 @@ async def get_tenant_ai_usage(
             status=status_val,
         ))
     return AIUsageResponse(tenant_id=tid, period_yyyymm=period, providers=out)
+
+
+# ── GET /tenants/me/integrations/maps/usage (I1.7.c.2) ───────────
+@router.get(
+    "/tenants/me/integrations/maps/usage",
+    response_model=MapsUsageResponse,
+    operation_id="tenants.integrations.maps.usage",
+)
+async def get_tenant_maps_usage(
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Per-provider monthly request counters + cap for the current
+    tenant. Counters are broken down per operation
+    (``geocode``, ``route``, ``static_map``) with a rolled-up
+    ``total`` — the cap is enforced against ``total``. Status flags
+    mirror AI: ``ok`` / ``warn`` (>=80%) / ``blocked`` (>=100%)."""
+    _require_read_role(user)
+    period = _maps_period()
+    tid = tenant["id"]
+    providers_present = set()
+    metas: Dict[str, Dict[str, Any]] = {}
+    for short in _maps_short_names():
+        m = await _maps_get_provider_meta(tenant_id=tid, provider=short)
+        if m:
+            providers_present.add(short)
+            metas[short] = m
+    usage_rows = await _maps_get_all_usage_rows(tenant_id=tid, period_yyyymm=period)
+    usage_by_short: Dict[str, Dict[str, Any]] = {
+        r["provider"]: r for r in usage_rows if r.get("provider")
+    }
+    providers_present.update(usage_by_short.keys())
+    out: List[MapsProviderUsage] = []
+    for short in sorted(providers_present):
+        meta = metas.get(short) or {}
+        usage = usage_by_short.get(short) or {}
+        cap_raw = meta.get("monthly_request_cap")
+        cap = int(cap_raw) if cap_raw is not None else None
+        used = int(usage.get("total", 0) or 0)
+        pct = None
+        if cap is not None and cap > 0:
+            pct = round(used / cap, 4)
+        out.append(MapsProviderUsage(
+            provider=short,
+            period_yyyymm=period,
+            geocode=int(usage.get("geocode", 0) or 0),
+            route=int(usage.get("route", 0) or 0),
+            static_map=int(usage.get("static_map", 0) or 0),
+            total=used,
+            monthly_request_cap=cap,
+            connected=short in metas,
+            pct_used=pct,
+            status=_maps_compute_status(used=used, cap=cap),
+        ))
+    return MapsUsageResponse(tenant_id=tid, period_yyyymm=period, providers=out)
 
 
 # ── GET /integrations/stripe/connect-link ────────────────────────

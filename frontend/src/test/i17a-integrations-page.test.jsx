@@ -110,6 +110,16 @@ const _seedSchemas = () => ({
       { name: "default_model", required: false, secret: false, label: "Default model" },
     ]},
   ],
+  maps: [
+    { provider_key: "maps_google", kind: "maps", models: [], fields: [
+      { name: "api_key", required: true, secret: true, label: "Google Maps API Key" },
+      { name: "region_bias", required: false, secret: false, label: "Region bias" },
+    ]},
+    { provider_key: "maps_mapbox", kind: "maps", models: [], fields: [
+      { name: "api_key", required: true, secret: true, label: "Mapbox Access Token" },
+      { name: "style", required: false, secret: false, label: "Static map style" },
+    ]},
+  ],
 });
 
 
@@ -121,6 +131,8 @@ const _installListAndSchemasMock = (rowsFactory) => {
     if (path === "/tenants/me/integrations") return rowsFactory();
     if (path === "/tenants/me/integrations/schemas") return _seedSchemas();
     if (path === "/tenants/me/integrations/ai/usage")
+      return { tenant_id: "tenant-i17a-vitest", period_yyyymm: "202602", providers: [] };
+    if (path === "/tenants/me/integrations/maps/usage")
       return { tenant_id: "tenant-i17a-vitest", period_yyyymm: "202602", providers: [] };
     if (path === "/integrations/stripe/connect-link")
       return { url: "https://connect.stripe.com/oauth/authorize?client_id=ca_x&state=abc", state: "abc" };
@@ -192,8 +204,14 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
       expect(screen.getByTestId(`tenant-integration-${k}-status`).textContent)
         .toMatch(/not connected/i);
     });
-    // Maps / Calendars / Storage remain coming-soon placeholders.
-    ["maps", "calendars", "storage"].forEach((k) => {
+    // Maps is now a real card too (I1.7.c.2).
+    ["maps_google", "maps_mapbox"].forEach((k) => {
+      expect(screen.getByTestId(`tenant-integration-${k}`)).toBeTruthy();
+      expect(screen.getByTestId(`tenant-integration-${k}-status`).textContent)
+        .toMatch(/not connected/i);
+    });
+    // Calendars / Storage remain coming-soon placeholders.
+    ["calendars", "storage"].forEach((k) => {
       expect(screen.getByTestId(`tenant-integration-${k}`)).toBeTruthy();
       expect(screen.getByTestId(`tenant-integration-${k}-status`).textContent)
         .toMatch(/coming soon/i);

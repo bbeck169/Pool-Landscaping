@@ -66,6 +66,8 @@ const _mockRoutes = (rows, usageProviders = []) => {
     if (path === "/tenants/me/integrations/ai/usage")
       return { tenant_id: "tenant-i17c1", period_yyyymm: "202602",
                 providers: usageProviders };
+    if (path === "/tenants/me/integrations/maps/usage")
+      return { tenant_id: "tenant-i17c1", period_yyyymm: "202602", providers: [] };
     return {};
   });
 };
@@ -306,6 +308,8 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
                        tokens_prompt: 0, tokens_completion: 0, tokens_total: 0,
                        monthly_token_cap: 10000, default_model: "gpt-4o-mini",
                        connected: true, pct_used: 0, status: "ok" }] };
+      if (path === "/tenants/me/integrations/maps/usage")
+        return { tenant_id: "t", period_yyyymm: "202602", providers: [] };
       return {};
     });
     mockDelete.mockResolvedValue({ removed: true, provider_key: "ai_openai" });
