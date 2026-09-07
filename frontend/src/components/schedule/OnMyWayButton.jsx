@@ -156,8 +156,17 @@ export default function OnMyWayButton({
       onClick={(e) => { e.stopPropagation(); send(); }}
       disabled={busy || cooldown || disabledProp}
       className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition disabled:opacity-60 disabled:cursor-not-allowed ${className}`}
-      style={{ backgroundColor: "#ECFDF5", color: "#065F46", border: "1px solid #A7F3D0" }}
+      // Feb-2026 HOTFIX (live user report) — was light-mint (#ECFDF5)
+      // which looked wishy-washy on the schedule card. Now navy-family
+      // (tenant --action-onmyway-* tokens) so techs see a strong,
+      // dispatch-brand CTA. Contrast: white on #1B1F5C · WCAG AA ok.
+      style={{
+        backgroundColor: "var(--action-onmyway-bg, #1B1F5C)",
+        color:           "var(--action-onmyway-fg, #FFFFFF)",
+        border:          "1px solid var(--action-onmyway-border, #1B1F5C)",
+      }}
       data-testid={_tid}
+      data-action-role="onmyway"
       aria-label={`Send 'on my way' SMS for job ${jobId}`}
       title="Send 'on my way' SMS"
     >

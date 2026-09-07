@@ -210,3 +210,49 @@ input.reorder-num-input {
         !important;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+ * Feb-2026 HOTFIX (live user report) — Schedule row semantic tokens.
+ * ═══════════════════════════════════════════════════════════════
+ * Tenants override the top-level palette (``--tenant-buttons-bg``,
+ * ``--tenant-k74-identity``); the schedule row surfaces below are
+ * derived from those primaries with a WCAG-AA-safe default.
+ *
+ * Consumers:
+ *   • OnMyWayButton (compact)               →  --action-onmyway-*
+ *   • Could-not-service row button          →  --action-cantservice-*
+ *   • NavigateJobButton (per-job nav arrow) →  --nav-arrow-*
+ *   • JobNotesCallout (row-level notes)     →  --note-bg / --note-accent
+ *
+ * Tenants can override any of these by setting the CSS var on
+ * ``:root`` — the components read them via inline ``var(--…, fallback)``.
+ * The fallback values match the K74 navy-family primary + a WCAG-AA
+ * danger red so unbranded pods look sensible out of the box. */
+:root {
+    /* Row action: On my way — navy family (matches K74 identity). */
+    --action-onmyway-bg:      var(--tenant-k74-identity, #1B1F5C);
+    --action-onmyway-fg:      #FFFFFF;
+    --action-onmyway-border:  var(--tenant-k74-identity, #1B1F5C);
+
+    /* Row action: Could not service — WCAG-AA danger red on white. */
+    --action-cantservice-bg:      #DC2626;   /* red-600  */
+    --action-cantservice-fg:      #FFFFFF;
+    --action-cantservice-border:  #B91C1C;   /* red-700  */
+
+    /* Row nav arrow: dominant, filled affordance. Falls back to the
+     * K74 primary so tenants that have overridden their identity
+     * color get a consistent look across the row (arrow + notes
+     * icon + On-my-way button all track the same primary). */
+    --nav-arrow-bg:  var(--tenant-k74-identity, #1B1F5C);
+    --nav-arrow-fg:  #FFFFFF;
+
+    /* Row note callout: white fill with a warning left-border so the
+     * "this is a note" affordance stays visible. */
+    --note-bg-white:     #FFFFFF;
+    --note-border:       #E5E7EB;    /* gray-200 */
+    --note-accent:       #F59E0B;    /* amber-500 · left border */
+    --note-icon-fg:      #B45309;    /* amber-700 · icon on white  */
+    --note-text-fg:      #111827;    /* near-black · body copy    */
+    --note-label-fg:     #4B5563;    /* gray-600  · "Customer note:" prefix */
+}
+

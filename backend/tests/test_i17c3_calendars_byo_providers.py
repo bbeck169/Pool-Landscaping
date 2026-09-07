@@ -183,19 +183,15 @@ def test_i17c3_start_admin_ok():
     assert r2.status_code == 200, r2.text
 
 
-def test_i17c3_start_self_ok():
-    # A technician can start OAuth for their own user_id.
-    tid = _tenant_id_for("super@aquaterra.com")
-    tech = _pick_tech_for(tid)
-    if tech.get("role") == "admin":
-        pytest.skip("chosen tech is admin — self-service branch not covered")
+def test_i17c3_start_self_ok(two_technicians):
+    # A technician can start OAuth for their own user_id (self-service).
+    tech = two_technicians["tech_a"]
     r = requests.post(
         f"{API}/auth/login",
-        json={"email": tech["email"], "password": "password123"},
+        json={"email": tech["email"], "password": two_technicians["password"]},
         timeout=30,
     )
-    if r.status_code != 200:
-        pytest.skip(f"tech login failed: {r.status_code}")
+    assert r.status_code == 200, f"tech login failed: {r.status_code} · {r.text}"
     tok = r.json()["access_token"]
     r2 = requests.get(
         f"{API}/tenants/me/integrations/calendars_google/oauth/start",
@@ -203,30 +199,52 @@ def test_i17c3_start_self_ok():
         headers=_hdrs(tok), timeout=15,
     )
     assert r2.status_code == 200, r2.text
+    assert r2.json()["technician_user_id"] == tech["id"]
 
 
-def test_i17c3_start_other_tech_403():
-    # A technician trying to initiate OAuth for a DIFFERENT technician
-    # must be rejected.
-    tid = _tenant_id_for("super@aquaterra.com")
-    tech = _pick_tech_for(tid)
-    if tech.get("role") == "admin":
-        pytest.skip("chosen tech is admin — role-branch not covered")
+def test_i17c3_start_other_tech_403(two_technicians):
+    # Tech A logs in and tries to initiate OAuth for Tech B — must 403.
+    tech_a = two_technicians["tech_a"]
+    tech_b = two_technicians["tech_b"]
     r = requests.post(
         f"{API}/auth/login",
-        json={"email": tech["email"], "password": "password123"},
+        json={"email": tech_a["email"], "password": two_technicians["password"]},
         timeout=30,
     )
-    if r.status_code != 200:
-        pytest.skip(f"tech login failed: {r.status_code}")
+    assert r.status_code == 200, f"tech login failed: {r.status_code} · {r.text}"
     tok = r.json()["access_token"]
     r2 = requests.get(
         f"{API}/tenants/me/integrations/calendars_google/oauth/start",
-        params={"technician_user_id": "some-other-technician-uuid",
-                "format": "json"},
+        params={"technician_user_id": tech_b["id"], "format": "json"},
         headers=_hdrs(tok), timeout=15,
     )
     assert r2.status_code == 403, r2.text
+
+
+def test_i17c3_start_super_can_initiate_for_any_tech(two_technicians):
+    """super_admin must be able to initiate OAuth for tech A, tech B,
+    AND themselves (three consecutive calls, all 200)."""
+    tok = _login()
+    super_row = _sync.users.find_one(
+        {"email": "super@aquaterra.com"}, {"_id": 0, "id": 1},
+    )
+    assert super_row and super_row.get("id"), "aquaterra super seed missing"
+    targets = [
+        two_technicians["tech_a"]["id"],
+        two_technicians["tech_b"]["id"],
+        super_row["id"],
+    ]
+    for target in targets:
+        r = requests.get(
+            f"{API}/tenants/me/integrations/calendars_google/oauth/start",
+            params={"technician_user_id": target, "format": "json"},
+            headers=_hdrs(tok), timeout=15,
+        )
+        assert r.status_code == 200, (
+            f"super failed to start OAuth for {target}: "
+            f"{r.status_code} · {r.text}"
+        )
+        assert r.json()["technician_user_id"] == target
 
 
 def test_i17c3_start_json_format():

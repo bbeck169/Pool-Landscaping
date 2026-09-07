@@ -26,12 +26,17 @@
 import React, { useState } from "react";
 import { NotebookPen } from "lucide-react";
 
-const AMBER_BG = "#FEF3C7";     // amber-100
-const AMBER_ACCENT = "#F59E0B"; // amber-500 · 3px left-border bar
-const AMBER_BORDER = "#FDE68A"; // amber-200
-const AMBER_ICON = "#B45309";   // amber-700 · readable on amber-100
-const TEXT_DARK = "#111827";    // near-black
-const TEXT_MUTED = "#4B5563";   // gray-600 · for the "Customer note:" prefix
+// Feb-2026 HOTFIX (live user report) — Notes callout is now WHITE
+// fill (was amber-100 which competed with the K74 mint card). The
+// amber icon + 3px amber left-border stay so "this is a note" still
+// scans at a glance. Tenants can override via ``--note-*`` tokens
+// declared in ``index.css``.
+const NOTE_BG      = "var(--note-bg-white, #FFFFFF)";
+const NOTE_BORDER  = "var(--note-border, #E5E7EB)";     // gray-200
+const NOTE_ACCENT  = "var(--note-accent, #F59E0B)";     // amber-500
+const NOTE_ICON_FG = "var(--note-icon-fg, #B45309)";    // amber-700
+const TEXT_DARK    = "var(--note-text-fg, #111827)";
+const TEXT_MUTED   = "var(--note-label-fg, #4B5563)";
 
 /** Heuristic — is this text long enough to plausibly overflow 2 lines? */
 function _mayOverflow(s) {
@@ -60,20 +65,21 @@ export default function JobNotesCallout({
       style={{
         marginTop: 6,
         padding: "8px 10px",
-        backgroundColor: AMBER_BG,
-        border: `1px solid ${AMBER_BORDER}`,
+        backgroundColor: NOTE_BG,
+        border: `1px solid ${NOTE_BORDER}`,
         borderLeftWidth: 3,
         borderLeftStyle: "solid",
-        borderLeftColor: AMBER_ACCENT,
+        borderLeftColor: NOTE_ACCENT,
         color: TEXT_DARK,
       }}
       title={[jobNote + (truncated ? "…" : ""),
                 custNote ? `Customer note: ${custNote}` : ""].filter(Boolean).join("\n\n")}
       data-testid={`job-notes-callout-${jobId}`}
+      data-note-surface="white"
     >
       <NotebookPen
         size={14}
-        color={AMBER_ICON}
+        color={NOTE_ICON_FG}
         style={{ flexShrink: 0, marginTop: 2 }}
         aria-label="Job note"
         data-testid={`job-notes-icon-${jobId}`}
@@ -103,7 +109,7 @@ export default function JobNotesCallout({
             type="button"
             onClick={(e) => { e.stopPropagation(); setExpanded((x) => !x); }}
             className="mt-1 text-xs font-semibold underline-offset-2 hover:underline"
-            style={{ color: AMBER_ICON, background: "transparent", padding: 0 }}
+            style={{ color: NOTE_ICON_FG, background: "transparent", padding: 0 }}
             data-testid={`job-notes-toggle-${jobId}`}
             aria-expanded={expanded}
           >

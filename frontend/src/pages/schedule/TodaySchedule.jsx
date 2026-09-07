@@ -517,7 +517,11 @@ export default function TodaySchedule() {
                   data-testid="schedule-refresh">
             <RefreshCw size={14}/> Refresh
           </button>
-          {jobItems.length >= 2 && (
+          {/* Feb-2026 HOTFIX (live user report): Optimize Route is a
+              dispatcher/planner action. Techs must not see it — they
+              only see the reordered route via ``orderedJobItems``.
+              Same gate as the Reorder pill above (``isAdminForReorder``). */}
+          {isAdminForReorder && jobItems.length >= 2 && (
             <button onClick={handleOptimize} disabled={optimizing}
                     className="px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-1 disabled:opacity-60 transition-all"
                     style={{ background: gradients.navyToGreen.css, color: "#fff",
@@ -526,7 +530,7 @@ export default function TodaySchedule() {
               <RouteIcon size={14}/> {optimizing ? "Optimizing…" : "Optimize Route"}
             </button>
           )}
-          {optimizedIds && (
+          {isAdminForReorder && optimizedIds && (
             <button onClick={resetOrder}
                     className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
                     style={{ backgroundColor: colors.surface, color: colors.onSurface,

@@ -67,12 +67,22 @@ def _cleanup(dbc, jids, email="mike@aquaterra.com"):
 
 
 # ─── 20A.1 · Route Optimization ────────────────────────────────────────────
-def test_route_optimize_orders_three_jobs(tech_h, dbc):
+# Feb-2026 HOTFIX (user report): technicians can NO LONGER call
+# ``/schedule/optimize-route`` directly — it is a dispatcher/planner
+# action. These tests use ``admin_h`` and pass ``user_id=<mike_uid>``
+# so the admin-override path plans mike's route (identical semantics
+# to the pre-hotfix behavior, just from the admin seat).
+def _mike_uid(dbc):
+    return dbc.users.find_one({"email": "mike@aquaterra.com"})["id"]
+
+
+def test_route_optimize_orders_three_jobs(admin_h, tech_h, dbc):
     j1 = _seed_pool_job(dbc, "aquaterra", "mike@aquaterra.com", 33.60, -112.20, mins=30)
     j2 = _seed_pool_job(dbc, "aquaterra", "mike@aquaterra.com", 33.70, -112.20, mins=60)
     j3 = _seed_pool_job(dbc, "aquaterra", "mike@aquaterra.com", 33.65, -112.20, mins=90)
     try:
-        r = requests.post(f"{API}/schedule/optimize-route", headers=tech_h,
+        r = requests.post(f"{API}/schedule/optimize-route?user_id=" + _mike_uid(dbc),
+                          headers=admin_h,
                           json={"start_lat": 33.60, "start_lng": -112.20}, timeout=15)
         assert r.status_code == 200, r.text
         data = r.json()
@@ -99,13 +109,16 @@ def test_route_optimize_orders_three_jobs(tech_h, dbc):
         _cleanup(dbc, [j1, j2, j3])
 
 
-def test_route_optimize_cache_hit(tech_h, dbc):
+def test_route_optimize_cache_hit(admin_h, dbc):
     j1 = _seed_pool_job(dbc, "aquaterra", "mike@aquaterra.com", 33.60, -112.20)
     j2 = _seed_pool_job(dbc, "aquaterra", "mike@aquaterra.com", 33.70, -112.20)
     try:
-        r1 = requests.post(f"{API}/schedule/optimize-route", headers=tech_h,
+        mike = _mike_uid(dbc)
+        r1 = requests.post(f"{API}/schedule/optimize-route?user_id=" + mike,
+                           headers=admin_h,
                            json={"start_lat": 33.60, "start_lng": -112.20}, timeout=15).json()
-        r2 = requests.post(f"{API}/schedule/optimize-route", headers=tech_h,
+        r2 = requests.post(f"{API}/schedule/optimize-route?user_id=" + mike,
+                           headers=admin_h,
                            json={"start_lat": 33.60, "start_lng": -112.20}, timeout=15).json()
         assert r1["cached"] is False
         assert r2["cached"] is True

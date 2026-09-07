@@ -68,16 +68,23 @@ describe("JobNotesCallout — schedule card notes visibility polish", () => {
     cleanup();
   });
 
-  it("icon renders with an accessible label (a11y) and amber accent applied", () => {
+  it("icon renders with accessible label + WHITE fill / amber left-accent (Feb-2026 hotfix)", () => {
     render(<JobNotesCallout jobId={JOB_ID} note="Gate on right" />);
     const icon = screen.getByTestId(`job-notes-icon-${JOB_ID}`);
     expect(icon).toBeTruthy();
     // Lucide forwards ``aria-label`` to the svg — assert it surfaces.
     expect(icon.getAttribute("aria-label")).toBe("Job note");
-    // Amber-100 background on the chip.
+    // Feb-2026 hotfix — chip is now WHITE background with an amber
+    // left-border accent (no more amber-100 fill that competed with
+    // the K74 mint card). The inline style references the semantic
+    // ``--note-*`` tokens defined in ``index.css``.
     const chip = screen.getByTestId(`job-notes-callout-${JOB_ID}`);
-    // rgb(254, 243, 199) === #FEF3C7 · JSDOM normalizes to rgb().
-    expect(chip.style.backgroundColor).toMatch(/rgb\(254,\s*243,\s*199\)|#FEF3C7/i);
+    expect(chip.getAttribute("data-note-surface")).toBe("white");
+    const styleStr = chip.getAttribute("style") || "";
+    expect(styleStr).toMatch(/--note-bg-white/);
+    expect(styleStr).toMatch(/--note-accent/);
+    // Regression-guard the amber fill that we intentionally removed.
+    expect(styleStr).not.toMatch(/#FEF3C7/i);
     cleanup();
   });
 });

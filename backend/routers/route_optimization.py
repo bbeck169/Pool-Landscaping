@@ -106,6 +106,16 @@ async def optimize_route(
     """
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
+    # Feb-2026 HOTFIX (live user report) — the Optimize Route bulk
+    # action is a dispatcher / planner tool. Technicians must not
+    # invoke it, even though they can PATCH their own jobs. This is
+    # defense-in-depth alongside the FE hide of the toolbar button.
+    if (user.get("role") or "").lower() == "technician":
+        raise HTTPException(
+            403,
+            "Optimize Route is a dispatcher action — technicians cannot "
+            "invoke it. Ask your dispatcher to reorder the day.",
+        )
     # Only admins can override which user to optimize for.
     target_uid = user["id"]
     if user_id and user.get("role") in ("admin", "super_admin"):

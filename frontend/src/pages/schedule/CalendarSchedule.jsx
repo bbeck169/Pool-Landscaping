@@ -1694,8 +1694,17 @@ function GridPanel({
         </div>
       </div>
 
-      {/* Bulk-action pill row */}
-      {canWrite ? (
+      {/* Bulk-action pill row — Feb-2026 HOTFIX (user report, live):
+          technicians must NOT see the bulk-action strip (Complete /
+          Move / Reorder / Optimize Route). These are dispatcher /
+          planner actions. Per-job row actions (On my way / Could not
+          service / individual complete) stay visible for techs.
+
+          Gate is now ``canWrite && isAdminForCard`` — the entire strip
+          is removed from the DOM for tech users, not just disabled.
+          Complete + Move remain admin-visible even at zero selection
+          (they self-disable via the ``checked.size === 0`` prop). */}
+      {canWrite && isAdminForCard ? (
         <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="grid-bulk-pills">
           <button
             onClick={onBulkComplete}
@@ -2149,8 +2158,18 @@ function GridPanel({
                         type="button"
                         onClick={(e) => { e.stopPropagation(); onOpenCouldNotService?.(j); }}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold"
-                        style={{ backgroundColor: "#FEF3C7", color: "#B45309", border: "1px solid #FCD34D" }}
+                        // Feb-2026 HOTFIX (live user report) — was
+                        // amber-100 which read as a "warning card"
+                        // (soft). Now a proper WCAG-AA danger red
+                        // via --action-cantservice-* tokens so techs
+                        // see it as a destructive-adjacent action.
+                        style={{
+                          backgroundColor: "var(--action-cantservice-bg, #DC2626)",
+                          color:           "var(--action-cantservice-fg, #FFFFFF)",
+                          border:          "1px solid var(--action-cantservice-border, #B91C1C)",
+                        }}
                         data-testid={`could-not-service-btn-${j.id}`}
+                        data-action-role="cantservice"
                       >
                         Could not service
                       </button>
@@ -2171,11 +2190,29 @@ function GridPanel({
                 <NavigateJobButton job={j} />
                 <button
                   onClick={(e) => { e.stopPropagation(); onOpenJob(j.id); }}
-                  style={{ background: "transparent", border: 0, cursor: "pointer", color: colors.muted }}
+                  // Feb-2026 HOTFIX (live user report) — was a bare
+                  // transparent chevron in muted-gray. Now a filled
+                  // pill using --nav-arrow-* tokens so it reads as
+                  // the primary "tap here → open job" affordance on
+                  // the card (44×44 hit target for mobile a11y).
+                  style={{
+                    background: "var(--nav-arrow-bg, #1B1F5C)",
+                    color: "var(--nav-arrow-fg, #FFFFFF)",
+                    border: 0,
+                    borderRadius: 12,
+                    cursor: "pointer",
+                    minWidth: 44,
+                    minHeight: 44,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 1px 2px rgba(0,0,0,0.12)",
+                  }}
                   data-testid={`grid-open-${j.id}`}
+                  data-action-role="nav-arrow"
                   aria-label="Open job detail"
                 >
-                  <ChevronRight size={18} />
+                  <ChevronRight size={22} strokeWidth={2.75} />
                 </button>
                 {/* Feb-2026 · Schedule-screen inline edit affordance.
                     Gated by ``isAdminRole`` (super_admin | admin |

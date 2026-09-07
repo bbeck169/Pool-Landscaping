@@ -117,6 +117,57 @@ def demo_pw(email: str) -> str:
         return "password123"
     return pw
 
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase I1.7.c.3 · Feb 2026 — Two-technician fixture.
+# ═════════════════════════════════════════════════════════════════════
+# Two plain ``technician``-role users in the "aquaterra" demo tenant.
+# Seeded here (not per-suite) so future suites — Calendars, Payments,
+# per-tech Push, per-tech Escalation, etc. — can reuse the exact pair
+# and drive cross-user 403 assertions without re-inserting synthetic
+# rows and polluting counts elsewhere.
+#
+# Returns::  {
+#     "tenant_id":  str,
+#     "tech_a":     {"id", "email", "role", "name"},
+#     "tech_b":     {"id", "email", "role", "name"},
+#     "password":   str      # login password (via demo_pw)
+# }
+#
+# The fixture is ``session``-scoped so it fires once per pytest run.
+# Idempotent — if the two techs already exist in the tenant, it hands
+# them back unchanged.
+@pytest.fixture(scope="session")
+def two_technicians():
+    """Two ``technician``-role users in the aquaterra demo tenant."""
+    if not _MONGO_URL or not _DB_NAME:
+        pytest.skip("MONGO_URL / DB_NAME not configured — skipping fixture")
+    _c = MongoClient(_MONGO_URL)
+    _db = _c[_DB_NAME]
+    super_row = _db.users.find_one(
+        {"email": "super@aquaterra.com"},
+        {"_id": 0, "tenant_id": 1},
+    )
+    if not super_row or not super_row.get("tenant_id"):
+        pytest.skip("aquaterra super seed row missing — skipping fixture")
+    tenant_id = super_row["tenant_id"]
+    techs = list(_db.users.find(
+        {"tenant_id": tenant_id, "role": "technician"},
+        {"_id": 0, "id": 1, "email": 1, "role": 1, "name": 1},
+    ).sort([("email", 1)]).limit(2))
+    if len(techs) < 2:
+        pytest.skip(
+            f"aquaterra seed has < 2 technician-role users (found {len(techs)}) "
+            f"— extend the seed script or run the demo-seed migration first."
+        )
+    tech_a, tech_b = techs[0], techs[1]
+    return {
+        "tenant_id": tenant_id,
+        "tech_a": tech_a,
+        "tech_b": tech_b,
+        "password": demo_pw(tech_a["email"]),
+    }
+
 # Load Mongo connection from the backend .env (tests run against the same DB the API uses)
 _BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 _ENV = dotenv_values(_BACKEND_ENV)
