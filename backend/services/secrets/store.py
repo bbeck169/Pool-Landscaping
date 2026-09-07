@@ -89,10 +89,19 @@ async def put_secret(
     *,
     connection_type: ConnectionType,
     connected_account_id: Optional[str] = None,
+    mask_source: Optional[str] = None,
     db=None,
 ) -> None:
     """Encrypt ``plaintext`` and upsert the row keyed on
-    ``(tenant_id, provider_key)``. Never returns plaintext."""
+    ``(tenant_id, provider_key)``. Never returns plaintext.
+
+    ``mask_source`` is the string whose last-4 chars are stored in
+    the ``last_4`` display field. Defaults to the full ``plaintext``
+    — correct for legacy single-string secrets (e.g. Stripe access
+    tokens) but useless for JSON-blob configs where the last 4 chars
+    are ``"}``. Multi-field messaging providers pass their PRIMARY
+    secret field's value here so the UI shows a meaningful tail
+    (I1.7.b.fix)."""
     if not isinstance(plaintext, str) or not plaintext:
         raise ValueError("plaintext must be a non-empty str")
     if db is None:
@@ -104,6 +113,9 @@ async def put_secret(
         {"tenant_id": tenant_id, "provider_key": provider_key},
         {"id": 1, "created_at": 1},
     )
+    # I1.7.b.fix: prefer mask_source when provided; else fall back
+    # to plaintext for legacy single-string secrets.
+    _mask_from = mask_source if (isinstance(mask_source, str) and mask_source) else plaintext
     doc = {
         "tenant_id": tenant_id,
         "provider_key": provider_key,
@@ -112,7 +124,7 @@ async def put_secret(
         "iv": enc.iv,
         "auth_tag": enc.auth_tag,
         "dek_wrapped": enc.dek_wrapped,
-        "last_4": last_4(plaintext),
+        "last_4": last_4(_mask_from),
         "connected_status": ConnectionStatus.CONNECTED.value,
         "connected_account_id": connected_account_id,
         "updated_at": now,

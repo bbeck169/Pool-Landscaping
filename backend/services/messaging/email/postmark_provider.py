@@ -28,6 +28,7 @@ _PM_BASE = "https://api.postmarkapp.com"
 
 class PostmarkEmailProvider(EmailProvider):
     provider_key = "postmark"
+    primary_secret_field = "server_token"
 
     config_fields: Dict[str, Dict[str, Any]] = {
         "server_token": {"required": True, "secret": True,  "label": "Server API token"},

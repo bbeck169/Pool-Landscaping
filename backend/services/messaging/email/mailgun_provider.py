@@ -27,6 +27,7 @@ log = logging.getLogger("messaging.email.mailgun")
 
 class MailgunEmailProvider(EmailProvider):
     provider_key = "mailgun"
+    primary_secret_field = "api_key"
 
     config_fields: Dict[str, Dict[str, Any]] = {
         "api_key":     {"required": True, "secret": True,  "label": "Mailgun API key"},

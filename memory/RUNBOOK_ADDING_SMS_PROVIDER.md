@@ -2,6 +2,9 @@
 
 Applies to tenant admins connecting Twilio, TextMagic, or RingCentral. Reference for on-call + support.
 
+## URL shape (I1.7.b.fix)
+Every endpoint uses the CONCRETE provider key — never a category kind. Correct: `/api/tenants/me/integrations/twilio`, `/api/tenants/me/integrations/textmagic`, `/api/tenants/me/integrations/ringcentral`. Calling `/api/tenants/me/integrations/sms` returns a helpful 400 that lists the concrete keys and points to `/api/tenants/me/integrations/schemas`.
+
 ## Preconditions
 * `TENANT_SECRETS_KEK_B64` populated in `backend/.env` (see I1.7.a runbook).
 * `MESSAGING_PLATFORM_FALLBACK_ENABLED=true` while at least one tenant is still on the platform default RingCentral.

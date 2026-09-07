@@ -29,6 +29,12 @@ class SmsProvider(ABC):
     #: (single string) or serialized alongside the secret payload.
     config_fields: Dict[str, Dict[str, Any]] = {}
 
+    #: I1.7.b.fix — the config field whose value drives ``last_4``
+    #: masking in the settings UI. Must reference a ``secret=True``
+    #: field so we don't leak plaintext. When ``None`` the row still
+    #: encrypts correctly but ``last_4`` displays as blank.
+    primary_secret_field: Optional[str] = None
+
     @abstractmethod
     async def send_sms(
         self, *, tenant_id: str, to: str, body: str,

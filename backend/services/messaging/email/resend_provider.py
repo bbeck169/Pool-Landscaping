@@ -28,6 +28,7 @@ _RESEND_BASE = "https://api.resend.com"
 
 class ResendEmailProvider(EmailProvider):
     provider_key = "resend"
+    primary_secret_field = "api_key"
 
     config_fields: Dict[str, Dict[str, Any]] = {
         "api_key":     {"required": True, "secret": True,  "label": "Resend API key"},

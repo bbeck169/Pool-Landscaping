@@ -38,6 +38,7 @@ log = logging.getLogger("messaging.email.smtp")
 
 class SmtpEmailProvider(EmailProvider):
     provider_key = "smtp"
+    primary_secret_field = "password"
 
     config_fields: Dict[str, Dict[str, Any]] = {
         "host":       {"required": True,  "secret": False, "label": "SMTP host"},

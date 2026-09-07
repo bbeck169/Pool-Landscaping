@@ -157,6 +157,37 @@ def _resolve_provider(provider_key: str):
         raise HTTPException(status_code=404, detail=f"unknown provider: {provider_key}")
 
 
+# ── Kind-alias hint for common URL mistakes (I1.7.b.fix) ─────────
+_KIND_ALIASES = {
+    "sms": "sms",
+    "email": "email",
+    "messaging": "sms",
+}
+
+
+def _friendly_unknown_provider_error(provider_key: str) -> str:
+    """Return a helpful message when a caller PUTs to a category
+    kind (``/sms``, ``/email``) instead of a concrete provider key
+    (``/twilio``, ``/resend``, …). Falls back to a generic message
+    when the key isn't a known alias."""
+    alias = _KIND_ALIASES.get(provider_key.lower())
+    if alias == "sms":
+        keys = ", ".join(sorted(_SMS_KEYS))
+        return (f"unknown provider key '{provider_key}'. Did you mean "
+                f"one of: {keys}? See "
+                f"/api/tenants/me/integrations/schemas for the full "
+                f"provider list.")
+    if alias == "email":
+        keys = ", ".join(sorted(_EMAIL_KEYS))
+        return (f"unknown provider key '{provider_key}'. Did you mean "
+                f"one of: {keys}? See "
+                f"/api/tenants/me/integrations/schemas for the full "
+                f"provider list.")
+    return (f"unknown provider key '{provider_key}'. See "
+            f"/api/tenants/me/integrations/schemas for the full "
+            f"provider list.")
+
+
 # ── GET /tenants/me/integrations ─────────────────────────────────
 @router.get(
     "/tenants/me/integrations",
@@ -249,12 +280,26 @@ async def save_tenant_integration(
     refuses the ``stripe`` key on purpose.
     """
     _require_write_role(user)
-    kind = _kind_for(provider_key)
-    if kind not in ("sms", "email"):
+    # I1.7.b.fix — dedicated messages for common URL mistakes.
+    if provider_key.lower() in _KIND_ALIASES:
         raise HTTPException(
             status_code=400,
-            detail=f"provider '{provider_key}' does not accept manual config "
-                   "(payment providers use the OAuth /connect-link flow).",
+            detail=_friendly_unknown_provider_error(provider_key),
+        )
+    kind = _kind_for(provider_key)
+    if kind not in ("sms", "email"):
+        # Every non-messaging key ends up here. ``stripe`` (payment
+        # provider) uses OAuth; everything else is unknown.
+        if provider_key == "stripe":
+            raise HTTPException(
+                status_code=400,
+                detail="Stripe uses the OAuth /connect-link flow — "
+                       "call GET /api/integrations/stripe/connect-link "
+                       "instead of PUT /api/tenants/me/integrations/stripe.",
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=_friendly_unknown_provider_error(provider_key),
         )
     # Resolve the provider to grab its field schema.
     _, provider = _resolve_provider(provider_key)
@@ -273,6 +318,7 @@ async def save_tenant_integration(
         await save_provider_config(
             tenant_id=tenant["id"], provider_key=provider_key,
             config=body.config, schema=schema, public_account_id=pub,
+            primary_secret_field=getattr(provider, "primary_secret_field", None),
         )
     except InvalidProviderConfig as e:
         # ``str(e)`` only names the fields — never their values.

@@ -28,6 +28,7 @@ _TM_API_BASE = "https://rest.textmagic.com/api/v2"
 
 class TextMagicSmsProvider(SmsProvider):
     provider_key = "textmagic"
+    primary_secret_field = "api_key"
 
     config_fields: Dict[str, Dict[str, Any]] = {
         "username":  {"required": True, "secret": False, "label": "TextMagic username"},

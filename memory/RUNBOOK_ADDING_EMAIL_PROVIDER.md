@@ -2,6 +2,9 @@
 
 Applies to tenant admins connecting Resend, SendGrid, Postmark, Mailgun, or a custom SMTP server.
 
+## URL shape (I1.7.b.fix)
+Every endpoint uses the CONCRETE provider key — never a category kind. Correct: `/api/tenants/me/integrations/resend`, `/sendgrid`, `/postmark`, `/mailgun`, `/smtp`. Calling `/api/tenants/me/integrations/email` returns a helpful 400 that lists the concrete keys and points to `/api/tenants/me/integrations/schemas`.
+
 ## Preconditions
 Same as SMS runbook.
 

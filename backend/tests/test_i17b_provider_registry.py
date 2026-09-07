@@ -49,3 +49,69 @@ class TestUnifiedRegistry:
         # After reset, a fresh singleton is returned — but same class.
         assert a is not b
         assert type(a) is type(b)
+
+
+# ── I1.7.b.fix — friendly error for kind-alias URL mistakes ──────
+import requests
+from pathlib import Path
+import os
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+_API = "http://localhost:8001/api"
+
+
+def _tok():
+    r = requests.post(f"{_API}/auth/login",
+                        json={"email": "super@aquaterra.com",
+                                "password": "password123"}, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
+class TestKindAliasHint:
+    def test_put_to_kind_sms_returns_helpful_error(self):
+        r = requests.put(
+            f"{_API}/tenants/me/integrations/sms",
+            headers={"Authorization": f"Bearer {_tok()}"},
+            json={"config": {"any": "value"}}, timeout=15,
+        )
+        assert r.status_code == 400, r.text
+        body = r.text
+        assert "unknown provider key 'sms'" in body
+        for k in ("twilio", "textmagic", "ringcentral"):
+            assert k in body
+        assert "/api/tenants/me/integrations/schemas" in body
+
+    def test_put_to_kind_email_returns_helpful_error(self):
+        r = requests.put(
+            f"{_API}/tenants/me/integrations/email",
+            headers={"Authorization": f"Bearer {_tok()}"},
+            json={"config": {"any": "value"}}, timeout=15,
+        )
+        assert r.status_code == 400, r.text
+        body = r.text
+        assert "unknown provider key 'email'" in body
+        for k in ("resend", "sendgrid", "postmark", "mailgun", "smtp"):
+            assert k in body
+        assert "/api/tenants/me/integrations/schemas" in body
+
+    def test_put_to_stripe_returns_oauth_specific_error(self):
+        r = requests.put(
+            f"{_API}/tenants/me/integrations/stripe",
+            headers={"Authorization": f"Bearer {_tok()}"},
+            json={"config": {"api_key": "sk_test_dontsaveme"}}, timeout=15,
+        )
+        assert r.status_code == 400, r.text
+        assert "OAuth" in r.text
+        assert "/connect-link" in r.text
+
+    def test_put_to_unknown_provider_returns_generic_error(self):
+        r = requests.put(
+            f"{_API}/tenants/me/integrations/carrier-pigeon",
+            headers={"Authorization": f"Bearer {_tok()}"},
+            json={"config": {"foo": "bar"}}, timeout=15,
+        )
+        assert r.status_code == 400, r.text
+        assert "unknown provider key 'carrier-pigeon'" in r.text
+        assert "/api/tenants/me/integrations/schemas" in r.text

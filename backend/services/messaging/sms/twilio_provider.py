@@ -34,6 +34,7 @@ _TWILIO_API_BASE = "https://api.twilio.com/2010-04-01"
 
 class TwilioSmsProvider(SmsProvider):
     provider_key = "twilio"
+    primary_secret_field = "auth_token"
 
     config_fields: Dict[str, Dict[str, Any]] = {
         "account_sid":  {"required": True,  "secret": False, "label": "Twilio Account SID"},

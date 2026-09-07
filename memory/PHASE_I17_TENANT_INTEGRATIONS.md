@@ -208,3 +208,75 @@ The dispatch shim (`services.messaging.dispatch`) is the go-forward entry point.
 * **I1.7.c** — AI + Maps + Calendars BYO providers.
 * **I1.7.d** — Square + PayPal + Authorize.net + Lumino payment providers.
 * **I1.7.e** (future) — Tenant-secret KEK rotation migration + callsite sweep to route every legacy `send_sms/send_email` through `dispatch_*`.
+
+---
+
+# Phase I1.7.b.fix · Feb-2026 — `last_4` masking + kind-alias hint
+
+Post-tester follow-up. Tester found 2 real bugs against I1.7.b; both fixed here.
+
+## Bug 1 — `last_4` masking on JSON-blob configs
+
+**Symptom.** `GET /api/tenants/me/integrations` returned garbage in the `last_4` field for messaging providers — e.g. `"}"` for Twilio (`{"account_sid":"...","auth_token":"...","from_number":"..."}` — tail is `"}"` because JSON serialisation ends with a closing brace). This confused the UI and made the stale-badge display meaningless.
+
+**Root cause.** `services.secrets.put_secret` computed `last_4` from the full `plaintext` argument. Correct for legacy single-string secrets (Stripe access tokens), useless for JSON-blob configs.
+
+**Fix.**
+1. Added `mask_source: Optional[str]` kwarg to `services.secrets.put_secret`. When provided, `last_4` is computed from `mask_source`; else falls back to the plaintext (legacy behaviour preserved).
+2. Added `primary_secret_field: Optional[str]` class attribute to `SmsProvider` + `EmailProvider` abstract bases.
+3. Every concrete provider now declares its primary secret field:
+   * `twilio` → `auth_token`
+   * `textmagic` → `api_key`
+   * `ringcentral` → `jwt_token`
+   * `resend` → `api_key`
+   * `sendgrid` → `api_key`
+   * `postmark` → `server_token`
+   * `mailgun` → `api_key`
+   * `smtp` → `password`
+4. `services.messaging._helpers.save_provider_config` accepts `primary_secret_field=` and pulls its value from the raw config dict (NOT the JSON-serialised plaintext) so the tail is meaningful even after escaping.
+5. `routers.tenant_integrations.save_tenant_integration` now reads `provider.primary_secret_field` and threads it through.
+
+**Locked by test.** `tests/test_i17b_last4_masking.py::test_i17b_fix_last4_reflects_primary_secret_field` — parametrised across all 8 providers, seeds a distinctive 4-char tail into the primary secret, PUTs the config, and asserts the public GET response returns exactly that tail. Belt-and-braces: the plaintext must not appear anywhere in the public JSON. Also pinned: `test_i17b_fix_stripe_last4_unchanged_by_regression` — legacy single-string secrets still work.
+
+## Bug 2 — Misleading error on kind-alias URL mistakes
+
+**Symptom.** `PUT /api/tenants/me/integrations/sms` returned `provider 'sms' does not accept manual config (payment providers use the OAuth /connect-link flow).` — misleading because SMS is not a payment provider.
+
+**Fix.** `routers.tenant_integrations` now surfaces distinct 400 messages:
+* `/sms`, `/messaging` → `unknown provider key 'sms'. Did you mean one of: ringcentral, textmagic, twilio? See /api/tenants/me/integrations/schemas for the full provider list.`
+* `/email` → `unknown provider key 'email'. Did you mean one of: mailgun, postmark, resend, sendgrid, smtp? See …`
+* `/stripe` → `Stripe uses the OAuth /connect-link flow — call GET /api/integrations/stripe/connect-link instead of PUT /api/tenants/me/integrations/stripe.`
+* Anything else → `unknown provider key 'X'. See /api/tenants/me/integrations/schemas for the full provider list.`
+
+**Locked by test.** `tests/test_i17b_provider_registry.py::TestKindAliasHint` — 4 scenarios covering `/sms`, `/email`, `/stripe`, and a completely bogus provider key.
+
+## URL-shape reference (corrected)
+
+Every endpoint uses the CONCRETE provider key. There are no category-kind endpoints:
+
+| Verb | URL | Purpose |
+| --- | --- | --- |
+| `GET`    | `/api/tenants/me/integrations`                     | List all connections (masked) |
+| `GET`    | `/api/tenants/me/integrations/schemas`             | Return field schemas for the settings UI |
+| `PUT`    | `/api/tenants/me/integrations/twilio`              | Save/rotate Twilio config |
+| `PUT`    | `/api/tenants/me/integrations/textmagic`           | Save/rotate TextMagic config |
+| `PUT`    | `/api/tenants/me/integrations/ringcentral`         | Save/rotate RingCentral config |
+| `PUT`    | `/api/tenants/me/integrations/resend`              | Save/rotate Resend config |
+| `PUT`    | `/api/tenants/me/integrations/sendgrid`            | Save/rotate SendGrid config |
+| `PUT`    | `/api/tenants/me/integrations/postmark`            | Save/rotate Postmark config |
+| `PUT`    | `/api/tenants/me/integrations/mailgun`             | Save/rotate Mailgun config |
+| `PUT`    | `/api/tenants/me/integrations/smtp`                | Save/rotate SMTP config |
+| `POST`   | `/api/tenants/me/integrations/{concrete_key}/test` | Live probe |
+| `DELETE` | `/api/tenants/me/integrations/{concrete_key}`      | Remove |
+| `GET`    | `/api/integrations/stripe/connect-link`            | Mint Stripe OAuth authorize URL |
+| `GET`    | `/api/integrations/stripe/callback`                | Complete Stripe OAuth |
+| `POST`   | `/api/integrations/stripe/webhook`                 | Stripe webhook (public) |
+
+## HUMAN_REQUIRED items outstanding
+* Webhook replay/idempotency with a real signed Stripe event — needs prod webhook signing secret.
+* Real `connect.stripe.com` OAuth URL verification in prod env — preview intentionally returns the mocked callback path.
+* K72 kill-switch end-to-end verification requires flipping the env-var toggle on preview.
+
+## Deferred (logged, not shipped)
+* Provider-health cron — daily lightweight `test_connection` sweep writing to `tenant_integration_health` for a "degraded providers" ops widget. Bundled into I1.7.d per user direction.
+* Callsite migration sweep — routing every existing `send_sms/send_email` through `dispatch_*`. Scheduled for I1.7.e.

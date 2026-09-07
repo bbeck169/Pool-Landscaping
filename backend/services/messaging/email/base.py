@@ -19,6 +19,9 @@ class EmailProvider(ABC):
     #: Field schema for the settings UI. See ``SmsProvider.config_fields``.
     config_fields: Dict[str, Dict[str, Any]] = {}
 
+    #: I1.7.b.fix — see ``SmsProvider.primary_secret_field``.
+    primary_secret_field: Optional[str] = None
+
     @abstractmethod
     async def send_email(
         self, *, tenant_id: str, to: List[str], subject: str,

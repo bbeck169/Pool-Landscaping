@@ -38,6 +38,7 @@ log = logging.getLogger("messaging.sms.ringcentral")
 
 class RingCentralSmsProvider(SmsProvider):
     provider_key = "ringcentral"
+    primary_secret_field = "jwt_token"
 
     config_fields: Dict[str, Dict[str, Any]] = {
         "server_url":   {"required": True, "secret": False, "label": "Server URL (e.g. https://platform.ringcentral.com)"},
