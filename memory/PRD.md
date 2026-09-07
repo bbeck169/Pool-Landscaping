@@ -1,3 +1,44 @@
+## Phase K80.a · Add + Delete Line-Item Affordances on `K71LineItemsEditor` — SHIPPED (Feb 2026)
+
+**Scope**: Frontend only. Close the K80-recon feature gap: staff could not add lines to a saved estimate/quote, and could not delete lines from a saved doc through the K71 surface. K80.b (server-side status gating on `PUT /quotes/{id}`) is deliberately queued as a separate phase.
+
+**Delivery**
+- `K71LineItemsEditor` gains `+ Add line` button under the table (visible only when `canEdit`). Clicking appends an empty scaffolded row and enters inline-edit mode on it. Cancel on a NEW line discards it entirely (no phantom empty rows).
+- Trash icon per row (visible only when `canEdit`). Clicking removes the row locally and mounts a dark undo toast (`k71-undo-toast`) with an Undo button for 5 seconds. Undo restores the row at its original index; timeout commits `onLinesUpdated` with the deleted row excluded.
+- Only one pending delete at a time — Add-line and other trash buttons disable during the undo window (dimmed with tooltip).
+- Category-required validation reused unchanged: an added line without Service + Income category can't be saved; added-then-cancelled rows never round-trip.
+- Discoverability fix on `QuoteInvoiceDetail.jsx`: the `Edit invoice` button (which opens `InvoiceEditModal`) is now **hidden on draft invoices** (K71 covers add/edit/delete), kept visible on `sent`/`paid`/`void`/`cancelled` where the modal's typed-confirm UX matters. Relabelled to `Edit invoice (advanced)` with a tooltip.
+
+**Tests**
+- `test/k71-line-items-editor.test.jsx` — +11 K80.a cases (18 total pass). Covers: visibility gates on canEdit, add appends empty row in edit mode, Cancel on new line removes it, add+save without categories → inline errors + no commit, trash hides row + shows undo toast + no commit yet, Undo restores row + cancels pending commit, timeout commits with deleted row excluded.
+- Full suite: **477 files pass · 1 skipped (Hygiene B) · 3758 tests pass · 34 skipped (Hygiene B untouched)**.
+
+**Files touched**
+- `frontend/src/components/quotes/K71LineItemsEditor.jsx` — rewrite with local state (localItems, editIndex, newLineIndex, pendingDelete + ref for delayed commit), Add/Delete/Undo UX, unmount cleanup.
+- `frontend/src/pages/quotes/QuoteInvoiceDetail.jsx` — gate `Edit invoice` button behind non-draft status; relabel.
+- `frontend/src/test/k71-line-items-editor.test.jsx` — +11 assertions.
+
+**Guardrails held**
+- Zero backend changes.
+- 34 Hygiene B skips untouched.
+- No I1.5 / I1.7.a / I1.7.b code touched.
+- K71 category-required rule intact.
+- No new colors outside token vocabulary (delete uses `#DC2626` matching K71 error convention; undo toast uses `#1F2937` slate + `#F9FAFB` on-surface — bounded to the toast).
+
+**Screenshots**
+- `/tmp/k80a_1_baseline.png` — draft quote with new `+ Add line` + trash icons.
+- `/tmp/k80a_2_undo_toast.png` — undo toast with dimmed Add-line during pending window.
+
+**Ship report**: `/app/memory/PHASE_K80_LINE_ITEM_CRUD_AFTER_SAVE.md`
+
+**Queued behind (in order)**
+- **K79** — grouped customer-facing line items by `service_category_id` on portal + PDF.
+- **K80.b** — server-side status gate on `PUT /api/quotes/{id}` to mirror the existing PATCH gates (`terminal→block`, `sent→confirm`, `paid→typed invoice number`). Product decision needed on whether `sent` estimates should remain editable — frontend and backend currently disagree.
+- **I1.7.c** — AI BYO providers + Maps + Calendars.
+
+---
+
+
 ## Phase Hygiene B · Pre-I-series Baseline Cleanup — SHIPPED (Feb 2026)
 
 **Scope:** Zero out 48 FE + 35 mobile pre-existing test failures so the I-series pivot starts from a fully-green baseline. Test-file-only edits, no product code changes (except the explicit `useIsNarrow` bonus).

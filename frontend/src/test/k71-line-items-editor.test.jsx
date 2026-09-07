@@ -1,5 +1,7 @@
 /**
  * Phase K71 · Feb-2026 — K71LineItemsEditor · frontend contract tests.
+ * Phase K80.a · Feb-2026 — Extended with add-line + delete-with-undo
+ * coverage.
  *
  * Coverage:
  *   1. Column header renamed from "Description" → "Item".
@@ -11,10 +13,23 @@
  *   6. Clicking pencil swaps the row into an inline form containing
  *      Item / Qty / Unit / Description / Service picker / Income
  *      picker + Save / Cancel buttons.
+ *   K80.a:
+ *   7. "+ Add line" button visible only when canEdit.
+ *   8. Trash icon per row visible only when canEdit.
+ *   9. Clicking "+ Add line" appends an empty row and enters edit mode.
+ *  10. Clicking Cancel on a NEW line removes it entirely.
+ *  11. Adding a line + saving without categories → inline validation
+ *      errors, no onLinesUpdated call.
+ *  12. Clicking trash on an existing row hides it and shows the undo
+ *      toast; onLinesUpdated NOT called until the 5s timeout fires.
+ *  13. Clicking Undo within the window restores the row at its original
+ *      index and cancels the pending commit.
+ *  14. Timeout elapsing commits onLinesUpdated with the deleted row
+ *      removed.
  */
 import React from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 
 vi.mock("@/api", () => ({
   api: {
@@ -147,3 +162,159 @@ describe("Phase K71 · K71LineItemsEditor", () => {
     expect(screen.getByTestId("k71-row-0")).toBeTruthy();
   });
 });
+
+
+// ═════════════════════════════════════════════════════════════════════
+// Phase K80.a — Add + Delete line-item affordances.
+// ═════════════════════════════════════════════════════════════════════
+
+describe("Phase K80.a · K71LineItemsEditor · Add + Delete affordances", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows the Add line button when canEdit is true", () => {
+    const doc = { line_items: [legacyLine], status: "draft" };
+    render(<K71LineItemsEditor doc={doc} canEdit onLinesUpdated={vi.fn()} />);
+    expect(screen.getByTestId("k71-add-line-btn")).toBeTruthy();
+  });
+
+  it("hides the Add line button when canEdit is false", () => {
+    const doc = { line_items: [legacyLine], status: "sent" };
+    render(
+      <K71LineItemsEditor doc={doc} canEdit={false}
+                            onLinesUpdated={vi.fn()} />
+    );
+    expect(screen.queryByTestId("k71-add-line-btn")).toBeNull();
+  });
+
+  it("shows the trash icon on each row when canEdit is true", () => {
+    const doc = {
+      line_items: [legacyLine, k71LineComplete], status: "draft",
+    };
+    render(<K71LineItemsEditor doc={doc} canEdit onLinesUpdated={vi.fn()} />);
+    expect(screen.getByTestId("k71-delete-btn-0")).toBeTruthy();
+    expect(screen.getByTestId("k71-delete-btn-1")).toBeTruthy();
+  });
+
+  it("hides the trash icon on each row when canEdit is false", () => {
+    const doc = { line_items: [legacyLine], status: "sent" };
+    render(
+      <K71LineItemsEditor doc={doc} canEdit={false}
+                            onLinesUpdated={vi.fn()} />
+    );
+    expect(screen.queryByTestId("k71-delete-btn-0")).toBeNull();
+  });
+
+  it("appends an empty row in edit mode when Add line is clicked", () => {
+    const doc = { line_items: [legacyLine], status: "draft" };
+    render(<K71LineItemsEditor doc={doc} canEdit onLinesUpdated={vi.fn()} />);
+    // Before click: only legacy row present.
+    expect(screen.getByTestId("k71-row-0")).toBeTruthy();
+    expect(screen.queryByTestId("k71-row-edit-1")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("k71-add-line-btn"));
+
+    // After click: new editable row appears at index 1, existing row
+    // stays at index 0 in read mode.
+    expect(screen.getByTestId("k71-row-edit-1")).toBeTruthy();
+    // Input starts empty — verifies scaffold defaults (empty Item).
+    const itemInput = screen.getByTestId("k71-input-item-1");
+    expect(itemInput.value).toBe("");
+  });
+
+  it("removes the new line entirely when Cancel is clicked on it", () => {
+    const doc = { line_items: [legacyLine], status: "draft" };
+    render(<K71LineItemsEditor doc={doc} canEdit onLinesUpdated={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("k71-add-line-btn"));
+    expect(screen.getByTestId("k71-row-edit-1")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("k71-cancel-1"));
+
+    // The added draft row is gone; original row 0 remains.
+    expect(screen.queryByTestId("k71-row-edit-1")).toBeNull();
+    expect(screen.queryByTestId("k71-row-1")).toBeNull();
+    expect(screen.getByTestId("k71-row-0")).toBeTruthy();
+  });
+
+  it("blocks save on an added line missing categories (validation reused)", () => {
+    const onLinesUpdated = vi.fn();
+    const doc = { line_items: [legacyLine], status: "draft" };
+    render(<K71LineItemsEditor doc={doc} canEdit
+                                   onLinesUpdated={onLinesUpdated} />);
+    fireEvent.click(screen.getByTestId("k71-add-line-btn"));
+    // Provide a description but leave both category pickers blank.
+    fireEvent.change(screen.getByTestId("k71-input-item-1"),
+                       { target: { value: "New service" } });
+    fireEvent.click(screen.getByTestId("k71-save-1"));
+
+    expect(onLinesUpdated).not.toHaveBeenCalled();
+    expect(screen.getByTestId("k71-error-service-1")).toBeTruthy();
+    expect(screen.getByTestId("k71-error-income-1")).toBeTruthy();
+  });
+
+  it("hides the row and shows the undo toast on trash click", () => {
+    vi.useFakeTimers();
+    const onLinesUpdated = vi.fn(async () => true);
+    const doc = { line_items: [legacyLine, k71LineComplete], status: "draft" };
+    render(<K71LineItemsEditor doc={doc} canEdit
+                                   onLinesUpdated={onLinesUpdated} />);
+    // Delete row 0.
+    fireEvent.click(screen.getByTestId("k71-delete-btn-0"));
+
+    // Row 0 (the deleted one) is hidden from the table — what USED to
+    // be row 1 is now rendered as row 0. The visible row is the K71
+    // complete line (Chemical treatment).
+    expect(screen.getByTestId("k71-undo-toast")).toBeTruthy();
+    expect(screen.getByTestId("k71-row-0").textContent)
+      .toContain("Chemical treatment");
+    // No commit has fired yet — the 5s window has not elapsed.
+    expect(onLinesUpdated).not.toHaveBeenCalled();
+  });
+
+  it("restores the row when Undo is clicked within the window", () => {
+    vi.useFakeTimers();
+    const onLinesUpdated = vi.fn(async () => true);
+    const doc = { line_items: [legacyLine, k71LineComplete], status: "draft" };
+    render(<K71LineItemsEditor doc={doc} canEdit
+                                   onLinesUpdated={onLinesUpdated} />);
+    fireEvent.click(screen.getByTestId("k71-delete-btn-0"));
+    expect(screen.getByTestId("k71-undo-toast")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("k71-undo-btn"));
+
+    // Undo restores at the original index — legacy line is back at row 0.
+    expect(screen.queryByTestId("k71-undo-toast")).toBeNull();
+    expect(screen.getByTestId("k71-row-0").textContent)
+      .toContain("Pool cleaning");
+    expect(screen.getByTestId("k71-row-1").textContent)
+      .toContain("Chemical treatment");
+
+    // Advancing time past 5s should NOT commit — the timer was cleared.
+    act(() => { vi.advanceTimersByTime(6000); });
+    expect(onLinesUpdated).not.toHaveBeenCalled();
+  });
+
+  it("commits onLinesUpdated after 5s if not undone (deleted row excluded)",
+    async () => {
+    vi.useFakeTimers();
+    const onLinesUpdated = vi.fn(async () => true);
+    const doc = { line_items: [legacyLine, k71LineComplete], status: "draft" };
+    render(<K71LineItemsEditor doc={doc} canEdit
+                                   onLinesUpdated={onLinesUpdated} />);
+    fireEvent.click(screen.getByTestId("k71-delete-btn-0"));
+
+    await act(async () => { vi.advanceTimersByTime(UNDO_WINDOW_MS_TEST); });
+
+    expect(onLinesUpdated).toHaveBeenCalledTimes(1);
+    const committed = onLinesUpdated.mock.calls[0][0];
+    // The deleted legacy line is NOT in the committed array.
+    expect(committed).toHaveLength(1);
+    expect(committed[0].description).toBe("Chemical treatment");
+  });
+});
+
+// Match the constant used inside the component.  Keeping it in the
+// test file (as opposed to importing from the module) so a future
+// change to the window duration is caught here.
+const UNDO_WINDOW_MS_TEST = 5000;

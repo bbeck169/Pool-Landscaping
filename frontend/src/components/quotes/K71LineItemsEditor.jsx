@@ -3,6 +3,20 @@
  * bold Item + secondary muted long_description, and Service + Income
  * category dropdowns.
  *
+ * Phase K80.a · Feb-2026 — Add + Delete line item affordances.
+ *   • "+ Add line" button below the table (visible only when canEdit).
+ *     Clicking appends an empty draft line and enters inline-edit mode
+ *     on it immediately. Cancelling a NEW line discards it entirely.
+ *   • Trash icon on each row (visible only when canEdit). Clicking hides
+ *     the row locally and surfaces an in-component Undo toast for 5s.
+ *     If not undone, onLinesUpdated fires with the deleted row removed.
+ *   • Only one pending delete at a time. While a delete is pending the
+ *     Add-line and other trash buttons are disabled to keep state simple.
+ *   • Category-required validation is unchanged: an added line still has
+ *     to pass the same Service + Income picker rule as any legacy row
+ *     switching into edit mode. Rows added and then Cancelled/Undone
+ *     never round-trip to the server.
+ *
  * Contract:
  *   - Renders the line-items table for /quotes/:id and /invoices/:id.
  *   - Column header renamed from "Description" → "Item" (spec K71).
@@ -10,19 +24,20 @@
  *     doc AND admin/super role). Clicking swaps the row into an inline
  *     form with fields: Item (description), Qty, Unit price, Description
  *     (multi-line, 500-char cap), Service Category, Income Category.
- *   - Save = PUT /api/quotes/:id with the full mutated line_items[]
- *     array (server recomputes totals). Cancel reverts. Enter = Save,
- *     Esc = Cancel.
+ *   - Save = onLinesUpdated(fullMutatedArray) — parent PUTs the whole
+ *     array to /api/quotes/:id (server recomputes totals). Cancel reverts.
+ *     Enter = Save, Esc = Cancel.
  *   - Legacy line items (neither service_category_id nor
  *     income_category_id present) show a subtle "Uncategorized" badge.
  *   - PDF/portal never render this component (staff-only surface).
  */
 import React, { useEffect, useRef, useState } from "react";
-import { Pencil, X, Check } from "lucide-react";
+import { Pencil, X, Check, Plus, Trash2, Undo2 } from "lucide-react";
 import { colors, money } from "@/theme";
 import CategoryPicker from "@/components/income/CategoryPicker";
 
 const MAX_LONG_DESC = 500;
+const UNDO_WINDOW_MS = 5000;
 
 function LegacyBadge() {
   return (
@@ -39,9 +54,6 @@ function LegacyBadge() {
 function isLegacyLine(li) {
   // Phase K71 · Feb-2026 — K71-touched iff either category field is
   // a string (matches backend routers/income_categories.py rule).
-  // Pydantic model returns ``null`` on legacy Mongo docs, so the
-  // presence-in-object check is unreliable — string-type check
-  // aligns frontend + backend exactly.
   const hasSvc = typeof li.service_category_id === "string";
   const hasInc = typeof li.income_category_id === "string";
   return !hasSvc && !hasInc;
@@ -232,7 +244,7 @@ function EditableRow({ line, index, onSave, onCancel }) {
   );
 }
 
-function ReadRow({ line, index, canEdit, onEdit }) {
+function ReadRow({ line, index, canEdit, deleteDisabled, onEdit, onDelete }) {
   const q = Number(line.quantity || 0);
   const u = Number(line.unit_price || 0);
   const legacy = isLegacyLine(line);
@@ -270,40 +282,182 @@ function ReadRow({ line, index, canEdit, onEdit }) {
           style={{ color: colors.onSurfaceSecondary }}>{money(u)}</td>
       <td className="px-2 py-2 text-right font-semibold"
           style={{ color: colors.onSurface }}>{money(q * u)}</td>
-      <td className="px-2 py-2 text-right w-12">
+      <td className="px-2 py-2 text-right w-20">
         {canEdit ? (
-          <button
-            type="button"
-            onClick={() => onEdit(index)}
-            className="p-1 rounded hover:bg-black/5"
-            style={{ color: colors.brand }}
-            title="Edit line"
-            data-testid={`k71-edit-btn-${index}`}
-          >
-            <Pencil size={13} />
-          </button>
+          <div className="flex items-center justify-end gap-1">
+            <button
+              type="button"
+              onClick={() => onEdit(index)}
+              className="p-1 rounded hover:bg-black/5"
+              style={{ color: colors.brand }}
+              title="Edit line"
+              data-testid={`k71-edit-btn-${index}`}
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(index)}
+              disabled={deleteDisabled}
+              className="p-1 rounded hover:bg-black/5 disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ color: "#DC2626" }}
+              title={deleteDisabled
+                ? "Finish the pending delete first"
+                : "Delete line"}
+              data-testid={`k71-delete-btn-${index}`}
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
         ) : null}
       </td>
     </tr>
   );
 }
 
+function UndoToast({ onUndo, testid }) {
+  return (
+    <div
+      className="rounded-xl p-3 mt-3 text-sm flex items-center justify-between gap-3"
+      style={{ background: "#1F2937", color: "#F9FAFB",
+                border: "1px solid #111827" }}
+      data-testid={testid}
+    >
+      <div className="flex items-center gap-2">
+        <Trash2 size={14} />
+        <span>Line item removed.</span>
+      </div>
+      <button
+        type="button"
+        onClick={onUndo}
+        className="px-2 py-1 rounded text-xs font-semibold flex items-center gap-1"
+        style={{ background: "#F9FAFB", color: "#111827" }}
+        data-testid="k71-undo-btn"
+      >
+        <Undo2 size={12} /> Undo
+      </button>
+    </div>
+  );
+}
+
 export default function K71LineItemsEditor({
   doc, canEdit, onLinesUpdated, onError,
 }) {
+  const [localItems, setLocalItems] = useState(doc.line_items || []);
   const [editIndex, setEditIndex] = useState(null);
-  const items = doc.line_items || [];
+  // Track the index of a locally-added-but-not-yet-saved line so
+  // Cancel discards it entirely (vs reverting an existing row).
+  const [newLineIndex, setNewLineIndex] = useState(null);
+  // Single-slot pending delete with 5s undo window.
+  //   { line, originalIndex, timeoutId }
+  const [pendingDelete, setPendingDelete] = useState(null);
+
+  // Ref so the delayed onLinesUpdated call captures the LATEST
+  // localItems (in case the user adds another line during the window).
+  const localItemsRef = useRef(localItems);
+  useEffect(() => { localItemsRef.current = localItems; }, [localItems]);
+
+  // Sync when parent doc changes (after a save or full reload).
+  // Only re-sync when nothing is in flight locally — otherwise we'd
+  // wipe an unsaved add or an active undo window.
+  useEffect(() => {
+    if (editIndex === null && pendingDelete === null && newLineIndex === null) {
+      setLocalItems(doc.line_items || []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.line_items]);
+
+  // Clear any lingering timeout on unmount so we don't fire a save
+  // against a stale parent after the page navigates away.
+  useEffect(() => {
+    return () => {
+      if (pendingDelete?.timeoutId) {
+        clearTimeout(pendingDelete.timeoutId);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const items = localItems;
+  const canAdd = canEdit && editIndex === null && pendingDelete === null;
 
   const saveLine = async (idx, updatedLine) => {
     const next = items.slice();
     next[idx] = updatedLine;
     try {
-      // Server recomputes subtotal/tax/total from the new array.
+      // Optimistic: reflect in local state immediately so the
+      // "Cancel" of a subsequent add doesn't wipe the fresh save.
+      setLocalItems(next);
       const res = await onLinesUpdated(next);
-      if (res !== false) setEditIndex(null);
+      if (res !== false) {
+        setEditIndex(null);
+        // Clear new-line marker — the row is now persisted.
+        if (newLineIndex === idx) setNewLineIndex(null);
+      } else {
+        // Save rejected — leave the row in edit mode so the user
+        // can fix the error and retry.
+      }
     } catch (e) {
       onError?.(e?.data?.detail || e?.message || "Save failed");
     }
+  };
+
+  const cancelLine = (idx) => {
+    if (newLineIndex === idx) {
+      // Discard the never-saved draft entirely.
+      setLocalItems((prev) => prev.filter((_, i) => i !== idx));
+      setNewLineIndex(null);
+    }
+    setEditIndex(null);
+  };
+
+  const handleAddLine = () => {
+    if (!canAdd) return;
+    const empty = {
+      description: "",
+      quantity: 1,
+      unit_price: 0,
+      service_category_id: "",
+      income_category_id: "",
+      long_description: "",
+    };
+    setLocalItems((prev) => {
+      const next = [...prev, empty];
+      const newIdx = next.length - 1;
+      setNewLineIndex(newIdx);
+      setEditIndex(newIdx);
+      return next;
+    });
+  };
+
+  const handleDelete = (idx) => {
+    if (!canEdit || pendingDelete !== null) return;
+    const line = items[idx];
+    const nextLocal = items.filter((_, i) => i !== idx);
+    setLocalItems(nextLocal);
+    const timeoutId = setTimeout(async () => {
+      setPendingDelete(null);
+      try {
+        // Use the ref so any add/edit that happened during the
+        // window is included.
+        await onLinesUpdated(localItemsRef.current);
+      } catch (e) {
+        onError?.(e?.data?.detail || e?.message || "Delete failed");
+      }
+    }, UNDO_WINDOW_MS);
+    setPendingDelete({ line, originalIndex: idx, timeoutId });
+  };
+
+  const handleUndo = () => {
+    if (!pendingDelete) return;
+    clearTimeout(pendingDelete.timeoutId);
+    setLocalItems((prev) => {
+      const restored = prev.slice();
+      const at = Math.min(pendingDelete.originalIndex, restored.length);
+      restored.splice(at, 0, pendingDelete.line);
+      return restored;
+    });
+    setPendingDelete(null);
   };
 
   // K71 gap detection for the banner + inline row highlighting.
@@ -351,7 +505,7 @@ export default function K71LineItemsEditor({
                 style={{ color: colors.onSurfaceSecondary }}>Unit</th>
             <th className="text-right px-2 py-2 font-semibold"
                 style={{ color: colors.onSurfaceSecondary }}>Total</th>
-            <th className="px-2 py-2 w-12"></th>
+            <th className="px-2 py-2 w-20"></th>
           </tr>
         </thead>
         <tbody>
@@ -362,7 +516,7 @@ export default function K71LineItemsEditor({
                 line={li}
                 index={i}
                 onSave={(updated) => saveLine(i, updated)}
-                onCancel={() => setEditIndex(null)}
+                onCancel={() => cancelLine(i)}
               />
             ) : (
               <ReadRow
@@ -370,12 +524,39 @@ export default function K71LineItemsEditor({
                 line={li}
                 index={i}
                 canEdit={canEdit && editIndex === null}
+                deleteDisabled={pendingDelete !== null}
                 onEdit={setEditIndex}
+                onDelete={handleDelete}
               />
             )
           ))}
         </tbody>
       </table>
+
+      {canEdit ? (
+        <div className="mt-3 flex justify-start">
+          <button
+            type="button"
+            onClick={handleAddLine}
+            disabled={!canAdd}
+            className="text-xs font-semibold flex items-center gap-1 px-2 py-1 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ color: colors.brand,
+                      border: `1px dashed ${colors.brand}` }}
+            data-testid="k71-add-line-btn"
+            title={pendingDelete !== null
+              ? "Finish the pending delete first"
+              : editIndex !== null
+                ? "Save or cancel the current row first"
+                : "Add a new line item"}
+          >
+            <Plus size={12} /> Add line
+          </button>
+        </div>
+      ) : null}
+
+      {pendingDelete ? (
+        <UndoToast onUndo={handleUndo} testid="k71-undo-toast" />
+      ) : null}
     </div>
   );
 }

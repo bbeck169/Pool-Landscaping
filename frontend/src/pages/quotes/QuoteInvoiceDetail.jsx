@@ -471,13 +471,22 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               ) : null}
             </>
           ) : null}
-          {isStaff && isInvoice ? (
+          {/* Phase K80.a · Feb-2026 — On DRAFT invoices the K71 inline
+              editor now covers add/edit/delete, so this modal button is
+              redundant. Keep it visible only on statuses where the
+              modal's typed-confirm / warning UX matters (sent, paid,
+              void, cancelled). Relabelled "Edit invoice (advanced)" to
+              signal it's the fuller surface. */}
+          {isStaff && isInvoice
+            && ["sent", "paid", "void", "cancelled"]
+                .includes(String(doc.status || "").toLowerCase()) ? (
             <Button
               variant="ghost"
               onClick={() => setEditOpen(true)}
               testid="qd-edit-invoice"
+              title="Adjust line items, discount, or invoice fields — with confirmation guards for sent/paid invoices."
             >
-              <PenTool size={14} /> Edit invoice
+              <PenTool size={14} /> Edit invoice (advanced)
             </Button>
           ) : null}
         </div>
