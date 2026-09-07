@@ -44,7 +44,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from config import db
 from routers.tenants import get_current_tenant
@@ -173,6 +173,43 @@ from services.calendars.technician_link import (
     remove_link as _cal_remove_link,
     summary_from_row as _cal_summary_from_row,
 )
+# Phase I1.7.d · Feb-2026 — Tenant Payments BYO (Square, PayPal,
+# Authorize.Net, Lumino). Mirrors AI/Maps registry contract; the
+# platform-managed Stripe Connect flow (I1.7.a) is unaffected.
+from services.payments_byo import (
+    ConnectionHealth as PaymentsByoConnectionHealth,
+    InvalidPaymentsProviderConfig,
+    PaymentsProviderUsage,
+    PaymentsUsageResponse,
+    UnknownPaymentsProvider,
+    WebhookEvent as PaymentsByoWebhookEvent,
+    WebhookSignatureInvalid,
+    get_payments_byo_provider,
+    get_payments_byo_provider_by_short_name,
+    get_provider_field_schemas as _pay_provider_field_schemas,
+    list_registered_payments_byo_provider_keys,
+    list_short_names as _pay_short_names,
+    short_name_for as _pay_short_name_for,
+)
+from services.payments_byo._helpers import (
+    current_period_yyyymm as _pay_period,
+    payments_testmode_mock as _pay_testmode,
+    save_provider_config as save_pay_provider_config,
+)
+from services.payments_byo.usage import (
+    SOFT_WARN_RATIO as _PAY_SOFT_WARN_RATIO,
+    _compute_status as _pay_compute_status,
+    enforce_cap_or_raise as _pay_enforce_cap,
+    get_all_usage_rows as _pay_get_all_usage_rows,
+    get_provider_meta as _pay_get_provider_meta,
+    record_op as _pay_record_op,
+    remove_provider_meta as _pay_remove_provider_meta,
+    upsert_provider_meta as _pay_upsert_provider_meta,
+)
+from services.provider_health import (
+    get_health_map_for_tenant as _health_map_for_tenant,
+    record_probe as _health_record_probe,
+)
 
 
 log = logging.getLogger("integrations")
@@ -203,9 +240,22 @@ def _require_read_role(user: Dict[str, Any]) -> None:
 
 
 # ── Response models ──────────────────────────────────────────────
+class ProviderHealthSnapshot(BaseModel):
+    """Slim projection of ``tenant_provider_health`` — safe to serve."""
+    provider_key: str
+    status: str                       # "ok" | "failed" | "unknown"
+    checked_at: Optional[str] = None
+    last_error: Optional[str] = None
+    consecutive_failures: int = 0
+    last_ok_at: Optional[str] = None
+
+
 class IntegrationsListResponse(BaseModel):
     integrations: List[ConnectionSummary]
     tenant_id: str
+    # Phase I1.7.d — health map keyed by ``provider_key``. Missing
+    # entries = provider hasn't been probed yet (surface as amber dot).
+    health: Dict[str, ProviderHealthSnapshot] = Field(default_factory=dict)
 
 
 class ConnectLinkResponse(BaseModel):
@@ -224,6 +274,7 @@ _EMAIL_KEYS = set(list_registered_email_provider_keys())
 _AI_KEYS = set(list_registered_ai_provider_keys())
 _MAPS_KEYS = set(list_registered_maps_provider_keys())
 _CAL_KEYS = set(list_registered_calendar_provider_keys())
+_PAY_KEYS = set(list_registered_payments_byo_provider_keys())
 
 
 def _kind_for(provider_key: str) -> str:
@@ -237,6 +288,8 @@ def _kind_for(provider_key: str) -> str:
         return "maps"
     if provider_key in _CAL_KEYS:
         return "calendars"
+    if provider_key in _PAY_KEYS:
+        return "payments_byo"
     return "payments"
 
 
@@ -253,9 +306,12 @@ def _resolve_provider(provider_key: str):
             return kind, get_maps_provider(provider_key)
         if kind == "calendars":
             return kind, get_calendar_provider(provider_key)
+        if kind == "payments_byo":
+            return kind, get_payments_byo_provider(provider_key)
         return kind, get_provider(provider_key)
     except (UnknownProvider, UnknownMessagingProvider, UnknownAIProvider,
-             UnknownMapsProvider, UnknownCalendarProvider):
+             UnknownMapsProvider, UnknownCalendarProvider,
+             UnknownPaymentsProvider):
         raise HTTPException(status_code=404, detail=f"unknown provider: {provider_key}")
 
 
@@ -302,9 +358,22 @@ async def list_tenant_integrations(
 ):
     _require_read_role(user)
     summaries = await list_connections(tenant["id"])
+    # Phase I1.7.d — attach unified provider-health snapshot.
+    raw_map = await _health_map_for_tenant(tenant_id=tenant["id"])
+    health_map: Dict[str, ProviderHealthSnapshot] = {}
+    for pk, row in (raw_map or {}).items():
+        health_map[pk] = ProviderHealthSnapshot(
+            provider_key=pk,
+            status=str(row.get("status") or "unknown"),
+            checked_at=row.get("checked_at"),
+            last_error=row.get("last_error"),
+            consecutive_failures=int(row.get("consecutive_failures") or 0),
+            last_ok_at=row.get("last_ok_at"),
+        )
     return IntegrationsListResponse(
         integrations=summaries,
         tenant_id=tenant["id"],
+        health=health_map,
     )
 
 
@@ -378,6 +447,14 @@ async def delete_tenant_integration(
             # so the top-level ``remove_secret`` above almost always
             # reports ``removed=False``).
             removed = removed or bool(links)
+        except Exception:
+            pass
+    # Phase I1.7.d — Payments-BYO cleanup: nuke the sidecar so a
+    # subsequent PUT starts from a clean cap/extras row.
+    if _kind_for(provider_key) == "payments_byo":
+        short = _pay_short_name_for(provider_key) or provider_key
+        try:
+            await _pay_remove_provider_meta(tenant_id=tenant["id"], provider=short)
         except Exception:
             pass
     return DeleteResponse(removed=removed, provider_key=provider_key)
@@ -639,6 +716,55 @@ async def save_tenant_integration(
             provider_key=provider_key, saved=True,
             connected_account_id_masked=None,
         )
+    if kind == "payments_byo":
+        # I1.7.d — Payments-BYO providers (Square/PayPal/AuthNet/Lumino).
+        # Same shape as Maps: encrypt config + persist sidecar (cap +
+        # non-secret extras like ``environment`` / ``location_id``).
+        _, pay_provider = _resolve_provider(provider_key)
+        schema = getattr(pay_provider, "config_fields", {}) or {}
+        merged_config = await _preserve_stored_secrets(
+            tenant_id=tenant["id"], provider_key=provider_key,
+            incoming_config=dict(body.config or {}),
+            schema=schema,
+        )
+        try:
+            await save_pay_provider_config(
+                tenant_id=tenant["id"], provider_key=provider_key,
+                config=merged_config, schema=schema,
+                primary_secret_field=getattr(pay_provider, "primary_secret_field", None),
+            )
+        except InvalidPaymentsProviderConfig as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        short = _pay_short_name_for(provider_key) or provider_key
+        cap = body.monthly_request_cap
+        if cap is not None:
+            try:
+                cap = int(cap)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="monthly_request_cap must be an integer or null",
+                )
+            if cap < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="monthly_request_cap must be >= 0 (null = unlimited, 0 = block all)",
+                )
+        extras: Dict[str, Any] = {}
+        for name, meta in (schema or {}).items():
+            if meta.get("secret"):
+                continue
+            v = merged_config.get(name)
+            if v is not None:
+                extras[name] = v
+        await _pay_upsert_provider_meta(
+            tenant_id=tenant["id"], provider=short,
+            monthly_request_cap=cap, extras=extras,
+        )
+        return SaveIntegrationResponse(
+            provider_key=provider_key, saved=True,
+            connected_account_id_masked=None,
+        )
     if kind not in ("sms", "email"):
         # Every non-messaging key ends up here. ``stripe`` (payment
         # provider) uses OAuth; everything else is unknown.
@@ -703,10 +829,16 @@ class ProviderFieldSchemaEntry(BaseModel):
 
 class ProviderSchema(BaseModel):
     provider_key: str
-    kind: str  # "sms" | "email" | "ai" | "maps"
+    kind: str  # "sms" | "email" | "ai" | "maps" | "calendars"
     fields: List[ProviderFieldSchemaEntry]
     # I1.7.c.1 — models dropdown options (empty for non-AI providers).
     models: List[str] = []
+    # Cleanup C2 (Feb-2026) — explicit connection type so the settings
+    # UI does not have to infer authentication mode from field names.
+    # "api_key"       → single-secret BYO (OpenAI, Twilio, Mapbox, …)
+    # "oauth"         → 3-legged OAuth PKCE (Google Calendar, Outlook)
+    # "oauth_connect" → provider-hosted onboarding (Stripe Connect)
+    connection_type: str = "api_key"
 
 
 class ProviderSchemasResponse(BaseModel):
@@ -715,6 +847,12 @@ class ProviderSchemasResponse(BaseModel):
     ai: List[ProviderSchema] = []
     maps: List[ProviderSchema] = []
     calendars: List[ProviderSchema] = []
+    # Phase I1.7.d — Payments-BYO providers (Square, PayPal,
+    # Authorize.Net, Lumino). All ``connection_type = "api_key"``.
+    # Stripe Connect (I1.7.a) is NOT part of this array — it uses
+    # its own /connect-link + /callback flow and lives under the
+    # ``/integrations`` GET list with connection_type=oauth_connect.
+    payments: List[ProviderSchema] = []
 
 
 def _to_field_entries(fields: Dict[str, Dict[str, Any]]) -> List[ProviderFieldSchemaEntry]:
@@ -741,37 +879,55 @@ async def integrations_schemas(
     the settings UI can render dynamic forms. NEVER echoes any
     stored value — schemas describe the shape, not the data."""
     _require_read_role(user)
+    # Cleanup C2 — Calendars use OAuth; all others are API-key today.
+    # Stripe (oauth_connect) has its own /schemas surface handled via
+    # /integrations GET; add here when I1.7.d payments arrays land.
+    _OAUTH_CALENDAR_KEYS = {"calendars_google", "calendars_outlook"}
     sms_schemas = [
         ProviderSchema(provider_key=k, kind="sms",
-                          fields=_to_field_entries(v))
+                          fields=_to_field_entries(v),
+                          connection_type="api_key")
         for k, v in _sms_provider_field_schemas().items()
     ]
     email_schemas = [
         ProviderSchema(provider_key=k, kind="email",
-                          fields=_to_field_entries(v))
+                          fields=_to_field_entries(v),
+                          connection_type="api_key")
         for k, v in _email_provider_field_schemas().items()
     ]
     ai_models_map = _ai_provider_model_options()
     ai_schemas = [
         ProviderSchema(provider_key=k, kind="ai",
                           fields=_to_field_entries(v),
-                          models=ai_models_map.get(k, []))
+                          models=ai_models_map.get(k, []),
+                          connection_type="api_key")
         for k, v in _ai_provider_field_schemas().items()
     ]
     maps_schemas = [
         ProviderSchema(provider_key=k, kind="maps",
-                          fields=_to_field_entries(v))
+                          fields=_to_field_entries(v),
+                          connection_type="api_key")
         for k, v in _maps_provider_field_schemas().items()
     ]
     cal_schemas = [
         ProviderSchema(provider_key=k, kind="calendars",
-                          fields=_to_field_entries(v))
+                          fields=_to_field_entries(v),
+                          connection_type=(
+                              "oauth" if k in _OAUTH_CALENDAR_KEYS
+                              else "api_key"))
         for k, v in _cal_provider_field_schemas().items()
+    ]
+    # Phase I1.7.d — Payments-BYO providers.
+    pay_schemas = [
+        ProviderSchema(provider_key=k, kind="payments",
+                          fields=_to_field_entries(v),
+                          connection_type="api_key")
+        for k, v in _pay_provider_field_schemas().items()
     ]
     return ProviderSchemasResponse(
         sms=sms_schemas, email=email_schemas,
         ai=ai_schemas, maps=maps_schemas,
-        calendars=cal_schemas,
+        calendars=cal_schemas, payments=pay_schemas,
     )
 
 
@@ -1344,3 +1500,148 @@ async def stripe_webhook(request: Request):
             "at": _now_iso(),
         })
     return {"received": True, "duplicate": False}
+
+
+# ── Phase I1.7.d · Payments-BYO endpoints ────────────────────────
+def _pay_key_from_short(short: str) -> str:
+    """Map ``square|paypal|authnet|lumino`` → ``pay_<short>``.
+
+    Raises 404 (via ``_resolve_provider``) if ``short`` is unknown.
+    """
+    try:
+        provider = get_payments_byo_provider_by_short_name(short)
+    except UnknownPaymentsProvider:
+        raise HTTPException(status_code=404, detail=f"unknown payments provider: {short}")
+    return provider.provider_key
+
+
+@router.post(
+    "/tenants/me/integrations/pay_{short}/test-connection",
+    response_model=ConnectionHealth,
+    operation_id="tenants.integrations.payments.test_connection",
+)
+async def payments_byo_test_connection(
+    short: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Explicit per-provider test-connection endpoint. Records the
+    outcome to ``tenant_provider_health`` so the FE dot updates
+    immediately (rather than waiting for the next cron cycle)."""
+    _require_write_role(user)
+    pk = _pay_key_from_short(short)
+    provider = get_payments_byo_provider(pk)
+    result = await provider.test_connection(tenant_id=tenant["id"])
+    try:
+        await _health_record_probe(
+            tenant_id=tenant["id"], provider_key=pk,
+            ok=bool(result.ok),
+            message=(result.message or "") if not result.ok else "",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return ConnectionHealth(**result.model_dump())
+
+
+@router.post(
+    "/tenants/me/integrations/pay_{short}/webhook",
+    operation_id="tenants.integrations.payments.webhook",
+)
+async def payments_byo_webhook(
+    short: str,
+    request: Request,
+    tenant_id: str = Query(...,
+                              description="Tenant id — passed as ?tenant_id= "
+                                          "since webhook posts are unauthenticated"),
+):
+    """Signed webhook receiver — verifies the provider signature
+    and dedupes by ``event_id`` in ``tenant_payments_webhook_events``.
+
+    Provider event routing (charge.succeeded → invoice update, …)
+    is I1.7.e; today this endpoint proves the pipe is wired.
+    """
+    pk = _pay_key_from_short(short)
+    provider = get_payments_byo_provider(pk)
+    payload = await request.body()
+    headers = dict(request.headers.items())
+    try:
+        event: PaymentsByoWebhookEvent = await provider.verify_webhook(
+            tenant_id=tenant_id, payload=payload, headers=headers,
+        )
+    except WebhookSignatureInvalid:
+        return Response(
+            content='{"detail":"verify_failed","reason":"signature"}',
+            status_code=400,
+            media_type="application/json",
+        )
+    except Exception as e:  # noqa: BLE001
+        return Response(
+            content=f'{{"detail":"verify_failed","reason":"{type(e).__name__}"}}',
+            status_code=400,
+            media_type="application/json",
+        )
+    # Idempotency dedupe.
+    if event.id:
+        existing = await db.tenant_payments_webhook_events.find_one(
+            {"event_id": event.id, "provider_key": pk, "tenant_id": tenant_id}
+        )
+        if existing:
+            return {"received": True, "duplicate": True}
+        await db.tenant_payments_webhook_events.insert_one({
+            "id": uuid.uuid4().hex,
+            "tenant_id": tenant_id,
+            "event_id": event.id,
+            "event_type": event.event_type,
+            "provider_key": pk,
+            "at": _now_iso(),
+        })
+    return {"received": True, "duplicate": False}
+
+
+@router.get(
+    "/tenants/me/integrations/payments/usage",
+    response_model=PaymentsUsageResponse,
+    operation_id="tenants.integrations.payments.usage",
+)
+async def payments_byo_usage(
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """One row per registered payments-BYO provider with
+    ``charge_count`` / ``refund_count`` / ``ops_total`` +
+    ``pct_used`` (soft warn at 80 %, hard block at 100 %)."""
+    _require_read_role(user)
+    period = _pay_period()
+    rows = await _pay_get_all_usage_rows(tenant_id=tenant["id"], period_yyyymm=period)
+    by_short = {r.get("provider"): r for r in rows}
+    out: List[PaymentsProviderUsage] = []
+    for short in _pay_short_names():
+        row = by_short.get(short) or {}
+        meta = await _pay_get_provider_meta(tenant_id=tenant["id"], provider=short) or {}
+        cap = meta.get("monthly_request_cap")
+        ops_total = int(row.get("ops_total", 0) or 0)
+        pct: Optional[float] = None
+        if isinstance(cap, int) and cap > 0:
+            pct = round(ops_total / cap, 4)
+        # Connection flag = any tenant_secrets row for the pay_<short> key.
+        pk = f"pay_{short}"
+        connected = False
+        try:
+            from services.secrets import connection_summary
+            summary = await connection_summary(tenant["id"], pk)
+            connected = bool(summary and summary.connected)
+        except Exception:
+            connected = False
+        out.append(PaymentsProviderUsage(
+            provider=short, period_yyyymm=period,
+            charge_count=int(row.get("charge_count", 0) or 0),
+            refund_count=int(row.get("refund_count", 0) or 0),
+            ops_total=ops_total,
+            monthly_request_cap=cap if isinstance(cap, int) else None,
+            connected=connected,
+            pct_used=pct,
+            status=_pay_compute_status(used=ops_total, cap=cap if isinstance(cap, int) else None),
+        ))
+    return PaymentsUsageResponse(
+        tenant_id=tenant["id"], period_yyyymm=period, providers=out,
+    )

@@ -2174,6 +2174,16 @@ async def startup():
         await _idx_boot()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[Phase13-W2] session index create failed: {e}")
+    # Phase I1.7.d · Feb-2026 — Unified tenant-provider health cron
+    # (AI / Maps / Calendars / Payments-BYO). Idempotent start; a
+    # single asyncio task per process. Disabled via
+    # ``PROVIDER_HEALTH_CRON_DISABLED=true``.
+    try:
+        from services.provider_health import start_health_cron
+        start_health_cron()
+        logger.info("[I1.7.d] provider-health cron started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[I1.7.d] provider-health cron start failed: {e}")
     # Phase R1 · Feb-2026 — Financial Suite reporting indexes.
     # Idempotent (see ``services/reporting/indexes.py``). Skipped
     # in prod when ``RUN_STARTUP_INDEXES=false``; ops re-runs via

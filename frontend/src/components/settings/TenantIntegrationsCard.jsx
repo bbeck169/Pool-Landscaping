@@ -75,6 +75,19 @@ const CALENDARS_PROVIDER_LABELS = {
 };
 
 
+// Phase I1.7.d — Payments-BYO provider display metadata (short_name → label).
+const PAYMENTS_PROVIDER_LABELS = {
+  pay_square:  { short: "square",  label: "Square",
+                  desc: "Bring your own Square access token · sandbox or production." },
+  pay_paypal:  { short: "paypal",  label: "PayPal",
+                  desc: "Bring your own PayPal REST app credentials · sandbox or production." },
+  pay_authnet: { short: "authnet", label: "Authorize.Net",
+                  desc: "Bring your own Authorize.Net API login + transaction key." },
+  pay_lumino:  { short: "lumino",  label: "Lumino",
+                  desc: "Bring your own Lumino API key · sandbox or production." },
+};
+
+
 function StatusPill({ tone = "neutral", children, testid }) {
   const palette = {
     connected: { bg: "#DCFCE7", fg: "#166534" },
@@ -112,10 +125,45 @@ function StaleBadge({ lastUsedAt, providerKey }) {
 }
 
 
+// Phase I1.7.d · Feb-2026 — Unified provider-health dot.
+// Colour mapping:
+//   green  = last probe succeeded
+//   red    = last probe failed
+//   amber  = never probed (unknown / not yet touched by cron)
+// The tooltip surfaces the ``last_error`` and ``consecutive_failures``.
+function HealthDot({ providerKey, health }) {
+  const snap = health || null;
+  const status = snap?.status || "unknown";
+  const palette = {
+    ok:      { bg: "#16A34A", label: "Healthy" },
+    failed:  { bg: "#DC2626", label: "Failing" },
+    unknown: { bg: "#F59E0B", label: "Not yet checked" },
+  }[status] || { bg: "#F59E0B", label: "Not yet checked" };
+  const consecutive = snap?.consecutive_failures || 0;
+  const err = (snap?.last_error || "").slice(0, 140);
+  const title = status === "ok"
+    ? `Healthy — last checked ${snap?.checked_at || ""}`
+    : status === "failed"
+    ? `Failing (${consecutive} consecutive) — ${err}`
+    : "Not yet checked by the health cron. Click Test to probe now.";
+  return (
+    <span
+      className="inline-block w-2.5 h-2.5 rounded-full"
+      style={{ backgroundColor: palette.bg }}
+      title={title}
+      role="status"
+      aria-label={`${palette.label} · ${providerKey}`}
+      data-testid={`tenant-integration-${providerKey}-health-dot`}
+      data-health-status={status}
+    />
+  );
+}
+
+
 /** ————————————————————————————————————————————————————————————
  *  Section: Stripe card (from I1.7.a).
  *  ———————————————————————————————————————————————————————————— */
-function StripeCard({ row, canWrite, busy, setBusyFor, reload }) {
+function StripeCard({ row, health, canWrite, busy, setBusyFor, reload }) {
   const isConnected = !!row?.connected;
   const state = isConnected ? "connected" : "disconnected";
   const stateLabel = isConnected ? "Connected" : "Not connected";
@@ -165,6 +213,7 @@ function StripeCard({ row, canWrite, busy, setBusyFor, reload }) {
           <div className="flex items-center gap-2 flex-wrap">
             <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>Stripe</div>
             <StatusPill tone={state} testid="tenant-integration-stripe-status">{stateLabel}</StatusPill>
+            <HealthDot providerKey="stripe" health={health} />
             {isConnected && <StaleBadge lastUsedAt={row.last_used_at} providerKey="stripe" />}
           </div>
           <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>
@@ -240,6 +289,7 @@ function MessagingCard({
   desc,           // human blurb
   schemas,        // array of {provider_key, kind, fields[]}
   connectedRow,   // whichever row from list_connections is currently connected in this kind, or null
+  healthMap,      // Phase I1.7.d — { provider_key: {status, ...} }
   canWrite, busy, setBusyFor, reload,
 }) {
   const [selected, setSelected] = useState("");
@@ -332,6 +382,10 @@ function MessagingCard({
           <div className="flex items-center gap-2 flex-wrap">
             <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>{label}</div>
             <StatusPill tone={state} testid={`tenant-integration-${kind}-status`}>{stateLabel}</StatusPill>
+            <HealthDot
+              providerKey={connectedRow?.provider_key || activeSchema.provider_key}
+              health={healthMap && healthMap[connectedRow?.provider_key || activeSchema.provider_key]}
+            />
             {isConnected && <StaleBadge lastUsedAt={connectedRow.last_used_at} providerKey={kind} />}
           </div>
           <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>{desc}</div>
@@ -450,7 +504,7 @@ function MessagingCard({
  *    - monthly_token_cap input (empty = unlimited, 0 = block all)
  *    - usage progress bar (green < 80% · amber 80–99% · red ≥ 100%)
  *  ———————————————————————————————————————————————————————————— */
-function AICard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
+function AICard({ schema, row, usage, health, canWrite, busy, setBusyFor, reload }) {
   const providerKey = schema.provider_key;      // e.g. "ai_openai"
   const shortName = (AI_PROVIDER_LABELS[providerKey] || {}).short || providerKey;
   const label = (AI_PROVIDER_LABELS[providerKey] || {}).label || providerKey;
@@ -532,6 +586,7 @@ function AICard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
           <div className="flex items-center gap-2 flex-wrap">
             <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>{label}</div>
             <StatusPill tone={state} testid={`tenant-integration-${providerKey}-status`}>{stateLabel}</StatusPill>
+            <HealthDot providerKey={providerKey} health={health} />
             {isConnected && <StaleBadge lastUsedAt={row.last_used_at} providerKey={providerKey} />}
           </div>
           <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>{desc}</div>
@@ -679,7 +734,7 @@ function AICard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
  *      static_map) plus the rolled-up ``total`` — the progress bar
  *      is against ``total``.
  *  ———————————————————————————————————————————————————————————— */
-function MapsCard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
+function MapsCard({ schema, row, usage, health, canWrite, busy, setBusyFor, reload }) {
   const providerKey = schema.provider_key;
   const shortName = (MAPS_PROVIDER_LABELS[providerKey] || {}).short || providerKey;
   const label = (MAPS_PROVIDER_LABELS[providerKey] || {}).label || providerKey;
@@ -775,6 +830,7 @@ function MapsCard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
           <div className="flex items-center gap-2 flex-wrap">
             <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>{label}</div>
             <StatusPill tone={state} testid={`tenant-integration-${providerKey}-status`}>{stateLabel}</StatusPill>
+            <HealthDot providerKey={providerKey} health={health} />
             {isConnected && <StaleBadge lastUsedAt={row.last_used_at} providerKey={providerKey} />}
           </div>
           <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>{desc}</div>
@@ -921,7 +977,7 @@ function MapsCard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
  *   • A per-technician list of currently-connected accounts.
  *  ———————————————————————————————————————————————————————————— */
 function CalendarsCard({
-  schema, usage, links, technicians,
+  schema, usage, links, technicians, health,
   canWrite, busy, setBusyFor, reload,
 }) {
   const providerKey = schema.provider_key;
@@ -1037,6 +1093,7 @@ function CalendarsCard({
                           testid={`tenant-integration-${providerKey}-status`}>
               {stateLabel}
             </StatusPill>
+            <HealthDot providerKey={providerKey} health={health} />
           </div>
           <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>{desc}</div>
         </div>
@@ -1194,13 +1251,267 @@ function CalendarsCard({
 
 
 /** ————————————————————————————————————————————————————————————
+ *  Phase I1.7.d · Feb-2026 — Payments-BYO card.
+ *
+ *  Rendered once per provider (Square, PayPal, Authorize.Net, Lumino).
+ *  Shape mirrors ``MapsCard``:
+ *    • Every schema.fields[] entry becomes a form input (password if
+ *      secret=true; text otherwise).
+ *    • Monthly-request cap (null / 0 / >0 semantics identical to
+ *      AI + Maps + Calendars).
+ *    • Save persists the config; Test surfaces the health probe;
+ *      Disconnect wipes the sidecar + tenant_secrets row.
+ *    • Health dot next to the status pill.
+ *  ———————————————————————————————————————————————————————————— */
+function PaymentsCard({ schema, row, usage, health, canWrite, busy, setBusyFor, reload }) {
+  const providerKey = schema.provider_key;
+  const shortName = (PAYMENTS_PROVIDER_LABELS[providerKey] || {}).short || providerKey;
+  const label = (PAYMENTS_PROVIDER_LABELS[providerKey] || {}).label || providerKey;
+  const desc = (PAYMENTS_PROVIDER_LABELS[providerKey] || {}).desc || "";
+
+  const isConnected = !!row?.connected;
+  const state = isConnected ? "connected" : "disconnected";
+  const stateLabel = isConnected ? "Connected" : "Not connected";
+  const busyKey = providerKey;
+
+  const secretFields = (schema.fields || []).filter((f) => f.secret);
+  const nonSecretFields = (schema.fields || []).filter((f) => !f.secret);
+
+  const [form, setForm] = useState(() => {
+    const seed = {};
+    (schema.fields || []).forEach((f) => { seed[f.name] = ""; });
+    return seed;
+  });
+  const [capInput, setCapInput] = useState(
+    usage?.monthly_request_cap == null ? "" : String(usage.monthly_request_cap),
+  );
+
+  useEffect(() => {
+    if (usage?.monthly_request_cap != null) {
+      setCapInput(String(usage.monthly_request_cap));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usage?.monthly_request_cap]);
+
+  const save = async () => {
+    setBusyFor(busyKey, "save");
+    try {
+      const config = {};
+      (schema.fields || []).forEach((f) => {
+        if (form[f.name] != null && form[f.name] !== "") config[f.name] = form[f.name];
+      });
+      const body = {
+        config,
+        monthly_request_cap: capInput === "" ? null : Number(capInput),
+      };
+      const r = await api.put(`/tenants/me/integrations/${providerKey}`, body);
+      if (r?.saved) toast.success(`${label} saved.`);
+      // Wipe secret fields from local state so they don't re-submit
+      // on the next Save (Fix-2026-02 uniformity).
+      setForm((prev) => {
+        const next = { ...prev };
+        secretFields.forEach((f) => { next[f.name] = ""; });
+        return next;
+      });
+      await reload();
+    } catch (e) {
+      toast.error(e?.message || `${label} save failed`);
+    } finally { setBusyFor(busyKey, null); }
+  };
+
+  const testConn = async () => {
+    setBusyFor(busyKey, "test");
+    try {
+      const r = await api.post(`/tenants/me/integrations/${providerKey}/test-connection`);
+      if (r?.ok) toast.success(`${label} · ${r.message || "connected"}`);
+      else toast.error(`${label} · ${r?.message || "connection failed"}`);
+      await reload();
+    } catch (e) { toast.error(e?.message || `${label} test failed`); }
+    finally { setBusyFor(busyKey, null); }
+  };
+
+  const remove = async () => {
+    if (!(await _confirmDisconnect(label))) return;
+    setBusyFor(busyKey, "delete");
+    try {
+      const r = await api.delete(`/tenants/me/integrations/${providerKey}`);
+      if (r?.removed) toast.success(`${label} disconnected.`);
+      else toast(`${label} was not connected.`);
+      await reload();
+    } catch (e) { toast.error(e?.message || `${label} disconnect failed`); }
+    finally { setBusyFor(busyKey, null); }
+  };
+
+  const pct = usage?.pct_used ?? 0;
+  const pctDisplay = usage?.monthly_request_cap == null
+    ? null
+    : Math.min(100, Math.round((pct || 0) * 100));
+  const barColor = usage?.status === "blocked" ? "#DC2626"
+    : usage?.status === "warn" ? "#F59E0B"
+    : "#16A34A";
+  const capLabel = usage?.monthly_request_cap == null
+    ? "Unlimited"
+    : usage.monthly_request_cap === 0
+    ? "Blocked (cap = 0)"
+    : `${(usage.ops_total || 0).toLocaleString()} / ${usage.monthly_request_cap.toLocaleString()}`;
+
+  return (
+    <div
+      className="rounded-xl p-4 flex flex-col gap-3"
+      style={{ border: `1px solid ${colors.border}` }}
+      data-testid={`tenant-integration-${providerKey}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>{label}</div>
+            <StatusPill tone={state} testid={`tenant-integration-${providerKey}-status`}>{stateLabel}</StatusPill>
+            <HealthDot providerKey={providerKey} health={health} />
+            {isConnected && <StaleBadge lastUsedAt={row.last_used_at} providerKey={providerKey} />}
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>{desc}</div>
+        </div>
+      </div>
+
+      {isConnected && (
+        <div
+          className="rounded-lg px-3 py-2 text-xs space-y-1"
+          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+          data-testid={`tenant-integration-${providerKey}-summary`}
+        >
+          {row.last_4 && (
+            <div><span className="font-semibold">Primary secret · last 4:</span>{" "}
+              <span className="font-mono" data-testid={`tenant-integration-${providerKey}-last4`}>••••{row.last_4}</span></div>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-1" data-testid={`tenant-integration-${providerKey}-usage`}>
+        <div className="flex items-center justify-between text-xs" style={{ color: colors.onSurfaceSecondary }}>
+          <span>Usage this month · charge + refund</span>
+          <span data-testid={`tenant-integration-${providerKey}-usage-label`}>{capLabel}</span>
+        </div>
+        <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: "#E5E7EB" }}>
+          {pctDisplay != null && (
+            <div
+              className="h-full transition-all"
+              style={{ width: `${pctDisplay}%`, backgroundColor: barColor }}
+              data-testid={`tenant-integration-${providerKey}-usage-bar`}
+            />
+          )}
+        </div>
+        {usage && (
+          <div className="text-[11px]" style={{ color: colors.onSurfaceSecondary }}
+               data-testid={`tenant-integration-${providerKey}-usage-breakdown`}>
+            charge {usage.charge_count || 0} · refund {usage.refund_count || 0}
+          </div>
+        )}
+        {usage?.status === "warn" && (
+          <div className="text-[11px]" style={{ color: "#854D0E" }}>
+            ⚠︎ Soft warning · ≥ 80% of monthly cap consumed.
+          </div>
+        )}
+        {usage?.status === "blocked" && (
+          <div className="text-[11px]" style={{ color: "#991B1B" }}>
+            ✕ Monthly cap reached · new charges/refunds will return 429.
+          </div>
+        )}
+      </div>
+
+      {canWrite && (
+        <div className="flex flex-col gap-2">
+          {(schema.fields || []).map((f) => (
+            <label key={f.name} className="text-xs flex flex-col gap-1"
+                    style={{ color: colors.onSurfaceSecondary }}>
+              <span>{f.label}{f.required && <span style={{ color: "#991B1B" }}> *</span>}</span>
+              <input
+                type={f.secret ? "password" : "text"}
+                value={form[f.name] ?? ""}
+                onChange={(e) => setForm((prev) => ({ ...prev, [f.name]: e.target.value }))}
+                autoComplete="off"
+                placeholder={f.secret && isConnected ? "•••• (leave blank to keep current)" : ""}
+                className="rounded-lg px-2 py-1 text-sm"
+                style={{ border: `1px solid ${colors.border}`, backgroundColor: "white", color: colors.onSurface }}
+                data-testid={`tenant-integration-${providerKey}-field-${f.name}`}
+              />
+            </label>
+          ))}
+
+          <label className="text-xs flex flex-col gap-1" style={{ color: colors.onSurfaceSecondary }}>
+            <span>
+              Monthly request cap
+              <span className="italic" style={{ color: colors.onSurfaceSecondary }}> · empty = unlimited · 0 = block all</span>
+            </span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={capInput}
+              onChange={(e) => setCapInput(e.target.value)}
+              placeholder="Unlimited"
+              className="rounded-lg px-2 py-1 text-sm"
+              style={{ border: `1px solid ${colors.border}`, backgroundColor: "white", color: colors.onSurface }}
+              data-testid={`tenant-integration-${providerKey}-cap-input`}
+            />
+          </label>
+
+          <div className="flex items-center gap-2 flex-wrap mt-1">
+            <button
+              onClick={save}
+              disabled={!!busy[busyKey]}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+              style={{ backgroundColor: colors.brand, opacity: busy[busyKey] ? 0.6 : 1 }}
+              data-testid={`tenant-integration-${providerKey}-save`}
+            >
+              {busy[busyKey] === "save" ? "Saving…" : (isConnected ? "Save (rotate)" : "Save")}
+            </button>
+            {isConnected && (
+              <button
+                onClick={testConn}
+                disabled={!!busy[busyKey]}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+                style={{ backgroundColor: colors.brandSurface || "#E0F2FE",
+                          color: colors.brand,
+                          opacity: busy[busyKey] ? 0.6 : 1 }}
+                data-testid={`tenant-integration-${providerKey}-test`}
+              >
+                {busy[busyKey] === "test" ? "Testing…" : "Test connection"}
+              </button>
+            )}
+            {isConnected && (
+              <button
+                onClick={remove}
+                disabled={!!busy[busyKey]}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+                style={{ backgroundColor: "#FEE2E2", color: "#991B1B", opacity: busy[busyKey] ? 0.6 : 1 }}
+                data-testid={`tenant-integration-${providerKey}-disconnect`}
+              >
+                {busy[busyKey] === "delete" ? "Removing…" : "Disconnect"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {!canWrite && (
+        <span className="text-xs" style={{ color: colors.onSurfaceSecondary }}>
+          Ask an admin to connect this provider.
+        </span>
+      )}
+    </div>
+  );
+}
+
+
+/** ————————————————————————————————————————————————————————————
  *  Root component.
  *  ———————————————————————————————————————————————————————————— */
 export default function TenantIntegrationsCard() {
   const [rows, setRows] = useState(null);
-  const [schemas, setSchemas] = useState({ sms: [], email: [], ai: [], maps: [], calendars: [] });
+  const [health, setHealth] = useState({}); // Phase I1.7.d — { provider_key: {status, ...} }
+  const [schemas, setSchemas] = useState({ sms: [], email: [], ai: [], maps: [], calendars: [], payments: [] });
   const [aiUsage, setAiUsage] = useState({});     // { openai: {...}, anthropic: {...}, gemini: {...} }
   const [mapsUsage, setMapsUsage] = useState({}); // { google: {...}, mapbox: {...} }
+  const [paymentsUsage, setPaymentsUsage] = useState({}); // Phase I1.7.d — { square, paypal, authnet, lumino }
   // Phase I1.7.c.3 — Calendars per-tenant usage + per-technician
   // link summaries. ``calendarsLinks`` mirrors the shape returned by
   // ``GET /calendars/usage.technicians``.
@@ -1221,12 +1532,13 @@ export default function TenantIntegrationsCard() {
 
   const load = useCallback(async () => {
     try {
-      const [listRes, schemaRes, usageRes, mapsUsageRes, calUsageRes, techListRes] = await Promise.all([
+      const [listRes, schemaRes, usageRes, mapsUsageRes, calUsageRes, payUsageRes, techListRes] = await Promise.all([
         api.get("/tenants/me/integrations"),
         api.get("/tenants/me/integrations/schemas"),
         api.get("/tenants/me/integrations/ai/usage").catch(() => ({ providers: [] })),
         api.get("/tenants/me/integrations/maps/usage").catch(() => ({ providers: [] })),
         api.get("/tenants/me/integrations/calendars/usage").catch(() => ({ providers: [], technicians: [] })),
+        api.get("/tenants/me/integrations/payments/usage").catch(() => ({ providers: [] })),
         // Best-effort — the ``/users`` endpoint 403s for non-admins,
         // which is fine (the connect button is only rendered for
         // admins anyway).
@@ -1235,12 +1547,14 @@ export default function TenantIntegrationsCard() {
       const map = {};
       (listRes?.integrations || []).forEach((row) => { map[row.provider_key] = row; });
       setRows(map);
+      setHealth(listRes?.health || {});
       setSchemas({
         sms: schemaRes?.sms || [],
         email: schemaRes?.email || [],
         ai: schemaRes?.ai || [],
         maps: schemaRes?.maps || [],
         calendars: schemaRes?.calendars || [],
+        payments: schemaRes?.payments || [],
       });
       const usageByShort = {};
       (usageRes?.providers || []).forEach((u) => { usageByShort[u.provider] = u; });
@@ -1248,6 +1562,9 @@ export default function TenantIntegrationsCard() {
       const mapsByShort = {};
       (mapsUsageRes?.providers || []).forEach((u) => { mapsByShort[u.provider] = u; });
       setMapsUsage(mapsByShort);
+      const payByShort = {};
+      (payUsageRes?.providers || []).forEach((u) => { payByShort[u.provider] = u; });
+      setPaymentsUsage(payByShort);
       const calByShort = {};
       (calUsageRes?.providers || []).forEach((u) => { calByShort[u.provider] = u; });
       setCalendarsUsage(calByShort);
@@ -1345,21 +1662,21 @@ export default function TenantIntegrationsCard() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <StripeCard
-          row={rows?.stripe}
+          row={rows?.stripe} health={health.stripe}
           canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
         />
 
         <MessagingCard
           kind="sms" label="SMS provider"
           desc="Twilio · TextMagic · RingCentral. Configure once — messages go out under your brand."
-          schemas={schemas.sms} connectedRow={smsRow}
+          schemas={schemas.sms} connectedRow={smsRow} healthMap={health}
           canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
         />
 
         <MessagingCard
           kind="email" label="Email provider"
           desc="Resend · SendGrid · Postmark · Mailgun · custom SMTP."
-          schemas={schemas.email} connectedRow={emailRow}
+          schemas={schemas.email} connectedRow={emailRow} healthMap={health}
           canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
         />
 
@@ -1372,6 +1689,7 @@ export default function TenantIntegrationsCard() {
               schema={s}
               row={rows?.[s.provider_key]}
               usage={aiUsage[short]}
+              health={health[s.provider_key]}
               canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
             />
           );
@@ -1386,6 +1704,7 @@ export default function TenantIntegrationsCard() {
               schema={s}
               row={rows?.[s.provider_key]}
               usage={mapsUsage[short]}
+              health={health[s.provider_key]}
               canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
             />
           );
@@ -1402,6 +1721,23 @@ export default function TenantIntegrationsCard() {
               usage={calendarsUsage[short]}
               links={calendarsLinks}
               technicians={technicians}
+              health={health[s.provider_key]}
+              canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
+            />
+          );
+        })}
+
+        {/* Phase I1.7.d · Feb-2026 — Payments-BYO cards
+              (Square, PayPal, Authorize.Net, Lumino). */}
+        {schemas.payments.map((s) => {
+          const short = (PAYMENTS_PROVIDER_LABELS[s.provider_key] || {}).short || s.provider_key;
+          return (
+            <PaymentsCard
+              key={s.provider_key}
+              schema={s}
+              row={rows?.[s.provider_key]}
+              usage={paymentsUsage[short]}
+              health={health[s.provider_key]}
               canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
             />
           );

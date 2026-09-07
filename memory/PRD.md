@@ -17042,3 +17042,44 @@ Shipped 2026-02-07.
 * **I1.7.c** — AI + Maps + Calendars BYO providers.
 * **I1.7.d** — Square + PayPal + Authorize.net + Lumino payment providers.
 * **I1.7.e** (future) — Callsite sweep migrating every legacy `send_sms/send_email` through `dispatch_*`; KEK-rotation migration endpoint.
+
+## Phase I1.7.c.3 · Feb-2026 — Calendars BYO providers (Google + Outlook)
+Shipped previously in this session. Per-technician OAuth PKCE flow, monthly sync-op cap parity with AI/Maps, unified test-connection surface.
+
+**Test coverage:** 20 pytest + 12 vitest — all green.
+
+## Cleanup C1 · Feb-2026 — Close Calendars OAuth authz skips
+Shipped in this session. Added multi-technician fixtures to `conftest.py`, unskipped `test_i17c3_start_self_ok` and `test_i17c3_start_other_tech_403`, plus new `test_i17c3_start_super_can_initiate_for_any_tech`. **20 pass, 0 skip** in `test_i17c3_calendars_byo_providers.py`.
+
+## Cleanup C2 · Feb-2026 — Explicit `connection_type` in `/schemas`
+Shipped in this session. `ProviderSchema.connection_type: "api_key" | "oauth" | "oauth_connect"` on every provider entry — no more inference in the FE. New test `test_i17c2_schemas_connection_type.py`.
+
+## Phase I1.7.d · Feb-2026 — Payments BYO providers + unified provider-health cron
+Shipped 2026-02-14.
+
+### What landed
+* Four new BYO payment adapters under `services/payments_byo/` — Square, PayPal, Authorize.Net, Lumino. Interface: `create_charge`, `refund_charge`, `verify_webhook`, `test_connection`. Full webhook signature verification (Square HMAC-SHA256, PayPal cert-verify or HMAC-SHA256 in mock, Authorize.Net HMAC-SHA512 `sha512=…`, Lumino HMAC-SHA256).
+* Uniform preserve-secret / cap-only-edit / usage tracking / cap semantics with AI + Maps + Calendars. Per-op counters (`charge_count`, `refund_count`, `ops_total`). Cap: null=unlimited, 0=block-all, hard 429 at cap, soft warn at 80 %.
+* New endpoints (all under `/api/tenants/me/integrations`):
+    * `PUT /pay_{provider}`
+    * `DELETE /pay_{provider}`
+    * `POST /pay_{short}/webhook`   (signed verify)
+    * `POST /pay_{short}/test-connection`
+    * `GET /payments/usage`
+* `/schemas` gains `payments: []` (all `connection_type=api_key`).
+* `/integrations` gains top-level `health: {…}` map.
+* Unified `services/provider_health/` cron — one worker probes AI + Maps + Calendars + Payments-BYO every 15 min (default `PROVIDER_HEALTH_CRON_INTERVAL_SECONDS=900`). Writes `tenant_provider_health` rows with `status`, `checked_at`, `last_error`, `consecutive_failures`, `last_ok_at`. Auto-redacts bearer tokens / api-keys from probe messages.
+* Frontend: `HealthDot` (green / red / amber) on **every** integration card (Stripe, SMS, Email, AI ×3, Maps ×2, Calendars ×2, Payments ×4). New `PaymentsCard` mirroring `MapsCard` — Save / Test connection / Disconnect + monthly-request-cap input.
+
+### Env
+* Preview: `PAYMENTS_TESTMODE_MOCK=true` (all 4 adapters short-circuit).
+* Production redeploy: user should unset (or set to `false`) once real Square/PayPal/AuthNet/Lumino credentials are ready.
+
+### Test coverage
+* Backend: 84 pytest cases (all I1.7.a–d + C2) — green.
+* Frontend: 68 vitest cases (all i17*) — green.
+
+### Explicitly out-of-scope (deferred to I1.7.e)
+* Rewiring existing `/payments/charge` callsites to dispatch through the BYO adapters.
+* Dollar-amount caps (this phase is request-count only).
+* Real (non-mock) API calls in preview.
