@@ -56,6 +56,14 @@ const defaults = {
   // "DELETE") to opt-in.
   requireTypeConfirm: false,
   typeConfirmString: "DELETE",
+  // I1.7.c.2.followup · Feb-2026 — call-site-scoped testids on the
+  // confirm/cancel buttons. Layered ON TOP of the stable global
+  // ``app-confirm-ok`` / ``app-confirm-cancel`` testids so the
+  // existing app-wide confirm-dialog tests still pass unchanged
+  // while browser-use automation on a specific flow (e.g.
+  // integrations disconnect) can target its own testid.
+  confirmTestId: null,
+  cancelTestId: null,
 };
 
 export function ConfirmProvider({ children }) {
@@ -170,7 +178,7 @@ export function ConfirmProvider({ children }) {
               {opts?.cancelable ? (
                 <button
                   type="button"
-                  data-testid="app-confirm-cancel"
+                  data-testid={opts?.cancelTestId || "app-confirm-cancel"}
                   onClick={() => settle(false)}
                   className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
                 >
@@ -179,7 +187,7 @@ export function ConfirmProvider({ children }) {
               ) : null}
               <button
                 type="button"
-                data-testid="app-confirm-ok"
+                data-testid={opts?.confirmTestId || "app-confirm-ok"}
                 onClick={() => { if (!confirmDisabled) settle(true); }}
                 autoFocus
                 disabled={confirmDisabled}

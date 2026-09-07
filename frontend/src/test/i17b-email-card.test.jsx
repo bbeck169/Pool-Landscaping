@@ -29,6 +29,14 @@ vi.mock("sonner", () => ({
 }));
 
 import TenantIntegrationsCard from "@/components/settings/TenantIntegrationsCard";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+
+
+const renderCard = () => render(
+  <ConfirmProvider>
+    <TenantIntegrationsCard />
+  </ConfirmProvider>,
+);
 
 
 const _EMAIL_SCHEMAS = [
@@ -69,7 +77,7 @@ beforeEach(() => {
   mockToastSuccess.mockReset();
   mockToastError.mockReset();
   window.localStorage.clear();
-  vi.spyOn(window, "confirm").mockReturnValue(true);
+  // I1.7.c.2.followup · Feb-2026 — no more window.confirm spy.
   Object.defineProperty(window, "location", {
     configurable: true,
     value: { ...window.location, assign: vi.fn(),
@@ -88,7 +96,7 @@ describe("TenantIntegrationsCard · Email card (I1.7.b)", () => {
   it("renders Email provider dropdown + schema fields", async () => {
     _asAdmin();
     _mockRoutes([]);
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-email")).toBeTruthy(),
     );
@@ -107,7 +115,7 @@ describe("TenantIntegrationsCard · Email card (I1.7.b)", () => {
   it("switching provider to smtp reveals SMTP-specific fields", async () => {
     _asAdmin();
     _mockRoutes([]);
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-email-provider-select")).toBeTruthy(),
     );
@@ -125,7 +133,7 @@ describe("TenantIntegrationsCard · Email card (I1.7.b)", () => {
     _mockRoutes([]);
     mockPut.mockResolvedValue({ saved: true, provider_key: "resend",
       connected_account_id_masked: "hello…l.com" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-email-field-api_key")).toBeTruthy(),
     );
@@ -152,7 +160,11 @@ describe("TenantIntegrationsCard · Email card (I1.7.b)", () => {
       last_used_at: "2026-02-01T12:00:00Z",
       connected_status: "connected", error_log_count: 0,
     }]);
-    const { container } = render(<TenantIntegrationsCard />);
+    const { container } = render(
+      <ConfirmProvider>
+        <TenantIntegrationsCard />
+      </ConfirmProvider>,
+    );
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-email-summary")).toBeTruthy(),
     );
@@ -164,5 +176,68 @@ describe("TenantIntegrationsCard · Email card (I1.7.b)", () => {
     const pw = screen.getByTestId("tenant-integration-email-field-password");
     expect(pw.value).toBe("");
     expect(container.textContent).not.toMatch(/PLAINTEXT/i);
+  });
+
+  // I1.7.c.2.followup · Task A · Feb-2026 — Modal interaction tests
+  // for the email disconnect flow.
+  describe("Email disconnect confirmation modal · Task A", () => {
+    const _connectedResend = [{
+      provider_key: "resend", connection_type: "api_key",
+      connected: true, last_4: "y_ab",
+      connected_account_id_masked: "hello…l.com",
+      last_used_at: "2026-02-05T12:00:00Z",
+      connected_status: "connected", error_log_count: 0,
+    }];
+
+    it("Email disconnect click opens the in-app modal (no window.confirm)", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedResend);
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-email-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-email-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+      );
+      expect(screen.getByTestId("integrations-disconnect-cancel")).toBeTruthy();
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    it("Email modal · Confirm fires DELETE", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedResend);
+      mockDelete.mockResolvedValue({ removed: true, provider_key: "resend" });
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-email-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-email-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("integrations-disconnect-confirm"));
+      await waitFor(() =>
+        expect(mockDelete).toHaveBeenCalledWith("/tenants/me/integrations/resend"),
+      );
+    });
+
+    it("Email modal · Cancel closes it and does NOT fire DELETE", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedResend);
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-email-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-email-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-cancel")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("integrations-disconnect-cancel"));
+      await waitFor(() =>
+        expect(screen.queryByTestId("integrations-disconnect-confirm")).toBeNull(),
+      );
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
   });
 });

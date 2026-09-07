@@ -41,6 +41,14 @@ vi.mock("sonner", () => ({
 }));
 
 import TenantIntegrationsCard from "@/components/settings/TenantIntegrationsCard";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+
+
+const renderCard = () => render(
+  <ConfirmProvider>
+    <TenantIntegrationsCard />
+  </ConfirmProvider>,
+);
 
 
 const _SMS_SCHEMAS = [
@@ -82,7 +90,7 @@ beforeEach(() => {
   mockToastSuccess.mockReset();
   mockToastError.mockReset();
   window.localStorage.clear();
-  vi.spyOn(window, "confirm").mockReturnValue(true);
+  // I1.7.c.2.followup · Feb-2026 — no more window.confirm spy.
   Object.defineProperty(window, "location", {
     configurable: true,
     value: { ...window.location, assign: vi.fn(),
@@ -101,7 +109,7 @@ describe("TenantIntegrationsCard · SMS card (I1.7.b)", () => {
   it("renders SMS provider dropdown + schema fields", async () => {
     _asAdmin();
     _mockRoutes([]);
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-sms")).toBeTruthy(),
     );
@@ -122,7 +130,7 @@ describe("TenantIntegrationsCard · SMS card (I1.7.b)", () => {
   it("switching provider re-renders the correct field schema", async () => {
     _asAdmin();
     _mockRoutes([]);
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-sms-provider-select")).toBeTruthy(),
     );
@@ -140,7 +148,7 @@ describe("TenantIntegrationsCard · SMS card (I1.7.b)", () => {
     _mockRoutes([]);
     mockPut.mockResolvedValue({ saved: true, provider_key: "twilio",
       connected_account_id_masked: "ACabc…1234" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-sms-field-account_sid")).toBeTruthy(),
     );
@@ -172,7 +180,7 @@ describe("TenantIntegrationsCard · SMS card (I1.7.b)", () => {
     mockPost.mockResolvedValue({ ok: true, message: "Twilio OK",
       provider_key: "twilio", tenant_id: "tenant-i17b",
       checked_at: "2026-02-05T12:34:56Z" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-sms-summary")).toBeTruthy(),
     );
@@ -191,7 +199,7 @@ describe("TenantIntegrationsCard · SMS card (I1.7.b)", () => {
     window.localStorage.setItem("user",
       JSON.stringify({ id: "m", role: "manager", email: "m@example.com" }));
     _mockRoutes([]);
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-sms")).toBeTruthy(),
     );
@@ -199,5 +207,69 @@ describe("TenantIntegrationsCard · SMS card (I1.7.b)", () => {
     expect(screen.queryByTestId("tenant-integration-sms-test")).toBeNull();
     expect(screen.queryByTestId("tenant-integration-sms-disconnect")).toBeNull();
     expect(screen.queryByTestId("tenant-integration-sms-provider-select")).toBeNull();
+  });
+
+  // I1.7.c.2.followup · Task A · Feb-2026 — Modal interaction tests
+  // for the SMS disconnect flow. MessagingCard is shared with email
+  // so the email suite reuses the same three-shape coverage.
+  describe("SMS disconnect confirmation modal · Task A", () => {
+    const _connectedTwilio = [{
+      provider_key: "twilio", connection_type: "api_key",
+      connected: true, last_4: "-xyz",
+      connected_account_id_masked: "ACabc…1234",
+      last_used_at: "2026-02-05T12:00:00Z",
+      connected_status: "connected", error_log_count: 0,
+    }];
+
+    it("SMS disconnect click opens the in-app modal (no window.confirm)", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedTwilio);
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-sms-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-sms-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+      );
+      expect(screen.getByTestId("integrations-disconnect-cancel")).toBeTruthy();
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    it("SMS modal · Confirm fires DELETE", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedTwilio);
+      mockDelete.mockResolvedValue({ removed: true, provider_key: "twilio" });
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-sms-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-sms-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("integrations-disconnect-confirm"));
+      await waitFor(() =>
+        expect(mockDelete).toHaveBeenCalledWith("/tenants/me/integrations/twilio"),
+      );
+    });
+
+    it("SMS modal · Cancel closes it and does NOT fire DELETE", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedTwilio);
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-sms-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-sms-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-cancel")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("integrations-disconnect-cancel"));
+      await waitFor(() =>
+        expect(screen.queryByTestId("integrations-disconnect-confirm")).toBeNull(),
+      );
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
   });
 });

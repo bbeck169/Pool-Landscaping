@@ -25,11 +25,28 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
+
+
+// Phase I1.7.c.2.followup · Feb-2026 — Shared in-app disconnect
+// confirmation. Replaces the 4 legacy ``window.confirm(...)`` calls
+// on the Stripe / SMS / Email / AI / Maps disconnect flows so
+// browser-use automation isn't blocked by native dialogs.
+async function _confirmDisconnect(label) {
+  return await mustConfirm({
+    title: `Disconnect ${label}?`,
+    description: "Your stored API key will be removed. You can reconnect at any time.",
+    confirmText: "Disconnect",
+    cancelText: "Cancel",
+    tone: "danger",
+    confirmTestId: "integrations-disconnect-confirm",
+    cancelTestId: "integrations-disconnect-cancel",
+  });
+}
 
 
 const STALE_DAYS = 30;
 const COMING_SOON = [
-  { key: "calendars", label: "Calendar sync",    desc: "Google Calendar · Outlook · iCloud." },
   { key: "storage",   label: "Object storage",   desc: "S3 · GCS · Emergent-managed default." },
 ];
 
@@ -46,6 +63,15 @@ const MAPS_PROVIDER_LABELS = {
                   desc: "Bring your own Google Maps API key (Geocoding + Routes + Static Maps)." },
   maps_mapbox: { short: "mapbox", label: "Mapbox",
                   desc: "Bring your own Mapbox access token (Geocoding + Directions + Static Maps)." },
+};
+
+
+// Phase I1.7.c.3 — Calendars provider display metadata (short_name → label).
+const CALENDARS_PROVIDER_LABELS = {
+  calendars_google:  { short: "google",  label: "Google Calendar",
+                        desc: "Per-technician Google Calendar OAuth · push jobs / pull availability." },
+  calendars_outlook: { short: "outlook", label: "Microsoft Outlook",
+                        desc: "Per-technician Microsoft 365 / Outlook OAuth · push jobs / pull availability." },
 };
 
 
@@ -117,8 +143,7 @@ function StripeCard({ row, canWrite, busy, setBusyFor, reload }) {
   };
 
   const remove = async () => {
-    if (typeof window !== "undefined" && window.confirm
-        && !window.confirm("Disconnect Stripe? Your saved credentials will be permanently removed.")) return;
+    if (!(await _confirmDisconnect("Stripe"))) return;
     setBusyFor("stripe", "delete");
     try {
       const r = await api.delete("/tenants/me/integrations/stripe");
@@ -285,8 +310,7 @@ function MessagingCard({
 
   const remove = async () => {
     if (!connectedRow?.provider_key) return;
-    if (typeof window !== "undefined" && window.confirm
-        && !window.confirm(`Disconnect ${connectedRow.provider_key}? Your saved credentials will be permanently removed.`)) return;
+    if (!(await _confirmDisconnect(connectedRow.provider_key))) return;
     setBusyFor(kind, "delete");
     try {
       const r = await api.delete(`/tenants/me/integrations/${connectedRow.provider_key}`);
@@ -472,8 +496,7 @@ function AICard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
   };
 
   const remove = async () => {
-    if (typeof window !== "undefined" && window.confirm
-        && !window.confirm(`Disconnect ${label}? Your saved credentials will be permanently removed.`)) return;
+    if (!(await _confirmDisconnect(label))) return;
     setBusyFor(busyKey, "delete");
     try {
       const r = await api.delete(`/tenants/me/integrations/${providerKey}`);
@@ -717,8 +740,7 @@ function MapsCard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
   };
 
   const remove = async () => {
-    if (typeof window !== "undefined" && window.confirm
-        && !window.confirm(`Disconnect ${label}? Your saved credentials will be permanently removed.`)) return;
+    if (!(await _confirmDisconnect(label))) return;
     setBusyFor(busyKey, "delete");
     try {
       const r = await api.delete(`/tenants/me/integrations/${providerKey}`);
@@ -890,13 +912,301 @@ function MapsCard({ schema, row, usage, canWrite, busy, setBusyFor, reload }) {
 
 
 /** ————————————————————————————————————————————————————————————
+ *  Phase I1.7.c.3 · Feb-2026 — Per-technician Calendars BYO card.
+ *
+ *  Unlike SMS / Email / AI / Maps (tenant-level API key), a Calendar
+ *  connection is per-technician OAuth. The card therefore shows:
+ *   • A cap input (monthly sync-op cap · same semantics as Maps).
+ *   • A "Connect …" launcher per technician + Disconnect action.
+ *   • A per-technician list of currently-connected accounts.
+ *  ———————————————————————————————————————————————————————————— */
+function CalendarsCard({
+  schema, usage, links, technicians,
+  canWrite, busy, setBusyFor, reload,
+}) {
+  const providerKey = schema.provider_key;
+  const shortName = (CALENDARS_PROVIDER_LABELS[providerKey] || {}).short || providerKey;
+  const label = (CALENDARS_PROVIDER_LABELS[providerKey] || {}).label || providerKey;
+  const desc = (CALENDARS_PROVIDER_LABELS[providerKey] || {}).desc || "";
+
+  const busyKey = providerKey;
+  const [capInput, setCapInput] = useState(
+    usage?.monthly_sync_op_cap == null ? "" : String(usage.monthly_sync_op_cap),
+  );
+  const [selectedTech, setSelectedTech] = useState(
+    (technicians && technicians[0]?.id) || "",
+  );
+  useEffect(() => {
+    if (usage?.monthly_sync_op_cap != null) {
+      setCapInput(String(usage.monthly_sync_op_cap));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usage?.monthly_sync_op_cap]);
+  useEffect(() => {
+    if (!selectedTech && technicians && technicians[0]?.id) {
+      setSelectedTech(technicians[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [technicians?.length]);
+
+  const connectedForProvider = (links || []).filter(
+    (l) => l.provider_key === providerKey && l.connected,
+  );
+  const isConnected = connectedForProvider.length > 0;
+  const stateLabel = isConnected
+    ? `${connectedForProvider.length} technician${connectedForProvider.length === 1 ? "" : "s"} connected`
+    : "No technicians connected";
+
+  const saveCap = async () => {
+    setBusyFor(busyKey, "save");
+    try {
+      const body = {
+        config: {},
+        monthly_sync_op_cap: capInput === "" ? null : Number(capInput),
+      };
+      const r = await api.put(`/tenants/me/integrations/${providerKey}`, body);
+      if (r?.saved) toast.success(`${label} cap saved.`);
+      await reload();
+    } catch (e) {
+      toast.error(e?.message || `${label} save failed`);
+    } finally { setBusyFor(busyKey, null); }
+  };
+
+  const connect = async () => {
+    if (!selectedTech) {
+      toast.error("Pick a technician first.");
+      return;
+    }
+    setBusyFor(busyKey, "connect");
+    try {
+      const r = await api.get(
+        `/tenants/me/integrations/${providerKey}/oauth/start`
+          + `?technician_user_id=${encodeURIComponent(selectedTech)}&format=json`,
+      );
+      if (r?.auth_url) {
+        // Full-page redirect so the OAuth callback bounces back with
+        // ``calendar_connect=success|error`` (absorbed by the root
+        // effect below).
+        window.location.assign(r.auth_url);
+      } else {
+        toast.error(`${label} connect failed — no auth URL returned`);
+      }
+    } catch (e) { toast.error(e?.message || `${label} connect failed`); }
+    finally { setBusyFor(busyKey, null); }
+  };
+
+  const disconnectTechnician = async (techUserId, techLabel) => {
+    if (!(await _confirmDisconnect(`${label} for ${techLabel}`))) return;
+    setBusyFor(`${busyKey}:${techUserId}`, "delete");
+    try {
+      const r = await api.post(
+        `/tenants/me/integrations/${providerKey}/disconnect`,
+        { technician_user_id: techUserId },
+      );
+      if (r?.removed) toast.success(`${label} disconnected for ${techLabel}.`);
+      else toast(`${label} was not connected for ${techLabel}.`);
+      await reload();
+    } catch (e) { toast.error(e?.message || `${label} disconnect failed`); }
+    finally { setBusyFor(`${busyKey}:${techUserId}`, null); }
+  };
+
+  const pct = usage?.pct_used ?? 0;
+  const pctDisplay = usage?.monthly_sync_op_cap == null
+    ? null
+    : Math.min(100, Math.round((pct || 0) * 100));
+  const barColor = usage?.status === "blocked" ? "#DC2626"
+    : usage?.status === "warn" ? "#F59E0B"
+    : "#16A34A";
+  const capLabel = usage?.monthly_sync_op_cap == null
+    ? "Unlimited"
+    : usage.monthly_sync_op_cap === 0
+    ? "Blocked (cap = 0)"
+    : `${(usage.total || 0).toLocaleString()} / ${usage.monthly_sync_op_cap.toLocaleString()}`;
+
+  return (
+    <div
+      className="rounded-xl p-4 flex flex-col gap-3"
+      style={{ border: `1px solid ${colors.border}` }}
+      data-testid={`tenant-integration-${providerKey}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>{label}</div>
+            <StatusPill tone={isConnected ? "connected" : "disconnected"}
+                          testid={`tenant-integration-${providerKey}-status`}>
+              {stateLabel}
+            </StatusPill>
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>{desc}</div>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1" data-testid={`tenant-integration-${providerKey}-usage`}>
+        <div className="flex items-center justify-between text-xs" style={{ color: colors.onSurfaceSecondary }}>
+          <span>Sync ops this month</span>
+          <span data-testid={`tenant-integration-${providerKey}-usage-label`}>{capLabel}</span>
+        </div>
+        <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: "#E5E7EB" }}>
+          {pctDisplay != null && (
+            <div
+              className="h-full transition-all"
+              style={{ width: `${pctDisplay}%`, backgroundColor: barColor }}
+              data-testid={`tenant-integration-${providerKey}-usage-bar`}
+            />
+          )}
+        </div>
+        {usage && (
+          <div className="text-[11px]" style={{ color: colors.onSurfaceSecondary }}
+                data-testid={`tenant-integration-${providerKey}-usage-breakdown`}>
+            push {usage.push_event || 0} · pull {usage.pull_delta || 0}
+          </div>
+        )}
+        {usage?.status === "warn" && (
+          <div className="text-[11px]" style={{ color: "#854D0E" }}
+                data-testid={`tenant-integration-${providerKey}-usage-warn`}>
+            ⚠︎ Soft warning · ≥ 80% of monthly sync-op cap consumed.
+          </div>
+        )}
+        {usage?.status === "blocked" && (
+          <div className="text-[11px]" style={{ color: "#991B1B" }}
+                data-testid={`tenant-integration-${providerKey}-usage-blocked`}>
+            ✕ Monthly sync cap reached · syncs will 429 until next month or you raise the cap.
+          </div>
+        )}
+      </div>
+
+      {/* Connected-technician list. */}
+      {connectedForProvider.length > 0 && (
+        <div className="flex flex-col gap-1"
+              data-testid={`tenant-integration-${providerKey}-technicians`}>
+          <div className="text-xs font-semibold" style={{ color: colors.onSurface }}>
+            Connected technicians
+          </div>
+          <ul className="text-xs flex flex-col gap-1">
+            {connectedForProvider.map((l) => {
+              const nm = l.technician_name || l.technician_email || l.technician_user_id;
+              const bk = `${busyKey}:${l.technician_user_id}`;
+              return (
+                <li key={l.technician_user_id}
+                    className="flex items-center justify-between gap-2 rounded-lg px-2 py-1"
+                    style={{ backgroundColor: colors.surfaceSecondary }}
+                    data-testid={`tenant-integration-${providerKey}-tech-${l.technician_user_id}`}>
+                  <span className="min-w-0 truncate" style={{ color: colors.onSurface }}>
+                    {nm}
+                    {l.connected_email && (
+                      <span style={{ color: colors.onSurfaceSecondary }}>{" "}
+                        · <span className="font-mono">{l.connected_email}</span>
+                      </span>
+                    )}
+                  </span>
+                  {canWrite && (
+                    <button
+                      onClick={() => disconnectTechnician(l.technician_user_id, nm)}
+                      disabled={!!busy[bk]}
+                      className="px-2 py-0.5 rounded text-[11px] font-semibold"
+                      style={{ backgroundColor: "#FEE2E2", color: "#991B1B",
+                                  opacity: busy[bk] ? 0.6 : 1 }}
+                      data-testid={`tenant-integration-${providerKey}-tech-${l.technician_user_id}-disconnect`}
+                    >
+                      {busy[bk] === "delete" ? "Removing…" : "Disconnect"}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {canWrite && (
+        <div className="flex flex-col gap-2">
+          <label className="text-xs flex flex-col gap-1" style={{ color: colors.onSurfaceSecondary }}>
+            <span>
+              Monthly sync-op cap
+              <span className="italic" style={{ color: colors.onSurfaceSecondary }}> · empty = unlimited · 0 = block all</span>
+            </span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={capInput}
+              onChange={(e) => setCapInput(e.target.value)}
+              placeholder="Unlimited"
+              className="rounded-lg px-2 py-1 text-sm"
+              style={{ border: `1px solid ${colors.border}`, backgroundColor: "white", color: colors.onSurface }}
+              data-testid={`tenant-integration-${providerKey}-cap-input`}
+            />
+          </label>
+
+          {technicians?.length > 0 && (
+            <label className="text-xs flex flex-col gap-1"
+                    style={{ color: colors.onSurfaceSecondary }}>
+              <span>Technician to connect</span>
+              <select
+                value={selectedTech}
+                onChange={(e) => setSelectedTech(e.target.value)}
+                className="rounded-lg px-2 py-1 text-sm"
+                style={{ border: `1px solid ${colors.border}`, backgroundColor: "white", color: colors.onSurface }}
+                data-testid={`tenant-integration-${providerKey}-tech-select`}
+              >
+                {technicians.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name || t.email || t.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <div className="flex items-center gap-2 flex-wrap mt-1">
+            <button
+              onClick={saveCap}
+              disabled={!!busy[busyKey]}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+              style={{ backgroundColor: colors.brand, opacity: busy[busyKey] ? 0.6 : 1 }}
+              data-testid={`tenant-integration-${providerKey}-save`}
+            >
+              {busy[busyKey] === "save" ? "Saving…" : "Save cap"}
+            </button>
+            <button
+              onClick={connect}
+              disabled={!!busy[busyKey] || !selectedTech}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+              style={{ backgroundColor: colors.brandSurface || "#E0F2FE",
+                        color: colors.brand,
+                        opacity: (busy[busyKey] || !selectedTech) ? 0.6 : 1 }}
+              data-testid={`tenant-integration-${providerKey}-connect`}
+            >
+              {busy[busyKey] === "connect" ? "Redirecting…" : `Connect ${label}`}
+            </button>
+          </div>
+        </div>
+      )}
+      {!canWrite && (
+        <span className="text-xs" style={{ color: colors.onSurfaceSecondary }}>
+          Ask an admin to connect this provider.
+        </span>
+      )}
+    </div>
+  );
+}
+
+
+/** ————————————————————————————————————————————————————————————
  *  Root component.
  *  ———————————————————————————————————————————————————————————— */
 export default function TenantIntegrationsCard() {
   const [rows, setRows] = useState(null);
-  const [schemas, setSchemas] = useState({ sms: [], email: [], ai: [], maps: [] });
+  const [schemas, setSchemas] = useState({ sms: [], email: [], ai: [], maps: [], calendars: [] });
   const [aiUsage, setAiUsage] = useState({});     // { openai: {...}, anthropic: {...}, gemini: {...} }
   const [mapsUsage, setMapsUsage] = useState({}); // { google: {...}, mapbox: {...} }
+  // Phase I1.7.c.3 — Calendars per-tenant usage + per-technician
+  // link summaries. ``calendarsLinks`` mirrors the shape returned by
+  // ``GET /calendars/usage.technicians``.
+  const [calendarsUsage, setCalendarsUsage] = useState({});
+  const [calendarsLinks, setCalendarsLinks] = useState([]);
+  const [technicians, setTechnicians] = useState([]);
   const [busy, setBusy] = useState({});
   const [role, setRole] = useState("manager");
 
@@ -911,11 +1221,16 @@ export default function TenantIntegrationsCard() {
 
   const load = useCallback(async () => {
     try {
-      const [listRes, schemaRes, usageRes, mapsUsageRes] = await Promise.all([
+      const [listRes, schemaRes, usageRes, mapsUsageRes, calUsageRes, techListRes] = await Promise.all([
         api.get("/tenants/me/integrations"),
         api.get("/tenants/me/integrations/schemas"),
         api.get("/tenants/me/integrations/ai/usage").catch(() => ({ providers: [] })),
         api.get("/tenants/me/integrations/maps/usage").catch(() => ({ providers: [] })),
+        api.get("/tenants/me/integrations/calendars/usage").catch(() => ({ providers: [], technicians: [] })),
+        // Best-effort — the ``/users`` endpoint 403s for non-admins,
+        // which is fine (the connect button is only rendered for
+        // admins anyway).
+        api.get("/users?role=tech").catch(() => api.get("/users").catch(() => [])),
       ]);
       const map = {};
       (listRes?.integrations || []).forEach((row) => { map[row.provider_key] = row; });
@@ -925,6 +1240,7 @@ export default function TenantIntegrationsCard() {
         email: schemaRes?.email || [],
         ai: schemaRes?.ai || [],
         maps: schemaRes?.maps || [],
+        calendars: schemaRes?.calendars || [],
       });
       const usageByShort = {};
       (usageRes?.providers || []).forEach((u) => { usageByShort[u.provider] = u; });
@@ -932,6 +1248,23 @@ export default function TenantIntegrationsCard() {
       const mapsByShort = {};
       (mapsUsageRes?.providers || []).forEach((u) => { mapsByShort[u.provider] = u; });
       setMapsUsage(mapsByShort);
+      const calByShort = {};
+      (calUsageRes?.providers || []).forEach((u) => { calByShort[u.provider] = u; });
+      setCalendarsUsage(calByShort);
+      setCalendarsLinks((calUsageRes?.technicians || []).map((t) => ({
+        ...t,
+        connected: t.connected !== false,
+      })));
+      // Normalise ``techListRes`` — the API returns a raw array or
+      // ``{items:[…]}`` depending on the tenant seed.
+      const techArr = Array.isArray(techListRes)
+        ? techListRes
+        : (techListRes?.items || techListRes?.users || []);
+      setTechnicians((techArr || []).map((t) => ({
+        id: t.id || t.user_id,
+        name: t.name || t.full_name,
+        email: t.email,
+      })).filter((t) => t.id));
     } catch (e) {
       setRows({});
       toast.error(e?.message || "Failed to load integrations");
@@ -950,7 +1283,15 @@ export default function TenantIntegrationsCard() {
         const reason = params.get("reason") || "unknown";
         toast.error(`Stripe connection failed: ${reason}`);
       }
-      if (flag) {
+      // Phase I1.7.c.3 — Calendars OAuth callback bounce.
+      const calFlag = params.get("calendar_connect");
+      const calProv = params.get("provider") || "calendar";
+      if (calFlag === "success") toast.success(`Calendar (${calProv}) connected.`);
+      else if (calFlag === "error") {
+        const err = params.get("error") || "unknown";
+        toast.error(`Calendar (${calProv}) connect failed: ${err}`);
+      }
+      if (flag || calFlag) {
         const clean = window.location.pathname + window.location.hash;
         window.history.replaceState({}, "", clean);
       }
@@ -1045,6 +1386,22 @@ export default function TenantIntegrationsCard() {
               schema={s}
               row={rows?.[s.provider_key]}
               usage={mapsUsage[short]}
+              canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
+            />
+          );
+        })}
+
+        {/* Phase I1.7.c.3 · Feb-2026 — Calendars BYO cards
+              (Google Calendar + Outlook, per-technician OAuth). */}
+        {schemas.calendars.map((s) => {
+          const short = (CALENDARS_PROVIDER_LABELS[s.provider_key] || {}).short || s.provider_key;
+          return (
+            <CalendarsCard
+              key={s.provider_key}
+              schema={s}
+              usage={calendarsUsage[short]}
+              links={calendarsLinks}
+              technicians={technicians}
               canWrite={canWrite} busy={busy} setBusyFor={setBusyFor} reload={load}
             />
           );

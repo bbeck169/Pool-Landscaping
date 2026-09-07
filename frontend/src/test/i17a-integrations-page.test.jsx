@@ -43,6 +43,20 @@ vi.mock("sonner", () => ({
 }));
 
 import TenantIntegrationsCard from "@/components/settings/TenantIntegrationsCard";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+
+
+// I1.7.c.2.followup · Feb-2026 — every ``render`` in this file must
+// live inside a ``ConfirmProvider`` so ``mustConfirm(...)`` on the
+// disconnect flows resolves to the real in-app Radix modal (not the
+// legacy ``window.confirm`` fallback). See ``useConfirmDelete.jsx``
+// for the hook variant used elsewhere; this test suite drives the
+// module-level escape hatch instead.
+const renderCard = () => render(
+  <ConfirmProvider>
+    <TenantIntegrationsCard />
+  </ConfirmProvider>,
+);
 
 
 const _seedList = (overrides = []) => ({
@@ -162,8 +176,9 @@ beforeEach(() => {
   mockToastSuccess.mockReset();
   mockToastError.mockReset();
   window.localStorage.clear();
-  // Silence window.confirm for the disconnect path.
-  vi.spyOn(window, "confirm").mockReturnValue(true);
+  // I1.7.c.2.followup · Feb-2026 — no more ``window.confirm`` spy;
+  // the disconnect flow is driven through the in-app modal via
+  // ``integrations-disconnect-confirm`` / ``-cancel`` testids.
   // JSDOM doesn't implement navigation — stub location.assign so the
   // Stripe connect redirect doesn't blow up the test.
   Object.defineProperty(window, "location", {
@@ -188,7 +203,7 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
   it("renders Stripe + coming-soon placeholders and loads the list", async () => {
     _asAdmin();
     _installListAndSchemasMock(() => _seedList());
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integrations-card")).toBeTruthy(),
     );
@@ -210,8 +225,9 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
       expect(screen.getByTestId(`tenant-integration-${k}-status`).textContent)
         .toMatch(/not connected/i);
     });
-    // Calendars / Storage remain coming-soon placeholders.
-    ["calendars", "storage"].forEach((k) => {
+    // Calendars is now a real card (I1.7.c.3 per-tech OAuth), so
+    // only "storage" remains a coming-soon placeholder in this suite.
+    ["storage"].forEach((k) => {
       expect(screen.getByTestId(`tenant-integration-${k}`)).toBeTruthy();
       expect(screen.getByTestId(`tenant-integration-${k}-status`).textContent)
         .toMatch(/coming soon/i);
@@ -223,7 +239,7 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
   it("connect-stripe hits the backend and redirects to the returned URL", async () => {
     _asAdmin();
     _installListAndSchemasMock(() => _seedList());
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-stripe-connect")).toBeTruthy(),
     );
@@ -252,7 +268,11 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
       last_error: null,
     };
     _installListAndSchemasMock(() => _seedList([connectedRow]));
-    const { container } = render(<TenantIntegrationsCard />);
+    const { container } = render(
+      <ConfirmProvider>
+        <TenantIntegrationsCard />
+      </ConfirmProvider>,
+    );
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-stripe-summary")).toBeTruthy(),
     );
@@ -278,7 +298,7 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
       message: "Stripe Account.retrieve returned OK.",
       checked_at: "2026-02-01T12:34:56Z",
     });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-stripe-test")).toBeTruthy(),
     );
@@ -300,11 +320,16 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
       connected_status: "connected", error_log_count: 0,
     }]));
     mockDelete.mockResolvedValue({ removed: true, provider_key: "stripe" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-stripe-disconnect")).toBeTruthy(),
     );
     fireEvent.click(screen.getByTestId("tenant-integration-stripe-disconnect"));
+    // I1.7.c.2.followup — must confirm through the in-app modal now.
+    await waitFor(() =>
+      expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("integrations-disconnect-confirm"));
     await waitFor(() =>
       expect(mockDelete).toHaveBeenCalledWith("/tenants/me/integrations/stripe"),
     );
@@ -313,10 +338,74 @@ describe("TenantIntegrationsCard · I1.7.a", () => {
     );
   });
 
+  // I1.7.c.2.followup · Task A · Feb-2026 — Modal interaction tests.
+  // Locks in that ``window.confirm`` is gone and the disconnect flow
+  // is now a two-step "open modal → confirm/cancel" that browser-use
+  // automation can drive by testid.
+  describe("disconnect confirmation modal · Task A", () => {
+    const _seedConnectedStripe = () => _seedList([{
+      provider_key: "stripe", connection_type: "oauth_stripe_connect",
+      connected: true, last_4: "abcd",
+      connected_account_id_masked: "acct_…1234",
+      connected_status: "connected", error_log_count: 0,
+    }]);
+
+    it("Stripe disconnect click opens the in-app modal (no window.confirm)", async () => {
+      _asAdmin();
+      _installListAndSchemasMock(_seedConnectedStripe);
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-stripe-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-stripe-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+      );
+      expect(screen.getByTestId("integrations-disconnect-cancel")).toBeTruthy();
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    it("Stripe modal · Confirm fires DELETE", async () => {
+      _asAdmin();
+      _installListAndSchemasMock(_seedConnectedStripe);
+      mockDelete.mockResolvedValue({ removed: true, provider_key: "stripe" });
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-stripe-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-stripe-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("integrations-disconnect-confirm"));
+      await waitFor(() =>
+        expect(mockDelete).toHaveBeenCalledWith("/tenants/me/integrations/stripe"),
+      );
+    });
+
+    it("Stripe modal · Cancel closes it and does NOT fire DELETE", async () => {
+      _asAdmin();
+      _installListAndSchemasMock(_seedConnectedStripe);
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-stripe-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-stripe-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-cancel")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("integrations-disconnect-cancel"));
+      await waitFor(() =>
+        expect(screen.queryByTestId("integrations-disconnect-confirm")).toBeNull(),
+      );
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+  });
+
   it("managers see the Stripe card but no write buttons", async () => {
     _asManager();
     _installListAndSchemasMock(() => _seedList());
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-stripe")).toBeTruthy(),
     );

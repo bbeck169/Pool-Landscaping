@@ -36,6 +36,14 @@ vi.mock("sonner", () => ({
 }));
 
 import TenantIntegrationsCard from "@/components/settings/TenantIntegrationsCard";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+
+
+const renderCard = () => render(
+  <ConfirmProvider>
+    <TenantIntegrationsCard />
+  </ConfirmProvider>,
+);
 
 
 const _MAPS_SCHEMAS = [
@@ -74,7 +82,7 @@ beforeEach(() => {
   mockToastSuccess.mockReset();
   mockToastError.mockReset();
   window.localStorage.clear();
-  vi.spyOn(window, "confirm").mockReturnValue(true);
+  // I1.7.c.2.followup · Feb-2026 — no more window.confirm spy.
   Object.defineProperty(window, "location", {
     configurable: true,
     value: { ...window.location, assign: vi.fn(),
@@ -93,7 +101,7 @@ describe("TenantIntegrationsCard · Maps BYO cards (I1.7.c.2)", () => {
   it("renders one Maps card per provider with the correct non-secret fields", async () => {
     _asAdmin();
     _mockRoutes([]);
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-maps_google")).toBeTruthy(),
     );
@@ -114,7 +122,7 @@ describe("TenantIntegrationsCard · Maps BYO cards (I1.7.c.2)", () => {
     _asAdmin();
     _mockRoutes([]);
     mockPut.mockResolvedValue({ saved: true, provider_key: "maps_google" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-maps_google-field-api_key")).toBeTruthy(),
     );
@@ -148,7 +156,7 @@ describe("TenantIntegrationsCard · Maps BYO cards (I1.7.c.2)", () => {
           connected: true, pct_used: 0, status: "ok" }],
     );
     mockPut.mockResolvedValue({ saved: true, provider_key: "maps_google" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-maps_google-cap-input")).toBeTruthy(),
     );
@@ -178,7 +186,7 @@ describe("TenantIntegrationsCard · Maps BYO cards (I1.7.c.2)", () => {
           monthly_request_cap: 100,
           connected: true, pct_used: 0.85, status: "warn" }],
     );
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-maps_google-usage-warn")).toBeTruthy(),
     );
@@ -201,7 +209,7 @@ describe("TenantIntegrationsCard · Maps BYO cards (I1.7.c.2)", () => {
           monthly_request_cap: 0,
           connected: true, pct_used: null, status: "blocked" }],
     );
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-maps_mapbox-usage-blocked")).toBeTruthy(),
     );
@@ -241,7 +249,7 @@ describe("TenantIntegrationsCard · Maps BYO cards (I1.7.c.2)", () => {
       return {};
     });
     mockDelete.mockResolvedValue({ removed: true, provider_key: "maps_google" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-maps_google-status").textContent)
         .toMatch(/connected/i),
@@ -249,6 +257,11 @@ describe("TenantIntegrationsCard · Maps BYO cards (I1.7.c.2)", () => {
     expect(screen.getByTestId("tenant-integration-maps_google-status").textContent)
       .not.toMatch(/not connected/i);
     fireEvent.click(screen.getByTestId("tenant-integration-maps_google-disconnect"));
+    // I1.7.c.2.followup — must confirm through the in-app modal now.
+    await waitFor(() =>
+      expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("integrations-disconnect-confirm"));
     await waitFor(() =>
       expect(mockDelete).toHaveBeenCalledWith("/tenants/me/integrations/maps_google"),
     );
@@ -263,11 +276,78 @@ describe("TenantIntegrationsCard · Maps BYO cards (I1.7.c.2)", () => {
     window.localStorage.setItem("user",
       JSON.stringify({ id: "m", role: "manager", email: "m@example.com" }));
     _mockRoutes([]);
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-maps_google")).toBeTruthy(),
     );
     expect(screen.queryByTestId("tenant-integration-maps_google-save")).toBeNull();
     expect(screen.queryByTestId("tenant-integration-maps_google-field-api_key")).toBeNull();
+  });
+
+  // I1.7.c.2.followup · Task A · Feb-2026 — Modal interaction tests
+  // for the Maps (Google) disconnect flow.
+  describe("Maps disconnect confirmation modal · Task A", () => {
+    const _connectedGoogle = [{
+      provider_key: "maps_google", connection_type: "api_key",
+      connected: true, last_4: "GOOG",
+      connected_account_id_masked: null,
+      last_used_at: "2026-02-05T12:00:00Z",
+      connected_status: "connected", error_log_count: 0,
+    }];
+    const _googleUsage = [{ provider: "google", period_yyyymm: "202602",
+      geocode: 0, route: 0, static_map: 0, total: 0,
+      monthly_request_cap: 10000,
+      connected: true, pct_used: 0, status: "ok" }];
+
+    it("Maps disconnect click opens the in-app modal (no window.confirm)", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedGoogle, _googleUsage);
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-maps_google-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-maps_google-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+      );
+      expect(screen.getByTestId("integrations-disconnect-cancel")).toBeTruthy();
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    it("Maps modal · Confirm fires DELETE", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedGoogle, _googleUsage);
+      mockDelete.mockResolvedValue({ removed: true, provider_key: "maps_google" });
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-maps_google-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-maps_google-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("integrations-disconnect-confirm"));
+      await waitFor(() =>
+        expect(mockDelete).toHaveBeenCalledWith("/tenants/me/integrations/maps_google"),
+      );
+    });
+
+    it("Maps modal · Cancel closes it and does NOT fire DELETE", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedGoogle, _googleUsage);
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-maps_google-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-maps_google-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-cancel")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("integrations-disconnect-cancel"));
+      await waitFor(() =>
+        expect(screen.queryByTestId("integrations-disconnect-confirm")).toBeNull(),
+      );
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
   });
 });

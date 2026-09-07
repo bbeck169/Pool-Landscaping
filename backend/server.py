@@ -2234,6 +2234,21 @@ async def startup():
             logger.warning(f"[Phase51a] walkie bootstrap failed: {e}")
     asyncio.create_task(_bg_phase51a_walkie_bootstrap())
 
+    # Phase I1.7.c.3 · Feb-2026 — Calendars BYO OAuth-state + link
+    # index bootstrap. Idempotent; skipped when startup-index creation
+    # is disabled (D2 boot-hardening flag). The dedicated
+    # ``services.calendars.dispatcher.ensure_indexes`` covers both
+    # ``calendar_oauth_state_consumed`` (unique + TTL) and
+    # ``technician_calendar_link`` (unique tenant/tech/provider).
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
+        from services.calendars.dispatcher import ensure_indexes as _cal_ei
+        await _cal_ei(db)
+        logger.info("[calendars-i17c3] startup ensure_indexes ok")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[calendars-i17c3] startup ensure_indexes skipped: {e}")
+
     # Feb-2026 · Task A · idempotent partial-unique-index migration on
     # ``db.jobs.(recurring_template_id, scheduled_date)``. Lazy-fires
     # from any /recurring-jobs/* handler too, but running at startup

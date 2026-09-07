@@ -133,6 +133,46 @@ from services.maps.usage import (
     remove_provider_meta as _maps_remove_provider_meta,
     upsert_provider_meta as _maps_upsert_provider_meta,
 )
+# Phase I1.7.c.3 · Feb-2026 — Tenant Calendars BYO (Google + Outlook).
+# Skip Apple/CalDAV/iCloud per phase scope. Polling-only for MVP;
+# webhooks scheduled as an I1.7.e follow-up.
+from services.calendars import (
+    CalendarProviderUsage,
+    CalendarUsageResponse,
+    InvalidCalendarProviderConfig,
+    UnknownCalendarProvider,
+    TechnicianCalendarLinkSummary,
+    get_calendar_provider,
+    get_provider_field_schemas as _cal_provider_field_schemas,
+    list_registered_calendar_provider_keys,
+    list_short_names as _cal_short_names,
+    short_name_for as _cal_short_name_for,
+    build_state_token as _cal_build_state,
+    verify_state_token as _cal_verify_state,
+    OAuthStateError as _CalOAuthStateError,
+    OAuthStateExpired as _CalOAuthStateExpired,
+    OAuthStateReplayed as _CalOAuthStateReplayed,
+    OAuthStateTampered as _CalOAuthStateTampered,
+)
+from services.calendars._helpers import (
+    current_period_yyyymm as _cal_period,
+    calendars_testmode_mock as _cal_testmode,
+)
+from services.calendars.usage import (
+    _compute_status as _cal_compute_status,
+    get_all_usage_rows as _cal_get_all_usage_rows,
+    get_provider_meta as _cal_get_provider_meta,
+    remove_provider_meta as _cal_remove_provider_meta,
+    upsert_provider_meta as _cal_upsert_provider_meta,
+)
+from services.calendars.technician_link import (
+    ensure_indexes as _cal_ensure_link_indexes,
+    upsert_link as _cal_upsert_link,
+    get_link as _cal_get_link,
+    list_links_for_tenant as _cal_list_links_for_tenant,
+    remove_link as _cal_remove_link,
+    summary_from_row as _cal_summary_from_row,
+)
 
 
 log = logging.getLogger("integrations")
@@ -183,6 +223,7 @@ _SMS_KEYS = set(list_registered_sms_provider_keys())
 _EMAIL_KEYS = set(list_registered_email_provider_keys())
 _AI_KEYS = set(list_registered_ai_provider_keys())
 _MAPS_KEYS = set(list_registered_maps_provider_keys())
+_CAL_KEYS = set(list_registered_calendar_provider_keys())
 
 
 def _kind_for(provider_key: str) -> str:
@@ -194,6 +235,8 @@ def _kind_for(provider_key: str) -> str:
         return "ai"
     if provider_key in _MAPS_KEYS:
         return "maps"
+    if provider_key in _CAL_KEYS:
+        return "calendars"
     return "payments"
 
 
@@ -208,9 +251,11 @@ def _resolve_provider(provider_key: str):
             return kind, get_ai_provider(provider_key)
         if kind == "maps":
             return kind, get_maps_provider(provider_key)
+        if kind == "calendars":
+            return kind, get_calendar_provider(provider_key)
         return kind, get_provider(provider_key)
     except (UnknownProvider, UnknownMessagingProvider, UnknownAIProvider,
-             UnknownMapsProvider):
+             UnknownMapsProvider, UnknownCalendarProvider):
         raise HTTPException(status_code=404, detail=f"unknown provider: {provider_key}")
 
 
@@ -310,6 +355,31 @@ async def delete_tenant_integration(
             await _maps_remove_provider_meta(tenant_id=tenant["id"], provider=short)
         except Exception:
             pass
+    # Phase I1.7.c.3 — Calendars: DELETE at the tenant level tears
+    # down every per-technician link AND the provider sidecar so
+    # "disconnect provider" from the settings UI wipes the whole
+    # provider footprint. Per-tech disconnect uses the dedicated
+    # /calendars_{provider}/disconnect endpoint below.
+    if _kind_for(provider_key) == "calendars":
+        short = _cal_short_name_for(provider_key) or provider_key
+        try:
+            links = await _cal_list_links_for_tenant(
+                tenant_id=tenant["id"], provider_key=provider_key,
+            )
+            for lk in links:
+                await _cal_remove_link(
+                    tenant_id=tenant["id"],
+                    technician_user_id=lk.get("technician_user_id", ""),
+                    provider_key=provider_key,
+                )
+            await _cal_remove_provider_meta(tenant_id=tenant["id"], provider=short)
+            # Signal removal even when there was no tenant-level
+            # ``tenant_secrets`` row (calendars store secrets per-tech,
+            # so the top-level ``remove_secret`` above almost always
+            # reports ``removed=False``).
+            removed = removed or bool(links)
+        except Exception:
+            pass
     return DeleteResponse(removed=removed, provider_key=provider_key)
 
 
@@ -336,6 +406,10 @@ class SaveIntegrationBody(BaseModel):
     # but the counter is request-count instead of tokens. Ignored
     # for non-Maps providers.
     monthly_request_cap: Optional[int] = None
+    # Phase I1.7.c.3 — Calendars providers only. Same semantics as
+    # above; counter is sync-op count (push_event + pull_delta) instead
+    # of tokens / requests. Ignored for non-Calendars providers.
+    monthly_sync_op_cap: Optional[int] = None
 
 
 class SaveIntegrationResponse(BaseModel):
@@ -525,6 +599,46 @@ async def save_tenant_integration(
             provider_key=provider_key, saved=True,
             connected_account_id_masked=None,
         )
+    if kind == "calendars":
+        # I1.7.c.3 — Calendars are per-technician OAuth. The
+        # ``PUT /calendars_{provider}`` endpoint only persists tenant-
+        # level cap + non-secret extras (e.g. default_calendar_id) —
+        # the OAuth tokens are stored per-tech via /oauth/callback.
+        _, cal_provider = _resolve_provider(provider_key)
+        schema = getattr(cal_provider, "config_fields", {}) or {}
+        cap = body.monthly_sync_op_cap
+        if cap is not None:
+            try:
+                cap = int(cap)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="monthly_sync_op_cap must be an integer or null",
+                )
+            if cap < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="monthly_sync_op_cap must be >= 0 (null = unlimited, 0 = block all)",
+                )
+        short = _cal_short_name_for(provider_key) or provider_key
+        # Non-secret extras from the incoming config (default_calendar_id, …).
+        extras: Dict[str, Any] = {}
+        for name, meta in (schema or {}).items():
+            if meta.get("secret"):
+                continue
+            if name == "monthly_sync_op_cap":
+                continue
+            v = (body.config or {}).get(name)
+            if v is not None:
+                extras[name] = v
+        await _cal_upsert_provider_meta(
+            tenant_id=tenant["id"], provider=short,
+            monthly_sync_op_cap=cap, extras=extras,
+        )
+        return SaveIntegrationResponse(
+            provider_key=provider_key, saved=True,
+            connected_account_id_masked=None,
+        )
     if kind not in ("sms", "email"):
         # Every non-messaging key ends up here. ``stripe`` (payment
         # provider) uses OAuth; everything else is unknown.
@@ -600,6 +714,7 @@ class ProviderSchemasResponse(BaseModel):
     email: List[ProviderSchema]
     ai: List[ProviderSchema] = []
     maps: List[ProviderSchema] = []
+    calendars: List[ProviderSchema] = []
 
 
 def _to_field_entries(fields: Dict[str, Dict[str, Any]]) -> List[ProviderFieldSchemaEntry]:
@@ -648,9 +763,15 @@ async def integrations_schemas(
                           fields=_to_field_entries(v))
         for k, v in _maps_provider_field_schemas().items()
     ]
+    cal_schemas = [
+        ProviderSchema(provider_key=k, kind="calendars",
+                          fields=_to_field_entries(v))
+        for k, v in _cal_provider_field_schemas().items()
+    ]
     return ProviderSchemasResponse(
         sms=sms_schemas, email=email_schemas,
         ai=ai_schemas, maps=maps_schemas,
+        calendars=cal_schemas,
     )
 
 
@@ -767,6 +888,306 @@ async def get_tenant_maps_usage(
             status=_maps_compute_status(used=used, cap=cap),
         ))
     return MapsUsageResponse(tenant_id=tid, period_yyyymm=period, providers=out)
+
+
+# ── Phase I1.7.c.3 · Calendars BYO (Google Calendar + Outlook) ──
+# All routes here are per-technician OAuth flows. Cap semantics
+# match AI/Maps (null=unlimited, 0=block, >0=hard-block at >=cap,
+# warn at 80%). Counters: push_event, pull_delta, total.
+
+def _cal_settle_frontend_url(status_str: str, provider_short: str,
+                              technician_user_id: str, error: str = "") -> str:
+    """Compose the callback-completion redirect URL. Uses
+    ``APP_PUBLIC_URL`` if set, otherwise a same-origin path so the
+    preview environment stays inside the ingress."""
+    base = (os.environ.get("APP_PUBLIC_URL") or "").strip().rstrip("/")
+    path = (f"/settings/integrations?calendar_connect={status_str}"
+            f"&provider={provider_short}"
+            f"&technician_user_id={technician_user_id}")
+    if error:
+        # Never echo the raw exception message — surface a bucket.
+        path += f"&error={error}"
+    return f"{base}{path}" if base else path
+
+
+def _cal_require_start_role(
+    *, user: Dict[str, Any], technician_user_id: str,
+) -> None:
+    """super/admin can start OAuth for any technician in their tenant.
+    A technician can start OAuth for themselves (self-service).
+    Everyone else → 403."""
+    role = user.get("role")
+    if role in ("super_admin", "admin"):
+        return
+    if user.get("id") == technician_user_id:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="only admins can initiate OAuth for other technicians",
+    )
+
+
+class CalendarsUsageAndLinksResponse(BaseModel):
+    tenant_id: str
+    period_yyyymm: str
+    providers: List[CalendarProviderUsage]
+    technicians: List[TechnicianCalendarLinkSummary]
+
+
+class OAuthStartResponse(BaseModel):
+    """Returned by the JSON variant of /oauth/start (browsers usually
+    hit the 302 variant below; SPAs / tests can grab the URL here)."""
+    provider_key: str
+    provider: str
+    technician_user_id: str
+    auth_url: str
+    state: str
+
+
+class CalendarDisconnectBody(BaseModel):
+    technician_user_id: str
+
+
+# ── GET /tenants/me/integrations/calendars_{provider}/oauth/start ─
+@router.get(
+    "/tenants/me/integrations/calendars_{provider_short}/oauth/start",
+    operation_id="tenants.integrations.calendars.oauth.start",
+)
+async def calendars_oauth_start(
+    provider_short: str,
+    technician_user_id: str = Query(..., min_length=1),
+    format: str = Query(
+        "redirect",
+        pattern="^(redirect|json)$",
+        description="``redirect`` returns 302 to the provider auth URL. "
+                    "``json`` returns the URL as JSON.",
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    provider_key = f"calendars_{provider_short}"
+    if provider_key not in _CAL_KEYS:
+        raise HTTPException(status_code=404,
+                             detail=f"unknown calendars provider: {provider_short}")
+    _cal_require_start_role(user=user, technician_user_id=technician_user_id)
+    provider = get_calendar_provider(provider_key)
+    state = _cal_build_state(
+        tenant_id=tenant["id"],
+        technician_user_id=technician_user_id,
+        provider_short=provider_short,
+    )
+    try:
+        auth_url = provider.build_auth_url(state=state)
+    except InvalidCalendarProviderConfig as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    if format == "json":
+        return OAuthStartResponse(
+            provider_key=provider_key,
+            provider=provider_short,
+            technician_user_id=technician_user_id,
+            auth_url=auth_url,
+            state=state,
+        )
+    return RedirectResponse(url=auth_url, status_code=302)
+
+
+# ── GET /tenants/me/integrations/calendars_{provider}/oauth/callback
+# Public — the OAuth provider hits this. Role gating is enforced
+# via the signed state token (bound to tenant + technician + provider).
+@router.get(
+    "/tenants/me/integrations/calendars_{provider_short}/oauth/callback",
+    operation_id="tenants.integrations.calendars.oauth.callback",
+)
+async def calendars_oauth_callback(
+    provider_short: str,
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+):
+    provider_key = f"calendars_{provider_short}"
+    if provider_key not in _CAL_KEYS:
+        raise HTTPException(status_code=404,
+                             detail=f"unknown calendars provider: {provider_short}")
+    if error:
+        return RedirectResponse(url=_cal_settle_frontend_url(
+            "error", provider_short, "unknown", error="provider_error"), status_code=302)
+    if not code or not state:
+        return RedirectResponse(url=_cal_settle_frontend_url(
+            "error", provider_short, "unknown", error="missing_params"), status_code=302)
+    try:
+        payload = await _cal_verify_state(state, expect_provider_short=provider_short)
+    except _CalOAuthStateExpired:
+        return RedirectResponse(url=_cal_settle_frontend_url(
+            "error", provider_short, "unknown", error="state_expired"), status_code=302)
+    except _CalOAuthStateReplayed:
+        return RedirectResponse(url=_cal_settle_frontend_url(
+            "error", provider_short, "unknown", error="state_replayed"), status_code=302)
+    except _CalOAuthStateTampered:
+        return RedirectResponse(url=_cal_settle_frontend_url(
+            "error", provider_short, "unknown", error="state_invalid"), status_code=302)
+    except _CalOAuthStateError:
+        return RedirectResponse(url=_cal_settle_frontend_url(
+            "error", provider_short, "unknown", error="state_invalid"), status_code=302)
+    tenant_id = payload["t"]
+    technician_user_id = payload["u"]
+    provider = get_calendar_provider(provider_key)
+    try:
+        tokens = await provider.exchange_code(code=code)
+    except InvalidCalendarProviderConfig as e:
+        log.warning("[calendars] exchange_code config error: %s", e)
+        return RedirectResponse(url=_cal_settle_frontend_url(
+            "error", provider_short, technician_user_id,
+            error="config_missing"), status_code=302)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[calendars] exchange_code failed: %s", e)
+        return RedirectResponse(url=_cal_settle_frontend_url(
+            "error", provider_short, technician_user_id,
+            error="exchange_failed"), status_code=302)
+    await _cal_upsert_link(
+        tenant_id=tenant_id,
+        technician_user_id=technician_user_id,
+        provider_key=provider_key,
+        provider=provider_short,
+        tokens=tokens,
+        connected_email=tokens.get("connected_email"),
+        calendar_id=tokens.get("calendar_id"),
+    )
+    # Ensure the provider metadata sidecar row exists (cap=None so
+    # the account starts as UNLIMITED until admin sets a value).
+    try:
+        existing = await _cal_get_provider_meta(
+            tenant_id=tenant_id, provider=provider_short,
+        )
+        if not existing:
+            await _cal_upsert_provider_meta(
+                tenant_id=tenant_id, provider=provider_short,
+                monthly_sync_op_cap=None,
+            )
+    except Exception:
+        pass
+    return RedirectResponse(url=_cal_settle_frontend_url(
+        "success", provider_short, technician_user_id), status_code=302)
+
+
+# ── POST /tenants/me/integrations/calendars_{provider}/disconnect ─
+# Per-technician disconnect. Body: {technician_user_id: "..."}.
+@router.post(
+    "/tenants/me/integrations/calendars_{provider_short}/disconnect",
+    response_model=DeleteResponse,
+    operation_id="tenants.integrations.calendars.disconnect",
+)
+async def calendars_disconnect_technician(
+    provider_short: str,
+    body: CalendarDisconnectBody,
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    provider_key = f"calendars_{provider_short}"
+    if provider_key not in _CAL_KEYS:
+        raise HTTPException(status_code=404,
+                             detail=f"unknown calendars provider: {provider_short}")
+    # Same role rules as /oauth/start — admin can disconnect anyone;
+    # a technician can disconnect themselves.
+    _cal_require_start_role(user=user, technician_user_id=body.technician_user_id)
+    removed = await _cal_remove_link(
+        tenant_id=tenant["id"],
+        technician_user_id=body.technician_user_id,
+        provider_key=provider_key,
+    )
+    return DeleteResponse(removed=removed, provider_key=provider_key)
+
+
+# ── GET /tenants/me/integrations/calendars/usage ────────────────
+@router.get(
+    "/tenants/me/integrations/calendars/usage",
+    response_model=CalendarsUsageAndLinksResponse,
+    operation_id="tenants.integrations.calendars.usage",
+)
+async def get_tenant_calendars_usage(
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_read_role(user)
+    tid = tenant["id"]
+    period = _cal_period()
+
+    providers_present = set()
+    metas: Dict[str, Dict[str, Any]] = {}
+    for short in _cal_short_names():
+        m = await _cal_get_provider_meta(tenant_id=tid, provider=short)
+        if m:
+            providers_present.add(short)
+            metas[short] = m
+    usage_rows = await _cal_get_all_usage_rows(tenant_id=tid, period_yyyymm=period)
+    usage_by_short: Dict[str, Dict[str, Any]] = {
+        r["provider"]: r for r in usage_rows if r.get("provider")
+    }
+    providers_present.update(usage_by_short.keys())
+    # Count connected technicians per provider (from technician_link).
+    links = await _cal_list_links_for_tenant(tenant_id=tid)
+    conn_counts: Dict[str, int] = {}
+    for lk in links:
+        conn_counts[lk.get("provider", "")] = conn_counts.get(lk.get("provider", ""), 0) + 1
+        providers_present.add(lk.get("provider", ""))
+    providers_out: List[CalendarProviderUsage] = []
+    for short in sorted(x for x in providers_present if x):
+        meta = metas.get(short) or {}
+        usage = usage_by_short.get(short) or {}
+        cap_raw = meta.get("monthly_sync_op_cap")
+        cap = int(cap_raw) if cap_raw is not None else None
+        used = int(usage.get("total", 0) or 0)
+        pct = None
+        if cap is not None and cap > 0:
+            pct = round(used / cap, 4)
+        providers_out.append(CalendarProviderUsage(
+            provider=short,
+            period_yyyymm=period,
+            push_event=int(usage.get("push_event", 0) or 0),
+            pull_delta=int(usage.get("pull_delta", 0) or 0),
+            total=used,
+            monthly_sync_op_cap=cap,
+            connected_technicians=int(conn_counts.get(short, 0)),
+            pct_used=pct,
+            status=_cal_compute_status(used=used, cap=cap),
+        ))
+    # Per-technician link summaries (safe — no tokens).
+    #
+    # Enrich with technician display name / email when available so
+    # the frontend card can show "Carlos M. <carlos@…>" instead of a
+    # bare uuid.
+    tech_summaries: List[TechnicianCalendarLinkSummary] = []
+    if links:
+        tech_ids = [lk.get("technician_user_id") for lk in links if lk.get("technician_user_id")]
+        users_by_id: Dict[str, Dict[str, Any]] = {}
+        if tech_ids:
+            async for u in db.users.find(
+                {"id": {"$in": tech_ids}, "tenant_id": tid},
+                {"_id": 0, "id": 1, "name": 1, "email": 1},
+            ):
+                users_by_id[u.get("id", "")] = u
+        for lk in links:
+            u = users_by_id.get(lk.get("technician_user_id", "")) or {}
+            tech_summaries.append(_cal_summary_from_row(
+                lk,
+                technician_name=u.get("name"),
+                technician_email=u.get("email"),
+            ))
+    return CalendarsUsageAndLinksResponse(
+        tenant_id=tid, period_yyyymm=period,
+        providers=providers_out, technicians=tech_summaries,
+    )
+
+
+# ── Boot: ensure Calendar OAuth state indexes exist ─────────────
+# The router module is imported at server-startup; the ensure_indexes
+# helper is idempotent so repeated boots are cheap. Wrapped in a
+# ``try`` so a Mongo hiccup can't wedge FastAPI import.
+async def _cal_boot_indexes() -> None:  # pragma: no cover — boot-time only
+    try:
+        from services.calendars.dispatcher import ensure_indexes as _ei
+        await _ei(db)
+    except Exception as e:
+        log.warning("[calendars] boot ensure_indexes failed: %s", e)
 
 
 # ── GET /integrations/stripe/connect-link ────────────────────────

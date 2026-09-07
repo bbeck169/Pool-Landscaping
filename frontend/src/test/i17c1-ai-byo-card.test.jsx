@@ -39,6 +39,14 @@ vi.mock("sonner", () => ({
 }));
 
 import TenantIntegrationsCard from "@/components/settings/TenantIntegrationsCard";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+
+
+const renderCard = () => render(
+  <ConfirmProvider>
+    <TenantIntegrationsCard />
+  </ConfirmProvider>,
+);
 
 
 const _AI_SCHEMAS = [
@@ -81,7 +89,7 @@ beforeEach(() => {
   mockToastSuccess.mockReset();
   mockToastError.mockReset();
   window.localStorage.clear();
-  vi.spyOn(window, "confirm").mockReturnValue(true);
+  // I1.7.c.2.followup · Feb-2026 — no more window.confirm spy.
   Object.defineProperty(window, "location", {
     configurable: true,
     value: { ...window.location, assign: vi.fn(),
@@ -100,7 +108,7 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
   it("renders one AI card per provider with model dropdown", async () => {
     _asAdmin();
     _mockRoutes([]);
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-ai_openai")).toBeTruthy(),
     );
@@ -121,7 +129,7 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
     _mockRoutes([]);
     mockPut.mockResolvedValue({ saved: true, provider_key: "ai_openai",
       connected_account_id_masked: null });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-ai_openai-field-api_key")).toBeTruthy(),
     );
@@ -146,7 +154,7 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
     _asAdmin();
     _mockRoutes([]);
     mockPut.mockResolvedValue({ saved: true, provider_key: "ai_anthropic" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-ai_anthropic-field-api_key")).toBeTruthy(),
     );
@@ -165,7 +173,7 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
     _asAdmin();
     _mockRoutes([]);
     mockPut.mockResolvedValue({ saved: true, provider_key: "ai_gemini" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-ai_gemini-field-api_key")).toBeTruthy(),
     );
@@ -195,7 +203,7 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
           monthly_token_cap: 1000, default_model: "gpt-4o-mini",
           connected: true, pct_used: 0.9, status: "warn" }],
     );
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-ai_openai-summary")).toBeTruthy(),
     );
@@ -221,7 +229,7 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
           monthly_token_cap: 0, default_model: "gemini-1.5-flash",
           connected: true, pct_used: null, status: "blocked" }],
     );
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-ai_gemini-usage-blocked")).toBeTruthy(),
     );
@@ -233,7 +241,7 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
     window.localStorage.setItem("user",
       JSON.stringify({ id: "m", role: "manager", email: "m@example.com" }));
     _mockRoutes([]);
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-ai_openai")).toBeTruthy(),
     );
@@ -261,7 +269,7 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
           connected: true, pct_used: 0, status: "ok" }],
     );
     mockPut.mockResolvedValue({ saved: true, provider_key: "ai_openai" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-ai_openai-cap-input")).toBeTruthy(),
     );
@@ -313,7 +321,7 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
       return {};
     });
     mockDelete.mockResolvedValue({ removed: true, provider_key: "ai_openai" });
-    render(<TenantIntegrationsCard />);
+    renderCard();
     await waitFor(() =>
       expect(screen.getByTestId("tenant-integration-ai_openai-status").textContent)
         .toMatch(/connected/i),
@@ -322,6 +330,11 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
     expect(screen.getByTestId("tenant-integration-ai_openai-status").textContent)
       .not.toMatch(/not connected/i);
     fireEvent.click(screen.getByTestId("tenant-integration-ai_openai-disconnect"));
+    // I1.7.c.2.followup — must confirm through the in-app modal now.
+    await waitFor(() =>
+      expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("integrations-disconnect-confirm"));
     await waitFor(() =>
       expect(mockDelete).toHaveBeenCalledWith("/tenants/me/integrations/ai_openai"),
     );
@@ -332,5 +345,72 @@ describe("TenantIntegrationsCard · AI BYO cards (I1.7.c.1)", () => {
     );
     // Disconnect button must be gone (unconnected UI).
     expect(screen.queryByTestId("tenant-integration-ai_openai-disconnect")).toBeNull();
+  });
+
+  // I1.7.c.2.followup · Task A · Feb-2026 — Modal interaction tests
+  // for the AI (OpenAI) disconnect flow.
+  describe("AI disconnect confirmation modal · Task A", () => {
+    const _connectedOpenAi = [{
+      provider_key: "ai_openai", connection_type: "api_key",
+      connected: true, last_4: "XY99",
+      connected_account_id_masked: null,
+      last_used_at: "2026-02-05T12:00:00Z",
+      connected_status: "connected", error_log_count: 0,
+    }];
+    const _openAiUsage = [{ provider: "openai", period_yyyymm: "202602",
+      tokens_prompt: 0, tokens_completion: 0, tokens_total: 0,
+      monthly_token_cap: 10000, default_model: "gpt-4o-mini",
+      connected: true, pct_used: 0, status: "ok" }];
+
+    it("AI disconnect click opens the in-app modal (no window.confirm)", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedOpenAi, _openAiUsage);
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-ai_openai-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-ai_openai-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+      );
+      expect(screen.getByTestId("integrations-disconnect-cancel")).toBeTruthy();
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    it("AI modal · Confirm fires DELETE", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedOpenAi, _openAiUsage);
+      mockDelete.mockResolvedValue({ removed: true, provider_key: "ai_openai" });
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-ai_openai-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-ai_openai-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-confirm")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("integrations-disconnect-confirm"));
+      await waitFor(() =>
+        expect(mockDelete).toHaveBeenCalledWith("/tenants/me/integrations/ai_openai"),
+      );
+    });
+
+    it("AI modal · Cancel closes it and does NOT fire DELETE", async () => {
+      _asAdmin();
+      _mockRoutes(_connectedOpenAi, _openAiUsage);
+      renderCard();
+      await waitFor(() =>
+        expect(screen.getByTestId("tenant-integration-ai_openai-disconnect")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("tenant-integration-ai_openai-disconnect"));
+      await waitFor(() =>
+        expect(screen.getByTestId("integrations-disconnect-cancel")).toBeTruthy(),
+      );
+      fireEvent.click(screen.getByTestId("integrations-disconnect-cancel"));
+      await waitFor(() =>
+        expect(screen.queryByTestId("integrations-disconnect-confirm")).toBeNull(),
+      );
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
   });
 });
