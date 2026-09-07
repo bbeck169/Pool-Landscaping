@@ -87,17 +87,25 @@ _RAW: Dict[str, Dict[str, Any]] = {
     # Default = combined pool_landscape (existing look — navy shell +
     # green brand accent). Any existing tenant with no theme reads
     # this from GET without an auto-write.
+    #
+    # I1.5.c.fix · Feb-2026 — menu.bg / rail.bg / accents.secondary
+    # anchored to the K64/K74 signature navy ``#1B1F5C`` (was
+    # ``#0f172a``) so the overlay ``[data-testid="admin-topbar"]``
+    # and ``[data-k74-solid-navy-*]`` rules paint pixel-identically
+    # to the pre-I1.5 shell on tenants that never PUT a theme.
+    # ``accents.badge_bg`` anchored to the K74.1 mint ``#EAF7F0``
+    # for the same reason on schedule tiles.
     "default": _p(
-        menu_bg="#0f172a", button_bg="#166534",
-        accent_primary="#166534", accent_secondary="#0f172a",
-        accent_link="#0f172a", accent_focus="#166534",
-        accent_badge_bg="#dcfce7", accent_badge_text="#14532d",
+        menu_bg="#1B1F5C", button_bg="#166534",
+        accent_primary="#166534", accent_secondary="#1B1F5C",
+        accent_link="#1B1F5C", accent_focus="#166534",
+        accent_badge_bg="#EAF7F0", accent_badge_text="#14532d",
     ),
     "pool_landscape": _p(
-        menu_bg="#0f172a", button_bg="#166534",
-        accent_primary="#166534", accent_secondary="#0f172a",
-        accent_link="#0f172a", accent_focus="#166534",
-        accent_badge_bg="#dcfce7", accent_badge_text="#14532d",
+        menu_bg="#1B1F5C", button_bg="#166534",
+        accent_primary="#166534", accent_secondary="#1B1F5C",
+        accent_link="#1B1F5C", accent_focus="#166534",
+        accent_badge_bg="#EAF7F0", accent_badge_text="#14532d",
     ),
     "pool": _p(
         menu_bg="#155e75", button_bg="#0e7490",

@@ -160,18 +160,43 @@ input.reorder-num-input {
  * already there. No React changes required.
  * ══════════════════════════════════════════════════════════════ */
 
-/* K74 · dashboard KPI chip + reports built-tile → tenant.tiles.bg */
+/* K74 · dashboard KPI identity chip + reports 'coming soon' tile.
+ * I1.5.c.fix · Feb-2026 — retargeted from ``--tenant-tiles-bg``
+ * (which regressed to #FFFFFF under every 31-preset default and
+ * turned the K74 signature chip white) to ``--tenant-k74-identity``
+ * — a derived surface var sourced from ``accents.secondary`` so
+ * the chip follows the tenant's dark brand shade (default preset
+ * pins accents.secondary → #1B1F5C so pre-refactor pixels are
+ * preserved). */
 [data-k74-solid-navy-chip="true"],
 [data-k74-solid-navy-tile="true"] {
-    background-color: var(--tenant-tiles-bg, #1B1F5C) !important;
+    background-color: var(--tenant-k74-identity, #1B1F5C) !important;
 }
 
-/* K74.1 · schedule tile bg (if present) → tenant.tiles.bg */
-[data-k74-1-schedule-tile="true"] {
-    background-color: var(--tenant-tiles-bg, #1B1F5C) !important;
+/* K74.1 · schedule "open/scheduled" tile mint bg.
+ * The K50 job-status map still returns exact hex from
+ * ``jobStatusColor()`` — the ``data-k50-bg`` attribute carries
+ * the resolved hex, so we target the mint variant specifically.
+ * ``--tenant-schedule-tile-bg`` is a derived surface var (sourced
+ * from ``accents.badge_bg``) so tenants who apply salon/spa/etc.
+ * see schedule tiles shift along with their pastel accent.
+ * Default preset pins accents.badge_bg → #EAF7F0 so K50/K74.1
+ * regression pixels are preserved. */
+[data-k50-bg="#EAF7F0"] {
+    background-color: var(--tenant-schedule-tile-bg, #EAF7F0) !important;
 }
 
-/* K75 · top-nav active state → tenant.menu.bg */
+/* K75 · top-nav BAR background — reads tenant.menu.bg.
+ * I1.5.c.fix · Feb-2026 — was missing entirely; the K75 active
+ * chip rule below only covered the active-item chip, not the
+ * top-bar itself, so menu.bg edits never reached the surface. */
+[data-testid="admin-topbar"],
+[data-testid="admin-topbar-narrow-wrap"],
+[data-testid="admin-topbar-wide-wrap"] {
+    background-color: var(--tenant-menu-bg, #1B1F5C) !important;
+}
+
+/* K75 · top-nav active state chip → tenant.menu.bg (retained). */
 [data-k75-nav-active="true"] {
     background-color: var(--tenant-menu-bg, #303AA0) !important;
 }

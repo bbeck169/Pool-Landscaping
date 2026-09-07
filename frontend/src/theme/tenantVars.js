@@ -62,6 +62,28 @@ export const TENANT_VAR_SPEC = [
 ];
 
 
+// ── I1.5.c.fix · Feb-2026 — derived surface vars ────────────────
+// These are NOT full preset slots (yet) — they're semantic aliases
+// derived from an existing slot at ``writeTenantCssVars`` time so
+// specific surfaces can reskin along with the tenant's brand
+// without adding new preset fields. Contract:
+//
+//   * ``--tenant-k74-identity``      ← ``accents.secondary``
+//     The K74 "solid navy identity chip" (Dashboard KPI icon chip,
+//     Reports 'coming soon' tile). Follows the tenant's dark
+//     brand shade — default preset re-pins to ``#1B1F5C`` so
+//     existing K64/K74 pixels are preserved on tenants with no
+//     theme.
+//   * ``--tenant-schedule-tile-bg``  ← ``accents.badge_bg``
+//     The K74.1 mint schedule-tile bg (Today's Schedule list).
+//     Follows the tenant's pastel accent — default preset re-pins
+//     to ``#EAF7F0`` for the same reason.
+const DERIVED_SURFACE_VARS = [
+  { name: "k74-identity",      from: "accents.secondary", kind: "solid" },
+  { name: "schedule-tile-bg",  from: "accents.badge_bg",  kind: "solid" },
+];
+
+
 // ── Default backstops — used when the API + provider aren't up ──
 // Keys mirror the ``TENANT_VAR_SPEC`` ``name`` slugs. Values are
 // the historical hardcoded defaults these surfaces render with
@@ -136,11 +158,21 @@ export function writeTenantCssVars(el, theme) {
       if (css) el.style.setProperty(`--tenant-${spec.name}-css`, css);
     }
   }
+  // I1.5.c.fix — derived surface vars (K74 identity, K74.1 schedule
+  // tile bg). Sourced from an existing slot at write-time so no new
+  // preset fields are required.
+  for (const der of DERIVED_SURFACE_VARS) {
+    const slot = _getSlot(theme, der.from);
+    if (!slot) continue;
+    const solid = slot.mode === "solid" ? slot.solid : null;
+    if (solid) el.style.setProperty(`--tenant-${der.name}`, solid);
+  }
 }
 
 
 /** Remove every tenant CSS var (used on sign-out).
- *  Also clears any residual ``-css`` variants. */
+ *  Also clears any residual ``-css`` variants + derived surface
+ *  vars introduced in I1.5.c.fix. */
 export function clearTenantCssVars(el) {
   if (!el) return;
   for (const spec of TENANT_VAR_SPEC) {
@@ -148,6 +180,9 @@ export function clearTenantCssVars(el) {
     if (spec.kind === "fill") {
       el.style.removeProperty(`--tenant-${spec.name}-css`);
     }
+  }
+  for (const der of DERIVED_SURFACE_VARS) {
+    el.style.removeProperty(`--tenant-${der.name}`);
   }
 }
 

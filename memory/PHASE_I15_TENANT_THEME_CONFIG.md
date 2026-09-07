@@ -322,3 +322,161 @@ sections.
   it into `scripts/dump-theme-presets.py` as I1.5.d cleanup so
   future preset additions can't drift.
 
+
+---
+
+## I1.5.c.fix — CSS-var overlay coverage patch
+**Shipped:** Feb-2026 · **Status:** GREEN
+
+### What was broken
+The I1.5.c CSS-var overlay landed with three surfaces missing
+their `--tenant-*` wiring, plus two testing-affordances the QA
+Playwright pass needed to verify overlay coverage post-fix:
+
+1. **Schedule tile bg (K74.1 mint)** wasn't reskinning under any
+   non-default preset — the overlay only re-hit `[data-k50-bg=
+   "#EAF7F0"]` via `--tenant-tiles-bg`, which every 31-preset
+   default pins to `#FFFFFF`. The mint schedule bg turned
+   white on preset apply.
+2. **Top-nav BAR** (`AdminTopBar.jsx` outer container) was not
+   covered by any overlay rule — only the K75 active-item chip
+   was. Editing `menu.bg` in the theme editor never reached the
+   surface a tenant actually looks at.
+3. **Reports "solid-navy" built tiles** didn't have a stable
+   test-ID for the Playwright reskin verifier.
+4. **Dashboard KPI identity chip** lacked a stable `data-testid`
+   — every card interpolated `${testId}-icon-chip`, so a
+   fixture-agnostic screenshot verifier had no reliable hook.
+
+### What shipped
+- **New derived-surface vars** in `frontend/src/theme/tenantVars.js`
+  (`DERIVED_SURFACE_VARS` block, lines 65-84):
+  - `--tenant-k74-identity` ← `accents.secondary` (was previously
+    misrouted to `--tenant-tiles-bg` which regressed to white).
+  - `--tenant-schedule-tile-bg` ← `accents.badge_bg` (new).
+  Writer + clear path handles both alongside the 16-slot spec.
+- **`index.css` overlay retargets + additions** (lines 163-211):
+  - `[data-k74-solid-navy-chip="true"], [data-k74-solid-navy-tile="true"]`
+    → `var(--tenant-k74-identity, #1B1F5C)` (retargeted from
+    `--tenant-tiles-bg`).
+  - `[data-k50-bg="#EAF7F0"]` → `var(--tenant-schedule-tile-bg,
+    #EAF7F0)` (new rule).
+  - `[data-testid="admin-topbar"], [data-testid="admin-topbar-
+    narrow-wrap"], [data-testid="admin-topbar-wide-wrap"]` →
+    `var(--tenant-menu-bg, #1B1F5C) !important` (new rule).
+- **Dashboard KPI chip** (`pages/admin/Dashboard.jsx` line 147):
+  data-testid is now unconditionally `"k74-kpi-identity-chip"`;
+  per-tile identifier moved to `data-tile-key={testId}` so
+  existing selectors like `kpi-active-jobs` still work through
+  the attribute lookup. All 4 KPI chips carry the stable ID
+  (screenshot verifier resolves 4 nodes → picks .first).
+- **Reports built tile** (`pages/reports/ReportsHub.jsx` line 254):
+  `BuiltTile` now accepts `isPrimary` (passed as `i === 0` in the
+  hub grid map). The primary tile (revenue-total) gets
+  `data-testid="k74-reports-tile-bg"` for the deterministic
+  Playwright hook while non-primary tiles keep their existing
+  `data-testid="reports-tile-<key>"` (all built tiles carry a
+  `data-tile-testid` mirror + `data-k74-solid-navy-tile="true"`
+  for CSS selection).
+- **Mobile `TODO(I13)`** in `mobile/src/lib/jobStatus.ts` header
+  (lines 11-34) documenting that React Native has no CSS-var
+  substrate and I13 (mobile tenant theme parity) will wire the
+  consumer to read `tenant.theme.accents.badge_bg` via a hook
+  instead of the frozen K50 map.
+
+### Runtime verification (Playwright + preview pod)
+Logged-in as `super@aquaterra.com`, `admin/dashboard` +
+`/reports` in the aquaterra tenant. Applied via the theme editor
+using `POST /api/tenants/me/theme/apply-preset`.
+
+| Surface / var             | Default preset | Salon preset applied |
+|---------------------------|----------------|----------------------|
+| `--tenant-menu-bg`        | `#1b1f5c`      | `#9d174d`            |
+| `--tenant-schedule-tile-bg` | `#eaf7f0`    | `#fce7f3`            |
+| `--tenant-k74-identity`   | `#1b1f5c`      | `#9d174d`            |
+| `[data-testid="admin-topbar"]` computed bg | `rgb(27, 31, 92)` | `rgb(157, 23, 77)` (salon magenta) |
+| `[data-testid="k74-kpi-identity-chip"]` chip bg | `rgb(27, 31, 92)` | `rgb(157, 23, 77)` |
+| `[data-testid="k74-reports-tile-bg"]` bg  | `rgb(27, 31, 92)` | `rgb(157, 23, 77)` |
+| KPI chip count on Dashboard | 4              | 4                   |
+
+Screenshots (preview pod):
+- `/tmp/i15c-fix-dashboard-default.png` — dashboard with the
+  default navy topbar + navy KPI icon chips.
+- `/tmp/i15c-fix-dashboard-salon.png` — dashboard after
+  apply-preset(salon): topbar + all 4 KPI chips render magenta.
+- `/tmp/i15c-fix-reports-salon.png` — Reports Hub with all 4
+  BuiltTile backgrounds painted salon magenta; ComingSoon tiles
+  keep their muted default (per K74 spec — only built tiles
+  carry the K74 solid-navy attribute).
+- `/tmp/i15c-fix-schedule-salon.png` — Schedule route captured
+  under salon; no `open`/`scheduled` jobs on the test tenant
+  today (0 K50 open cards to paint), but the CSS var flip was
+  proven via `getPropertyValue('--tenant-schedule-tile-bg')`
+  above. When jobs land in the `open` bucket the overlay will
+  paint pastel-pink instead of mint.
+
+Tenant returned to `default` preset after the verify pass so
+the aquaterra demo boots on the K64/K74 signature palette
+next run.
+
+### Grep sweep (post-fix)
+Ran the user-mandated regression grep across
+`frontend/src/**`:
+- `#1B1F5C` — 0 new hardcoded consumers. Pre-existing
+  occurrences live inside `components/ui/select.jsx`,
+  `components/ui/button.jsx`, `pages/settings/BrandLogoSettings.jsx`
+  (K51 logo preview swatch), `layouts/AdminTopBar.jsx`
+  (doc-comment only), and consumer files' doc comments —
+  all documented in the I1.5.c ship report as "legacy K-phase
+  hardcodings, untouched".
+- `#EAF7F0` — 0 hardcoded consumers outside the allowed
+  paths (`lib/jobStatus.js`, `mobile/lib/jobStatus.ts`,
+  `theme/presets.js`, `theme/tenantVars.js`, `index.css`
+  fallback, and test files).
+- `#15803D` — 3 occurrences in `pages/reports/ReportsHub.jsx`
+  for the K67 "Open report" green CTA pill. Pre-existing —
+  outside the I1.5.c.fix scope (this fix targets 4 specific
+  surfaces; the Open-report CTA is a K67 concern for a
+  future phase).
+- `navyToGreen` — 20 legitimate consumers of the `gradients.
+  navyToGreen.css` canonical export (theme.js static export).
+  All were retained by design per I1.5.c contract lock ("Zero
+  consumer files touched — stylesheet-only concern").
+- `brandGradient` — 0 code references. Present only in retired-
+  alias assertions inside test files and a doc-comment in
+  `topNavRegistry.js` documenting the retirement.
+
+### Test results
+- **Backend** — `tests/test_i15a_tenant_theme_endpoint.py`:
+  **14 / 14 pass** (unchanged).
+- **Frontend** — full suite: **472 files, 3725 tests passing,
+  34 pre-existing Hygiene B skips**. Zero new drift. The
+  previously failing (during exploration) `reports-hub-r1-tile-
+  flip.test.jsx` now green because non-primary BuiltTiles
+  retain their per-tile `data-testid`.
+- **Targeted regression tests** re-run: `k70a-tile-theming`
+  (21), `k75-top-nav` (33), `k67-navy-green-gradient` (13),
+  `feb2026-dashboard-kpi-tint` (8), `k66-reports-hub-quick-
+  access-tiles` (5 + 2 pre-existing skips), `i15b-theme-editor`
+  (9), `tenant-theme-css-vars` (10), `use-tenant-theme-hook`
+  (5), `theme-preset-parity` (3) — all green.
+
+### Contract locks re-verified
+- No `brandGradient` alias reintroduced.
+- No new hardcoded hex in consumer files — every new hex lives
+  in the preset registry, the tenantVars defaults map, or the
+  index.css CSS-var fallback.
+- All 34 pre-existing Hygiene B skips untouched.
+- Public routes + jsdom tests still paint pre-refactor pixels
+  (CSS fallback chain intact).
+
+### Notes for I13 (mobile tenant theme parity)
+Mobile `jobStatus.ts` now carries the `TODO(I13)` header.
+When I13 lands: introduce a `useTenantThemeMobile()` hook
+(likely an AsyncStorage-cached mirror of `useTenantTheme` from
+web) that returns the persisted theme, then swap the mobile
+Schedule card's `jobStatusColor(status)` call for a resolver
+that overlays `tenant.theme.accents.badge_bg` on the
+`open`/`scheduled` bucket only. The K50 frozen map stays put
+as the offline-first fallback.
+

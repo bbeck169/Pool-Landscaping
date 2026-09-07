@@ -144,7 +144,8 @@ function KpiCard({ icon: Icon, label, value, onClick, testId, tone }) {
           backgroundColor: colors.tile.solidNavy,
           color: "#FFFFFF",
         }}
-        data-testid={testId ? `${testId}-icon-chip` : undefined}
+        data-testid="k74-kpi-identity-chip"
+        data-tile-key={testId || ""}
         data-k74-solid-navy-chip="true"
       >
         <Icon size={20} />

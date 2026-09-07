@@ -20,7 +20,7 @@ export const CLIENT_PRESETS = {
     "menu": {
       "bg": {
         "mode": "solid",
-        "solid": "#0f172a"
+        "solid": "#1b1f5c"
       },
       "text": {
         "mode": "solid",
@@ -30,7 +30,7 @@ export const CLIENT_PRESETS = {
     "rail": {
       "bg": {
         "mode": "solid",
-        "solid": "#0f172a"
+        "solid": "#1b1f5c"
       },
       "text": {
         "mode": "solid",
@@ -68,7 +68,7 @@ export const CLIENT_PRESETS = {
       },
       "secondary": {
         "mode": "solid",
-        "solid": "#0f172a"
+        "solid": "#1b1f5c"
       },
       "text": {
         "mode": "solid",
@@ -76,7 +76,7 @@ export const CLIENT_PRESETS = {
       },
       "link": {
         "mode": "solid",
-        "solid": "#0f172a"
+        "solid": "#1b1f5c"
       },
       "focus_ring": {
         "mode": "solid",
@@ -84,7 +84,7 @@ export const CLIENT_PRESETS = {
       },
       "badge_bg": {
         "mode": "solid",
-        "solid": "#dcfce7"
+        "solid": "#eaf7f0"
       },
       "badge_text": {
         "mode": "solid",
@@ -97,7 +97,7 @@ export const CLIENT_PRESETS = {
     "menu": {
       "bg": {
         "mode": "solid",
-        "solid": "#0f172a"
+        "solid": "#1b1f5c"
       },
       "text": {
         "mode": "solid",
@@ -107,7 +107,7 @@ export const CLIENT_PRESETS = {
     "rail": {
       "bg": {
         "mode": "solid",
-        "solid": "#0f172a"
+        "solid": "#1b1f5c"
       },
       "text": {
         "mode": "solid",
@@ -145,7 +145,7 @@ export const CLIENT_PRESETS = {
       },
       "secondary": {
         "mode": "solid",
-        "solid": "#0f172a"
+        "solid": "#1b1f5c"
       },
       "text": {
         "mode": "solid",
@@ -153,7 +153,7 @@ export const CLIENT_PRESETS = {
       },
       "link": {
         "mode": "solid",
-        "solid": "#0f172a"
+        "solid": "#1b1f5c"
       },
       "focus_ring": {
         "mode": "solid",
@@ -161,7 +161,7 @@ export const CLIENT_PRESETS = {
       },
       "badge_bg": {
         "mode": "solid",
-        "solid": "#dcfce7"
+        "solid": "#eaf7f0"
       },
       "badge_text": {
         "mode": "solid",

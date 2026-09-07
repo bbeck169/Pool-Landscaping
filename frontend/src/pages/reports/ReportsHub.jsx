@@ -222,8 +222,8 @@ export default function ReportsHub() {
         className="grid grid-cols-1 md:grid-cols-3 gap-4"
         data-testid="reports-hub-grid"
       >
-        {builtTiles.map((t) => (
-          <BuiltTile key={t.key} tile={t} />
+        {builtTiles.map((t, i) => (
+          <BuiltTile key={t.key} tile={t} isPrimary={i === 0} />
         ))}
         {comingSoonTiles.map((t) => (
           <ComingSoonTile key={t.key} tile={t} />
@@ -251,7 +251,7 @@ export default function ReportsHub() {
  * ONLY the tile background changes — the page canvas is
  * untouched (per K74 spec).
  */
-function BuiltTile({ tile }) {
+function BuiltTile({ tile, isPrimary = false }) {
   const { icon: Icon, title, description, to, kpi, renderKpi, kpiSubtitle } = tile;
   const sub = kpiSubtitle ? kpiSubtitle(kpi) : null;
   const testIdRoot = `reports-tile-${tile.key}`;
@@ -264,7 +264,10 @@ function BuiltTile({ tile }) {
         border: `1px solid ${colors.border}`,
         color: "#FFFFFF",
       }}
-      data-testid={testIdRoot}
+      data-testid={isPrimary ? "k74-reports-tile-bg" : testIdRoot}
+      data-tile-key={tile.key}
+      data-tile-testid={testIdRoot}
+      data-k74-reports-tile-bg={isPrimary ? "true" : undefined}
       data-k74-solid-navy-tile="true"
     >
       <div className="flex items-start gap-3">

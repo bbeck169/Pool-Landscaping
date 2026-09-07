@@ -4,6 +4,26 @@
  * MOBILE mirror of ``frontend/src/lib/jobStatus.js`` — same status
  * keys, same hex values, same alias table.  Web + mobile Schedule
  * cards MUST render identically per the K50 brief.
+ *
+ * TODO(I13) — Tenant theme override.
+ * ------------------------------------------------------------------
+ * Phase I1.5.c.fix · Feb-2026: The web sibling reskins the
+ * ``open``/``scheduled`` mint tile background under a tenant preset
+ * via the ``--tenant-schedule-tile-bg`` CSS custom property (see
+ * ``frontend/src/index.css`` `[data-k50-bg="#EAF7F0"]` rule +
+ * ``frontend/src/theme/tenantVars.js`` derived-var wiring).
+ *
+ * React Native has no CSS-var substrate, so the mobile Schedule
+ * card cannot participate in that overlay from *this* module — the
+ * ``K50_JOB_STATUS_BG`` map deliberately keeps its static hex so
+ * web + mobile parity is preserved when no tenant override is set.
+ *
+ * When Phase I13 (mobile tenant theme parity) lands, wire the
+ * consumer to read the persisted ``tenant.theme.accents.badge_bg``
+ * (fallback ``#EAF7F0``) via a hook instead of ``jobStatusColor()``
+ * for the ``open``/``scheduled`` bucket only. Do NOT mutate this
+ * frozen map — the K50/K74.1 contract locks it for every non-tenant
+ * path (e.g. tests, cached data, offline mode).
  */
 
 export const K50_JOB_STATUS_BG: Readonly<Record<string, string>> =
