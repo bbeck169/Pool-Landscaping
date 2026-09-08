@@ -1412,3 +1412,16 @@
 - **Files modified**: app/_layout.tsx (import + mount useOtaUpdateListener)
 - **Test results**: 9 OTA tests + 86 existing = 95 total, all passing, 0 regressions
 
+
+## Iteration 76 — Task 4 (Account Chooser) + Task 6 (Send Service Records Link)
+- **Commit**: 4e28bef9e809b63b771cc9352022f92043461c6c
+- **Date**: 2026-09-08
+- **Changes**:
+  - Task 4: Multi-account chooser on login — detects multi_account_choice_required, renders card chooser, finalizeAccountChoice to POST /auth/login/select-account, "Not you? Log out." cancel
+  - Task 6: Send Service Records Link modal — Email/SMS tabs, consent checks, throttle status, copy link, send button, success/error toasts
+  - Task 6: Added "Service Records Link" to SendCreateSheet quick actions
+  - Added 9 Task 4 tests + 13 Task 6 tests
+- **Files created**: src/components/customers/SendServiceRecordsLinkModal.tsx, __tests__/task4-account-chooser.test.ts, __tests__/task6-send-service-records-link.test.ts
+- **Files modified**: src/auth.tsx, app/login.tsx, src/components/customers/SendCreateSheet.tsx, app/customer/[id].tsx
+- **Test results**: 13 suites, 116 tests, ALL passing, 0 regressions
+

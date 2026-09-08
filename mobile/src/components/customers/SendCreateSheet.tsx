@@ -15,6 +15,7 @@ const ACTIONS = [
   { key: "send-email", icon: "mail-outline", label: "Send Email", route: null },
   { key: "send-sms", icon: "chatbubble-outline", label: "Send SMS", route: null },
   { key: "send-invoice", icon: "receipt-outline", label: "Send Invoice", route: null },
+  { key: "service-records-link", icon: "link-outline", label: "Service Records Link", route: null },
   { key: "add-task", icon: "checkbox-outline", label: "Add Task", route: null },
   { key: "add-note", icon: "document-text-outline", label: "Add Service Note", route: null },
 ] as const;
@@ -25,9 +26,10 @@ type Props = {
   customerId: string;
   onAddNote?: () => void;
   onAddTask?: () => void;
+  onServiceRecordsLink?: () => void;
 };
 
-export default function SendCreateSheet({ visible, onClose, customerId, onAddNote, onAddTask }: Props) {
+export default function SendCreateSheet({ visible, onClose, customerId, onAddNote, onAddTask, onServiceRecordsLink }: Props) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -57,6 +59,9 @@ export default function SendCreateSheet({ visible, onClose, customerId, onAddNot
         break;
       case "add-note":
         onAddNote?.();
+        break;
+      case "service-records-link":
+        onServiceRecordsLink?.();
         break;
     }
   };

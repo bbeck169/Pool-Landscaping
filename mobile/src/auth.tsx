@@ -88,12 +88,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setImpersonatorName("");
   };
 
-  const login = async (email: string, password: string) => {
+  // ── Multi-account choice flow (Task 4 · Feb 2026) ──────────────
+  // When backend returns `multi_account_choice_required`, we do NOT
+  // persist anything. The caller (login.tsx) gets a `kind: "choice"`
+  // return and renders the account picker inline.
+  type LoginResult =
+    | { kind: "success" }
+    | { kind: "choice"; email: string; choices: any[]; choice_token: string };
+
+  const login = async (email: string, password: string): Promise<LoginResult> => {
     const res = await api.post("/auth/login", { email, password });
+
+    if (res && res.status === "multi_account_choice_required") {
+      return {
+        kind: "choice",
+        email: res.email,
+        choices: res.choices || [],
+        choice_token: res.choice_token,
+      };
+    }
+
     await storage.secureSet(TOKEN_KEY, res.access_token);
     await storage.setItem(USER_KEY, JSON.stringify(res.user));
-    // Feb-2026 · Phase 1 offline — record freshness + prime the user
-    // cache so a subsequent offline boot can hydrate.
+    await persistJwtExpiry().catch(() => {});
+    await writeThroughMe(res.user).catch(() => {});
+    await clearImpersonation();
+    setUser(res.user);
+    return { kind: "success" };
+  };
+
+  const finalizeAccountChoice = async (choiceToken: string, accountId: string) => {
+    const res = await api.post("/auth/login/select-account", {
+      choice_token: choiceToken,
+      account_id: accountId,
+    });
+    await storage.secureSet(TOKEN_KEY, res.access_token);
+    await storage.setItem(USER_KEY, JSON.stringify(res.user));
     await persistJwtExpiry().catch(() => {});
     await writeThroughMe(res.user).catch(() => {});
     await clearImpersonation();
@@ -149,7 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider
-      value={{ user, loading, isImpersonating, impersonatorName, login, signup, logout, startImpersonation, stopImpersonation }}
+      value={{ user, loading, isImpersonating, impersonatorName, login, finalizeAccountChoice, signup, logout, startImpersonation, stopImpersonation }}
     >
       {children}
     </Ctx.Provider>

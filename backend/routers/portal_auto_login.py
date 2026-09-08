@@ -65,6 +65,7 @@ logger = logging.getLogger("portal.auto_login")
 router = APIRouter()
 
 _LOGIN_EXPIRED_URL = "/portal/login?reason=link_expired"
+_LOGIN_REVOKED_URL = "/portal/login?reason=link_revoked"
 
 # ─── Feb 2026 · IP rate limit for magic-link redemption ─────────────
 # In-process rolling-window limiter: 20 redemption attempts per minute
@@ -144,6 +145,15 @@ def _expired_response() -> RedirectResponse:
     return RedirectResponse(url=_LOGIN_EXPIRED_URL, status_code=302)
 
 
+def _revoked_response() -> RedirectResponse:
+    """Task 6b · Feb 2026 — 302 → the portal login page with the
+    ``link_revoked`` reason so the frontend renders the friendly
+    "This link has been revoked" banner instead of the generic
+    expired copy.
+    """
+    return RedirectResponse(url=_LOGIN_REVOKED_URL, status_code=302)
+
+
 def _interstitial_html(*, access_token: str, redirect_to: str) -> str:
     """One-shot HTML that seeds ``localStorage["token"]`` then
     ``window.location.replace``s to the portal target.  Kept dead
@@ -221,6 +231,28 @@ async def portal_auto_login(
 
     customer_id = payload.get("customer_id")
     tenant_id = payload.get("tenant_id")
+
+    # 1b) Task 6b · Feb 2026 — service-records tokens may have been
+    #     revoked by an admin. Check the denylist BEFORE minting a
+    #     session so a revoked link cannot log the customer in.
+    #     Scope-narrow: only the ``service_records`` resource_type
+    #     participates in this denylist; other portal magic-link
+    #     scopes are unaffected.
+    if resource_type == "service_records":
+        from services.service_records_link import hash_token
+        revoked_hit = await db.customer_link_sends.find_one(
+            {"tenant_id": tenant_id,
+             "customer_id": customer_id,
+             "token_hash": hash_token(t),
+             "revoked_at": {"$ne": None}},
+            {"_id": 0, "id": 1, "revoked_at": 1},
+        )
+        if revoked_hit:
+            _log("revoked", customer_id=customer_id,
+                  resource_type=resource_type,
+                  resource_id=revoked_hit.get("id"),
+                  from_ip=from_ip)
+            return _revoked_response()
 
     # 2) Confirm the customer + login user exist.
     customer = await db.customers.find_one(

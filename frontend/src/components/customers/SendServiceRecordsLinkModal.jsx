@@ -1,7 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Modal, Button } from "@/components/ui-kit";
 import { colors } from "@/theme";
-import { Mail, MessageSquare, Copy, Check, Link2, AlertTriangle } from "lucide-react";
+import {
+  Mail, MessageSquare, Copy, Check, Link2, AlertTriangle,
+  Ban, RefreshCw, ShieldOff,
+} from "lucide-react";
 import { api } from "@/api";
 
 /**
@@ -38,6 +41,10 @@ export default function SendServiceRecordsLinkModal({
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState(null); // { rate_limited, sends_last_hour, ... }
   const [statusLoading, setStatusLoading] = useState(false);
+  // Task 6b · Feb 2026 — Recent sends + revoke.
+  const [recentSends, setRecentSends] = useState([]); // [{id, channel, recipient, created_at, revoked_at, ...}]
+  const [revokingId, setRevokingId] = useState(null);
+  const [confirmRevokeId, setConfirmRevokeId] = useState(null);
 
   // ── Consent derivation. Absent field OR True = allow. Explicit
   //    False = block. Muted trumps everything.
@@ -87,6 +94,26 @@ export default function SendServiceRecordsLinkModal({
       .finally(() => setStatusLoading(false));
   }, [open, customer?.id]);
 
+  // Task 6b · Fetch the "Recent sends" list so the admin can revoke
+  // a specific outstanding link. Refreshes after every successful
+  // send or revoke.
+  const refreshRecentSends = useCallback(async () => {
+    if (!customer?.id) return;
+    try {
+      const r = await api.get(
+        `/customers/${customer.id}/service-records-links?limit=5`,
+      );
+      setRecentSends(Array.isArray(r?.sends) ? r.sends : []);
+    } catch {
+      setRecentSends([]);
+    }
+  }, [customer?.id]);
+
+  useEffect(() => {
+    if (!open) return;
+    refreshRecentSends();
+  }, [open, refreshRecentSends]);
+
   const consentOk = channel === "email" ? emailConsent : smsConsent;
   const noContactOnFile =
     channel === "email" ? !defaultEmail : !defaultMobile;
@@ -110,6 +137,8 @@ export default function SendServiceRecordsLinkModal({
         .get(`/customers/${customer.id}/service-records-link-status`)
         .then((s) => setStatus(s))
         .catch(() => {});
+      // Refresh recent sends so the new link appears in the revoke list.
+      refreshRecentSends();
     } catch (e) {
       // 429 rate-limited comes back with a structured body; surface
       // it as a scoped banner rather than a toast.
@@ -148,6 +177,23 @@ export default function SendServiceRecordsLinkModal({
       try { document.execCommand("copy"); setCopied(true); } catch {}
       document.body.removeChild(ta);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const doRevoke = async (id) => {
+    if (!id || !customer?.id) return;
+    setRevokingId(id);
+    try {
+      await api.post(
+        `/customers/${customer.id}/service-records-links/${id}/revoke`,
+        {},
+      );
+      setConfirmRevokeId(null);
+      await refreshRecentSends();
+    } catch (e) {
+      onError?.(e?.message || "Revoke failed");
+    } finally {
+      setRevokingId(null);
     }
   };
 
@@ -329,9 +375,160 @@ export default function SendServiceRecordsLinkModal({
             in the past hour.
           </div>
         ) : null}
+
+        {/* Task 6b · Recent sends + revoke. */}
+        <RecentSendsSection
+          sends={recentSends}
+          revokingId={revokingId}
+          confirmRevokeId={confirmRevokeId}
+          onRequestRevoke={setConfirmRevokeId}
+          onConfirmRevoke={doRevoke}
+          onCancelRevoke={() => setConfirmRevokeId(null)}
+          onRefresh={refreshRecentSends}
+        />
       </div>
     </Modal>
   );
+}
+
+function RecentSendsSection({
+  sends, revokingId, confirmRevokeId,
+  onRequestRevoke, onConfirmRevoke, onCancelRevoke, onRefresh,
+}) {
+  if (!sends || sends.length === 0) return null;
+  return (
+    <div data-testid="sr-link-recent-sends">
+      <div
+        className="flex items-center justify-between mb-2"
+        style={{ color: colors.muted }}
+      >
+        <div className="text-xs uppercase font-semibold">
+          Recent sends
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="text-xs inline-flex items-center gap-1"
+          data-testid="sr-link-recent-refresh"
+          style={{ color: colors.muted }}
+          title="Refresh"
+          aria-label="Refresh recent sends"
+        >
+          <RefreshCw size={12} />
+        </button>
+      </div>
+      <div
+        className="rounded-md border divide-y"
+        style={{ borderColor: colors.border, borderTopColor: colors.border }}
+      >
+        {sends.map((s) => {
+          const isRevoked = !!s.revoked_at;
+          const isConfirming = confirmRevokeId === s.id;
+          const isBusy = revokingId === s.id;
+          return (
+            <div
+              key={s.id}
+              className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+              style={{ borderColor: colors.border }}
+              data-testid={`sr-link-send-row-${s.id}`}
+              data-revoked={isRevoked ? "true" : "false"}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  {s.channel === "email" ? (
+                    <Mail size={13} />
+                  ) : (
+                    <MessageSquare size={13} />
+                  )}
+                  <span
+                    className="font-mono text-xs truncate"
+                    style={{ color: colors.onSurface }}
+                    data-testid={`sr-link-send-recipient-${s.id}`}
+                  >
+                    {s.recipient}
+                  </span>
+                </div>
+                <div
+                  className="text-xs"
+                  style={{ color: colors.muted }}
+                  data-testid={`sr-link-send-meta-${s.id}`}
+                >
+                  {formatRelative(s.created_at)}
+                  {isRevoked ? (
+                    <span
+                      className="ml-2 inline-flex items-center gap-1"
+                      style={{ color: colors.error || "#b91c1c" }}
+                    >
+                      <ShieldOff size={11} /> Revoked
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              {isRevoked ? null : isConfirming ? (
+                <div className="flex items-center gap-1" data-testid={`sr-link-confirm-${s.id}`}>
+                  <span className="text-xs" style={{ color: colors.muted }}>
+                    Revoke?
+                  </span>
+                  <Button
+                    variant="danger"
+                    className="px-2 py-1 text-xs"
+                    onClick={() => onConfirmRevoke(s.id)}
+                    disabled={isBusy}
+                    testid={`sr-link-confirm-yes-${s.id}`}
+                  >
+                    {isBusy ? "Revoking…" : "Yes"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="px-2 py-1 text-xs"
+                    onClick={onCancelRevoke}
+                    testid={`sr-link-confirm-no-${s.id}`}
+                  >
+                    No
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="ghost"
+                  className="px-2 py-1 text-xs"
+                  onClick={() => onRequestRevoke(s.id)}
+                  testid={`sr-link-revoke-${s.id}`}
+                >
+                  <Ban size={12} /> Revoke
+                </Button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div
+        className="text-xs mt-1"
+        style={{ color: colors.muted }}
+        data-testid="sr-link-recent-hint"
+      >
+        Revoking a link invalidates it immediately — anyone with the URL
+        loses access.
+      </div>
+    </div>
+  );
+}
+
+function formatRelative(iso) {
+  if (!iso) return "";
+  try {
+    const now = Date.now();
+    const then = new Date(iso).getTime();
+    const secs = Math.max(0, Math.round((now - then) / 1000));
+    if (secs < 60) return "just now";
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.round(hrs / 24);
+    return `${days}d ago`;
+  } catch {
+    return "";
+  }
 }
 
 function TabButton({ active, disabled, disabledTitle, onClick, testid, children }) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, Platform } from "react-native";
+import { View, Text, StyleSheet, TextInput, Pressable, Platform, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -21,7 +21,7 @@ import { getCachedMe } from "@/src/lib/offline/cache";
 import { storage } from "@/src/utils/storage";
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, finalizeAccountChoice } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -42,6 +42,13 @@ export default function Login() {
   // ``.env``) from overriding the gate. Prefers the new
   // ``/config/features.demo_logins_enabled`` flag when present.
   const [demoServerAllowed, setDemoServerAllowed] = useState<boolean | null>(null);
+
+  // Task 4 · Multi-account chooser state.
+  const [chooser, setChooser] = useState<{
+    email: string;
+    choices: { account_id: string; role: string; display: string }[];
+    choice_token: string;
+  } | null>(null);
 
   // Feb-2026 · Phase 1 offline — on mount, if there's a still-fresh
   // JWT (<24h) + a cached ``/me`` payload, hydrate AsyncStorage and
@@ -109,13 +116,44 @@ export default function Login() {
     setError("");
     setLoading(true);
     try {
-      await login(em, pw);
+      const result = await login(em, pw);
+      if (result?.kind === "choice") {
+        // Task 4 — multi-account: show the chooser instead of navigating.
+        setChooser({
+          email: result.email,
+          choices: result.choices,
+          choice_token: result.choice_token,
+        });
+        return;
+      }
       router.replace("/(app)");
     } catch (err: any) {
       setError(err.message || "Login failed");
     } finally {
       setLoading(false);
     }
+  };
+
+  // Task 4 — handle account selection from the chooser.
+  const pickAccount = async (accountId: string) => {
+    if (!chooser) return;
+    setError("");
+    setLoading(true);
+    try {
+      await finalizeAccountChoice(chooser.choice_token, accountId);
+      setChooser(null);
+      router.replace("/(app)");
+    } catch (err: any) {
+      setError(err.message || "Could not sign in to that account");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cancelChooser = () => {
+    setChooser(null);
+    setError("");
+    setPassword("");
   };
 
   return (
@@ -151,6 +189,61 @@ export default function Login() {
         bottomOffset={24}
         keyboardShouldPersistTaps="handled"
       >
+        {/* Task 4 · Account Chooser — shown when backend returns multi_account_choice_required */}
+        {chooser ? (
+          <View testID="account-chooser-screen">
+            <Text style={styles.eyebrow}>ACCOUNT</Text>
+            <Text style={[styles.heading, { fontSize: 14 }]} testID="account-chooser-heading">
+              Which account?
+            </Text>
+            <Text style={styles.chooserSubhead}>
+              We found two accounts for this email.{"\n"}Pick one to continue.
+            </Text>
+
+            {chooser.choices.map((c) => (
+              <Pressable
+                key={c.account_id}
+                style={({ pressed }) => [
+                  styles.chooserCard,
+                  pressed && { backgroundColor: colors.surfaceSecondary },
+                ]}
+                onPress={() => pickAccount(c.account_id)}
+                disabled={loading}
+                testID={`account-choice-${c.account_id}`}
+              >
+                <Ionicons
+                  name={c.role === "customer" ? "person-outline" : "briefcase-outline"}
+                  size={20}
+                  color={colors.brand}
+                />
+                <Text style={styles.chooserCardText} numberOfLines={2}>
+                  {c.display}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+              </Pressable>
+            ))}
+
+            {loading ? (
+              <ActivityIndicator style={{ marginTop: spacing.lg }} color={colors.brand} />
+            ) : null}
+
+            {error ? (
+              <Text style={styles.error} testID="account-chooser-error">
+                {error}
+              </Text>
+            ) : null}
+
+            <Pressable
+              onPress={cancelChooser}
+              style={styles.chooserCancelLink}
+              testID="account-chooser-cancel"
+            >
+              <Text style={styles.forgotText}>Not you? Log out.</Text>
+            </Pressable>
+          </View>
+        ) : (
+        /* Normal login form */
+        <View testID="login-form-container">
         <Text style={styles.eyebrow}>WELCOME BACK</Text>
         {/* Phase 31 · Feb 2026 — heading font size halved from the
             theme's ``fontSize["2xl"]`` (24pt) to 12pt inline. Same
@@ -285,6 +378,8 @@ export default function Login() {
         {/* Phase 30 · Feb 2026 — DEMO ACCOUNTS block removed
             unconditionally. Manual sign-in above still authenticates the
             three seed accounts — only the visual shortcuts are gone. */}
+        </View>
+        )}
       </KeyboardAwareScrollView>
     </View>
   );
@@ -412,5 +507,35 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     color: colors.muted,
     marginTop: 1,
+  },
+  // Task 4 · Account chooser styles
+  chooserSubhead: {
+    fontFamily: font.regular,
+    fontSize: fontSize.base,
+    color: colors.muted,
+    marginBottom: spacing.xl,
+    lineHeight: 20,
+  },
+  chooserCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    marginBottom: spacing.sm,
+  },
+  chooserCardText: {
+    flex: 1,
+    fontFamily: font.semibold,
+    fontSize: fontSize.base,
+    color: colors.onSurface,
+  },
+  chooserCancelLink: {
+    alignItems: "center",
+    marginTop: spacing.xl,
   },
 });

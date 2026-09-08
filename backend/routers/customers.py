@@ -2716,6 +2716,12 @@ def _sr_link_recipient_matches(customer: dict, channel: str, recipient: str) -> 
 
 
 def _sr_link_hash(url: str) -> str:
+    """Legacy — Feb-2026 Task 6 originally hashed the built URL. The
+    revoke ship (Task 6b) switched to hashing the raw JWT so the
+    denylist lookup on redemption is stable across URL rebuilds.
+    Kept for any historical caller — new code MUST use
+    ``services.service_records_link.hash_token``.
+    """
     import hashlib
     return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
@@ -2848,7 +2854,9 @@ async def send_service_records_link(cid: str,
         )
 
     # 4) Mint the token + URL.
-    from services.service_records_link import build_service_records_url
+    from services.service_records_link import (
+        build_service_records_url_and_token, hash_token,
+    )
     base = _os.environ.get("APP_PUBLIC_URL", "") or ""
     if not base:
         # Fall back to the tenant's configured portal URL if APP_PUBLIC_URL
@@ -2861,9 +2869,10 @@ async def send_service_records_link(cid: str,
             detail={"detail": "public_url_unset",
                       "message": "APP_PUBLIC_URL is not configured — cannot build the link."},
         )
-    url = build_service_records_url(
+    url, raw_token = build_service_records_url_and_token(
         base, cid, tenant["id"], ttl_hours=_SR_LINK_TTL_HOURS,
     )
+    token_hash = hash_token(raw_token)
     expires_at = (now + _td(hours=_SR_LINK_TTL_HOURS)).isoformat()
 
     # 5) Dispatch on the requested channel.
@@ -2950,9 +2959,11 @@ async def send_service_records_link(cid: str,
             "provider": provider,
             "provider_status": provider_status,
             "provider_response_id": provider_id,
-            "token_hash": _sr_link_hash(url),
+            "token_hash": token_hash,
             "ttl_hours": _SR_LINK_TTL_HOURS,
             "expires_at": expires_at,
+            "revoked_at": None,
+            "revoked_by": None,
             "created_at": now.isoformat(),
         })
     except Exception as _exc:  # noqa: BLE001
@@ -3049,6 +3060,136 @@ async def get_service_records_link_status(cid: str,
         "retry_after_seconds": retry_after,
         "last_send_at": (last or {}).get("created_at"),
     }
+
+
+# ── Task 6b · Feb 2026 · Revoke a sent service-records link ──────────
+class _ServiceRecordsLinkListItem(BaseModel):
+    id: str
+    channel: str
+    recipient: str
+    sent_by_email: Optional[str] = None
+    provider_status: Optional[str] = None
+    created_at: str
+    expires_at: Optional[str] = None
+    revoked_at: Optional[str] = None
+    revoked_by_email: Optional[str] = None
+
+
+@router.get(
+    "/customers/{cid}/service-records-links",
+    operation_id="customers.listServiceRecordsLinks",
+)
+async def list_service_records_links(cid: str,
+                                        limit: int = 5,
+                                        user: dict = Depends(require_admin),
+                                        tenant: dict = Depends(get_current_tenant)):
+    """Return the most-recent sent service-records links for a
+    customer — powers the "Recent sends" list in the send modal so
+    an admin can revoke a specific link. Default limit = 5; hard
+    cap at 25.
+    """
+    limit = max(1, min(int(limit or 5), 25))
+    customer = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1},
+    )
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+    cursor = db.customer_link_sends.find(
+        {"tenant_id": tenant["id"], "customer_id": cid},
+        {"_id": 0, "id": 1, "channel": 1, "recipient": 1,
+         "sent_by_email": 1, "provider_status": 1,
+         "created_at": 1, "expires_at": 1,
+         "revoked_at": 1, "revoked_by_email": 1},
+    ).sort("created_at", -1).limit(limit)
+    rows = await cursor.to_list(length=limit)
+    return {"sends": rows, "limit": limit}
+
+
+@router.post(
+    "/customers/{cid}/service-records-links/{token_id}/revoke",
+    operation_id="customers.revokeServiceRecordsLink",
+)
+async def revoke_service_records_link(cid: str, token_id: str,
+                                         user: dict = Depends(require_admin),
+                                         tenant: dict = Depends(get_current_tenant)):
+    """Mark a single sent service-records link as revoked.
+
+    Behavioural contract:
+      * Scope is a SINGLE ``token_id`` — no other outstanding links
+        for this customer (or any other customer) are affected.
+      * Idempotent — revoking an already-revoked link returns 200
+        with the original ``revoked_at`` timestamp preserved.
+      * A ``customer_link_sends`` doc's ``revoked_at`` stamp is
+        checked at ``/api/portal/auto-login`` redemption time; a
+        revoked token 302s to ``/portal/login?reason=link_revoked``
+        with the friendly "This link has been revoked" copy.
+      * Writes an audit row into ``communications_log`` with
+        ``trigger_entity.kind = "service_records_link_revoked"`` so
+        the customer timeline shows the revocation event.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    customer = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1},
+    )
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    row = await db.customer_link_sends.find_one(
+        {"id": token_id, "customer_id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "Link not found")
+
+    if row.get("revoked_at"):
+        # Idempotent — return the existing revocation stamp.
+        return {"ok": True, "already_revoked": True,
+                "id": row["id"],
+                "revoked_at": row["revoked_at"],
+                "revoked_by_email": row.get("revoked_by_email")}
+
+    now = _dt.now(_tz.utc).isoformat()
+    await db.customer_link_sends.update_one(
+        {"id": token_id, "customer_id": cid, "tenant_id": tenant["id"]},
+        {"$set": {"revoked_at": now,
+                    "revoked_by": user.get("id"),
+                    "revoked_by_email": user.get("email")}},
+    )
+
+    try:
+        await db.communications_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "channel": row.get("channel") or "system",
+            "direction": "outbound",
+            "recipient": row.get("recipient") or "",
+            "subject": None,
+            "body": (
+                f"Service records link revoked by "
+                f"{user.get('email') or 'admin'} — originally sent "
+                f"{row.get('created_at') or ''}"
+            ),
+            "delivery_status": "revoked",
+            "provider": row.get("provider") or "",
+            "provider_response_id": None,
+            "trigger_entity": {"kind": "service_records_link_revoked",
+                                "customer_id": cid,
+                                "sent_by": row.get("sent_by"),
+                                "revoked_by": user.get("id"),
+                                "link_id": token_id},
+            "created_at": now,
+        })
+    except Exception as _exc:  # noqa: BLE001
+        logger.warning("[task6b] comms_log insert failed cid=%s tok=%s: %s",
+                        cid, token_id, _exc)
+
+    return {"ok": True,
+            "already_revoked": False,
+            "id": token_id,
+            "revoked_at": now,
+            "revoked_by_email": user.get("email")}
 
 
 async def _emit_vip_flagged(tenant_id: str, actor: dict, customer: dict) -> None:

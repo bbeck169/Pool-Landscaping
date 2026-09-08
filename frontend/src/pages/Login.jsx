@@ -113,11 +113,21 @@ export default function Login({ variant = "staff" } = {}) {
     // Feb-2026 · Door-hanger auto-login redemption reasons — the
     // /api/portal/auto-login interstitial 302s here with a specific
     // ``reason`` when the one-click ``?t=`` link is unusable.
-    return reason === "expired" || reason === "link_expired";
+    // Task 6b · Feb 2026 — ``link_revoked`` added for admin-revoked
+    // service-records links.
+    return (
+      reason === "expired" ||
+      reason === "link_expired" ||
+      reason === "link_revoked"
+    );
   }, [location.search]);
   const isLinkExpired = React.useMemo(() => {
     const params = new URLSearchParams(location.search || "");
     return params.get("reason") === "link_expired";
+  }, [location.search]);
+  const isLinkRevoked = React.useMemo(() => {
+    const params = new URLSearchParams(location.search || "");
+    return params.get("reason") === "link_revoked";
   }, [location.search]);
 
   // Shared post-login redirect logic — runs after either a direct
@@ -191,6 +201,7 @@ export default function Login({ variant = "staff" } = {}) {
         error={error}
         expiredBanner={expiredBanner}
         isLinkExpired={isLinkExpired}
+        isLinkRevoked={isLinkRevoked}
         chooser={chooser}
         onPickAccount={onPickAccount}
         onCancelChooser={onCancelChooser}
@@ -272,7 +283,9 @@ export default function Login({ variant = "staff" } = {}) {
               role="status"
               data-testid="login-session-expired-banner"
             >
-              {isLinkExpired
+              {isLinkRevoked
+                ? "This link has been revoked. Please contact your service provider for a new link."
+                : isLinkExpired
                 ? "Your one-click link has expired. Please log in to continue."
                 : "Your session has expired. Please sign in again."}
             </div>
@@ -490,7 +503,7 @@ export default function Login({ variant = "staff" } = {}) {
  */
 function PortalLoginCustomerLayout({
   onSubmit, email, setEmail, password, setPassword,
-  showPw, setShowPw, submitting, error, expiredBanner, isLinkExpired,
+  showPw, setShowPw, submitting, error, expiredBanner, isLinkExpired, isLinkRevoked,
   chooser, onPickAccount, onCancelChooser,
 }) {
   const CARD_STYLE = {
@@ -568,7 +581,9 @@ function PortalLoginCustomerLayout({
                 border: "1px solid #FDE68A", marginBottom: 14,
               }}
             >
-              {isLinkExpired
+              {isLinkRevoked
+                ? "This link has been revoked. Please contact your service provider for a new link."
+                : isLinkExpired
                 ? "Your one-click link has expired. Please log in to continue."
                 : "Your session has expired. Please sign in again."}
             </div>

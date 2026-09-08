@@ -15,6 +15,7 @@ import MultiContact from "@/src/components/customers/MultiContact";
 import CustomerTasks from "@/src/components/customers/CustomerTasks";
 import ServiceNotes from "@/src/components/customers/ServiceNotes";
 import SendCreateSheet from "@/src/components/customers/SendCreateSheet";
+import SendServiceRecordsLinkModal from "@/src/components/customers/SendServiceRecordsLinkModal";
 import CustomerTagsSection from "@/src/components/customers/CustomerTagsSection";
 import PaymentMethodTiles from "@/src/components/customers/PaymentMethodTiles";
 import CommunicationTimeline from "@/src/components/customers/CommunicationTimeline";
@@ -42,6 +43,7 @@ export default function CustomerDetail() {
   const [confirmImp, setConfirmImp] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
+  const [serviceRecordsLinkOpen, setServiceRecordsLinkOpen] = useState(false);
   const [noteComposerOpen, setNoteComposerOpen] = useState(false);
   // Feb-2026 MP2 UI — read-only property list. Editing lives on
   // web-only (per the ship brief); mobile admins get visibility.
@@ -795,6 +797,18 @@ export default function CustomerDetail() {
         onClose={() => setActionSheetOpen(false)}
         customerId={id as string}
         onAddNote={() => setNoteComposerOpen(true)}
+        onServiceRecordsLink={() => setServiceRecordsLinkOpen(true)}
+      />
+
+      {/* Task 6 · Send Service Records Link modal */}
+      <SendServiceRecordsLinkModal
+        visible={serviceRecordsLinkOpen}
+        customerId={id as string}
+        customerEmail={c?.email}
+        customerPhone={c?.phone}
+        channelOptIn={c?.channel_opt_in}
+        isMuted={c?.is_muted}
+        onClose={() => setServiceRecordsLinkOpen(false)}
       />
 
       {/* Ship 2 · Customer Delete UX overhaul — 3-button modal */}

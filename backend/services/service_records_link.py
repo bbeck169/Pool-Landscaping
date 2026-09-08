@@ -49,10 +49,16 @@ def mint_service_records_token(
         raise ValueError("customer_id and tenant_id are required")
     ttl = max(60, int(ttl_hours) * 3600)
     now = datetime.now(timezone.utc)
+    # Task 6b · Feb 2026 — include a random ``jti`` claim so back-to-back
+    # mints within the same second produce distinct JWTs. Without this
+    # the ``token_hash`` denylist would treat two sibling sends as the
+    # same link and a revoke on one would silently invalidate the other.
+    import uuid as _uuid
     payload = {
         "sub": _TOKEN_SUB,
         "customer_id": customer_id,
         "tenant_id": tenant_id,
+        "jti": _uuid.uuid4().hex,
         "iat": now,
         "exp": now + timedelta(seconds=ttl),
     }
@@ -84,11 +90,36 @@ def build_service_records_url(
     mint failure should call ``mint_service_records_token`` in a
     try/except rather than letting this helper raise.
     """
+    url, _tok = build_service_records_url_and_token(
+        base_url, customer_id, tenant_id, ttl_hours=ttl_hours,
+    )
+    return url
+
+
+def build_service_records_url_and_token(
+    base_url: str, customer_id: str, tenant_id: str,
+    *, ttl_hours: int = _DEFAULT_TTL_HOURS,
+) -> tuple[str, str]:
+    """Same as :func:`build_service_records_url` but also returns the
+    raw JWT. Task 6 · Revoke callers need the token to compute a
+    stable hash for the ``customer_link_sends`` denylist row.
+    """
     token = mint_service_records_token(
         customer_id, tenant_id, ttl_hours=ttl_hours,
     )
     base = (base_url or "").rstrip("/")
-    return f"{base}/api/portal/auto-login?t={token}&redirect={_REDIRECT_PATH}"
+    url = f"{base}/api/portal/auto-login?t={token}&redirect={_REDIRECT_PATH}"
+    return url, token
+
+
+def hash_token(token: str) -> str:
+    """SHA256 of the raw JWT — used as a stable identifier for the
+    ``customer_link_sends`` revoke denylist. Avoids storing the
+    plaintext token while still allowing an O(1) lookup on
+    redemption.
+    """
+    import hashlib
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 
 REDIRECT_PATH = _REDIRECT_PATH
