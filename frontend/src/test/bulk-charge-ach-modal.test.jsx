@@ -35,9 +35,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const _achDryOk = (invoiceIds) => ({
-  ok: true,
-  json: async () => ({
+const _achDryOk = (invoiceIds) => {
+  const body = {
     dry_run: true,
     payment_method_type: "ach",
     run_id: null,
@@ -52,12 +51,18 @@ const _achDryOk = (invoiceIds) => ({
     summary: { total: invoiceIds.length, would_charge: invoiceIds.length,
                 skipped: 0, initiated: 0, failed: 0,
                 total_amount_initiated_cents: 0 },
-  }),
-});
+  };
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  };
+};
 
-const _achConfirmOk = (invoiceIds) => ({
-  ok: true,
-  json: async () => ({
+const _achConfirmOk = (invoiceIds) => {
+  const body = {
     dry_run: false,
     payment_method_type: "ach",
     run_id: "run-ach-42",
@@ -73,12 +78,18 @@ const _achConfirmOk = (invoiceIds) => ({
     summary: { total: invoiceIds.length, initiated: invoiceIds.length,
                 would_charge: 0, skipped: 0, failed: 0,
                 total_amount_initiated_cents: invoiceIds.length * 5000 },
-  }),
-});
+  };
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  };
+};
 
-const _cardDryOk = (invoiceIds) => ({
-  ok: true,
-  json: async () => ({
+const _cardDryOk = (invoiceIds) => {
+  const body = {
     dry_run: true,
     run_id: null,
     results: invoiceIds.map((id, i) => ({
@@ -90,8 +101,15 @@ const _cardDryOk = (invoiceIds) => ({
     summary: { total: invoiceIds.length, would_charge: invoiceIds.length,
                 skipped: 0, charged: 0, failed: 0,
                 total_amount_charged_cents: 0 },
-  }),
-});
+  };
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  };
+};
 
 describe("BulkChargeModal · ACH parity (K38)", () => {
   it("renders the verbatim 3-5 business day settlement warning when paymentMethod='ach'", async () => {
@@ -154,14 +172,62 @@ describe("BulkChargeModal · ACH parity (K38)", () => {
 
   it("renders the ACH error surface when the endpoint returns a 500", async () => {
     const ids = ["inv-fail"];
+    const body = { detail: "stripe not configured" };
     fetchSpy.mockResolvedValueOnce({
       ok: false,
       status: 500,
-      json: async () => ({ detail: "stripe not configured" }),
+      statusText: "Internal Server Error",
+      text: async () => JSON.stringify(body),
+      json: async () => body,
     });
     render(<BulkChargeModal invoiceIds={ids} paymentMethod="ach" onClose={() => {}} />);
     const err = await screen.findByTestId("bulk-charge-ach-error");
     expect(err).toBeTruthy();
     expect(err.textContent).toMatch(/stripe not configured/);
+    // Bug A · Feb-2026 — status hint appended so admins know it was a 500.
+    expect(err.textContent).toMatch(/HTTP 500/);
+    // Bug A · Feb-2026 — affected invoice ids surfaced under the message.
+    expect(screen.getByTestId("bulk-charge-ach-error-invoices").textContent)
+      .toMatch(/inv-fail/);
+  });
+
+  // Bug A · Feb-2026 — regression guard: the FE MUST NOT show the string
+  // "{}" as the error body when the backend returns an unhandled 500 with
+  // an empty JSON body OR a non-JSON body (e.g. Starlette's default
+  // `text/plain: Internal Server Error`).
+  it("shows a helpful HTTP status hint when the backend returns EMPTY JSON body", async () => {
+    const ids = ["inv-empty"];
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      text: async () => "{}",
+      json: async () => ({}),
+    });
+    render(<BulkChargeModal invoiceIds={ids} paymentMethod="ach" onClose={() => {}} />);
+    const msg = await screen.findByTestId("bulk-charge-ach-error-message");
+    expect(msg.textContent).toMatch(/HTTP 500/);
+    expect(msg.textContent).toMatch(/check backend logs/);
+    // The literal string "{}" must NOT be surfaced to end users.
+    expect(msg.textContent).not.toMatch(/^\{\}$/);
+    expect(msg.textContent).not.toContain("{}");
+  });
+
+  it("shows a helpful HTTP status hint when the backend returns a NON-JSON body", async () => {
+    const ids = ["inv-plain"];
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      // Starlette's default 500 body — plaintext, NOT JSON.
+      text: async () => "Internal Server Error",
+      json: async () => { throw new Error("not json"); },
+    });
+    render(<BulkChargeModal invoiceIds={ids} paymentMethod="ach" onClose={() => {}} />);
+    const msg = await screen.findByTestId("bulk-charge-ach-error-message");
+    // Should surface the raw text body verbatim.
+    expect(msg.textContent).toMatch(/Internal Server Error/);
+    // And still tag with the HTTP status.
+    expect(msg.textContent).toMatch(/HTTP 500/);
   });
 });

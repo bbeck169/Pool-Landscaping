@@ -90,10 +90,41 @@ export default function BulkChargeModal({ invoiceIds, paymentMethod = "card", on
           idempotency_key: key,
         }),
       });
-      const j = await res.json().catch(() => ({}));
+      // Feb-2026 · Bug A — the backend can return non-JSON bodies (e.g.
+      // Starlette's default `text/plain: "Internal Server Error"` on an
+      // unhandled exception, a proxy 502 HTML page, or a truly empty
+      // body).  Read the body defensively so the error surface shows a
+      // helpful message instead of the string `"{}"`.
+      const rawText = await res.text();
+      let j = {};
+      if (rawText) {
+        try { j = JSON.parse(rawText); } catch { j = {}; }
+      }
       if (!res.ok) {
-        const detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail || j);
-        throw new Error(detail || `HTTP ${res.status}`);
+        const status = `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
+        // Structured backend error (HTTPException) → detail is a string.
+        // Pydantic 422 → detail is a list of {loc,msg,type}; stringify each.
+        // FastAPI generic → look at .message too.
+        let msg = "";
+        if (typeof j.detail === "string") {
+          msg = j.detail;
+        } else if (Array.isArray(j.detail)) {
+          msg = j.detail
+            .map((e) => (typeof e === "string" ? e : e?.msg || JSON.stringify(e)))
+            .join("; ");
+        } else if (typeof j.message === "string") {
+          msg = j.message;
+        } else if (rawText && rawText.trim() && rawText.trim() !== "{}") {
+          // Non-JSON body (plaintext / HTML).  Trim + clip so we don't
+          // splash an entire HTML page into the error card.
+          msg = rawText.trim().slice(0, 240);
+        }
+        const hint = res.status >= 500
+          ? " — check backend logs"
+          : res.status === 403
+            ? " — check your admin role"
+            : "";
+        throw new Error(msg ? `${msg} (${status})` : `${status}${hint}`);
       }
       return j;
     },
@@ -218,7 +249,19 @@ export default function BulkChargeModal({ invoiceIds, paymentMethod = "card", on
             <div className="flex items-center gap-2 font-semibold">
               <AlertTriangle size={14} /> Bulk {isAch ? "ACH " : ""}charge failed
             </div>
-            <p className="mt-1">{errMsg}</p>
+            <p className="mt-1" data-testid={`${testIdPrefix}-error-message`}>{errMsg}</p>
+            {invoiceIds && invoiceIds.length > 0 ? (
+              <p
+                className="mt-1 text-[11px] text-red-700"
+                data-testid={`${testIdPrefix}-error-invoices`}
+              >
+                Affected invoice{invoiceIds.length === 1 ? "" : "s"}:{" "}
+                <code className="text-[10px]">
+                  {invoiceIds.slice(0, 5).join(", ")}
+                  {invoiceIds.length > 5 ? ` (+${invoiceIds.length - 5} more)` : ""}
+                </code>
+              </p>
+            ) : null}
             <div className="mt-3 flex justify-end">
               <Button variant="ghost" onClick={() => onClose?.()}>
                 Close

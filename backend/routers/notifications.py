@@ -68,8 +68,17 @@ async def list_notifications(
     tenant: dict = Depends(get_current_tenant),
 ):
     q = _mine_filter(user, tenant["id"])
+    # Feb-2026 · Notifications filter dropdown — multi-kind support.
+    # ``kind`` remains a single query param for backward compat, but
+    # values are now split on ``,`` so ``?kind=job_assigned,job_completed``
+    # resolves to ``$in``. Empty tokens are dropped so callers can send
+    # trailing commas without side effects.
     if kind:
-        q["kind"] = kind
+        tokens = [k.strip() for k in kind.split(",") if k.strip()]
+        if len(tokens) == 1:
+            q["kind"] = tokens[0]
+        elif len(tokens) > 1:
+            q["kind"] = {"$in": tokens}
     if unread_only:
         q["read"] = {"$ne": True}
     rows = await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).limit(limit).to_list(limit)
