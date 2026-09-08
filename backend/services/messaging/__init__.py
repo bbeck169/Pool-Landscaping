@@ -24,6 +24,14 @@ from .dispatch import (  # noqa: F401
     dispatch_email,
     FALLBACK_LOG_COLLECTION,
 )
+from .byo_passthrough import (  # noqa: F401
+    CAP_EXCEEDED_HTTP_STATUS,
+    CAP_EXCEEDED_STATUS,
+    is_cap_exceeded,
+    raise_if_cap_exceeded,
+    try_dispatch_email_tenant_byo,
+    try_dispatch_sms_tenant_byo,
+)
 from .sms.registry import (  # noqa: F401
     get_sms_provider,
     get_tenant_sms_provider,

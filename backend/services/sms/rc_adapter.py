@@ -252,6 +252,30 @@ class RingCentralSMSAdapter:
             await _cache_sms_envelope(tenant_id, _idem_key, env)
             return env
 
+        # Phase I1.7.e · chunk 1 · Feb-2026 — tenant-BYO first hop.
+        # See the mirror comment in
+        # ``services/email/resend_adapter.py::send``. Cap-exceeded
+        # (HTTP 429) responses are normalized to
+        # ``status="cap_exceeded"``. Falls through to the direct
+        # RingCentral SDK path below when no tenant provider is
+        # configured. Runs AFTER the gate / consent / kill-switch /
+        # dry-run guard so a BYO provider cannot bypass any of those.
+        try:
+            from services.messaging.byo_passthrough import (
+                try_dispatch_sms_tenant_byo,
+            )
+            _byo = await try_dispatch_sms_tenant_byo(
+                tenant_id=tenant_id, to=addr_e164, body=body or "",
+            )
+        except Exception as _byo_exc:  # noqa: BLE001
+            logger.warning(
+                "[rc-sms] BYO probe raised — falling through: %s", _byo_exc,
+            )
+            _byo = None
+        if _byo is not None:
+            await _cache_sms_envelope(tenant_id, _idem_key, _byo)
+            return _byo
+
         # 2. Graceful mocked mode when RC not configured.
         if not self.enabled:
             logger.info(

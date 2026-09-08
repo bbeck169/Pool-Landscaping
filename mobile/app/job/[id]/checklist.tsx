@@ -167,14 +167,47 @@ export default function JobChecklistScreen() {
   useEffect(() => { writeQueue.flush().catch(() => {}); }, []);
 
   // ─── Load ───────────────────────────────────────────────────────────
+  //
+  // M5 hardening — per-status-code error UX for the bootstrap fetch.
+  // 429: retry once after 1s → cache fallback → "Server busy" alert.
+  // 401/403: "Please sign in again" → route to login.
+  // 5xx: "Something went wrong" with a Retry button.
+  // Other: generic message from backend response body.
+  // All failures are logged to telemetry (best-effort, no retry storm).
+  //
+  const _logBootstrapFailure = useCallback(async (
+    endpoint: string, status: number | null, message: string,
+  ) => {
+    try {
+      await api.post("/telemetry/mobile-crash", {
+        crash: {
+          message: `Checklist bootstrap error: ${endpoint} → ${status ?? "network"}: ${message}`,
+          stack: new Error().stack?.slice(0, 500) || "",
+        },
+        context: {
+          screen: "checklist",
+          job_id: id,
+          user_id: user?.id,
+          endpoint,
+          status,
+        },
+      });
+    } catch {
+      // Best-effort — if telemetry itself 429s, drop silently.
+    }
+  }, [id, user?.id]);
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+
+    const bootstrap = async () => Promise.all([
+      api.get(`/jobs/${id}`),
+      api.get(`/jobs/${id}/service-report`),
+    ]);
+
     try {
-      const [jobResp, reportResp] = await Promise.all([
-        api.get(`/jobs/${id}`),
-        api.get(`/jobs/${id}/service-report`),
-      ]);
+      const [jobResp, reportResp] = await bootstrap();
       setJob(jobResp);
       setReport(reportResp);
       reportRef.current = reportResp;
@@ -184,7 +217,69 @@ export default function JobChecklistScreen() {
       // Phase O3 · Also cache in SQLite for offline service-log.
       await cacheServiceReport(String(id), reportResp).catch(() => {});
     } catch (e: any) {
-      // Phase 40 · Try to fall back to cache before surfacing the error.
+      const isApiErr = e instanceof ApiError;
+      const status: number | null = isApiErr ? e.status : null;
+      const msg = e?.message || "Unknown error";
+
+      // Log to telemetry (best-effort)
+      _logBootstrapFailure(`/jobs/${id}+service-report`, status, msg);
+
+      // ── 429 — retry once after 1s backoff ──────────────────────────
+      if (status === 429) {
+        try {
+          await new Promise((r) => setTimeout(r, 1000));
+          const [jobResp, reportResp] = await bootstrap();
+          setJob(jobResp);
+          setReport(reportResp);
+          reportRef.current = reportResp;
+          setOfflineMode(false);
+          await cacheJobBootstrap(String(id), { job: jobResp, report: reportResp });
+          await cacheServiceReport(String(id), reportResp).catch(() => {});
+          setLoading(false);
+          return; // retry succeeded
+        } catch {
+          // retry failed — fall through to cache
+        }
+        // Try cache fallback
+        const cached = await getCachedBootstrap(String(id));
+        if (cached?.job && cached?.report) {
+          setJob(cached.job);
+          setReport(cached.report);
+          reportRef.current = cached.report;
+          setOfflineMode(true);
+        } else {
+          Alert.alert("Server busy", "Try again in a moment.");
+        }
+        setLoading(false);
+        return;
+      }
+
+      // ── 401 / 403 — route to login ────────────────────────────────
+      if (status === 401 || status === 403) {
+        Alert.alert(
+          "Session expired",
+          "Please sign in again.",
+          [{ text: "Sign in", onPress: () => router.replace("/login") }],
+        );
+        setLoading(false);
+        return;
+      }
+
+      // ── 5xx — server error with Retry ──────────────────────────────
+      if (status && status >= 500) {
+        Alert.alert(
+          "Something went wrong",
+          "Try again later.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Retry", onPress: () => load() },
+          ],
+        );
+        setLoading(false);
+        return;
+      }
+
+      // ── Other — try cache, then generic alert with body message ────
       const cached = await getCachedBootstrap(String(id));
       if (cached?.job && cached?.report) {
         setJob(cached.job);
@@ -192,12 +287,12 @@ export default function JobChecklistScreen() {
         reportRef.current = cached.report;
         setOfflineMode(true);
       } else {
-        Alert.alert("Unable to open checklist", e?.message || "Try again.");
+        Alert.alert("Unable to open checklist", msg);
       }
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, _logBootstrapFailure, router]);
   useEffect(() => { load(); }, [load]);
 
   // Phase 27 — seed service-report media from loaded report.

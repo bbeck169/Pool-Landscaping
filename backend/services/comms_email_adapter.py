@@ -63,6 +63,31 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
         logger.warning("[p34] quiet-hours gate errored — failing open: %s",
                           _e34)
 
+    # Phase I1.7.e · chunk 1 · Feb-2026 — tenant-BYO first hop.
+    # If the tenant has a BYO email provider configured, route the
+    # send through it. Cap-exceeded (HTTP 429) responses are normalized
+    # into ``status="cap_exceeded"`` so the transactional caller can
+    # translate to HTTPException(429) and the bulk caller can persist
+    # ``skipped_cap_exceeded`` in its delivery ledger. Never raises;
+    # returns ``None`` when no tenant provider is configured and the
+    # caller should proceed with the platform send path below.
+    try:
+        from services.messaging.byo_passthrough import (
+            try_dispatch_email_tenant_byo,
+        )
+        _byo = await try_dispatch_email_tenant_byo(
+            tenant_id=tenant_id, to=to_email, subject=subject,
+            html=html, from_addr=from_email, from_name=from_name,
+        )
+    except Exception as _byo_exc:  # noqa: BLE001
+        logger.warning(
+            "comms_email_adapter: BYO probe raised — falling through: %s",
+            _byo_exc,
+        )
+        _byo = None
+    if _byo is not None:
+        return _byo
+
     key = os.environ.get("RESEND_API_KEY")
     if not key:
         return {"status": "not_sent_missing_key"}

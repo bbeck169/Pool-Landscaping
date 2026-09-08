@@ -103,6 +103,30 @@ async def send_sms(tenant_id: str, to_phone: str, body: str,
         logger.warning("[p34] quiet-hours gate errored — failing open: %s",
                           _e34)
 
+    # Phase I1.7.e · chunk 1 · Feb-2026 — tenant-BYO first hop.
+    # Route through the tenant's configured SMS provider when one is
+    # saved. Cap-exceeded (HTTP 429) responses are normalized to
+    # ``status="cap_exceeded"`` for the caller to interpret. See the
+    # mirror comment in ``comms_email_adapter.send_email``.
+    try:
+        from services.messaging.byo_passthrough import (
+            try_dispatch_sms_tenant_byo,
+        )
+        _byo = await try_dispatch_sms_tenant_byo(
+            tenant_id=tenant_id, to=to_phone, body=body,
+            media_urls=[mms_url] if mms_url else None,
+        )
+    except Exception as _byo_exc:  # noqa: BLE001
+        logger.warning(
+            "comms_sms_adapter: BYO probe raised — falling through: %s",
+            _byo_exc,
+        )
+        _byo = None
+    if _byo is not None:
+        # Merge SMS length stats into the envelope so downstream
+        # ledger rows still get character_count / segment_count.
+        return {**_byo, **stats}
+
     if os.environ.get("SMS_MOCK_MODE", "1") == "1":
         logger.info(
             f"comms_sms_adapter: MOCKED sms tenant={tenant_id} to={to_phone} "

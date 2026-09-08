@@ -635,14 +635,25 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
 
 def _classify_provider_status(res: Optional[Dict[str, Any]]) -> str:
     """Map an adapter envelope to one of the batch stat buckets:
-    ``sent`` | ``suppressed`` | ``failed``.  Mocked mode (no API key)
-    counts as ``sent`` — the caller's intent was fulfilled and the
-    ledger row still lands.  ``no_contact`` is handled by the caller."""
+    ``sent`` | ``suppressed`` | ``skipped_cap_exceeded`` | ``failed``.
+    Mocked mode (no API key) counts as ``sent`` — the caller's intent
+    was fulfilled and the ledger row still lands. ``no_contact`` is
+    handled by the caller.
+
+    Phase I1.7.e · chunk 1 · Feb-2026 — a tenant-BYO provider that
+    hits its monthly cap surfaces as ``provider_status="cap_exceeded"``
+    from the adapter. Bulk fanout MUST NOT re-raise or halt the whole
+    batch on this signal; it maps to a dedicated ledger row status
+    ``skipped_cap_exceeded`` so admin UI can distinguish it from a
+    hard failure. The batch continues with the next recipient — a
+    single tenant's cap does not 429 the batch owner's request."""
     ps = (res or {}).get("provider_status") or ""
     if ps in ("sent", "mocked"):
         return "sent"
     if ps == "suppressed":
         return "suppressed"
+    if ps == "cap_exceeded":
+        return "skipped_cap_exceeded"
     return "failed"
 
 

@@ -1089,6 +1089,10 @@ async def _deliver_one(*, tenant: dict, user: dict, customer: dict,
         html = render_email_html(tpl.get("blocks_json") or [], ctx)
         deliver = await send_email(tenant_id, contact, subject, html,
                                      from_name=company.get("name") or None)
+        # Phase I1.7.e · chunk 1 · Feb-2026 — transactional cap-exceeded
+        # semantic: persist the audit row THEN 429 the caller. This
+        # endpoint is a synchronous admin-triggered send, so surfacing
+        # the tenant's monthly cap as an HTTP 429 is the correct signal.
         doc = {
             "id": new_id(), "tenant_id": tenant_id, "kind": "email",
             "template_code": template_code, "automation_code": automation_code,
@@ -1104,6 +1108,12 @@ async def _deliver_one(*, tenant: dict, user: dict, customer: dict,
             "retry_count": 0,
         }
         await db.communication_sends.insert_one(doc)
+        from services.messaging.byo_passthrough import raise_if_cap_exceeded
+        raise_if_cap_exceeded(
+            deliver,
+            detail=(f"Monthly messaging cap exceeded for tenant {tenant_id} "
+                    f"(channel=email, template={template_code})"),
+        )
         return _clean_doc(doc)
     elif channel == "sms":
         tpl = await _find_sms_template(tenant_id, template_code)
@@ -1132,6 +1142,15 @@ async def _deliver_one(*, tenant: dict, user: dict, customer: dict,
             "retry_count": 0,
         }
         await db.communication_sends.insert_one(doc)
+        # Phase I1.7.e · chunk 1 · Feb-2026 — transactional cap-exceeded
+        # semantic: persist the audit row THEN 429 the caller. Mirrors
+        # the email branch above.
+        from services.messaging.byo_passthrough import raise_if_cap_exceeded
+        raise_if_cap_exceeded(
+            deliver,
+            detail=(f"Monthly messaging cap exceeded for tenant {tenant_id} "
+                    f"(channel=sms, template={template_code})"),
+        )
         return _clean_doc(doc)
     else:
         raise HTTPException(422, "channel must be 'email' or 'sms'")

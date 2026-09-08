@@ -66,6 +66,9 @@ export default function D2DCanvass() {
   const [convertingLead, setConvertingLead] = useState(false);
   const storeKey = "d2d_sold_working_set";
   const [hydrated, setHydrated] = useState(false);
+  // M3 hotfix — Zillow property enrichment on knock rows
+  const [enriching, setEnriching] = useState(false);
+  const [enrichedData, setEnrichedData] = useState<any>(null);
 
   const load = useCallback(async () => {
     try {
@@ -168,6 +171,7 @@ export default function D2DCanvass() {
 
   const openAdd = (coords?: { lat: number; lng: number } | null) => {
     setForm({ ...empty, lat: coords?.lat ?? null, lng: coords?.lng ?? null });
+    setEnrichedData(null);
     setSheet(true);
   };
 
@@ -184,6 +188,8 @@ export default function D2DCanvass() {
 
   const openEdit = (k: any) => {
     setForm({ id: k.id, address: k.address || "", name: k.name || "", phone: k.phone || "", disposition: k.disposition, notes: k.notes || "", lat: k.lat, lng: k.lng });
+    // M3 — pre-populate enriched data if knock already has zillow_data
+    setEnrichedData(k.zillow_data || null);
     setSheet(true);
   };
 
@@ -336,6 +342,31 @@ export default function D2DCanvass() {
   const del = async () => {
     if (!form.id) return;
     try { await api.del(`/d2d/knocks/${form.id}`); setSheet(false); await load(); } catch {}
+  };
+
+  // M3 hotfix — Pull / Refresh Zillow property data for a knock
+  const enrichZillow = async () => {
+    if (!form.id) return;
+    setEnriching(true);
+    try {
+      const res = await api.post(`/d2d/prospects/${form.id}/enrich-zillow`, {});
+      setEnrichedData(res.zillow_data || res);
+      // Update the knock in local state so reopening it shows cached data
+      setKnocks((prev) => prev.map((k) =>
+        k.id === form.id ? { ...k, zillow_data: res.zillow_data || res } : k
+      ));
+    } catch (e: any) {
+      const status = e?.status;
+      if (status === 503) {
+        Alert.alert("Not configured", "Zillow API not configured — ask your admin.");
+      } else if (status === 429) {
+        Alert.alert("Rate limited", "Property lookups rate-limited — try again shortly.");
+      } else {
+        Alert.alert("Lookup failed", e?.message || "Could not fetch property data. Try again.");
+      }
+    } finally {
+      setEnriching(false);
+    }
   };
 
   const convert = async () => {
@@ -617,6 +648,73 @@ export default function D2DCanvass() {
           <Field label="Notes" value={form.notes} onChangeText={(v: string) => setForm((f: any) => ({ ...f, notes: v }))} placeholder="Interested in weekly cleaning…" multiline testID="d2d-notes" />
           {form.zpid ? <Text style={styles.soldTag}>🏠 Recently sold home from Zillow</Text> : null}
           {form.lat ? <Text style={styles.geoTag}>📍 Pinned at your location</Text> : null}
+
+          {/* M3 — Zillow property enrichment */}
+          {form.id ? (
+            <View style={styles.enrichSection} testID="d2d-zillow-enrich-section">
+              <Pressable
+                style={[styles.enrichBtn, enriching && { opacity: 0.7 }]}
+                onPress={enrichZillow}
+                disabled={enriching}
+                testID="d2d-zillow-enrich-btn"
+              >
+                {enriching ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Ionicons name="search" size={14} color="#fff" />
+                )}
+                <Text style={styles.enrichBtnText}>
+                  {enriching ? "Looking up…" : enrichedData ? "Refresh Zillow data" : "Pull property data"}
+                </Text>
+              </Pressable>
+              {enrichedData ? (
+                <View style={styles.enrichPanel} testID="d2d-zillow-data-panel">
+                  {enrichedData.image_url ? (
+                    <Image source={{ uri: enrichedData.image_url }} style={styles.enrichImg} resizeMode="cover" />
+                  ) : null}
+                  <View style={styles.enrichGrid}>
+                    {enrichedData.estimated_value ? (
+                      <View style={styles.enrichItem}>
+                        <Text style={styles.enrichLabel}>Est. Value</Text>
+                        <Text style={styles.enrichValue}>${Number(enrichedData.estimated_value).toLocaleString()}</Text>
+                      </View>
+                    ) : null}
+                    {enrichedData.sqft ? (
+                      <View style={styles.enrichItem}>
+                        <Text style={styles.enrichLabel}>Sqft</Text>
+                        <Text style={styles.enrichValue}>{Number(enrichedData.sqft).toLocaleString()}</Text>
+                      </View>
+                    ) : null}
+                    {enrichedData.lot_size_sqft ? (
+                      <View style={styles.enrichItem}>
+                        <Text style={styles.enrichLabel}>Lot</Text>
+                        <Text style={styles.enrichValue}>{Number(enrichedData.lot_size_sqft).toLocaleString()} sqft</Text>
+                      </View>
+                    ) : null}
+                    {enrichedData.bed_count ? (
+                      <View style={styles.enrichItem}>
+                        <Text style={styles.enrichLabel}>Beds</Text>
+                        <Text style={styles.enrichValue}>{enrichedData.bed_count}</Text>
+                      </View>
+                    ) : null}
+                    {enrichedData.bath_count ? (
+                      <View style={styles.enrichItem}>
+                        <Text style={styles.enrichLabel}>Baths</Text>
+                        <Text style={styles.enrichValue}>{enrichedData.bath_count}</Text>
+                      </View>
+                    ) : null}
+                    {enrichedData.year_built ? (
+                      <View style={styles.enrichItem}>
+                        <Text style={styles.enrichLabel}>Built</Text>
+                        <Text style={styles.enrichValue}>{enrichedData.year_built}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
           <View style={{ height: spacing.md }} />
           <PrimaryButton title={form.id ? "Save" : "Log Door"} icon="checkmark" loading={saving} onPress={save} testID="d2d-save" />
           {form.id && canConvert && !knocks.find((k) => k.id === form.id)?.converted ? (
@@ -792,4 +890,19 @@ const styles = StyleSheet.create({
   convertText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
   delBtn: { alignItems: "center", justifyContent: "center", height: 44, marginTop: spacing.xs },
   delText: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.error },
+  enrichSection: { marginTop: spacing.md, gap: spacing.sm },
+  enrichBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 6, height: 42, borderRadius: radius.md, backgroundColor: "#0284C7",
+  },
+  enrichBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#fff" },
+  enrichPanel: {
+    backgroundColor: colors.surfaceSecondary, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border, padding: spacing.md,
+  },
+  enrichImg: { width: "100%", height: 120, borderRadius: radius.sm, marginBottom: spacing.sm, backgroundColor: colors.surfaceTertiary },
+  enrichGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  enrichItem: { minWidth: 80, flex: 1 },
+  enrichLabel: { fontFamily: font.medium, fontSize: fontSize.xs, color: colors.muted },
+  enrichValue: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 1 },
 });

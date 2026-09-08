@@ -291,6 +291,32 @@ class ResendEmailAdapter:
                 )
                 return verdict.dry_run_response(provider="resend")
 
+        # Phase I1.7.e · chunk 1 · Feb-2026 — tenant-BYO first hop.
+        # If the tenant has a BYO email provider configured, route
+        # the send through it. Cap-exceeded (HTTP 429) responses are
+        # normalized so a transactional caller can translate to
+        # HTTPException(429) and a bulk caller can log
+        # ``skipped_cap_exceeded`` in its ledger. Falls through to
+        # the direct Resend SDK path below when no tenant provider
+        # is configured. Runs AFTER the gate / kill-switch / dry-run
+        # guard so a BYO provider cannot bypass any of those.
+        try:
+            from services.messaging.byo_passthrough import (
+                try_dispatch_email_tenant_byo,
+            )
+            _byo = await try_dispatch_email_tenant_byo(
+                tenant_id=tenant_id, to=addr, subject=subject,
+                html=html, text=text, from_addr=from_email,
+                from_name=from_name, reply_to=reply_to,
+            )
+        except Exception as _byo_exc:  # noqa: BLE001
+            logger.warning(
+                "[resend] BYO probe raised — falling through: %s", _byo_exc,
+            )
+            _byo = None
+        if _byo is not None:
+            return _byo
+
         # 2. Graceful mocked mode — no API key set. Log + return.
         if not self.enabled:
             logger.info(

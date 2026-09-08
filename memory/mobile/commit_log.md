@@ -1310,3 +1310,20 @@
 - **Files modified**: calendar.tsx, OnMyWayButton.tsx, CouldNotServiceButton.tsx, NavigateJobButton.tsx, JobNotesCallout.tsx
 - **Files created**: __tests__/hotfix-m1-m2-schedule.test.tsx
 
+
+## Iteration 70 — Hotfixes M3 + M4 + M5
+- **Commit**: db0d3ff1d56a4e2d8ccba1a47bde5947bb66fb33
+- **Date**: 2026-09-08
+- **Changes**:
+  - M3-A: Customers-nearby panel — NO-OP (mobile has no customer layer on D2D)
+  - M3-B: Zillow enrichment button + data panel on knock edit Sheet (d2d/index.tsx)
+    - "Pull property data" / "Refresh Zillow data" labels, cached fields pre-rendered
+    - Error toasts: 503 (not configured), 429 (rate limited), generic
+  - M4: Trainings — NO code changes (verified no client-side filtering)
+  - M5: Checklist load() rewritten with per-status-code error handling
+    - 429→retry+cache→"Server busy", 401/403→login, 5xx→retry button
+    - Telemetry logging via POST /api/telemetry/mobile-crash (best-effort)
+  - Tests: 20 new (4 M3 + 3 M4 + 13 M5), all 36 total pass
+- **Files modified**: app/d2d/index.tsx, app/job/[id]/checklist.tsx
+- **Files created**: __tests__/hotfix-m3-d2d-zillow.test.tsx, __tests__/hotfix-m4-trainings.test.tsx, __tests__/hotfix-m5-checklist-429.test.tsx
+
