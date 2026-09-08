@@ -165,7 +165,78 @@ endpoint bodies.
 * **79 passed, 1 skipped, 1 pre-existing error** in 24.01s.
 * The one ERROR (`test_phase31_checklist.py::test_events_are_tenant_scoped` — `admin@sunbelt.com` 401 login) is **pre-existing** in main (verified by stash + rerun on baseline). Not introduced by this migration. Filed for the phase-31 fixture drift bucket.
 
-## Follow-up tickets
+## Test mode
+
+### `MESSAGING_TESTMODE_MOCK` (prep task for chunk 2 tester)
+
+Added to `backend/.env`::
+
+    MESSAGING_TESTMODE_MOCK=true
+
+Mirrors the existing `ZILLOW_TESTMODE_MOCK` /
+`PAYMENTS_TESTMODE_MOCK` / `CALENDARS_TESTMODE_MOCK` pattern.
+Short-circuits the last-mile outbound HTTP call in **all four**
+messaging chokepoints (`comms_email_adapter`, `comms_sms_adapter`,
+`services/email/resend_adapter`, `services/sms/rc_adapter`) AND in
+the BYO probe (`try_dispatch_{email,sms}_tenant_byo`) to a
+deterministic mock envelope.
+
+**Every pre-flight gate still fires**: opt-out check, comm
+allowlist gate (`is_comm_allowed`), K72 kill switch,
+`guard_outbound` env guard, tenant-BYO probe. Only the raw
+provider SDK / HTTP call is skipped.
+
+**Deterministic envelope** keyed on `(tenant_id, to, subject|body)`:
+
+```python
+{
+    "status": "sent",
+    "provider_id": "mock-<sha1(tenant|to|subject_or_body)[:12]>",
+    "provider": "mock" | "<tenant_byo_provider_key>",
+    "provider_status": "sent",
+    "provider_response_id": "mock-...",
+    "attempts": 1,
+    "error": None,
+    "routed_via": "platform_testmode_mock" |
+                    "tenant_byo_testmode_mock" |
+                    "modern_email_testmode_mock" |
+                    "modern_sms_testmode_mock",
+    "raw": {"testmode_mock": True, "tenant_id": ...},
+}
+```
+
+Idempotency caches, delivery ledgers, and log grep-audits behave
+identically to a real send — same input → same message id →
+same ledger row.
+
+**Enabling cap-exceeded in test mode**: the flag itself never
+surfaces cap-exceeded. Tests that need to simulate a cap hit
+monkey-patch the BYO probe
+(`try_dispatch_{email,sms}_tenant_byo`) to return a
+cap-exceeded envelope. The dedicated tests
+`test_transactional_callsite_returns_429_on_cap_exceeded`,
+`test_transactional_deliver_one_raises_http_429_on_cap_exceeded`,
+and `test_cap_exceeded_on_tenant_a_does_not_affect_tenant_b`
+demonstrate the pattern.
+
+Guarded by two new tests in
+`tests/test_i17e_messaging_callsite_migration.py`:
+
+* **`test_messaging_testmode_mock_short_circuits_outbound_http`** —
+  asserts all four chokepoints return a mock envelope and no
+  Resend / RingCentral / Twilio HTTP client is invoked.
+* **`test_messaging_testmode_mock_still_enforces_cap_and_optout`** —
+  asserts (a) the opt-out gate still blocks in test mode and (b)
+  the tenant-BYO probe still fires (BYO provider `send_email` is
+  routed through and tagged with its provider key, not the
+  platform-mock tag).
+
+Preview + dev + staging tester passes can now verify the full
+transactional 429 + bulk `skipped_cap_exceeded` contracts
+end-to-end without needing valid Twilio / RingCentral / SendGrid /
+Resend API keys.
+
+
 
 1. **[chunk 1.b]** Migrate the 17 direct-SDK `resend.Emails.send(...)` callsites to `services.email.resend_adapter.send(**kwargs)` for full BYO routing coverage. Comm-allowlist gate is still applied today; only BYO is missing.
 2. **[cap-exceeded bulk retry policy]** — the current bulk semantic is: log `skipped_cap_exceeded` and move on. There is **no automatic retry** for bulk sends that hit the cap. A future policy decision is needed:

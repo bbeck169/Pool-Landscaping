@@ -35,7 +35,21 @@ async def _emergent_platform_fallback(
     """Last-resort platform fallback using the Emergent Universal
     LLM Key. Reuses the existing ``services.llm_provider`` wrapper
     so behaviour + error-handling stays consistent with older
-    call-sites during the migration window."""
+    call-sites during the migration window.
+
+    Phase I1.7.e · chunk 2 · Feb-2026 — honours ``AI_TESTMODE_MOCK``
+    so the Emergent + OpenAI HTTP paths are skipped in preview /
+    dev / staging. BYO providers already honour the same flag inside
+    their own ``complete()`` methods (see ``_helpers.ai_testmode_mock``)."""
+    from ._helpers import ai_testmode_mock
+    if ai_testmode_mock():
+        from .testmode import mock_completion_result
+        return mock_completion_result(
+            tenant_id=tenant_id, system_prompt=system_prompt,
+            user_text=user_text,
+            provider_key="emergent",
+            provider_used="platform:emergent",
+        )
     from services.llm_provider import call_llm_with_fallback
     result = await call_llm_with_fallback(
         system_prompt=system_prompt, user_text=user_text,
@@ -88,6 +102,14 @@ async def dispatch_ai_completion(
     short = short_name_for(provider.provider_key) or provider.provider_key
     # Rule 2: BYO exists — cap check FIRST.
     await enforce_cap_or_raise(tenant_id=tenant_id, provider=short, db=db)
+    # Phase I1.7.e · chunk 2 · Feb-2026 — AI_TESTMODE_MOCK short-circuit
+    # for the BYO path is honoured DEEPER IN the provider adapters
+    # (``services/ai/{openai,anthropic,gemini}_provider.py`` each
+    # check ``ai_testmode_mock()`` and return a deterministic
+    # AICompletionResult without any outbound HTTP call). No
+    # short-circuit is needed here — deferring keeps
+    # ``result.provider_used == "tenant:{short}"`` semantics
+    # unchanged, which downstream analytics + admin UI depend on.
     # Rule 3: dispatch + record.
     result = await provider.complete(
         tenant_id=tenant_id,

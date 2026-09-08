@@ -127,6 +127,19 @@ async def send_sms(tenant_id: str, to_phone: str, body: str,
         # ledger rows still get character_count / segment_count.
         return {**_byo, **stats}
 
+    # Phase I1.7.e · Feb-2026 — MESSAGING_TESTMODE_MOCK short-circuit
+    # for the platform (non-BYO) path. Runs AFTER opt-out + BYO probe
+    # so both gates still fire; only the RC HTTP call is skipped.
+    from services.messaging.testmode import (
+        is_messaging_testmode, mock_sms_envelope,
+    )
+    if is_messaging_testmode():
+        return mock_sms_envelope(
+            tenant_id=tenant_id, to=to_phone, body=body,
+            routed_via="platform_testmode_mock",
+            length_stats=stats,
+        )
+
     if os.environ.get("SMS_MOCK_MODE", "1") == "1":
         logger.info(
             f"comms_sms_adapter: MOCKED sms tenant={tenant_id} to={to_phone} "

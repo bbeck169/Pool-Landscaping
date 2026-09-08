@@ -168,13 +168,15 @@ async def call_llm_with_fallback(*, system_prompt: str, user_text: str,
                                     provider: str = "anthropic",
                                     model: str = "claude-sonnet-4-5",
                                     openai_model: Optional[str] = None,
+                                    tenant_id: Optional[str] = None,
                                     ) -> Dict[str, Any]:
     """High-level dispatcher.
 
     Returns::
-      {"raw": <parsed json>, "provider": "emergent"|"openai"}
+      {"raw": <parsed json>, "provider": "emergent"|"openai"|"tenant_byo"}
     OR::
-      {"error": "...", "provider": "emergent"|"openai"}
+      {"error": "...", "provider": "emergent"|"openai"|"tenant_byo",
+        "cap_exceeded": True}   # only when a BYO cap is hit
 
     Behaviour (Feb 2026 — Emergent-only default)
     ---------------------------------------------
@@ -186,7 +188,86 @@ async def call_llm_with_fallback(*, system_prompt: str, user_text: str,
       to OpenAI **only if** ``OPENAI_API_KEY`` is present. With no key
       set, the Emergent error is returned as-is tagged
       ``provider: "emergent"``.
+
+    Phase I1.7.e · chunk 2 · Feb-2026 — Tenant-BYO first hop
+    ---------------------------------------------------------
+    When ``tenant_id`` is passed AND the tenant has a BYO AI provider
+    row configured, the request is routed through
+    ``services.ai.dispatcher.dispatch_ai_completion`` instead of the
+    Emergent / OpenAI branches. A BYO cap-exceeded is HARD BLOCK — the
+    return dict contains ``{"cap_exceeded": True, "error":
+    "ai_spend_cap_exceeded", "http_status": 429}`` and callers MUST
+    NOT transparently fall back to the platform key (see rule 2 in
+    ``services/ai/dispatcher.py``). ``tenant_id=None`` (the default)
+    preserves pre-migration behaviour bit-for-bit — no BYO probe, no
+    cap check, straight Emergent → OpenAI path.
     """
+    # Phase I1.7.e · chunk 2 · Feb-2026 — tenant-BYO first hop.
+    if tenant_id:
+        try:
+            from services.ai.dispatcher import dispatch_ai_completion
+            from services.ai.models import TenantAIUsageCapExceeded
+            try:
+                result = await dispatch_ai_completion(
+                    tenant_id=tenant_id,
+                    system_prompt=system_prompt, user_text=user_text,
+                    model=model,
+                )
+            except TenantAIUsageCapExceeded as cap:
+                logger.info(
+                    f"[llm_provider] tenant_byo cap-exceeded tenant={tenant_id} "
+                    f"provider={cap.provider} cap={cap.cap} used={cap.used}"
+                )
+                return {
+                    "error": "ai_spend_cap_exceeded",
+                    "provider": "tenant_byo",
+                    "cap_exceeded": True,
+                    "http_status": 429,
+                    "detail": {
+                        "provider": cap.provider,
+                        "monthly_cap": cap.cap,
+                        "used": cap.used,
+                    },
+                }
+            # Map AICompletionResult back to the legacy shape.
+            raw: Dict[str, Any] = dict(getattr(result, "raw", {}) or {})
+            if not raw:
+                raw = {}
+            raw.setdefault("text", getattr(result, "content", "") or "")
+            raw.setdefault("content", getattr(result, "content", "") or "")
+            # ``provider_used`` is a colon-prefixed origin tag:
+            #   "tenant:{short}"          — real / mocked BYO provider
+            #   "byo:{short}"             — test-fake BYO provider
+            #   "platform:emergent"       — Emergent platform fallback
+            # Any of those three surfaces through as ``tenant_byo``
+            # from the migration chokepoint's point of view because
+            # the request was routed through the dispatcher (not the
+            # legacy Emergent/OpenAI branches below).
+            pu = getattr(result, "provider_used", "") or ""
+            provider_tag = "tenant_byo" if pu.startswith(("tenant:", "byo:")) else "emergent"
+            return {"raw": raw, "provider": provider_tag}
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"[llm_provider] tenant_byo dispatch raised — falling through "
+                f"to Emergent/OpenAI: {type(e).__name__}: {e}"
+            )
+
+    # Phase I1.7.e · chunk 2 · Feb-2026 — AI_TESTMODE_MOCK short-circuit
+    # for the pure platform path (no tenant_id passed). Returns a
+    # deterministic mock in the legacy ``{"raw": ..., "provider": ...}``
+    # shape so no caller migration is required to hermetic-ify tests.
+    try:
+        from services.ai.testmode import (
+            is_ai_testmode, mock_llm_provider_response,
+        )
+        if is_ai_testmode():
+            return mock_llm_provider_response(
+                system_prompt=system_prompt, user_text=user_text,
+                provider=_PROVIDER_EMERGENT,
+            )
+    except Exception:  # noqa: BLE001 — never let testmode probe explode
+        pass
+
     forced = force_provider()
     if forced == _PROVIDER_OPENAI:
         r = await _call_openai_text(system_prompt=system_prompt,

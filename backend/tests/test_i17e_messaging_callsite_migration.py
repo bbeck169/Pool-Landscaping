@@ -125,6 +125,18 @@ def _stub_opt_out(monkeypatch):
     monkeypatch.setattr(_cs, "_is_opted_out", _never_opted_out)
 
 
+@pytest.fixture(autouse=True)
+def _disable_messaging_testmode_by_default(monkeypatch):
+    """The chunk 1 migration + platform-fallback invariant tests
+    verify the real code path (BYO probe or platform SDK fork). The
+    ``MESSAGING_TESTMODE_MOCK`` env var — which is enabled by
+    default in preview ``.env`` so live-curl tester passes work —
+    short-circuits both paths to a deterministic mock envelope. Turn
+    it OFF here so tests see the underlying behaviour. The two
+    dedicated test-mode tests below re-enable it explicitly."""
+    monkeypatch.setenv("MESSAGING_TESTMODE_MOCK", "")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 1. Dispatcher invocation — every centralized adapter probes tenant BYO
 # ─────────────────────────────────────────────────────────────────────
@@ -546,3 +558,127 @@ def test_byo_probe_returns_none_when_no_tenant_id(monkeypatch):
         tenant_id=None, to="+1", body="b",
     )) is None
     assert not lookups, "empty tenant_id must not trigger a lookup"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 8. MESSAGING_TESTMODE_MOCK short-circuit
+# ─────────────────────────────────────────────────────────────────────
+def test_messaging_testmode_mock_short_circuits_outbound_http(monkeypatch):
+    """When ``MESSAGING_TESTMODE_MOCK=true`` and no tenant BYO is
+    configured, the four centralized adapters MUST return a
+    deterministic mock envelope without invoking any provider
+    HTTP client (Resend, RingCentral, Twilio, etc.)."""
+    from services import comms_email_adapter, comms_sms_adapter
+    from services.messaging import byo_passthrough
+    from services.email import resend_adapter
+    from services.sms import rc_adapter
+
+    async def _no_byo(*a, **kw):
+        return None
+
+    monkeypatch.setattr(byo_passthrough, "get_tenant_email_provider",
+                        _no_byo)
+    monkeypatch.setattr(byo_passthrough, "get_tenant_sms_provider",
+                        _no_byo)
+    monkeypatch.setenv("MESSAGING_TESTMODE_MOCK", "true")
+    monkeypatch.setenv("RESEND_API_KEY", "should-not-be-used")
+    monkeypatch.setenv("APP_ENV", "production")
+
+    # Legacy platform email chokepoint.
+    env_e = _run(comms_email_adapter.send_email(
+        "t-mm-1", "test@example.com", "hi", "<p>hi</p>",
+    ))
+    assert env_e["status"] == "sent"
+    assert env_e["routed_via"] == "platform_testmode_mock"
+    assert env_e["provider_id"].startswith("mock-")
+
+    # Legacy platform SMS chokepoint.
+    env_s = _run(comms_sms_adapter.send_sms(
+        "t-mm-2", "+15551234567", "hello",
+    ))
+    assert env_s["status"] == "sent"
+    assert env_s["routed_via"] == "platform_testmode_mock"
+    assert env_s["provider_id"].startswith("mock-")
+
+    # Modern email adapter chokepoint.
+    env_m_e = _run(resend_adapter.send(
+        to="test@example.com", subject="hi", html="<p>hi</p>",
+        category="transactional", tenant_id="t-mm-3",
+    ))
+    assert env_m_e["provider_status"] == "sent"
+    assert env_m_e["routed_via"] == "modern_email_testmode_mock"
+
+    # Modern SMS adapter chokepoint.
+    env_m_s = _run(rc_adapter.send(
+        to="+15551234567", body="hello",
+        category="transactional", tenant_id="t-mm-4",
+    ))
+    assert env_m_s["provider_status"] == "sent"
+    assert env_m_s["routed_via"] == "modern_sms_testmode_mock"
+
+    # Deterministic — same (tenant, recipient, subject) → same id.
+    env_e_replay = _run(comms_email_adapter.send_email(
+        "t-mm-1", "test@example.com", "hi", "<p>hi-different-body</p>",
+    ))
+    assert env_e_replay["provider_id"] == env_e["provider_id"]
+
+
+def test_messaging_testmode_mock_still_enforces_cap_and_optout(monkeypatch):
+    """Test mode short-circuits the outbound HTTP call but MUST NOT
+    bypass the opt-out gate OR the tenant-BYO probe (which is where
+    cap accounting lives). Proves both safeties still fire."""
+    from services import comms_email_adapter
+    from services.messaging import byo_passthrough
+
+    monkeypatch.setenv("MESSAGING_TESTMODE_MOCK", "true")
+
+    # (a) Opt-out gate STILL BLOCKS in test mode.
+    async def _opted_out(*args, **kwargs):
+        return True
+
+    import services.comms_email_adapter as _ce
+    monkeypatch.setattr(_ce, "_is_opted_out", _opted_out)
+    async def _no_byo(*a, **kw):
+        return None
+    monkeypatch.setattr(byo_passthrough, "get_tenant_email_provider",
+                        _no_byo)
+
+    env = _run(comms_email_adapter.send_email(
+        "t-mm-optout", "blocked@example.com", "hi", "<p>hi</p>",
+    ))
+    assert env["status"] == "skipped_opted_out"
+    assert env.get("routed_via") != "platform_testmode_mock"
+
+    # (b) BYO probe STILL FIRES in test mode — a tenant with a BYO
+    # provider gets a mock envelope tagged with the BYO provider
+    # key (via ``tenant_byo_testmode_mock``), NOT the platform mock.
+    # Re-enable opt-out gate to false.
+    async def _not_opted(*a, **kw):
+        return False
+
+    monkeypatch.setattr(_ce, "_is_opted_out", _not_opted)
+
+    class _FakeByoProvider:
+        provider_key = "fake_byo"
+
+        async def send_email(self, **kwargs):
+            raise AssertionError(
+                "BYO provider HTTP was invoked in test mode"
+            )
+
+    fake = _FakeByoProvider()
+
+    async def _fake_get(*a, **kw):
+        return fake
+
+    monkeypatch.setattr(byo_passthrough, "get_tenant_email_provider",
+                        _fake_get)
+
+    env2 = _run(comms_email_adapter.send_email(
+        "t-mm-byo", "user@example.com", "hi", "<p>hi</p>",
+    ))
+    # Modern shape assertion: provider is the BYO key, routed_via
+    # reflects the BYO-mock code path (not the platform-mock path).
+    assert env2["provider_status"] == "sent"
+    assert env2["provider"] == "fake_byo"
+    assert env2["routed_via"] == "tenant_byo_testmode_mock"

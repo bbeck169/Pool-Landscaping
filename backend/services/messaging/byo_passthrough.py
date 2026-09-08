@@ -156,6 +156,19 @@ async def try_dispatch_email_tenant_byo(
         return None
 
     provider_key = getattr(provider, "provider_key", "unknown")
+    # Phase I1.7.e · Feb-2026 — MESSAGING_TESTMODE_MOCK short-circuit.
+    # BYO probe still fires (this branch = tenant HAS a BYO provider
+    # configured), only the provider's outbound HTTP call is skipped.
+    # Deterministic envelope so idempotency + delivery-status
+    # classification behave identically to a real send.
+    from .testmode import is_messaging_testmode, mock_email_envelope
+    if is_messaging_testmode():
+        env = mock_email_envelope(
+            tenant_id=tenant_id, to=to, subject=subject,
+            routed_via="tenant_byo_testmode_mock",
+        )
+        env["provider"] = provider_key
+        return env
     try:
         result = await provider.send_email(
             tenant_id=tenant_id,
@@ -222,6 +235,16 @@ async def try_dispatch_sms_tenant_byo(
         return None
 
     provider_key = getattr(provider, "provider_key", "unknown")
+    # Phase I1.7.e · Feb-2026 — MESSAGING_TESTMODE_MOCK short-circuit.
+    # See mirror comment in ``try_dispatch_email_tenant_byo``.
+    from .testmode import is_messaging_testmode, mock_sms_envelope
+    if is_messaging_testmode():
+        env = mock_sms_envelope(
+            tenant_id=tenant_id, to=to, body=body,
+            routed_via="tenant_byo_testmode_mock",
+        )
+        env["provider"] = provider_key
+        return env
     try:
         result = await provider.send_sms(
             tenant_id=tenant_id,

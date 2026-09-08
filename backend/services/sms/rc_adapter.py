@@ -276,6 +276,34 @@ class RingCentralSMSAdapter:
             await _cache_sms_envelope(tenant_id, _idem_key, _byo)
             return _byo
 
+        # Phase I1.7.e · Feb-2026 — MESSAGING_TESTMODE_MOCK short-circuit
+        # for the platform (non-BYO) path. Runs AFTER every pre-flight
+        # gate (suppression, consent, is_comm_allowed, guard_outbound,
+        # BYO probe) so all safeties still fire; only the raw RC
+        # send call in the retry loop below is skipped. Envelope is
+        # also cached in ``sms_idempotency`` so replay behaves
+        # identically to a real send.
+        from services.messaging.testmode import (
+            is_messaging_testmode as _tm_on,
+            mock_sms_envelope as _tm_sms,
+        )
+        if _tm_on():
+            _env = _tm_sms(
+                tenant_id=tenant_id, to=addr_e164, body=body or "",
+                routed_via="modern_sms_testmode_mock",
+            )
+            env = {
+                "provider": _env.get("provider") or "mock",
+                "provider_status": _env["provider_status"],
+                "provider_response_id": _env["provider_response_id"],
+                "attempts": 1,
+                "error": None,
+                "routed_via": _env["routed_via"],
+                "rc_status": "Queued",
+            }
+            await _cache_sms_envelope(tenant_id, _idem_key, env)
+            return env
+
         # 2. Graceful mocked mode when RC not configured.
         if not self.enabled:
             logger.info(

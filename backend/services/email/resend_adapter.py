@@ -317,6 +317,32 @@ class ResendEmailAdapter:
         if _byo is not None:
             return _byo
 
+        # Phase I1.7.e · Feb-2026 — MESSAGING_TESTMODE_MOCK short-circuit
+        # for the platform (non-BYO) path. Runs AFTER every pre-flight
+        # gate (suppression, is_comm_allowed, K72 kill-switch,
+        # guard_outbound, BYO probe) so all safeties still fire; only
+        # the raw Resend SDK call in the retry loop below is skipped.
+        from services.messaging.testmode import (
+            is_messaging_testmode as _tm_on,
+            mock_email_envelope as _tm_email,
+        )
+        if _tm_on():
+            _env = _tm_email(
+                tenant_id=tenant_id, to=addr, subject=subject,
+                routed_via="modern_email_testmode_mock",
+            )
+            # Modern adapter shape — map legacy keys to modern names
+            # so the adapter's contract (provider / provider_status /
+            # provider_response_id) is preserved.
+            return {
+                "provider": _env.get("provider") or "mock",
+                "provider_status": _env["provider_status"],
+                "provider_response_id": _env["provider_response_id"],
+                "attempts": 1,
+                "error": None,
+                "routed_via": _env["routed_via"],
+            }
+
         # 2. Graceful mocked mode — no API key set. Log + return.
         if not self.enabled:
             logger.info(

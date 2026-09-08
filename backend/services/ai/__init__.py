@@ -37,3 +37,15 @@ from .models import (  # noqa: F401
     TenantAINotConnected,
     UnknownAIProvider,
 )
+from .testmode import (  # noqa: F401
+    is_ai_testmode,
+    mock_completion_result,
+    mock_llm_provider_response,
+)
+from .cap_http import (  # noqa: F401
+    is_ai_cap_exceeded,
+    raise_if_ai_cap_exceeded,
+    translate_tenant_cap_exception,
+    CAP_EXCEEDED_HTTP_STATUS,
+    CAP_EXCEEDED_ERROR_CODE,
+)

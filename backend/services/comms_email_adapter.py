@@ -88,6 +88,19 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
     if _byo is not None:
         return _byo
 
+    # Phase I1.7.e · Feb-2026 — MESSAGING_TESTMODE_MOCK short-circuit
+    # for the platform (non-BYO) path. Runs AFTER opt-out + BYO probe
+    # so both gates still fire; only the outbound Resend HTTP call is
+    # skipped. Deterministic envelope keyed on (tenant, to, subject).
+    from services.messaging.testmode import (
+        is_messaging_testmode, mock_email_envelope,
+    )
+    if is_messaging_testmode():
+        return mock_email_envelope(
+            tenant_id=tenant_id, to=to_email, subject=subject,
+            routed_via="platform_testmode_mock",
+        )
+
     key = os.environ.get("RESEND_API_KEY")
     if not key:
         return {"status": "not_sent_missing_key"}
