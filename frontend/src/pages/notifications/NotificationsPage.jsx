@@ -2,17 +2,28 @@
  * Phase 55 · Notifications page (full history).
  *
  * Renders every bell-channel notification the current user can see,
- * grouped by Today / Yesterday / Earlier. Filter chips let the user
- * narrow by kind. "Mark all read" clears every unread row; per-row
- * "Delete" drops one from history; row click routes to the deep link
- * or the source ref.
+ * grouped by Today / Yesterday / Earlier.
+ *
+ * Feb-2026 · UX cleanup — the ~40-chip filter wall was replaced with a
+ * single grouped multi-select dropdown (:file:``NotificationsFilterDropdown``).
+ * Filter state:
+ *   * ``kindFilters`` (``string[]``) — selected notification kinds.
+ *     Empty array == "All". Persisted to the ``?kind=`` URL query so
+ *     back/forward navigation preserves the filter.
+ *   * ``unreadOnly`` (``boolean``) — orthogonal toggle beside the
+ *     dropdown, ``?unread=1`` in the URL.
+ * Backend accepts ``?kind=a,b,c`` (comma-joined) → Mongo ``$in``.
+ *
+ * "Mark all read" clears every unread row; per-row "Delete" drops one
+ * from history; row click routes to the deep link or the source ref.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Check, Trash2, Filter, ExternalLink, Settings as SettingsIcon } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft, Bell, Check, Trash2, ExternalLink, Settings as SettingsIcon } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { useRealtime } from "@/realtime/NotificationSocket";
+import NotificationsFilterDropdown from "@/components/notifications/NotificationsFilterDropdown";
 
 function dayBucket(iso) {
   if (!iso) return "Earlier";
@@ -34,24 +45,48 @@ function fmtTime(iso) {
 export default function NotificationsPage() {
   const [rows, setRows] = useState([]);
   const [kinds, setKinds] = useState([]);
-  const [kindFilter, setKindFilter] = useState("");
-  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Feb-2026 · UX cleanup — array-typed filter. Seeded from ``?kind=``
+  // URL param (comma-joined) so deep-links + back button preserve the
+  // selection.  Empty array == "All".
+  const [kindFilters, setKindFilters] = useState(() => {
+    const raw = searchParams.get("kind") || "";
+    return raw ? raw.split(",").filter(Boolean) : [];
+  });
+  const [unreadOnly, setUnreadOnly] = useState(() => searchParams.get("unread") === "1");
   const [loading, setLoading] = useState(true);
   const { connected, transport, subscribe } = useRealtime();
   const nav = useNavigate();
+
+  // Sync filter state → URL so back/forward buttons and shareable
+  // links round-trip the current filter.  ``replace: true`` avoids
+  // creating a history entry per checkbox click.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (kindFilters.length > 0) next.set("kind", kindFilters.join(","));
+    else next.delete("kind");
+    if (unreadOnly) next.set("unread", "1");
+    else next.delete("unread");
+    // Avoid pushing an identical string — React-Router will still
+    // re-render but it keeps the history clean.
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kindFilters, unreadOnly]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const q = new URLSearchParams();
       q.set("limit", "200");
-      if (kindFilter) q.set("kind", kindFilter);
+      if (kindFilters.length > 0) q.set("kind", kindFilters.join(","));
       if (unreadOnly) q.set("unread_only", "true");
       const r = await api.get(`/notifications?${q.toString()}`);
       setRows(Array.isArray(r) ? r : []);
     } catch { setRows([]); }
     setLoading(false);
-  }, [kindFilter, unreadOnly]);
+  }, [kindFilters, unreadOnly]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -130,38 +165,28 @@ export default function NotificationsPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider" style={{ color: colors.muted }}>
-          <Filter size={12} /> Filter
-        </span>
-        <button
-          onClick={() => setKindFilter("")}
-          className="text-xs px-2.5 py-1 rounded-full border"
-          style={{
-            borderColor: !kindFilter ? colors.brand : colors.border,
-            backgroundColor: !kindFilter ? colors.brand : "transparent",
-            color: !kindFilter ? "#fff" : colors.onSurface,
-          }}
-          data-testid="notif-filter-all"
-        >
-          All
-        </button>
-        {kinds.map((k) => (
+      <div className="flex items-center gap-3 mb-4 flex-wrap" data-testid="notif-filter-bar">
+        <NotificationsFilterDropdown
+          kinds={kinds}
+          selected={kindFilters}
+          onChange={setKindFilters}
+          testId="notif-filter-dropdown"
+        />
+        {kindFilters.length > 0 ? (
           <button
-            key={k.key}
-            onClick={() => setKindFilter(k.key)}
-            className="text-xs px-2.5 py-1 rounded-full border"
-            style={{
-              borderColor: kindFilter === k.key ? colors.brand : colors.border,
-              backgroundColor: kindFilter === k.key ? colors.brand : "transparent",
-              color: kindFilter === k.key ? "#fff" : colors.onSurface,
-            }}
-            data-testid={`notif-filter-${k.key}`}
+            type="button"
+            onClick={() => setKindFilters([])}
+            className="text-xs font-semibold underline"
+            style={{ color: colors.brand }}
+            data-testid="notif-filter-reset"
           >
-            {k.label}
+            Reset ({kindFilters.length})
           </button>
-        ))}
-        <label className="ml-2 inline-flex items-center gap-1.5 text-xs font-semibold" style={{ color: colors.onSurface }}>
+        ) : null}
+        <label
+          className="ml-auto inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
+          style={{ color: colors.onSurface }}
+        >
           <input
             type="checkbox"
             checked={unreadOnly}
