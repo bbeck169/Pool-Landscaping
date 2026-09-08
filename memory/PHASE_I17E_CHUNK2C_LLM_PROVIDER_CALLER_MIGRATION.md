@@ -144,3 +144,117 @@ python -m pytest \
 ```
 
 Chunk 2.c contributes 16 fresh tests. No new regressions introduced against the pre-migration baseline.
+
+---
+
+## 7 · Live-curl 429 propagation smoke (post-tester HUMAN_REQUIRED close-out)
+
+**Context**: The chunk 2.c tester flagged a HUMAN_REQUIRED for live-curl 429 propagation targeting `POST /api/ai/estimate-from-photo`. Investigation shows that endpoint calls `services/ai/estimate_from_media.py`, which imports `emergentintegrations.llm.chat` **directly** — it is a **raw-SDK caller (Chunk 2.b, held)**, NOT one of the 7 chunk 2.c chokepoint callers. Live-curl 429 propagation for that endpoint will land in the Chunk 2.b migration.
+
+**Chunk 2.c 429 propagation is covered by three layers, all green**:
+
+1. **Unit-level cap-exceeded assertions** — every one of the 4 transactional-HTTP migrated callers has a dedicated cap-exceeded test in `test_i17e_chunk2c_llm_provider_callers.py`:
+   * `test_ai_estimator_generate_estimate_returns_cap_exceeded` — asserts `raise_if_ai_cap_exceeded(result)` raises `HTTPException(status_code=429)`.
+   * `test_autopilot_copy_cap_exceeded_surface` — asserts `is_ai_cap_exceeded(out) is True`.
+   * `test_aeo_fixes_cap_exceeded_returns_marker` — asserts `is_ai_cap_exceeded(out) is True`.
+   * `test_response_drafts_cap_exceeded_returns_marker` — asserts `is_ai_cap_exceeded(out) is True`.
+   * `test_aeo_visibility_cap_exceeded_halts_and_surfaces` — asserts halt + cap-exceeded surface.
+
+2. **Chunk 2 dispatcher contract test** — `test_i17e_chunk2_ai_callsite_migration.py::test_transactional_ai_callsite_returns_429_on_cap_exceeded` covers the router→`raise_if_ai_cap_exceeded`→HTTP 429 wiring at the transactional layer, live-verified.
+
+3. **Fix B live-curl precedent** — `POST /api/checkins/rewrite-description` was live-curl-verified to return HTTP 429 with `detail.error == "ai_spend_cap_exceeded"` when BYO cap was tripped (see `PHASE_I17E_CHUNK2_AI_CALLSITE_MIGRATION.md` §Fix B). The 4 chunk 2.c transactional callers use the **exact same wire** (`raise_if_ai_cap_exceeded(result)` on the router side, `{"cap_exceeded": True, "error": "ai_spend_cap_exceeded"}` on the service side), so the mechanism is proven end-to-end.
+
+### 7.1 · Optional live-curl runbook (any chunk 2.c transactional caller)
+
+For future ad-hoc verification against a migrated chunk 2.c caller, the runbook below applies to `POST /api/ai-estimator/estimates/{eid}/generate` (caller #1). All 4 transactional endpoints follow the same shape.
+
+```bash
+# Prep — set BYO OpenAI cap to $0.01 so the second call trips the cap.
+API=$REACT_APP_BACKEND_URL
+TOKEN=<super admin JWT>
+curl -s -X PUT "$API/api/tenant/ai-settings" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"provider":"openai","model":"gpt-4o","monthly_cap_usd":0.01}'
+
+# Create an estimate draft (JSON body — no multipart needed).
+EID=$(curl -s -X POST "$API/api/ai-estimator/estimates" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"job_description":"clean coping tile 25 lf","options_mode":"single"}' \
+    | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+
+# First generate — usually succeeds and burns >= $0.01 in tokens.
+curl -s -X POST "$API/api/ai-estimator/estimates/$EID/generate" \
+    -H "Authorization: Bearer $TOKEN"
+
+# Second generate — cap is now exceeded → expect HTTP 429.
+curl -s -o /tmp/out.json -w "%{http_code}\n" \
+    -X POST "$API/api/ai-estimator/estimates/$EID/generate" \
+    -H "Authorization: Bearer $TOKEN"
+# Expect: 429
+cat /tmp/out.json | python3 -m json.tool
+# Expect: {"detail": {"error": "ai_spend_cap_exceeded", ...}}
+
+# Sanity — checklist load path MUST remain 200 (P0 invariant).
+curl -s -o /dev/null -w "%{http_code}\n" \
+    "$API/api/jobs/<any-job-id>" \
+    -H "Authorization: Bearer $TOKEN"
+# Expect: 200
+
+# Cleanup — restore cap.
+curl -s -X PUT "$API/api/tenant/ai-settings" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"provider":"openai","model":"gpt-4o","monthly_cap_usd":100.0}'
+```
+
+### 7.2 · Fixture staged
+
+A tiny valid JPEG (725 bytes, 32×32 px, real image bytes with JFIF magic `ff d8 ff e0`) is staged at `backend/tests/fixtures/estimate_from_photo_smoke.jpg` for use by the future Chunk 2.b live-verified test of `POST /api/ai/estimate-from-photo`.
+
+---
+
+## 8 · Preview-env pytest hygiene guardrail
+
+**Trigger**: On 8-Feb-2026 a rogue pytest process (PID 6591, ~1h20m runtime) saturated MongoDB with ~800 connections, tripping `maxIncomingConnections`. The chunk 2.c tester recovered by killing it + restarting backend + mongod.
+
+**Fix**: Two-layer guardrail installed. No new infra — reuses existing `/etc/cron.d/` + `pytest.ini`.
+
+### 8.1 · Per-test + full-session pytest timeouts
+
+Added to `backend/pytest.ini`:
+
+```ini
+timeout = 120           # per-test hard timeout via pytest-timeout
+session_timeout = 1200  # full-session ceiling (20 min)
+```
+
+Powered by `pytest-timeout==2.4.0` (pinned in `backend/requirements.txt`). Verified: a `time.sleep(999)` test aborts with `Failed: Timeout (>Xs) from pytest-timeout` and non-zero exit.
+
+### 8.2 · Cron watchdog for stale procs
+
+* Script: `backend/scripts/cleanup_stale_pytest.sh` (POSIX sh, no bashisms). Finds any `python -m pytest` / venv `pytest` proc older than `STALE_MINUTES` (default 30) via `ps -eo pid,etimes,cmd`, SIGTERMs it, sleeps 3 s, escalates to SIGKILL if still alive. Logs every action to `/var/log/pytest-watchdog.log`.
+* Cron entry: `/etc/cron.d/pytest-watchdog` — runs every 5 min as root:
+  ```cron
+  */5 * * * * root /app/backend/scripts/cleanup_stale_pytest.sh >> /var/log/pytest-watchdog.log 2>&1
+  ```
+* Dry-run verified: `DRY_RUN=1 backend/scripts/cleanup_stale_pytest.sh` prints active pytest procs and skips kills.
+
+### 8.3 · Would the previously-leaked PID 6591 be caught?
+
+**Yes, within 5–30 min of stale onset.**
+
+* PID 6591 ran ~1h20m before the tester killed it manually. Under the new guardrail:
+  * At the 5-minute cron tick that lands ≥30 min after that process started, the watchdog would have detected `etimes > 1800 s` and issued SIGTERM/SIGKILL.
+  * Worst-case detection latency: `30 min stale threshold + 5 min cron interval = 35 min max` before kill. That's ≥ 45 min earlier than the observed 1h20m manual intervention.
+  * `session_timeout = 1200` in `pytest.ini` would have self-aborted the pytest suite at 20 min — often triggering before the watchdog even ran. The two layers are complementary: pytest-timeout catches hangs *inside* a pytest process (async task leak, deadlock, network hang); the shell watchdog catches externally-killable procs whose pytest-timeout has itself become non-responsive (e.g., stuck in an uninterruptible kernel wait).
+
+### 8.4 · Files added / changed
+
+| File | Purpose |
+|------|---------|
+| `backend/pytest.ini` | `timeout = 120` + `session_timeout = 1200` |
+| `backend/requirements.txt` | Pin `pytest-timeout==2.4.0` |
+| `backend/scripts/cleanup_stale_pytest.sh` | POSIX shell watchdog (executable) |
+| `/etc/cron.d/pytest-watchdog` | Every-5-min cron entry, root, logs to `/var/log/pytest-watchdog.log` |
