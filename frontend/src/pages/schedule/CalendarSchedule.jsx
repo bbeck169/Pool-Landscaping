@@ -73,6 +73,12 @@ import { useNumberedOrder, NumberOrderInput, ReorderBanner, BulkReorderModal } f
 // Feb-2026 · Google-Maps stops map above the DnD panel (reuses the
 // app-wide ``<APIProvider>`` mounted in ``layouts/AppLayout.jsx``).
 import ScheduleMap from "@/pages/schedule/ScheduleMap";
+// Feb-2026 · P0 defensive · Google Maps SDK failures (billing
+// disabled, key rotation, quota exhausted) throw inside
+// @vis.gl/react-google-maps' render tree. Without a tight
+// boundary around ScheduleMap, that throw takes out the entire
+// schedule day view. Boundary keeps the rest of the page usable.
+import ScheduleMapErrorBoundary from "@/components/schedule/ScheduleMapErrorBoundary";
 // Phase K50 · Feb-2026 — Schedule job-card status background shading.
 // Single source of truth: ``frontend/src/lib/jobStatus.js`` (web) +
 // ``mobile/src/lib/jobStatus.ts`` (mobile).  DO NOT inline the hex
@@ -1455,11 +1461,13 @@ export default function CalendarSchedule() {
           ``techColorMap`` the schedule calendar / DnD panel key on
           so a stop's colour matches across surfaces. */}
       {mode === "grid" ? (
-        <ScheduleMap
-          jobs={dayJobs}
-          techs={techs}
-          techColorMap={techColorMap}
-        />
+        <ScheduleMapErrorBoundary>
+          <ScheduleMap
+            jobs={dayJobs}
+            techs={techs}
+            techColorMap={techColorMap}
+          />
+        </ScheduleMapErrorBoundary>
       ) : null}
 
       {/* Feb-2026 · Numbered-order reorder — the previous

@@ -265,33 +265,54 @@ def _coarse_location_hint(address: str) -> str:
     return f"{city}, {tail}".strip(", ")
 
 
-async def _call_emergent_text(system_prompt: str, user_prompt: str) -> str:
-    """Emergent-LLM text-only call. Returns the raw string reply.
-    Raises RuntimeError on any failure (timeout, import, empty, etc.).
+async def _call_emergent_text(system_prompt: str, user_prompt: str,
+                                 *, tenant_id: Optional[str] = None) -> str:
+    """Emergent-LLM text-only call routed through the BYO-aware
+    dispatcher chokepoint.
+
+    Phase I1.7.e · chunk 2 · Feb-2026 — Migrated to
+    ``services.llm_provider.call_llm_with_fallback(tenant_id=...)``
+    so this endpoint honours per-tenant AI cap enforcement +
+    tenant-BYO provider routing. Cap-exceeded surfaces as a
+    ``HTTPException(429)`` via
+    :func:`services.ai.cap_http.raise_if_ai_cap_exceeded` in the
+    caller (:func:`rewrite_description`). Falls back to the Emergent
+    Universal LLM Key when the tenant has no BYO AI provider row.
+
+    Raises ``RuntimeError`` on any non-cap failure (timeout, import,
+    empty response, etc.) — caller maps to HTTP 502. The
+    cap-exceeded case is signalled by returning the raw result dict
+    with ``cap_exceeded=True`` so the caller can raise 429 without
+    swallowing the cap semantics in a generic 502.
     """
-    key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
-    if not key:
-        raise RuntimeError("emergent_key_missing")
+    from services.llm_provider import call_llm_with_fallback
+    from services.ai.cap_http import is_ai_cap_exceeded
+
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:  # pragma: no cover — env-dependent
-        raise RuntimeError(f"emergent_import_failed: {e}") from e
-    try:
-        chat = (
-            LlmChat(
-                api_key=key,
-                session_id=new_id(),
-                system_message=system_prompt,
-            )
-            .with_model("anthropic", "claude-sonnet-4-5")
+        result = await asyncio.wait_for(
+            call_llm_with_fallback(
+                system_prompt=system_prompt, user_text=user_prompt,
+                provider="anthropic", model="claude-sonnet-4-5",
+                tenant_id=tenant_id,
+            ),
+            timeout=30.0,
         )
-        msg = UserMessage(text=user_prompt)
-        resp = await asyncio.wait_for(chat.send_message(msg), timeout=30.0)
     except asyncio.TimeoutError as e:
         raise RuntimeError("emergent_timeout") from e
     except Exception as e:
         raise RuntimeError(f"emergent_call_failed: {e}") from e
-    text = str(resp or "").strip()
+
+    # Cap-exceeded is a signalled state, not an exception. Surface it
+    # to the caller in a form it can distinguish from a generic
+    # failure (which maps to HTTP 502).
+    if is_ai_cap_exceeded(result):
+        raise _CapExceeded(result)
+
+    if not isinstance(result, dict) or "raw" not in result:
+        raise RuntimeError(f"emergent_bad_shape: {type(result).__name__}")
+
+    raw = result.get("raw") or {}
+    text = str(raw.get("text") or raw.get("content") or "").strip()
     # Strip surrounding quotes / codefences the model sometimes emits.
     if text.startswith("```"):
         text = text.strip("`").strip()
@@ -304,9 +325,21 @@ async def _call_emergent_text(system_prompt: str, user_prompt: str) -> str:
     return text
 
 
+class _CapExceeded(Exception):
+    """Sentinel exception carrying the cap-exceeded result dict so
+    the endpoint handler can convert it into a proper HTTP 429 via
+    :func:`services.ai.cap_http.raise_if_ai_cap_exceeded`."""
+
+    def __init__(self, result: Dict[str, Any]) -> None:
+        super().__init__("ai_spend_cap_exceeded")
+        self.result = result
+
+
 # Test seam — the pytest suite patches this to bypass the real LLM.
-async def _generate_rewrite(system_prompt: str, user_prompt: str) -> str:
-    return await _call_emergent_text(system_prompt, user_prompt)
+async def _generate_rewrite(system_prompt: str, user_prompt: str,
+                              *, tenant_id: Optional[str] = None) -> str:
+    return await _call_emergent_text(system_prompt, user_prompt,
+                                        tenant_id=tenant_id)
 
 
 def _test_bypass_enabled(request: Request) -> bool:
@@ -354,7 +387,22 @@ async def rewrite_description(
 
     system_prompt, user_prompt = _build_prompt(draft, body.context)
     try:
-        rewritten = await _generate_rewrite(system_prompt, user_prompt)
+        rewritten = await _generate_rewrite(system_prompt, user_prompt,
+                                              tenant_id=tenant_id)
+    except _CapExceeded as cap:
+        # Phase I1.7.e · chunk 2 · Feb-2026 — transactional AI
+        # cap-exceeded → HTTP 429. Uses the migration helper so the
+        # response shape matches the other transactional cap-exceeded
+        # sites (D2D Zillow limiter, comms send-now, etc.).
+        from services.ai.cap_http import raise_if_ai_cap_exceeded
+        raise_if_ai_cap_exceeded(
+            cap.result,
+            detail={"error": "ai_spend_cap_exceeded",
+                     **(cap.result.get("detail") or {})},
+        )
+        # `raise_if_ai_cap_exceeded` raises; the ``raise`` below is
+        # unreachable but appeases the type-checker.
+        raise HTTPException(429, {"error": "ai_spend_cap_exceeded"}) from cap
     except Exception as e:
         logger.warning(f"[checkin_rewrite] LLM failure: {e}")
         raise HTTPException(502, {"error": "llm_unavailable"}) from e

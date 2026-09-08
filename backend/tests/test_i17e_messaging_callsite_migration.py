@@ -606,7 +606,7 @@ def test_messaging_testmode_mock_short_circuits_outbound_http(monkeypatch):
         category="transactional", tenant_id="t-mm-3",
     ))
     assert env_m_e["provider_status"] == "sent"
-    assert env_m_e["routed_via"] == "modern_email_testmode_mock"
+    assert env_m_e["routed_via"] == "platform_testmode_mock"
 
     # Modern SMS adapter chokepoint.
     env_m_s = _run(rc_adapter.send(
@@ -614,7 +614,7 @@ def test_messaging_testmode_mock_short_circuits_outbound_http(monkeypatch):
         category="transactional", tenant_id="t-mm-4",
     ))
     assert env_m_s["provider_status"] == "sent"
-    assert env_m_s["routed_via"] == "modern_sms_testmode_mock"
+    assert env_m_s["routed_via"] == "platform_testmode_mock"
 
     # Deterministic — same (tenant, recipient, subject) → same id.
     env_e_replay = _run(comms_email_adapter.send_email(

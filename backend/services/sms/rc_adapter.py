@@ -290,7 +290,7 @@ class RingCentralSMSAdapter:
         if _tm_on():
             _env = _tm_sms(
                 tenant_id=tenant_id, to=addr_e164, body=body or "",
-                routed_via="modern_sms_testmode_mock",
+                routed_via="platform_testmode_mock",
             )
             env = {
                 "provider": _env.get("provider") or "mock",

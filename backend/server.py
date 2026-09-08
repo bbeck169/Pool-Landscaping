@@ -1131,6 +1131,21 @@ try:
 except Exception:  # pragma: no cover — defensive; never block boot
     pass
 
+# Phase I1.7.e · Feb-2026 — log the two testmode flags at boot so
+# preview env-drift is immediately visible in ``supervisorctl tail
+# backend``. If a tester sees a live-curl 502 that pytest can't
+# reproduce, this line proves whether the running process actually
+# has the flag loaded from ``.env``.
+try:
+    from services.messaging.testmode import is_messaging_testmode as _mm_on
+    from services.ai._helpers import ai_testmode_mock as _ai_on
+    logger.info(
+        f"[testmode] MESSAGING_TESTMODE_MOCK={_mm_on()} "
+        f"AI_TESTMODE_MOCK={_ai_on()}"
+    )
+except Exception as _e:  # pragma: no cover
+    logger.warning(f"[testmode] flag snapshot failed: {_e}")
+
 
 # ── Cold-start optimization ───────────────────────────────────────────
 # Only the demo-admin `seed()` + a Mongo ping stay on the sync boot path

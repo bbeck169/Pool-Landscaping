@@ -2600,7 +2600,23 @@ async def customer_send_sms(cid: str, body: _SendSmsBody,
         logger.warning(f"[bug-f] failed to persist customer sms comms_log row: {e}")
 
     status = res.get("provider_status")
-    if status not in ("sent", "queued", "mocked", "suppressed"):
+    # Phase I1.7.e · Fix A · Feb-2026 — guard-block statuses are NOT
+    # infrastructure failures. Each of the pre-flight gates in
+    # ``rc_adapter.send`` (marketing suppression, K31 consent gate,
+    # comm-allowlist gate, K72 kill switch, ``guard_outbound`` preview
+    # dry-run, tenant-BYO cap) intentionally returns a distinct
+    # ``provider_status`` other than ``"sent"``. They mean "the safety
+    # system fired and no live send occurred" — the caller should get
+    # 200 OK with the envelope so the UI can surface the reason,
+    # not a 502 that implies a transport-level failure.
+    #
+    # Cap-exceeded is a real business signal (tenant hit their monthly
+    # cap) so it surfaces as HTTP 429 — the same shape every other
+    # transactional cap-exceeded callsite uses.
+    from services.messaging.byo_passthrough import raise_if_cap_exceeded
+    raise_if_cap_exceeded(res,
+                           detail="Monthly SMS cap exceeded for this tenant")
+    if status == "failed" or not status:
         raise HTTPException(
             502,
             f"send failed: {res.get('error') or status or 'unknown'}",

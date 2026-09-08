@@ -329,7 +329,7 @@ class ResendEmailAdapter:
         if _tm_on():
             _env = _tm_email(
                 tenant_id=tenant_id, to=addr, subject=subject,
-                routed_via="modern_email_testmode_mock",
+                routed_via="platform_testmode_mock",
             )
             # Modern adapter shape — map legacy keys to modern names
             # so the adapter's contract (provider / provider_status /

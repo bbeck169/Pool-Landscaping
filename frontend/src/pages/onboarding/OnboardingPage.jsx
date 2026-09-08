@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { api } from "@/api";
 import { colors, gradients } from "@/theme";
-import { ChevronRight, ChevronLeft, ExternalLink, Sparkles, Rocket } from 'lucide-react';
+import { ChevronRight, ChevronLeft, ExternalLink, Sparkles, Rocket, X } from 'lucide-react';
 
 const STEPS = [
   { key: "welcome",       title: "Welcome",              blurb: "Tell us about your business." },
@@ -362,6 +362,38 @@ function StepCampaign({ data, setData }) {
 }
 
 /* ─── First-login modal ─────────────────────────────────────── */
+// Feb-2026 · P0 defensive · schedule "freeze" mitigation.
+// The tenant welcome modal previously persisted its dismissal to
+// ``sessionStorage`` only AND never called the backend's
+// ``POST /api/onboarding/progress {skipped: true}``. Two failure
+// modes fell out of that:
+//   1. On every new browser session (or every tab open in
+//      Chrome-with-tab-isolation), the modal re-appeared even
+//      though ``GET /api/onboarding`` still reported the tenant
+//      as not-skipped.
+//   2. Its ``fixed inset-0 z-[60]`` backdrop intercepted every
+//      pointer event across the viewport, so users on 5G mobile
+//      who missed the small "Skip for now" tap target reported
+//      the schedule page as "frozen" (Playwright confirmed the
+//      intercept in the P0 diagnostic — 60× click retries all
+//      blocked by ``data-testid="onboarding-modal"``).
+//
+// This rework:
+//   * Persists dismissal to the backend via the existing
+//     ``POST /api/onboarding/progress`` endpoint (backend already
+//     supported ``{skipped: true}``; only the FE was ignoring it).
+//   * Uses ``localStorage`` for an immediate no-round-trip guard
+//     so the modal doesn't blip while the backend PATCH is in
+//     flight (fire-and-forget on close).
+//   * Wraps the outer backdrop in ``pointer-events-none`` so
+//     background taps click through to the underlying page — the
+//     modal is educational / skippable, not compliance-blocking,
+//     and users on mobile MUST be able to interact with the
+//     schedule behind it even if they never notice the modal.
+//   * Adds a large 44×44 top-right "×" close button on the card so
+//     the dismiss target passes the WCAG 2.1 min tap-size rule.
+const _ONBOARD_DISMISS_KEY = "onboarding_modal_dismissed_v2";
+
 export function OnboardingLoginModal() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -379,21 +411,63 @@ export function OnboardingLoginModal() {
     // ANY ``/admin/*`` path. The modal still fires on the tenant
     // dashboard + everywhere else it was designed for.
     if (location.pathname.startsWith("/admin")) return;
-    // Only show once per browser session.
-    if (sessionStorage.getItem("onboarding_modal_seen") === "1") return;
+    // Feb-2026 · P0 · localStorage guard survives session close.
+    // (Legacy ``onboarding_modal_seen`` sessionStorage flag is
+    // read for backwards-compat so users mid-session don't get
+    // re-nagged after this ship.)
+    try {
+      if (localStorage.getItem(_ONBOARD_DISMISS_KEY) === "1") return;
+      if (sessionStorage.getItem("onboarding_modal_seen") === "1") return;
+    } catch { /* private-mode / storage disabled → fall through */ }
     api.get("/onboarding").then((s) => {
       if (!s.completed && !s.skipped) setState(s);
     }).catch(() => {});
   }, [location.pathname]);
 
   if (!state || dismissed) return null;
-  const close = () => { sessionStorage.setItem("onboarding_modal_seen", "1"); setDismissed(true); };
+  const close = () => {
+    // Immediate local dismissal so the modal disappears before the
+    // network round-trip. Both storages are best-effort; wrap in
+    // try/catch for private-browsing / storage-disabled contexts.
+    try { localStorage.setItem(_ONBOARD_DISMISS_KEY, "1"); } catch {}
+    try { sessionStorage.setItem("onboarding_modal_seen", "1"); } catch {}
+    setDismissed(true);
+    // Persist to backend so the modal doesn't come back on a
+    // different device / cleared browser. Fire-and-forget — the
+    // local guard already covers this device even if the network
+    // POST fails.
+    api.post("/onboarding/progress", { skipped: true }).catch(() => {});
+  };
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+    // Feb-2026 · P0 · ``pointer-events-none`` on the backdrop so
+    // taps click through to the schedule (or any other page)
+    // behind. The card itself re-enables pointer events so its
+    // buttons remain interactive.
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 pointer-events-none"
          style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
-         data-testid="onboarding-modal">
-      <div className="rounded-2xl max-w-md w-full p-6"
+         data-testid="onboarding-modal"
+         data-onboard-pass-through="true">
+      <div className="rounded-2xl max-w-md w-full p-6 pointer-events-auto relative"
            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        {/* Feb-2026 · P0 · 44×44 dismiss target (WCAG 2.1 min).
+            Absolute-positioned top-right so it doesn't fight the
+            main CTA row for tap space. */}
+        <button
+          type="button"
+          onClick={close}
+          aria-label="Dismiss welcome"
+          data-testid="onboarding-modal-close"
+          className="absolute top-2 right-2 inline-flex items-center justify-center rounded-full"
+          style={{
+            width: 44, height: 44,
+            background: "transparent",
+            color: colors.onSurfaceSecondary,
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          <X size={20} />
+        </button>
         <div className="text-4xl mb-3">👋</div>
         <h2 className="text-xl font-bold mb-2" style={{ color: colors.onSurface }}>Welcome to Pool & Landscaping</h2>
         <p className="text-sm mb-6" style={{ color: colors.muted }}>

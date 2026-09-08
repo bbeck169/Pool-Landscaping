@@ -197,10 +197,8 @@ provider SDK / HTTP call is skipped.
     "provider_response_id": "mock-...",
     "attempts": 1,
     "error": None,
-    "routed_via": "platform_testmode_mock" |
-                    "tenant_byo_testmode_mock" |
-                    "modern_email_testmode_mock" |
-                    "modern_sms_testmode_mock",
+    "routed_via": "platform_testmode_mock" |     # non-BYO path (both email + SMS)
+                    "tenant_byo_testmode_mock",   # tenant-BYO path (both email + SMS)
     "raw": {"testmode_mock": True, "tenant_id": ...},
 }
 ```
