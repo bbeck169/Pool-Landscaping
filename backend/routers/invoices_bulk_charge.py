@@ -166,8 +166,28 @@ async def execute_bulk_charge(
     HTTP + Depends) to keep the stripe stub inside the same interpreter."""
 
     # ── Idempotency replay guard ─────────────────────────────────────
+    # P0 · Feb-2026 — the pre-fix guard matched ONLY on
+    # ``(tenant_id, idempotency_key)`` and did not distinguish between
+    # the preview (``dry_run=true``) and the confirm (``dry_run=false``)
+    # calls the FE makes with the SAME key (see
+    # ``frontend/src/components/invoices/BulkChargeModal.jsx``: the key
+    # is generated once on mount and reused for both requests). That
+    # coupling caused a real-money silent no-op: the confirm click
+    # replayed the cached dry-run row (with ``status="would_charge"``
+    # rows and ``charged=0`` summary) instead of dispatching to
+    # ``stripe_svc.charge_card_on_file``. Users saw
+    # "0 charged · 1 skipped · 0 failed" and the ``WOULD_CHARGE``
+    # outcome echoed from the preview. Stripe was never called.
+    #
+    # Fix: scope the replay lookup by ``dry_run`` so the preview
+    # request and the confirm request occupy separate replay slots
+    # under the same FE-supplied ``idempotency_key``. The unique
+    # index is likewise widened to include ``dry_run`` (see
+    # :func:`ensure_indexes` below).
     existing = await db.bulk_charge_runs.find_one(
-        {"tenant_id": tenant["id"], "idempotency_key": body.idempotency_key},
+        {"tenant_id": tenant["id"],
+         "idempotency_key": body.idempotency_key,
+         "dry_run": body.dry_run},
         {"_id": 0},
     )
     if existing:
@@ -364,10 +384,15 @@ async def execute_bulk_charge(
         await db.bulk_charge_runs.insert_one(run_doc)
     except Exception as exc:
         # Unique-index race: another concurrent call raced to insert with the
-        # same (tenant, idempotency_key). Fall through to the replay branch.
+        # same (tenant, idempotency_key, dry_run). Fall through to the replay
+        # branch. Note the dry_run scoping here — see the P0 note on the top
+        # guard above; a bare (tenant, key) match would silently short-circuit
+        # a live confirm using a dry-run row.
         logger.warning("[bulk-charge] insert race: %s", exc)
         again = await db.bulk_charge_runs.find_one(
-            {"tenant_id": tenant["id"], "idempotency_key": body.idempotency_key},
+            {"tenant_id": tenant["id"],
+             "idempotency_key": body.idempotency_key,
+             "dry_run": body.dry_run},
             {"_id": 0},
         )
         if again:
@@ -466,9 +491,13 @@ async def execute_bulk_charge_ach(
     in-process (bypassing HTTP + Depends) to keep the stripe stub inside
     the same interpreter."""
 
-    # Idempotency replay — same 24h window as the card flow.
+    # Idempotency replay — same 24h window as the card flow, and same
+    # P0 dry_run-scoping fix (see the card path above for full
+    # rationale — the FE reuses one key for both preview + confirm).
     existing = await db.bulk_charge_runs.find_one(
-        {"tenant_id": tenant["id"], "idempotency_key": body.idempotency_key},
+        {"tenant_id": tenant["id"],
+         "idempotency_key": body.idempotency_key,
+         "dry_run": body.dry_run},
         {"_id": 0},
     )
     if existing:
@@ -665,10 +694,13 @@ async def execute_bulk_charge_ach(
     try:
         await db.bulk_charge_runs.insert_one(run_doc)
     except Exception as exc:
-        # Unique-index race — replay branch.
+        # Unique-index race — replay branch. Scoped by dry_run per the
+        # P0 fix (see card path).
         logger.warning("[bulk-charge-ach] insert race: %s", exc)
         again = await db.bulk_charge_runs.find_one(
-            {"tenant_id": tenant["id"], "idempotency_key": body.idempotency_key},
+            {"tenant_id": tenant["id"],
+             "idempotency_key": body.idempotency_key,
+             "dry_run": body.dry_run},
             {"_id": 0},
         )
         if again:
@@ -729,10 +761,30 @@ async def get_bulk_charge_run(
 async def ensure_indexes(db_client=None) -> None:
     target = db_client if db_client is not None else db
     from pymongo.errors import OperationFailure
+    # P0 · Feb-2026 — the pre-fix unique index was
+    # ``(tenant_id, idempotency_key)`` and forced a UNIQUE constraint
+    # across BOTH the dry-run preview row and the live confirm row —
+    # which the FE writes with the SAME idempotency key. Combined
+    # with the (also pre-fix) unscoped ``find_one`` replay guard,
+    # that caused a real-money silent no-op: the confirm click
+    # replayed the cached preview row (``WOULD_CHARGE``, ``charged=0``)
+    # instead of dispatching to Stripe. The replay guard now filters
+    # on ``dry_run`` too; the unique index must widen to match so
+    # preview + confirm can coexist under one FE-supplied key.
+    #
+    # Drop the legacy 2-column unique index first. If it doesn't
+    # exist (fresh env) that's fine.
+    try:
+        await target.bulk_charge_runs.drop_index("tenant_idempotency_unique")
+        logger.info("[bulk-charge] dropped legacy tenant_idempotency_unique "
+                     "index (P0 idempotency scoping fix)")
+    except OperationFailure as e:
+        if "index not found" not in str(e).lower() and "ns not found" not in str(e).lower():
+            logger.warning("[bulk-charge] drop legacy index: %s", e)
     try:
         await target.bulk_charge_runs.create_index(
-            [("tenant_id", 1), ("idempotency_key", 1)],
-            name="tenant_idempotency_unique",
+            [("tenant_id", 1), ("idempotency_key", 1), ("dry_run", 1)],
+            name="tenant_idempotency_dry_run_unique",
             unique=True,
         )
     except OperationFailure as e:

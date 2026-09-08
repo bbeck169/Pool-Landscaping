@@ -1369,10 +1369,29 @@ async def stripe_connect_link(
         "expires_at": (_now() + timedelta(seconds=_OAUTH_STATE_TTL_SECONDS)).isoformat(),
         "created_at": _now_iso(),
     })
-    # Prefer the request's origin so the redirect returns to the
-    # right pod URL in preview + prod without any static config.
-    base = str(request.base_url).rstrip("/")
-    redirect_uri = f"{base}/api/integrations/stripe/callback"
+    # Redirect URI resolution — P0 · Feb-2026.
+    # ------------------------------------------------------------
+    # Order:
+    #   1. ``STRIPE_CONNECT_REDIRECT_URI`` env var — allows ops to
+    #      pin the callback to the canonical production hostname
+    #      (``https://app.plofv.com/api/integrations/stripe/callback``)
+    #      when the request-derived ``base_url`` lands on a
+    #      preview / emergentcf.cloud pod that has proxy-level
+    #      403 for unauthenticated GETs — Stripe (or the mock)
+    #      cannot present a session cookie.
+    #   2. Fallback: ``request.base_url`` — the pre-existing
+    #      dynamic derivation. Kept so mock testmode preview flows
+    #      continue to work without any env changes.
+    override = (os.environ.get("STRIPE_CONNECT_REDIRECT_URI") or "").strip()
+    if override:
+        redirect_uri = override
+        log.info("[stripe_connect] using STRIPE_CONNECT_REDIRECT_URI env override: %s",
+                  redirect_uri)
+    else:
+        base = str(request.base_url).rstrip("/")
+        redirect_uri = f"{base}/api/integrations/stripe/callback"
+        log.info("[stripe_connect] using request.base_url-derived redirect_uri: %s",
+                  redirect_uri)
     testmode_mock = os.environ.get("STRIPE_TESTMODE_MOCK_CONNECT", "").strip().lower() in ("1", "true", "yes")
     if testmode_mock:
         # Short-circuit: the FE hits this URL directly and lands
