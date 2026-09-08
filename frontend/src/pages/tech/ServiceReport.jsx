@@ -11,6 +11,17 @@ import { colors, gradients } from "@/theme";
 import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer, Share2, Video, Upload } from "lucide-react";
 // Feb-2026 · Chemistry required-readings gate — shared with backend.
 import { missingCoreReadings } from "@/utils/chemistryGate";
+import { CORE_KEYS as _CORE_READING_KEYS } from "@/utils/chemistryGate";
+// Feb-2026 · Unification — chemistry section renders the SAME row as
+// the schedule ChecklistModal (verbose labels, "Not tested" pill,
+// "Previously tested at:" caption, sparkline, outlier warning).
+// Previously this page rendered a compact ``FC / TC / pH`` inline
+// grid which duplicated fields on-screen with the ChecklistModal
+// and had subtly divergent state semantics.
+import {
+  ReadingInputRow,
+  canonicalReadingKey,
+} from "@/components/checklist/PoolChecklistForm";
 import { compressImageIfNeeded } from "../../lib/imageCompress";
 
 const AUTOSAVE_MS = 5000;
@@ -488,7 +499,8 @@ export default function ServiceReport() {
             data-testid="svc-report-analyze-water-btn">
             🔬 Analyze water photo (Claude Vision)
           </button>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3"
+               data-testid="svc-report-readings-grid">
             {(report.chemical_reading_fields || []).map((field) => {
               const key = field.key || field.name;
               const existingIdx = (report.chemical_readings || []).findIndex(
@@ -497,48 +509,36 @@ export default function ServiceReport() {
               const r = existingIdx >= 0
                 ? report.chemical_readings[existingIdx]
                 : { key, name: field.name, unit: field.unit, value: null };
-              const opts = field.options || [];
-              const upd = (patch) => {
+              // Feb-2026 · Unification — write path preserved verbatim.
+              // ``ReadingInputRow`` calls ``onChange(val)`` with the
+              // parsed numeric value (or ``null`` for cleared / not-
+              // tested), which we splice into ``chemical_readings``
+              // using the same shape the pre-unification compact
+              // renderer wrote — timestamped merge, no schema drift.
+              const upd = (val) => {
                 let arr = [...(report.chemical_readings || [])];
                 if (existingIdx >= 0) {
-                  arr[existingIdx] = { ...arr[existingIdx], ...patch, ts: new Date().toISOString() };
+                  arr[existingIdx] = { ...arr[existingIdx], value: val,
+                                        ts: new Date().toISOString() };
                 } else {
-                  arr = [...arr, { ...r, ...patch, ts: new Date().toISOString() }];
+                  arr = [...arr, { ...r, value: val,
+                                    ts: new Date().toISOString() }];
                 }
                 setReport({ ...report, chemical_readings: arr });
                 markDirty();
               };
+              const canon = canonicalReadingKey(r);
               return (
-                <div key={key} data-testid={`svc-reading-${key}`}>
-                  <label className="text-xs font-bold uppercase tracking-wider block mb-1"
-                         style={{ color: colors.muted }}>
-                    {field.name} {field.unit ? `(${field.unit})` : ""}
-                  </label>
-                  {opts.length > 0 ? (
-                    <select value={r.value == null ? "" : String(r.value)} disabled={locked}
-                            onChange={(e) => upd({
-                              value: e.target.value === "" ? null : parseFloat(e.target.value),
-                            })}
-                            className="w-full px-2 py-2 rounded-lg text-sm"
-                            style={{ border: `1px solid ${colors.border}`, background: colors.surface }}>
-                      <option value="">—</option>
-                      {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  ) : (
-                    <input type="number" step="any"
-                           value={r.value ?? ""} disabled={locked}
-                           onChange={(e) => upd({
-                             value: e.target.value === "" ? null : parseFloat(e.target.value),
-                           })}
-                           className="w-full px-2 py-2 rounded-lg text-sm"
-                           style={{ border: `1px solid ${colors.border}` }}/>
-                  )}
-                  {field.ideal && (
-                    <div className="text-[10px] mt-1" style={{ color: colors.muted }}>
-                      ideal {field.ideal}
-                    </div>
-                  )}
-                </div>
+                <ReadingInputRow
+                  key={key}
+                  testKey={key}
+                  reading={r}
+                  previous={undefined}
+                  recent={undefined}
+                  locked={locked}
+                  required={_CORE_READING_KEYS.includes(canon)}
+                  onChange={upd}
+                />
               );
             })}
           </div>

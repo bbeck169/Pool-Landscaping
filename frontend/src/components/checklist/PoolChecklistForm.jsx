@@ -24,6 +24,11 @@ import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDro
 // to full names on the display surface.  Data keys unchanged.  Kept in
 // lockstep with mobile/src/lib/expandChemistryLabel.ts.
 import { expandChemistryLabel } from "../../lib/expandChemistryLabel";
+// Feb-2026 · Unification — the five gate-required readings get a red
+// ``*`` marker on their input row.  Kept in exact lockstep with
+// backend ``services/chemistry_gate.CORE_READINGS`` so any tenant
+// customization can't drift the visual marker out of the gate.
+import { CORE_KEYS as _CORE_READING_KEYS } from "@/utils/chemistryGate";
 
 // Phase 48 — per-key validation rules for the manual-entry reading rows.
 // Keys are normalized snake_case; aliases share the same rule.
@@ -66,8 +71,12 @@ function _validateReading(rule, raw) {
 }
 
 /** Phase 48 — Manual-entry reading row. Phase 49.1 — default-tested keys.
- *  Phase 50.C — inline 4-dot sparkline of `recent[]`. */
-function ReadingInputRow({ testKey, reading, previous, recent, locked, onChange }) {
+ *  Phase 50.C — inline 4-dot sparkline of `recent[]`.
+ *
+ *  Feb-2026 · Unification — exported so ``pages/tech/ServiceReport.jsx``
+ *  can drop its own compact inline renderer and render the identical
+ *  verbose row here. Both routes now show one canonical block. */
+export function ReadingInputRow({ testKey, reading, previous, recent, locked, onChange, required }) {
   const rule = _READING_RULES[testKey];
   const unit = reading.unit || (rule ? rule.unit : "");
   const hasValue = reading.value != null && reading.value !== "";
@@ -109,7 +118,17 @@ function ReadingInputRow({ testKey, reading, previous, recent, locked, onChange 
     >
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] font-bold uppercase tracking-wider inline-flex items-center gap-2" style={{ color: colors.onSurface }}>
-          <span>{expandChemistryLabel(reading.name)}{reading.unit ? ` (${reading.unit})` : ""}</span>
+          <span>
+            {expandChemistryLabel(reading.name)}{reading.unit ? ` (${reading.unit})` : ""}
+            {required ? (
+              <span
+                data-testid={`pool-reading-${testKey}-required`}
+                aria-label="required"
+                className="ml-1"
+                style={{ color: "#DC2626" }}
+              >*</span>
+            ) : null}
+          </span>
           <ReadingSparkline recent={recentArr} median={median} testKey={testKey} />
         </span>
         <button
@@ -329,7 +348,7 @@ const _NAME_TO_CANONICAL = {
   "filter psi": "filter_psi",
   "psi": "filter_psi",
 };
-function canonicalReadingKey(r) {
+export function canonicalReadingKey(r) {
   const name = String(r?.name || "").toLowerCase().trim();
   if (_NAME_TO_CANONICAL[name]) return _NAME_TO_CANONICAL[name];
   const rawKey = String(r?.key || r?.name || "").toLowerCase().trim();
@@ -763,6 +782,7 @@ export default function PoolChecklistForm({
                 previous={prev}
                 recent={recentRaw}
                 locked={locked}
+                required={_CORE_READING_KEYS.includes(key)}
                 onChange={(val) => updReading(i, val)}
               />
             );
