@@ -1379,3 +1379,36 @@
 - **Files modified**: app/job/[id]/checklist.tsx, app/job/[id].tsx, app/_layout.tsx, __tests__/sync-db.test.ts
 - **Test results**: 9 suites, 77 tests, ALL PASSING
 
+
+## Iteration 74 — Chemistry Readings Unification (web-parity)
+- **Commit**: 6e989bc4605637041ff990cd0fc34b931b4e465b
+- **Date**: 2026-09-08
+- **Changes**:
+  - Added CC + water_temp to expandChemistryLabel map
+  - Added required prop to ReadingChipRow (red * marker)
+  - Exported canonicalReadingKey + ReadingInputRow from PoolChecklistForm
+  - Added short-form abbreviations to _NAME_TO_CANONICAL
+  - Replaced inline compact grid in service-report with canonical ReadingChipRow
+  - Changed WaterBodyPanel from meta.short to meta.name (full-word labels)
+  - Added combined_chlorine + water_temp to waterBodies READING_LABELS + READING_ALLOWLIST
+  - Applied expandChemistryLabel to portal service-report for customer-facing labels
+  - Added 9 regression tests (chemistry-unification.test.ts)
+- **Files modified**: src/lib/expandChemistryLabel.ts, src/components/checklist/ReadingChipRow.tsx, src/components/checklist/PoolChecklistForm.tsx, src/components/checklist/WaterBodyPanel.tsx, src/lib/waterBodies.ts, app/(app)/service-report/[id].tsx, app/portal/service-report/[id].tsx
+- **Files created**: __tests__/chemistry-unification.test.ts
+- **Test results**: 9 new tests passing, 77+16 existing tests passing, 0 regressions
+
+
+## Iteration 75 — OTA Auto-Update Configuration
+- **Commit**: 6e989bc4605637041ff990cd0fc34b931b4e465b
+- **Date**: 2026-09-08
+- **Changes**:
+  - Created useOtaUpdateListener hook (check on cold start + foreground, fetch in background, subtle alert with "Restart now" option, never auto-reload mid-session)
+  - Mounted useOtaUpdateListener in _layout.tsx
+  - Created /app/memory/OTA_AUTO_UPDATE_CONFIG.md documentation
+  - Created __tests__/ota-config.test.ts (9 tests verifying config correctness)
+  - Verified app.config.js already had correct updates config (no changes needed)
+  - Verified eas.json already had correct channel wiring (no changes needed)
+- **Files created**: src/hooks/useOtaUpdateListener.ts, __tests__/ota-config.test.ts, /app/memory/OTA_AUTO_UPDATE_CONFIG.md
+- **Files modified**: app/_layout.tsx (import + mount useOtaUpdateListener)
+- **Test results**: 9 OTA tests + 86 existing = 95 total, all passing, 0 regressions
+

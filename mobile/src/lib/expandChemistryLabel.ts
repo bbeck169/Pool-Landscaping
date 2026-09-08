@@ -25,15 +25,17 @@
  */
 
 const _K60_LABEL_MAP: Readonly<Record<string, string>> = Object.freeze({
-  fc:   "Free Chlorine",
-  tc:   "Total Chlorine",
-  ph:   "pH",
-  ta:   "Total Alkalinity",
-  cya:  "Cyanuric Acid",
-  ch:   "Calcium Hardness",
-  salt: "Salt",
-  tds:  "Total Dissolved Solids",
-  po4:  "Phosphates",
+  fc:         "Free Chlorine",
+  tc:         "Total Chlorine",
+  cc:         "Combined Chlorine",
+  ph:         "pH",
+  ta:         "Total Alkalinity",
+  cya:        "Cyanuric Acid",
+  ch:         "Calcium Hardness",
+  salt:       "Salt",
+  tds:        "Total Dissolved Solids",
+  po4:        "Phosphates",
+  water_temp: "Water Temp",
 });
 
 /**

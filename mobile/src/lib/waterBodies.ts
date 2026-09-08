@@ -47,11 +47,11 @@ export const BODY_TYPE_TINTS: Record<string, { bg: string; fg: string; border: s
 /* ── Reading allow-list per body type ───────────────────────────────── */
 
 export const READING_ALLOWLIST: Record<string, string[]> = {
-  pool: ["free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates"],
-  spa: ["free_chlorine", "ph", "alkalinity", "calcium_hardness"],
-  water_feature: ["free_chlorine", "ph"],
-  fountain: ["free_chlorine", "ph"],
-  other: ["free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates"],
+  pool: ["free_chlorine", "total_chlorine", "combined_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
+  spa: ["free_chlorine", "ph", "alkalinity", "calcium_hardness", "water_temp"],
+  water_feature: ["free_chlorine", "ph", "water_temp"],
+  fountain: ["free_chlorine", "ph", "water_temp"],
+  other: ["free_chlorine", "total_chlorine", "combined_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
 };
 
 /* ── Required readings (only pool blocks submit) ───────────────────── */
@@ -77,15 +77,17 @@ export const CHEMICAL_ALLOWLIST: Record<string, string[]> = {
 /* ── Display metadata ───────────────────────────────────────────────── */
 
 export const READING_LABELS: Record<string, { name: string; unit: string; short: string }> = {
-  free_chlorine:    { name: "Free Chlorine",    unit: "ppm", short: "FC" },
-  total_chlorine:   { name: "Total Chlorine",   unit: "ppm", short: "TC" },
-  ph:               { name: "pH",               unit: "",    short: "pH" },
-  alkalinity:       { name: "Total Alkalinity",  unit: "ppm", short: "TA" },
-  cyanuric_acid:    { name: "Cyanuric Acid",    unit: "ppm", short: "CYA" },
-  calcium_hardness: { name: "Calcium Hardness",  unit: "ppm", short: "CH" },
-  salt:             { name: "Salt",             unit: "ppm", short: "Salt" },
-  tds:              { name: "TDS",              unit: "ppm", short: "TDS" },
-  phosphates:       { name: "Phosphates",       unit: "ppb", short: "PO4" },
+  free_chlorine:      { name: "Free Chlorine",      unit: "ppm", short: "FC" },
+  total_chlorine:     { name: "Total Chlorine",      unit: "ppm", short: "TC" },
+  combined_chlorine:  { name: "Combined Chlorine",   unit: "ppm", short: "CC" },
+  ph:                 { name: "pH",                  unit: "",    short: "pH" },
+  alkalinity:         { name: "Total Alkalinity",    unit: "ppm", short: "TA" },
+  cyanuric_acid:      { name: "Cyanuric Acid",       unit: "ppm", short: "CYA" },
+  calcium_hardness:   { name: "Calcium Hardness",    unit: "ppm", short: "CH" },
+  salt:               { name: "Salt",                unit: "ppm", short: "Salt" },
+  tds:                { name: "TDS",                 unit: "ppm", short: "TDS" },
+  phosphates:         { name: "Phosphates",          unit: "ppb", short: "PO4" },
+  water_temp:         { name: "Water Temp",          unit: "°F",  short: "Temp" },
 };
 
 export const CHEMICAL_LABELS: Record<string, { name: string; unit: string }> = {

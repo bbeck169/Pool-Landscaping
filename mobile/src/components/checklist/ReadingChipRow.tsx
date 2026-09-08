@@ -46,15 +46,20 @@ const DEFAULT_TESTED_KEYS = new Set<string>([
 // share the same rule.
 type Rule = { min: number; max: number; decimals: number };
 const RULES: Record<string, Rule> = {
-  free_chlorine:    { min: 0, max: 10,  decimals: 2 },
-  total_chlorine:   { min: 0, max: 10,  decimals: 2 },
-  chlorine:         { min: 0, max: 10,  decimals: 2 },
-  ph:               { min: 0, max: 14,  decimals: 2 },
-  total_alkalinity: { min: 0, max: 500, decimals: 1 },
-  alkalinity:       { min: 0, max: 500, decimals: 1 },
-  cyanuric_acid:    { min: 0, max: 300, decimals: 1 },
-  cya:              { min: 0, max: 300, decimals: 1 },
-  salt:             { min: 0, max: 6000, decimals: 0 },
+  free_chlorine:      { min: 0, max: 10,    decimals: 2 },
+  total_chlorine:     { min: 0, max: 10,    decimals: 2 },
+  combined_chlorine:  { min: 0, max: 10,    decimals: 2 },
+  chlorine:           { min: 0, max: 10,    decimals: 2 },
+  ph:                 { min: 0, max: 14,    decimals: 2 },
+  total_alkalinity:   { min: 0, max: 500,   decimals: 1 },
+  alkalinity:         { min: 0, max: 500,   decimals: 1 },
+  cyanuric_acid:      { min: 0, max: 300,   decimals: 1 },
+  cya:                { min: 0, max: 300,   decimals: 1 },
+  calcium_hardness:   { min: 0, max: 1000,  decimals: 0 },
+  salt:               { min: 0, max: 6000,  decimals: 0 },
+  tds:                { min: 0, max: 10000, decimals: 0 },
+  phosphates:         { min: 0, max: 10000, decimals: 0 },
+  water_temp:         { min: 0, max: 120,   decimals: 1 },
 };
 
 function validate(rule: Rule | undefined, raw: string): { value: number | null; invalid: boolean } {
@@ -94,11 +99,13 @@ type Props = {
   locked?: boolean;
   previous?: { value: number | null; at?: string | null } | null;
   recent?: number[];
+  /** When true, renders a red `*` marker after the label (core readings). */
+  required?: boolean;
   onChange: (val: number | null) => void;
 };
 
 export default function ReadingChipRow({
-  readingKey, label, unit, value, locked, previous, recent, onChange,
+  readingKey, label, unit, value, locked, previous, recent, required, onChange,
 }: Props) {
   const key = normalizeKey(readingKey || label);
   const rule = RULES[key];
@@ -160,6 +167,12 @@ export default function ReadingChipRow({
         <View style={{ flexDirection: "row", alignItems: "center", flex: 1, gap: 8 }}>
           <Text style={styles.label}>
             {label}{unit ? ` (${unit})` : ""}
+            {required ? (
+              <Text
+                style={{ color: "#DC2626" }}
+                testID={`pool-reading-${key}-required`}
+              > *</Text>
+            ) : null}
           </Text>
           <ReadingSparkline recent={recentArr} median={median} testKey={key} />
         </View>

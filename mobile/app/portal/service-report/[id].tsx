@@ -16,6 +16,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { BODY_TYPE_LABELS, BODY_TYPE_TINTS, READING_LABELS } from "@/src/lib/waterBodies";
+import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import { formatCompletedAt } from "@/src/lib/dateTimeFormat";
 
 /* ── helpers ──────────────────────────────── */
@@ -232,7 +233,7 @@ export default function PortalServiceReportDetail() {
                         return (
                           <View key={r.key || ri} style={s.readingCard}>
                             <View style={{ flex: 1 }}>
-                              <Text style={s.readingLabel}>{(meta as any).name || r.name || r.key}</Text>
+                              <Text style={s.readingLabel}>{expandChemistryLabel((meta as any).name || r.name || r.key)}</Text>
                             </View>
                             <View style={[s.bandChip, { backgroundColor: bs.bg }]}>
                               <Text style={[s.bandChipText, { color: bs.fg }]}>{bs.label}</Text>
@@ -262,7 +263,7 @@ export default function PortalServiceReportDetail() {
                     testID={`portal-service-report-reading-${r.key || i}`}
                   >
                     <View style={{ flex: 1 }}>
-                      <Text style={s.readingLabel}>{r.name || r.key}</Text>
+                      <Text style={s.readingLabel}>{expandChemistryLabel(r.name || r.key)}</Text>
                       {r.unit ? <Text style={s.readingUnit}>{r.unit}</Text> : null}
                     </View>
                     <View style={[s.bandChip, { backgroundColor: bs.bg }]}>

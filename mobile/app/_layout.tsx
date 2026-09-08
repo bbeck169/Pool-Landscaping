@@ -25,6 +25,8 @@ import { ConfirmModalHost } from "@/src/components/ConfirmModal";
 import { StripeConfigProvider } from "@/src/config/stripe";
 import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTemplateDrafts";
 import { SyncManagerProvider } from "@/src/services/SyncManager";
+// OTA auto-update listener — background check + subtle "update ready" toast.
+import { useOtaUpdateListener } from "@/src/hooks/useOtaUpdateListener";
 // Phase O2 · Offline sync foundation — boot the sync infra.
 import { startListening as startNetBus, wireAutoFlush, flush as flushSyncQueue } from "@/src/services/sync";
 import { wirePhotoAutoUpload, flushPhotos } from "@/src/services/sync/photoWorker";
@@ -67,6 +69,10 @@ export default function RootLayout() {
     const unsub = registerOfflineTemplateDraftListeners();
     return unsub;
   }, []);
+
+  // OTA auto-update listener — checks for updates on cold start and foreground.
+  // Never auto-reloads mid-session; shows a subtle alert instead.
+  useOtaUpdateListener();
 
   // Phase O2 · Offline sync foundation — init SQLite schema + net bus + auto-flush.
   // Phase O3 · Wire photo auto-upload on reconnect.

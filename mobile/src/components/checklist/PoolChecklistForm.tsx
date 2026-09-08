@@ -65,14 +65,40 @@ const _NAME_TO_CANONICAL: Record<string, string> = {
   "temperature": "water_temp",
   "filter psi": "filter_psi",
   "psi": "filter_psi",
+  // Short-form abbreviations (backend template defaults)
+  "fc": "free_chlorine",
+  "tc": "total_chlorine",
+  "cc": "combined_chlorine",
+  "ta": "total_alkalinity",
+  "ch": "calcium_hardness",
+  "po4": "phosphates",
+  "water_temp": "water_temp",
 };
-function canonicalReadingKey(r: { key?: string; name?: string }): string {
+export function canonicalReadingKey(r: { key?: string; name?: string }): string {
   const name = String(r?.name || "").toLowerCase().trim();
   if (_NAME_TO_CANONICAL[name]) return _NAME_TO_CANONICAL[name];
   const rawKey = String(r?.key || r?.name || "").toLowerCase().trim();
   if (_NAME_TO_CANONICAL[rawKey]) return _NAME_TO_CANONICAL[rawKey];
   return rawKey.replace(/[\s()]+/g, "_").replace(/[^a-z0-9_]/g, "");
 }
+
+// Feb-2026 · Unification — Re-export ReadingChipRow as ReadingInputRow
+// so callers can import the canonical component name used by the web.
+export { default as ReadingInputRow } from "./ReadingChipRow";
+
+// Feb-2026 · Required-reading keys — covers all canonical/alias forms of
+// the 5 core readings (free_chlorine, total_chlorine, alkalinity/
+// total_alkalinity, ph, cyanuric_acid/cya). Both the PoolChecklistForm
+// canonical keys and the chemistryGate keys match at least one entry.
+const REQUIRED_READING_KEYS = new Set<string>([
+  "free_chlorine",
+  "total_chlorine",
+  "alkalinity",
+  "total_alkalinity",
+  "ph",
+  "cyanuric_acid",
+  "cya",
+]);
 
 type Reading = {
   key?: string; name: string; unit?: string; value: number | string | null;
@@ -458,6 +484,7 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
               locked={locked}
               previous={prev || null}
               recent={recent}
+              required={REQUIRED_READING_KEYS.has(key)}
               onChange={(v) => updReading(i, v)}
             />
           );

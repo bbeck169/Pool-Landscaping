@@ -140,7 +140,7 @@ export default function WaterBodyPanel({
           <View key={key} style={[s.readingRow, isMissing && s.readingRowMissing]} testID={`reading-row-${index}-${key}`}>
             <View style={s.readingLabel}>
               <Text style={[s.readingName, isMissing && { color: colors.error }]}>
-                {meta.short}
+                {meta.name}
                 {isRequired ? <Text style={{ color: colors.error }}> *</Text> : null}
               </Text>
               {meta.unit ? <Text style={s.readingUnit}>{meta.unit}</Text> : null}

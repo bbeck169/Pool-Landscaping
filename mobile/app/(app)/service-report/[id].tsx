@@ -16,7 +16,18 @@ import { writeCache, readCache } from "@/src/services/readCache";
 // Feb-2026 · Chemistry required-readings gate — mirror of backend
 // helper (see ``backend/services/chemistry_gate.py``).
 import { missingCoreReadings } from "@/utils/chemistryGate";
+import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
+import { canonicalReadingKey } from "@/src/components/checklist/PoolChecklistForm";
+import ReadingChipRow from "@/src/components/checklist/ReadingChipRow";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+
+// Feb-2026 · Required-reading keys — covers all canonical/alias forms.
+// Mirrors the Set in PoolChecklistForm.tsx.
+const REQUIRED_READING_KEYS = new Set<string>([
+  "free_chlorine", "total_chlorine",
+  "alkalinity", "total_alkalinity",
+  "ph", "cyanuric_acid", "cya",
+]);
 
 const AUTOSAVE_MS = 5000;
 const PHOTO_CAP = 10;
@@ -292,46 +303,23 @@ export default function ServiceReportScreen() {
           </View>
         </SectionCard>
 
-        {/* Chemical Readings — pool only */}
+        {/* Chemical Readings — pool only — unified canonical block (Feb-2026) */}
         {isPool && (
           <SectionCard title="Chemical Readings" testID="svc-report-readings">
-            <View style={styles.readingGrid}>
+            <View>
               {(report.chemical_readings || []).map((r: any, i: number) => {
-                const field = (report.chemical_reading_fields || []).find(
-                  (f: any) => (f.key || f.name) === (r.key || r.name)
-                );
-                const opts: string[] = field?.options || [];
+                const key = canonicalReadingKey(r);
                 return (
-                  <View key={r.key || r.name} style={styles.readingCell}>
-                    <Text style={styles.readingLabel}>
-                      {r.name}{r.unit ? ` (${r.unit})` : ""}
-                    </Text>
-                    {opts.length > 0 ? (
-                      <Pressable
-                        onPress={() => !locked && setPicker({
-                          title: r.name,
-                          options: opts,
-                          current: r.value == null ? "" : String(r.value),
-                          onSelect: (v) => { updChem(i, v); setPicker(null); },
-                        })}
-                        style={styles.selectBox}
-                        testID={`svc-reading-${r.key || r.name}`}>
-                        <Text style={r.value == null ? styles.selectPlaceholder : styles.selectValue}>
-                          {r.value == null ? "—" : String(r.value)}
-                        </Text>
-                        <Ionicons name="chevron-down" size={15} color={colors.muted}/>
-                      </Pressable>
-                    ) : (
-                      <TextInput
-                        keyboardType="decimal-pad"
-                        editable={!locked}
-                        value={r.value == null ? "" : String(r.value)}
-                        onChangeText={(v) => updChem(i, v)}
-                        style={styles.input}
-                        testID={`svc-reading-${r.key || r.name}`}
-                      />
-                    )}
-                  </View>
+                  <ReadingChipRow
+                    key={key}
+                    readingKey={key}
+                    label={expandChemistryLabel(r.name)}
+                    unit={r.unit}
+                    value={r.value}
+                    locked={locked}
+                    required={REQUIRED_READING_KEYS.has(key)}
+                    onChange={(v) => updChem(i, String(v ?? ""))}
+                  />
                 );
               })}
             </View>
@@ -612,8 +600,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary },
   photoAddText: { fontFamily: font.bold, fontSize: fontSize.xs,
     color: colors.muted, marginTop: 4, textTransform: "uppercase" },
-  readingGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  readingCell: { width: "48%" },
+  // readingGrid + readingCell removed — Feb 2026 chemistry unification.
+  //   Readings now use the canonical ReadingChipRow component.
   readingLabel: { fontFamily: font.bold, fontSize: fontSize.xs,
     color: colors.muted, textTransform: "uppercase", marginBottom: 4 },
   algaeRow: { flexDirection: "row", gap: spacing.sm, marginBottom: 6 },
