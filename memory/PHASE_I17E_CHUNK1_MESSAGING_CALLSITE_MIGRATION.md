@@ -234,6 +234,103 @@ transactional 429 + bulk `skipped_cap_exceeded` contracts
 end-to-end without needing valid Twilio / RingCentral / SendGrid /
 Resend API keys.
 
+### Test Mode · Live-curl smoke test (Fix A · Feb-2026)
+
+The `POST /api/customers/{cid}/send-sms` route was returning a
+`502 Bad Gateway` in test mode because the endpoint's status
+whitelist was too narrow — it treated every non-`sent` status
+(including the guard-block states `dry_run`,
+`suppressed_not_demo`, `no_consent`) as an infrastructure
+failure. Fix A ships two changes to `routers/customers.py::send_sms`:
+
+* **502 only on `provider_status="failed"`** (or an unknown/empty
+  status). Guard-block states now surface as `200 OK` with the
+  envelope preserved so the admin UI can display the reason.
+* **429 on `cap_exceeded`** via the existing
+  `services.messaging.byo_passthrough.raise_if_cap_exceeded`
+  helper — aligns with the transactional cap-exceeded contract
+  every other messaging callsite uses.
+
+Also renames the platform-testmode `routed_via` marker on
+`services.sms.rc_adapter` from `modern_sms_testmode_mock` →
+`platform_testmode_mock` (and the paired
+`services.email.resend_adapter` marker from
+`modern_email_testmode_mock` → `platform_testmode_mock`) so
+observability + tester pass-criteria assertions have a single
+stable marker.
+
+**Live-curl smoke test** — pinned customer `Brian Beckman` under
+tenant `Pool & Landscaping of Vistancia`:
+
+* **Customer:** `id = 86bb10d4-2dc3-4b1d-ae91-dacc775e0762`
+  * name: `Brian Beckman`
+  * phone: `+16236285855` (present in
+    `COMMS_TEST_ALLOWLIST_PHONES` env var; guard-outbound
+    passes)
+  * `is_demo_account: true` (flipped as part of Fix A; the
+    comm-allowlist gate `is_comm_allowed` blocks non-demo
+    records in non-prod pods — this is intentional and per the
+    "K72 and every other guardrail must still fire in mock
+    mode" invariant)
+* **Auth:** `super@aquaterra.com` / `password123` (super admin)
+* **Preconditions in `.env`:**
+  ```
+  MESSAGING_TESTMODE_MOCK=true
+  APP_ENV=preview
+  COMMS_TEST_ALLOWLIST_PHONES=+16028874400,+16236285855
+  ```
+
+**Curl:**
+```bash
+TOKEN=$(curl -s -X POST "http://localhost:8001/api/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"super@aquaterra.com","password":"password123"}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+curl -s -w "\nHTTP=%{http_code}\n" \
+  -X POST "http://localhost:8001/api/customers/86bb10d4-2dc3-4b1d-ae91-dacc775e0762/send-sms" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"to":"+16236285855","body":"Fix A smoke — MESSAGING_TESTMODE_MOCK=true"}'
+```
+
+**Recorded live response (Feb-2026, preview pod):**
+```json
+{
+  "ok": true,
+  "provider": "mock",
+  "provider_status": "sent",
+  "provider_response_id": "mock-471e766f3303",
+  "attempts": 1,
+  "error": null,
+  "routed_via": "platform_testmode_mock",
+  "rc_status": "Queued"
+}
+HTTP=200
+```
+
+**Pass criteria** (all four MUST hold for a Fix A tester pass):
+
+1. **`HTTP=200`** — no more `502 Bad Gateway` at the edge.
+2. **`provider_status == "sent"`** — mock envelope confirms the
+   testmode short-circuit actually fired.
+3. **`routed_via` is one of `platform_testmode_mock` or
+   `tenant_byo_testmode_mock`** — the specific marker depends
+   on whether the tenant has a BYO SMS provider configured
+   (this test tenant has none; if a tester adds a BYO Twilio
+   row to reproduce the BYO path, expect `tenant_byo_testmode_mock`
+   instead).
+4. **`provider_response_id` starts with `mock-`** and is
+   deterministic across repeated identical requests (keyed on
+   `sha1(tenant_id|to|body)[:12]`). No real Twilio/RC SID was
+   allocated; no outbound HTTP fired.
+
+**Regression coverage:** the same contract is pinned by
+`test_i17e_send_sms_endpoint_testmode.py::test_send_sms_testmode_platform_mock_returns_200`
+(and 8 sibling cases covering BYO path, guard-block ×4, cap-429,
+real-failure 502, and env-visibility). To bypass all 9 cases a
+future PR would have to actively delete their assertions.
+
 
 
 1. **[chunk 1.b]** Migrate the 17 direct-SDK `resend.Emails.send(...)` callsites to `services.email.resend_adapter.send(**kwargs)` for full BYO routing coverage. Comm-allowlist gate is still applied today; only BYO is missing.
