@@ -1,3 +1,16 @@
+## Iteration 75 — Task 6b E2E Verification (Testing Agent)
+- **Commit**: a9f5f483 (code unchanged; E2E test added)
+- **Date**: 2026-09-08
+- **Changes**:
+  - Verified Task 6b (Revoke service-records link) via E2E Playwright tests
+  - 8/8 Playwright tests pass: banner visibility/copy/dismiss, modal open/recent sends/tabs/buttons, login form
+  - 17/17 Jest unit tests pass, 12/12 Task 6 tests pass, 9/9 Task 4 tests pass — 0 regressions
+  - Fixed /root/.expo/state.json empty JSON error
+- **Files created**: `tests/test_task6b_mobile_revoke.py`
+- **Files modified**: None (code was already complete)
+
+
+
 ## Iteration 66 — Phase K28: Workstream completed_at column + LRU investigation
 - **Commit**: 4851ac251c72dddad77d4b23d7a20effbc5c16cd
 - **Date**: 2026-09-02

@@ -1,17 +1,20 @@
 /**
- * Task 6 · Send Service Records Link Modal (mobile parity with web).
+ * Task 6 + 6b · Send Service Records Link Modal (mobile parity with web).
  *
  * Opens from the customer detail "Send ▼" sheet. Lets the admin send
- * a portal auto-login link via email or SMS.
+ * a portal auto-login link via email or SMS, view recent sends, and
+ * revoke individual links.
  *
  * Endpoints:
  *   POST /api/customers/{cid}/send-service-records-link  { channel, recipient? }
  *   GET  /api/customers/{cid}/service-records-link-status
+ *   GET  /api/customers/{cid}/service-records-links        → { sends: [...] }
+ *   POST /api/customers/{cid}/service-records-links/{token_id}/revoke → { ok: true }
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, Pressable, TextInput,
-  ActivityIndicator, Alert, Modal,
+  ActivityIndicator, Alert, Modal, ScrollView,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
@@ -20,6 +23,15 @@ import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
 type Channel = "email" | "sms";
+
+type RecentSend = {
+  token_id: string;
+  channel: string;
+  recipient: string;
+  sent_at: string;
+  revoked_at?: string | null;
+  revoked_by?: string | null;
+};
 
 interface Props {
   visible: boolean;
@@ -34,6 +46,14 @@ interface Props {
   onClose: () => void;
 }
 
+function formatTimestamp(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      + " " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  } catch { return iso; }
+}
+
 export default function SendServiceRecordsLinkModal({
   visible, customerId, customerEmail, customerPhone,
   channelOptIn, isMuted, onClose,
@@ -44,6 +64,12 @@ export default function SendServiceRecordsLinkModal({
   const [statusLoading, setStatusLoading] = useState(false);
   const [sendsRemaining, setSendsRemaining] = useState<number | null>(null);
   const [portalUrl, setPortalUrl] = useState<string | null>(null);
+
+  // Recent sends state (Task 6b)
+  const [recentSends, setRecentSends] = useState<RecentSend[]>([]);
+  const [sendsLoading, setSendsLoading] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null); // token_id being revoked
+  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null); // token_id pending confirm
 
   // Consent checks.
   const emailDisabled = channelOptIn?.email_marketing === false || isMuted === true;
@@ -63,18 +89,35 @@ export default function SendServiceRecordsLinkModal({
     if (emailDisabled && !smsDisabled) setChannel("sms");
   }, [emailDisabled, smsDisabled]);
 
-  // Fetch throttle status + portal URL on open.
+  // Fetch throttle status + portal URL + recent sends on open.
+  const fetchStatus = useCallback(async () => {
+    if (!customerId) return;
+    setStatusLoading(true);
+    try {
+      const data = await api.get(`/customers/${customerId}/service-records-link-status`);
+      setSendsRemaining(data?.sends_remaining ?? null);
+      setPortalUrl(data?.portal_url ?? null);
+    } catch { /* ignore */ }
+    setStatusLoading(false);
+  }, [customerId]);
+
+  const fetchRecentSends = useCallback(async () => {
+    if (!customerId) return;
+    setSendsLoading(true);
+    try {
+      const data = await api.get(`/customers/${customerId}/service-records-links`);
+      setRecentSends(data?.sends || []);
+    } catch {
+      setRecentSends([]);
+    }
+    setSendsLoading(false);
+  }, [customerId]);
+
   useEffect(() => {
     if (!visible) return;
-    setStatusLoading(true);
-    api.get(`/customers/${customerId}/service-records-link-status`)
-      .then((data: any) => {
-        setSendsRemaining(data?.sends_remaining ?? null);
-        setPortalUrl(data?.portal_url ?? null);
-      })
-      .catch(() => {})
-      .finally(() => setStatusLoading(false));
-  }, [visible, customerId]);
+    fetchStatus();
+    fetchRecentSends();
+  }, [visible, customerId, fetchStatus, fetchRecentSends]);
 
   const handleSend = useCallback(async () => {
     if (sending) return;
@@ -95,18 +138,31 @@ export default function SendServiceRecordsLinkModal({
         "Sent",
         channel === "email" ? "Sent by email" : "Sent by text",
       );
-      // Refresh status after send.
-      try {
-        const data = await api.get(`/customers/${customerId}/service-records-link-status`);
-        setSendsRemaining(data?.sends_remaining ?? null);
-      } catch { /* ignore */ }
+      // Refresh status + recent sends after send.
+      fetchStatus();
+      fetchRecentSends();
     } catch (e: any) {
       const detail = e?.response?.detail || e?.message || "Send failed";
       Alert.alert("Error", String(detail));
     } finally {
       setSending(false);
     }
-  }, [channel, recipient, customerId, sending, emailDisabled, smsDisabled]);
+  }, [channel, recipient, customerId, sending, emailDisabled, smsDisabled, fetchStatus, fetchRecentSends]);
+
+  const handleRevoke = useCallback(async (tokenId: string) => {
+    setRevoking(tokenId);
+    try {
+      await api.post(`/customers/${customerId}/service-records-links/${tokenId}/revoke`, {});
+      setConfirmRevoke(null);
+      // Refresh the list to show "Revoked" badge.
+      await fetchRecentSends();
+    } catch (e: any) {
+      const detail = e?.response?.detail || e?.message || "Revoke failed";
+      Alert.alert("Error", String(detail));
+    } finally {
+      setRevoking(null);
+    }
+  }, [customerId, fetchRecentSends]);
 
   const handleCopyLink = useCallback(async () => {
     if (!portalUrl) return;
@@ -124,7 +180,7 @@ export default function SendServiceRecordsLinkModal({
       onRequestClose={onClose}
       testID="send-service-records-link-modal"
     >
-      <View style={styles.root}>
+      <ScrollView style={styles.root} contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Send Service Records</Text>
@@ -235,7 +291,90 @@ export default function SendServiceRecordsLinkModal({
             Hourly send limit reached. Try again later.
           </Text>
         ) : null}
-      </View>
+
+        {/* ── Task 6b · Recent sends + Revoke ────────────────────── */}
+        <View style={styles.recentSection} testID="recent-sends-section">
+          <Text style={styles.recentTitle}>Recent sends</Text>
+
+          {sendsLoading ? (
+            <ActivityIndicator size="small" style={{ marginTop: spacing.md }} />
+          ) : recentSends.length === 0 ? (
+            <Text style={styles.recentEmpty} testID="recent-sends-empty">
+              No links sent yet.
+            </Text>
+          ) : (
+            recentSends.map((s) => {
+              const isRevoked = !!s.revoked_at;
+              const isConfirming = confirmRevoke === s.token_id;
+              const isRevoking = revoking === s.token_id;
+
+              return (
+                <View
+                  key={s.token_id}
+                  style={[styles.sendRow, isRevoked && styles.sendRowRevoked]}
+                  testID={`recent-send-row-${s.token_id}`}
+                >
+                  {/* Channel icon */}
+                  <Ionicons
+                    name={s.channel === "sms" ? "chatbubble-outline" : "mail-outline"}
+                    size={16}
+                    color={isRevoked ? colors.muted : colors.onSurface}
+                  />
+
+                  {/* Info column */}
+                  <View style={styles.sendInfo}>
+                    <Text style={[styles.sendRecipient, isRevoked && { color: colors.muted }]} numberOfLines={1}>
+                      {s.recipient || "—"}
+                    </Text>
+                    <Text style={styles.sendTimestamp}>
+                      {formatTimestamp(s.sent_at)}
+                    </Text>
+                  </View>
+
+                  {/* Status / Revoke action */}
+                  {isRevoked ? (
+                    <View style={styles.revokedBadge} testID={`revoked-badge-${s.token_id}`}>
+                      <Ionicons name="shield-outline" size={12} color="#991B1B" />
+                      <Text style={styles.revokedText}>Revoked</Text>
+                    </View>
+                  ) : isConfirming ? (
+                    <View style={styles.confirmRow}>
+                      <Text style={styles.confirmLabel}>Revoke?</Text>
+                      <Pressable
+                        style={styles.confirmYes}
+                        onPress={() => handleRevoke(s.token_id)}
+                        disabled={isRevoking}
+                        testID={`revoke-confirm-yes-${s.token_id}`}
+                      >
+                        {isRevoking ? (
+                          <ActivityIndicator size={10} color="#fff" />
+                        ) : (
+                          <Text style={styles.confirmYesText}>Yes</Text>
+                        )}
+                      </Pressable>
+                      <Pressable
+                        style={styles.confirmNo}
+                        onPress={() => setConfirmRevoke(null)}
+                        testID={`revoke-confirm-no-${s.token_id}`}
+                      >
+                        <Text style={styles.confirmNoText}>No</Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Pressable
+                      style={styles.revokeBtn}
+                      onPress={() => setConfirmRevoke(s.token_id)}
+                      testID={`revoke-btn-${s.token_id}`}
+                    >
+                      <Text style={styles.revokeBtnText}>Revoke</Text>
+                    </Pressable>
+                  )}
+                </View>
+              );
+            })
+          )}
+        </View>
+      </ScrollView>
     </Modal>
   );
 }
@@ -244,8 +383,11 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.surface,
+  },
+  scrollContent: {
     paddingHorizontal: spacing.xl,
     paddingTop: spacing["2xl"],
+    paddingBottom: 40,
   },
   header: {
     flexDirection: "row",
@@ -372,5 +514,111 @@ const styles = StyleSheet.create({
     color: "#B45309",
     textAlign: "center",
     marginTop: spacing.md,
+  },
+  // ── Task 6b · Recent sends ──────────────────────────────────
+  recentSection: {
+    marginTop: spacing["2xl"],
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.lg,
+  },
+  recentTitle: {
+    fontFamily: font.bold,
+    fontSize: fontSize.base,
+    color: colors.onSurface,
+    marginBottom: spacing.md,
+  },
+  recentEmpty: {
+    fontFamily: font.regular,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+    fontStyle: "italic",
+  },
+  sendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  sendRowRevoked: {
+    opacity: 0.6,
+  },
+  sendInfo: {
+    flex: 1,
+  },
+  sendRecipient: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.onSurface,
+  },
+  sendTimestamp: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: colors.muted,
+    marginTop: 1,
+  },
+  revokedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#FEE2E2",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
+  },
+  revokedText: {
+    fontFamily: font.bold,
+    fontSize: 10,
+    color: "#991B1B",
+    letterSpacing: 0.3,
+  },
+  revokeBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: "#DC2626",
+  },
+  revokeBtnText: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    color: "#DC2626",
+  },
+  confirmRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  confirmLabel: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    color: colors.muted,
+  },
+  confirmYes: {
+    backgroundColor: "#DC2626",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    minWidth: 36,
+    alignItems: "center",
+  },
+  confirmYesText: {
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: "#fff",
+  },
+  confirmNo: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  confirmNoText: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    color: colors.muted,
   },
 });

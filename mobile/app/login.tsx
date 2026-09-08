@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
@@ -42,6 +42,15 @@ export default function Login() {
   // ``.env``) from overriding the gate. Prefers the new
   // ``/config/features.demo_logins_enabled`` flag when present.
   const [demoServerAllowed, setDemoServerAllowed] = useState<boolean | null>(null);
+
+  // Task 6b · Deep-link "link revoked" banner.
+  const searchParams = useLocalSearchParams<{ reason?: string }>();
+  const [linkRevokedBanner, setLinkRevokedBanner] = useState(false);
+  useEffect(() => {
+    if (searchParams?.reason === "link_revoked") {
+      setLinkRevokedBanner(true);
+    }
+  }, [searchParams?.reason]);
 
   // Task 4 · Multi-account chooser state.
   const [chooser, setChooser] = useState<{
@@ -126,6 +135,7 @@ export default function Login() {
         });
         return;
       }
+      setLinkRevokedBanner(false);
       router.replace("/(app)");
     } catch (err: any) {
       setError(err.message || "Login failed");
@@ -142,6 +152,7 @@ export default function Login() {
     try {
       await finalizeAccountChoice(chooser.choice_token, accountId);
       setChooser(null);
+      setLinkRevokedBanner(false);
       router.replace("/(app)");
     } catch (err: any) {
       setError(err.message || "Could not sign in to that account");
@@ -189,6 +200,21 @@ export default function Login() {
         bottomOffset={24}
         keyboardShouldPersistTaps="handled"
       >
+        {/* Task 6b · "Link revoked" banner — shown when deep link includes ?reason=link_revoked */}
+        {linkRevokedBanner ? (
+          <View style={styles.revokedBanner} testID="link-revoked-banner">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+              <Ionicons name="shield-outline" size={18} color="#92400E" />
+              <Text style={styles.revokedBannerText}>
+                This link has been revoked. Please contact your service provider for a new link.
+              </Text>
+            </View>
+            <Pressable onPress={() => setLinkRevokedBanner(false)} hitSlop={8} testID="dismiss-revoked-banner">
+              <Ionicons name="close" size={16} color="#92400E" />
+            </Pressable>
+          </View>
+        ) : null}
+
         {/* Task 4 · Account Chooser — shown when backend returns multi_account_choice_required */}
         {chooser ? (
           <View testID="account-chooser-screen">
@@ -537,5 +563,25 @@ const styles = StyleSheet.create({
   chooserCancelLink: {
     alignItems: "center",
     marginTop: spacing.xl,
+  },
+  // Task 6b · Link revoked banner
+  revokedBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#FEF3C7",
+    borderColor: "#FDE68A",
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  revokedBannerText: {
+    flex: 1,
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: "#92400E",
+    lineHeight: 18,
   },
 });
