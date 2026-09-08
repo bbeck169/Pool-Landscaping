@@ -9,6 +9,7 @@ import { Button, Modal, TextInput, Skeleton, Chip, StatusPill, EmptyState, Toast
 import { ActivationControl } from "@/components/customers/ActivationControl";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
 import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
+import SendServiceRecordsLinkModal from "@/components/customers/SendServiceRecordsLinkModal";
 import CustomerTagPicker from "@/components/customers/CustomerTagPicker";
 import CustomerTagsCard from "@/components/customers/CustomerTagsCard";
 import DemoAccountToggle from "@/components/comms/DemoAccountToggle";
@@ -204,6 +205,8 @@ export default function CustomerDetail() {
   const [loginModal, setLoginModal] = useState(false);
   const [vipModal, setVipModal] = useState(false);
   const [sendModal, setSendModal] = useState(null); // { channel, to }
+  // Task 6 · Feb 2026 — "Send service records link" modal state.
+  const [srLinkOpen, setSrLinkOpen] = useState(false);
   const [taskQuickAddOpener, setTaskQuickAddOpener] = useState(null);
   // Phase 12 · Feb 2026 — role + tenant default fetched once for the
   // card-on-file admin controls. Techs never see the toggle at all.
@@ -542,6 +545,7 @@ export default function CustomerDetail() {
               customer={customer}
               onSend={openSendModal}
               onQuickTask={openQuickTaskFromDropdown}
+              onSendServiceRecordsLink={() => setSrLinkOpen(true)}
             />
             <Button variant="ghost" className="px-2.5 py-1 text-xs" onClick={() => navigate(`/customers/${id}/edit`)} testid="cd-edit">
               <Edit3 size={14} /> Edit
@@ -991,6 +995,17 @@ export default function CustomerDetail() {
         onSent={() => {
           setSendModal(null);
           setToast({ tone: "success", message: "Message sent" });
+        }}
+        onError={(msg) => setToast({ tone: "error", message: msg })}
+      />
+
+      {/* Task 6 · Feb 2026 — Send service records link modal. */}
+      <SendServiceRecordsLinkModal
+        open={srLinkOpen}
+        customer={customer}
+        onClose={() => setSrLinkOpen(false)}
+        onSent={() => {
+          setToast({ tone: "success", message: "Service records link sent" });
         }}
         onError={(msg) => setToast({ tone: "error", message: msg })}
       />

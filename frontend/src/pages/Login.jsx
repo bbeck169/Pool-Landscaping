@@ -19,12 +19,20 @@ export default function Login({ variant = "staff" } = {}) {
   const isCustomerVariant = variant === "customer";
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, me } = useAuth();
+  const { login, finalizeAccountChoice, me } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // Feb-2026 · Task 4 · Option A account chooser — set when the
+  // backend returns ``multi_account_choice_required``. When truthy,
+  // the form is replaced by an inline account picker. Structure:
+  //   { email, choices: [{account_id, role, display}], choice_token }
+  // Selection posts to ``/auth/login/select-account``; on success the
+  // downstream redirect logic (below) runs identically to a normal
+  // single-record login.
+  const [chooser, setChooser] = useState(null);
   // Feb 2026 · Demo-login P0 hotfix — the previous env gate read
   // the build-time env var REACT_APP_PUBLIC_ENV which was BAKED
   // INTO THE BUNDLE at build time. When the production deploy
@@ -112,35 +120,64 @@ export default function Login({ variant = "staff" } = {}) {
     return params.get("reason") === "link_expired";
   }, [location.search]);
 
+  // Shared post-login redirect logic — runs after either a direct
+  // single-record login OR the account chooser's ``finalize`` call.
+  const _postLoginRedirect = async () => {
+    const user = await me().catch(() => null);
+    const role = user?.role;
+    localStorage.removeItem("tenant_slug");
+    localStorage.removeItem("tenant_name");
+    try {
+      const memberships = await (await import("@/api")).api.get("/tenants/memberships/mine");
+      const list = Array.isArray(memberships) ? memberships : (memberships?.memberships || []);
+      if (list.length > 1) {
+        navigate("/tenant-picker", { replace: true });
+        return;
+      }
+    } catch (_) { /* fall through */ }
+    navigate(forced && role === "admin" ? forced : landingFor(role), { replace: true });
+  };
+
   const onSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setSubmitting(true);
     try {
-      await login(email.trim().toLowerCase(), password);
-      // Refresh /auth/me to normalize the user object; then land based on role.
-      const user = await me().catch(() => null);
-      const role = user?.role;
-      // Multi-tenant: if the user belongs to >1 active tenant, show the picker.
-      // Reset any stale tenant_slug from a previous session first.
-      localStorage.removeItem("tenant_slug");
-      localStorage.removeItem("tenant_name");
-      try {
-        const memberships = await (await import("@/api")).api.get("/tenants/memberships/mine");
-        const list = Array.isArray(memberships) ? memberships : (memberships?.memberships || []);
-        if (list.length > 1) {
-          navigate("/tenant-picker", { replace: true });
-          return;
-        }
-      } catch (_) {
-        // fall through to normal landing
+      const res = await login(email.trim().toLowerCase(), password);
+      // Feb-2026 · Task 4 · Option A account chooser — the login
+      // helper resolves to ``{kind}``.  When ``kind === "choice"``
+      // the backend found 2+ password-verified records for this
+      // email; render the inline picker instead of redirecting.
+      if (res && res.kind === "choice") {
+        setChooser(res);
+        return;
       }
-      navigate(forced && role === "admin" ? forced : landingFor(role), { replace: true });
+      await _postLoginRedirect();
     } catch (err) {
       setError(err.message || "Login failed");
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const onPickAccount = async (accountId) => {
+    if (!chooser || !accountId) return;
+    setError("");
+    setSubmitting(true);
+    try {
+      await finalizeAccountChoice(chooser.choice_token, accountId);
+      await _postLoginRedirect();
+    } catch (err) {
+      setError(err.message || "Could not sign in to that account");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const onCancelChooser = () => {
+    setChooser(null);
+    setError("");
+    setPassword("");
   };
 
   return (
@@ -154,6 +191,9 @@ export default function Login({ variant = "staff" } = {}) {
         error={error}
         expiredBanner={expiredBanner}
         isLinkExpired={isLinkExpired}
+        chooser={chooser}
+        onPickAccount={onPickAccount}
+        onCancelChooser={onCancelChooser}
       />
     ) : (
     <div
@@ -238,7 +278,7 @@ export default function Login({ variant = "staff" } = {}) {
             </div>
           )}
 
-          <form onSubmit={onSubmit} className="space-y-4" data-testid="login-form">
+          <form onSubmit={onSubmit} className="space-y-4" data-testid="login-form" hidden={!!chooser}>
             <div>
               <label
                 htmlFor="email"
@@ -342,6 +382,16 @@ export default function Login({ variant = "staff" } = {}) {
             </button>
           </form>
 
+          {chooser && (
+            <AccountChooserCard
+              chooser={chooser}
+              submitting={submitting}
+              error={error}
+              onPick={onPickAccount}
+              onCancel={onCancelChooser}
+            />
+          )}
+
           <p
             className="mt-6 text-sm text-center"
             style={{ color: colors.onSurfaceSecondary }}
@@ -441,6 +491,7 @@ export default function Login({ variant = "staff" } = {}) {
 function PortalLoginCustomerLayout({
   onSubmit, email, setEmail, password, setPassword,
   showPw, setShowPw, submitting, error, expiredBanner, isLinkExpired,
+  chooser, onPickAccount, onCancelChooser,
 }) {
   const CARD_STYLE = {
     background: "rgba(255,255,255,0.96)",
@@ -524,7 +575,8 @@ function PortalLoginCustomerLayout({
           )}
 
           <form onSubmit={onSubmit} data-testid="login-form"
-                  style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  hidden={!!chooser}
+                  style={{ display: chooser ? "none" : "flex", flexDirection: "column", gap: 12 }}>
             <input
               id="email" type="email" required autoComplete="email"
               placeholder="you@email.com"
@@ -582,6 +634,17 @@ function PortalLoginCustomerLayout({
             </button>
           </form>
 
+          {chooser && (
+            <AccountChooserCard
+              chooser={chooser}
+              submitting={submitting}
+              error={error}
+              onPick={onPickAccount}
+              onCancel={onCancelChooser}
+              variant="customer"
+            />
+          )}
+
           <div style={{
               display: "flex", justifyContent: "space-between",
               alignItems: "center", marginTop: 16,
@@ -617,3 +680,120 @@ function PortalLoginCustomerLayout({
     </div>
   );
 }
+
+
+// ── Feb-2026 · Task 4 · Option A — inline account chooser card ──
+//
+// Rendered when ``/api/auth/login`` returns
+// ``multi_account_choice_required``.  Two large, keyboard-accessible
+// cards (one per matching record) plus a "Not you?" cancel link.
+// Copy is intentionally short:
+//   * Heading: "Which account?"
+//   * Sub-line: "We found two accounts for this email. Pick one to
+//     continue."
+// The customer variant uses lighter borders + white background so it
+// blends with the portal glass card; the staff variant is the same
+// component with the default palette.
+function AccountChooserCard({ chooser, submitting, error, onPick, onCancel,
+                              variant = "staff" }) {
+  const cardBg = variant === "customer" ? "rgba(255,255,255,0.98)" : "#fff";
+  const rowBorder = variant === "customer" ? "#DBEAFE" : colors.border;
+  return (
+    <div
+      className="mt-2"
+      style={{
+        backgroundColor: cardBg,
+        borderRadius: 12,
+        padding: 16,
+        display: "flex", flexDirection: "column", gap: 12,
+        boxShadow: variant === "customer"
+          ? "0 8px 24px rgba(30,64,175,0.10)"
+          : "0 4px 12px rgba(0,0,0,0.04)",
+      }}
+      data-testid="account-chooser"
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div
+          style={{
+            fontFamily: font.family,
+            fontWeight: 700,
+            fontSize: 20,
+            color: colors.onSurface,
+          }}
+          data-testid="account-chooser-heading"
+        >
+          Which account?
+        </div>
+        <div
+          style={{ fontSize: 13, color: colors.muted }}
+          data-testid="account-chooser-subhead"
+        >
+          We found {chooser.choices.length === 2
+            ? "two accounts"
+            : `${chooser.choices.length} accounts`} for
+          {" "}
+          <b style={{ color: colors.onSurface }}>{chooser.email}</b>.
+          Pick one to continue.
+        </div>
+      </div>
+
+      {error ? (
+        <div
+          style={{
+            background: "#FEF2F2", border: "1px solid #FECACA",
+            color: "#B91C1C", borderRadius: 8, padding: "8px 12px",
+            fontSize: 13,
+          }}
+          data-testid="account-chooser-error"
+        >
+          {error}
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {chooser.choices.map((c) => (
+          <button
+            key={c.account_id}
+            type="button"
+            disabled={submitting}
+            onClick={() => onPick(c.account_id)}
+            className="w-full transition active:scale-[0.99] disabled:opacity-60"
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "14px 16px", borderRadius: 10,
+              background: "#fff", border: `1px solid ${rowBorder}`,
+              cursor: submitting ? "not-allowed" : "pointer",
+              fontFamily: font.family, textAlign: "left",
+            }}
+            data-testid={`account-chooser-option-${c.role || "unknown"}`}
+          >
+            <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ fontWeight: 600, fontSize: 15, color: colors.onSurface }}>
+                {c.display}
+              </span>
+              <span style={{ fontSize: 12, color: colors.muted, textTransform: "uppercase",
+                                letterSpacing: 0.6 }}>
+                {c.role}
+              </span>
+            </span>
+            <span style={{ color: colors.brand, fontWeight: 700, fontSize: 20 }}>
+              →
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={submitting}
+        className="text-xs underline self-start"
+        style={{ color: colors.muted, background: "none", border: 0, padding: 0 }}
+        data-testid="account-chooser-cancel"
+      >
+        Not you? Log in with a different email.
+      </button>
+    </div>
+  );
+}
+

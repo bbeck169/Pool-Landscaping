@@ -78,7 +78,40 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     const res = await api.post("/auth/login", { email, password });
+    // Feb-2026 · Task 4 · Option A account chooser.
+    // When the backend returns ``multi_account_choice_required`` the
+    // FE must NOT persist anything — no access_token was issued.
+    // We bubble the chooser payload up so ``Login.jsx`` can render
+    // the picker inline.  Downstream callers should branch on the
+    // returned ``kind``:
+    //   * ``kind: "success"``  → user is now signed in (persisted).
+    //   * ``kind: "choice"``   → render the account chooser using
+    //                             ``choices`` + ``choice_token``.
+    if (res && res.status === "multi_account_choice_required") {
+      return {
+        kind: "choice",
+        email: res.email,
+        choices: res.choices || [],
+        choice_token: res.choice_token,
+      };
+    }
     persist(res.access_token, res.user);
+    return { kind: "success" };
+  };
+
+  const finalizeAccountChoice = async (choiceToken, accountId) => {
+    // Feb-2026 · Task 4 · Option A — completes a login started by
+    // the chooser branch above.  Server issues the normal auth
+    // response for the picked record; we persist identically to a
+    // single-record login.  Any 401/403 propagates so ``Login.jsx``
+    // can show it inline (expired choice_token, bogus account_id,
+    // soft-deleted, deactivated, etc.).
+    const res = await api.post("/auth/login/select-account", {
+      choice_token: choiceToken,
+      account_id: accountId,
+    });
+    persist(res.access_token, res.user);
+    return { kind: "success" };
   };
 
   const signup = async (payload) => {
@@ -106,7 +139,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthCtx.Provider
-      value={{ user, role, loading, token, login, signup, me, logout, setUser }}
+      value={{ user, role, loading, token, login, finalizeAccountChoice, signup, me, logout, setUser }}
     >
       {children}
     </AuthCtx.Provider>

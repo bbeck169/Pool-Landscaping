@@ -5,7 +5,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import { Mail, MessageSquare, ChevronDown, Plus, Calendar, DollarSign, FileText, ClipboardCheck, ListChecks, Users } from "lucide-react";
+import { Mail, MessageSquare, ChevronDown, Plus, Calendar, DollarSign, FileText, ClipboardCheck, ListChecks, Users, Link2 } from "lucide-react";
 import { Button } from "@/components/ui-kit";
 import { useNavigate } from "react-router-dom";
 
@@ -17,7 +17,7 @@ import { useNavigate } from "react-router-dom";
  * ``?customer_id=`` query param — every existing create route already
  * respects this convention, so no receiving-side changes are required.
  */
-export function CustomerActionDropdowns({ customer, onSend, onQuickTask }) {
+export function CustomerActionDropdowns({ customer, onSend, onQuickTask, onSendServiceRecordsLink }) {
   const navigate = useNavigate();
   const cid = customer?.id;
   const primaryEmail =
@@ -52,6 +52,15 @@ export function CustomerActionDropdowns({ customer, onSend, onQuickTask }) {
             data-testid="customer-send-sms"
           >
             <MessageSquare size={14} className="mr-2" /> Text (SMS)
+          </DropdownMenuItem>
+          {/* Task 6 · Feb 2026 — Send service records link. Opens a
+              dedicated modal that dispatches a signed portal
+              auto-login URL to the customer via Email or SMS. */}
+          <DropdownMenuItem
+            onSelect={() => onSendServiceRecordsLink?.()}
+            data-testid="customer-send-service-records-link"
+          >
+            <Link2 size={14} className="mr-2" /> Service records link
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

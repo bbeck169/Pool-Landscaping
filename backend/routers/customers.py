@@ -1,6 +1,6 @@
 # ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, Body
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -2623,6 +2623,432 @@ async def customer_send_sms(cid: str, body: _SendSmsBody,
         )
     return {"ok": True, **res}
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Task 6 · Feb 2026 · "Send service records link" (Customer admin page).
+#
+# Admin dispatches a portal auto-login magic URL to the customer via
+# Email or SMS. The URL redeems into a customer-scoped session and
+# drops the customer on ``/portal/service-reports`` (the existing
+# portal list surface — NO new portal view was invented). Rate
+# limited to 5 sends per hour per customer. Consent is hard-enforced
+# — a customer whose ``channel_opt_in.email_marketing`` or
+# ``channel_opt_in.sms_marketing`` is explicitly False cannot be
+# targeted; the 403 error surfaces the reason so the admin UI can
+# render a tooltip explaining the block.
+# ═══════════════════════════════════════════════════════════════════════════
+class _ServiceRecordsLinkSendBody(BaseModel):
+    channel: str = Field(..., pattern="^(email|sms)$")
+    recipient: Optional[str] = None  # optional override — falls back
+    # to the customer's primary email/phone. When supplied it MUST
+    # match one of the customer's mirrored contacts (same allow-list
+    # rule as ``send-email`` / ``send-sms``).
+
+
+_SR_LINK_RATE_LIMIT_PER_HOUR = 5
+_SR_LINK_TTL_HOURS = 168  # 7 days
+
+
+def _sr_link_has_consent(customer: dict, channel: str) -> bool:
+    """Task 6 consent gate. Absent field OR True = allow; explicit
+    False = block. Muted customers are always blocked regardless of
+    channel_opt_in. Transactional-only opt-in (email_transactional
+    /sms_transactional) is NOT sufficient — the service-records link
+    is treated as marketing-adjacent for this compliance surface per
+    the Task 6 spec.
+    """
+    if customer.get("is_muted"):
+        return False
+    channel_opt_in = customer.get("channel_opt_in") or {}
+    key = "email_marketing" if channel == "email" else "sms_marketing"
+    return channel_opt_in.get(key) is not False
+
+
+def _sr_link_default_recipient(customer: dict, channel: str) -> Optional[str]:
+    if channel == "email":
+        for e in (customer.get("emails") or []):
+            addr = (e.get("address") or "").strip()
+            if addr:
+                return addr
+        return (customer.get("email") or "").strip() or None
+    # sms
+    for m in (customer.get("mobiles") or []):
+        n = (m.get("number_e164") or "").strip()
+        if n:
+            return n
+    return (customer.get("phone") or "").strip() or None
+
+
+def _sr_link_recipient_matches(customer: dict, channel: str, recipient: str) -> bool:
+    """Verify the supplied recipient is one of the customer's mirrored
+    contacts on that channel. Prevents an admin from redirecting the
+    link to an arbitrary address/phone.
+    """
+    r = (recipient or "").strip()
+    if not r:
+        return False
+    if channel == "email":
+        r_lc = r.lower()
+        addrs = {(e.get("address") or "").strip().lower()
+                  for e in (customer.get("emails") or [])}
+        addrs.add((customer.get("email") or "").strip().lower())
+        addrs.discard("")
+        return r_lc in addrs
+
+    def _digits(s: str) -> str:
+        return "".join(ch for ch in (s or "") if ch.isdigit())
+
+    def _norm(d: str) -> str:
+        return d[-10:] if len(d) > 10 else d
+
+    r_digits = _digits(r)
+    allowed: set[str] = set()
+    for m in (customer.get("mobiles") or []):
+        n = _digits(m.get("number_e164") or "")
+        if n:
+            allowed.add(n)
+    for k in ("phone", "mobile_phone", "phone_number"):
+        n = _digits(customer.get(k) or "")
+        if n:
+            allowed.add(n)
+    return _norm(r_digits) in {_norm(a) for a in allowed}
+
+
+def _sr_link_hash(url: str) -> str:
+    import hashlib
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+
+@router.post("/customers/{cid}/send-service-records-link",
+              operation_id="customers.sendServiceRecordsLink")
+async def send_service_records_link(cid: str,
+                                       body: _ServiceRecordsLinkSendBody,
+                                       user: dict = Depends(require_admin),
+                                       tenant: dict = Depends(get_current_tenant)):
+    """Admin action from the Customer detail page — dispatches a
+    portal auto-login magic URL that opens directly on the customer's
+    service records list.
+
+    Body:
+      * ``channel`` — ``"email"`` or ``"sms"``.
+      * ``recipient`` — optional override (defaults to the customer's
+        primary email/phone). When supplied it MUST match one of the
+        customer's mirrored contacts on that channel.
+
+    Response:
+      * ``ok`` — True on success.
+      * ``url`` — the generated auto-login URL. The frontend renders
+        a Copy button so the admin can share the URL manually as a
+        fallback when delivery hasn't landed yet.
+      * ``recipient`` — the final target address/phone.
+      * ``channel`` — echoed back.
+      * ``ttl_hours`` — 168 (7 days).
+      * ``expires_at`` — ISO timestamp for the link expiry.
+
+    Errors:
+      * 403 ``consent_blocked`` — customer has ``channel_opt_in``
+        False for the requested channel (or is muted). Admin
+        CANNOT bypass. Surfaces ``reason`` = ``sms_consent_off`` /
+        ``email_consent_off`` / ``muted``.
+      * 400 ``no_recipient`` — no contact on file for the channel
+        AND no ``recipient`` override was supplied.
+      * 400 ``recipient_not_allowed`` — the supplied override is
+        NOT one of the customer's mirrored contacts.
+      * 429 ``rate_limited`` — customer has hit the 5-sends-per-hour
+        cap. Response body includes ``retry_after_seconds``.
+      * 502 — email/SMS adapter failed (not a customer-visible
+        error — the admin can retry).
+    """
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    import os as _os
+
+    channel = (body.channel or "").strip().lower()
+    customer = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    # 1) Consent gate — hard-block. Admin cannot override.
+    if customer.get("is_muted"):
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": "consent_blocked",
+                      "reason": "muted",
+                      "message": "This customer is muted — outbound comms are disabled."},
+        )
+    if not _sr_link_has_consent(customer, channel):
+        reason = "sms_consent_off" if channel == "sms" else "email_consent_off"
+        friendly = ("SMS opt-in is off for this customer."
+                     if channel == "sms"
+                     else "Email opt-in is off for this customer.")
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": "consent_blocked",
+                      "reason": reason,
+                      "message": friendly},
+        )
+
+    # 2) Recipient resolution.
+    recipient = (body.recipient or "").strip()
+    if recipient:
+        if not _sr_link_recipient_matches(customer, channel, recipient):
+            raise HTTPException(
+                status_code=400,
+                detail={"detail": "recipient_not_allowed",
+                          "message": (
+                              "Recipient must match one of the "
+                              "customer's mirrored contacts."
+                          )},
+            )
+    else:
+        recipient = _sr_link_default_recipient(customer, channel) or ""
+    if not recipient:
+        raise HTTPException(
+            status_code=400,
+            detail={"detail": "no_recipient",
+                      "message": (
+                          f"No {channel} on file for this customer."
+                      )},
+        )
+
+    # 3) Rate limit — 5 sends per hour per customer, across BOTH channels.
+    now = _dt.now(_tz.utc)
+    window_start = now - _td(hours=1)
+    recent = await db.customer_link_sends.count_documents({
+        "tenant_id": tenant["id"],
+        "customer_id": cid,
+        "created_at": {"$gte": window_start.isoformat()},
+    })
+    if recent >= _SR_LINK_RATE_LIMIT_PER_HOUR:
+        # Compute retry-after = seconds until the oldest hit in-window falls off.
+        oldest = await db.customer_link_sends.find_one(
+            {"tenant_id": tenant["id"], "customer_id": cid,
+             "created_at": {"$gte": window_start.isoformat()}},
+            sort=[("created_at", 1)],
+        )
+        retry_after = 3600
+        if oldest and oldest.get("created_at"):
+            try:
+                oldest_dt = _dt.fromisoformat(oldest["created_at"])
+                retry_after = max(60, int(3600 - (now - oldest_dt).total_seconds()))
+            except Exception:
+                pass
+        raise HTTPException(
+            status_code=429,
+            detail={"detail": "rate_limited",
+                      "message": (
+                          f"Rate limit hit — max "
+                          f"{_SR_LINK_RATE_LIMIT_PER_HOUR} sends per hour "
+                          "per customer."
+                      ),
+                      "retry_after_seconds": retry_after,
+                      "limit_per_hour": _SR_LINK_RATE_LIMIT_PER_HOUR},
+        )
+
+    # 4) Mint the token + URL.
+    from services.service_records_link import build_service_records_url
+    base = _os.environ.get("APP_PUBLIC_URL", "") or ""
+    if not base:
+        # Fall back to the tenant's configured portal URL if APP_PUBLIC_URL
+        # isn't set (common in dev). This keeps the URL clickable in the
+        # local box; production always sets APP_PUBLIC_URL.
+        base = (tenant.get("portal_url") or tenant.get("portal_link") or "").rstrip("/")
+    if not base:
+        raise HTTPException(
+            status_code=500,
+            detail={"detail": "public_url_unset",
+                      "message": "APP_PUBLIC_URL is not configured — cannot build the link."},
+        )
+    url = build_service_records_url(
+        base, cid, tenant["id"], ttl_hours=_SR_LINK_TTL_HOURS,
+    )
+    expires_at = (now + _td(hours=_SR_LINK_TTL_HOURS)).isoformat()
+
+    # 5) Dispatch on the requested channel.
+    company_name = tenant.get("name") or "your service"
+    subject = f"Your service records — {company_name}"
+    if channel == "email":
+        greeting_name = (customer.get("first_name")
+                          or (customer.get("name") or "").split(" ", 1)[0]
+                          or "there")
+        html = (
+            f"<div style=\"font-family:-apple-system,Segoe UI,Roboto,"
+            f"Helvetica,Arial,sans-serif;color:#222;line-height:1.5;\">"
+            f"<p>Hi {greeting_name},</p>"
+            f"<p>Here are your service records with {company_name}. "
+            f"Click the button below to view your history — no "
+            f"password needed.</p>"
+            f"<p style=\"margin:24px 0;\">"
+            f"<a href=\"{url}\" style=\"display:inline-block;"
+            f"background:#0f6ed1;color:#fff;padding:12px 24px;"
+            f"text-decoration:none;border-radius:6px;font-weight:600;\">"
+            f"View service records</a></p>"
+            f"<p style=\"color:#555;font-size:13px;\">Or paste this link "
+            f"in your browser:<br/>"
+            f"<a href=\"{url}\">{url}</a></p>"
+            f"<p style=\"color:#8a8a8a;font-size:12px;margin-top:32px;\">"
+            f"This link expires in 7 days.</p>"
+            f"</div>"
+        )
+        from services.comms_email_adapter import send_email
+        res = await send_email(
+            tenant["id"], recipient,
+            subject=subject, html=html,
+        )
+        provider = "resend"
+        provider_status = res.get("status") or "unknown"
+        provider_id = res.get("provider_id")
+        if provider_status not in ("sent", "queued", "mocked", "skipped_opted_out"):
+            raise HTTPException(
+                502,
+                f"send failed: {res.get('error') or provider_status}",
+            )
+    else:  # sms
+        # SMS body — keep tight for deliverability. Under ~160 chars
+        # when company name is short. No shortener helper exists in
+        # this codebase (per spec: skip if adds complexity); a longer
+        # URL is fine since providers segment cleanly.
+        sms_body = f"{company_name}: view your service records — {url} (expires in 7 days)"
+        from services.sms.rc_adapter import send as _sms_send
+        res = await _sms_send(
+            to=recipient,
+            body=sms_body,
+            category="transactional",
+            tenant_id=tenant["id"],
+            customer_id=cid,
+        )
+        provider = res.get("provider") or "ringcentral"
+        provider_status = res.get("provider_status") or "unknown"
+        provider_id = res.get("provider_response_id")
+        # Reuse the cap-exceeded 429 branch the sibling ``send-sms``
+        # endpoint uses so tenant SMS caps get the same treatment.
+        from services.messaging.byo_passthrough import raise_if_cap_exceeded
+        raise_if_cap_exceeded(
+            res, detail="Monthly SMS cap exceeded for this tenant",
+        )
+        if provider_status == "failed" or not provider_status:
+            raise HTTPException(
+                502,
+                f"send failed: {res.get('error') or provider_status}",
+            )
+
+    # 6) Audit row — powers the 5/hour rate limit AND appears on the
+    # customer's activity timeline. Best-effort persistence of the
+    # comms_log row so the admin timeline surfaces the send even if
+    # the audit-insert path fails somehow.
+    try:
+        await db.customer_link_sends.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "channel": channel,
+            "recipient": recipient,
+            "sent_by": user.get("id"),
+            "sent_by_email": user.get("email"),
+            "provider": provider,
+            "provider_status": provider_status,
+            "provider_response_id": provider_id,
+            "token_hash": _sr_link_hash(url),
+            "ttl_hours": _SR_LINK_TTL_HOURS,
+            "expires_at": expires_at,
+            "created_at": now.isoformat(),
+        })
+    except Exception as _exc:  # noqa: BLE001
+        logger.warning("[task6] audit insert failed cid=%s: %s", cid, _exc)
+
+    try:
+        await db.communications_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "channel": channel,
+            "direction": "outbound",
+            "recipient": recipient,
+            "subject": subject if channel == "email" else None,
+            "body": ("Service records link sent" if channel == "email"
+                     else "Service records SMS link sent"),
+            "delivery_status": provider_status,
+            "provider": provider,
+            "provider_response_id": provider_id,
+            "trigger_entity": {"kind": "service_records_link",
+                                "customer_id": cid,
+                                "sent_by": user.get("id")},
+            "created_at": now.isoformat(),
+        })
+    except Exception as _exc:  # noqa: BLE001
+        logger.warning("[task6] comms_log insert failed cid=%s: %s", cid, _exc)
+
+    return {
+        "ok": True,
+        "url": url,
+        "recipient": recipient,
+        "channel": channel,
+        "ttl_hours": _SR_LINK_TTL_HOURS,
+        "expires_at": expires_at,
+        "provider_status": provider_status,
+    }
+
+
+@router.get("/customers/{cid}/service-records-link-status",
+              operation_id="customers.getServiceRecordsLinkStatus")
+async def get_service_records_link_status(cid: str,
+                                             user: dict = Depends(require_admin),
+                                             tenant: dict = Depends(get_current_tenant)):
+    """Task 6 · Feb 2026 — light read surface for the modal. Returns:
+
+    * ``sends_last_hour`` — count of successful sends in the past hour.
+    * ``rate_limit`` — the 5-per-hour ceiling (exposed so the UI
+      doesn't hardcode the number).
+    * ``rate_limited`` — True when ``sends_last_hour >= rate_limit``.
+    * ``retry_after_seconds`` — seconds until the oldest send falls
+      out of the rolling window (only set when rate_limited).
+    * ``last_send_at`` — ISO timestamp of the most recent send.
+    """
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
+    # Confirm the customer exists + tenant-scoped.
+    customer = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1},
+    )
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    now = _dt.now(_tz.utc)
+    window_start = now - _td(hours=1)
+    q = {"tenant_id": tenant["id"], "customer_id": cid,
+          "created_at": {"$gte": window_start.isoformat()}}
+    count = await db.customer_link_sends.count_documents(q)
+    last = await db.customer_link_sends.find_one(
+        {"tenant_id": tenant["id"], "customer_id": cid},
+        sort=[("created_at", -1)],
+    )
+    rate_limited = count >= _SR_LINK_RATE_LIMIT_PER_HOUR
+    retry_after: Optional[int] = None
+    if rate_limited:
+        oldest = await db.customer_link_sends.find_one(
+            q, sort=[("created_at", 1)],
+        )
+        if oldest and oldest.get("created_at"):
+            try:
+                oldest_dt = _dt.fromisoformat(oldest["created_at"])
+                retry_after = max(
+                    60,
+                    int(3600 - (now - oldest_dt).total_seconds()),
+                )
+            except Exception:
+                retry_after = 3600
+        else:
+            retry_after = 3600
+    return {
+        "sends_last_hour": count,
+        "rate_limit": _SR_LINK_RATE_LIMIT_PER_HOUR,
+        "rate_limited": rate_limited,
+        "retry_after_seconds": retry_after,
+        "last_send_at": (last or {}).get("created_at"),
+    }
 
 
 async def _emit_vip_flagged(tenant_id: str, actor: dict, customer: dict) -> None:

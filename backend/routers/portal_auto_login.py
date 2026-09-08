@@ -55,6 +55,10 @@ from services.portal_magic_links import (
     verify_estimate_view_token,
     verify_portal_home_token,
 )
+from services.service_records_link import (
+    verify_service_records_token,
+    REDIRECT_PATH as _SERVICE_RECORDS_REDIRECT,
+)
 
 logger = logging.getLogger("portal.auto_login")
 
@@ -103,6 +107,7 @@ def _classify_and_verify(token: str):
         ("invoice", verify_invoice_pay_token),
         ("estimate", verify_estimate_view_token),
         ("portal_home", verify_portal_home_token),
+        ("service_records", verify_service_records_token),
     ):
         try:
             return kind, verify(token)
@@ -260,6 +265,13 @@ async def portal_auto_login(
         # ``/customer-portal/onboarding-state`` and open the accept
         # modal automatically.
         default_target = "/portal/home"
+        resource_id = None
+    elif resource_type == "service_records":
+        # Feb-2026 · Task 6 — "Send service records link" from the
+        # Customer admin page drops the customer on the existing
+        # portal service-records list. No new portal surface was
+        # invented for this ship.
+        default_target = _SERVICE_RECORDS_REDIRECT
         resource_id = None
     else:  # pragma: no cover — defensive
         _log("expired", customer_id=customer_id, from_ip=from_ip)
