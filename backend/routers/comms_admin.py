@@ -133,7 +133,31 @@ async def whitelist_status(
     """Small meta endpoint for the Settings → Notifications banner.
     Tells the FE that comms are demo-only + how many suppression
     rows have accumulated + how many records are flagged demo.
+
+    Feb-2026 P0 · Prod comms-gate banner hotfix.
+    -----------------------------------------------
+    ``whitelist_active`` MUST mirror the actual gate policy in
+    ``services/comms/gate.py::current_gate_policy``. Previously it
+    was hardcoded ``True``, which meant the FE red banner lit up on
+    production even though the underlying gate was ``prod_bypass``
+    (real customers were the intended recipients and comms flowed
+    correctly). Ops read the banner and thought real customer sends
+    were being suppressed when they weren't.
+
+    Truth-source order (locked, matches the outbound gate):
+      * ``APP_ENV=production`` → ``gate_policy="prod_bypass"``,
+        ``whitelist_active=False`` — banner hides.
+      * Any other ``APP_ENV`` (default ``preview``) →
+        ``gate_policy="demo_only"``, ``whitelist_active=True`` —
+        banner stays up so preview / staging developers don't
+        accidentally blast real customers.
     """
+    # Local import to keep the router bootstrap cheap and to avoid
+    # any import cycles — ``services.comms.gate`` transitively
+    # imports ``config.db`` which is fine at request time.
+    from services.comms.gate import current_gate_policy
+    from services.comms_env_guard import _app_env  # type: ignore
+
     tenant_id = user.get("tenant_id")
     q = {"tenant_id": tenant_id}
     users_demo = await db.users.count_documents(
@@ -146,8 +170,16 @@ async def whitelist_status(
     suppressed_24h = await db.comms_suppression_log.count_documents(
         {**q, "created_at": {"$gte": suppress_24h_ago}},
     )
+
+    policy = current_gate_policy()
     return {
-        "whitelist_active": True,
+        # ``whitelist_active`` is what the FE banner reads. Only
+        # true when the underlying gate is actively suppressing.
+        "whitelist_active": policy != "prod_bypass",
+        # Diagnostic fields for the /settings/notifications page +
+        # curl-based prod triage. Never PII.
+        "gate_policy": policy,
+        "app_env": _app_env(),
         "users_flagged_demo": int(users_demo),
         "customers_flagged_demo": int(cust_demo),
         "suppressed_last_24h": int(suppressed_24h),
