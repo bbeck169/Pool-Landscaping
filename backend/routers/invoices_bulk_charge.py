@@ -156,7 +156,25 @@ async def bulk_charge_card_on_file(
     tenant: dict = Depends(get_current_tenant),
 ):
     _require_admin(user)
-    return await execute_bulk_charge(body=body, user=user, tenant=tenant)
+    # Bug B · Feb-2026 — router-level catch-all so uncaught exceptions
+    # (Mongo timeouts, replay race re-raise, downstream service errors,
+    # etc.) surface as a structured ``{"detail": "..."}`` HTTPException
+    # instead of Starlette's default plaintext ``Internal Server Error``.
+    # HTTPException itself is re-raised untouched to preserve status
+    # codes set by ``_require_admin`` and other guards. logger.exception
+    # keeps the full traceback in the backend logs.
+    try:
+        return await execute_bulk_charge(body=body, user=user, tenant=tenant)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "[bulk-charge] unhandled exception "
+            "tenant=%s user=%s dry_run=%s invoice_count=%s idempotency_key=%s",
+            tenant.get("id"), user.get("id"), body.dry_run,
+            len(body.invoice_ids), body.idempotency_key,
+        )
+        raise HTTPException(status_code=500, detail=(str(exc) or repr(exc)))
 
 
 async def execute_bulk_charge(
@@ -481,7 +499,20 @@ async def bulk_charge_ach_on_file(
     tenant: dict = Depends(get_current_tenant),
 ):
     _require_admin(user)
-    return await execute_bulk_charge_ach(body=body, user=user, tenant=tenant)
+    # Bug B · Feb-2026 — see the twin catch-all on the card endpoint
+    # above.  Structured error surface for uncaught exceptions.
+    try:
+        return await execute_bulk_charge_ach(body=body, user=user, tenant=tenant)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "[bulk-charge-ach] unhandled exception "
+            "tenant=%s user=%s dry_run=%s invoice_count=%s idempotency_key=%s",
+            tenant.get("id"), user.get("id"), body.dry_run,
+            len(body.invoice_ids), body.idempotency_key,
+        )
+        raise HTTPException(status_code=500, detail=(str(exc) or repr(exc)))
 
 
 async def execute_bulk_charge_ach(
