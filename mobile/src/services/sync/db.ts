@@ -15,7 +15,7 @@
 import * as SQLite from "expo-sqlite";
 
 const DB_NAME = "poolcrm-offline.db";
-const TARGET_VERSION = 1;
+const TARGET_VERSION = 2;
 
 let _dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let _migrated = false;
@@ -109,7 +109,29 @@ async function _runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
     `);
   }
 
-  // Future: if currentVersion < 2 → run v2 migration, etc.
+  // ── v1 → v2 — Phase 2: videos_pending table ──────────────────────
+  if (currentVersion < 2) {
+    await db.execAsync(`
+      -- Videos pending upload (30s cap, keep audio).
+      CREATE TABLE IF NOT EXISTS videos_pending (
+        id              TEXT    PRIMARY KEY,
+        local_uri       TEXT    NOT NULL,
+        entity_type     TEXT    NOT NULL DEFAULT 'service_report',
+        entity_id       TEXT    NOT NULL,
+        duration_sec    INTEGER NOT NULL DEFAULT 0,
+        upload_status   TEXT    NOT NULL DEFAULT 'pending',
+        upload_attempts INTEGER NOT NULL DEFAULT 0,
+        last_error      TEXT,
+        created_at      TEXT    NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_vp_status
+        ON videos_pending (upload_status);
+
+      PRAGMA user_version = 2;
+    `);
+  }
+
+  // Future: if currentVersion < 3 → run v3 migration, etc.
 }
 
 

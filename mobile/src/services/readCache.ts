@@ -86,6 +86,31 @@ export async function clearAllCache(): Promise<void> {
   await db.runAsync(`DELETE FROM ${TABLE}`);
 }
 
+/** Count entries matching a prefix (for diagnostics). */
+export async function countCacheKeys(prefix?: string): Promise<number> {
+  await ensureTable();
+  const db = await getSyncDb();
+  const row = prefix
+    ? await db.getFirstAsync<{ cnt: number }>(
+        `SELECT count(*) as cnt FROM ${TABLE} WHERE key LIKE ?`,
+        [`${prefix}%`],
+      )
+    : await db.getFirstAsync<{ cnt: number }>(
+        `SELECT count(*) as cnt FROM ${TABLE}`,
+      );
+  return row?.cnt ?? 0;
+}
+
+/** Approximate total cache size in bytes (diagnostics). */
+export async function cacheByteSize(): Promise<number> {
+  await ensureTable();
+  const db = await getSyncDb();
+  const row = await db.getFirstAsync<{ sz: number }>(
+    `SELECT coalesce(sum(length(payload)), 0) as sz FROM ${TABLE}`,
+  );
+  return row?.sz ?? 0;
+}
+
 /** For tests. */
 export function __resetEnsured(): void {
   _ensured = false;

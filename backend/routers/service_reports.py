@@ -524,6 +524,14 @@ class ServiceReportPatch(BaseModel):
     # ``chemical_readings`` so the chemistry required-readings gate
     # keeps operating unchanged.
     water_bodies: Optional[List[Dict[str, Any]]] = None
+    # Mobile Phase 2 · Feb-2026 — tech-wins conflict marker. When
+    # set, the flush worker declares this write reflects a tech's
+    # local edit taken while offline. The handler compares this to
+    # the server's current ``updated_at`` and, if the server is
+    # newer, logs the overwrite to ``mobile_write_conflicts`` for
+    # audit — the tech's write is ACCEPTED regardless (per user
+    # directive). Never persisted onto the report document.
+    client_updated_at: Optional[str] = None
 
 
 @router.patch("/jobs/{jid}/service-report")
@@ -550,6 +558,26 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
     if rep.get("submitted_at"):
         raise HTTPException(409, "Report has already been submitted and is locked")
     upd = {k: v for k, v in body.dict(exclude_unset=True).items()}
+    # Mobile Phase 2 · Feb-2026 — tech-wins conflict audit. Strip
+    # ``client_updated_at`` from the persisted payload; use it only
+    # to decide whether to write an audit row. Tech's write is
+    # ALWAYS accepted per user directive.
+    _client_updated_at = upd.pop("client_updated_at", None)
+    if _client_updated_at:
+        from services.mobile_offline_sync import (
+            log_write_conflict, should_log_conflict,
+        )
+        _srv_upd = rep.get("updated_at")
+        if should_log_conflict(_srv_upd, _client_updated_at):
+            await log_write_conflict(
+                tenant_id=tenant["id"],
+                entity_type="service_report",
+                entity_id=str(rep.get("id") or jid),
+                tech_user_id=user.get("id"),
+                fields_overwritten=list(upd.keys()),
+                client_updated_at_iso=_client_updated_at,
+                server_updated_at_iso=_srv_upd,
+            )
     if not upd:
         raise HTTPException(400, "No fields to update")
     # Feb-2026 · Repair retag — normalize + validate before write.

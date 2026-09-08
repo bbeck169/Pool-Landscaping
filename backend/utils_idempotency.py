@@ -33,7 +33,13 @@ from utils import now_iso, new_id
 # Phase O4 · Feb-2026 — bumped from 24h to 48h to cover weekend tech
 # offline windows without pushing so far out that body-fingerprint
 # staleness becomes a real risk.
-TTL_SECONDS = 48 * 60 * 60
+# Mobile Phase 2 · Feb-2026 — bumped again 48h → 72h. Confirmed by
+# the mobile agent as the longest realistic offline window a field
+# tech accumulates (Fri-morning outage → Mon-morning reconnect).
+# The 72h ceiling still keeps body-fingerprint staleness inside the
+# tolerable band because writes older than that are dominated by
+# schema drift risks the mobile client's own upgrade-check catches.
+TTL_SECONDS = 72 * 60 * 60
 
 
 def _fingerprint(body: Any) -> str:

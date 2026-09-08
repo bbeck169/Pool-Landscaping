@@ -1,14 +1,9 @@
 /**
- * Feb-2026 · Phase 1 offline foundation — offline badge pill.
+ * Phase 1 Offline Read · Enhanced OfflineBadge
  *
- * Renders a compact "Offline" pill in a screen header when either
- *   • ``netinfo`` reports ``isConnected === false``, OR
- *   • ``markApiSuccess()`` hasn't been called in the last 60 s AND
- *     the caller passes ``renderStale``
- *
- * Consumers embed it in the header row of Schedule / Job Detail /
- * Checklist screens.  Non-intrusive — muted grey, single icon +
- * one-word label.
+ * When offline, shows cache freshness stats:
+ *   "Offline — 5 of 5 jobs cached • last synced 7:42 AM"
+ * When online, hidden (unless renderStale forces it).
  */
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
@@ -17,29 +12,47 @@ import { Ionicons } from "@expo/vector-icons";
 import { useOnline, getSecondsSinceLastSuccess } from "@/src/lib/offline/netStatus";
 import { font, fontSize, radius, spacing } from "@/src/theme";
 
+type CacheStats = {
+  cached: number;
+  total: number;
+  lastSyncedAt: string; // ISO
+};
 
 type Props = {
-  /** Optional — when true, the badge also shows if the last
-   *  successful API call was >60 s ago even when netinfo says
-   *  online. Default false. */
   renderStale?: boolean;
+  cacheStats?: CacheStats | null;
   testID?: string;
 };
 
+function _formatTime(iso: string): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
 
-export default function OfflineBadge({ renderStale = false, testID }: Props) {
+export default function OfflineBadge({ renderStale = false, cacheStats, testID }: Props) {
   const online = useOnline();
   const staleForced = renderStale && getSecondsSinceLastSuccess() > 60;
   if (online && !staleForced) return null;
 
+  const hasStats = cacheStats && cacheStats.total > 0;
+  const timeStr = cacheStats?.lastSyncedAt ? _formatTime(cacheStats.lastSyncedAt) : "";
+
   return (
     <View style={styles.pill} testID={testID || "offline-badge"}>
       <Ionicons name="cloud-offline-outline" size={12} color="#4B5563" />
-      <Text style={styles.label}>Offline</Text>
+      <Text style={styles.label}>
+        Offline
+        {hasStats ? ` — ${cacheStats!.cached} of ${cacheStats!.total} jobs cached` : ""}
+        {timeStr ? ` • synced ${timeStr}` : ""}
+      </Text>
     </View>
   );
 }
-
 
 const styles = StyleSheet.create({
   pill: {

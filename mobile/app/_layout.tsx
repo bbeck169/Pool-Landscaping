@@ -1,8 +1,8 @@
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import * as Notifications from "expo-notifications";
-import { useEffect } from "react";
-import { LogBox } from "react-native";
+import { useEffect, useRef } from "react";
+import { LogBox, AppState, type AppStateStatus } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -26,8 +26,9 @@ import { StripeConfigProvider } from "@/src/config/stripe";
 import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTemplateDrafts";
 import { SyncManagerProvider } from "@/src/services/SyncManager";
 // Phase O2 · Offline sync foundation — boot the sync infra.
-import { startListening as startNetBus, wireAutoFlush } from "@/src/services/sync";
-import { wirePhotoAutoUpload } from "@/src/services/sync/photoWorker";
+import { startListening as startNetBus, wireAutoFlush, flush as flushSyncQueue } from "@/src/services/sync";
+import { wirePhotoAutoUpload, flushPhotos } from "@/src/services/sync/photoWorker";
+import { wireVideoAutoUpload, flushVideos } from "@/src/services/sync/videoWorker";
 import { getSyncDb } from "@/src/services/sync/db";
 // Phase O6 · Sync UI components.
 import { OfflineBanner, ConflictSheet, SyncToast, StoragePressureBanner } from "@/src/components/sync";
@@ -95,6 +96,11 @@ export default function RootLayout() {
         console.warn("[boot] wirePhotoAutoUpload failed:", e?.message || e);
         logNav("boot.sync.photo_failed", { err: String(e?.message || e).slice(0, 120) });
       }
+      // Phase 2 · Wire video auto-upload on reconnect.
+      try { wireVideoAutoUpload(); } catch (e: any) {
+        console.warn("[boot] wireVideoAutoUpload failed:", e?.message || e);
+        logNav("boot.sync.video_failed", { err: String(e?.message || e).slice(0, 120) });
+      }
       // K36 · best-effort crash upload from prior session's persisted
       // slot. Never blocks boot; never surfaces errors.
       try {
@@ -104,6 +110,26 @@ export default function RootLayout() {
       } catch { /* swallow */ }
       logNav("boot.sync.done");
     })();
+  }, []);
+
+  // Phase 2 · AppState foreground trigger — flush sync queue when the
+  // app returns from background. This ensures pending writes sync
+  // within seconds of the tech switching back to the app.
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+      if (
+        appStateRef.current.match(/inactive|background/) &&
+        nextState === "active"
+      ) {
+        // App came to foreground — trigger sync.
+        flushSyncQueue().catch(() => {});
+        flushPhotos().catch(() => {});
+        flushVideos().catch(() => {});
+      }
+      appStateRef.current = nextState;
+    });
+    return () => sub.remove();
   }, []);
 
   // Phase K46 · Feb-2026 — Mapbox token dev-mode placeholder guard

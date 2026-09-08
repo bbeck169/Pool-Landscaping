@@ -241,6 +241,14 @@ class JobUpdate(BaseModel):
     # Free-text title/subject for the job card. Editable from the
     # Schedule inline edit modal.
     title: Optional[str] = None
+    # Mobile Phase 2 · Feb-2026 — tech-wins conflict marker. When
+    # set, the flush worker declares this write reflects a tech's
+    # local edit taken while offline. The handler compares this to
+    # the server's current ``updated_at`` and, if the server is
+    # newer, logs the overwrite to ``mobile_write_conflicts`` for
+    # audit — the tech's write is ACCEPTED regardless (per user
+    # directive). Never persisted onto the job document.
+    client_updated_at: Optional[str] = None
 
 
 class JobArriveIn(BaseModel):

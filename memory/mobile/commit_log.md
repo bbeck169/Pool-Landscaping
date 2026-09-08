@@ -1327,3 +1327,55 @@
 - **Files modified**: app/d2d/index.tsx, app/job/[id]/checklist.tsx
 - **Files created**: __tests__/hotfix-m3-d2d-zillow.test.tsx, __tests__/hotfix-m4-trainings.test.tsx, __tests__/hotfix-m5-checklist-429.test.tsx
 
+
+## Iteration 71 — Phase 1 Offline Read Cache for Field Techs
+- **Commit**: 2c82722981aa2eab95484be23b28545176bfb10d
+- **Date**: 2026-09-08
+- **Changes**:
+  - NEW: routeHydrator.ts — proactive cache engine (today's route → SQLite)
+  - NEW: useRouteHydration.ts — React hook for hydration state + auto-trigger
+  - NEW: useCachedJobIds.ts — check which jobs are cached (for "Cached ✓" pills)
+  - NEW: offline-diagnostics.tsx — hidden settings screen (cache stats, rebuild, purge)
+  - MOD: job/[id].tsx — offline-first reads + "showing cached copy" banner + clean empty state
+  - MOD: checklist.tsx — hydrator cache integration + "Not cached for offline" empty state
+  - MOD: calendar.tsx — trigger hydrator, "Cached ✓" pill per job row, OfflineBadge stats
+  - MOD: OfflineBadge.tsx — "Offline — X of Y jobs cached • synced time"
+  - MOD: auth.tsx — clearAllReadCache() on logout
+  - MOD: readCache.ts — countCacheKeys() + cacheByteSize() for diagnostics
+  - Tests: 16 new (phase1-offline-read.test.tsx), 39 total passing
+  - Doc: /app/memory/PHASE_OFFLINE_1_READ_CACHE.md
+- **Files created**: src/services/routeHydrator.ts, src/hooks/useRouteHydration.ts, src/hooks/useCachedJobIds.ts, app/(app)/settings/offline-diagnostics.tsx, __tests__/phase1-offline-read.test.tsx
+- **Files modified**: app/job/[id].tsx, app/job/[id]/checklist.tsx, app/(app)/schedule/calendar.tsx, src/components/OfflineBadge.tsx, src/auth.tsx, src/services/readCache.ts
+
+
+
+## Iteration 72 — Phase 2: Offline Write Queue + Auto-Sync
+- **Commit**: 2c82722981aa2eab95484be23b28545176bfb10d
+- **Date**: 2026-09-08
+- **Changes**:
+  - Created Sync Center screen at /settings/sync-center
+  - Created SyncBadge component for schedule header
+  - Created PendingSyncPill for per-job pending indicators
+  - Created usePendingOps/usePendingEntityIds hooks
+  - Created videoWorker.ts (30s cap, auto-upload, retry stalled)
+  - DB migration v2: videos_pending table
+  - Queue concurrency limiter: max 3 entity syncs
+  - Wired OnMyWayButton through offlineWrite for offline support
+  - Added cache invalidation for video.upload, checklist.answer, checklist.update, job.complete, on_my_way
+  - Updated barrel exports in sync/index.ts
+- **Files created**: app/settings/sync-center.tsx, src/services/sync/videoWorker.ts, src/hooks/usePendingOps.ts, src/components/SyncBadge.tsx, src/components/PendingSyncPill.tsx
+- **Files modified**: src/services/sync/db.ts, src/services/sync/queue.ts, src/services/sync/index.ts, src/services/cacheInvalidation.ts, src/components/schedule/OnMyWayButton.tsx, app/(app)/schedule/calendar.tsx
+- **Web files referenced**: frontend/src/components/schedule/OnMyWayButton.jsx (offline write parity)
+
+## Iteration 73 — Phase 2 Follow-up: Three Missing Wire-ups
+- **Commit**: 2c82722981aa2eab95484be23b28545176bfb10d
+- **Date**: 2026-09-08
+- **Changes**:
+  - Wired checklist autosave offlineWrite() queued handling + pill text "Saved — will sync when online"
+  - Wired Mark Complete via job.complete op_type + Alert toast on queued
+  - Added AppState foreground trigger (inactive/background → active flushes sync queue + photos + videos)
+  - Wired wireVideoAutoUpload() in boot sequence
+  - Updated sync-db.test.ts for v2 migration expectations
+- **Files modified**: app/job/[id]/checklist.tsx, app/job/[id].tsx, app/_layout.tsx, __tests__/sync-db.test.ts
+- **Test results**: 9 suites, 77 tests, ALL PASSING
+

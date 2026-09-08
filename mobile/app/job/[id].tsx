@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, ScrollView, Pressable, Linking, StyleSheet, TextInput } from "react-native";
+import { View, Text, ScrollView, Pressable, Linking, StyleSheet, TextInput, Alert } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
@@ -7,13 +7,18 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 
-import { api } from "@/src/api";
+import { api, ApiNetworkError } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useAttendance } from "@/src/hooks/useAttendance";
 import { useOnline, queuePhoto, pendingForJob, flushPendingPhotos, getCachedJobs, cacheJob, getCachedJob, queueMutation, flushPendingMutations } from "@/src/offline";
 import { enqueueJobArrive } from "@/src/services/sync/jobArrive";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, money, IMAGES , colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
+// Phase 1 Offline Read — route hydrator cache + write-through.
+import {
+  getCachedJobDetail, CK,
+} from "@/src/services/routeHydrator";
+import { writeCache } from "@/src/services/readCache";
 // Feb-2026 · Phase 1 offline foundation — cache /properties/{id}
 // on success + fall back to the SQLite cache on network failure so
 // the tech can still see property address / gate code offline.
@@ -78,6 +83,8 @@ export default function JobDetail() {
   // lineItems state removed — LineItemsSection component manages its own data
   const [activeSection, setActiveSection] = useState("overview");
   const online = useOnline();
+  // Phase 1 Offline Read — track whether data came from cache.
+  const [offlineRead, setOfflineRead] = useState(false);
   // Feb-2026 · Slice 6 — 24h post-completion edit window (mobile).
   const [editSheet, setEditSheet] = useState(false);
   const [editNotes, setEditNotes] = useState("");
@@ -99,7 +106,10 @@ export default function JobDetail() {
       await flushPendingPhotos().catch(() => null);
       const fresh = await api.get(`/jobs/${id}`);
       setJob(fresh);
+      setOfflineRead(false);
       cacheJob(fresh);
+      // Phase 1 Offline Read — also write to SQLite read_cache.
+      writeCache(CK.jobDetail(String(id)), fresh).catch(() => {});
       // Feb-2026 MP2 UI — hydrate property info when the job carries
       // a property_id so techs can see label + address on-site.
       if (fresh?.property_id) {
@@ -119,14 +129,28 @@ export default function JobDetail() {
       // Line items fetching moved to LineItemsSection component
       setPendingPhotos(await pendingForJob(id));
     } catch (e) {
-      // Offline — use the single-job cache, then fall back to the cached schedule.
-      let found: any = await getCachedJob(id as string);
+      // Phase 1 Offline Read — try SQLite read_cache first (hydrator-populated),
+      // then AsyncStorage caches as fallback.
+      let found: any = await getCachedJobDetail(String(id)).catch(() => null);
+      if (!found) found = await getCachedJob(id as string);
       if (!found) {
         const roleKey = `${user?.role}_${user?.id}`;
         const cached = await getCachedJobs(roleKey);
         if (cached) found = cached.find((j: any) => j.id === id) || null;
       }
-      if (found) setJob(found);
+      if (found) {
+        setJob(found);
+        setOfflineRead(true);
+        // Try property from cache too.
+        if (found.property_id) {
+          const cachedProp = await readCachedProperty(found.property_id).catch(() => null);
+          setProperty(cachedProp || null);
+        }
+      } else {
+        // Clean empty state — no red error toast.
+        setJob(null);
+        setOfflineRead(true);
+      }
       setPendingPhotos(await pendingForJob(id));
     } finally {
       setLoading(false);
@@ -268,7 +292,7 @@ export default function JobDetail() {
     try {
       const body = { status };
       const { data: updated, queued } = await offlineWrite({
-        op_type: "job.status",
+        op_type: status === "completed" ? "job.complete" : "job.status",
         entity_id: id as string,
         endpoint: `/jobs/${id}`,
         method: "PUT",
@@ -279,9 +303,11 @@ export default function JobDetail() {
         setJob(updated);
         cacheJob(updated);
       } else if (queued) {
+        // Phase 2 — optimistic UI fires immediately.
         const optimistic = { ...job, status };
         setJob(optimistic);
         cacheJob(optimistic);
+        Alert.alert("Saved — will sync when online");
       }
     } catch {
       // Last resort — optimistic update + legacy queue.
@@ -289,6 +315,7 @@ export default function JobDetail() {
       setJob(optimistic);
       cacheJob(optimistic);
       await queueMutation(`/jobs/${id}`, { status });
+      Alert.alert("Saved — will sync when online");
     } finally {
       setBusy(false);
     }
@@ -320,6 +347,28 @@ export default function JobDetail() {
   };
 
   if (loading) return <Loading testID="job-detail-loading" />;
+  // Phase 1 Offline Read — clean empty state for uncached offline jobs.
+  if (!job && !loading) {
+    return (
+      <View style={styles.root}>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
+          <Pressable style={[styles.backBtn, { top: insets.top + 8, left: 12, position: "absolute" }]} onPress={() => router.back()} testID="job-back-empty">
+            <Ionicons name="chevron-back" size={24} color={themeColors.onSurface} />
+          </Pressable>
+          <Ionicons name="cloud-offline-outline" size={48} color={themeColors.muted} />
+          <Text style={{ fontFamily: themeFont.bold, fontSize: 18, color: themeColors.onSurface, marginTop: spacing.md, textAlign: "center" }}>
+            {online ? "Job not found" : "Not cached for offline"}
+          </Text>
+          <Text style={{ fontFamily: themeFont.regular, fontSize: 14, color: themeColors.muted, marginTop: spacing.sm, textAlign: "center" }} testID="job-detail-not-cached-msg">
+            {online ? "This job may have been removed." : "Connect to Wi-Fi or cellular once to cache this job for offline use."}
+          </Text>
+          <Pressable style={{ marginTop: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: themeColors.brand, borderRadius: themeRadius.md }} onPress={() => router.back()} testID="job-detail-go-back-btn">
+            <Text style={{ fontFamily: themeFont.bold, fontSize: 14, color: "#fff" }}>Go back</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
   if (!job) return null;
 
   const st = (job.service_type || "").toLowerCase();
@@ -359,6 +408,13 @@ export default function JobDetail() {
         </View>
 
         <View style={styles.body}>
+          {/* Phase 1 Offline Read — "showing cached copy" banner */}
+          {offlineRead && !online ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#FEF3C7", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginBottom: spacing.md }} testID="job-detail-cached-banner">
+              <Ionicons name="cloud-done-outline" size={14} color="#92400E" />
+              <Text style={{ fontFamily: themeFont.medium, fontSize: 12, color: "#92400E" }}>You're offline — showing cached copy</Text>
+            </View>
+          ) : null}
           {/* Feb-2026 MP2 UI — property card. Only rendered when the
               job has a property_id AND the property fetch succeeded.
               Legacy jobs (no property) render the customer-level

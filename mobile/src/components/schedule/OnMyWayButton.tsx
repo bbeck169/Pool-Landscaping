@@ -18,6 +18,7 @@ import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
+import { offlineWrite, queuedMessage } from "@/src/services/offlineWrite";
 import { font, fontSize, spacing, radius } from "@/src/theme";
 
 /* M2 hotfix — navy fill for "On my way" (was mint-green). */
@@ -98,11 +99,18 @@ export default function OnMyWayButton({
       const coords = await geolocate();
       const body = coords || {};
 
-      let resp: any;
-      try {
-        resp = await api.post(`/jobs/${jobId}/on-my-way`, body);
-      } catch (e: any) {
-        Alert.alert("Send failed", e?.message || "Couldn't reach the server — try again.");
+      // Phase 2 — use offlineWrite so the SMS is queued when offline.
+      const { data: resp, queued } = await offlineWrite<any>({
+        op_type: "on_my_way",
+        entity_id: jobId,
+        endpoint: `/jobs/${jobId}/on-my-way`,
+        method: "POST",
+        payload: body,
+        onlineFn: () => api.post(`/jobs/${jobId}/on-my-way`, body),
+      });
+
+      if (queued) {
+        Alert.alert("Queued offline", queuedMessage("A"));
         return;
       }
 
@@ -112,6 +120,8 @@ export default function OnMyWayButton({
       } else {
         Alert.alert("Not sent", humanizeReason(resp?.reason));
       }
+    } catch (e: any) {
+      Alert.alert("Send failed", e?.message || "Couldn't reach the server — try again.");
     } finally {
       setBusy(false);
       setCooldown(true);

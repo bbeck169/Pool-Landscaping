@@ -40,6 +40,14 @@ import { Header, NotificationBell } from "@/src/components/widgets";
 // successful load + read-fallback + header-level "Offline" pill.
 import { cachedGet, writeThroughJobs, readCachedWeekJobs } from "@/src/lib/offline/apiCache";
 import OfflineBadge from "@/src/components/OfflineBadge";
+// Phase 2 · Sync badge — global "⤴ X items waiting" in schedule header.
+import SyncBadge from "@/src/components/SyncBadge";
+// Phase 2 · Per-job pending sync indicator.
+import PendingSyncPill from "@/src/components/PendingSyncPill";
+import { usePendingEntityIds } from "@/src/hooks/usePendingOps";
+// Phase 1 Offline Read — route hydrator + cache status.
+import { useRouteHydration } from "@/src/hooks/useRouteHydration";
+import { useCachedJobIds } from "@/src/hooks/useCachedJobIds";
 import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import RainFlag from "@/src/components/weather/RainFlag";
@@ -166,6 +174,9 @@ function ScheduleCalendarInner() {
   const isAdmin = role === "admin" || role === "super_admin" || role === "manager";
   const isTech = role === "technician" || role === "tech";
   const canWriteJobs = isAdmin || isTech;
+
+  // Phase 1 Offline Read — trigger hydration + get cache stats.
+  const { meta: hydrationMeta } = useRouteHydration();
 
   const [mode, setMode] = useState<Mode>("grid");
   const [modeLoaded, setModeLoaded] = useState(false);
@@ -360,6 +371,13 @@ function ScheduleCalendarInner() {
     return counts;
   }, [jobs]);
 
+  // Phase 1 Offline Read — which of today's jobs are cached for offline.
+  const dayJobIds = useMemo(() => dayJobs.map((j) => j.id), [dayJobs]);
+  const cachedJobIds = useCachedJobIds(dayJobIds);
+
+  // Phase 2 — which jobs have pending offline writes.
+  const pendingEntityIds = usePendingEntityIds();
+
   const [reorderList, setReorderList] = useState<Job[]>([]);
   useEffect(() => { setReorderList(dayJobs); }, [dayJobs]);
 
@@ -531,7 +549,8 @@ function ScheduleCalendarInner() {
         subtitle={loading ? "Loading…" : `${jobs.length} jobs in window · ${mode}`}
         right={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <OfflineBadge testID="schedule-header-offline-badge" />
+            <SyncBadge testID="schedule-header-sync-badge" />
+            <OfflineBadge testID="schedule-header-offline-badge" cacheStats={hydrationMeta ? { cached: hydrationMeta.cachedJobs, total: hydrationMeta.totalJobs, lastSyncedAt: hydrationMeta.lastSyncedAt } : undefined} />
             {isTech ? (
               // Phase 22 · 2026-08-02 · Sub-item B — the ambient shell
               // hamburger renders at the extreme top-right and was
@@ -674,6 +693,9 @@ function ScheduleCalendarInner() {
           crewMembers={crewMembers}
           onCrewSelect={handleCrewSelect}
           isTech={isTech}
+          cachedJobIds={cachedJobIds}
+          pendingEntityIds={pendingEntityIds}
+          hydrationMeta={hydrationMeta}
         />
       ) : (
         <CalendarView
@@ -787,6 +809,7 @@ function GridView(props: any) {
     weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection, role,
     gridSubMode, setGridSubMode, dayJobs, setReorderList,
     crews, crewFilter, crewMembers, onCrewSelect, isTech,
+    cachedJobIds, pendingEntityIds, hydrationMeta,
   } = props;
   const focusISO = iso(focus);
   const isToday = focusISO === iso(new Date());
@@ -1089,6 +1112,8 @@ function GridView(props: any) {
                   role={role}
                   onDrag={drag}
                   isDragging={isActive}
+                  cachedForOffline={cachedJobIds?.has(item.id)}
+                  pendingSync={pendingEntityIds?.has(item.id)}
                 />
               </ScaleDecorator>
             );
@@ -1119,6 +1144,8 @@ function GridView(props: any) {
               isAdminForCard={isAdmin}
               onEdit={isAdmin ? onOpenEdit : undefined}
               role={role}
+              cachedForOffline={cachedJobIds?.has(item.id)}
+              pendingSync={pendingEntityIds?.has(item.id)}
             />
           )}
         />
@@ -1134,7 +1161,7 @@ function GridView(props: any) {
   );
 }
 
-function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData, isAdminForCard, onEdit, role, onDrag, isDragging }: any) {
+function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData, isAdminForCard, onEdit, role, onDrag, isDragging, cachedForOffline, pendingSync }: any) {
   const pill = STATUS_PILL[(job.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
   const svc = SERVICE_COLOR(job.service_type);
   // Feb-2026 · Schedule-UI · colored left border.
@@ -1264,6 +1291,17 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
         />
         {job.address ? (
           <Text style={gStyles.addr} numberOfLines={1}>{job.address}</Text>
+        ) : null}
+        {/* Phase 1 Offline Read — "Cached ✓" pill */}
+        {cachedForOffline ? (
+          <View style={gStyles.cachedPill} testID={`job-cached-pill-${job.id}`}>
+            <Ionicons name="checkmark-circle" size={10} color="#065F46" />
+            <Text style={gStyles.cachedPillText}>Cached</Text>
+          </View>
+        ) : null}
+        {/* Phase 2 — "Pending sync" pill when job has queued writes */}
+        {pendingSync ? (
+          <PendingSyncPill testID={`job-pending-sync-${job.id}`} />
         ) : null}
         <View style={gStyles.metaRow}>
           <Ionicons name="reader-outline" size={12} color={colors.muted} />
@@ -1475,6 +1513,16 @@ const gStyles = StyleSheet.create({
     gap: 2, backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
     paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill,
     marginTop: 2,
+  },
+  cachedPill: {
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
+    gap: 3, backgroundColor: "#ECFDF5", borderColor: "#A7F3D0", borderWidth: 1,
+    paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill,
+    marginTop: 3,
+  },
+  cachedPillText: {
+    fontFamily: font.bold, fontSize: 9, color: "#065F46",
+    letterSpacing: 0.4, textTransform: "uppercase",
   },
   vipText: {
     fontFamily: font.bold, fontSize: 9, color: "#92400E",

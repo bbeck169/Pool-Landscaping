@@ -123,6 +123,21 @@ const INVALIDATION_MAP: Record<string, { keys?: string[]; prefixes?: string[] }>
   "photo.upload": {
     prefixes: ["job:", "service-report:"],
   },
+  "video.upload": {
+    prefixes: ["job:", "service-report:"],
+  },
+  "checklist.answer": {
+    prefixes: ["job:", "service-report:", "checklist:"],
+  },
+  "checklist.update": {
+    prefixes: ["job:", "service-report:", "checklist:"],
+  },
+  "job.complete": {
+    prefixes: ["job:", "jobs:", "schedule:", "dashboard"],
+  },
+  "on_my_way": {
+    prefixes: ["job:", "jobs:"],
+  },
 };
 
 /**

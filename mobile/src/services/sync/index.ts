@@ -63,6 +63,25 @@ export {
   type PendingPhoto,
 } from "./photoWorker";
 
+// Phase 2: Video pipeline
+export {
+  captureVideo,
+  stageVideo,
+  insertPendingVideo,
+  flushVideos,
+  retryStalled as retryVideoStalled,
+  retryAllStalledVideos,
+  getPendingVideos,
+  getStalledVideos,
+  getVideosForEntity,
+  purgeVideosForEntity,
+  cleanupUploadedVideos,
+  wireVideoAutoUpload,
+  subscribeVideos,
+  VIDEO_MAX_DURATION_SEC,
+  type PendingVideo,
+} from "./videoWorker";
+
 // Phase O3: Job arrive
 export { enqueueJobArrive } from "./jobArrive";
 

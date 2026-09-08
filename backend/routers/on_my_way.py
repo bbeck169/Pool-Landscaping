@@ -50,6 +50,11 @@ _TEMPLATE_KEY = "tech_on_my_way"
 class OnMyWayBody(BaseModel):
     origin_lat: Optional[float] = None
     origin_lng: Optional[float] = None
+    # Mobile Phase 2 · Feb-2026 — the flush worker tags each replay
+    # with the timestamp at which the tech originally hit the "On
+    # my way" button (ISO8601 UTC). Absent / malformed values fall
+    # through as a normal (non-delayed) send.
+    queued_at: Optional[str] = None
 
 
 def _short_street(addr: Optional[str]) -> str:
@@ -207,6 +212,23 @@ async def on_my_way(
     if not job:
         raise HTTPException(404, "job not found")
 
+    # Mobile Phase 2 · Feb-2026 — suppress-if-advanced. When the
+    # queued op finally flushes we may find the job has since moved
+    # past in-progress (completed by someone else, cancelled, etc).
+    # Send would be misleading, so return ``suppressed=true`` and
+    # let mobile mark the queued op discarded in Sync Center.
+    from services.mobile_offline_sync import (
+        is_delayed_queued_at,
+        job_is_past_in_progress,
+        DELAYED_ON_MY_WAY_SUFFIX,
+    )
+    if job_is_past_in_progress(job):
+        return await _sar({
+            "sent": False,
+            "suppressed": True,
+            "reason": "job_already_advanced",
+        })
+
     tech_id = job.get("technician_id") or job.get("tech_user_id")
     if not tech_id:
         raise HTTPException(422, "job has no assigned technician")
@@ -252,6 +274,13 @@ async def on_my_way(
         address_short=prop["address_short"],
         eta_minutes=eta_min,
     )
+    # Mobile Phase 2 · Feb-2026 — delayed-send transparency. When
+    # the tech's tap sat in the offline queue for more than 10 min
+    # before the network came back, append a short suffix so the
+    # customer isn't confused by a "coming now" message that
+    # arrives 40 min late.
+    if is_delayed_queued_at(body.queued_at):
+        sms_body = sms_body + DELAYED_ON_MY_WAY_SUFFIX
 
     # Env / demo gate.
     from services.comms.gate import is_comm_allowed

@@ -1490,6 +1490,28 @@ async def update_job(jid: str, body: JobUpdate,
     else:
         raise HTTPException(403, "Not permitted to edit jobs")
     update = {k: v for k, v in body.dict().items() if v is not None}
+    # Mobile Phase 2 · Feb-2026 — tech-wins conflict audit. The
+    # ``client_updated_at`` marker (if present) is stripped from
+    # the persisted payload and used only to decide whether the
+    # tech's write is overwriting a newer server state — an
+    # ``mobile_write_conflicts`` row is written for audit but the
+    # tech's write is ALWAYS accepted (per user directive).
+    _client_updated_at = update.pop("client_updated_at", None)
+    if _client_updated_at:
+        from services.mobile_offline_sync import (
+            log_write_conflict, should_log_conflict,
+        )
+        _srv_upd = job.get("updated_at")
+        if should_log_conflict(_srv_upd, _client_updated_at):
+            await log_write_conflict(
+                tenant_id=tenant["id"],
+                entity_type="job",
+                entity_id=jid,
+                tech_user_id=user.get("id"),
+                fields_overwritten=list(update.keys()),
+                client_updated_at_iso=_client_updated_at,
+                server_updated_at_iso=_srv_upd,
+            )
     # Feb 2026 · Work-class retag validation. When present, must be
     # ``"service"`` or ``"repair"`` (case-insensitive). Everything
     # else → 400.

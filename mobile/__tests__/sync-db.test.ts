@@ -147,15 +147,17 @@ beforeEach(() => {
 });
 
 describe("sync DB schema migration (Phase O2)", () => {
-  it("fresh DB bumps user_version to 1 and creates all 4 O2 tables", async () => {
+  it("fresh DB bumps user_version to 2 and creates all O2+Phase2 tables", async () => {
     await getSyncDb();
-    expect((SQLite as any).__getUserVersion()).toBe(1);
+    expect((SQLite as any).__getUserVersion()).toBe(2);
 
     const tables = (SQLite as any).__getTableColumns();
     expect(tables).toHaveProperty("sync_queue");
     expect(tables).toHaveProperty("service_reports");
     expect(tables).toHaveProperty("photos_pending");
     expect(tables).toHaveProperty("config");
+    // Phase 2 — videos_pending table.
+    expect(tables).toHaveProperty("videos_pending");
 
     // Verify sync_queue has the expected columns
     expect(tables.sync_queue).toEqual(
@@ -171,8 +173,8 @@ describe("sync DB schema migration (Phase O2)", () => {
   it("migration is idempotent — running twice causes no errors", async () => {
     await getSyncDb(); // first run
     __resetForTests(); // reset the _migrated flag but keep DB state
-    await getSyncDb(); // second run — should be a no-op (version already 1)
-    expect((SQLite as any).__getUserVersion()).toBe(1);
+    await getSyncDb(); // second run — should be a no-op (version already 2)
+    expect((SQLite as any).__getUserVersion()).toBe(2);
   });
 
   it("config table supports get/set round-trip", async () => {

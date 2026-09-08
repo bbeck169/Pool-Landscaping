@@ -138,12 +138,28 @@ async def _upload_video(
 
     _require_storage_ready()
 
+    # Mobile Phase 2 · Feb-2026 — stricter caps when the caller
+    # declares itself the mobile flush worker. Web / other clients
+    # keep the pre-existing generous 100MB / 3-min / 4-mime policy.
+    from services.mobile_offline_sync import (
+        is_mobile_offline_sync,
+        MOBILE_MAX_VIDEO_BYTES,
+        MOBILE_MAX_VIDEO_DURATION_S,
+        MOBILE_STRICT_MIMES,
+    )
+    is_mobile = is_mobile_offline_sync(request)
+    _max_bytes = MOBILE_MAX_VIDEO_BYTES if is_mobile else MAX_VIDEO_BYTES
+    _max_duration = (
+        MOBILE_MAX_VIDEO_DURATION_S if is_mobile else MAX_VIDEO_DURATION_S
+    )
+    _allowed_mimes = MOBILE_STRICT_MIMES if is_mobile else ALLOWED_MIMES
+
     mime = (file.content_type or "").lower()
-    if mime not in ALLOWED_MIMES:
+    if mime not in _allowed_mimes:
         raise HTTPException(
             400,
             f"Unsupported mimetype {mime!r}. "
-            f"Allowed: {sorted(ALLOWED_MIMES)}",
+            f"Allowed: {sorted(_allowed_mimes)}",
         )
 
     entity = await _get_entity_or_404(kind, entity_id, tenant["id"])
@@ -163,20 +179,23 @@ async def _upload_video(
         except ValueError:
             declared_i = 0
         # Multipart framing adds a small overhead, allow 8KB slack.
-        if declared_i > MAX_VIDEO_BYTES + 8192:
-            raise HTTPException(413, "Video exceeds 100 MB limit")
+        if declared_i > _max_bytes + 8192:
+            _mb = _max_bytes // (1024 * 1024)
+            raise HTTPException(413, f"Video exceeds {_mb} MB limit")
 
     data = await file.read()
-    if len(data) > MAX_VIDEO_BYTES:
-        raise HTTPException(413, "Video exceeds 100 MB limit")
+    if len(data) > _max_bytes:
+        _mb = _max_bytes // (1024 * 1024)
+        raise HTTPException(413, f"Video exceeds {_mb} MB limit")
     if not data:
         raise HTTPException(400, "Empty video file")
 
     duration = _parse_duration(x_video_duration)
-    if duration is not None and duration > MAX_VIDEO_DURATION_S:
+    if duration is not None and duration > _max_duration:
         raise HTTPException(
             400,
-            f"Video duration {duration:.1f}s exceeds 3-minute cap",
+            f"Video duration {duration:.1f}s exceeds "
+            f"{int(_max_duration)}s cap",
         )
 
     visibility_v = _visibility_or_400(visibility)

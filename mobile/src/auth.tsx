@@ -11,6 +11,8 @@ import {
 } from "@/src/lib/offline/jwtCache";
 import { wipeCache, initCache } from "@/src/lib/offline/cache";
 import { writeThroughMe } from "@/src/lib/offline/apiCache";
+// Phase 1 Offline Read — purge read_cache on logout.
+import { clearAllCache as clearAllReadCache } from "@/src/services/readCache";
 
 export type User = {
   id: string;
@@ -116,6 +118,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // cannot see the previous tech's route from cache.
     await clearJwtExpiry().catch(() => {});
     await wipeCache().catch(() => {});
+    // Phase 1 Offline Read — purge the read_cache (job bootstraps, hydration meta).
+    await clearAllReadCache().catch(() => {});
     await clearImpersonation();
     setUser(null);
   };

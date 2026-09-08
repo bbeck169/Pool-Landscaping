@@ -164,29 +164,45 @@ export async function flush(): Promise<FlushResult> {
       byEntity.set(entry.entity_id, arr);
     }
 
-    // Process each entity's queue sequentially, but entities in
-    // parallel.
-    const entityPromises = Array.from(byEntity.entries()).map(
-      async ([_entityId, entries]) => {
-        for (const entry of entries) {
-          if (!isOnlineNow()) break; // abort if we went offline
+    // Phase 2 · Max 3 concurrent entity syncs (semaphore pattern).
+    // Process each entity's queue sequentially, but limit parallel
+    // entity dispatch to MAX_CONCURRENT_ENTITIES at a time.
+    const entityQueues = Array.from(byEntity.entries());
+    const MAX_CONCURRENT_ENTITIES = 3;
+    let idx = 0;
 
-          const outcome = await _dispatchOne(entry);
-          if (outcome === "done") {
-            result.succeeded++;
-          } else if (outcome === "shelved") {
-            result.failed++;
-            result.errors.push(entry.last_error || "Max retries exceeded");
-          } else {
-            // "retry_later" or "network_error" — stop this entity chain
-            break;
-          }
-          _notify();
+    async function processEntity([_entityId, entries]: [string, SyncEntry[]]) {
+      for (const entry of entries) {
+        if (!isOnlineNow()) break; // abort if we went offline
+
+        const outcome = await _dispatchOne(entry);
+        if (outcome === "done") {
+          result.succeeded++;
+        } else if (outcome === "shelved") {
+          result.failed++;
+          result.errors.push(entry.last_error || "Max retries exceeded");
+        } else {
+          // "retry_later" or "network_error" — stop this entity chain
+          break;
         }
-      },
-    );
+        _notify();
+      }
+    }
 
-    await Promise.all(entityPromises);
+    async function worker() {
+      while (idx < entityQueues.length) {
+        const i = idx++;
+        if (i < entityQueues.length) {
+          await processEntity(entityQueues[i]);
+        }
+      }
+    }
+
+    const workers = Array.from(
+      { length: Math.min(MAX_CONCURRENT_ENTITIES, entityQueues.length) },
+      () => worker(),
+    );
+    await Promise.all(workers);
   } finally {
     _flushing = false;
     _notify();

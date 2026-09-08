@@ -54,6 +54,9 @@ import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/wat
 // required readings" alert.  See ``@/src/lib/expandChemistryLabel``.
 import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
+// Phase 1 Offline Read — hydrator cache for offline-first bootstrap.
+import { getCachedJobBootstrap, CK } from "@/src/services/routeHydrator";
+import { writeCache } from "@/src/services/readCache";
 import * as writeQueue from "@/src/services/writeQueue";
 import { submitOffline, cacheServiceReport } from "@/src/services/sync/offlineServiceLog";
 import { offlineWrite } from "@/src/services/offlineWrite";
@@ -212,8 +215,9 @@ export default function JobChecklistScreen() {
       setReport(reportResp);
       reportRef.current = reportResp;
       setOfflineMode(false);
-      // Cache the bootstrap for later offline access.
+      // Cache the bootstrap for later offline access (both stores).
       await cacheJobBootstrap(String(id), { job: jobResp, report: reportResp });
+      await writeCache(CK.jobBootstrap(String(id)), { job: jobResp, report: reportResp }).catch(() => {});
       // Phase O3 · Also cache in SQLite for offline service-log.
       await cacheServiceReport(String(id), reportResp).catch(() => {});
     } catch (e: any) {
@@ -240,8 +244,9 @@ export default function JobChecklistScreen() {
         } catch {
           // retry failed — fall through to cache
         }
-        // Try cache fallback
-        const cached = await getCachedBootstrap(String(id));
+        // Try cache fallback — hydrator SQLite first, then AsyncStorage.
+        let cached = await getCachedJobBootstrap(String(id)).catch(() => null);
+        if (!cached?.report) cached = await getCachedBootstrap(String(id));
         if (cached?.job && cached?.report) {
           setJob(cached.job);
           setReport(cached.report);
@@ -279,13 +284,20 @@ export default function JobChecklistScreen() {
         return;
       }
 
-      // ── Other — try cache, then generic alert with body message ────
-      const cached = await getCachedBootstrap(String(id));
+      // ── Other — try hydrator + AsyncStorage cache, then clean empty state ──
+      let cached = await getCachedJobBootstrap(String(id)).catch(() => null);
+      if (!cached?.report) cached = await getCachedBootstrap(String(id));
       if (cached?.job && cached?.report) {
         setJob(cached.job);
         setReport(cached.report);
         reportRef.current = cached.report;
         setOfflineMode(true);
+      }
+      // If no cache + offline → clean "not cached" state (no red alert).
+      // If online + real error → show the backend message.
+      else if (status === null) {
+        // Network error — offline with no cache.
+        // Don't show an alert — the UI will render the "not cached" empty state.
       } else {
         Alert.alert("Unable to open checklist", msg);
       }
@@ -395,7 +407,7 @@ export default function JobChecklistScreen() {
         // tech knows the write is safe but not yet server-side.
         return { ok: true, queued: true };
       }
-      const { data: patched } = await offlineWrite({
+      const { data: patched, queued: oqQueued } = await offlineWrite({
         op_type: "service_report.patch",
         entity_id: String(id),
         endpoint: `/jobs/${id}/service-report`,
@@ -412,6 +424,9 @@ export default function JobChecklistScreen() {
         savingShownAtRef.current = 0;
         setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
       }, holdMs);
+      // Phase 2 — if offlineWrite fell back to queue (network drop
+      // mid-request), return a truthful queued result.
+      if (oqQueued) return { ok: true, queued: true };
       // K61.b.2 · Feb-2026 — happy path.
       return { ok: true };
     } catch (e: any) {
@@ -569,7 +584,7 @@ export default function JobChecklistScreen() {
                 const current = reportRef.current;
                 await submitOffline(String(id), current || report);
                 Alert.alert(
-                  "Submitted (pending sync)",
+                  "Saved — will sync when online",
                   "You're offline — the job will close automatically when your device reconnects.",
                   [{ text: "OK", onPress: () => router.replace("/(app)/schedule/calendar") }],
                 );
@@ -720,7 +735,16 @@ export default function JobChecklistScreen() {
   if (!report || !job) {
     return (
       <View style={styles.centered} testID="checklist-error">
-        <Text style={styles.forbiddenText}>Unable to load checklist.</Text>
+        <Ionicons name="cloud-offline-outline" size={48} color={colors.muted} />
+        <Text style={[styles.forbiddenText, { marginTop: spacing.md }]}>
+          {!online ? "Not cached for offline" : "Unable to load checklist."}
+        </Text>
+        <Text style={{ fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, textAlign: "center", marginTop: spacing.sm, paddingHorizontal: spacing.lg }} testID="checklist-not-cached-msg">
+          {!online ? "Connect to Wi-Fi or cellular once to enable offline access for this job." : "Check your connection and try again."}
+        </Text>
+        <Pressable style={{ marginTop: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: colors.brand, borderRadius: radius.md }} onPress={() => router.back()} testID="checklist-go-back-btn">
+          <Text style={{ fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" }}>Go back</Text>
+        </Pressable>
       </View>
     );
   }
@@ -775,7 +799,7 @@ export default function JobChecklistScreen() {
             />
             <Text style={styles.autosavePillText} testID="checklist-save-state">
               {saveState === "saving" ? "Saving…"
-               : saveState === "saved" ? "Saved"
+               : saveState === "saved" ? (online ? "Saved" : "Saved — will sync when online")
                : saveState === "error" ? "Save error — will retry"
                : "Ready"}
             </Text>
