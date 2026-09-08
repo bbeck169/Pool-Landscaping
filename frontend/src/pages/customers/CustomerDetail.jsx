@@ -1083,11 +1083,25 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
   };
 
   const impersonate = async () => {
+    // Feb-2026 · Popup-blocker fix. Browsers (Chrome/Safari/Firefox)
+    // only allow ``window.open()`` when it fires *directly* from a
+    // user gesture. Any ``await`` BEFORE the open call detaches it
+    // from the click and the browser silently blocks it — the
+    // previous version called ``window.open`` after ``await
+    // api.post(...)`` returned, so the tab never opened while the
+    // success toast still fired. Open a blank stub tab
+    // synchronously first, then navigate it once the token comes
+    // back. If the pre-open itself is blocked (``win === null``)
+    // we surface a real error with a clipboard fallback.
+    const win = typeof window !== "undefined"
+      ? window.open("about:blank", "_blank")
+      : null;
     setBusy("impersonate");
     try {
       const r = await api.post(`/admin/impersonate/${customer.id}`);
       const token = r?.access_token;
       if (!token) {
+        if (win) { try { win.close(); } catch { /* ignore */ } }
         onToast({ tone: "error",
                    message: r?.detail || r?.message
                      || "Impersonation failed — the server did not return a token." });
@@ -1098,8 +1112,10 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
       // the portal side pins it to sessionStorage + strips the URL.
       // Admin tab is NOT re-tokened, so the admin's session survives.
       const portalUrl = `/portal/home?impersonation_token=${encodeURIComponent(token)}`;
-      const opened = window.open(portalUrl, "_blank");
-      if (!opened) {
+      if (!win) {
+        // Popup blocker bit through even the synchronous pre-open
+        // (some hardened browser configs). Surface a real error
+        // with a clipboard fallback — NO success toast.
         onToast({ tone: "error",
                    message: "Enable popups to impersonate. URL copied to clipboard.",
                    action: { label: "Copy portal URL",
@@ -1110,11 +1126,21 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
         } catch { /* clipboard may fail in test env */ }
         return;
       }
+      // Success path — navigate the pre-opened stub tab, THEN toast.
+      // ``replace`` (not ``assign``) so back-navigation from the
+      // portal doesn't return to about:blank.
+      try {
+        win.location.replace(portalUrl);
+      } catch {
+        // Defensive fallback for exotic cross-origin edge cases.
+        win.location.href = portalUrl;
+      }
       onToast({ tone: "success",
                  message: `Opened portal as ${customer.name || "customer"} in a new tab.` });
     } catch (e) {
       // Every failure path surfaces a toast — no more silent "nothing
       // happened" on missing portal-user rows (400) or 5xx errors.
+      if (win) { try { win.close(); } catch { /* ignore */ } }
       const detail = e?.detail || e?.message
         || (typeof e === "string" ? e : "Impersonation failed.");
       onToast({ tone: "error", message: detail });
