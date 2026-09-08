@@ -621,6 +621,7 @@ async def generate_automation_copy(code: str, body: GenerateCopyIn,
         raise HTTPException(404, "automation not found")
     from services.autopilot_copy import generate_copy
     from services.ai_credits import debit_credits
+    from services.ai.cap_http import raise_if_ai_cap_exceeded
 
     channel = (body.channel or rule.get("channel") or "email").lower().strip()
     if channel not in ("email", "sms"):
@@ -640,7 +641,11 @@ async def generate_automation_copy(code: str, body: GenerateCopyIn,
         brand_voice_snippet=(body.brand_voice_snippet or ""),
         company_name=(tenant.get("name") or "Your Service Team"),
         extra_context=(body.extra_context or ""),
+        tenant_id=tenant["id"],
     )
+    # Phase I1.7.e · chunk 2.c · Feb-2026 — surface tenant BYO AI
+    # cap-exceeded as HTTP 429 before persisting the automation copy.
+    raise_if_ai_cap_exceeded(copy)
     generated_at = now_iso()
     ai_copy_doc = {
         **{k: copy.get(k) for k in ("subject", "body_text", "body_sms")},
@@ -750,6 +755,7 @@ async def _draft_step(*, tenant: dict, code: str, name: str,
         use_case=use_case, brand_voice_snippet=brand_voice_snippet or "",
         company_name=(tenant.get("name") or "Your Service Team"),
         extra_context=extra_context,
+        tenant_id=tenant.get("id"),
     )
     return {
         "code": code, "name": name, "description": description,
@@ -761,6 +767,7 @@ async def _draft_step(*, tenant: dict, code: str, name: str,
         "delay_days": delay_days,
         "active": True,
         "error": copy.get("error"),
+        "cap_exceeded": bool(copy.get("cap_exceeded")),
     }
 
 
@@ -799,6 +806,13 @@ async def seasonal_draft(body: SeasonalDraftIn,
                                 f"Offset from event={offset} days.",
             )
             steps.append(step)
+    # Phase I1.7.e · chunk 2.c · Feb-2026 — if any drafted step hit
+    # the tenant BYO AI monthly cap, surface HTTP 429 before we
+    # debit credits. Later steps in the same tick will keep hitting
+    # the cap too, so short-circuiting is safe.
+    from services.ai.cap_http import raise_if_ai_cap_exceeded
+    for _s in steps:
+        raise_if_ai_cap_exceeded(_s)
     total = len(steps) * AUTOPILOT_COPY_COST
     debit = await debit_credits(
         tenant["id"], total, feature="autopilot",
@@ -849,6 +863,10 @@ async def invoice_followup_draft(body: InvoiceFollowupDraftIn,
                             "and provide a clear pay-now action.",
         )
         steps.append(step)
+    # Phase I1.7.e · chunk 2.c · Feb-2026 — cap-exceeded → HTTP 429.
+    from services.ai.cap_http import raise_if_ai_cap_exceeded
+    for _s in steps:
+        raise_if_ai_cap_exceeded(_s)
     total = len(steps) * AUTOPILOT_COPY_COST
     debit = await debit_credits(
         tenant["id"], total, feature="autopilot",

@@ -171,7 +171,11 @@ async def api_visibility_run_now(body: VisibilityRunBody,
                 "next_available_after_hours": DUPLICATE_HOURS,
                 "last_ran_at": recent.get("ran_at")}
     out = await run_probes(tenant, templates=body.query_templates,
-                              providers=body.providers)
+                              providers=body.providers,
+                              tenant_id=tenant_id)
+    # Phase I1.7.e · chunk 2.c · Feb-2026 — cap-exceeded → 429.
+    from services.ai.cap_http import raise_if_ai_cap_exceeded
+    raise_if_ai_cap_exceeded(out)
     return out
 
 
@@ -218,7 +222,11 @@ async def api_fixes_generate(body: FixesGenerateBody,
     if not scan:
         raise HTTPException(404, {"error": "scan_not_found"})
     out = await _gen_fixes(body.scan_id, tenant,
-                              requested_signals=body.sub_signals)
+                              requested_signals=body.sub_signals,
+                              tenant_id=tenant_id)
+    # Phase I1.7.e · chunk 2.c · Feb-2026 — cap-exceeded → 429.
+    from services.ai.cap_http import raise_if_ai_cap_exceeded
+    raise_if_ai_cap_exceeded(out)
     return out
 
 
@@ -301,7 +309,8 @@ async def api_mentions_run_now(body: MentionsRunBody,
     tenant = await _tenant_row(tenant_id)
     tenant = {"id": tenant_id, **(tenant or {})}
     r = await run_crawl(tenant, queries=body.queries,
-                          max_results_per_query=body.max_results_per_query)
+                          max_results_per_query=body.max_results_per_query,
+                          tenant_id=tenant_id)
     return r
 
 
@@ -405,7 +414,11 @@ async def api_draft_response(mention_id: str, body: DraftBody,
     r = await create_or_get_draft(tenant=tenant, mention=mention,
                                      tone=body.tone,
                                      regenerate=body.regenerate,
-                                     user_id=caller.get("id", ""))
+                                     user_id=caller.get("id", ""),
+                                     tenant_id=tenant_id)
+    # Phase I1.7.e · chunk 2.c · Feb-2026 — cap-exceeded → 429.
+    from services.ai.cap_http import raise_if_ai_cap_exceeded
+    raise_if_ai_cap_exceeded(r)
     if r.get("error"):
         detail = r["error"]
         if detail in ("empty_response",) or "emergent" in str(detail).lower():

@@ -31,6 +31,7 @@ from utils import (get_current_user, require_admin, new_id, now_iso)
 from routers.tenants import get_current_tenant
 from services.ai_credits import debit_credits
 from services.ai_estimator import generate_estimate
+from services.ai.cap_http import raise_if_ai_cap_exceeded
 
 
 router = APIRouter(tags=["AI Estimator"])
@@ -111,6 +112,11 @@ async def generate(body: EstimatorGenerateIn,
                  "service_area_sqft": body.service_area_sqft,
                  "pool_size_gallons": body.pool_size_gallons},
     )
+    # Phase I1.7.e · chunk 2.c · Feb-2026 — surface tenant BYO AI
+    # monthly cap-exceeded as HTTP 429 before we persist the draft.
+    # The debited credits stay debited — that's a spend audit trail,
+    # not a refundable pre-check.
+    raise_if_ai_cap_exceeded(result)
     if result.get("error"):
         doc["status"] = "error"
         doc["error"] = result["error"]

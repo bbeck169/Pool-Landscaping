@@ -165,54 +165,90 @@ async def month_cost_usd(tenant_id: str) -> float:
 
 # ── Probe execution ──────────────────────────────────────────────
 
+# Phase I1.7.e · chunk 2.c · Feb-2026 — Sentinel returned by the
+# built-in probe caller when a tenant BYO monthly cap is exceeded.
+# :func:`run_probes` short-circuits on this and returns
+# ``cap_exceeded=True`` at the top level so the HTTP router can
+# raise 429 (and the cron scan can log ``skipped_cap_exceeded``).
+_CAP_MARKER_KEY = "__ai_cap_exceeded__"
+
+
+def _make_llm_call(tenant_id: Optional[str]
+                     ) -> Callable[[str, str, str], Awaitable[Dict[str, Any]]]:
+    """Build a ``(query, provider, model) -> dict`` caller bound to
+    ``tenant_id`` so each probe threads the tenant's BYO provider
+    (if configured) into ``call_llm_with_fallback``."""
+    async def _call(rendered_query: str, provider: str,
+                     model: str) -> Dict[str, Any]:
+        from services.llm_provider import call_llm_with_fallback
+        system = ("You are a helpful assistant answering local-services "
+                  "recommendation questions concisely. When appropriate, cite "
+                  "sources with URLs.")
+        try:
+            r = await call_llm_with_fallback(
+                system_prompt=system, user_text=rendered_query,
+                provider=provider, model=model,
+                tenant_id=tenant_id,
+            )
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"emergent_exception:{e}"}
+        if r.get("cap_exceeded"):
+            return {"error": "ai_spend_cap_exceeded",
+                     _CAP_MARKER_KEY: True}
+        if r.get("error"):
+            return {"error": r["error"]}
+        text = ""
+        raw = r.get("raw") or r
+        if isinstance(raw, dict):
+            text = raw.get("answer") or raw.get("text") or ""
+        if not text:
+            text = str(r.get("_raw_text", "")) or str(raw)[:2000]
+        return {"answer_text": text, "citations": []}
+    return _call
+
+
 async def _default_llm_call(rendered_query: str, provider: str,
                               model: str) -> Dict[str, Any]:
-    """Real Emergent LLM call. Tests override this."""
-    from services.llm_provider import _call_emergent_text
-    system = ("You are a helpful assistant answering local-services "
-              "recommendation questions concisely. When appropriate, cite "
-              "sources with URLs.")
-    try:
-        r = await _call_emergent_text(
-            system_prompt=system, user_text=rendered_query,
-            provider=provider, model=model)
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"emergent_exception:{e}"}
-    if r.get("error"):
-        return {"error": r["error"]}
-    # ``_call_emergent_text`` returns raw parsed JSON if the LLM emits it;
-    # for our free-form probes it typically returns raw text under keys
-    # or falls through to {}. Fall back to any string form.
-    text = ""
-    raw = r.get("raw") or r
-    if isinstance(raw, dict):
-        text = raw.get("answer") or raw.get("text") or ""
-    if not text:
-        text = str(r.get("_raw_text", "")) or str(raw)[:2000]
-    return {"answer_text": text, "citations": []}
+    """Legacy platform-only entrypoint — kept for backwards compat
+    with tests that override this symbol. New callers should thread
+    ``tenant_id`` via :func:`run_probes`."""
+    return await _make_llm_call(None)(rendered_query, provider, model)
 
 
 async def run_probes(tenant: Dict[str, Any], *,
                        templates: Optional[List[str]] = None,
                        providers: Optional[List[Dict[str, str]]] = None,
-                       llm_call: Callable[[str, str, str], Awaitable[Dict[str, Any]]]
-                                    = _default_llm_call,
+                       llm_call: Optional[Callable[[str, str, str], Awaitable[Dict[str, Any]]]] = None,
                        max_probes: int = MAX_PROBES_PER_INVOCATION,
+                       tenant_id: Optional[str] = None,
                        ) -> Dict[str, Any]:
     """Run each (template × provider) combination, up to ``max_probes``.
 
     Returns ``{probes: [...], summary: {total, mentions, avg_score},
     cost_capped, cost_this_month, cost_cap}``.
-    """
-    tenant_id = tenant["id"] if isinstance(tenant.get("id"), str) else tenant.get("tenant_id")
+
+    Phase I1.7.e · chunk 2.c · Feb-2026 — ``tenant_id`` (defaulting
+    to ``tenant['id']``) is threaded into every probe's underlying
+    ``call_llm_with_fallback`` call so tenant-BYO provider routing +
+    monthly cap enforcement fire per request. On BYO cap-exceeded
+    the loop halts, ``cap_exceeded=True`` is set at the top level,
+    and any probes already run remain persisted. Transactional
+    callers (``POST /aeo/visibility/run-now``) inspect that flag and
+    raise HTTP 429; the cron path (``daily_visibility_scan``) logs
+    ``skipped_cap_exceeded`` and moves on to the next tenant."""
+    resolved_tid = tenant["id"] if isinstance(tenant.get("id"), str) else tenant.get("tenant_id")
+    effective_tid = tenant_id or resolved_tid
+    if llm_call is None:
+        llm_call = _make_llm_call(effective_tid)
     tenant_name = tenant.get("name") or tenant.get("business_name") or ""
     tenant_domain = (tenant.get("url") or tenant.get("website") or "").lower()
     tenant_domain = re.sub(r"^https?://", "", tenant_domain).split("/")[0]
 
     templates = templates or DEFAULT_QUERY_TEMPLATES
     providers = providers or DEFAULT_PROVIDERS
-    started_cost = await month_cost_usd(tenant_id)
+    started_cost = await month_cost_usd(resolved_tid)
     cost_capped = started_cost >= MONTHLY_COST_CAP_USD
+    ai_cap_exceeded = False
 
     probes_out: List[Dict[str, Any]] = []
     ran = 0
@@ -233,6 +269,12 @@ async def run_probes(tenant: Dict[str, Any], *,
                 r = await llm_call(rendered, prov["provider"], prov["model"])
             except Exception as e:  # noqa: BLE001
                 r = {"error": f"call_exception:{e}"}
+            # Phase I1.7.e · chunk 2.c · Feb-2026 — BYO cap hit? Halt
+            # the loop and surface at the top level. Any probes
+            # already persisted this call stay persisted.
+            if r.get(_CAP_MARKER_KEY):
+                ai_cap_exceeded = True
+                break
             error = r.get("error")
             answer = r.get("answer_text") or ""
             citations = r.get("citations") or []
@@ -242,7 +284,7 @@ async def run_probes(tenant: Dict[str, Any], *,
                                               citations=citations,
                                               competitors=comps)
             doc = {
-                "tenant_id": tenant_id, "probe_id": probe_id,
+                "tenant_id": resolved_tid, "probe_id": probe_id,
                 "query_template": tpl, "rendered_query": rendered,
                 "llm_provider": prov["key"], "provider_model": prov["model"],
                 "ran_at": ran_at,
@@ -264,19 +306,23 @@ async def run_probes(tenant: Dict[str, Any], *,
             ran += 1
             if not error:
                 running_cost += COST_PER_PROBE_USD
-        if ran >= max_probes or cost_capped:
+        if ran >= max_probes or cost_capped or ai_cap_exceeded:
             break
 
     total = len(probes_out)
     mentions = sum(1 for p in probes_out if p["brand_mentioned"])
     avg = round(sum(p["score"] for p in probes_out) / total, 1) if total else 0.0
-    return {
+    result: Dict[str, Any] = {
         "probes": probes_out,
         "summary": {"total": total, "mentions": mentions, "avg_score": avg},
         "cost_capped": cost_capped,
         "cost_this_month": round(running_cost, 4),
         "cost_cap": MONTHLY_COST_CAP_USD,
     }
+    if ai_cap_exceeded:
+        result["cap_exceeded"] = True
+        result["error"] = "ai_spend_cap_exceeded"
+    return result
 
 
 # ── Dashboard / history ──────────────────────────────────────────
@@ -362,6 +408,7 @@ async def daily_visibility_scan() -> Dict[str, Any]:
                     - timedelta(hours=DUPLICATE_HOURS)).isoformat()
     tenants_run = 0
     total_probes = 0
+    skipped_cap = 0
     async for t in db.tenants.find({"aeo_visibility_enabled": True},
                                      {"_id": 0}):
         recent = await db.aeo_visibility_probes.find_one(
@@ -370,10 +417,19 @@ async def daily_visibility_scan() -> Dict[str, Any]:
         if recent:
             continue
         try:
-            r = await run_probes(t)
+            r = await run_probes(t, tenant_id=t.get("id"))
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[aeo_visibility] tenant {t.get('id')} failed: {e}")
             continue
+        # Phase I1.7.e · chunk 2.c · Feb-2026 — cron path: log
+        # skipped_cap_exceeded and move on. Any probes already
+        # persisted this pass still count toward the summary.
+        if r.get("cap_exceeded"):
+            skipped_cap += 1
+            logger.info(
+                f"[aeo_visibility] skipped_cap_exceeded tenant={t.get('id')} "
+                f"partial_probes={r['summary']['total']}"
+            )
         tenants_run += 1
         total_probes += r["summary"]["total"]
         await db.aeo_probe_runs.insert_one({
@@ -382,7 +438,9 @@ async def daily_visibility_scan() -> Dict[str, Any]:
             "probes_count": r["summary"]["total"],
             "cost_est_usd_total": r["cost_this_month"],
             "cost_capped": r["cost_capped"],
+            "skipped_cap_exceeded": bool(r.get("cap_exceeded")),
         })
     logger.info(f"[aeo_visibility] daily scan tenants={tenants_run} "
-                f"probes={total_probes}")
-    return {"tenants_run": tenants_run, "probes": total_probes}
+                f"probes={total_probes} skipped_cap={skipped_cap}")
+    return {"tenants_run": tenants_run, "probes": total_probes,
+            "skipped_cap_exceeded": skipped_cap}

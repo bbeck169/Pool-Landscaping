@@ -58,7 +58,13 @@ async def _sentiment(snippet: str, tenant_id: str,
                         llm_call: Optional[Callable[[str], Awaitable[str]]] = None,
                         ) -> Optional[str]:
     """Very light Claude classification. Cached in ``brand_sentiment_cache``
-    for 30 days per (tenant_id, snippet_hash)."""
+    for 30 days per (tenant_id, snippet_hash).
+
+    Phase I1.7.e · chunk 2.c · Feb-2026 — threads ``tenant_id`` into
+    ``call_llm_with_fallback`` for BYO routing + cap enforcement. On
+    BYO cap-exceeded returns ``None`` (sentiment unavailable) so the
+    mention row still lands — sentiment is a nice-to-have, not a
+    gating field."""
     if not snippet or len(snippet) < SENTIMENT_MIN_LEN:
         return None
     import hashlib
@@ -72,14 +78,19 @@ async def _sentiment(snippet: str, tenant_id: str,
     # Live call (or stub in tests).
     if llm_call is None:
         async def llm_call(prompt: str) -> str:  # type: ignore[misc]
-            from services.llm_provider import _call_emergent_text
-            r = await _call_emergent_text(
+            from services.llm_provider import call_llm_with_fallback
+            r = await call_llm_with_fallback(
                 system_prompt=("Classify sentiment of the following web "
                                 "search snippet toward the mentioned business "
                                 "as exactly one word: positive, neutral, or "
                                 "negative. Reply with only that word."),
                 user_text=prompt, provider="anthropic",
-                model="claude-sonnet-4-5")
+                model="claude-sonnet-4-5",
+                tenant_id=tenant_id,
+            )
+            if r.get("cap_exceeded"):
+                # Sentinel — outer scope handles this as "skip".
+                return "__cap_exceeded__"
             if r.get("error"):
                 return "neutral"
             raw = r.get("raw") or r
@@ -90,6 +101,14 @@ async def _sentiment(snippet: str, tenant_id: str,
         out = (await llm_call(snippet) or "").strip().lower()
     except Exception:  # noqa: BLE001
         out = ""
+    # Phase I1.7.e · chunk 2.c · Feb-2026 — cap-exceeded: skip
+    # sentiment classification for this snippet entirely and let
+    # the caller know via ``None``.
+    if out == "__cap_exceeded__":
+        logger.info(
+            "[mentions] skipped_cap_exceeded (sentiment) tenant=%s", tenant_id,
+        )
+        return None
     if "positive" in out:
         s = "positive"
     elif "negative" in out:
@@ -114,8 +133,24 @@ async def run_crawl(tenant: Dict[str, Any], *,
                        search_fn: Callable[..., Awaitable[Dict[str, Any]]]
                                     = _default_search,
                        sentiment_fn: Optional[Callable[[str, str], Awaitable[Optional[str]]]] = None,
+                       tenant_id: Optional[str] = None,
                        ) -> Dict[str, Any]:
-    tenant_id = tenant.get("id") or tenant.get("tenant_id")
+    """Run the brand-mention crawl.
+
+    Phase I1.7.e · chunk 2.c · Feb-2026 — ``tenant_id`` (defaulting
+    to ``tenant['id']``) threads through the sentiment classifier
+    so BYO AI provider routing + cap enforcement fire per snippet.
+    Cap-exceeded on the sentiment side is a soft failure (mention
+    lands with ``sentiment=None``); the crawl itself is a search-
+    provider workload, not an AI workload, so it never raises 429.
+    """
+    resolved_tid = tenant.get("id") or tenant.get("tenant_id")
+    effective_tid = tenant_id or resolved_tid
+    # Rebind for readability + parity with pre-migration behaviour.
+    # ``tenant_id`` inside the crawl body is what persists on every
+    # mention doc; it must be the same value the sentiment BYO
+    # dispatch sees so per-tenant usage accounting stays consistent.
+    tenant_id = effective_tid
     max_results_per_query = min(max(int(max_results_per_query or 10), 1), 20)
     started_cost = await month_cost_usd(tenant_id)
     cost_capped = started_cost >= MONTHLY_COST_CAP_USD
@@ -298,7 +333,7 @@ async def daily_mentions_scan() -> Dict[str, Any]:
         if recent:
             continue
         try:
-            r = await run_crawl(t)
+            r = await run_crawl(t, tenant_id=t.get("id"))
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[mentions] tenant {t.get('id')} failed: {e}")
             continue

@@ -4,6 +4,15 @@ Reads the last AEO signals off a completed SEO scan and turns each
 low sub-signal into an actionable suggestion via the Emergent LLM
 key. schema + llms_txt fall through to the Phase 5a generators so we
 never re-implement JSON-LD or llmstxt.org emission.
+
+Phase I1.7.e · chunk 2.c · Feb-2026 — LLM calls now route through
+``services.llm_provider.call_llm_with_fallback`` with the caller's
+``tenant_id`` threaded through, so per-tenant BYO AI provider
+routing + monthly cap enforcement fire before the platform key is
+consulted. Cap-exceeded is a HARD BLOCK: the fix generator surfaces
+``{"cap_exceeded": True}`` in its return dict so the transactional
+HTTP router raises 429 via
+:func:`services.ai.cap_http.raise_if_ai_cap_exceeded`.
 """
 from __future__ import annotations
 
@@ -16,23 +25,50 @@ from services.aeo_generators import generate_jsonld, generate_llms_txt
 _LOW_THRESHOLD = 70
 _ALL_SIGNALS = ["schema", "faq", "passages", "entity_clarity", "llms_txt"]
 
+# Sentinel marker string embedded in the returned suggestion text
+# when the LLM call is short-circuited by a tenant BYO cap-exceeded.
+# The public :func:`generate_fixes` inspects for this marker and
+# lifts ``cap_exceeded`` to the top-level return dict so the router
+# can raise HTTP 429.
+_CAP_MARKER = "__AI_CAP_EXCEEDED__"
+
+
+def _make_llm_call(tenant_id: Optional[str]) -> Callable[[str], Awaitable[str]]:
+    """Build a ``prompt -> text`` LLM caller bound to ``tenant_id``.
+
+    Threads the tenant's BYO provider (if any) into every LLM call
+    made during fix generation. When the tenant's monthly BYO cap
+    is exceeded the returned callable emits :data:`_CAP_MARKER`
+    verbatim; :func:`generate_fixes` translates that into a
+    top-level ``cap_exceeded=True`` return value.
+    """
+    async def _call(prompt: str) -> str:
+        from services.llm_provider import call_llm_with_fallback
+        r = await call_llm_with_fallback(
+            system_prompt=("You are an AEO (Answer Engine Optimization) "
+                            "consultant. Return short, actionable Markdown "
+                            "recommendations tailored to a local-services "
+                            "business. Never invent facts about the business."),
+            user_text=prompt, provider="anthropic",
+            model="claude-sonnet-4-5",
+            tenant_id=tenant_id,
+        )
+        if r.get("cap_exceeded"):
+            return _CAP_MARKER
+        if r.get("error"):
+            return f"_LLM error: {r['error']}_"
+        raw = r.get("raw") or r
+        if isinstance(raw, dict):
+            return (raw.get("answer") or raw.get("text") or str(raw))[:4000]
+        return str(raw)[:4000]
+    return _call
+
 
 async def _default_llm_call(prompt: str) -> str:
-    """Real Emergent LLM call for free-form fix copy."""
-    from services.llm_provider import _call_emergent_text
-    r = await _call_emergent_text(
-        system_prompt=("You are an AEO (Answer Engine Optimization) "
-                        "consultant. Return short, actionable Markdown "
-                        "recommendations tailored to a local-services "
-                        "business. Never invent facts about the business."),
-        user_text=prompt, provider="anthropic", model="claude-sonnet-4-5",
-    )
-    if r.get("error"):
-        return f"_LLM error: {r['error']}_"
-    raw = r.get("raw") or r
-    if isinstance(raw, dict):
-        return (raw.get("answer") or raw.get("text") or str(raw))[:4000]
-    return str(raw)[:4000]
+    """Legacy platform-only entrypoint — kept for backwards compat
+    with tests that override this symbol. New callers should thread
+    ``tenant_id`` via :func:`generate_fixes`."""
+    return await _make_llm_call(None)(prompt)
 
 
 def _priority_from_score(score: int) -> str:
@@ -59,11 +95,24 @@ def _find_long_paragraphs(html_bytes: bytes, top_n: int = 3) -> List[str]:
 
 async def generate_fixes(scan_id: str, tenant: Dict[str, Any],
                             requested_signals: Optional[List[str]] = None,
-                            llm_call: Callable[[str], Awaitable[str]]
-                                          = _default_llm_call,
+                            llm_call: Optional[Callable[[str], Awaitable[str]]] = None,
+                            tenant_id: Optional[str] = None,
                             ) -> Dict[str, Any]:
     """Load the scan, build LLM prompts per low sub-signal, return
-    ``{fixes: [...]}`` and persist to ``aeo_fixes``."""
+    ``{fixes: [...]}`` and persist to ``aeo_fixes``.
+
+    Phase I1.7.e · chunk 2.c · Feb-2026 — ``tenant_id`` is threaded
+    into every underlying ``call_llm_with_fallback`` invocation for
+    tenant-BYO routing + cap enforcement. When ``tenant_id`` is
+    omitted it defaults to ``tenant.get('id') or tenant.get('tenant_id')``.
+    On BYO cap-exceeded the function short-circuits and returns
+    ``{"fixes": [...partial...], "cap_exceeded": True, "error":
+    "ai_spend_cap_exceeded"}`` so the router can raise HTTP 429."""
+    # Resolve effective tenant_id for BYO routing.
+    effective_tid = tenant_id or tenant.get("id") or tenant.get("tenant_id")
+    if llm_call is None:
+        llm_call = _make_llm_call(effective_tid)
+
     scan = await db.seo_scans.find_one({"id": scan_id},
                                           {"_id": 0}) or {}
     if not scan:
@@ -134,6 +183,12 @@ async def generate_fixes(scan_id: str, tenant: Dict[str, Any],
                 f"engines. Return Markdown with `### Q` headings."
             )
             suggestion = await llm_call(prompt)
+            if suggestion == _CAP_MARKER:
+                # Cap-exceeded on the first LLM-driven signal — bail
+                # early with whatever we've already assembled.
+                return {"fixes": fixes,
+                         "cap_exceeded": True,
+                         "error": "ai_spend_cap_exceeded"}
         elif sig == "passages":
             html = (((scan.get("results") or {}).get("on_page") or {})
                      .get("raw_html_bytes") or b"")
@@ -150,6 +205,10 @@ async def generate_fixes(scan_id: str, tenant: Dict[str, Any],
                     f"'Rewritten passage N:' per item.\n\n{joined}"
                 )
                 suggestion = await llm_call(prompt)
+                if suggestion == _CAP_MARKER:
+                    return {"fixes": fixes,
+                             "cap_exceeded": True,
+                             "error": "ai_spend_cap_exceeded"}
             else:
                 suggestion = (
                     "## Shorten your long paragraphs\n\n"
@@ -169,6 +228,10 @@ async def generate_fixes(scan_id: str, tenant: Dict[str, Any],
                 f"Return Markdown."
             )
             suggestion = await llm_call(prompt)
+            if suggestion == _CAP_MARKER:
+                return {"fixes": fixes,
+                         "cap_exceeded": True,
+                         "error": "ai_spend_cap_exceeded"}
             if same_as:
                 suggestion += (
                     f"\n\n**Existing sameAs on file:**\n"

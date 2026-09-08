@@ -295,13 +295,22 @@ ZERO_RETRY_HINT = (
 async def _call_llm(*, system_prompt: str, job_description: str,
                       photo_urls: Optional[List[str]] = None,
                       extras: Optional[Dict[str, Any]] = None,
-                      extra_user_hint: str = "") -> Dict[str, Any]:
+                      extra_user_hint: str = "",
+                      tenant_id: Optional[str] = None) -> Dict[str, Any]:
     """Single LLM round-trip via the shared ``llm_provider`` dispatcher.
 
-    Returns ``{"raw": <parsed json>, "provider": "emergent"|"openai"}``
-    on success or ``{"error": "..."}`` on failure. Provider tag flows
-    up into ``_meta`` so downstream persistence knows who served the
-    request.
+    Returns ``{"raw": <parsed json>, "provider": "emergent"|"openai"|"tenant_byo"}``
+    on success or ``{"error": "..."}`` on failure. When
+    ``tenant_id`` is passed and the tenant BYO monthly cap is
+    exceeded, returns ``{"error": "ai_spend_cap_exceeded",
+    "cap_exceeded": True, "provider": "tenant_byo"}`` — caller
+    surfaces to router which raises HTTP 429. Provider tag flows
+    up into ``_meta`` so downstream persistence knows who served
+    the request.
+
+    Phase I1.7.e · chunk 2.c · Feb-2026 — Threads ``tenant_id``
+    into ``call_llm_with_fallback`` for tenant-BYO provider
+    routing + per-tenant AI cap enforcement.
     """
     from services.llm_provider import call_llm_with_fallback
     parts: List[str] = [f"Job description: {job_description}"]
@@ -316,9 +325,11 @@ async def _call_llm(*, system_prompt: str, job_description: str,
         photo_urls=photo_urls,
         provider=DEFAULT_MODEL_PROVIDER,
         model=DEFAULT_MODEL_NAME,
+        tenant_id=tenant_id,
     )
     if r.get("error"):
-        return {"error": r["error"], "provider": r.get("provider")}
+        return {"error": r["error"], "provider": r.get("provider"),
+                "cap_exceeded": bool(r.get("cap_exceeded"))}
     return {"raw": r["raw"], "provider": r.get("provider")}
 
 
@@ -389,7 +400,17 @@ async def generate_estimate(*, tenant_id: str,
     # Real-LLM path -------------------------------------------------------
     first = await _call_llm(system_prompt=system_prompt,
                               job_description=job_description,
-                              photo_urls=photo_urls, extras=extras)
+                              photo_urls=photo_urls, extras=extras,
+                              tenant_id=tenant_id)
+    if first.get("cap_exceeded"):
+        # Phase I1.7.e · chunk 2.c · Feb-2026 — surface cap-exceeded
+        # verbatim so the router can raise HTTP 429 via
+        # ``services.ai.cap_http.raise_if_ai_cap_exceeded``. No retry,
+        # no catalog fallback — the tenant hit their monthly BYO cap.
+        return {"error": "ai_spend_cap_exceeded", "line_items": [],
+                 "cap_exceeded": True,
+                 "_meta": {"path": "cap_exceeded", "retries": 0,
+                            "provider": first.get("provider") or "tenant_byo"}}
     if first.get("error"):
         return {"error": first["error"], "line_items": [],
                  "_meta": {"path": "llm_error", "retries": 0,
@@ -405,8 +426,15 @@ async def generate_estimate(*, tenant_id: str,
         second = await _call_llm(system_prompt=system_prompt,
                                     job_description=job_description,
                                     photo_urls=photo_urls, extras=extras,
-                                    extra_user_hint=ZERO_RETRY_HINT)
+                                    extra_user_hint=ZERO_RETRY_HINT,
+                                    tenant_id=tenant_id)
         meta["retries"] = 1
+        if second.get("cap_exceeded"):
+            # Retry hit the cap — bail with cap-exceeded semantics.
+            return {"error": "ai_spend_cap_exceeded", "line_items": [],
+                     "cap_exceeded": True,
+                     "_meta": {"path": "cap_exceeded", "retries": 1,
+                                "provider": second.get("provider") or "tenant_byo"}}
         if not second.get("error"):
             retry_result = await _finalize(tenant_id, second["raw"],
                                               options_mode=options_mode)

@@ -349,6 +349,7 @@ async def moderate_post(
             user_text=user_text,
             provider=MODEL_PROVIDER,
             model=MODEL_NAME,
+            tenant_id=tenant_id,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("[soshie.moderation] LLM crash: %s", e)
@@ -362,6 +363,33 @@ async def moderate_post(
             cost_estimate_usd=0.0,
             model=MODEL_NAME,
             error=str(e),
+            regex_high_flags=regex_high,
+            regex_low_flags=regex_low,
+        )
+
+    # Phase I1.7.e · chunk 2.c · Feb-2026 — moderation is a scheduled
+    # / autopilot gate, NOT a transactional HTTP endpoint. When the
+    # tenant BYO monthly AI cap is exceeded we MUST NOT raise HTTP 429
+    # (there's no HTTP caller). Instead, log ``skipped_cap_exceeded``
+    # into the audit row and return ``decision="flag"`` so the post
+    # is queued for human review — the safest failure mode when the
+    # LLM is unavailable.
+    from services.ai.cap_http import is_ai_cap_exceeded
+    if is_ai_cap_exceeded(res):
+        logger.info(
+            "[soshie.moderation] skipped_cap_exceeded tenant=%s post=%s",
+            tenant_id, post_id,
+        )
+        return await _store_result(
+            tenant_id=tenant_id, post_id=post_id,
+            content_hash=content_hash,
+            decision="flag",
+            reasons=["skipped_cap_exceeded"],
+            risk_level="medium",
+            tokens_in=0, tokens_out=0,
+            cost_estimate_usd=0.0,
+            model=MODEL_NAME,
+            error="skipped_cap_exceeded",
             regex_high_flags=regex_high,
             regex_low_flags=regex_low,
         )

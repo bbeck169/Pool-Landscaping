@@ -133,10 +133,21 @@ async def generate_copy(*, trigger_event: str, channel: str,
                           tone: str, company_name: str,
                           use_case: str = "generic",
                           brand_voice_snippet: str = "",
-                          extra_context: str = "") -> Dict[str, Any]:
+                          extra_context: str = "",
+                          tenant_id: Optional[str] = None,
+                          ) -> Dict[str, Any]:
     """High-level entrypoint. Never raises — on LLM failure returns
     ``{"error": "..."}`` with an empty body so the router can log and
-    still 200. Router decides whether to persist on error."""
+    still 200. Router decides whether to persist on error.
+
+    Phase I1.7.e · chunk 2.c · Feb-2026 — Threads ``tenant_id``
+    into ``call_llm_with_fallback`` for tenant-BYO provider
+    routing + per-tenant AI cap enforcement. Cap-exceeded is
+    surfaced verbatim as
+    ``{"error": "ai_spend_cap_exceeded", "cap_exceeded": True, ...}``
+    so the transactional caller (comms router) can raise HTTP 429
+    via :func:`services.ai.cap_http.raise_if_ai_cap_exceeded`.
+    """
     tone = (tone or "friendly").lower()
     if tone not in ALLOWED_TONES:
         tone = "friendly"
@@ -166,7 +177,14 @@ async def generate_copy(*, trigger_event: str, channel: str,
         user_text=f"Draft the {channel} copy now.",
         provider=DEFAULT_MODEL_PROVIDER,
         model=DEFAULT_MODEL_NAME,
+        tenant_id=tenant_id,
     )
+    if r.get("cap_exceeded"):
+        # Phase I1.7.e · chunk 2.c · Feb-2026 — propagate cap-exceeded
+        # verbatim so the transactional router raises HTTP 429.
+        return {"error": "ai_spend_cap_exceeded",
+                 "cap_exceeded": True,
+                 "ai_meta": {"provider": r.get("provider") or "tenant_byo"}}
     if r.get("error"):
         return {"error": r["error"], "ai_meta": {"provider": r.get("provider")}}
     out = _normalize(r["raw"], channel=channel)

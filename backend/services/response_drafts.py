@@ -122,12 +122,27 @@ def _build_prompt(*, tenant: Dict[str, Any], mention: Dict[str, Any],
     return {"system": system, "user": user, "max_chars": length}
 
 
-async def _default_llm_call(system: str, user: str) -> Dict[str, Any]:
-    from services.llm_provider import _call_emergent_text
-    r = await _call_emergent_text(
+async def _default_llm_call(system: str, user: str,
+                              *, tenant_id: Optional[str] = None,
+                              ) -> Dict[str, Any]:
+    """Real LLM call routed through the tenant-BYO aware
+    ``call_llm_with_fallback`` dispatcher.
+
+    Phase I1.7.e · chunk 2.c · Feb-2026 — Threads ``tenant_id`` for
+    BYO provider routing + monthly cap enforcement. On cap-exceeded
+    the returned dict carries ``cap_exceeded=True`` and
+    ``error="ai_spend_cap_exceeded"``; the transactional caller
+    (:func:`create_or_get_draft`) propagates that verbatim so the
+    HTTP router can raise 429.
+    """
+    from services.llm_provider import call_llm_with_fallback
+    r = await call_llm_with_fallback(
         system_prompt=system, user_text=user,
         provider="anthropic", model=DEFAULT_MODEL,
+        tenant_id=tenant_id,
     )
+    if r.get("cap_exceeded"):
+        return {"error": "ai_spend_cap_exceeded", "cap_exceeded": True}
     if r.get("error"):
         return {"error": r["error"]}
     raw = r.get("raw") or r
@@ -154,15 +169,36 @@ async def create_or_get_draft(*, tenant: Dict[str, Any],
                                  tone: str = "empathetic",
                                  regenerate: bool = False,
                                  user_id: str = "",
-                                 llm_call: Callable[[str, str], Awaitable[Dict[str, Any]]]
-                                              = _default_llm_call,
+                                 llm_call: Optional[Callable[[str, str], Awaitable[Dict[str, Any]]]] = None,
+                                 tenant_id: Optional[str] = None,
                                  ) -> Dict[str, Any]:
-    tenant_id = tenant.get("id") or tenant.get("tenant_id")
+    """Create or fetch a cached response draft.
+
+    Phase I1.7.e · chunk 2.c · Feb-2026 — Threads ``tenant_id``
+    through the underlying LLM dispatcher so per-tenant BYO
+    provider routing + monthly cap enforcement fire. On BYO
+    cap-exceeded the return dict is
+    ``{"error": "ai_spend_cap_exceeded", "cap_exceeded": True}`` —
+    the router (:func:`routers.aeo.api_draft_response`) surfaces
+    that as HTTP 429 via
+    :func:`services.ai.cap_http.raise_if_ai_cap_exceeded`.
+    """
+    resolved_tid = tenant.get("id") or tenant.get("tenant_id")
+    effective_tid = tenant_id or resolved_tid
+    # Rebind so downstream persistence uses the same tenant id as
+    # the AI dispatch.
+    tenant_id_local = effective_tid
     if tone not in DEFAULT_TONES:
         tone = "empathetic"
 
+    if llm_call is None:
+        async def llm_call(system_prompt: str, user_prompt: str) -> Dict[str, Any]:  # type: ignore[misc]
+            return await _default_llm_call(
+                system_prompt, user_prompt, tenant_id=effective_tid,
+            )
+
     if not regenerate:
-        cached = await _find_cached_draft(tenant_id, mention["mention_id"], tone)
+        cached = await _find_cached_draft(tenant_id_local, mention["mention_id"], tone)
         if cached:
             return {"cached": True, **cached}
 
@@ -173,7 +209,7 @@ async def create_or_get_draft(*, tenant: Dict[str, Any],
     examples: List[Dict[str, Any]] = []
     try:
         from services.response_library import top_templates_for
-        examples = await top_templates_for(tenant_id=tenant_id,
+        examples = await top_templates_for(tenant_id=tenant_id_local,
                                               platform=platform, tone=tone,
                                               limit=3)
     except Exception:
@@ -182,6 +218,9 @@ async def create_or_get_draft(*, tenant: Dict[str, Any],
                              platform=platform, tone=tone,
                              examples=examples)
     r = await llm_call(prompt["system"], prompt["user"])
+    if r.get("cap_exceeded"):
+        # Phase I1.7.e · chunk 2.c · Feb-2026 — propagate verbatim.
+        return {"error": "ai_spend_cap_exceeded", "cap_exceeded": True}
     if r.get("error"):
         return {"error": r["error"]}
     text = (r.get("text") or "").strip()
@@ -190,7 +229,7 @@ async def create_or_get_draft(*, tenant: Dict[str, Any],
 
     now = datetime.now(timezone.utc).isoformat()
     draft = {
-        "tenant_id": tenant_id,
+        "tenant_id": tenant_id_local,
         "draft_id": f"drft_{uuid.uuid4().hex[:16]}",
         "mention_id": mention["mention_id"],
         "platform": platform,
@@ -208,7 +247,7 @@ async def create_or_get_draft(*, tenant: Dict[str, Any],
     await db.mention_response_drafts.insert_one({**draft})
     # Mirror on the mention doc.
     await db.brand_mentions.update_one(
-        {"tenant_id": tenant_id, "mention_id": mention["mention_id"]},
+        {"tenant_id": tenant_id_local, "mention_id": mention["mention_id"]},
         {"$set": {"has_response_draft": True,
                     "latest_draft_status": "draft"}})
     return {"cached": False, **draft}
