@@ -1114,6 +1114,53 @@ class _WidgetCorsMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_WidgetCorsMiddleware)
 
 
+# Feb-2026 · Task 5 perf — Server-Timing header for every /api request.
+#
+# The production complaint that Schedule + Customer screens sit on a
+# spinner for 30 s cannot be root-caused from preview timings (which
+# consistently return in ~150 ms).  Without cooperation from DevTools
+# HAR captures we're diagnosing blind.  Emitting the total wall-clock
+# request time as a Server-Timing header turns any subsequent user
+# report into a self-service diagnostic: browsers surface the value
+# in DevTools > Network > Timing, and ops can grep it out of a HAR.
+#
+# Scope:
+#   * ``/api/*`` only — third-party integrations (webhooks, widget
+#     surface) are unaffected because their clients don't consume
+#     Server-Timing.
+#   * NO request-body inspection, NO downstream telemetry emit — this
+#     is a header shim, nothing else.
+#
+# Header format is spec-compliant:
+#     Server-Timing: total;dur=<ms>
+# Handlers that want finer-grained buckets can push into
+# ``request.state.timings`` (list of ``"name;dur=ms"``) and this
+# middleware will join them alongside the always-present ``total``.
+import time as _timing
+
+
+class _ServerTimingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if not request.url.path.startswith("/api/"):
+            return await call_next(request)
+        request.state.timings = []
+        t0 = _timing.perf_counter()
+        resp = await call_next(request)
+        dur_ms = (_timing.perf_counter() - t0) * 1000.0
+        parts: list[str] = list(getattr(request.state, "timings", []) or [])
+        parts.append(f"total;dur={dur_ms:.1f}")
+        # Existing values (rare — some handlers may already set one)
+        # are preserved and our summary is appended.
+        prior = resp.headers.get("Server-Timing")
+        resp.headers["Server-Timing"] = (
+            f"{prior}, {', '.join(parts)}" if prior else ", ".join(parts)
+        )
+        return resp
+
+
+app.add_middleware(_ServerTimingMiddleware)
+
+
 scheduler = AsyncIOScheduler(timezone="UTC")
 
 

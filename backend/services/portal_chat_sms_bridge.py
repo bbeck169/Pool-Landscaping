@@ -97,8 +97,9 @@ async def _record_notification(*, tenant_id: str, thread_id: str,
                                 throttled: bool,
                                 message_id: str,
                                 sms_body: str,
-                                sent_provider_id: Optional[str]) -> None:
-    await db.sms_thread_notifications.insert_one({
+                                sent_provider_id: Optional[str],
+                                skip_reason: Optional[str] = None) -> None:
+    doc = {
         "id": new_id(),
         "tenant_id": tenant_id,
         "thread_id": thread_id,
@@ -109,7 +110,16 @@ async def _record_notification(*, tenant_id: str, thread_id: str,
         "last_notified_at_utc": now_iso(),
         "sms_body_preview": (sms_body or "")[:200],
         "message_id": message_id,
-    })
+    }
+    # Feb-2026 · Enhancement A — surface silent config-skip cases as
+    # audit rows so ops can quantify "how often did a customer message
+    # get dropped because the tenant hadn't set admin_sms_notify_to /
+    # rc_sms_from_number".  ``skip_reason`` is only set on the two
+    # config-missing branches; the normal send/throttle paths leave
+    # it null so existing pytest fixtures that count rows keep working.
+    if skip_reason:
+        doc["skip_reason"] = skip_reason
+    await db.sms_thread_notifications.insert_one(doc)
 
 
 async def _send_via_rc(*, tenant_id: str, to_phone: str,
@@ -157,6 +167,24 @@ async def notify_admin_of_customer_message(
     from_number = (tenant.get("rc_sms_from_number") or "").strip() or None
 
     if not admin_phone:
+        # Feb-2026 · Enhancement A — record a config-skip audit row so
+        # ops can see WHY a portal message failed to page an admin.
+        # ``throttled=False`` and ``sent_provider_id=None`` mirror the
+        # existing shape; ``skip_reason`` distinguishes it from the
+        # normal throttle/send rows.
+        try:
+            await _record_notification(
+                tenant_id=tenant_id, thread_id=thread_id,
+                admin_phone="", from_number=from_number,
+                throttled=False, message_id=message_id,
+                sms_body="", sent_provider_id=None,
+                skip_reason="no_admin_phone",
+            )
+        except Exception as exc:                           # noqa: BLE001
+            logger.warning(
+                "[k9] audit insert failed on no_admin_phone skip "
+                "tenant=%s: %s", tenant_id, exc,
+            )
         return {"status": "skipped_no_admin_phone",
                 "reason": "tenant.admin_sms_notify_to unset"}
     if not from_number:
@@ -164,6 +192,22 @@ async def notify_admin_of_customer_message(
             "[k9] admin_sms_notify_to set but rc_sms_from_number missing "
             "for tenant=%s — SMS ping skipped.", tenant_id,
         )
+        # Feb-2026 · Enhancement A — same config-skip audit row for the
+        # second silent branch.  admin_phone IS known here so we
+        # preserve it for observability + inbound-fallback correlation.
+        try:
+            await _record_notification(
+                tenant_id=tenant_id, thread_id=thread_id,
+                admin_phone=admin_phone, from_number=None,
+                throttled=False, message_id=message_id,
+                sms_body="", sent_provider_id=None,
+                skip_reason="no_from_number",
+            )
+        except Exception as exc:                           # noqa: BLE001
+            logger.warning(
+                "[k9] audit insert failed on no_from_number skip "
+                "tenant=%s: %s", tenant_id, exc,
+            )
         return {"status": "skipped_no_from_number",
                 "reason": "tenant.rc_sms_from_number unset"}
 

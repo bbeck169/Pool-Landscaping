@@ -7,7 +7,8 @@
  * thread sees the hydrated tiles inline.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Plus, Send, X, Paperclip } from "lucide-react";
+import { Link } from "react-router-dom";
+import { MessageSquare, Plus, Send, X, Paperclip, AlertTriangle } from "lucide-react";
 import { api } from "@/api";
 import { colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
@@ -28,10 +29,34 @@ export default function PortalChatsPage() {
   // ── B2 attachments state ─────────────────────────────────────
   const [pending, setPending] = useState([]);   // uploaded file ids awaiting send
   const [uploading, setUploading] = useState(false);
+  // ── K9 Enhancement B · Feb-2026 — SMS-config hint state ──────
+  //   Fetched once for admin viewers.  Renders a yellow warning
+  //   banner atop the inbox when either tenant config field is
+  //   missing, so admins learn WHY customer messages are silently
+  //   dropped (see Enhancement A audit rows) and can jump straight
+  //   to /settings/notifications to fix it.
+  const [smsCfg, setSmsCfg] = useState(null);
   const scrollRef = useRef(null);
 
   const loadThreads = () => api.get("/portal/chats").then(setThreads);
   useEffect(() => { loadThreads(); }, []);
+
+  // K9 Enhancement B · Feb-2026 — admin only.  Poll ``/tenants/current``
+  // once and stash the two SMS config fields so we can decide whether
+  // to render the missing-config banner.  Silent-fail on error so the
+  // inbox still loads if the endpoint hiccups.
+  useEffect(() => {
+    if (!isAdmin) return;
+    (async () => {
+      try {
+        const t = await api.get("/tenants/current");
+        setSmsCfg({
+          admin_sms_notify_to: t?.admin_sms_notify_to || null,
+          rc_sms_from_number: t?.rc_sms_from_number || null,
+        });
+      } catch { /* silent */ }
+    })();
+  }, [isAdmin]);
 
   useEffect(() => {
     if (!selected) return;
@@ -133,6 +158,73 @@ export default function PortalChatsPage() {
           </button>
         )}
       </div>
+
+      {/* K9 Enhancement B · Feb-2026 — SMS-config missing hint banner.
+          Admin-only.  Rendered when EITHER config field is unset so
+          the ops user learns why portal-chat SMS pings are being
+          silently dropped (see Enhancement A audit rows in
+          ``sms_thread_notifications`` with ``skip_reason`` set).
+          Both fields have deep-link CTAs to /settings/notifications. */}
+      {isAdmin && smsCfg && (!smsCfg.admin_sms_notify_to || !smsCfg.rc_sms_from_number) && (
+        <div
+          className="mb-4 rounded-2xl p-3 flex items-start gap-3"
+          style={{
+            backgroundColor: "#FEF9C3",           // yellow-100
+            border: "1px solid #FDE68A",          // yellow-300
+            color: "#78350F",                     // amber-900 for text
+          }}
+          data-testid="portal-chats-sms-config-hint"
+          role="status"
+          aria-live="polite"
+        >
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" style={{ color: "#B45309" }} />
+          <div className="text-xs leading-relaxed flex-1">
+            <div className="font-bold mb-1">SMS pings for customer messages aren't wired up.</div>
+            <div>
+              {!smsCfg.admin_sms_notify_to && !smsCfg.rc_sms_from_number ? (
+                <>
+                  Neither the admin SMS number nor the outbound "from" number is set,
+                  so customer portal messages will land here silently &mdash; no phone ping.{" "}
+                  <Link
+                    to="/settings/notifications"
+                    className="font-bold underline"
+                    style={{ color: "#78350F" }}
+                    data-testid="portal-chats-sms-config-hint-link-both"
+                  >
+                    Set both in Notification settings &rarr;
+                  </Link>
+                </>
+              ) : !smsCfg.admin_sms_notify_to ? (
+                <>
+                  <b>Admin phone missing.</b> Customer portal messages will land here silently
+                  until you set an admin SMS number.{" "}
+                  <Link
+                    to="/settings/notifications"
+                    className="font-bold underline"
+                    style={{ color: "#78350F" }}
+                    data-testid="portal-chats-sms-config-hint-link-admin"
+                  >
+                    Set admin phone &rarr;
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <b>Outbound SMS "from" number missing.</b> Your admin phone is set but
+                  RingCentral has no number to send from, so pings are dropped.{" "}
+                  <Link
+                    to="/settings/notifications"
+                    className="font-bold underline"
+                    style={{ color: "#78350F" }}
+                    data-testid="portal-chats-sms-config-hint-link-from"
+                  >
+                    Set outbound "from" number &rarr;
+                  </Link>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid md:grid-cols-3 gap-4 h-[70vh]">
         <div className="rounded-2xl p-2 overflow-auto"

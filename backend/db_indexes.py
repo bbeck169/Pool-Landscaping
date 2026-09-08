@@ -78,6 +78,17 @@ _INDEX_PLANS: List[Tuple[str, Sequence[Tuple[str, int]], Dict[str, Any]]] = [
      [("tenant_id", ASCENDING), ("customer_id", ASCENDING),
       ("occurred_at", DESCENDING)],
      {"name": "chem_usage_tenant_customer_time", "background": True}),
+    # Feb-2026 · Task 5 perf — distance_matrix_cache had ZERO indexes
+    # in prod (verified via ``list_indexes`` on the seeded cluster).
+    # Every ``/schedule/today`` leg lookup did a full-collection scan
+    # on a table that grows monotonically.  This index is the exact
+    # key the router queries by (``_cache_key(lat, lng, lat, lng)``).
+    # Unique because two rows would corrupt the cache write-through
+    # path in ``services.distance_matrix`` (last-writer-wins is fine
+    # but duplicates skew hit-rate telemetry).
+    ("distance_matrix_cache",
+     [("key", ASCENDING)],
+     {"unique": True, "name": "dmc_key_unique", "background": True}),
     ("chemical_usage_events",
      [("tenant_id", ASCENDING), ("service_report_id", ASCENDING)],
      {"name": "chem_usage_tenant_report", "background": True}),

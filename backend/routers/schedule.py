@@ -19,7 +19,7 @@ Endpoints (all tenant-scoped)
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from config import db, logger
@@ -54,11 +54,29 @@ def _cache_key(from_lat, from_lng, to_lat, to_lng):
 
 
 @router.get("/schedule/today")
-async def schedule_today(date: Optional[str] = None,
+async def schedule_today(request: Request,
+                         date: Optional[str] = None,
                          user: dict = Depends(get_current_user),
                          tenant: dict = Depends(get_current_tenant)):
     """Return the tech's timeline for `date` (YYYY-MM-DD) or today when omitted.
-    Alias `/schedule/day` accepts the same query."""
+    Alias `/schedule/day` accepts the same query.
+
+    Feb-2026 · Task 5 perf instrumentation — the handler pushes
+    phase timings into ``request.state.timings`` so the
+    ``ServerTimingMiddleware`` in ``server.py`` emits them under the
+    ``Server-Timing`` response header.  Fields:
+
+      * ``crews;dur=X``   — my_crew_ids prefetch (tenant scan).
+      * ``jobs;dur=X``    — main jobs query (tech + crew visibility).
+      * ``custs;dur=X``   — bulk gate-code/notes prefetch.
+      * ``entries;dur=X`` — time entries prefetch.
+      * ``legs;dur=X``    — batched distance_matrix_cache lookup.
+
+    Any prod slowness now surfaces the culprit phase in DevTools
+    without a code deploy.
+    """
+    import time as _t
+    _timings = request.state.timings if hasattr(request.state, "timings") else []
     tid = tenant["id"]
     tz_name = (tenant.get("settings") or {}).get("tz") or DEFAULT_TZ
     start_iso, end_iso = _today_bounds_utc(tz_name, date)
@@ -99,12 +117,14 @@ async def schedule_today(date: Optional[str] = None,
     # (via ``ops.py::create_crew``) but the field has legacy rows
     # from a prior seed migration that stored ``technicians.id``.
     # Match either so no crew memberships are silently skipped.
+    _t_crews = _t.perf_counter()
     my_crew_ids = [
         c["id"] async for c in db.crews.find(
             {"tenant_id": tid, "tech_ids": {"$in": _tech_ids}},
             {"_id": 0, "id": 1},
         )
     ]
+    _timings.append(f"crews;dur={(_t.perf_counter()-_t_crews)*1000:.1f}")
     # Guardrail — only add the crew clause when the list is non-empty.
     # ``$in: []`` would emit an always-false branch that Mongo still
     # has to plan; skip entirely instead.
@@ -136,11 +156,14 @@ async def schedule_today(date: Optional[str] = None,
     # soft-delete predicate composed under $and above — do NOT
     # dict-spread ``_nd()`` in again (that's what caused the
     # tech-visibility leak this ship fixed).
+    _t_jobs = _t.perf_counter()
     jobs = await db.jobs.find(job_q, {"_id": 0}).sort(
         [("scheduled_date", 1), ("route_index", 1), ("created_at", 1)]
     ).to_list(200)
+    _timings.append(f"jobs;dur={(_t.perf_counter()-_t_jobs)*1000:.1f}")
 
     # Phase 16C follow-up · fetch customer gate codes + notes for the tech.
+    _t_custs = _t.perf_counter()
     cids = list({j.get("customer_id") for j in jobs if j.get("customer_id")})
     cust_map: dict = {}
     if cids:
@@ -150,13 +173,16 @@ async def schedule_today(date: Optional[str] = None,
               "service_notes": 1},
         ).to_list(500):
             cust_map[c["id"]] = c
+    _timings.append(f"custs;dur={(_t.perf_counter()-_t_custs)*1000:.1f}")
 
     # Time entries + break intervals for *today* (by user).
+    _t_entries = _t.perf_counter()
     entries = await db.time_entries.find(
         {"tenant_id": tid, "user_id": user["id"],
          "clock_in_at": {"$gte": start_iso, "$lte": end_iso}},
         {"_id": 0},
     ).sort("clock_in_at", 1).to_list(50)
+    _timings.append(f"entries;dur={(_t.perf_counter()-_t_entries)*1000:.1f}")
 
     items: list = []
     for j in jobs:
@@ -244,16 +270,32 @@ async def schedule_today(date: Optional[str] = None,
         return (primary, secondary)
     items.sort(key=_sort_key)
 
-    # Route legs between consecutive jobs with coords
+    # Route legs between consecutive jobs with coords.
+    # Feb-2026 · Task 5 perf — replace the O(N) sequential
+    # ``find_one`` loop with a single batched ``find({key: {$in: [...]}})``.
+    # On a schedule with 15 jobs the old code fired 14 sequential
+    # Mongo round-trips (100–700 ms on a remote cluster); the new
+    # path fires 1.  Query semantics + response shape are byte-
+    # for-byte identical (verified by
+    # ``tests/test_schedule_today_leg_cache_batched.py``).
     coord_jobs = [it for it in items if it["type"] == "job"
                                        and it.get("lat") is not None
                                        and it.get("lng") is not None]
     legs = []
-    for a, b in zip(coord_jobs, coord_jobs[1:]):
-        leg_key = _cache_key(a["lat"], a["lng"], b["lat"], b["lng"])
-        cached = await db.distance_matrix_cache.find_one(
-            {"key": leg_key}, {"_id": 0}
-        )
+    leg_pairs = list(zip(coord_jobs, coord_jobs[1:]))
+    leg_keys = [_cache_key(a["lat"], a["lng"], b["lat"], b["lng"])
+                 for a, b in leg_pairs]
+    cache_by_key: dict = {}
+    _t_legs = _t.perf_counter()
+    if leg_keys:
+        async for row in db.distance_matrix_cache.find(
+            {"key": {"$in": leg_keys}},
+            {"_id": 0, "key": 1, "distance_meters": 1, "duration_seconds": 1},
+        ):
+            cache_by_key[row["key"]] = row
+    _timings.append(f"legs;dur={(_t.perf_counter()-_t_legs)*1000:.1f}")
+    for (a, b), leg_key in zip(leg_pairs, leg_keys):
+        cached = cache_by_key.get(leg_key)
         legs.append({
             "from_job_id": a["id"],
             "to_job_id": b["id"],

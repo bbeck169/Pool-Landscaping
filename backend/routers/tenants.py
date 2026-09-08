@@ -207,6 +207,14 @@ async def current_tenant(request: Request,
         "logo_updated_by": tenant.get("logo_updated_by_user_id"),
         "logo_updated_by_name": await _resolve_actor_name(
             tenant.get("logo_updated_by_user_id")),
+        # Feb-2026 · K9 Enhancement B — expose the two config fields
+        # the Admin Customer Inbox reads to decide whether to show the
+        # "SMS notifications aren't wired up" banner.  Both are safe to
+        # surface to any admin user (already editable via
+        # ``PATCH /tenants/{id}`` from NotificationPrefs).  Missing
+        # values return null so the FE can trigger the hint.
+        "admin_sms_notify_to": tenant.get("admin_sms_notify_to") or None,
+        "rc_sms_from_number": tenant.get("rc_sms_from_number") or None,
     }
 
 
