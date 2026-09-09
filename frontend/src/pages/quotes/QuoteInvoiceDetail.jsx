@@ -34,6 +34,11 @@ import K79CustomerViewSection from "@/components/quotes/K79CustomerViewSection";
 // only; the component hides itself when the endpoint 403s).
 import InvoiceViewHistory from "@/components/invoices/InvoiceViewHistory";
 import { Button, Skeleton, StatusPill, Modal, TextInput, Toast, Chip } from "@/components/ui-kit";
+// Feb-2026 · Batch #4 · Logo ship — shared tenant logo helper so
+// the admin invoice/quote detail header matches the InvoiceView /
+// EstimateView / magic-link surfaces. The ``doc-header-logo``
+// testid is asserted by ``src/test/doc-header-logo.test.jsx``.
+import { getTenantLogoUrl, DEFAULT_LOGO_ALT } from "@/lib/tenantLogo";
 
 // ─── Pure helpers · exported for Vitest ────────────────────────────────
 // Feb 2026 · P0/P0.5a/P1 — draft-transition fix. These are pulled out
@@ -345,7 +350,34 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+          {/* Feb-2026 · Batch #4 · Logo ship — brand logo top-left,
+              LEFT of the doc title. Height mirrors the InvoiceView /
+              EstimateView treatment (~2.4in in PDF, ~56px on-screen)
+              so the admin detail view stays visually aligned with
+              the printable + magic-link surfaces. Alt reads from
+              ``tenant_name`` in localStorage when present so the
+              screen-reader announcement matches the tenant the
+              admin is scoped into; falls back to the shared
+              default ("Pool & Landscaping of Vistancia"). */}
+          <div
+            className="flex items-start gap-4 flex-1 min-w-0"
+            data-testid="quote-invoice-detail-header-left"
+          >
+            <img
+              src={getTenantLogoUrl()}
+              alt={
+                (typeof window !== "undefined"
+                  && window.localStorage
+                  && window.localStorage.getItem("tenant_name"))
+                || DEFAULT_LOGO_ALT
+              }
+              className="rounded-md shrink-0"
+              style={{ height: 56, width: "auto",
+                        border: `1px solid ${colors.border}` }}
+              data-testid="doc-header-logo"
+              data-surface={isInvoice ? "invoice-admin" : "quote-admin"}
+            />
+            <div className="min-w-0">
             <div className="flex items-center gap-2 mb-2">
               <StatusPill status={doc.decision || doc.status} />
               {isInvoice ? (
@@ -374,6 +406,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               </span>
               {doc.due_date ? <> · Due {doc.due_date}</> : null}
             </p>
+            </div>
           </div>
           <div className="text-right">
             <div className="text-3xl font-bold" style={{ color: colors.brand }}>{money(doc.total)}</div>

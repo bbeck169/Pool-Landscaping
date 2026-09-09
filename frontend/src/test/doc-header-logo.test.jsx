@@ -15,13 +15,20 @@ import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 vi.mock("@/api", () => ({
-  api: { get: vi.fn(), post: vi.fn() },
+  api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), del: vi.fn() },
   TOKEN_KEY: "token",
+}));
+
+// Feb-2026 · Batch #4 · Logo ship — QuoteInvoiceDetail leans on
+// ``useAuth``; the shape it consumes is ``{ user: { role } }``.
+vi.mock("@/auth", () => ({
+  useAuth: () => ({ user: { role: "admin", id: "u-1" }, token: "t" }),
 }));
 
 import { api } from "@/api";
 import EstimateView from "@/components/EstimateView";
 import InvoiceView from "@/components/InvoiceView";
+import QuoteInvoiceDetail from "@/pages/quotes/QuoteInvoiceDetail";
 import {
   getTenantLogoUrl,
   DEFAULT_LOGO_URL,
@@ -180,6 +187,101 @@ describe("Batch #4 · Logo ship · EstimateView (admin + magic-link)", () => {
       () => screen.getByTestId("doc-header-logo"),
     );
     expect(logo.getAttribute("alt")).toBe(DEFAULT_LOGO_ALT);
+    cleanup();
+  });
+});
+
+
+// Minimal Mongo-shape doc payload the `/quotes/:id` GET returns.
+// Only the fields QuoteInvoiceDetail's header block reads matter
+// for this test — the rest of the page can render (or bail) fine
+// without full fixtures because the loader tolerates missing
+// customers / settings / signature.
+function _quoteDoc(overrides = {}) {
+  return {
+    id: "q-1",
+    doc_type: "quote",
+    status: "sent",
+    decision: null,
+    title: "Test Quote",
+    customer_id: null,
+    customer_name: "Jane Doe",
+    total: 100,
+    amount_paid: 0,
+    payment_status: "unpaid",
+    line_items: [],
+    tenant_id: "t-1",
+    ...overrides,
+  };
+}
+
+
+describe("Batch #4 · Logo ship · QuoteInvoiceDetail (admin surfaces)", () => {
+  beforeEach(() => {
+    api.get.mockReset();
+    api.post.mockReset();
+    api.put.mockReset();
+    api.del.mockReset();
+    // Default resolver: every GET returns an empty-ish payload so
+    // secondary loaders (settings, signature, etc.) don't throw.
+    api.get.mockImplementation(async (path) => {
+      if (path.startsWith("/quotes/q-inv-1")
+          && !path.includes("signature")
+          && !path.includes("edit-history")) {
+        return _quoteDoc({ id: "q-inv-1", doc_type: "invoice" });
+      }
+      if (path.startsWith("/quotes/q-quote-1")
+          && !path.includes("signature")
+          && !path.includes("edit-history")) {
+        return _quoteDoc({ id: "q-quote-1", doc_type: "quote" });
+      }
+      if (path.startsWith("/settings/payment-handles")) return {};
+      if (path.startsWith("/settings/terms")) {
+        return { default_invoice_terms: "", default_quote_terms: "" };
+      }
+      if (path.includes("/signature")) return { signed: false };
+      return {};
+    });
+  });
+
+  it("admin invoice route mounts doc-header-logo top-left", async () => {
+    const { MemoryRouter, Routes, Route } = await import("react-router-dom");
+    render(
+      <MemoryRouter initialEntries={["/invoices/q-inv-1"]}>
+        <Routes>
+          <Route path="/invoices/:id"
+                  element={<QuoteInvoiceDetail _docType="invoice" />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const logo = await waitFor(
+      () => screen.getByTestId("doc-header-logo"),
+    );
+    expect(logo.tagName).toBe("IMG");
+    expect(logo.getAttribute("src")).toBe(DEFAULT_LOGO_URL);
+    expect(logo.getAttribute("data-surface")).toBe("invoice-admin");
+    // Regression: exactly one logo per page — no duplicate from a
+    // stray legacy header we forgot to strip.
+    expect(screen.getAllByTestId("doc-header-logo")).toHaveLength(1);
+    cleanup();
+  });
+
+  it("admin quote route mounts doc-header-logo top-left", async () => {
+    const { MemoryRouter, Routes, Route } = await import("react-router-dom");
+    render(
+      <MemoryRouter initialEntries={["/quotes/q-quote-1"]}>
+        <Routes>
+          <Route path="/quotes/:id"
+                  element={<QuoteInvoiceDetail _docType="quote" />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const logo = await waitFor(
+      () => screen.getByTestId("doc-header-logo"),
+    );
+    expect(logo.getAttribute("src")).toBe(DEFAULT_LOGO_URL);
+    expect(logo.getAttribute("data-surface")).toBe("quote-admin");
+    expect(screen.getAllByTestId("doc-header-logo")).toHaveLength(1);
     cleanup();
   });
 });
