@@ -1,3 +1,17 @@
+## Iteration 77 — Navigate arrow button: top-right + orange restyle
+- **Commit**: 1b08cb2a
+- **Date**: 2026-09-09
+- **Changes**:
+  - Moved NavigateJobButton from bottom of content column to top-right of card's right column
+  - Restyled: navy (#1B1F5C) → orange (#F97316), 44px → 36px visual (48px effective with hitSlop), added shadow/elevation
+  - Card layout changed from `alignItems: "center"` to `"flex-start"` with new `cardRight` column wrapper
+  - Accessibility preserved: dynamic `accessibilityLabel="Navigate to {customer}"`, `accessibilityRole="button"`, hint
+  - 8 Jest tests covering: testID, orange color, accessibility, press handler, disabled state, size
+- **Files modified**: `mobile/src/components/schedule/NavigateJobButton.tsx`, `mobile/app/(app)/schedule/calendar.tsx`
+- **Files modified (tests)**: `mobile/__tests__/navigate-job-button.test.tsx`
+
+
+
 ## Iteration 76 — Schedule map show/hide toggle
 - **Commit**: 453db872
 - **Date**: 2026-09-08

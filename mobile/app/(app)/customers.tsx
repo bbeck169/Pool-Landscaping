@@ -56,8 +56,19 @@ export default function Customers() {
   // behaviour landed simultaneously in CustomersList.jsx.
   const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "all" | "waitlist">("active");
 
-  // Phase G4b — Portal activation filter. K40 — no persistence.
-  const [portalFilter, setPortalFilter] = useState<"all" | "activated" | "not_activated">("all");
+  // P43c corrected — Portal status tri-state ("" = any, "activated" = Signed in, "not_activated" = Never signed in).
+  const [portalFilter, setPortalFilter] = useState<"" | "activated" | "not_activated">("");
+  const [portalActivatedCount, setPortalActivatedCount] = useState<number | null>(null);
+  const [portalNotActivatedCount, setPortalNotActivatedCount] = useState<number | null>(null);
+
+  // P43b — Missing address filter.
+  const [missingAddressFilter, setMissingAddressFilter] = useState(false);
+  const [missingAddressCount, setMissingAddressCount] = useState<number | null>(null);
+
+  // P44 — No payment on file filter + row action.
+  const [noPaymentFilter, setNoPaymentFilter] = useState(false);
+  const [noPaymentCount, setNoPaymentCount] = useState<number | null>(null);
+  const [sendingPaymentLink, setSendingPaymentLink] = useState<Set<string>>(new Set());
 
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
   const bulk = useBulkSelect(visibleIds);
@@ -75,8 +86,13 @@ export default function Customers() {
       } else if (statusFilter !== "all") {
         qp.set("is_active", String(statusFilter === "active"));
       }
-      // Phase G4b — Portal activation filter.
-      if (portalFilter !== "all") qp.set("portal_status", portalFilter);
+      // P43c corrected — Portal status filter (portal_activated param).
+      if (portalFilter === "activated") qp.set("portal_activated", "true");
+      else if (portalFilter === "not_activated") qp.set("portal_activated", "false");
+      // P43b — Missing address filter.
+      if (missingAddressFilter) qp.set("missing_address", "true");
+      // P44 — No payment on file filter.
+      if (noPaymentFilter) qp.set("has_payment_method", "false");
       const res: any = await api.get(`/customers?${qp.toString()}`);
       const rows = Array.isArray(res) ? res : (res?.items || []);
       const tp = Number.isFinite(res?.total_pages)
@@ -100,7 +116,7 @@ export default function Customers() {
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, [statusFilter, portalFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMore = useCallback(() => {
     if (loadingMore) return;
@@ -170,6 +186,43 @@ export default function Customers() {
     }
   };
 
+  // P43b + P43c + P44 — Fetch filter counts on mount (parallel, stable badges).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [addrRes, paRes, pnaRes, payRes] = await Promise.all([
+        api.get("/customers?count_only=true&missing_address=true").catch(() => null),
+        api.get("/customers?count_only=true&portal_activated=true").catch(() => null),
+        api.get("/customers?count_only=true&portal_activated=false").catch(() => null),
+        api.get("/customers?count_only=true&has_payment_method=false").catch(() => null),
+      ]);
+      if (cancelled) return;
+      setMissingAddressCount(addrRes?.count ?? null);
+      setPortalActivatedCount(paRes?.count ?? null);
+      setPortalNotActivatedCount(pnaRes?.count ?? null);
+      setNoPaymentCount(payRes?.count ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // P44 — Send payment link row action.
+  const handleSendPaymentLink = async (cust: any) => {
+    if (!cust?.id) return;
+    setSendingPaymentLink((s) => new Set(s).add(cust.id));
+    try {
+      const res: any = await api.post(`/customers/${cust.id}/send-card-add-link`, {});
+      const to = [res?.email_recipient, res?.sms_recipient].filter(Boolean).join(" and ");
+      Alert.alert("Success", to ? `Payment link sent to ${to}` : "Payment link sent");
+    } catch (e: any) {
+      const msg = e?.detail?.code === "RATE_LIMITED"
+        ? "Please wait a few minutes before sending another link."
+        : (e?.message || "Failed to send link");
+      Alert.alert("Error", msg);
+    } finally {
+      setSendingPaymentLink((s) => { const n = new Set(s); n.delete(cust.id); return n; });
+    }
+  };
+
   return (
     <View style={styles.root}>
       <Header
@@ -207,26 +260,78 @@ export default function Customers() {
           </Pressable>
         ))}
       </View>
-      {/* Phase G4b — Portal activation filter chips */}
-      <View style={cs.portalRow} testID="customer-portal-filter">
-        <Ionicons name="key-outline" size={13} color={colors.muted} style={{ marginRight: 4 }} />
-        {(["all", "activated", "not_activated"] as const).map((opt) => (
-          <Pressable
-            key={opt}
-            onPress={() => {
-              setPortalFilter(opt);
-              // Phase K40 — no persistence; page resets on filter change.
-              setPage(1);
-            }}
-            style={[cs.portalChip, portalFilter === opt && cs.portalChipActive]}
-            testID={`customer-portal-${opt}`}
-            accessibilityRole="button"
-          >
-            <Text style={[cs.portalChipText, portalFilter === opt && cs.portalChipTextActive]}>
-              {opt === "all" ? "All" : opt === "activated" ? "Activated" : "Not activated"}
+      {/* P43b + P43c + P44 — Data-quality filter chips.
+          Each chip toggles a backend filter param. Counts are stable
+          (fetched once on mount, NOT composed with other filters). */}
+      <View style={cs.chipRow} testID="customer-data-quality-filters">
+        {/* P43b — Missing address */}
+        <Pressable
+          onPress={() => { setMissingAddressFilter((v) => !v); setPage(1); }}
+          style={[cs.dqChip, missingAddressFilter && cs.dqChipActive]}
+          testID="customers-missing-address-filter"
+          accessibilityRole="button"
+          accessibilityLabel={`Missing address${missingAddressCount != null ? ` (${missingAddressCount})` : ""}`}
+        >
+          <View style={[cs.dqDot, missingAddressFilter && cs.dqDotActive]} />
+          <Text style={[cs.dqChipText, missingAddressFilter && cs.dqChipTextActive]}>
+            Missing address
+          </Text>
+          {missingAddressCount != null ? (
+            <Text style={[cs.dqChipCount, missingAddressFilter && cs.dqChipCountActive]} testID="customers-missing-address-count">
+              ({missingAddressCount})
             </Text>
-          </Pressable>
-        ))}
+          ) : null}
+        </Pressable>
+
+        {/* P44 — No payment on file */}
+        <Pressable
+          onPress={() => { setNoPaymentFilter((v) => !v); setPage(1); }}
+          style={[cs.dqChip, noPaymentFilter && cs.dqChipActive]}
+          testID="customers-no-payment-filter"
+          accessibilityRole="button"
+          accessibilityLabel={`No payment on file${noPaymentCount != null ? ` (${noPaymentCount})` : ""}`}
+        >
+          <View style={[cs.dqDot, noPaymentFilter && cs.dqDotActive]} />
+          <Text style={[cs.dqChipText, noPaymentFilter && cs.dqChipTextActive]}>
+            No payment on file
+          </Text>
+          {noPaymentCount != null ? (
+            <Text style={[cs.dqChipCount, noPaymentFilter && cs.dqChipCountActive]} testID="customers-no-payment-count">
+              ({noPaymentCount})
+            </Text>
+          ) : null}
+        </Pressable>
+      </View>
+
+      {/* P43c corrected — Portal status tri-state segmented control.
+          "Any" | "Signed in (N)" | "Never signed in (N)". */}
+      <View style={cs.portalRow} testID="customers-portal-status-filter">
+        <Ionicons name="key-outline" size={13} color={colors.muted} style={{ marginRight: 4 }} />
+        {([
+          { value: "" as const, label: "Any", count: null, testid: "customers-portal-status-any" },
+          { value: "activated" as const, label: "Signed in", count: portalActivatedCount, testid: "customers-portal-status-activated" },
+          { value: "not_activated" as const, label: "Never signed in", count: portalNotActivatedCount, testid: "customers-portal-status-not-activated" },
+        ]).map((opt) => {
+          const active = portalFilter === opt.value;
+          return (
+            <Pressable
+              key={opt.value || "any"}
+              onPress={() => { setPortalFilter(opt.value); setPage(1); }}
+              style={[cs.portalChip, active && cs.portalChipActive]}
+              testID={opt.testid}
+              accessibilityRole="button"
+            >
+              <Text style={[cs.portalChipText, active && cs.portalChipTextActive]}>
+                {opt.label}
+              </Text>
+              {opt.count != null ? (
+                <Text style={[cs.portalChipCount, active && cs.portalChipCountActive]}>
+                  ({opt.count})
+                </Text>
+              ) : null}
+            </Pressable>
+          );
+        })}
       </View>
       <View style={styles.searchWrap}>
         <View style={styles.searchBox}>
@@ -292,6 +397,10 @@ export default function Customers() {
               </View>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  {/* P44 — missing card dot indicator */}
+                  {!item.has_card_on_file ? (
+                    <View style={cs.missingCardDot} testID={`row-${item.id}-missing-card-dot`} />
+                  ) : null}
                   <Text style={[styles.name, item.deleted_at && cs.nameDeleted]} numberOfLines={1}>{item.name}</Text>
                   {item.deleted_at && canManageDeleted ? (
                     <RestoreCustomerButton
@@ -302,6 +411,22 @@ export default function Customers() {
                       }}
                       onError={(msg) => Alert.alert("Restore failed", msg)}
                     />
+                  ) : null}
+                  {/* P44 — "Send payment link" row action (admin only, no card on file) */}
+                  {isAdmin && !item.has_card_on_file ? (
+                    <Pressable
+                      onPress={(e) => { handleSendPaymentLink(item); }}
+                      disabled={sendingPaymentLink.has(item.id)}
+                      style={[cs.sendPaymentPill, sendingPaymentLink.has(item.id) && { opacity: 0.5 }]}
+                      testID={`customer-row-send-payment-link-btn-${item.id}`}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Send payment link to ${item.name}`}
+                    >
+                      <Ionicons name="send-outline" size={10} color="#92400E" />
+                      <Text style={cs.sendPaymentPillText}>
+                        {sendingPaymentLink.has(item.id) ? "Sending…" : "Send payment link"}
+                      </Text>
+                    </Pressable>
                   ) : null}
                 </View>
                 <Text style={styles.sub} numberOfLines={1}>{item.address || item.phone || item.email || "—"}</Text>
@@ -553,6 +678,9 @@ const cs = StyleSheet.create({
     gap: 4,
   },
   portalChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: radius.pill,
@@ -568,5 +696,87 @@ const cs = StyleSheet.create({
   },
   portalChipTextActive: {
     color: "#fff",
+  },
+  portalChipCount: {
+    fontFamily: font.bold,
+    fontSize: 10,
+    color: colors.muted,
+    opacity: 0.8,
+  },
+  portalChipCountActive: {
+    color: "#fff",
+    opacity: 0.9,
+  },
+  // P43b + P44 — Data-quality filter chip row.
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    gap: 6,
+  },
+  dqChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  dqChipActive: {
+    backgroundColor: "#DBEAFE",
+    borderColor: "#93C5FD",
+  },
+  dqDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#94A3B8",
+  },
+  dqDotActive: {
+    backgroundColor: "#1E40AF",
+  },
+  dqChipText: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    color: colors.onSurfaceSecondary,
+  },
+  dqChipTextActive: {
+    color: "#1E3A8A",
+  },
+  dqChipCount: {
+    fontFamily: font.semibold,
+    fontSize: 10,
+    color: colors.onSurfaceSecondary,
+    opacity: 0.9,
+  },
+  dqChipCountActive: {
+    color: "#1E3A8A",
+  },
+  // P44 — Missing card dot + Send payment link pill.
+  missingCardDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#F59E0B",
+  },
+  sendPaymentPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  sendPaymentPillText: {
+    fontFamily: font.semibold,
+    fontSize: 10,
+    color: "#92400E",
   },
 });
