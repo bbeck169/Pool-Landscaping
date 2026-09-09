@@ -48,6 +48,58 @@ log = logging.getLogger("messaging.byo_passthrough")
 CAP_EXCEEDED_STATUS = "cap_exceeded"
 CAP_EXCEEDED_HTTP_STATUS = 429
 
+
+async def _byo_required_fields_present(
+    provider: Any, tenant_id: str, db=None,
+) -> bool:
+    """Return True iff every required secret field on the provider's
+    ``config_fields`` schema resolves to a non-blank string in the
+    tenant's saved config.
+
+    Feb-2026 · P0 comms hotfix — the tenant-BYO write path
+    (``save_provider_config``) marks the row ``connected=True`` as
+    soon as ``validate_config`` accepts the input, even though the
+    key is never live-probed. Users who typed a mangled Resend key
+    (or blanked the field after a partial save) end up with a
+    ``connected=True`` row whose ``api_key`` is empty / whitespace.
+    ``get_tenant_*_provider`` then hands back a provider whose every
+    outbound call raises with an empty-auth error, and the
+    passthrough returns ``_envelope_failed(...)`` — which the
+    adapter treats as authoritative and NEVER falls back to the
+    platform provider. Result: both channels silently break the
+    moment BYOP is "connected" but not valid.
+
+    This guard runs before the BYO provider is invoked. When it
+    returns False, the caller returns ``None`` and the send falls
+    through to the platform key. When it returns True, the send
+    routes through the BYO provider as usual (cap-exceeded and
+    genuine send failures continue to surface via envelopes).
+    """
+    try:
+        from ._helpers import load_provider_config
+        cfg = await load_provider_config(
+            tenant_id=tenant_id,
+            provider_key=getattr(provider, "provider_key", ""),
+            db=db,
+        ) or {}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[byo] config load failed tenant=%s provider=%s: %s",
+                    tenant_id, getattr(provider, "provider_key", "?"), exc)
+        return False
+    schema = getattr(provider, "config_fields", {}) or {}
+    for name, meta in schema.items():
+        if not meta.get("required"):
+            continue
+        val = cfg.get(name)
+        if not isinstance(val, str) or not val.strip():
+            log.warning(
+                "[byo] tenant=%s provider=%s required field %r is "
+                "blank/missing — falling back to platform provider",
+                tenant_id, getattr(provider, "provider_key", "?"), name,
+            )
+            return False
+    return True
+
 # Substrings we treat as a cap / quota hit when they appear in a
 # provider error message. Kept intentionally coarse — provider error
 # copy is not standardized, and false positives here fail-safe (the
@@ -74,6 +126,45 @@ def _looks_like_cap_hit(status: Optional[str], error: Optional[str]) -> bool:
     if not e:
         return False
     return any(marker in e for marker in _CAP_ERROR_MARKERS)
+
+
+# Feb-2026 · P0 comms hotfix — substrings we treat as "the BYO
+# provider's credentials are broken" and therefore we should fall
+# back to the platform provider rather than bubble a failed
+# envelope. Kept coarse on purpose — over-matching here means one
+# extra platform send, under-matching leaves the user with silent
+# failures. Prefer the former.
+_CREDENTIAL_ERROR_MARKERS = (
+    "unauthorized",
+    "unauthorised",
+    "401",
+    "403",
+    "authentication",
+    "invalid api key",
+    "invalid_api_key",
+    "no resend config",
+    "no ringcentral config",
+    "no twilio config",
+    "no textmagic config",
+    "tenantmessagingnotconnected",
+    "missing required",
+    "missing api",
+    "empty api",
+    "invalid credentials",
+    "invalid_credentials",
+    "api key not valid",
+    "api_key is required",
+)
+
+
+def _looks_like_credential_failure(error: Optional[str]) -> bool:
+    """Return True when the BYO provider raised an error whose
+    text looks like an authentication / credential issue rather
+    than a legitimate send-time failure."""
+    if not error:
+        return False
+    e = error.lower()
+    return any(marker in e for marker in _CREDENTIAL_ERROR_MARKERS)
 
 
 def _envelope_ok(*, provider_key: str, message_id: Optional[str],
@@ -155,6 +246,12 @@ async def try_dispatch_email_tenant_byo(
     if provider is None:
         return None
 
+    # Feb-2026 · P0 comms hotfix — fall back to platform when the
+    # tenant's BYO row is "connected" on paper but has empty
+    # required credentials (see :func:`_byo_required_fields_present`).
+    if not await _byo_required_fields_present(provider, tenant_id, db=db):
+        return None
+
     provider_key = getattr(provider, "provider_key", "unknown")
     # Phase I1.7.e · Feb-2026 — MESSAGING_TESTMODE_MOCK short-circuit.
     # BYO probe still fires (this branch = tenant HAS a BYO provider
@@ -190,6 +287,19 @@ async def try_dispatch_email_tenant_byo(
             log.info("[byo] email cap-exceeded via exception tenant=%s "
                       "provider=%s: %s", tenant_id, provider_key, err)
             return _envelope_cap(provider_key=provider_key, error=err)
+        # Feb-2026 · P0 comms hotfix — credential-shaped failures
+        # (auth 401/403, "unauthorized", missing key) mean the BYO
+        # row itself is broken; fall through to the platform key
+        # instead of returning a failed envelope that would strand
+        # the send. Non-credential failures still return the
+        # envelope so ops can see real provider errors.
+        if _looks_like_credential_failure(err):
+            log.warning(
+                "[byo] email tenant=%s provider=%s credential-shaped "
+                "failure — falling back to platform: %s",
+                tenant_id, provider_key, err,
+            )
+            return None
         log.warning("[byo] email BYO raised tenant=%s provider=%s: %s",
                     tenant_id, provider_key, err)
         return _envelope_failed(provider_key=provider_key, error=err)
@@ -234,6 +344,10 @@ async def try_dispatch_sms_tenant_byo(
     if provider is None:
         return None
 
+    # Feb-2026 · P0 comms hotfix — same guard as the email path.
+    if not await _byo_required_fields_present(provider, tenant_id, db=db):
+        return None
+
     provider_key = getattr(provider, "provider_key", "unknown")
     # Phase I1.7.e · Feb-2026 — MESSAGING_TESTMODE_MOCK short-circuit.
     # See mirror comment in ``try_dispatch_email_tenant_byo``.
@@ -261,6 +375,13 @@ async def try_dispatch_sms_tenant_byo(
             log.info("[byo] sms cap-exceeded via exception tenant=%s "
                       "provider=%s: %s", tenant_id, provider_key, err)
             return _envelope_cap(provider_key=provider_key, error=err)
+        if _looks_like_credential_failure(err):
+            log.warning(
+                "[byo] sms tenant=%s provider=%s credential-shaped "
+                "failure — falling back to platform: %s",
+                tenant_id, provider_key, err,
+            )
+            return None
         log.warning("[byo] sms BYO raised tenant=%s provider=%s: %s",
                     tenant_id, provider_key, err)
         return _envelope_failed(provider_key=provider_key, error=err)

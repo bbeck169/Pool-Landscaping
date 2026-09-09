@@ -177,14 +177,42 @@ class ResendEmailProvider(EmailProvider):
                 headers={"Authorization": f"Bearer {cfg['api_key']}"},
             )
             if r.status_code < 400:
+                # Feb-2026 · P0 comms — surface the domain list + first
+                # ``verified`` domain so ops can immediately confirm
+                # the BYO key is scoped to the right project.
+                _verified = []
+                try:
+                    _body = r.json()
+                    for _d in (_body.get("data") or []):
+                        if (_d.get("status") or "").lower() == "verified":
+                            _verified.append(_d.get("name"))
+                except Exception:  # noqa: BLE001
+                    pass
+                _msg = "Resend domains.list OK."
+                if _verified:
+                    _msg += f" verified_domains={_verified}"
                 return ConnectionHealth(
                     provider_key=self.provider_key, tenant_id=tenant_id,
-                    ok=True, message="Resend domains.list OK.",
-                    checked_at=now_iso(),
+                    ok=True, message=_msg, checked_at=now_iso(),
                 )
+            # Feb-2026 · P0 comms — capture the Resend error body so
+            # ops don't have to guess. Resend returns
+            # ``{"message":"...","name":"..."}`` on 4xx. Redact any
+            # accidental key echoing (Resend doesn't currently, but
+            # belt-and-braces).
+            _body_text = ""
+            try:
+                _body_text = r.text[:800] if r.text else ""
+                if cfg.get("api_key") and cfg["api_key"] in _body_text:
+                    _body_text = _body_text.replace(
+                        cfg["api_key"], f"{cfg['api_key'][:6]}...(redacted)",
+                    )
+            except Exception:  # noqa: BLE001
+                _body_text = "<body read failed>"
             return ConnectionHealth(
                 provider_key=self.provider_key, tenant_id=tenant_id,
-                ok=False, message=f"Resend probe HTTP {r.status_code}",
+                ok=False,
+                message=f"Resend probe HTTP {r.status_code} body={_body_text}",
                 checked_at=now_iso(),
             )
         except Exception as e:

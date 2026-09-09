@@ -475,3 +475,126 @@ async def comms_diagnostics_send_to_customer(
         )
         raise HTTPException(500, f"sms diagnostic failed: {e}")
 
+
+
+
+# ─── Recent failures + Resend key/domain probe (Feb-2026 P0 recurrence) ─
+#
+# Two more admin-only reads for triage:
+#   • recent failures across the whole audit log (not customer-scoped)
+#   • Resend ``/domains`` probe using the POD-level ``RESEND_API_KEY``,
+#     surfacing the raw body + parsed verified domain list so ops
+#     can tell "wrong project" from "unverified domain" from
+#     "revoked key" without SSHing into the pod.
+
+
+@router.get("/admin/comms-diagnostics/recent-failures")
+async def comms_diagnostics_recent_failures(
+    provider: str | None = Query(default=None,
+                                    description="e.g. resend, ringcentral"),
+    channel: str | None = Query(default=None,
+                                   description="email | sms"),
+    limit: int = Query(default=10, ge=1, le=100),
+    user: dict = Depends(require_admin),
+):
+    """Return the most recent ``ok=false`` rows from
+    ``db.comms_send_log`` for the current tenant.
+
+    Includes full ``error``, ``exc_type``, and ``exc_trace`` so ops
+    can pull the provider's 4xx body straight out of the audit log
+    (which now records direct-SDK calls too, via ``sdk_intercept``).
+    """
+    from config import db  # lazy
+    q: dict = {"ok": False}
+    if user.get("tenant_id"):
+        q["tenant_id"] = user["tenant_id"]
+    if provider:
+        q["provider"] = provider.strip().lower()
+    if channel:
+        q["channel"] = channel.strip().lower()
+    out: list[dict] = []
+    cursor = db.comms_send_log.find(q, {"_id": 0}).sort("at", -1).limit(limit)
+    async for row in cursor:
+        if row.get("exc_trace"):
+            row["exc_trace"] = row["exc_trace"][:1500]
+        if row.get("error"):
+            row["error"] = row["error"][:1500]
+        out.append(row)
+    return {"count": len(out), "items": out,
+             "filter": {"provider": provider, "channel": channel,
+                         "tenant_id": user.get("tenant_id")}}
+
+
+@router.get("/admin/comms-diagnostics/resend-domains")
+async def comms_diagnostics_resend_domains(
+    user: dict = Depends(require_admin),
+):
+    """Probe Resend ``GET /domains`` using the pod-level
+    ``RESEND_API_KEY``. Returns the parsed domain list with
+    verification status, plus the redacted key prefix so ops can
+    cross-check the pod is running with the expected key.
+
+    Never returns the full API key. Never returns response headers.
+    """
+    import httpx  # lazy — keeps the module import cheap.
+    key = (os.environ.get("RESEND_API_KEY") or "").strip()
+    key_prefix = f"{key[:6]}..." if key else None
+    key_len = len(key) if key else 0
+    from_addr = os.environ.get("RESEND_FROM") or os.environ.get(
+        "RESEND_FROM_ADDRESS") or None
+    if not key:
+        return {
+            "ok": False,
+            "reason": "RESEND_API_KEY_missing_on_pod",
+            "key_prefix": None, "key_len": 0,
+            "from_address_env": from_addr,
+            "domains": [],
+        }
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            r = await c.get(
+                "https://api.resend.com/domains",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+    except Exception as e:
+        return {
+            "ok": False, "reason": f"probe_exception:{type(e).__name__}",
+            "key_prefix": key_prefix, "key_len": key_len,
+            "from_address_env": from_addr, "domains": [],
+        }
+    body_text = (r.text or "")[:1000]
+    if key and key in body_text:
+        body_text = body_text.replace(key, f"{key_prefix}(redacted)")
+    if r.status_code >= 400:
+        return {
+            "ok": False, "status_code": r.status_code,
+            "reason": f"resend_probe_http_{r.status_code}",
+            "response_body": body_text,
+            "key_prefix": key_prefix, "key_len": key_len,
+            "from_address_env": from_addr, "domains": [],
+        }
+    try:
+        parsed = r.json()
+    except Exception:
+        parsed = {}
+    domains = []
+    from_domain = None
+    if from_addr and "@" in from_addr:
+        from_domain = from_addr.split("@", 1)[1].strip().lower()
+    from_domain_verified = None
+    for d in (parsed.get("data") or []):
+        _name = d.get("name")
+        _status = d.get("status")
+        domains.append({"name": _name, "status": _status,
+                          "region": d.get("region"),
+                          "sending": (d.get("capabilities") or {}).get("sending")})
+        if from_domain and _name == from_domain:
+            from_domain_verified = (_status == "verified")
+    return {
+        "ok": True, "status_code": r.status_code,
+        "key_prefix": key_prefix, "key_len": key_len,
+        "from_address_env": from_addr,
+        "from_domain": from_domain,
+        "from_domain_verified": from_domain_verified,
+        "domains": domains,
+    }
