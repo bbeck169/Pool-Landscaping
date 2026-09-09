@@ -17,7 +17,6 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_ROOT))
 from dotenv import load_dotenv
 load_dotenv(BACKEND_ROOT / ".env")
-os.environ["TEST_LLM_MOCK"] = "1"
 
 from services.ai_estimator import (
     generate_estimate, prime_test_mocks, clear_test_mocks,
@@ -44,8 +43,15 @@ GOOD_LINEAR = {
 }
 
 
+# ─── Test-isolation guard (I1.7 leak fix, Feb-2026) ──────────────
+# Previously this file did ``os.environ["TEST_LLM_MOCK"] = "1"`` at
+# module scope, which polluted every subsequent test module in an
+# alphabetical sweep. The autouse fixture below scopes the flag to
+# each test in THIS file and tears it down on module exit. Also
+# clears any queued mock responses so tests can't cross-contaminate.
 @pytest.fixture(autouse=True)
-def _clean():
+def _clean(monkeypatch):
+    monkeypatch.setenv("TEST_LLM_MOCK", "1")
     clear_test_mocks()
     yield
     clear_test_mocks()

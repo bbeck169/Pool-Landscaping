@@ -17,10 +17,19 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from dotenv import load_dotenv
 load_dotenv(BACKEND_ROOT / ".env")
 
-# Turn on the mock BEFORE we import anything that reads it.
-os.environ["TEST_LLM_MOCK"] = "1"
-
 from tests.conftest import demo_pw
+
+
+# ─── Test-isolation guard (I1.7 leak fix, Feb-2026) ──────────────
+# Previously this file did ``os.environ["TEST_LLM_MOCK"] = "1"`` at
+# module scope, which polluted every subsequent test file in an
+# alphabetical sweep. Scoping the flag to an autouse fixture keeps
+# the mock active for every test in THIS module and tears it down
+# on module exit.
+@pytest.fixture(autouse=True)
+def _force_test_llm_mock(monkeypatch):
+    monkeypatch.setenv("TEST_LLM_MOCK", "1")
+    yield
 
 BACKEND = os.environ.get("REACT_APP_BACKEND_URL") \
     or "https://poolscape-audit.preview.emergentagent.com"

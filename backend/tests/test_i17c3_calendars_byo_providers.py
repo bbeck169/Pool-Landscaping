@@ -53,11 +53,23 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import MongoClient
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-# Force mock mode BEFORE we import the calendars module.
-os.environ["CALENDARS_TESTMODE_MOCK"] = "true"
 
 API = "http://localhost:8001/api"
 _sync = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+
+# ─── Test-isolation guard (I1.7 leak fix, Feb-2026) ──────────────
+# Previously this file did ``os.environ["CALENDARS_TESTMODE_MOCK"] =
+# "true"`` at module scope, which pollutes every subsequent pytest
+# (e.g. ``test_i17e_testmode_env_visibility``) run in the same
+# alphabetical sweep. The autouse ``monkeypatch`` fixture below sets
+# the flag for the duration of each test in THIS module only and
+# tears it down cleanly on completion, restoring whatever value (or
+# absence) was there at process start.
+@pytest.fixture(autouse=True)
+def _force_calendars_testmode_mock(monkeypatch):
+    monkeypatch.setenv("CALENDARS_TESTMODE_MOCK", "true")
+    yield
 
 
 _LOOP: asyncio.AbstractEventLoop | None = None
