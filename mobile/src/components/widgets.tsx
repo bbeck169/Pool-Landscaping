@@ -90,18 +90,22 @@ export function Header({
   return (
     <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
       <View style={styles.headerRow}>
-        <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0 }}>
           {back ? (
             <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn} testID="header-back">
               <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
             </Pressable>
           ) : null}
           {left ? left : !back ? <BrandLogo size="sm" variant="icon" /> : null}
-          <View style={{ flex: 1, marginLeft: !back && !left ? spacing.sm : 0 }}>
+          <View style={{ flex: 1, minWidth: 0, flexShrink: 1, marginLeft: !back && !left ? spacing.sm : 0 }}>
             <Text style={styles.headerTitle} numberOfLines={1}>
               {title}
             </Text>
-            {subtitle ? <Text style={styles.headerSub}>{subtitle}</Text> : null}
+            {subtitle ? (
+              <Text style={styles.headerSub} numberOfLines={1} ellipsizeMode="tail">
+                {subtitle}
+              </Text>
+            ) : null}
           </View>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>

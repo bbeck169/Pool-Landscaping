@@ -1,10 +1,17 @@
 /**
- * Daily Route Map — web fallback.
+ * Daily Route Map — web implementation.
  *
- * @rnmapbox/maps is native-only; on web we show a placeholder.
- * Mirrors the ScheduleMap.web.tsx pattern.
+ * Renders a Leaflet + OpenStreetMap map inside an <iframe srcDoc>
+ * with one marker per geocoded stop. No API key or native SDK
+ * required — Leaflet + OSM tiles load from CDN inside the iframe.
+ *
+ * Falls back to the "No mapped stops" placeholder when 0 jobs
+ * have coordinates.
+ *
+ * Native (.native.tsx) is untouched — it ships the real
+ * @rnmapbox/maps view.
  */
-import React from "react";
+import React, { useMemo } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, font, fontSize, radius } from "@/src/theme";
@@ -75,27 +82,113 @@ export function statusKind(status?: string | null): "pending" | "completed" | "c
   return "pending";
 }
 
+/* ── Status → marker color map ─────────────────────────────────────── */
+
+const STATUS_COLORS: Record<ReturnType<typeof statusKind>, string> = {
+  pending: "#3B82F6",   // blue
+  completed: "#22C55E", // green
+  cns: "#EF4444",       // red
+};
+
 /* ── Component ─────────────────────────────────────────────────────── */
 
 export default function DailyRouteMap({ jobs, testID }: DailyRouteMapProps) {
   if (!jobs || jobs.length === 0) return null;
 
-  const geocoded = jobs.filter((j) => resolveJobCoords(j) !== null);
+  const pins = useMemo(() => {
+    const out: Array<{ lat: number; lng: number; label: string; color: string; idx: number }> = [];
+    for (let i = 0; i < jobs.length; i++) {
+      const j = jobs[i];
+      const c = resolveJobCoords(j);
+      if (!c) continue;
+      const kind = statusKind(j.status);
+      const label = (j.customer_name || `Stop ${i + 1}`).replace(/'/g, "\\'").replace(/"/g, "&quot;");
+      out.push({ ...c, label, color: STATUS_COLORS[kind], idx: i + 1 });
+    }
+    return out;
+  }, [jobs]);
+
+  // Fallback: no geocoded stops → placeholder
+  if (pins.length === 0) {
+    return (
+      <View style={s.placeholder} testID={testID || "schedule-daily-route-map"}>
+        <Ionicons name="map-outline" size={28} color={colors.muted} />
+        <Text style={s.placeholderText}>No mapped stops today</Text>
+      </View>
+    );
+  }
+
+  // Compute center + zoom bounds
+  const center = useMemo(() => {
+    const lats = pins.map((p) => p.lat);
+    const lngs = pins.map((p) => p.lng);
+    return {
+      lat: (Math.min(...lats) + Math.max(...lats)) / 2,
+      lng: (Math.min(...lngs) + Math.max(...lngs)) / 2,
+    };
+  }, [pins]);
+
+  // Build the Leaflet HTML page for the iframe
+  const html = useMemo(() => {
+    const markersJs = pins
+      .map(
+        (p) =>
+          `L.circleMarker([${p.lat},${p.lng}],{radius:8,fillColor:'${p.color}',color:'#fff',weight:2,fillOpacity:0.9}).addTo(m).bindPopup('<b>${p.idx}.</b> ${p.label}');`
+      )
+      .join("\n");
+
+    // Compute bounds for fitBounds
+    const boundsJs =
+      pins.length > 1
+        ? `m.fitBounds([${pins.map((p) => `[${p.lat},${p.lng}]`).join(",")}],{padding:[30,30]});`
+        : `m.setView([${pins[0].lat},${pins[0].lng}],13);`;
+
+    return `<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
+<style>*{margin:0;padding:0}html,body,#m{width:100%;height:100%}</style>
+</head><body>
+<div id="m"></div>
+<script>
+var m=L.map('m',{zoomControl:false,attributionControl:false});
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18}).addTo(m);
+${markersJs}
+${boundsJs}
+L.control.attribution({prefix:false}).addTo(m);
+<\/script>
+</body></html>`;
+  }, [pins, center]);
 
   return (
     <View style={s.wrap} testID={testID || "schedule-daily-route-map"}>
-      <Ionicons name="map-outline" size={28} color={colors.muted} />
-      <Text style={s.text}>
-        {geocoded.length === 0
-          ? "No mapped stops today"
-          : `Route map with ${geocoded.length} stop${geocoded.length > 1 ? "s" : ""} available on the mobile app.`}
-      </Text>
+      {React.createElement("iframe", {
+        srcDoc: html,
+        style: {
+          width: "100%",
+          height: "100%",
+          border: "none",
+          borderRadius: 8,
+        },
+        title: "Route map",
+        sandbox: "allow-scripts",
+      })}
     </View>
   );
 }
 
 const s = StyleSheet.create({
   wrap: {
+    height: 240,
+    borderRadius: radius.md,
+    overflow: "hidden",
+    marginBottom: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  placeholder: {
     height: 200,
     alignItems: "center",
     justifyContent: "center",
@@ -107,7 +200,7 @@ const s = StyleSheet.create({
     borderColor: colors.border,
     marginBottom: spacing.md,
   },
-  text: {
+  placeholderText: {
     fontFamily: font.regular,
     fontSize: fontSize.sm,
     color: colors.muted,
