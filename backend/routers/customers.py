@@ -435,6 +435,33 @@ async def list_customers(
     # active together. Whitespace-only fields are treated as missing.
     missing_email: Optional[bool] = False,
     missing_phone: Optional[bool] = False,
+    # Feb-2026 · P43b — "Missing address" data-quality chip. Same
+    # ``missing_*`` boolean convention as email/phone. A customer
+    # counts as missing an address when BOTH sides of the read-side
+    # union used by ``services.google_maps.geocoding._flatten_addr``
+    # come up empty: (a) ``service_address`` is null/missing/empty
+    # string/whitespace/empty-dict/all-empty-dict, AND (b) every
+    # per-field slot (``service_street|street``, ``service_city|city``,
+    # ``service_state|state``, ``service_zip|zip``) is also empty.
+    # This mirrors the truth used by the P37 geocode backfill so the
+    # chip count exactly matches "customers that can't be pinned on
+    # the map".
+    missing_address: Optional[bool] = False,
+    # Feb-2026 · P43c — "Portal status" tri-state filter.
+    #   ``portal_activated=true``  → customer has EITHER ``has_login``
+    #     True (staff / self-serve created a portal password) OR
+    #     ``last_portal_login_at`` set (customer has actually signed
+    #     in at least once). Any single positive signal counts.
+    #   ``portal_activated=false`` → NEITHER signal is present —
+    #     ``has_login`` is not truthy AND ``last_portal_login_at``
+    #     is null/missing/empty. These are the "created by staff
+    #     but never onboarded" customers the chip surfaces.
+    #   Omitted (``None``) → no filter, all customers pass.
+    # The two positive signals are the strongest ones on the
+    # ``customers`` document; no cross-collection join into ``users``
+    # is needed. Composes AND with every other filter (P43 chips,
+    # search, active/inactive tabs, etc.).
+    portal_activated: Optional[bool] = None,
     portal_status: Optional[str] = Query(
         None,
         description=(
@@ -646,6 +673,77 @@ async def list_customers(
                 {"phone": {"$regex": r"^\s*$"}},
             ],
         }]
+    # Feb-2026 · P43b — "Missing address" data-quality chip. Matches
+    # the read-side predicate used by
+    # ``services.google_maps.geocoding._flatten_addr``: a customer
+    # counts as address-less only when the top-level ``service_address``
+    # AND every per-field breakdown slot are empty. Both branches
+    # tolerate the historical dict shape (``{street, city, state,
+    # postal_code|zip}``) — an empty or all-blank dict qualifies.
+    # ``$regex: \S`` (any non-whitespace char) is the canonical
+    # "has-content" probe used by the ``$nor`` clause.
+    if missing_address:
+        _blank = {"$regex": r"\S", "$options": "s"}
+        _dict_all_blank = {"$and": [
+            {"service_address": {"$type": "object"}},
+            {"$nor": [
+                {"service_address.street": _blank},
+                {"service_address.city": _blank},
+                {"service_address.state": _blank},
+                {"service_address.postal_code": _blank},
+                {"service_address.zip": _blank},
+            ]},
+        ]}
+        q["$and"] = q.get("$and", []) + [{
+            "$and": [
+                # (a) top-level ``service_address`` is empty in any shape
+                {"$or": [
+                    {"service_address": None},
+                    {"service_address": ""},
+                    {"service_address": {"$exists": False}},
+                    {"service_address": {"$regex": r"^\s*$"}},
+                    _dict_all_blank,
+                ]},
+                # (b) per-field breakdown is entirely empty (any of the
+                # eight slots with non-whitespace content disqualifies)
+                {"$nor": [
+                    {"service_street": _blank},
+                    {"street": _blank},
+                    {"service_city": _blank},
+                    {"city": _blank},
+                    {"service_state": _blank},
+                    {"state": _blank},
+                    {"service_zip": _blank},
+                    {"zip": _blank},
+                ]},
+            ],
+        }]
+    # Feb-2026 · P43c — "Portal status" tri-state filter. Positive
+    # signals: ``has_login: True`` (portal account created — password
+    # persisted) OR ``last_portal_login_at`` set (customer has signed
+    # in at least once). Either counts.
+    if portal_activated is not None:
+        _activated_signals = {
+            "$or": [
+                {"has_login": True},
+                {"last_portal_login_at": {"$exists": True,
+                                             "$nin": [None, ""]}},
+            ],
+        }
+        if portal_activated:
+            q["$and"] = q.get("$and", []) + [_activated_signals]
+        else:
+            # Not activated → NEITHER signal is present.
+            q["$and"] = q.get("$and", []) + [{
+                "$and": [
+                    {"$or": [{"has_login": {"$exists": False}},
+                              {"has_login": None},
+                              {"has_login": False}]},
+                    {"$or": [{"last_portal_login_at": {"$exists": False}},
+                              {"last_portal_login_at": None},
+                              {"last_portal_login_at": ""}]},
+                ],
+            }]
     # Phase G4a · Feb-2026 — Portal-activation cohort filter. Uses the
     # ``customers.has_login`` denorm (set to True on
     # ``portal-invite``, False on ``portal-revoke``) for O(index)

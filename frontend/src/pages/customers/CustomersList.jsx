@@ -276,6 +276,32 @@ export default function CustomersList() {
     () => searchParams.get("missing_email") === "1");
   const [missingPhone, setMissingPhone] = useState(
     () => searchParams.get("missing_phone") === "1");
+  // Feb-2026 · P43b — "Missing address" chip. Same URL-hydrated
+  // convention as the two P43 chips. Server-side filter via
+  // ``?missing_address=true`` composes AND with every other filter.
+  const [missingAddress, setMissingAddress] = useState(
+    () => searchParams.get("missing_address") === "1");
+  // P43b · standalone count for the chip badge — hydrated on mount +
+  // whenever the tenant scope changes so the count reflects the
+  // FULL filterable population (not the intersection of currently-
+  // active filters). Deliberately does NOT compose with other
+  // filters so the badge is stable while the admin toggles chips.
+  const [missingAddressCount, setMissingAddressCount] = useState(null);
+  // Feb-2026 · P43c — "Portal status" tri-state segmented control.
+  //   ``""``            → Any (default, no filter)
+  //   ``"activated"``   → ``?portal_activated=true``
+  //   ``"not_activated"`` → ``?portal_activated=false``
+  // Hydrated from ``?portal_activated=1|0`` in the URL (canonical
+  // shorthand matching the sibling ``missing_*`` chips). Persisted
+  // back to the URL on toggle so refresh + share links keep state.
+  const [portalStatusFilter, setPortalStatusFilter] = useState(() => {
+    const raw = searchParams.get("portal_activated");
+    if (raw === "1" || raw === "true") return "activated";
+    if (raw === "0" || raw === "false") return "not_activated";
+    return "";
+  });
+  const [portalActivatedCount, setPortalActivatedCount] = useState(null);
+  const [portalNotActivatedCount, setPortalNotActivatedCount] = useState(null);
   // Feb-2026 · P46 — ``city`` filter state must live above ``load()``
   // so its dep-array reference during render doesn't hit the TDZ.
   // Hydrated from ``?city=<value>``; URL sync lives further down.
@@ -371,6 +397,10 @@ export default function CustomersList() {
     // Feb-2026 · P43 — data-quality filters.
     if (missingEmail) params.set("missing_email", "true");
     if (missingPhone) params.set("missing_phone", "true");
+    if (missingAddress) params.set("missing_address", "true");
+    // Feb-2026 · P43c — Portal status tri-state.
+    if (portalStatusFilter === "activated") params.set("portal_activated", "true");
+    else if (portalStatusFilter === "not_activated") params.set("portal_activated", "false");
     // Feb-2026 · P46 — city + multi-tag now flow through the backend
     // so pagination + tab counts stay honest. Repeat the ``tags``
     // key per selected value so backend gets a proper list.
@@ -435,6 +465,9 @@ export default function CustomersList() {
       const p43 = [];
       if (missingEmail) p43.push("missing_email=true");
       if (missingPhone) p43.push("missing_phone=true");
+      if (missingAddress) p43.push("missing_address=true");
+      if (portalStatusFilter === "activated") p43.push("portal_activated=true");
+      else if (portalStatusFilter === "not_activated") p43.push("portal_activated=false");
       // Feb-2026 · P46 — tab counts must also honor city + multi-tag
       // filters so tab badges match the paginated envelope's total.
       if (city && city.trim()) {
@@ -493,7 +526,7 @@ export default function CustomersList() {
     // missing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
-       missingPhone, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
+       missingPhone, missingAddress, portalStatusFilter, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
 
   // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
   // first invocation so hydrating chips from the URL on mount does
@@ -509,10 +542,55 @@ export default function CustomersList() {
     else next.delete("missing_email");
     if (missingPhone) next.set("missing_phone", "1");
     else next.delete("missing_phone");
+    if (missingAddress) next.set("missing_address", "1");
+    else next.delete("missing_address");
+    if (portalStatusFilter === "activated") next.set("portal_activated", "1");
+    else if (portalStatusFilter === "not_activated") next.set("portal_activated", "0");
+    else next.delete("portal_activated");
     setSearchParams(next, { replace: true });
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missingEmail, missingPhone]);
+  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter]);
+
+  // Feb-2026 · P43b — Fetch the total "missing address" count once
+  // on mount (and whenever the tenant scope changes) so the chip
+  // badge shows a stable "(N)" count. Deliberately does NOT compose
+  // with other active filters — the badge represents the FULL
+  // population of address-less customers in the current tenant so
+  // the number doesn't jump as the admin toggles other chips.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.get(
+          "/customers?count_only=true&missing_address=true",
+        );
+        if (!cancelled) setMissingAddressCount(r?.count ?? 0);
+      } catch {
+        if (!cancelled) setMissingAddressCount(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [scope]);
+
+  // Feb-2026 · P43c — Fetch both "activated" and "not activated"
+  // counts on mount (parallel). Same stability contract as the
+  // missing-address count — deliberately does NOT compose with
+  // other filters so the segmented badges stay stable while the
+  // admin narrows other criteria.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [a, na] = await Promise.all([
+        api.get("/customers?count_only=true&portal_activated=true").catch(() => null),
+        api.get("/customers?count_only=true&portal_activated=false").catch(() => null),
+      ]);
+      if (cancelled) return;
+      setPortalActivatedCount(a?.count ?? null);
+      setPortalNotActivatedCount(na?.count ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [scope]);
 
   // Feb-2026 · P35 — any filter or tab change resets pagination to
   // page 1 so the user doesn't land on an empty page after narrowing
@@ -1269,6 +1347,102 @@ export default function CustomersList() {
           />
           No phone number
         </button>
+        {/* Feb-2026 · P43b — "Missing address" data-quality chip.
+             Server-side filter via ``?missing_address=true``. Renders
+             a "(N)" count badge sourced from a standalone count call
+             that ignores other filters (badge is stable across
+             chip toggles). Same P43 blue palette as email/phone. */}
+        <button
+          onClick={() => setMissingAddress((v) => !v)}
+          data-testid="customers-missing-address-filter"
+          className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+          style={{
+            backgroundColor: missingAddress ? "#DBEAFE" : colors.surfaceSecondary,
+            color: missingAddress ? "#1E3A8A" : colors.onSurfaceSecondary,
+            border: `1px solid ${missingAddress ? "#93C5FD" : colors.border}`,
+          }}
+          aria-pressed={missingAddress ? "true" : "false"}
+        >
+          <span
+            className="inline-block w-2 h-2 rounded-full"
+            style={{ backgroundColor: missingAddress ? "#1E40AF" : "#94A3B8" }}
+          />
+          Missing address
+          {missingAddressCount != null ? (
+            <span
+              className="ml-1 tabular-nums"
+              data-testid="customers-missing-address-count"
+              style={{
+                color: missingAddress ? "#1E3A8A" : colors.onSurfaceSecondary,
+                fontWeight: 600,
+                opacity: 0.9,
+              }}
+            >
+              ({missingAddressCount})
+            </span>
+          ) : null}
+        </button>
+        {/* Feb-2026 · P43c — "Portal status" tri-state segmented
+             control. Only one option can be selected at a time; the
+             Any option clears the filter. Two count badges hydrate
+             from parallel ``count_only`` calls on mount and remain
+             stable while the admin toggles other chips. Matches the
+             P43 blue palette so the segmented control reads as part
+             of the data-quality chip family. */}
+        <div
+          data-testid="customers-portal-status-filter"
+          data-value={portalStatusFilter || "any"}
+          role="group"
+          aria-label="Portal status"
+          className="inline-flex items-stretch rounded-lg overflow-hidden text-xs font-semibold"
+          style={{
+            border: `1px solid ${colors.border}`,
+            backgroundColor: colors.surfaceSecondary,
+          }}
+        >
+          {[
+            { value: "", label: "Any", testid: "customers-portal-status-any" },
+            { value: "activated", label: "Activated",
+              count: portalActivatedCount,
+              testid: "customers-portal-status-activated" },
+            { value: "not_activated", label: "Not activated",
+              count: portalNotActivatedCount,
+              testid: "customers-portal-status-not-activated" },
+          ].map((opt) => {
+            const active = portalStatusFilter === opt.value;
+            return (
+              <button
+                key={opt.value || "any"}
+                type="button"
+                onClick={() => setPortalStatusFilter(opt.value)}
+                data-testid={opt.testid}
+                aria-pressed={active ? "true" : "false"}
+                className="px-3 py-1.5 inline-flex items-center gap-1"
+                style={{
+                  backgroundColor: active ? "#DBEAFE" : "transparent",
+                  color: active ? "#1E3A8A" : colors.onSurfaceSecondary,
+                  borderLeft: opt.value === "" ? "none"
+                    : `1px solid ${colors.border}`,
+                  cursor: "pointer",
+                }}
+              >
+                {opt.label}
+                {opt.count != null ? (
+                  <span
+                    className="tabular-nums"
+                    style={{
+                      color: active ? "#1E3A8A" : colors.onSurfaceSecondary,
+                      opacity: 0.9,
+                    }}
+                    data-testid={`${opt.testid}-count`}
+                  >
+                    ({opt.count})
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
         {/* Feb-2026 · P26 — admin-tier "Show deleted" toggle
              (widened from super_admin by the Customer Delete UX
              overhaul; backend gates are widened symmetrically). */}
@@ -1408,6 +1582,31 @@ export default function CustomersList() {
               Send portal invite ({selected.size})
             </Button>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* Feb-2026 · P43b — contextual banner shown ONLY when the
+          missing-address chip is active. Sits ABOVE the data-table
+          card so it renders whether the filtered list is empty or
+          populated. Skipped when the chip is off so the list is
+          uncluttered. */}
+      {missingAddress ? (
+        <div
+          className="rounded-md border p-3 mb-3 text-sm inline-flex items-start gap-2"
+          style={{
+            background: "#EFF6FF",
+            borderColor: "#BFDBFE",
+            color: "#1E3A8A",
+          }}
+          data-testid="customers-missing-address-banner"
+          role="note"
+        >
+          <span aria-hidden="true">&#9432;</span>
+          <span>
+            These customers can&rsquo;t appear on maps or route
+            optimization until an address is added. Click any
+            customer to add one.
+          </span>
         </div>
       ) : null}
 
