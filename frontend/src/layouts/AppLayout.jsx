@@ -234,6 +234,19 @@ function ProtectedShell() {
     );
   }
   if (!user) {
+    // Feb-2026 · Phase A · Item 1 — magic-link tokens on
+    // ``/portal/estimates/:id?token=…`` bypass the auth redirect so
+    // an anonymous customer can approve / decline the estimate
+    // without signing in. The token is validated server-side inside
+    // ``EstimateView`` → ``/portal/quotes/via-token`` load; the
+    // guard here just lets the render proceed.
+    const search = location.search || "";
+    const hasToken = /[?&]token=[^&]+/.test(search);
+    const isTokenableEstimatePath =
+      /^\/portal\/estimates\/[^/]+/.test(location.pathname);
+    if (hasToken && isTokenableEstimatePath) {
+      return <Outlet />;
+    }
     // K37 · Unauthenticated hits under `/portal/*` land on the
     // customer login surface, not the staff `/login` page. Every
     // other unauthenticated route continues to hit `/login` as

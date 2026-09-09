@@ -32,6 +32,8 @@ import ScheduleMap from "@/pages/schedule/ScheduleMap";
 // Phase K50 · Feb-2026 — Schedule job-card status background shading.
 import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
 import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide } from "lucide-react";
+// Feb-2026 · Batch #4 · Item 2 — inline nav-arrow next to customer name.
+import NavigateJobButton from "../../components/schedule/NavigateJobButton";
 
 const GOOGLE_LIBS = ["places"];
 
@@ -1023,6 +1025,14 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                 <div className="text-base font-bold flex items-center gap-1.5 flex-wrap" style={{ color: colors.onSurface }}
                      data-testid={`schedule-card-customer-${j.id}`}>
                   <span>{j.customer_name || "—"}</span>
+                  {/* Feb-2026 · Batch #4 · Item 2 — Navigate arrow
+                      moved inline with the customer name (from far-
+                      right where it used to sit next to the OPEN
+                      status pill). Kept as a sibling of the name
+                      span so DOM lookups + snapshot tests can
+                      assert positional invariants. Order: name →
+                      nav-arrow → VIP pill. */}
+                  <NavigateJobButton job={j} size={14} />
                   {j.customer_is_vip ? (
                     <span
                       className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider"

@@ -11,6 +11,7 @@ import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import ScrollToTop from "@/components/ScrollToTop";
 import useTelephonyLiveEvents from "@/hooks/useTelephonyLiveEvents";
 import AppLayout from "@/layouts/AppLayout";
+import PublicEstimateLanding from "@/pages/portal/PublicEstimateLanding";
 import Login from "@/pages/Login";
 // Phase 34 · Feb 2026 — self-serve password reset landing (stub UI).
 // Backend endpoint tracked in /app/memory/todo_password_reset.md.
@@ -626,6 +627,14 @@ export default function App() {
           {/* Phase 15A public magic-link routes (no auth) */}
           <Route path="/csat/:token" element={<PublicCsat />} />
           <Route path="/portal/sign/:token" element={<PortalSignPage />} />
+          {/* Feb-2026 · Phase A · Item 1 — public estimate-approve /
+              decline landing page. The magic-link generator emits
+              ``/e/estimate?token=…``; this route reads the token
+              from the query and hands it straight to EstimateView,
+              which activates the Phase A path-based endpoints for
+              per-line + top-level approve / decline. Sits OUTSIDE
+              AppLayout so no auth guard runs. */}
+          <Route path="/e/estimate" element={<PublicEstimateLanding />} />
           {/* Phase 15B slot-in — Lead Request public form (no auth) */}
           <Route path="/lead-request/:token" element={<PublicLeadRequestPage />} />
           {/* Phase 8 · Feb 2026 — public leads intake (Turnstile-gated) */}

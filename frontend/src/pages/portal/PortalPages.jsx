@@ -296,12 +296,35 @@ export function PortalEstimateDetail() {
   const [params] = useSearchParams();
   const printable = params.get("format") === "printable";
   const [toast, setToast] = useState(null);
+  // Feb-2026 · Phase A · Item 1 — read the magic-link token from the
+  // URL so the Phase A path-based endpoints on ``EstimateView`` fire
+  // against ``/portal/quotes/via-token/{token}/…``. The AppLayout
+  // auth guard has a matching bypass (see ``ProtectedShell``) that
+  // allows this route to render for anonymous visitors when
+  // ``?token=`` is present. Log a WARN so we can pick which wiring
+  // path (this route vs the newly-added ``/e/estimate``) survives
+  // long-term.
+  const token = params.get("token") || null;
+  if (token && typeof window !== "undefined"
+      && !window.__phaseA_portal_estimates_id_warned) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[phase-a] token-bearing /portal/estimates/:id hit. Consider "
+      + "consolidating on /e/estimate.",
+    );
+    window.__phaseA_portal_estimates_id_warned = true;
+  }
   return (
     <div
       className={printable ? "" : "max-w-4xl mx-auto px-2 sm:px-4 lg:px-6 py-4"}
       data-testid="portal-est-detail"
     >
-      <EstimateView estimateId={id} isAdmin={false} printable={printable} />
+      <EstimateView
+        estimateId={id}
+        isAdmin={false}
+        printable={printable}
+        token={token}
+      />
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );

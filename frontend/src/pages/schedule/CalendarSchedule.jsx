@@ -29,7 +29,7 @@ import "react-big-calendar/lib/css/react-big-calendar.css";
 import JobNotesCallout from "@/components/schedule/JobNotesCallout";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
          CheckCircle2, Move as MoveIcon, ArrowUp, FileText, Star, Check, Trash2, Loader2, UsersRound,
-         Pencil, Key, Navigation2, ChevronDown, ChevronUp, Map as MapIcon } from "lucide-react";
+         Pencil, Key, Navigation2, ChevronDown, ChevronUp, Map as MapIcon, RefreshCw } from "lucide-react";
 // Phase F1 · Feb-2026 — Bulk multi-stop "Navigate route" URL builder.
 import { runBulkNavigateRoute } from "../../lib/googleMapsRoute";
 
@@ -1758,6 +1758,34 @@ function GridPanel({
           data-testid="grid-next-day"
         >
           <ChevronRight size={16} />
+        </button>
+        {/* Feb-2026 · Batch #4 · Item 3 — refresh button. Refetches
+            the same day's schedule payload (jobs + map pins) so
+            techs see newly-assigned jobs without a page reload.
+            Debounced against double-clicks via the ``busy`` guard
+            and shows an inline spinner while the request is in
+            flight. */}
+        <button
+          onClick={() => {
+            if (busy) return;
+            load({ force: true });
+          }}
+          disabled={busy}
+          className="w-9 h-9 rounded-lg flex items-center justify-center"
+          style={{ background: colors.surfaceSecondary,
+                    border: `1px solid ${colors.border}`,
+                    color: colors.onSurface,
+                    opacity: busy ? 0.6 : 1,
+                    cursor: busy ? "wait" : "pointer" }}
+          title="Refresh schedule"
+          aria-label="Refresh schedule"
+          data-testid="schedule-refresh-btn"
+        >
+          <RefreshCw
+            size={16}
+            className={busy ? "animate-spin" : ""}
+            data-testid={busy ? "schedule-refresh-spinner" : undefined}
+          />
         </button>
         <div className="flex-1" />
         <div className="text-sm font-semibold" style={{ color: colors.onSurface }} data-testid="grid-day-label">
