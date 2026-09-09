@@ -408,8 +408,11 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
   return (
     <View testID="pool-checklist-form">
       {/* Chemical Readings — Wizard step 1 (mobile renders as a
-          single scroll; the caller does not wire `wizardStep`). */}
-      <Text style={styles.sectionTitle}>Chemical Readings</Text>
+          single scroll; the caller does not wire `wizardStep`).
+          Heading hidden on Expo Web per product trim. */}
+      {Platform.OS !== "web" && (
+        <Text style={styles.sectionTitle}>Chemical Readings</Text>
+      )}
       {/* Feb-2026 · Checklist reclassifier — inline picker mirrors the
           web empty-state block. Trigger conditions match web: the
           backend template must be "generic" AND readingFields must be

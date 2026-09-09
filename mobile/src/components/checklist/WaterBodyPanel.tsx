@@ -6,7 +6,7 @@
  */
 import React, { useMemo } from "react";
 import {
-  View, Text, TextInput, Pressable, StyleSheet, Alert,
+  View, Text, TextInput, Pressable, StyleSheet, Alert, Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
@@ -159,42 +159,46 @@ export default function WaterBodyPanel({
         );
       })}
 
-      {/* Chemicals used */}
-      <Text style={s.sectionLabel}>Chemicals Used</Text>
-      {(body.chemicals_used || []).map((chem: any, ci: number) => {
-        const meta = CHEMICAL_LABELS[chem.product_slug] || { name: chem.product_name || chem.product_slug, unit: chem.unit };
-        return (
-          <View key={`${chem.product_slug}-${ci}`} style={s.chemRow} testID={`chem-row-${index}-${ci}`}>
-            <Text style={s.chemName}>{meta.name}</Text>
-            <TextInput
-              style={s.chemInput}
-              value={chem.amount != null ? String(chem.amount) : ""}
-              onChangeText={(v) => updateChemical(ci, v)}
-              keyboardType="decimal-pad"
-              editable={!locked}
-              placeholder="0"
-              placeholderTextColor={colors.muted}
-              testID={`chem-amount-${index}-${ci}`}
-            />
-            <Text style={s.chemUnit}>{meta.unit}</Text>
-            {!locked ? (
-              <Pressable onPress={() => removeChemical(ci)} hitSlop={8} testID={`chem-remove-${index}-${ci}`}>
-                <Ionicons name="close-outline" size={16} color={colors.error} />
-              </Pressable>
-            ) : null}
-          </View>
-        );
-      })}
-      {!locked && availableChemicals.length > 0 ? (
-        <Pressable
-          style={s.addChemBtn}
-          onPress={() => addChemical(availableChemicals[0])}
-          testID={`add-chemical-${index}`}
-        >
-          <Ionicons name="add-outline" size={14} color={colors.brand} />
-          <Text style={s.addChemText}>Add chemical</Text>
-        </Pressable>
-      ) : null}
+      {/* Chemicals used — hidden on Expo Web per product trim */}
+      {Platform.OS !== "web" && (
+        <>
+          <Text style={s.sectionLabel}>Chemicals Used</Text>
+          {(body.chemicals_used || []).map((chem: any, ci: number) => {
+            const meta = CHEMICAL_LABELS[chem.product_slug] || { name: chem.product_name || chem.product_slug, unit: chem.unit };
+            return (
+              <View key={`${chem.product_slug}-${ci}`} style={s.chemRow} testID={`chem-row-${index}-${ci}`}>
+                <Text style={s.chemName}>{meta.name}</Text>
+                <TextInput
+                  style={s.chemInput}
+                  value={chem.amount != null ? String(chem.amount) : ""}
+                  onChangeText={(v) => updateChemical(ci, v)}
+                  keyboardType="decimal-pad"
+                  editable={!locked}
+                  placeholder="0"
+                  placeholderTextColor={colors.muted}
+                  testID={`chem-amount-${index}-${ci}`}
+                />
+                <Text style={s.chemUnit}>{meta.unit}</Text>
+                {!locked ? (
+                  <Pressable onPress={() => removeChemical(ci)} hitSlop={8} testID={`chem-remove-${index}-${ci}`}>
+                    <Ionicons name="close-outline" size={16} color={colors.error} />
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })}
+          {!locked && availableChemicals.length > 0 ? (
+            <Pressable
+              style={s.addChemBtn}
+              onPress={() => addChemical(availableChemicals[0])}
+              testID={`add-chemical-${index}`}
+            >
+              <Ionicons name="add-outline" size={14} color={colors.brand} />
+              <Text style={s.addChemText}>Add chemical</Text>
+            </Pressable>
+          ) : null}
+        </>
+      )}
 
       {/* Notes */}
       <Text style={s.sectionLabel}>Notes</Text>
