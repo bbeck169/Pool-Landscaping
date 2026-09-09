@@ -1,3 +1,22 @@
+## Iteration 78 — P43b + P43c + P44 Customer list filter chips
+- **Commit**: 8b2e34a3
+- **Date**: 2026-09-09
+- **Changes**:
+  - P43b: "Missing address (25)" filter chip, queries `missing_address=true`
+  - P43c corrected: Portal tri-state "Any | Signed in (5) | Never signed in (23)", queries `portal_activated=true/false` (replaces old "Activated/Not activated" + `portal_status` param)
+  - P44: "No payment on file (28)" filter chip, queries `has_payment_method=false`
+  - P44: "Send payment link" row action pill (admin-only, amber badge) + POST `/customers/{id}/send-card-add-link`
+  - P44: Missing card dot indicator (amber ●) on rows without payment methods
+  - All four count badges fetched in parallel on mount (stable, not composed)
+  - Filter chips compose: multi-filter = ANDed backend query
+  - 16 Jest tests (all pass): chip rendering, toggle API calls, composition, row action, alerts
+- **Files modified**: `mobile/app/(app)/customers.tsx`
+- **Files created**: `mobile/__tests__/customer-list-filters.test.tsx`
+- **Web files referenced**: `frontend/src/pages/customers/CustomersList.jsx`
+- **UX compromise**: Info banners (P43b "can't appear on maps" + P44 "can't be auto-charged") skipped for mobile viewport space
+
+
+
 ## Iteration 77 — Navigate arrow button: top-right + orange restyle
 - **Commit**: 1b08cb2a
 - **Date**: 2026-09-09

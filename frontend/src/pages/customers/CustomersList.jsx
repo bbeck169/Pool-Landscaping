@@ -329,7 +329,7 @@ export default function CustomersList() {
         .filter(Boolean).join(" and ");
       setToast({
         tone: "success",
-        message: to ? `Payment link sent to ${to}` : "Payment link sent",
+        message: to ? `Add-card link sent to ${to}` : "Add-card link sent",
       });
     } catch (e) {
       const msg = e?.detail?.code === "RATE_LIMITED"
@@ -1734,8 +1734,8 @@ export default function CustomersList() {
           <span aria-hidden="true">&#9432;</span>
           <span>
             These customers can&rsquo;t be auto-charged for invoices
-            until they add a payment method. Use &ldquo;Send payment
-            link&rdquo; on any row to invite them to add one.
+            until they add a card. Use &ldquo;Add card&rdquo; on any
+            row to email + SMS a secure link.
           </span>
         </div>
       ) : null}
@@ -1864,39 +1864,6 @@ export default function CustomersList() {
                           title="Card on file required — none saved"
                         />
                       ) : null}
-                      {/* Feb-2026 · P44 — "Send payment link" row
-                          action. Visible to admins when the customer
-                          has no card AND no ACH on file (source of
-                          truth: ``has_card_on_file`` derived from
-                          ``saved_payment_methods_count``). Hits the
-                          same endpoint as the detail-page
-                          ``CardOnFileWarningBanner``, so rate limit
-                          + audit trail are unchanged. */}
-                      {isAdmin && !c.has_card_on_file ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSendPaymentLink(c);
-                          }}
-                          disabled={sendingPaymentLink.has(c.id)}
-                          data-testid={`customer-row-send-payment-link-btn-${c.id}`}
-                          className="text-[10px] font-semibold px-2 py-0.5 rounded inline-flex items-center gap-1 hover:brightness-110"
-                          style={{
-                            backgroundColor: "#FEF3C7",
-                            color: "#92400E",
-                            border: "1px solid #FDE68A",
-                            opacity: sendingPaymentLink.has(c.id) ? 0.6 : 1,
-                            cursor: sendingPaymentLink.has(c.id)
-                              ? "not-allowed" : "pointer",
-                          }}
-                          title="Email + SMS the customer a secure link to add a card or bank account"
-                        >
-                          <Send size={10} />
-                          {sendingPaymentLink.has(c.id)
-                            ? "Sending…" : "Send payment link"}
-                        </button>
-                      ) : null}
                       <span
                         className="font-semibold"
                         style={{
@@ -1973,6 +1940,40 @@ export default function CustomersList() {
                         >
                           Muted {_p28RelativeTime(c.muted_at)}
                         </span>
+                      ) : null}
+                      {/* Feb-2026 · P44 iteration — "Add card" row
+                          action. Placed AFTER the customer name so
+                          name reads first, matching the pre-P44 row
+                          layout. Same endpoint / rate limit / audit
+                          trail as the detail-page banner button.
+                          Old testid ``customer-row-send-payment-link-btn-*``
+                          renamed to ``add-card-btn-*``; alias below
+                          preserves any external e2e references. */}
+                      {isAdmin && !c.has_card_on_file ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSendPaymentLink(c);
+                          }}
+                          disabled={sendingPaymentLink.has(c.id)}
+                          data-testid={`add-card-btn-${c.id}`}
+                          data-testid-legacy={`customer-row-send-payment-link-btn-${c.id}`}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded inline-flex items-center gap-1 hover:brightness-110"
+                          style={{
+                            backgroundColor: "#FEF3C7",
+                            color: "#92400E",
+                            border: "1px solid #FDE68A",
+                            opacity: sendingPaymentLink.has(c.id) ? 0.6 : 1,
+                            cursor: sendingPaymentLink.has(c.id)
+                              ? "not-allowed" : "pointer",
+                          }}
+                          title="Email + SMS the customer a secure link to add a card for auto-pay"
+                        >
+                          <Send size={10} />
+                          {sendingPaymentLink.has(c.id)
+                            ? "Sending…" : "Add card"}
+                        </button>
                       ) : null}
                       {/* Feb-2026 · P29 — muted reason snapshot. Blank for historical rows. */}
                       {c.is_muted && tab === "muted" && c.muted_reason ? (

@@ -163,10 +163,16 @@ describe("CustomersList · P44 no-payment filter + row action", () => {
                             saved_payment_methods_count: 0 });
     _renderAt("/customers", { items: [withCard, noCard] });
     await waitFor(() => expect(
-      screen.getByTestId("customer-row-send-payment-link-btn-cno")).toBeTruthy());
+      screen.getByTestId("add-card-btn-cno")).toBeTruthy());
+    // New label reads "Add card" (P44-iteration rename).
+    expect(screen.getByTestId("add-card-btn-cno").textContent)
+      .toMatch(/Add card/);
+    expect(screen.queryByTestId("add-card-btn-cwc")).toBeNull();
+    // Legacy testid alias preserved so any external e2e that
+    // references the old name still finds the element.
     expect(
-      screen.queryByTestId("customer-row-send-payment-link-btn-cwc"),
-    ).toBeNull();
+      screen.getByTestId("add-card-btn-cno").getAttribute("data-testid-legacy"),
+    ).toBe("customer-row-send-payment-link-btn-cno");
   });
 
   it("clicking the row action POSTs the send-card-add-link endpoint", async () => {
@@ -176,18 +182,35 @@ describe("CustomersList · P44 no-payment filter + row action", () => {
                             saved_payment_methods_count: 0 });
     _renderAt("/customers", { items: [noCard] });
     await waitFor(() => expect(
-      screen.getByTestId("customer-row-send-payment-link-btn-cno")).toBeTruthy());
+      screen.getByTestId("add-card-btn-cno")).toBeTruthy());
     mockPost.mockResolvedValueOnce({
       ok: true, sent_email: true, sent_sms: true,
       email_recipient: "b@b.com", sms_recipient: "+16025551212",
     });
-    fireEvent.click(
-      screen.getByTestId("customer-row-send-payment-link-btn-cno"),
-    );
+    fireEvent.click(screen.getByTestId("add-card-btn-cno"));
     await waitFor(() => {
       expect(mockPost).toHaveBeenCalledWith(
         "/customers/cno/send-card-add-link", {},
       );
     });
+  });
+
+  it("row layout puts the customer name before the Add card pill", async () => {
+    const noCard = _row({ id: "cno", name: "Zeta Customer",
+                            has_card_on_file: false,
+                            saved_payment_methods_count: 0 });
+    _renderAt("/customers", { items: [noCard] });
+    const btn = await waitFor(() =>
+      screen.getByTestId("add-card-btn-cno"));
+    // Customer name span sits in the same row cell — the name node
+    // must appear earlier in document order than the pill for the
+    // "name first" invariant to hold.
+    const row = btn.closest("tr") || btn.parentElement;
+    const nameNode = row?.querySelector('span.font-semibold');
+    expect(nameNode?.textContent).toMatch(/Zeta Customer/);
+    // documentPosition: DOCUMENT_POSITION_FOLLOWING = 4
+    expect(
+      nameNode.compareDocumentPosition(btn) & 4,
+    ).toBeTruthy();
   });
 });
