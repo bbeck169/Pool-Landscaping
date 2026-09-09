@@ -1,8 +1,14 @@
 /**
  * Slice R · <EstimateView> — shared estimate viewer.
  *
- * Reads /api/estimates/{id}/full (authenticated) OR
- * /api/portal/estimates/via-token (magic-link) and renders:
+ * Feb-2026 · Outcome C — Canonical API paths are now /api/quotes/{qid}/*
+ * (backing collection is db.quotes). The old /api/estimates/{eid}/*
+ * aliases still work for one release cycle. Portal magic-link is
+ * likewise /api/portal/quotes/via-token* (canonical) with the /portal
+ * /estimates/via-token* alias retained.
+ *
+ * Reads /api/quotes/{qid}/full (authenticated) OR
+ * /api/portal/quotes/via-token (magic-link) and renders:
  *
  *   • Admin toolbar (send/print/duplicate/archive/create-invoice/
  *     create-visit + request-changes/accept/decline + delete/edit)
@@ -53,8 +59,8 @@ export default function EstimateView({
   const load = useCallback(() => {
     setErr("");
     const p = token
-      ? api.get(`/portal/estimates/via-token?token=${encodeURIComponent(token)}`)
-      : api.get(`/estimates/${estimateId}/full`);
+      ? api.get(`/portal/quotes/via-token?token=${encodeURIComponent(token)}`)
+      : api.get(`/quotes/${estimateId}/full`);
     p.then(setData).catch((e) => setErr(e?.message || "Failed to load."));
   }, [estimateId, token]);
 
@@ -80,24 +86,24 @@ export default function EstimateView({
 
   const accept = () => {
     if (!window.confirm("Accept this estimate?")) return;
-    if (token) call("/portal/estimates/via-token/accept");
-    else call(`/estimates/${estimateId}/accept`);
+    if (token) call("/portal/quotes/via-token/accept");
+    else call(`/quotes/${estimateId}/accept`);
   };
   const submitDecline = () => {
-    if (token) call("/portal/estimates/via-token/decline", { reason: declineMsg });
-    else call(`/estimates/${estimateId}/decline`, { reason: declineMsg });
+    if (token) call("/portal/quotes/via-token/decline", { reason: declineMsg });
+    else call(`/quotes/${estimateId}/decline`, { reason: declineMsg });
     setDeclineOpen(false); setDeclineMsg("");
   };
   const submitChanges = () => {
     if (!changesMsg.trim()) return;
-    if (token) call("/portal/estimates/via-token/request-changes", { message: changesMsg });
-    else call(`/estimates/${estimateId}/request-changes`, { message: changesMsg });
+    if (token) call("/portal/quotes/via-token/request-changes", { message: changesMsg });
+    else call(`/quotes/${estimateId}/request-changes`, { message: changesMsg });
     setChangesOpen(false); setChangesMsg("");
   };
 
   const openPdf = () => {
     const tok = localStorage.getItem(TOKEN_KEY);
-    const url = `${BACKEND}/api/estimates/${estimateId}/pdf`;
+    const url = `${BACKEND}/api/quotes/${estimateId}/pdf`;
     if (!tok) { window.open(url, "_blank"); return; }
     fetch(url, { headers: { Authorization: `Bearer ${tok}` } })
       .then((r) => r.blob())

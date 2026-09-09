@@ -1,3 +1,16 @@
+"""Feb-2026 · Outcome C — DEPRECATED router (kept live).
+
+Every route in this module is flagged ``deprecated=True`` in the OpenAPI
+schema. The router is NOT yet retired because it and ``routers/estimator.py``
+are not duplicates — they operate on different collections
+(``db.estimates`` here vs. ``db.estimator_estimates`` in ``estimator.py``)
+with different request/response schemas. Retirement requires a proper
+data + frontend migration (see PRD backlog: "Estimates → Estimator
+unification, Phase 2 schema migration"). Until then callers should
+migrate to ``/api/estimator/*`` where a semantically-matching endpoint
+exists; ``/api/estimates/{eid}/convert`` is explicitly preserved as an
+alias for one release cycle so external scripts don't break.
+"""
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional
 
@@ -32,7 +45,7 @@ def compute_estimate(line_items: List[dict], overhead_pct: float, margin_pct: fl
 
 
 # ----------------------- Settings (company defaults) -----------------------
-@router.get("/estimates/settings")
+@router.get("/estimates/settings", deprecated=True)
 async def get_estimate_settings(user: dict = Depends(require_admin),
                                 tenant: dict = Depends(get_current_tenant)):
     s = await db.settings.find_one(
@@ -45,7 +58,7 @@ async def get_estimate_settings(user: dict = Depends(require_admin),
     return {"overhead_pct": s.get("overhead_pct", 15.0), "margin_pct": s.get("margin_pct", 30.0)}
 
 
-@router.put("/estimates/settings")
+@router.put("/estimates/settings", deprecated=True)
 async def put_estimate_settings(body: EstimateSettingsIn,
                                 user: dict = Depends(require_admin),
                                 tenant: dict = Depends(get_current_tenant)):
@@ -102,7 +115,7 @@ async def _ensure_templates_seeded(tenant_id: str):
             })
 
 
-@router.get("/estimate-templates")
+@router.get("/estimate-templates", deprecated=True)
 async def list_templates(user: dict = Depends(require_admin),
                          tenant: dict = Depends(get_current_tenant)):
     await _ensure_templates_seeded(tenant["id"])
@@ -111,7 +124,7 @@ async def list_templates(user: dict = Depends(require_admin),
     ).sort("name", 1).to_list(500)
 
 
-@router.post("/estimate-templates")
+@router.post("/estimate-templates", deprecated=True)
 async def create_template(body: EstimateTemplateIn,
                           user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
@@ -126,7 +139,7 @@ async def create_template(body: EstimateTemplateIn,
     return doc
 
 
-@router.delete("/estimate-templates/{tid}")
+@router.delete("/estimate-templates/{tid}", deprecated=True)
 async def delete_template(tid: str,
                           user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
@@ -137,7 +150,7 @@ async def delete_template(tid: str,
 
 
 # ----------------------- Estimates -----------------------
-@router.get("/estimates")
+@router.get("/estimates", deprecated=True)
 async def list_estimates(user: dict = Depends(require_admin),
                          tenant: dict = Depends(get_current_tenant),
                          include_deleted: bool = False,
@@ -154,7 +167,7 @@ async def list_estimates(user: dict = Depends(require_admin),
     ).sort("created_at", -1).to_list(1000)
 
 
-@router.post("/estimates")
+@router.post("/estimates", deprecated=True)
 async def create_estimate(body: EstimateIn,
                           user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
@@ -218,7 +231,7 @@ async def create_estimate(body: EstimateIn,
     return doc
 
 
-@router.get("/estimates/{eid}")
+@router.get("/estimates/{eid}", deprecated=True)
 async def get_estimate(eid: str,
                        user: dict = Depends(require_admin),
                        tenant: dict = Depends(get_current_tenant)):
@@ -230,7 +243,7 @@ async def get_estimate(eid: str,
     return doc
 
 
-@router.put("/estimates/{eid}")
+@router.put("/estimates/{eid}", deprecated=True)
 async def update_estimate(eid: str, body: EstimateIn,
                           user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
@@ -279,7 +292,7 @@ async def update_estimate(eid: str, body: EstimateIn,
     )
 
 
-@router.delete("/estimates/{eid}")
+@router.delete("/estimates/{eid}", deprecated=True)
 async def delete_estimate(eid: str,
                           user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
@@ -287,7 +300,7 @@ async def delete_estimate(eid: str,
     return {"ok": True}
 
 
-@router.post("/estimates/{eid}/convert")
+@router.post("/estimates/{eid}/convert", deprecated=True)
 async def convert_estimate_to_quote(eid: str,
                                     user: dict = Depends(require_admin),
                                     tenant: dict = Depends(get_current_tenant)):
@@ -399,7 +412,7 @@ async def _perform_soft_delete_estimate(eid: str, user: dict, tenant: dict) -> d
 
 
 @router.post("/estimates/{eid}/soft-delete",
-              operation_id="estimates.softDelete")
+              operation_id="estimates.softDelete", deprecated=True)
 async def soft_delete_estimate(eid: str,
                                   user: dict = Depends(require_admin),
                                   tenant: dict = Depends(get_current_tenant)):
@@ -407,7 +420,7 @@ async def soft_delete_estimate(eid: str,
 
 
 @router.post("/estimates/bulk-delete",
-              operation_id="estimates.bulkDelete")
+              operation_id="estimates.bulkDelete", deprecated=True)
 async def bulk_delete_estimates(body: _EstimateBulkDeleteIn,
                                    user: dict = Depends(require_admin),
                                    tenant: dict = Depends(get_current_tenant)):

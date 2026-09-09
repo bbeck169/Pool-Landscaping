@@ -89,7 +89,11 @@ export function CustomerActionDropdowns({ customer, onSend, onQuickTask, onSendS
             onSelect={() => navigate(`/quotes/new?customer_id=${cid}`)}
             data-testid="customer-create-estimate"
           >
-            <FileText size={14} className="mr-2" /> Estimate
+            <FileText size={14} className="mr-2" />
+            <span className="flex flex-col leading-tight">
+              <span>Estimate &rarr; Quote</span>
+              <span className="text-[10px] text-slate-500">Creates a quote you can send, sign, and collect on.</span>
+            </span>
           </DropdownMenuItem>
           <DropdownMenuItem
             onSelect={() => navigate(`/invoices/new?customer_id=${cid}`)}

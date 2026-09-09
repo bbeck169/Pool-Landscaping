@@ -1,16 +1,33 @@
 """Feb 2026 · Slice R — Estimate Viewer aggregator + Accept/Decline + PDF.
 
-Endpoints:
-    GET  /api/estimates/{eid}/full            — role-projected viewer payload
-    POST /api/estimates/{eid}/accept          — admin or portal customer
-    POST /api/estimates/{eid}/decline         — same
-    POST /api/estimates/{eid}/request-changes — same
-    GET  /api/estimates/{eid}/magic-link      — admin issues token URL
-    GET  /api/portal/estimates/via-token       — public, reads by JWT
-    POST /api/portal/estimates/via-token/accept
-    POST /api/portal/estimates/via-token/decline
-    POST /api/portal/estimates/via-token/request-changes
-    GET  /api/estimates/{eid}/pdf              — ReportLab
+Feb 2026 · Outcome C rename — Canonical paths moved to ``/quotes/{qid}/*``
+because the underlying resource lives in ``db.quotes``. The old
+``/estimates/{eid}/*`` paths are preserved as ``deprecated=True``
+aliases pointing to the same handlers; response shape unchanged
+(``estimate_id``, ``estimate_number`` fields retained for backward
+compat). Slated for removal one release cycle after Feb 2026.
+
+Endpoints (canonical + deprecated alias each):
+    GET  /api/quotes/{qid}/full            — role-projected viewer payload
+         (alias) /api/estimates/{qid}/full [deprecated]
+    POST /api/quotes/{qid}/accept          — admin or portal customer
+         (alias) /api/estimates/{qid}/accept [deprecated]
+    POST /api/quotes/{qid}/decline         — same
+         (alias) /api/estimates/{qid}/decline [deprecated]
+    POST /api/quotes/{qid}/request-changes — same
+         (alias) /api/estimates/{qid}/request-changes [deprecated]
+    GET  /api/quotes/{qid}/magic-link      — admin issues token URL
+         (alias) /api/estimates/{qid}/magic-link [deprecated]
+    GET  /api/portal/quotes/via-token       — public, reads by JWT
+         (alias) /api/portal/estimates/via-token [deprecated]
+    POST /api/portal/quotes/via-token/accept
+         (alias) /api/portal/estimates/via-token/accept [deprecated]
+    POST /api/portal/quotes/via-token/decline
+         (alias) /api/portal/estimates/via-token/decline [deprecated]
+    POST /api/portal/quotes/via-token/request-changes
+         (alias) /api/portal/estimates/via-token/request-changes [deprecated]
+    GET  /api/quotes/{qid}/pdf              — ReportLab
+         (alias) /api/estimates/{qid}/pdf [deprecated]
 
 RBAC & pricing invariants (locked):
     * Technician role   → 403 on everything
@@ -71,9 +88,9 @@ def _project_totals_for_customer(totals: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in totals.items() if k not in _CUSTOMER_TOTAL_HIDDEN}
 
 
-async def _load_estimate(eid: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+async def _load_estimate(qid: str, tenant_id: str) -> Optional[Dict[str, Any]]:
     return await db.quotes.find_one(
-        {"id": eid, "tenant_id": tenant_id,
+        {"id": qid, "tenant_id": tenant_id,
          "doc_type": {"$in": ["quote", "estimate"]}},
         {"_id": 0},
     )
@@ -167,16 +184,18 @@ async def _build_payload(est: dict, tenant: dict, *,
 
 
 # ══════════════════════════════════════════════════════════════════
-# GET /estimates/{eid}/full
+# GET /quotes/{qid}/full   (canonical)
+# GET /estimates/{qid}/full  (deprecated alias)
 # ══════════════════════════════════════════════════════════════════
-@router.get("/estimates/{eid}/full")
-async def get_estimate_full(eid: str,
+@router.get("/quotes/{qid}/full")
+@router.get("/estimates/{qid}/full", deprecated=True)
+async def get_estimate_full(qid: str,
                               user: dict = Depends(get_current_user),
                               tenant: dict = Depends(get_current_tenant)):
     role = user.get("role") or ""
     if role == "technician":
         raise HTTPException(403, "Not allowed")
-    est = await _load_estimate(eid, tenant["id"])
+    est = await _load_estimate(qid, tenant["id"])
     if not est:
         raise HTTPException(404, "Estimate not found")
     if role == "customer":
@@ -196,12 +215,12 @@ class RequestChangesIn(BaseModel):
     message: str
 
 
-async def _authorised_estimate(eid: str, user: dict,
+async def _authorised_estimate(qid: str, user: dict,
                                 tenant: dict) -> Dict[str, Any]:
     role = user.get("role") or ""
     if role == "technician":
         raise HTTPException(403, "Not allowed")
-    est = await _load_estimate(eid, tenant["id"])
+    est = await _load_estimate(qid, tenant["id"])
     if not est:
         raise HTTPException(404, "Estimate not found")
     if role == "customer" and est.get("customer_id") != user.get("customer_id"):
@@ -291,11 +310,12 @@ async def _mark_changes_requested(est: dict, tenant_id: str,
     )
 
 
-@router.post("/estimates/{eid}/accept")
-async def accept_estimate(eid: str,
+@router.post("/quotes/{qid}/accept")
+@router.post("/estimates/{qid}/accept", deprecated=True)
+async def accept_estimate(qid: str,
                             user: dict = Depends(get_current_user),
                             tenant: dict = Depends(get_current_tenant)):
-    est = await _authorised_estimate(eid, user, tenant)
+    est = await _authorised_estimate(qid, user, tenant)
     if est.get("decision") in ("accepted", "declined"):
         raise HTTPException(409, "Estimate is already locked")
     await _mark_accepted(est, tenant["id"], user.get("id"))
@@ -303,19 +323,20 @@ async def accept_estimate(eid: str,
         tenant["id"], kind="quote_accepted",
         title=f"Estimate accepted by {est.get('customer_name') or 'customer'}",
         body=f"Estimate #{(est.get('id') or '')[:8]} was accepted.",
-        href=f"/estimates/{eid}",
+        href=f"/estimates/{qid}",
     )
     return await _build_payload(
-        await _load_estimate(eid, tenant["id"]), tenant,
+        await _load_estimate(qid, tenant["id"]), tenant,
         as_customer=(user.get("role") == "customer"),
     )
 
 
-@router.post("/estimates/{eid}/decline")
-async def decline_estimate(eid: str, body: DeclineIn,
+@router.post("/quotes/{qid}/decline")
+@router.post("/estimates/{qid}/decline", deprecated=True)
+async def decline_estimate(qid: str, body: DeclineIn,
                              user: dict = Depends(get_current_user),
                              tenant: dict = Depends(get_current_tenant)):
-    est = await _authorised_estimate(eid, user, tenant)
+    est = await _authorised_estimate(qid, user, tenant)
     if est.get("decision") in ("accepted", "declined"):
         raise HTTPException(409, "Estimate is already locked")
     await _mark_declined(est, tenant["id"], user.get("id"), body.reason)
@@ -323,19 +344,20 @@ async def decline_estimate(eid: str, body: DeclineIn,
         tenant["id"], kind="quote_accepted",
         title=f"Estimate declined by {est.get('customer_name') or 'customer'}",
         body=(body.reason or "No reason given")[:200],
-        href=f"/estimates/{eid}",
+        href=f"/estimates/{qid}",
     )
     return await _build_payload(
-        await _load_estimate(eid, tenant["id"]), tenant,
+        await _load_estimate(qid, tenant["id"]), tenant,
         as_customer=(user.get("role") == "customer"),
     )
 
 
-@router.post("/estimates/{eid}/request-changes")
-async def request_changes(eid: str, body: RequestChangesIn,
+@router.post("/quotes/{qid}/request-changes")
+@router.post("/estimates/{qid}/request-changes", deprecated=True)
+async def request_changes(qid: str, body: RequestChangesIn,
                             user: dict = Depends(get_current_user),
                             tenant: dict = Depends(get_current_tenant)):
-    est = await _authorised_estimate(eid, user, tenant)
+    est = await _authorised_estimate(qid, user, tenant)
     if not (body.message or "").strip():
         raise HTTPException(422, "message is required")
     if est.get("decision") in ("accepted", "declined"):
@@ -345,10 +367,10 @@ async def request_changes(eid: str, body: RequestChangesIn,
         tenant["id"], kind="quote_accepted",
         title=f"Estimate change request from {est.get('customer_name') or 'customer'}",
         body=body.message[:200],
-        href=f"/estimates/{eid}",
+        href=f"/estimates/{qid}",
     )
     return await _build_payload(
-        await _load_estimate(eid, tenant["id"]), tenant,
+        await _load_estimate(qid, tenant["id"]), tenant,
         as_customer=(user.get("role") == "customer"),
     )
 
@@ -356,11 +378,11 @@ async def request_changes(eid: str, body: RequestChangesIn,
 # ══════════════════════════════════════════════════════════════════
 # Magic-link tokens (public path)
 # ══════════════════════════════════════════════════════════════════
-def _sign_estimate_token(eid: str, cid: str, tenant_id: str) -> str:
+def _sign_estimate_token(qid: str, cid: str, tenant_id: str) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": TOKEN_SUB,
-        "eid": eid,
+        "eid": qid,
         "cid": cid,
         "tid": tenant_id,
         "iat": int(now.timestamp()),
@@ -381,17 +403,18 @@ def _verify_estimate_token(tok: str) -> Dict[str, Any]:
     return payload
 
 
-@router.get("/estimates/{eid}/magic-link")
-async def issue_magic_link(eid: str,
+@router.get("/quotes/{qid}/magic-link")
+@router.get("/estimates/{qid}/magic-link", deprecated=True)
+async def issue_magic_link(qid: str,
                              user: dict = Depends(get_current_user),
                              tenant: dict = Depends(get_current_tenant)):
     if not _is_admin(user):
         raise HTTPException(403, "Admin only")
-    est = await _load_estimate(eid, tenant["id"])
+    est = await _load_estimate(qid, tenant["id"])
     if not est:
         raise HTTPException(404, "Estimate not found")
     cid = est.get("customer_id") or ""
-    tok = _sign_estimate_token(eid, cid, tenant["id"])
+    tok = _sign_estimate_token(qid, cid, tenant["id"])
     return {"token": tok, "url": f"/e/estimate?token={tok}",
              "expires_in_days": MAGIC_LINK_TTL_DAYS}
 
@@ -409,13 +432,15 @@ async def _load_est_from_token(tok: str) -> Dict[str, Any]:
     return {"est": est, "tenant": tenant, "cid": payload["cid"]}
 
 
-@router.get("/portal/estimates/via-token")
+@router.get("/portal/quotes/via-token")
+@router.get("/portal/estimates/via-token", deprecated=True)
 async def view_estimate_via_token(token: str = Query(...)):
     ctx = await _load_est_from_token(token)
     return await _build_payload(ctx["est"], ctx["tenant"], as_customer=True)
 
 
-@router.post("/portal/estimates/via-token/accept")
+@router.post("/portal/quotes/via-token/accept")
+@router.post("/portal/estimates/via-token/accept", deprecated=True)
 async def accept_via_token(token: str = Query(...)):
     ctx = await _load_est_from_token(token)
     est = ctx["est"]
@@ -434,7 +459,8 @@ async def accept_via_token(token: str = Query(...)):
     )
 
 
-@router.post("/portal/estimates/via-token/decline")
+@router.post("/portal/quotes/via-token/decline")
+@router.post("/portal/estimates/via-token/decline", deprecated=True)
 async def decline_via_token(body: DeclineIn, token: str = Query(...)):
     ctx = await _load_est_from_token(token)
     est = ctx["est"]
@@ -453,7 +479,8 @@ async def decline_via_token(body: DeclineIn, token: str = Query(...)):
     )
 
 
-@router.post("/portal/estimates/via-token/request-changes")
+@router.post("/portal/quotes/via-token/request-changes")
+@router.post("/portal/estimates/via-token/request-changes", deprecated=True)
 async def changes_via_token(body: RequestChangesIn, token: str = Query(...)):
     ctx = await _load_est_from_token(token)
     est = ctx["est"]
@@ -511,7 +538,7 @@ async def quote_customer_view_via_token(token: str = Query(...)):
     """Return the grouped customer-facing payload via magic-link.
 
     Same signing/verification path as
-    ``GET /api/portal/estimates/via-token``.
+    ``GET /api/portal/quotes/via-token``.
     """
     ctx = await _load_est_from_token(token)
     return await _build_customer_view_only(ctx["est"], ctx["tenant"])
@@ -538,8 +565,9 @@ async def _build_customer_view_only(est: dict, tenant: dict) -> Dict[str, Any]:
 # ══════════════════════════════════════════════════════════════════
 # PDF
 # ══════════════════════════════════════════════════════════════════
-@router.get("/estimates/{eid}/pdf")
-async def estimate_pdf(eid: str,
+@router.get("/quotes/{qid}/pdf")
+@router.get("/estimates/{qid}/pdf", deprecated=True)
+async def estimate_pdf(qid: str,
                         internal: bool = False,
                         user: dict = Depends(get_current_user),
                         tenant: dict = Depends(get_current_tenant)):
@@ -553,7 +581,7 @@ async def estimate_pdf(eid: str,
     role = user.get("role") or ""
     if role == "technician":
         raise HTTPException(403, "Not allowed")
-    est = await _load_estimate(eid, tenant["id"])
+    est = await _load_estimate(qid, tenant["id"])
     if not est:
         raise HTTPException(404, "Estimate not found")
     if role == "customer" and est.get("customer_id") != user.get("customer_id"):
