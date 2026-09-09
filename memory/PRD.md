@@ -17193,3 +17193,71 @@ Delivered on top of Phase 1's palette + palette-locked PATCH endpoints. Web only
 
 **STOP for user verification** before starting Phase 4.core+4.a+4.b batched or the Sent Documents task.
 
+
+## Feb-2026 · Customer detail — unified "Sent documents" tab (SHIPPED)
+P1 admin ask: "on customer page admin give easy access to view all sent quotes estimates invoices". Web only; mobile parity flagged as follow-up.
+
+### Audit findings (backend + frontend, Feb-2026)
+* **Existing tabs on `/customers/:id`**: overview, properties, jobs, **quotes** (placeholder empty state), **invoices** (placeholder empty state), equipment, tasks, notes, credits, payments, subscriptions, reviews, portal. Both Quotes/Invoices tabs were "coming in Phase 3" placeholders never wired up.
+* **Doc storage**: quotes + invoices unified in `db.quotes` since Phase 11 (differentiated by `doc_type`). Legacy `db.invoices` retired.
+* **Estimates**: BOTH `db.estimates` (deprecated router `estimates.py`) and `db.estimator_estimates` (current router `estimator.py`) are live per the Chunk 2.c audit. Retirement requires a proper data migration — until then, admins must see both.
+* **Existing endpoints** (already accept `customer_id` filter — no new backend needed):
+  * `GET /api/quotes?customer_id=X&doc_type=quote|invoice` → bare array.
+  * `GET /api/estimator/estimates?customer_id=X` → `{items, total}` shape.
+  * `GET /api/estimates?customer_id=X` (deprecated) → bare array.
+  * `POST /api/quotes/{qid}/send-reminder` — invoice reminder (admin, unpaid only).
+  * `POST /api/estimator/estimates/{eid}/send-to-customer`.
+  * `GET /api/quotes/{qid}/pdf`.
+* **Auth**: parent `/customers/:id` route gated by `<NoTech>` (admin/manager/owner/super_admin only — techs excluded). New tab inherits.
+
+### What landed
+* **New tab** — "Documents" wedged into the tab bar between Jobs and Quotes. Existing Quotes/Invoices placeholders preserved (guardrail).
+* **New component** `frontend/src/components/customers/CustomerDocumentsTab.jsx` — frontend fan-out over 4 endpoints via `Promise.allSettled`, merged into a unified row list, sorted newest-first. Response-shape normaliser tolerates both bare-array + `{items, total}` responses so a single endpoint 404 or shape drift never crashes the tab.
+* **Row schema** — `{ id, type: quote|invoice|estimate, number, title, date, status, amount, _source }`. Status pill uses `payment_status` for invoices when present (so paid vs unpaid surfaces cleanly).
+* **Filters** — Type multi-select (3 chips), Status dropdown (9 statuses), From/To date range. Live-filtered client-side.
+* **Actions per row** — View (navigates to `/quotes/{id}` for quote/invoice or `/estimator/estimates/{id}` for estimates); PDF (opens `/api/quotes/{id}/pdf`, hidden for estimates); Resend (only for invoices + estimator estimates — no first-class resend endpoint exists for quotes, so button hidden there).
+* **Empty state** with FileText icon + "No documents sent yet" copy.
+
+### Files touched
+* Created: `frontend/src/components/customers/CustomerDocumentsTab.jsx`, `frontend/src/test/customer-documents-tab.test.jsx`.
+* Modified: `frontend/src/pages/customers/CustomerDetail.jsx` (import + TABS array + render block).
+* Docs: `/app/memory/PRD.md`.
+
+### Tests
+* `customer-documents-tab.test.jsx` — 11/11 green. Coverage:
+  * Fan-out fetch merges all 4 sources.
+  * Empty state renders when all 4 sources return empty.
+  * Type filter toggle removes rows of deselected type.
+  * Status filter narrows the list.
+  * Resend button only on invoice + estimator rows.
+  * Resend POSTs to `/quotes/{id}/send-reminder` for invoices and `/estimator/estimates/{id}/send-to-customer` for estimator.
+  * PDF opens `/api/quotes/{id}/pdf` in new tab for quote/invoice.
+  * PDF button hidden on estimate rows.
+  * View routes to `/quotes/{id}` for quote/invoice, `/estimator/estimates/{id}` for both estimator + legacy estimates.
+  * Response-shape normaliser tolerates both array + `{items, total}` shapes.
+* Regression sweep (Phase 2 palette picker, team color swatch, schedule nav button, schedule map toggle): 29/29 still green.
+
+### Verified interactively at 1440×900
+* `/customers/drift-dt-fd70e7?tab=documents` renders 6 rows (3 quotes + 3 invoices — this customer has no estimates on either collection). Filter to Quote-only correctly narrows to 3.
+* Empty-state screenshot on a customer with zero docs — "No documents sent yet" renders correctly.
+* Resend button visible only on the 3 invoice rows; hidden on the 3 quote rows.
+* PDF + View buttons on all quote/invoice rows.
+
+### Guardrails honored
+* No schema changes.
+* No new backend endpoints (frontend fan-out reuses existing per-doc-type list endpoints).
+* No Chunk 3 files touched.
+* No changes to any existing customer-page tab (Quotes + Invoices placeholders preserved).
+* No changes to `/quotes/*` routes or PDF endpoint (Outcome C canonical).
+* No mobile / Expo files. Mobile parity flagged as **follow-up**.
+* No comms code, offline mode, Stripe/RC, chemistry, service records, notifications, filters, geocoding.
+* Preserved every existing testID; new testids all namespaced `customer-docs-*`.
+
+### Mobile parity flag (follow-up, NOT shipped)
+Mobile customer detail screen (`mobile/app/(app)/customers/[id].tsx` or equivalent) should get the same tab consolidation on the next mobile pass. Not touching Expo in this task per standing guardrail.
+
+**STOP for user verification.**
+
+**Next queued (per standing order):**
+* Phase 4.core + 4.a + 4.b batched — Dispatch live map (30s poll, faded stale, legend-isolate) + `DispatchSchedulePanel` in the left column + Q4 click-schedule-item → focus-map polish + **Team color legend pill** (folded in per user green-light — top-right of map region, testid `dispatch-color-legend`).
+

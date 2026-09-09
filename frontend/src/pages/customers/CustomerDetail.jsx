@@ -126,11 +126,19 @@ import AdminCardCapturePanel from "@/components/customers/AdminCardCapturePanel"
 // Phase B4 · Feb-2026 — Stripe subscription CRUD panel.
 import SubscriptionsPanel from "./SubscriptionsPanel";
 import ResponsiveTabs from "@/components/ui/responsive-tabs";
+// Feb-2026 · Customer detail — unified "Sent documents" tab.
+// Merges quotes + invoices + estimator estimates + legacy
+// estimates for the current customer into one sortable/filterable
+// list. Preserves the existing Quotes / Invoices tab placeholders
+// (they stay in the tab bar for backwards-compat) and adds a new
+// consolidated "Documents" tab as the primary surface.
+import CustomerDocumentsTab from "@/components/customers/CustomerDocumentsTab";
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
   { k: "properties", label: "Properties", icon: Home },
   { k: "jobs", label: "Jobs", icon: Briefcase },
+  { k: "documents", label: "Documents", icon: FileText },
   { k: "quotes", label: "Quotes", icon: FileText },
   { k: "invoices", label: "Invoices", icon: FileText },
   { k: "equipment", label: "Equipment", icon: Beaker },
@@ -848,6 +856,10 @@ export default function CustomerDetail() {
                 ))}
               </ul>
             )
+          ) : null}
+
+          {tab === "documents" ? (
+            <CustomerDocumentsTab customerId={id} />
           ) : null}
 
           {tab === "quotes" ? (
