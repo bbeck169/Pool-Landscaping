@@ -24,6 +24,32 @@ def _normalize(addr: str) -> str:
     return re.sub(r"\s+", " ", (addr or "").strip().lower())
 
 
+def _flatten_addr(raw: Any) -> str:
+    """Feb-2026 · P37b · Tolerantly collapse a ``service_address`` value
+    to a single string. Legacy rows persist ``service_address`` as a
+    structured dict (``{street, city, state, postal_code|zip}``) while
+    newer rows persist a free-form string. Callers used to assume
+    string; the dict shape blew up the P37 backfill with an
+    ``AttributeError`` on ``.strip()``. This helper is the single
+    read-side normalizer.
+
+    * ``str``  → stripped as-is.
+    * ``dict`` → joined ``"{street} {city} {state} {postal_code|zip}"``.
+    * anything else (None, list, int, …) → empty string, so callers
+      fall through to their per-field builders.
+    """
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        return " ".join(filter(None, [
+            (raw.get("street") or "").strip(),
+            (raw.get("city") or "").strip(),
+            (raw.get("state") or "").strip(),
+            (raw.get("postal_code") or raw.get("zip") or "").strip(),
+        ])).strip()
+    return ""
+
+
 async def geocode_address(address: str) -> Optional[Dict[str, Any]]:
     """Return ``{lat, lng, formatted_address, place_id, precision}`` or
     None on ZERO_RESULTS / error. Never raises."""
@@ -93,7 +119,7 @@ async def geocode_and_persist_customer(customer_id: str, tenant_id: str) -> bool
                 return False
         except Exception:
             pass
-    addr = cust.get("service_address") or " ".join(filter(None, [
+    addr = _flatten_addr(cust.get("service_address")) or " ".join(filter(None, [
         cust.get("service_street") or cust.get("street"),
         cust.get("service_city") or cust.get("city"),
         cust.get("service_state") or cust.get("state"),
@@ -149,7 +175,7 @@ async def geocode_and_persist_job(job_id: str, tenant_id: str) -> bool:
         except Exception:
             pass
 
-    addr = (job.get("service_address") or "").strip()
+    addr = _flatten_addr(job.get("service_address"))
     if not addr:
         addr = " ".join(filter(None, [
             job.get("service_street"), job.get("service_city"),
@@ -180,11 +206,12 @@ async def geocode_and_persist_job(job_id: str, tenant_id: str) -> bool:
                 }},
             )
             return True
-        addr = (cust.get("service_address") or cust.get("address")
-                    or " ".join(filter(None, [
-                        cust.get("service_street"), cust.get("service_city"),
-                        cust.get("service_state"), cust.get("service_zip"),
-                    ]))).strip()
+        addr = (_flatten_addr(cust.get("service_address"))
+                or (cust.get("address") if isinstance(cust.get("address"), str) else "")
+                or " ".join(filter(None, [
+                    cust.get("service_street"), cust.get("service_city"),
+                    cust.get("service_state"), cust.get("service_zip"),
+                ]))).strip()
     if not addr:
         return False
     hit = await geocode_address(addr)
