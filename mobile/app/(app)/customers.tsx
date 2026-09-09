@@ -212,7 +212,7 @@ export default function Customers() {
     try {
       const res: any = await api.post(`/customers/${cust.id}/send-card-add-link`, {});
       const to = [res?.email_recipient, res?.sms_recipient].filter(Boolean).join(" and ");
-      Alert.alert("Success", to ? `Payment link sent to ${to}` : "Payment link sent");
+      Alert.alert("Success", to ? `Add-card link sent to ${to}` : "Add-card link sent");
     } catch (e: any) {
       const msg = e?.detail?.code === "RATE_LIMITED"
         ? "Please wait a few minutes before sending another link."
@@ -397,11 +397,7 @@ export default function Customers() {
               </View>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  {/* P44 — missing card dot indicator */}
-                  {!item.has_card_on_file ? (
-                    <View style={cs.missingCardDot} testID={`row-${item.id}-missing-card-dot`} />
-                  ) : null}
-                  <Text style={[styles.name, item.deleted_at && cs.nameDeleted]} numberOfLines={1}>{item.name}</Text>
+                  <Text style={[styles.name, item.deleted_at && cs.nameDeleted]} numberOfLines={1} testID={`customer-row-name-${item.id}`}>{item.name}</Text>
                   {item.deleted_at && canManageDeleted ? (
                     <RestoreCustomerButton
                       customer={item}
@@ -412,19 +408,23 @@ export default function Customers() {
                       onError={(msg) => Alert.alert("Restore failed", msg)}
                     />
                   ) : null}
-                  {/* P44 — "Send payment link" row action (admin only, no card on file) */}
+                  {/* P44 — missing card dot + "Add card" pill (after name) */}
+                  {!item.has_card_on_file ? (
+                    <View style={cs.missingCardDot} testID={`row-${item.id}-missing-card-dot`} />
+                  ) : null}
                   {isAdmin && !item.has_card_on_file ? (
                     <Pressable
-                      onPress={(e) => { handleSendPaymentLink(item); }}
+                      onPress={() => { handleSendPaymentLink(item); }}
                       disabled={sendingPaymentLink.has(item.id)}
-                      style={[cs.sendPaymentPill, sendingPaymentLink.has(item.id) && { opacity: 0.5 }]}
-                      testID={`customer-row-send-payment-link-btn-${item.id}`}
+                      style={[cs.addCardPill, sendingPaymentLink.has(item.id) && { opacity: 0.5 }]}
+                      testID={`customer-row-add-card-btn-${item.id}`}
                       accessibilityRole="button"
-                      accessibilityLabel={`Send payment link to ${item.name}`}
+                      accessibilityLabel={`Add card for ${item.name}`}
+                      accessibilityHint="Email and SMS a secure link to add a card for auto-pay"
                     >
-                      <Ionicons name="send-outline" size={10} color="#92400E" />
-                      <Text style={cs.sendPaymentPillText}>
-                        {sendingPaymentLink.has(item.id) ? "Sending…" : "Send payment link"}
+                      <Ionicons name="card-outline" size={10} color="#92400E" />
+                      <Text style={cs.addCardPillText}>
+                        {sendingPaymentLink.has(item.id) ? "Sending…" : "Add card"}
                       </Text>
                     </Pressable>
                   ) : null}
@@ -763,7 +763,7 @@ const cs = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: "#F59E0B",
   },
-  sendPaymentPill: {
+  addCardPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
@@ -774,7 +774,7 @@ const cs = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#FDE68A",
   },
-  sendPaymentPillText: {
+  addCardPillText: {
     fontFamily: font.semibold,
     fontSize: 10,
     color: "#92400E",
