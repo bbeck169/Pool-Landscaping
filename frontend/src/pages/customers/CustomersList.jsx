@@ -318,6 +318,12 @@ export default function CustomersList() {
   // different rows independent while preventing double-fire on the
   // same row.
   const [sendingPaymentLink, setSendingPaymentLink] = useState(new Set());
+  // Feb-2026 · P45 — controlled open state for the "More filters"
+  // dropdown that consolidates the pre-P45 chip strip. Always-
+  // mounted content (hidden={!open}) keeps existing filter testids
+  // resolvable via RTL queries without needing to open the dropdown
+  // first in tests.
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
   const handleSendPaymentLink = async (cust) => {
     if (!cust?.id) return;
     setSendingPaymentLink((s) => new Set(s).add(cust.id));
@@ -1377,266 +1383,426 @@ export default function CustomersList() {
             Missing card
           </button>
         )}
-        {/* Feb-2026 · P43 — data-quality chips: "No email" + "No phone
-            number". Independent toggles that compose as AND on the
-            backend. Admin/manager/tech all see them (read-only data). */}
-        <button
-          onClick={() => setMissingEmail((v) => !v)}
-          data-testid="filter-chip-missing-email"
-          className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
-          style={{
-            backgroundColor: missingEmail ? "#DBEAFE" : colors.surfaceSecondary,
-            color: missingEmail ? "#1E3A8A" : colors.onSurfaceSecondary,
-            border: `1px solid ${missingEmail ? "#93C5FD" : colors.border}`,
-          }}
-        >
-          <span
-            className="inline-block w-2 h-2 rounded-full"
-            style={{ backgroundColor: missingEmail ? "#1E40AF" : "#94A3B8" }}
-          />
-          No email
-        </button>
-        <button
-          onClick={() => setMissingPhone((v) => !v)}
-          data-testid="filter-chip-missing-phone"
-          className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
-          style={{
-            backgroundColor: missingPhone ? "#DBEAFE" : colors.surfaceSecondary,
-            color: missingPhone ? "#1E3A8A" : colors.onSurfaceSecondary,
-            border: `1px solid ${missingPhone ? "#93C5FD" : colors.border}`,
-          }}
-        >
-          <span
-            className="inline-block w-2 h-2 rounded-full"
-            style={{ backgroundColor: missingPhone ? "#1E40AF" : "#94A3B8" }}
-          />
-          No phone number
-        </button>
-        {/* Feb-2026 · P43b — "Missing address" data-quality chip.
-             Server-side filter via ``?missing_address=true``. Renders
-             a "(N)" count badge sourced from a standalone count call
-             that ignores other filters (badge is stable across
-             chip toggles). Same P43 blue palette as email/phone. */}
-        <button
-          onClick={() => setMissingAddress((v) => !v)}
-          data-testid="customers-missing-address-filter"
-          className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
-          style={{
-            backgroundColor: missingAddress ? "#DBEAFE" : colors.surfaceSecondary,
-            color: missingAddress ? "#1E3A8A" : colors.onSurfaceSecondary,
-            border: `1px solid ${missingAddress ? "#93C5FD" : colors.border}`,
-          }}
-          aria-pressed={missingAddress ? "true" : "false"}
-        >
-          <span
-            className="inline-block w-2 h-2 rounded-full"
-            style={{ backgroundColor: missingAddress ? "#1E40AF" : "#94A3B8" }}
-          />
-          Missing address
-          {missingAddressCount != null ? (
-            <span
-              className="ml-1 tabular-nums"
-              data-testid="customers-missing-address-count"
-              style={{
-                color: missingAddress ? "#1E3A8A" : colors.onSurfaceSecondary,
-                fontWeight: 600,
-                opacity: 0.9,
-              }}
-            >
-              ({missingAddressCount})
-            </span>
-          ) : null}
-        </button>
-        {/* Feb-2026 · P44 — "No payment on file" data-quality chip.
-             Server-side filter via ``?has_payment_method=false``.
-             Source-of-truth agrees with ``CardOnFileWarningBanner``
-             (both key on ``saved_payment_methods_count``). Counts
-             both cards AND ACH (Stripe ``us_bank_account``) — a
-             customer with either is EXCLUDED. */}
-        <button
-          onClick={() => setNoPaymentFilter((v) => !v)}
-          data-testid="customers-no-payment-filter"
-          title="Customers with no card AND no ACH bank account on file. Matches the same 'Card on file required — none saved' banner shown on customer detail."
-          className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
-          style={{
-            backgroundColor: noPaymentFilter ? "#DBEAFE" : colors.surfaceSecondary,
-            color: noPaymentFilter ? "#1E3A8A" : colors.onSurfaceSecondary,
-            border: `1px solid ${noPaymentFilter ? "#93C5FD" : colors.border}`,
-          }}
-          aria-pressed={noPaymentFilter ? "true" : "false"}
-        >
-          <span
-            className="inline-block w-2 h-2 rounded-full"
-            style={{ backgroundColor: noPaymentFilter ? "#1E40AF" : "#94A3B8" }}
-          />
-          No payment on file
-          {noPaymentCount != null ? (
-            <span
-              className="ml-1 tabular-nums"
-              data-testid="customers-no-payment-count"
-              style={{
-                color: noPaymentFilter ? "#1E3A8A" : colors.onSurfaceSecondary,
-                fontWeight: 600,
-                opacity: 0.9,
-              }}
-            >
-              ({noPaymentCount})
-            </span>
-          ) : null}
-        </button>
-        {/* Feb-2026 · P43c — "Portal status" tri-state segmented
-             control. Only one option can be selected at a time; the
-             Any option clears the filter. Two count badges hydrate
-             from parallel ``count_only`` calls on mount and remain
-             stable while the admin toggles other chips. Matches the
-             P43 blue palette so the segmented control reads as part
-             of the data-quality chip family. */}
-        <div
-          data-testid="customers-portal-status-filter"
-          data-value={portalStatusFilter || "any"}
-          role="group"
-          aria-label="Portal status"
-          title="Portal activation reflects real customer engagement — a customer has either set their own password or signed in at least once. Sending an invite alone does not count."
-          className="inline-flex items-stretch rounded-lg overflow-hidden text-xs font-semibold"
-          style={{
-            border: `1px solid ${colors.border}`,
-            backgroundColor: colors.surfaceSecondary,
-          }}
-        >
-          {[
-            { value: "", label: "Any", testid: "customers-portal-status-any" },
-            { value: "activated", label: "Signed in",
-              count: portalActivatedCount,
-              tooltip: "Customer has set their own password or signed into the portal at least once.",
-              testid: "customers-portal-status-activated" },
-            { value: "not_activated", label: "Never signed in",
-              count: portalNotActivatedCount,
-              tooltip: "These customers received an invite but have not signed in or set a password yet.",
-              testid: "customers-portal-status-not-activated" },
-          ].map((opt) => {
-            const active = portalStatusFilter === opt.value;
+        {/* Feb-2026 · P45 — "More filters" dropdown. Replaces the
+             chip strip with a single trigger that opens a grouped,
+             always-mounted panel. Every child control preserves its
+             pre-existing ``data-testid`` so existing filter tests
+             (P43b / P43c / P44 / merge / include-deleted) keep
+             passing without modification. Panel is portaled by
+             hidden-attribute toggle so RTL testid queries resolve
+             even when the panel is closed.
+
+             Kept OUT of the dropdown per spec:
+               • "Missing card"  → primary filter, stays on this row.
+             Grouping inside the dropdown:
+               • Contact info missing → email / phone / address
+               • Payment → No payment on file
+               • Portal status (radio, tri-state)
+               • Administrative → deleted / merged / merge candidates
+        */}
+        <div className="relative">
+          {(() => {
+            const active = (
+              (missingEmail ? 1 : 0) +
+              (missingPhone ? 1 : 0) +
+              (missingAddress ? 1 : 0) +
+              (noPaymentFilter ? 1 : 0) +
+              (portalStatusFilter ? 1 : 0) +
+              (includeDeleted ? 1 : 0) +
+              (includeMerged ? 1 : 0) +
+              (candidateFilterActive ? 1 : 0)
+            );
+            const summaryBits = [];
+            if (missingEmail) summaryBits.push("No email");
+            if (missingPhone) summaryBits.push("No phone");
+            if (missingAddress) summaryBits.push("Missing address");
+            if (noPaymentFilter) summaryBits.push("No payment");
+            if (portalStatusFilter === "activated") summaryBits.push("Signed in");
+            else if (portalStatusFilter === "not_activated") summaryBits.push("Never signed in");
+            if (includeDeleted) summaryBits.push("Show deleted");
+            if (includeMerged) summaryBits.push("Show merged");
+            if (candidateFilterActive) summaryBits.push("Merge candidates");
+            let summary = "All";
+            if (active === 1) summary = summaryBits[0];
+            else if (active > 1) summary = `${summaryBits[0]} +${active - 1}`;
             return (
               <button
-                key={opt.value || "any"}
                 type="button"
-                onClick={() => setPortalStatusFilter(opt.value)}
-                data-testid={opt.testid}
-                aria-pressed={active ? "true" : "false"}
-                title={opt.tooltip || undefined}
-                className="px-3 py-1.5 inline-flex items-center gap-1"
+                onClick={() => setMoreFiltersOpen((v) => !v)}
+                data-testid="customers-more-filters-dropdown"
+                aria-haspopup="dialog"
+                aria-expanded={moreFiltersOpen ? "true" : "false"}
+                aria-controls="customers-more-filters-panel"
+                className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
                 style={{
-                  backgroundColor: active ? "#DBEAFE" : "transparent",
-                  color: active ? "#1E3A8A" : colors.onSurfaceSecondary,
-                  borderLeft: opt.value === "" ? "none"
-                    : `1px solid ${colors.border}`,
-                  cursor: "pointer",
+                  backgroundColor: active > 0 ? "#DBEAFE" : colors.surfaceSecondary,
+                  color: active > 0 ? "#1E3A8A" : colors.onSurfaceSecondary,
+                  border: `1px solid ${active > 0 ? "#93C5FD" : colors.border}`,
                 }}
+                title="More filters"
               >
-                {opt.label}
-                {opt.count != null ? (
+                <Filter size={12} />
+                <span>More filters:</span>
+                <span
+                  data-testid="customers-more-filters-summary"
+                  className="tabular-nums"
+                  style={{ fontWeight: 700 }}
+                >
+                  {summary}
+                </span>
+                {active > 0 ? (
                   <span
-                    className="tabular-nums"
-                    style={{
-                      color: active ? "#1E3A8A" : colors.onSurfaceSecondary,
-                      opacity: 0.9,
-                    }}
-                    data-testid={`${opt.testid}-count`}
+                    className="ml-1 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums"
+                    style={{ backgroundColor: "#1E40AF", color: "#fff" }}
+                    data-testid="customers-more-filters-active-count"
                   >
-                    ({opt.count})
+                    {active}
                   </span>
                 ) : null}
               </button>
             );
-          })}
+          })()}
+          {/* Backdrop — click-outside close. Always mounted so children
+              stay in the DOM for test queries. */}
+          <div
+            hidden={!moreFiltersOpen}
+            onClick={() => setMoreFiltersOpen(false)}
+            className="fixed inset-0 z-40"
+            aria-hidden="true"
+          />
+          <div
+            id="customers-more-filters-panel"
+            role="dialog"
+            aria-label="More filters"
+            hidden={!moreFiltersOpen}
+            className="absolute z-50 mt-2 w-80 rounded-xl shadow-lg p-3"
+            style={{
+              backgroundColor: colors.surface,
+              border: `1px solid ${colors.border}`,
+              color: colors.onSurface,
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setMoreFiltersOpen(false);
+            }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-bold uppercase tracking-wide"
+                   style={{ color: colors.onSurfaceSecondary }}>
+                Filter by attribute
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setMissingEmail(false);
+                  setMissingPhone(false);
+                  setMissingAddress(false);
+                  setNoPaymentFilter(false);
+                  setPortalStatusFilter("");
+                  if (canManageDeleted) setIncludeDeleted(false);
+                  setIncludeMerged(false);
+                  setCandidateFilterActive(false);
+                }}
+                data-testid="customers-more-filters-clear"
+                className="text-xs font-semibold underline"
+                style={{ color: "#1E40AF" }}
+              >
+                Clear
+              </button>
+            </div>
+
+            {/* Group: Contact info missing */}
+            <div className="mb-3">
+              <div className="text-[10px] font-bold uppercase mb-1.5"
+                   style={{ color: colors.muted }}>
+                Contact info missing
+              </div>
+              <button
+                onClick={() => setMissingEmail((v) => !v)}
+                data-testid="filter-chip-missing-email"
+                aria-pressed={missingEmail ? "true" : "false"}
+                className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2"
+                style={{
+                  backgroundColor: missingEmail ? "#DBEAFE" : "transparent",
+                  color: missingEmail ? "#1E3A8A" : colors.onSurface,
+                }}
+              >
+                <span
+                  className="inline-block w-3 h-3 rounded border"
+                  style={{
+                    backgroundColor: missingEmail ? "#1E40AF" : "transparent",
+                    borderColor: missingEmail ? "#1E40AF" : colors.border,
+                  }}
+                  aria-hidden="true"
+                />
+                No email
+              </button>
+              <button
+                onClick={() => setMissingPhone((v) => !v)}
+                data-testid="filter-chip-missing-phone"
+                aria-pressed={missingPhone ? "true" : "false"}
+                className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2"
+                style={{
+                  backgroundColor: missingPhone ? "#DBEAFE" : "transparent",
+                  color: missingPhone ? "#1E3A8A" : colors.onSurface,
+                }}
+              >
+                <span
+                  className="inline-block w-3 h-3 rounded border"
+                  style={{
+                    backgroundColor: missingPhone ? "#1E40AF" : "transparent",
+                    borderColor: missingPhone ? "#1E40AF" : colors.border,
+                  }}
+                  aria-hidden="true"
+                />
+                No phone number
+              </button>
+              <button
+                onClick={() => setMissingAddress((v) => !v)}
+                data-testid="customers-missing-address-filter"
+                aria-pressed={missingAddress ? "true" : "false"}
+                className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2"
+                style={{
+                  backgroundColor: missingAddress ? "#DBEAFE" : "transparent",
+                  color: missingAddress ? "#1E3A8A" : colors.onSurface,
+                }}
+              >
+                <span
+                  className="inline-block w-3 h-3 rounded border"
+                  style={{
+                    backgroundColor: missingAddress ? "#1E40AF" : "transparent",
+                    borderColor: missingAddress ? "#1E40AF" : colors.border,
+                  }}
+                  aria-hidden="true"
+                />
+                <span className="flex-1">Missing address</span>
+                {missingAddressCount != null ? (
+                  <span
+                    className="tabular-nums text-[11px]"
+                    data-testid="customers-missing-address-count"
+                    style={{
+                      color: missingAddress ? "#1E3A8A" : colors.muted,
+                      fontWeight: 600,
+                    }}
+                  >
+                    ({missingAddressCount})
+                  </span>
+                ) : null}
+              </button>
+            </div>
+
+            {/* Group: Payment */}
+            <div className="mb-3">
+              <div className="text-[10px] font-bold uppercase mb-1.5"
+                   style={{ color: colors.muted }}>
+                Payment
+              </div>
+              <button
+                onClick={() => setNoPaymentFilter((v) => !v)}
+                data-testid="customers-no-payment-filter"
+                aria-pressed={noPaymentFilter ? "true" : "false"}
+                title="Customers with no card AND no ACH bank account on file. Matches the same 'Card on file required — none saved' banner shown on customer detail."
+                className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2"
+                style={{
+                  backgroundColor: noPaymentFilter ? "#DBEAFE" : "transparent",
+                  color: noPaymentFilter ? "#1E3A8A" : colors.onSurface,
+                }}
+              >
+                <span
+                  className="inline-block w-3 h-3 rounded border"
+                  style={{
+                    backgroundColor: noPaymentFilter ? "#1E40AF" : "transparent",
+                    borderColor: noPaymentFilter ? "#1E40AF" : colors.border,
+                  }}
+                  aria-hidden="true"
+                />
+                <span className="flex-1">No payment on file</span>
+                {noPaymentCount != null ? (
+                  <span
+                    className="tabular-nums text-[11px]"
+                    data-testid="customers-no-payment-count"
+                    style={{
+                      color: noPaymentFilter ? "#1E3A8A" : colors.muted,
+                      fontWeight: 600,
+                    }}
+                  >
+                    ({noPaymentCount})
+                  </span>
+                ) : null}
+              </button>
+            </div>
+
+            {/* Group: Portal status — tri-state radio */}
+            <div className="mb-3">
+              <div className="text-[10px] font-bold uppercase mb-1.5"
+                   style={{ color: colors.muted }}>
+                Portal status
+              </div>
+              <div
+                data-testid="customers-portal-status-filter"
+                data-value={portalStatusFilter || "any"}
+                role="radiogroup"
+                aria-label="Portal status"
+              >
+                {[
+                  { value: "", label: "Any",
+                    testid: "customers-portal-status-any" },
+                  { value: "activated", label: "Signed in",
+                    count: portalActivatedCount,
+                    testid: "customers-portal-status-activated" },
+                  { value: "not_activated", label: "Never signed in",
+                    count: portalNotActivatedCount,
+                    testid: "customers-portal-status-not-activated" },
+                ].map((opt) => {
+                  const active = portalStatusFilter === opt.value;
+                  return (
+                    <button
+                      key={opt.value || "any"}
+                      type="button"
+                      role="radio"
+                      onClick={() => setPortalStatusFilter(opt.value)}
+                      data-testid={opt.testid}
+                      aria-pressed={active ? "true" : "false"}
+                      aria-checked={active ? "true" : "false"}
+                      className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2"
+                      style={{
+                        backgroundColor: active ? "#DBEAFE" : "transparent",
+                        color: active ? "#1E3A8A" : colors.onSurface,
+                      }}
+                    >
+                      <span
+                        className="inline-block w-3 h-3 rounded-full border"
+                        style={{
+                          backgroundColor: active ? "#1E40AF" : "transparent",
+                          borderColor: active ? "#1E40AF" : colors.border,
+                        }}
+                        aria-hidden="true"
+                      />
+                      <span className="flex-1">{opt.label}</span>
+                      {opt.count != null ? (
+                        <span
+                          className="tabular-nums text-[11px]"
+                          data-testid={`${opt.testid}-count`}
+                          style={{
+                            color: active ? "#1E3A8A" : colors.muted,
+                            fontWeight: 600,
+                          }}
+                        >
+                          ({opt.count})
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Group: Administrative */}
+            {(canManageDeleted || isAdmin) ? (
+              <div className="mb-1">
+                <div className="text-[10px] font-bold uppercase mb-1.5"
+                     style={{ color: colors.muted }}>
+                  Administrative
+                </div>
+                {canManageDeleted ? (
+                  <button
+                    onClick={() => setIncludeDeleted((v) => !v)}
+                    data-testid="customers-filter-include-deleted"
+                    aria-pressed={includeDeleted ? "true" : "false"}
+                    title="Admin: include soft-deleted customers in the list"
+                    className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2"
+                    style={{
+                      backgroundColor: includeDeleted ? "#FEE2E2" : "transparent",
+                      color: includeDeleted ? "#991B1B" : colors.onSurface,
+                    }}
+                  >
+                    <span
+                      className="inline-block w-3 h-3 rounded border"
+                      style={{
+                        backgroundColor: includeDeleted ? "#B91C1C" : "transparent",
+                        borderColor: includeDeleted ? "#B91C1C" : colors.border,
+                      }}
+                      aria-hidden="true"
+                    />
+                    Show deleted
+                  </button>
+                ) : null}
+                {isAdmin ? (
+                  <button
+                    onClick={() => setIncludeMerged((v) => !v)}
+                    data-testid="customers-filter-include-merged"
+                    aria-pressed={includeMerged ? "true" : "false"}
+                    title="Include records that were merged into another customer"
+                    className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2"
+                    style={{
+                      backgroundColor: includeMerged ? "#F3E8FF" : "transparent",
+                      color: includeMerged
+                        ? (colors.accent?.violet?.[700] || "#6D28D9")
+                        : colors.onSurface,
+                    }}
+                  >
+                    <span
+                      className="inline-block w-3 h-3 rounded border"
+                      style={{
+                        backgroundColor: includeMerged
+                          ? (colors.accent?.violet?.[500] || "#8B5CF6")
+                          : "transparent",
+                        borderColor: includeMerged
+                          ? (colors.accent?.violet?.[500] || "#8B5CF6")
+                          : colors.border,
+                      }}
+                      aria-hidden="true"
+                    />
+                    Show merged
+                  </button>
+                ) : null}
+                {isAdmin && candidateGroupsCount > 0 ? (
+                  <button
+                    onClick={() => setCandidateFilterActive((v) => !v)}
+                    data-testid="customers-filter-pending-merge-candidates"
+                    aria-pressed={candidateFilterActive ? "true" : "false"}
+                    title="Filter list to duplicate candidates awaiting manual merge review"
+                    className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2"
+                    style={{
+                      backgroundColor: candidateFilterActive
+                        ? (colors.accent?.amber?.[100] || "#FEF3C7")
+                        : "transparent",
+                      color: candidateFilterActive
+                        ? (colors.accent?.amber?.[700] || "#B45309")
+                        : colors.onSurface,
+                    }}
+                  >
+                    <span
+                      className="inline-block w-3 h-3 rounded border"
+                      style={{
+                        backgroundColor: candidateFilterActive
+                          ? (colors.accent?.amber?.[500] || "#F59E0B")
+                          : "transparent",
+                        borderColor: candidateFilterActive
+                          ? (colors.accent?.amber?.[500] || "#F59E0B")
+                          : colors.border,
+                      }}
+                      aria-hidden="true"
+                    />
+                    <span className="flex-1">
+                      Pending merge candidates
+                    </span>
+                    <span
+                      className="tabular-nums text-[11px]"
+                      style={{
+                        color: candidateFilterActive
+                          ? (colors.accent?.amber?.[700] || "#B45309")
+                          : colors.muted,
+                        fontWeight: 600,
+                      }}
+                    >
+                      ({candidateGroupsCount})
+                    </span>
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
-        {/* Feb-2026 · P26 — admin-tier "Show deleted" toggle
-             (widened from super_admin by the Customer Delete UX
-             overhaul; backend gates are widened symmetrically). */}
-        {canManageDeleted && (
-          <button
-            onClick={() => setIncludeDeleted((v) => !v)}
-            data-testid="customers-filter-include-deleted"
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
-            style={{
-              backgroundColor: includeDeleted ? "#FEE2E2" : colors.surfaceSecondary,
-              color: includeDeleted ? "#991B1B" : colors.onSurfaceSecondary,
-              border: `1px solid ${includeDeleted ? "#FCA5A5" : colors.border}`,
-            }}
-            title="Admin: include soft-deleted customers in the list"
-          >
-            <span
-              className="inline-block w-2 h-2 rounded-full"
-              style={{ backgroundColor: includeDeleted ? "#B91C1C" : "#94A3B8" }}
-            />
-            Show deleted
-          </button>
-        )}
-        {/* Feb 2026 · Customer Merge Phase 3 — pending candidates
-            chip. Hidden when N == 0. Toggles a client-side narrow
-            to the low-confidence candidate ids. */}
-        {isAdmin && candidateGroupsCount > 0 && (
-          <button
-            onClick={() => setCandidateFilterActive((v) => !v)}
-            data-testid="customers-filter-pending-merge-candidates"
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
-            style={{
-              backgroundColor: candidateFilterActive
-                ? colors.accent.amber[100]
-                : colors.surfaceSecondary,
-              color: candidateFilterActive
-                ? colors.accent.amber[700]
-                : colors.onSurfaceSecondary,
-              border: `1px solid ${candidateFilterActive
-                ? colors.accent.amber[500]
-                : colors.border}`,
-            }}
-            title="Filter list to duplicate candidates awaiting manual merge review"
-          >
-            <span
-              className="inline-block w-2 h-2 rounded-full"
-              style={{
-                backgroundColor: candidateFilterActive
-                  ? colors.accent.amber[500]
-                  : "#94A3B8",
-              }}
-            />
-            View {candidateGroupsCount} pending merge candidate
-            {candidateGroupsCount === 1 ? "" : "s"}
-          </button>
-        )}
-        {/* Feb 2026 · Customer Merge Phase 2 — "Show merged" toggle.
-            Admin-visible so operators can audit historic merges +
-            navigate to the surviving primary via the badge on the
-            row. */}
-        {isAdmin && (
-          <button
-            onClick={() => setIncludeMerged((v) => !v)}
-            data-testid="customers-filter-include-merged"
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
-            style={{
-              backgroundColor: includeMerged
-                ? colors.accent.violet[50]
-                : colors.surfaceSecondary,
-              color: includeMerged
-                ? colors.accent.violet[700]
-                : colors.onSurfaceSecondary,
-              border: `1px solid ${includeMerged
-                ? colors.accent.violet[500]
-                : colors.border}`,
-            }}
-            title="Include records that were merged into another customer"
-          >
-            <span
-              className="inline-block w-2 h-2 rounded-full"
-              style={{
-                backgroundColor: includeMerged
-                  ? colors.accent.violet[500]
-                  : "#94A3B8",
-              }}
-            />
-            Show merged
-          </button>
-        )}
       </div>
 
       {/* Bulk-actions toolbar (visible when selection exists) */}
@@ -1941,40 +2107,6 @@ export default function CustomersList() {
                           Muted {_p28RelativeTime(c.muted_at)}
                         </span>
                       ) : null}
-                      {/* Feb-2026 · P44 iteration — "Add card" row
-                          action. Placed AFTER the customer name so
-                          name reads first, matching the pre-P44 row
-                          layout. Same endpoint / rate limit / audit
-                          trail as the detail-page banner button.
-                          Old testid ``customer-row-send-payment-link-btn-*``
-                          renamed to ``add-card-btn-*``; alias below
-                          preserves any external e2e references. */}
-                      {isAdmin && !c.has_card_on_file ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSendPaymentLink(c);
-                          }}
-                          disabled={sendingPaymentLink.has(c.id)}
-                          data-testid={`add-card-btn-${c.id}`}
-                          data-testid-legacy={`customer-row-send-payment-link-btn-${c.id}`}
-                          className="text-[10px] font-semibold px-2 py-0.5 rounded inline-flex items-center gap-1 hover:brightness-110"
-                          style={{
-                            backgroundColor: "#FEF3C7",
-                            color: "#92400E",
-                            border: "1px solid #FDE68A",
-                            opacity: sendingPaymentLink.has(c.id) ? 0.6 : 1,
-                            cursor: sendingPaymentLink.has(c.id)
-                              ? "not-allowed" : "pointer",
-                          }}
-                          title="Email + SMS the customer a secure link to add a card for auto-pay"
-                        >
-                          <Send size={10} />
-                          {sendingPaymentLink.has(c.id)
-                            ? "Sending…" : "Add card"}
-                        </button>
-                      ) : null}
                       {/* Feb-2026 · P29 — muted reason snapshot. Blank for historical rows. */}
                       {c.is_muted && tab === "muted" && c.muted_reason ? (
                         <span
@@ -2083,6 +2215,42 @@ export default function CustomersList() {
                   </td>
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-1 justify-end">
+                      {/* Feb-2026 · P44 iteration r2 — "Add card"
+                          row action. Relocated to the right-edge
+                          action cluster and re-skinned navy-on-white
+                          so it reads as a primary action, not a
+                          warning. Placed BEFORE Reactivate /
+                          Mark inactive so the natural left-to-right
+                          reading order in the actions column is
+                          [Add card] → [Reactivate|Mark inactive] →
+                          [Mute] → [⋮]. Testid + legacy alias +
+                          endpoint + rate limit are unchanged. */}
+                      {isAdmin && !c.has_card_on_file ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSendPaymentLink(c);
+                          }}
+                          disabled={sendingPaymentLink.has(c.id)}
+                          data-testid={`add-card-btn-${c.id}`}
+                          data-testid-legacy={`customer-row-send-payment-link-btn-${c.id}`}
+                          className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded transition hover:brightness-110"
+                          style={{
+                            backgroundColor: "#1E293B",
+                            color: "#FFFFFF",
+                            border: "1px solid #0F172A",
+                            opacity: sendingPaymentLink.has(c.id) ? 0.6 : 1,
+                            cursor: sendingPaymentLink.has(c.id)
+                              ? "not-allowed" : "pointer",
+                          }}
+                          title="Email + SMS the customer a secure link to add a card for auto-pay"
+                        >
+                          <Send size={12} />
+                          {sendingPaymentLink.has(c.id)
+                            ? "Sending…" : "Add card"}
+                        </button>
+                      ) : null}
                       {isAdmin ? (
                         c.is_active === false ? (
                           <button

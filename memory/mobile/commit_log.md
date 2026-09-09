@@ -1,3 +1,18 @@
+## Iteration 79 — P44 row polish: name leftmost, label → "Add card"
+- **Commit**: a1031a02
+- **Date**: 2026-09-09
+- **Changes**:
+  - Row order: customer name is now leftmost, missing-card dot + "Add card" pill trail after name
+  - Label rename: "Send payment link" → "Add card" everywhere (button, testID, alert, accessibility)
+  - testID: `send-payment-link-btn-{id}` → `add-card-btn-{id}`
+  - Alert copy: "Payment link sent to…" → "Add-card link sent to…"
+  - Icon: `send-outline` → `card-outline`
+  - Added `testID="customer-row-name-{id}"` on name Text for order assertions
+  - 18 Jest tests pass (16 original + 2 new: name-before-pill order, label text verification)
+- **Files modified**: `mobile/app/(app)/customers.tsx`, `mobile/__tests__/customer-list-filters.test.tsx`
+
+
+
 ## Iteration 78 — P43b + P43c + P44 Customer list filter chips
 - **Commit**: 8b2e34a3
 - **Date**: 2026-09-09
