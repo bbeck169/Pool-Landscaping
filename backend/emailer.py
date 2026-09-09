@@ -97,25 +97,44 @@ async def send_completion_email(job: dict) -> bool:
         return False
 
 
+def _invoice_display_number(inv: dict) -> str:
+    """Return a stable customer-facing identifier for an invoice.
+
+    Preference order (all customer-visible today somewhere in the
+    UI): explicit ``invoice_number`` → doc_number → id short-form.
+    NEVER falls back to ``title`` (which for legacy rows is the
+    doc-type label ``"Estimate"`` / ``"Invoice"`` — the exact string
+    that produced the "invoice Estimate has an outstanding
+    balance…" prod bug).
+    """
+    n = (inv.get("invoice_number") or inv.get("doc_number") or "").strip()
+    if n:
+        return n
+    _id = str(inv.get("id") or "")
+    return f"#{_id[:8]}" if _id else "#—"
+
+
 def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
                      portal_cta_url: str = "") -> str:
     balance = round(float(inv.get("total") or 0) - float(inv.get("amount_paid") or 0), 2)
     due = inv.get("due_date") or "now"
-    # Feb-2026 · Slice 7 — Invoice pay-link auto-login. Prefer the
-    # portal auto-login URL (drops the customer INSIDE their portal
-    # at /portal/invoices/{id}) when we can mint one. Falls back to
-    # the pre-existing public pay-sheet magic-link URL (kept intact
-    # per the "additive, not replacing" spec) — some email clients
-    # strip buttons, and some customers forward invoices to a
-    # spouse who isn't on the account, so the public viewer route
-    # remains the resilience path.
-    if portal_cta_url:
-        pay_link = portal_cta_url
-    else:
-        from services.pay_link_builder import build_pay_now_url
-        pay_link = build_pay_now_url(
-            inv["id"], inv.get("tenant_id") or "", src="email",
-        )
+    # Feb-2026 · P0 Pay-link routing fix — always use the PUBLIC
+    # pay-link URL (``/pay/invoice/{id}?token=…``) instead of the
+    # portal auto-login URL (``/api/portal/auto-login?t=…``). The
+    # portal path required the customer to have an active session
+    # and 302'd to ``/portal/login?reason=link_expired`` once the
+    # 72h portal-token TTL lapsed, blocking payment. The public
+    # URL runs OUTSIDE ``<AppLayout>`` (see App.js) so no login is
+    # ever required; the token there is a 30-day pay-only JWT tied
+    # to the invoice + tenant.  ``portal_cta_url`` is retained for
+    # backwards-compat callers but is now IGNORED for the Pay Now
+    # button.  See DIAG_PAY_LINK_LOGIN_REDIRECT_BUG.md for the full
+    # RCA.
+    _ = portal_cta_url  # kwarg retained for callsite compatibility
+    from services.pay_link_builder import build_pay_now_url
+    pay_link = build_pay_now_url(
+        inv["id"], inv.get("tenant_id") or "", src="email",
+    )
     link_html = f'<p><a href="{pay_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Pay Now</a></p>' if pay_link else ""
     # Phase B1 · Feb 2026 — F2b attachment-count copy.
     n = max(0, int(attachment_count or 0))
@@ -126,17 +145,86 @@ def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
             f'<p style="font-size:13px;color:#475569;margin:8px 0 0;">'
             f'{n} {noun} included</p>'
         )
+    # Feb-2026 · P0 template bug fix — substitute the invoice's
+    # customer-facing number instead of the (legacy) title field,
+    # which stored the doc_type label ("Estimate") on some prod
+    # rows and produced "invoice Estimate has an outstanding
+    # balance…". Full RCA in DIAG_ESTIMATE_INVOICE_REMINDER_BUG.md.
+    doc_number = _invoice_display_number(inv)
     return (
         f'<div style="font-family:sans-serif;max-width:520px;margin:auto">'
         f"<h2>Payment reminder</h2><p>Hi {name},</p>"
-        f"<p>This is a friendly reminder that invoice <b>{inv.get('title','')}</b> has an outstanding balance of "
+        f"<p>This is a friendly reminder that invoice <b>{doc_number}</b> has an outstanding balance of "
         f"<b>${balance:,.2f}</b> (was due {due}).</p>{attach_html}{link_html}"
         f"<p>Thank you,<br/>Pool &amp; Landscaping of Vistancia</p></div>"
     )
 
 
+def _estimate_reminder_html(inv: dict, name: str, tenant: dict,
+                                review_url: str,
+                                attachment_count: int = 0) -> str:
+    """Feb-2026 · P0 fix — Estimate/Quote reminder template.
+
+    Fundamentally different from the invoice reminder:
+      * no "outstanding balance" / "was due" / "Pay Now" copy — an
+        estimate awaits a **decision**, not a payment.
+      * CTA points to the customer-facing magic-link viewer
+        (``/e/estimate?token=…``) which lets the customer approve,
+        request changes, or decline.
+      * The doc-type label ("estimate" vs "quote") is derived from
+        ``inv.doc_type`` so the sender-shipped copy matches the
+        header the customer sees on the portal page.
+    """
+    doc_type_label = "quote" if inv.get("doc_type") == "quote" else "estimate"
+    doc_number = _invoice_display_number(inv)
+    company = (tenant or {}).get("company_name") or "your service provider"
+    n = max(0, int(attachment_count or 0))
+    attach_html = ""
+    if n > 0:
+        noun = "attachment" if n == 1 else "attachments"
+        attach_html = (
+            f'<p style="font-size:13px;color:#475569;margin:8px 0 0;">'
+            f'{n} {noun} included</p>'
+        )
+    cta = ""
+    if review_url:
+        cta = (
+            f'<p><a href="{review_url}" '
+            f'style="background:#0891b2;color:#fff;padding:12px 20px;'
+            f'border-radius:8px;text-decoration:none;display:inline-block">'
+            f'Review {doc_type_label.title()}</a></p>'
+        )
+    return (
+        f'<div style="font-family:sans-serif;max-width:520px;margin:auto">'
+        f"<h2>Reminder: your {doc_type_label}</h2>"
+        f"<p>Hi {name},</p>"
+        f"<p>This is a friendly reminder that {doc_type_label} "
+        f"<b>{doc_number}</b> from {company} is awaiting your review. "
+        f"Please take a moment to approve, request changes, or decline.</p>"
+        f"{attach_html}{cta}"
+        f"<p>Thank you,<br/>{company}</p></div>"
+    )
+
+
 async def send_invoice_reminder_email(inv: dict) -> bool:
-    """Email the customer a payment reminder for an outstanding invoice."""
+    """Email the customer a payment reminder for an outstanding invoice.
+
+    Feb-2026 · P0 refusal — this fn now REFUSES to fire for any doc
+    whose ``doc_type`` is not ``invoice``. The old shape would happily
+    email "invoice Estimate has an outstanding balance…" to customers
+    on a quote/estimate detail page. The refusal returns ``False`` and
+    logs a warning so callers can migrate to
+    :func:`send_estimate_reminder_email`.
+    """
+    # Feb-2026 · P0 template-guard — invoice-only path.
+    doc_type = str(inv.get("doc_type") or "invoice").lower()
+    if doc_type != "invoice":
+        logger.warning(
+            "[emailer] refusing invoice-reminder shape for doc_type=%s id=%s "
+            "— callers must switch to send_estimate_reminder_email()",
+            doc_type, inv.get("id"),
+        )
+        return False
     if not RESEND_API_KEY:
         logger.info("Resend not configured — skipping invoice reminder email.")
         return False
@@ -172,29 +260,23 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
         })
     except Exception:                                                # noqa: BLE001
         attachment_count = 0
-    # Feb-2026 · Slice 7 — mint portal auto-login URL when we have
-    # both a customer_id and an app public base URL. On failure we
-    # silently fall back to the existing public pay-sheet magic-link.
+    # Feb-2026 · P0 Pay-link routing fix — do NOT mint the portal
+    # auto-login URL for the Pay Now CTA any more. The public
+    # pay-sheet URL from ``build_pay_now_url`` is now the sole
+    # target so an expired token can never route the customer
+    # through ``/portal/login?reason=link_expired``. The template
+    # itself calls ``build_pay_now_url`` internally so we pass an
+    # empty string here and keep the kwarg for API compatibility.
     portal_cta_url = ""
     try:
-        if cid and inv.get("tenant_id"):
-            base = APP_PUBLIC_URL
-            if base:
-                from services.portal_magic_links import build_invoice_pay_url
-                portal_cta_url = build_invoice_pay_url(
-                    base, cid, inv["id"], inv["tenant_id"],
-                )
-    except Exception as _mint_exc:  # pragma: no cover — belt-and-braces
-        logger.warning(
-            f"[emailer] portal invoice-pay CTA mint failed: {_mint_exc}"
-        )
-        portal_cta_url = ""
-    try:
         resend.api_key = RESEND_API_KEY
+        # Feb-2026 · P0 subject fix — no more "Payment reminder —
+        # Estimate" chimera. Use the invoice's display number.
+        subject_num = _invoice_display_number(inv)
         resend.Emails.send({
             "from": EMAIL_FROM,
             "to": to_email,
-            "subject": f"Payment reminder — {inv.get('title', 'invoice')}",
+            "subject": f"Payment reminder — invoice {subject_num}",
             "html": _reminder_html(inv, cust.get("name", "there"),
                                     attachment_count=attachment_count,
                                     portal_cta_url=portal_cta_url),
@@ -202,4 +284,72 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
         return True
     except Exception as e:
         logger.warning(f"Reminder email failed: {e}")
+        return False
+
+
+async def send_estimate_reminder_email(inv: dict, tenant: dict,
+                                          review_url: str) -> bool:
+    """Feb-2026 · P0 — Email the customer a review reminder for a
+    pending estimate/quote. Distinct from ``send_invoice_reminder_email``
+    in template, subject, and CTA URL. Never mentions "balance",
+    "amount due", or "Pay Now"."""
+    doc_type = str(inv.get("doc_type") or "estimate").lower()
+    if doc_type not in ("estimate", "quote"):
+        logger.warning(
+            "[emailer] refusing estimate-reminder for doc_type=%s id=%s",
+            doc_type, inv.get("id"),
+        )
+        return False
+    if not RESEND_API_KEY:
+        logger.info(
+            "Resend not configured — skipping estimate reminder email.",
+        )
+        return False
+    cid = inv.get("customer_id")
+    if not cid:
+        return False
+    cust = await db.customers.find_one({"id": cid}, {"_id": 0}) or {}
+    to_email = cust.get("email")
+    if not to_email:
+        user = await db.users.find_one(
+            {"customer_id": cid, "role": "customer"}, {"_id": 0},
+        )
+        to_email = user.get("email") if user else None
+    if not to_email:
+        logger.info("No customer email — skipping estimate reminder email.")
+        return False
+    from services.comms_env_guard import guard_outbound
+    verdict = guard_outbound(kind="email", to=to_email)
+    if verdict.blocked:
+        logger.info(
+            "[DRY-RUN] emailer.send_estimate_reminder_email SKIPPED "
+            "to=%s doc_id=%s",
+            to_email, inv.get("id"),
+        )
+        return False
+    try:
+        attachment_count = await db.files.count_documents({
+            "purpose": "invoice_attachment",  # legacy label — same collection
+            "linked_entity_id": inv.get("id"),
+            "deleted_at": None,
+        })
+    except Exception:  # noqa: BLE001
+        attachment_count = 0
+    doc_type_label = "quote" if doc_type == "quote" else "estimate"
+    company = (tenant or {}).get("company_name") or "your service provider"
+    try:
+        resend.api_key = RESEND_API_KEY
+        resend.Emails.send({
+            "from": EMAIL_FROM,
+            "to": to_email,
+            "subject": f"Reminder: your {doc_type_label} from {company}",
+            "html": _estimate_reminder_html(
+                inv, cust.get("name", "there"),
+                tenant or {}, review_url,
+                attachment_count=attachment_count,
+            ),
+        })
+        return True
+    except Exception as e:
+        logger.warning(f"Estimate reminder email failed: {e}")
         return False

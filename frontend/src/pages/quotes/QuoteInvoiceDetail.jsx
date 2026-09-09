@@ -76,6 +76,33 @@ export function reminderToastCopy({ wasDraftFlippedToSent, emailSent }) {
 }
 
 /** Reused for both /quotes/:id and /invoices/:id — same collection. */
+/** Feb-2026 · P0 — the "Payment link" toolbar button is
+ *  invoice-only.  Rendering it on an Estimate/Quote produced a
+ *  Stripe-Checkout-Session call against a not-yet-approved
+ *  document (that either 500'd or created a bogus session).
+ *  Rules:
+ *    * hidden on non-invoices (estimate / quote / anything else).
+ *    * hidden on invoices when the doc is still a draft (nothing
+ *      to pay yet — the "Send invoice" chain handles issuance).
+ *    * hidden on invoices already ``paid`` / ``void``.
+ *    * shown on invoices in ``sent`` / ``partially_paid`` /
+ *      ``overdue`` (i.e. any state with an outstanding balance).
+ *  Backend also refuses non-invoice ids at the endpoint boundary
+ *  as belt-and-braces (see ``routers/lumino_link_request.py``).
+ */
+export function shouldShowPaymentLinkButton({
+  isInvoice, docStatus, paymentStatus,
+}) {
+  if (!isInvoice) return false;
+  const status = String(docStatus || "").toLowerCase();
+  const pay = String(paymentStatus || "").toLowerCase();
+  if (status === "draft" || status === "void" || status === "voided") {
+    return false;
+  }
+  if (pay === "paid") return false;
+  return true;
+}
+
 export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -430,8 +457,19 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                 </>
               ) : (
                 <>
-                  <Button variant="ghost" onClick={sendReminder}><Send size={14} /> Send reminder</Button>
-                  <Button variant="ghost" onClick={generateLink} testid="qd-gen-link"><Link2 size={14} /> Payment link</Button>
+                  <Button variant="ghost" onClick={sendReminder} testid="qd-send-reminder"><Send size={14} /> Send reminder</Button>
+                  {/* Feb-2026 · P0 fix — payment link is invoice-only.
+                      Rendering it on an Estimate/Quote produced a
+                      "Payment link" button that either 500'd
+                      downstream (Stripe session for an estimate
+                      total) OR minted a Stripe checkout against a
+                      not-yet-approved estimate. Guarded at the UI
+                      boundary + also at the backend endpoint
+                      (POST /invoices/{id}/request-payment-link now
+                      returns 400 with error_code=not_an_invoice for
+                      quote/estimate ids). Estimates use the
+                      "Send for signature" and magic-link viewer
+                      flows to collect the customer decision. */}
                 </>
               )}
               {canConvertToJob ? (
@@ -474,7 +512,12 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                   : emailInvoiceButtonLabel({ docStatus: doc.status })}
               </Button>
               <Button variant="ghost" onClick={() => setSmsOpen(true)} testid="id-send-sms"><MessageSquare size={14} /> Text invoice</Button>
-              <Button variant="ghost" onClick={generateLink} testid="id-gen-link"><Link2 size={14} /> Payment link</Button>
+              {shouldShowPaymentLinkButton({
+                isInvoice, docStatus: doc.status,
+                paymentStatus: doc.payment_status,
+              }) ? (
+                <Button variant="ghost" onClick={generateLink} testid="id-gen-link"><Link2 size={14} /> Payment link</Button>
+              ) : null}
               {pmethod?.brand ? (
                 <Button onClick={chargeOnFile} testid="id-charge-on-file">
                   <CreditCard size={14} /> Charge {pmethod.brand} · {pmethod.last4}

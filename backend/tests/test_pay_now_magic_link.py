@@ -37,7 +37,7 @@ def test_pay_now_url_is_public_magic_link_and_decodes():
     ``{APP_PUBLIC_URL}/pay/invoice/<id>?token=<jwt>``. The JWT must
     decode via the same verifier the /full-magic endpoint uses."""
     from emailer import _reminder_html
-    from routers.payments_stripe_live import _verify_invoice_magic_token
+    from routers.invoice_magic_view import _verify_invoice_magic_token
 
     inv_id = f"phase-pay-{uuid.uuid4().hex[:8]}"
     tenant_id = f"tenant-{uuid.uuid4().hex[:8]}"
@@ -82,7 +82,7 @@ def test_pay_link_builder_empty_when_base_url_missing(monkeypatch):
 
 def test_pay_link_builder_token_expiry_default_30_days():
     from services.pay_link_builder import issue_invoice_magic_token
-    from routers.payments_stripe_live import _verify_invoice_magic_token
+    from routers.invoice_magic_view import _verify_invoice_magic_token
     import time
     tok = issue_invoice_magic_token("inv-y", "tenant-y")
     payload = _verify_invoice_magic_token(tok)

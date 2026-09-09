@@ -394,7 +394,16 @@ def test_invoice_token_ignores_estimate_redirect_query_param():
     _run(_go())
 
 
-def test_expired_invoice_token_redirects_to_link_expired():
+def test_expired_invoice_token_redirects_to_public_pay():
+    """Feb-2026 · P0 Pay-link routing fix — expired
+    ``portal_invoice_pay`` tokens are now routed to the PUBLIC pay
+    page (``/pay/invoice/{id}?msg=link_expired``) so the customer
+    is never forced through the portal auth wall to complete a
+    payment.  Prior behaviour (302 → ``/portal/login?reason=
+    link_expired``) is preserved for OTHER expired token scopes
+    (estimate / job_view / portal_home) — see
+    ``test_expired_token_redirects_to_login_with_link_expired_reason``
+    upstream in this file."""
     async def _go():
         tid = _mk_tenant()
         cid, _uid = await _seed_customer_and_user(tid)
@@ -413,7 +422,11 @@ def test_expired_invoice_token_redirects_to_link_expired():
                 _FakeRequest(), t=tok, redirect=None,
             )
             assert resp.status_code == 302
-            assert "/portal/login?reason=link_expired" in resp.headers["location"]
+            loc = resp.headers["location"]
+            assert loc.startswith(f"/pay/invoice/{inv_id}"), loc
+            assert "msg=link_expired" in loc, loc
+            # And crucially — no longer the portal login wall.
+            assert "/portal/login" not in loc, loc
         finally:
             await _drain(tid)
 

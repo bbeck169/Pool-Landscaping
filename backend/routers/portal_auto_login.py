@@ -47,8 +47,9 @@ from typing import Deque, Dict, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+import jwt
 
-from config import db
+from config import db, JWT_ALGO, JWT_SECRET
 from services.portal_magic_links import (
     verify_job_view_token,
     verify_invoice_pay_token,
@@ -145,6 +146,52 @@ def _expired_response() -> RedirectResponse:
     return RedirectResponse(url=_LOGIN_EXPIRED_URL, status_code=302)
 
 
+def _peek_scope_and_id(token: str) -> tuple[str, str]:
+    """Feb-2026 · P0 Pay-link routing fix — decode the token WITHOUT
+    verifying ``exp`` so we can determine whether an expired /
+    tampered token was a ``portal_invoice_pay`` token pointed at a
+    known invoice id.  Used ONLY to route to the public pay page
+    instead of the auth wall — the token is still fully rejected
+    for auto-login purposes.
+
+    Returns ``(scope, resource_id)`` or ``("", "")`` when the token
+    can't even be peeked (tampered signature, malformed claims,
+    etc).  Never raises.
+    """
+    if not token:
+        return "", ""
+    try:
+        payload = jwt.decode(
+            token, JWT_SECRET,
+            algorithms=[JWT_ALGO],
+            options={"verify_exp": False},
+        )
+    except Exception:  # noqa: BLE001
+        return "", ""
+    sub = str(payload.get("sub") or "")
+    if sub == "portal_invoice_pay" and payload.get("invoice_id"):
+        return "invoice", str(payload["invoice_id"])
+    if sub == "invoice_pay" and payload.get("invoice_id"):
+        return "invoice", str(payload["invoice_id"])
+    return "", ""
+
+
+def _invoice_expired_public_response(invoice_id: str) -> RedirectResponse:
+    """Feb-2026 · P0 Pay-link routing fix — when a legacy invoice
+    auto-login token has expired/tampered but the invoice id is
+    still recoverable, bounce the customer to the public pay page
+    (``/pay/invoice/{id}``) instead of the portal login screen. The
+    public page renders the "This payment link is no longer valid"
+    friendly copy (no ``token=`` on the URL → PublicInvoicePay
+    branches to its missing-token state).  Payments never require
+    login — see DIAG_PAY_LINK_LOGIN_REDIRECT_BUG.md.
+    """
+    return RedirectResponse(
+        url=f"/pay/invoice/{invoice_id}?msg=link_expired",
+        status_code=302,
+    )
+
+
 def _revoked_response() -> RedirectResponse:
     """Task 6b · Feb 2026 — 302 → the portal login page with the
     ``link_revoked`` reason so the frontend renders the friendly
@@ -226,6 +273,16 @@ async def portal_auto_login(
     # 1) Classify + verify token.
     resource_type, payload = _classify_and_verify(t)
     if not payload:
+        # Feb-2026 · P0 Pay-link routing fix — invoice-scoped tokens
+        # that expired must land the customer on the public pay
+        # page, not the portal login wall.  Peek at the sub claim
+        # ignoring exp; only bounce to /pay/invoice on a matching
+        # scope + recoverable invoice id.
+        peek_scope, peek_id = _peek_scope_and_id(t)
+        if peek_scope == "invoice" and peek_id:
+            _log("expired_invoice_to_public", from_ip=from_ip,
+                  resource_type="invoice", resource_id=peek_id)
+            return _invoice_expired_public_response(peek_id)
         _log("expired", from_ip=from_ip)
         return _expired_response()
 

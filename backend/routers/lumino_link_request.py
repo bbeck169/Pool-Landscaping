@@ -132,6 +132,28 @@ async def request_payment_link(
     if not inv:
         raise HTTPException(404, "invoice_not_found")
 
+    # Feb-2026 · P0 doc-type guard — the pay-link endpoint is
+    # invoice-only.  ``find_invoice_dual`` will happily resolve a
+    # quote/estimate row because both share the ``quotes``
+    # collection; before this guard, clicking "Payment link" on an
+    # Estimate detail page would 500 downstream in the Stripe
+    # session creator OR (worse) mint a checkout session against
+    # an estimate's total.  Refusing at the boundary keeps the
+    # error message user-actionable.
+    _doc_type = str(inv.get("doc_type") or "invoice").lower()
+    if _doc_type in ("estimate", "quote"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "not_an_invoice",
+                "message": (
+                    f"Payment links can only be generated for invoices. "
+                    f"This document is a {_doc_type}."
+                ),
+                "doc_type": _doc_type,
+            },
+        )
+
     # Ownership check for customer role.
     if user.get("role") == "customer":
         if inv.get("customer_id") != user.get("customer_id"):

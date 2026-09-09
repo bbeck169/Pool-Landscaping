@@ -8,7 +8,7 @@ from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
 from routers.tenants import get_current_tenant
-from emailer import send_invoice_reminder_email
+from emailer import send_invoice_reminder_email, send_estimate_reminder_email
 # Feb-2026 · P5 — wildcard ``from models import *`` replaced with the
 # concrete set actually used below. ``Any / Dict`` come from typing
 # (added to the typing import above); ``BaseModel`` / ``re`` are not
@@ -940,21 +940,116 @@ async def update_quote_status(qid: str, status: str = Query(...),
 async def send_reminder(qid: str,
                         user: dict = Depends(require_admin),
                         tenant: dict = Depends(get_current_tenant)):
-    """One-tap payment reminder for an outstanding invoice: in-app + SMS + email."""
-    inv = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
-    if not inv:
-        raise HTTPException(404, "Invoice not found")
-    if not inv.get("customer_id"):
-        raise HTTPException(400, "This invoice has no linked customer.")
-    if inv.get("payment_status") == "paid":
-        raise HTTPException(400, "This invoice is already paid.")
-    balance = round(float(inv.get("total") or 0) - float(inv.get("amount_paid") or 0), 2)
-    title = "Payment reminder"
-    body = f"'{inv.get('title', 'Your invoice')}' has an outstanding balance of ${balance:,.2f}. Please pay at your earliest convenience."
-    await notify_customer(inv["customer_id"], title, body, sms=True)
-    email_sent = await send_invoice_reminder_email(inv)
-    count = int(inv.get("reminder_count") or 0) + 1
+    """Feb-2026 · P0 fix — Send-reminder now branches on ``doc_type``.
+
+    * Invoice — payment-reminder shape (subject, body, "Pay Now"
+      button, outstanding-balance copy).  Unchanged customer-facing
+      contract.
+    * Estimate / quote — review-reminder shape (subject, body,
+      "Review Estimate" / "Review Quote" button pointing at the
+      customer-facing magic-link viewer ``/e/estimate?token=…``).
+      NEVER mentions "outstanding balance" / "amount due" /
+      "Pay Now" — the customer owes NOTHING on an estimate.
+
+    Before this fix, the estimate-side click routed through the
+    invoice template and produced the "invoice Estimate has an
+    outstanding balance of $X" copy that landed in prod on Feb-2026
+    (see ``DIAG_ESTIMATE_INVOICE_REMINDER_BUG.md``).
+    """
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    if not doc.get("customer_id"):
+        raise HTTPException(400, "This document has no linked customer.")
+    doc_type = str(doc.get("doc_type") or "invoice").lower()
     ts = now_iso()
+
+    if doc_type in ("estimate", "quote"):
+        # ── Estimate / quote review-reminder path ──────────────
+        # These docs are awaiting a **decision**, not a payment.
+        # Refusing after conversion (doc_type flips to invoice)
+        # keeps this branch narrow.
+        if doc.get("status") in ("approved", "declined"):
+            raise HTTPException(
+                400,
+                f"This {doc_type} has already been "
+                f"{doc.get('status')}.",
+            )
+        doc_type_label = "quote" if doc_type == "quote" else "estimate"
+        # Mint a fresh magic-link token for the "Review" CTA. The
+        # helper below is the same one ``GET /quotes/{qid}/magic-
+        # link`` returns to the admin toolbar so tokens are
+        # signature-compatible and share the 30-day TTL.
+        from routers.estimate_viewer import _sign_estimate_token
+        tok = _sign_estimate_token(qid, doc["customer_id"], tenant["id"])
+        import os
+        base = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+        review_url = f"{base}/e/estimate?token={tok}" if base else ""
+        display_number = (
+            doc.get("invoice_number")
+            or doc.get("doc_number")
+            or f"#{qid[:8]}"
+        )
+        title = f"{doc_type_label.title()} review reminder"
+        body = (
+            f"{doc_type_label.title()} {display_number} is awaiting your "
+            f"review. Please approve, request changes, or decline."
+        )
+        await notify_customer(doc["customer_id"], title, body, sms=True)
+        email_sent = await send_estimate_reminder_email(
+            doc, tenant, review_url,
+        )
+        count = int(doc.get("reminder_count") or 0) + 1
+        await db.quotes.update_one(
+            {"id": qid, "tenant_id": tenant["id"]},
+            {"$set": {"last_reminder_at": ts, "reminder_count": count}},
+        )
+        try:
+            await db.audit_events.insert_one({
+                "id": new_id(),
+                "event_type": f"{doc_type_label}_reminder_sent",
+                "actor_user_id": user.get("id") or user.get("_id") or "unknown",
+                "tenant_id": tenant["id"],
+                "timestamp": ts,
+                "payload": {
+                    f"{doc_type_label}_id": qid,
+                    "doc_number": display_number,
+                    "customer_id": doc.get("customer_id"),
+                    "customer_name": doc.get("customer_name"),
+                    "email_sent": bool(email_sent),
+                    "reminder_count": count,
+                    "channel": "in_app+sms+email",
+                    "review_url_minted": bool(review_url),
+                },
+            })
+        except Exception as e:
+            logger.warning(
+                f"{doc_type_label}_reminder_sent audit write failed: {e}",
+            )
+        return {
+            "ok": True, "email_sent": email_sent,
+            "reminder_count": count, "last_reminder_at": ts,
+            "doc_type": doc_type_label,
+            "review_url_minted": bool(review_url),
+        }
+
+    # ── Invoice payment-reminder path (unchanged contract) ────────
+    if doc.get("payment_status") == "paid":
+        raise HTTPException(400, "This invoice is already paid.")
+    balance = round(float(doc.get("total") or 0) - float(doc.get("amount_paid") or 0), 2)
+    display_number = (
+        doc.get("invoice_number")
+        or doc.get("doc_number")
+        or f"#{qid[:8]}"
+    )
+    title = "Payment reminder"
+    body = (
+        f"Invoice {display_number} has an outstanding balance of "
+        f"${balance:,.2f}. Please pay at your earliest convenience."
+    )
+    await notify_customer(doc["customer_id"], title, body, sms=True)
+    email_sent = await send_invoice_reminder_email(doc)
+    count = int(doc.get("reminder_count") or 0) + 1
     await db.quotes.update_one(
         {"id": qid, "tenant_id": tenant["id"]},
         {"$set": {"last_reminder_at": ts, "reminder_count": count}},
@@ -972,9 +1067,9 @@ async def send_reminder(qid: str,
             "timestamp": ts,
             "payload": {
                 "invoice_id": qid,
-                "invoice_number": inv.get("invoice_number"),
-                "customer_id": inv.get("customer_id"),
-                "customer_name": inv.get("customer_name"),
+                "invoice_number": doc.get("invoice_number"),
+                "customer_id": doc.get("customer_id"),
+                "customer_name": doc.get("customer_name"),
                 "balance": balance,
                 "email_sent": bool(email_sent),
                 "reminder_count": count,
