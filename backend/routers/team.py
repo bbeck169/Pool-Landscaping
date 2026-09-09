@@ -509,6 +509,19 @@ async def update_user(user_id: str, body: dict,
                     400,
                     "display_color_hex must be a '#RRGGBB' string (e.g. #0EA5E9)",
                 )
+            # Feb-2026 · Live-Tech-Map Phase 1 — palette lock. Only
+            # the 12 approved Tailwind 500-tier hexes may be assigned
+            # via this endpoint. Off-palette values already present
+            # on rows are TOLERATED on reads (backwards compat) but
+            # NEW writes must land inside the palette so the Settings
+            # UI + dispatch board render consistently.
+            from constants.tech_colors import is_palette_color, PALETTE_HEXES
+            if not is_palette_color(raw):
+                raise HTTPException(
+                    400,
+                    "display_color_hex must be one of the approved "
+                    f"palette colors: {PALETTE_HEXES}",
+                )
             new_color = raw.upper()
         old_color = target.get("display_color_hex")
         if new_color != old_color:

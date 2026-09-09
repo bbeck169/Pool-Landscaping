@@ -440,6 +440,14 @@ api_router.include_router(_k63f_resend_router.router)
 from routers import admin_perf_explain_schedule as _k65_perf_router  # noqa: E402
 api_router.include_router(_k65_perf_router.router)
 
+# Feb-2026 · Live-Tech-Map Phase 1 — palette read endpoint. Backs the
+# Phase 2 Settings UI color picker (and any other surface that
+# needs to render the approved 12-color palette without hard-coding
+# it on the client). See ``routers/tech_colors.py`` +
+# ``constants/tech_colors.py``.
+from routers import tech_colors as _ltm_phase1_tech_colors_router  # noqa: E402
+api_router.include_router(_ltm_phase1_tech_colors_router.router)
+
 # Feb-2026 · Slice 2A — Multi-ToS backend foundation (Pool +
 # Landscaping split, admin CRUD, customer onboarding-state DTO).
 # Registered adjacent to the legacy single-ToS router so both
@@ -2357,6 +2365,23 @@ async def startup():
         logger.info("[calendars-i17c3] startup ensure_indexes ok")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[calendars-i17c3] startup ensure_indexes skipped: {e}")
+
+    # Feb-2026 · Live-Tech-Map Phase 1 — null-fill tech + crew
+    # colors from the approved 12-color palette. Idempotent
+    # (only touches NULL/missing/empty rows) so safe on every
+    # boot. Backgrounded so a slow scan can't block the health
+    # probe. See ``services/tech_color_migration.py``.
+    async def _bg_ltm_phase1_color_fill():
+        try:
+            from services.tech_color_migration import run_all as _ltm_fill
+            summary = await _ltm_fill(db)
+            logger.info(
+                "[ltm-phase1] tech-color null-fill: users=%s crews=%s",
+                summary.get("users"), summary.get("crews"),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[ltm-phase1] tech-color null-fill skipped: {e}")
+    asyncio.create_task(_bg_ltm_phase1_color_fill())
 
     # Feb-2026 · Task A · idempotent partial-unique-index migration on
     # ``db.jobs.(recurring_template_id, scheduled_date)``. Lazy-fires

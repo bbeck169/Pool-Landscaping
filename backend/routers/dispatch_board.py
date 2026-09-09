@@ -28,10 +28,13 @@ frontend and the endpoints below re-enforce role on the backend.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from config import db, logger
@@ -100,6 +103,14 @@ async def get_board(
         "endpoint falls back to db.jobs for that (tenant, tech, date). "
         "Read-only — never mutates dispatch_route_orders or customer "
         "denorm fields.")),
+    if_none_match: Optional[str] = Header(
+        default=None, alias="If-None-Match",
+        description=(
+            "Feb-2026 · Live-Tech-Map Phase 1 (Q8) — conditional GET "
+            "support. When the caller's cached ETag matches the "
+            "current board hash the endpoint returns 304 Not Modified "
+            "with an empty body. Reduces the 30 s dispatch poll cost "
+            "on quiet boards.")),
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
@@ -444,7 +455,7 @@ async def get_board(
             # new pins set (below).
             routed_ids = {p["customer_id"] for p in pins}
 
-    return {
+    payload = {
         "pins": pins,
         "route_stops": route_stops,
         "tech_load": list(tech_load.values()) if isinstance(tech_load, dict) else tech_load,
@@ -457,6 +468,22 @@ async def get_board(
         "tech_user_id": tech_user_id,
         "source": "jobs_fallback" if fallback_from_jobs else "denorm",
     }
+    # Feb-2026 · Live-Tech-Map Phase 1 (Q8) — ETag / If-None-Match.
+    # Hash the serialized payload; return 304 if the caller's
+    # cached tag matches. ``sort_keys=True`` + ``default=str`` guard
+    # against key-order jitter and stray datetime/ObjectId objects
+    # in the pin list.
+    try:
+        canonical = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+        etag = '"' + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16] + '"'
+    except Exception:  # noqa: BLE001
+        # Hash failure must never break the endpoint — fall through
+        # to a plain 200 without ETag rather than 500.
+        return payload
+    if if_none_match and if_none_match == etag:
+        # 304 body MUST be empty per RFC 7232.
+        return Response(status_code=304, headers={"ETag": etag})
+    return JSONResponse(content=payload, headers={"ETag": etag})
 
 
 # ═════════════════════════════════════════════════════════════════

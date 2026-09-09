@@ -44,6 +44,16 @@ export function _buildMapsUrl(dest) {
   return `https://www.google.com/maps/dir/?${q.toString()}`;
 }
 
+// Feb-2026 · Web/mobile parity — the mobile ``NavigateJobButton``
+// (see /app/mobile/src/components/schedule/NavigateJobButton.tsx)
+// renders as a solid orange (#F97316) circular button with a
+// white nav glyph and a small drop-shadow. Web now matches so the
+// affordance reads identically on both surfaces and stands out
+// from the surrounding card chrome (previously blue on
+// transparent, which merged with the card and was easy to miss).
+const NAV_BG = "#F97316";
+const NAV_BG_DISABLED = "#D1D5DB";
+
 export default function NavigateJobButton({ job, size = 16 }) {
   const dest = _resolveDestination(job);
   const url = _buildMapsUrl(dest);
@@ -70,14 +80,19 @@ export default function NavigateJobButton({ job, size = 16 }) {
       title={label}
       data-testid={`schedule-job-nav-${job?.id ?? "unknown"}`}
       style={{
-        background: "transparent",
+        background: disabled ? NAV_BG_DISABLED : NAV_BG,
         border: 0,
         cursor: disabled ? "not-allowed" : "pointer",
-        color: disabled ? "#9CA3AF" : "#2563EB",
+        color: disabled ? "#9CA3AF" : "#FFFFFF",
         opacity: disabled ? 0.5 : 1,
-        padding: "2px 4px",
+        width: 28,
+        height: 28,
+        borderRadius: 14,
         display: "inline-flex",
         alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        boxShadow: disabled ? "none" : "0 2px 4px rgba(0,0,0,0.15)",
       }}
     >
       <Navigation size={size} />

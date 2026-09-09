@@ -17111,3 +17111,54 @@ Shipped 2026-02-14.
 * Rewiring existing `/payments/charge` callsites to dispatch through the BYO adapters.
 * Dollar-amount caps (this phase is request-count only).
 * Real (non-mock) API calls in preview.
+
+## Feb-2026 · Batched Wave — Navigate button UI polish + Schedule map toggle
+Shipped 2026-02-XX. Web/mobile parity ship for two P1 UX papercuts.
+
+### What landed
+* **Web NavigateJobButton** (`frontend/src/components/schedule/NavigateJobButton.jsx`) restyled to match the mobile card:
+    * Circular 28×28, `#F97316` background, white nav glyph, drop shadow. Disabled state → gray `#D1D5DB` + 50% opacity.
+    * Already had `e.stopPropagation()` — retained.
+* **CalendarSchedule.jsx** — the per-card `<NavigateJobButton />` moved from the far-right (next to the Open chevron) into the customer-name row so it sits adjacent to the title. Title gained ellipsis truncation (`overflow:hidden; textOverflow:ellipsis; whiteSpace:nowrap`) via a new `flex-1 min-w-0` wrapper span (`data-testid=grid-job-title-{jobId}`).
+* **Schedule map show/hide toggle** — persistent, above the calendar grid.
+    * State initialized from `localStorage.getItem("schedule.mapVisible")` (default: visible), persisted on every click.
+    * Toggle button `data-testid=schedule-map-toggle`, map body `data-testid=schedule-map-body`.
+    * `MAP_VISIBLE_KEY = "schedule.mapVisible"` matches the mobile parity key in `mobile/app/(app)/schedule/calendar.tsx`.
+* Mobile parity already existed — no mobile work required.
+
+### Verified interactively
+* Toggle click hides `schedule-map-body`, second click restores it.
+* `localStorage["schedule.mapVisible"]` flips `"true"` ↔ `"false"`.
+* Nav button now `#F97316` circular with white icon.
+* No compile errors; testids `schedule-job-nav-*` / `grid-job-title-*` / `schedule-map-toggle` present in the DOM.
+
+## Feb-2026 · Live-Tech-Map Phase 1 — palette + settings API + migration + ETag
+Shipped 2026-02-XX. Foundational backend for the Live-Tech-Map roadmap (Q1–Q8 all approved).
+
+### What landed
+* **`backend/constants/tech_colors.py`** — the approved 12-color Tailwind 500-tier palette (blue/red/emerald/amber/violet/pink/teal/orange/indigo/lime/cyan/fuchsia), `is_palette_color()` guard, and `deterministic_color_for_id(seed)` helper (SHA-256 → `palette[hash % 12]`, stable across processes).
+* **`frontend/src/lib/techColorsPalette.js`** — mirror of the palette + `isPaletteColor()` guard for Phase 2 Settings UI.
+* **Null-fill migration** (`backend/services/tech_color_migration.py`) — idempotent, boot-time scan. Fills `db.users.display_color_hex` for `role ∈ {technician, landscaper}` and `db.crews.color` where null / missing / empty. Off-palette customs are preserved. Wired into `server.py::startup` as a backgrounded task. First boot filled 11 tech rows; subsequent boots fill 0 (idempotent, verified).
+* **Palette lock** on the existing `PATCH /api/users/{user_id}` (team.py) and `PATCH /api/crews/{cid}` (ops.py) — off-palette hexes now 400 with a helpful error listing the approved slots. Regex `#RRGGBB` guard runs first.
+* **`GET /api/tech-colors/palette`** — authed read-only, returns `{"palette": [{name, hex}, ...]}`.
+* **ETag / If-None-Match** on `GET /api/dispatch/board` (Q8) — SHA-256(payload)[:16] as the ETag. Match → 304 empty body + ETag echo. Non-match → 200 + fresh ETag. Delivers per-poll cost reduction on quiet dispatch boards.
+* **`backend/tests/test_phase1_live_tech_map.py`** — 23 pytest cases across palette constants, `is_palette_color`, deterministic hash, palette endpoint, PATCH auth + palette lock (users + crews), ETag round-trip (200 → 304 → 200 on stale), migration idempotency, migration preserves off-palette customs. **23/23 green.**
+
+### Q1–Q8 answers (user-approved, live in `/app/memory/PHASE_LIVE_TECH_MAP_SCOPE.md`)
+* Q1: reuse `display_color_hex` — no new schema field.
+* Q2: 12-color Tailwind 500 palette confirmed.
+* Q3: `DispatchSchedulePanel` grouping mirrors `PIN_COLOR_MODES`.
+* Q4 (user override): SHIP click-schedule-item → map focus in this pass.
+* Q5: admin viewing a tech → shows admin's OWN browser geolocation.
+* Q6 (user override): mobile foreground ping 60 s → 30 s when dispatch is visible; contract deferred to Phase 1 kickoff — parked to a follow-up.
+* Q7: hide "you are here" pin when accuracy > 500 m.
+* Q8: ETag / If-None-Match on `/api/dispatch/board` — **shipped in Phase 1**.
+
+### Backlog (unblocked, on user acceptance)
+* **Phase 2** — Settings UI (color picker for admin roster).
+* **Phase 4.core + 4.a + 4.b** batched — dispatch page live-map treatment + `DispatchSchedulePanel` + unified filter chain + Q4 click-to-focus map.
+* **Phase 3** — schedule "you are here" pin (Q7 500 m guard).
+* **Phase 5** — mobile parity + Q6 ping-cadence patch (routed to `e1_expo_frontend_dev`).
+
+**STOP for user verification** before starting Phase 2.
+

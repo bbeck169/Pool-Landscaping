@@ -251,7 +251,124 @@ Sits in `constants/tech_colors.py` (backend) + `constants/techColors.js`
 
 ---
 
-## 5 · Decisions to route to user BEFORE Phase 1 code ships
+## 5 · Decisions — user-approved Feb-2026 (Q1–Q8) ✅
+
+All 8 questions returned as "a" (the recommended answer) on 2026-02-XX.
+Two of those ("a") are user overrides of the audit's own defer/reject
+recommendations — those are called out inline.
+
+### Q1 ✅ · Reuse `display_color_hex` — no new field
+
+Confirmed. Migration = **null-fill only** on `db.users.display_color_hex`
+(and `db.crews.color`, existing field). Deterministic hash of
+`user_id` → `palette[hash % 12]`. Idempotent — safe to re-run.
+**No schema change, no new index.**
+
+### Q2 ✅ · Palette confirmed
+
+Approved 12-color Tailwind 500-tier palette:
+`blue, red, emerald, amber, violet, pink, teal, orange, indigo,
+lime, cyan, fuchsia`. See §2 for exact hex values. Palette lives
+in `backend/constants/tech_colors.py` (created in Phase 1) and
+`frontend/src/lib/techColorsPalette.js` (created in Phase 2). No
+brand-color slot pinning — all 12 slots hash-assigned.
+
+### Q3 ✅ · Panel grouping mirrors `PIN_COLOR_MODES`
+
+Confirmed. `DispatchSchedulePanel` uses **one control** that mirrors
+the map's `PIN_COLOR_MODES` (tech / crew / service_day). Same
+source-of-truth state; `service_day` panel-mode falls back to tech
+grouping for the intra-day view.
+
+### Q4 ✅ · SHIP click-schedule-item → focus-map polish (USER OVERRIDE)
+
+User overrode the audit's "defer behind a flag" recommendation.
+Ships in this pass, no flag. Clicking a `DispatchSchedulePanel` row
+pans + zooms the dispatch map to that stop's pin. Implementation
+lives in Phase 4.a (~30 LOC — `panelRow.onClick` → `mapRef.panTo(pin)`).
+
+### Q5 ✅ · Admin-viewing-a-tech screens show admin's OWN browser location
+
+Confirmed. When an admin views a tech's schedule (`/schedule?tech=X`),
+the "you are here" pin renders **the admin's browser geolocation**,
+not the tech's last ping. Matches the user's original "browser
+geolocation current-location pin" spec literally.
+
+### Q6 ✅ · Mobile foreground ping BUMPS 60s → 30s when dispatch is visible (USER OVERRIDE)
+
+User overrode the audit's battery-cost concern. Contract:
+* Mobile foreground ping cadence = **30 s** when dispatch is visible
+  (an admin is actively viewing `/dispatch`).
+* Cadence stays 60 s otherwise (default) and 300 s background.
+* Signal: **TBD in Phase 1 kickoff** — either
+  (a) mobile polls a lightweight `GET /api/gps/ping-config` that reads
+      a `dispatch_visible` tenant flag toggled by the web dispatch
+      page's presence heartbeat, OR
+  (b) mobile-only client-side heuristic (does not need a backend
+      contract; falls under Phase 5 mobile-only work).
+* **Decision deferred to Phase 1 kickoff.** Flag which cleaner
+  approach lands before writing code; either way this is NOT a
+  Phase-1 blocker — Phase 1 can ship without touching ping cadence
+  and pick it up in a follow-up patch.
+
+### Q7 ✅ · Hide "you are here" pin if accuracy > 500 m
+
+Confirmed. Client-side filter in the geolocation callback:
+`if (position.coords.accuracy > 500) hidePin(); else showPin();`.
+No pin renders on desktops that geolocate via IP (typical accuracy
+1–5 km). Rendered pin includes a subtle accuracy-radius circle.
+
+### Q8 ✅ · Ship ETag / If-None-Match on `/api/dispatch/board`
+
+Confirmed. Phase 1 delivers this (~40 LOC):
+* Server hashes the board payload (stable JSON dump SHA-256, hex
+  first 16 chars) → `ETag: "<hash>"`.
+* On subsequent poll, client sends `If-None-Match: "<hash>"`.
+* Server returns `304 Not Modified` (empty body) on match.
+* Frontend `dispatch board` poll interprets 304 = skip re-render.
+* Idempotent, safe under polling-only. Falls back to 200 if hash
+  changes.
+
+---
+
+## 5.1 · Phase 1 kickoff scope (Feb-2026, unblocked)
+
+Ships after the Batched Wave (#1 Navigate button + #2 Schedule map
+toggle) lands green. Phase 1 delivers:
+
+1. **Palette constants** — `backend/constants/tech_colors.py` +
+   `frontend/src/lib/techColorsPalette.js` (mirror). Exports the
+   12-color hex array + `deterministicColorForId(user_id)` helper.
+2. **Null-fill migration** — one-shot idempotent scan at startup
+   (`backend/services/tech_color_migration.py`, wired into
+   `server.py` startup event). Fills `db.users.display_color_hex`
+   for any tech with null/undefined using `hash(id) mod 12`. Also
+   fills `db.crews.color` where null. Logs the count of rows filled.
+3. **Settings API endpoints** — admin-only (PATCH):
+   * `PATCH /api/users/{user_id}/display-color-hex` — validates
+     against the 12-color palette (rejects arbitrary hex outside
+     the approved list).
+   * `PATCH /api/crews/{crew_id}/color` — same guard.
+   * `GET /api/tech-colors/palette` — public-ish (admin-authed but
+     read-only), returns the palette array for the Settings UI.
+4. **ETag on `/api/dispatch/board`** (~40 LOC) — Q8 delivery.
+5. **Tests** — pytest suite covering:
+   * palette validation (rejects unlisted hex)
+   * migration idempotency (2× run = same output)
+   * hash-assignment determinism (same input → same color)
+   * PATCH auth (admin-only, tech gets 403, unauth gets 401)
+   * ETag round-trip (200 → 304 on unchanged, 200 on mutation)
+
+**Q6 mobile ping cadence:** flag decision at kickoff (backend
+contract vs. mobile-only). Not a Phase-1 blocker; parked to a
+Phase-1 follow-up patch or Phase 5.
+
+**STOP at end of Phase 1** for user verification before starting
+Phase 2 (Settings UI).
+
+---
+
+## 5.2 · Original open questions (superseded — see §5 above)
 
 ### Q1 (Blocker) · Reuse `display_color_hex` or add new `color` field?
 

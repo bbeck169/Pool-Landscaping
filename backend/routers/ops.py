@@ -94,6 +94,28 @@ async def create_crew(body: CrewIn, user: dict = Depends(require_admin),
 @router.patch("/crews/{cid}")
 async def update_crew(cid: str, body: dict, user: dict = Depends(require_admin),
                        tenant: dict = Depends(get_current_tenant)):
+    # Feb-2026 · Live-Tech-Map Phase 1 — palette lock on crew ``color``.
+    # Off-palette values already saved on rows are TOLERATED on reads,
+    # but new writes must land inside the approved 12-color palette.
+    if "color" in body:
+        raw = body.get("color")
+        if raw is not None and raw != "":
+            import re as _color_re
+            if not isinstance(raw, str) or not _color_re.fullmatch(
+                r"#[0-9A-Fa-f]{6}", raw,
+            ):
+                raise HTTPException(
+                    400,
+                    "color must be a '#RRGGBB' string (e.g. #3B82F6)",
+                )
+            from constants.tech_colors import is_palette_color, PALETTE_HEXES
+            if not is_palette_color(raw):
+                raise HTTPException(
+                    400,
+                    "color must be one of the approved palette colors: "
+                    f"{PALETTE_HEXES}",
+                )
+            body["color"] = raw.upper()
     body["updated_at"] = now_iso()
     # Feb-2026 · P0 fix — scope the update to the caller's tenant so
     # a stale/foreign crew id can't mutate rows across tenants.

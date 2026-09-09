@@ -29,7 +29,7 @@ import "react-big-calendar/lib/css/react-big-calendar.css";
 import JobNotesCallout from "@/components/schedule/JobNotesCallout";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
          CheckCircle2, Move as MoveIcon, ArrowUp, FileText, Star, Check, Trash2, Loader2, UsersRound,
-         Pencil, Key, Navigation2 } from "lucide-react";
+         Pencil, Key, Navigation2, ChevronDown, ChevronUp, Map as MapIcon } from "lucide-react";
 // Phase F1 · Feb-2026 — Bulk multi-stop "Navigate route" URL builder.
 import { runBulkNavigateRoute } from "../../lib/googleMapsRoute";
 
@@ -131,6 +131,12 @@ const isRecurring = (j) =>
   Boolean(j.is_recurring || j.recurring || (j.recurrence && j.recurrence !== "none"));
 
 const MODE_KEY = "aq-schedule-mode-v1";
+// Feb-2026 · Batched Wave #2 — persistent show/hide of the
+// schedule map (grid mode). Key MUST match the mobile parity
+// storage key in ``mobile/app/(app)/schedule/calendar.tsx``
+// (``MAP_VISIBLE_KEY``) so users get a consistent default across
+// devices when we eventually sync per-user prefs.
+const MAP_VISIBLE_KEY = "schedule.mapVisible";
 
 const locales = { "en-US": enUS };
 const localizer = dateFnsLocalizer({
@@ -275,6 +281,26 @@ export default function CalendarSchedule() {
     try { sessionStorage.setItem(MODE_KEY, m); } catch {}
     setParam("mode", m);
   };
+
+  // Feb-2026 · Batched Wave #2 — persistent map show/hide toggle.
+  // Rendered above the grid in ``mode === "grid"``. Default = shown
+  // (matches mobile default). Persisted to localStorage under the
+  // shared ``MAP_VISIBLE_KEY`` so a page reload preserves the pick.
+  const [mapVisible, setMapVisible] = useState(() => {
+    try {
+      const v = localStorage.getItem(MAP_VISIBLE_KEY);
+      if (v === "false") return false;
+      if (v === "true") return true;
+    } catch {}
+    return true;
+  });
+  const toggleMapVisible = React.useCallback(() => {
+    setMapVisible((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(MAP_VISIBLE_KEY, String(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   // Phase 30W · grid-mode bookkeeping.
   const [checked, setChecked] = useState(new Set());
@@ -1358,6 +1384,51 @@ export default function CalendarSchedule() {
         </div>
       ) : null}
 
+      {/* Feb-2026 · Batched Wave #2 — Schedule Map (grid mode) with
+          a persistent show/hide toggle. Rendered ABOVE the day list
+          so the map is the first thing an operator sees when they
+          land on /schedule. Toggle state persists to localStorage
+          under ``schedule.mapVisible`` (mobile parity: same key is
+          used with AsyncStorage in the Expo app). ScheduleMap
+          itself self-hides when zero stops have coords, so the
+          toggle header can render even on empty days and the map
+          area quietly disappears — the toggle stays available for
+          navigation to a day with coords. */}
+      {mode === "grid" ? (
+        <div className="mb-3" data-testid="schedule-map-wrap">
+          <button
+            type="button"
+            onClick={toggleMapVisible}
+            aria-expanded={mapVisible ? "true" : "false"}
+            aria-controls="schedule-map-body"
+            data-testid="schedule-map-toggle"
+            data-map-visible={mapVisible ? "true" : "false"}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold mb-2"
+            style={{
+              background: colors.surface,
+              color: mapVisible ? colors.brand : colors.muted,
+              border: `1px solid ${colors.border}`,
+              cursor: "pointer",
+            }}
+          >
+            <MapIcon size={13} />
+            <span>{mapVisible ? "Hide map" : "Show map"}</span>
+            {mapVisible ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          </button>
+          {mapVisible ? (
+            <div id="schedule-map-body" data-testid="schedule-map-body">
+              <ScheduleMapErrorBoundary>
+                <ScheduleMap
+                  jobs={dayJobs}
+                  techs={techs}
+                  techColorMap={techColorMap}
+                />
+              </ScheduleMapErrorBoundary>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {mode === "calendar" ? (
       <div
         style={{ background: colors.surface, border: `1px solid ${colors.border}`,
@@ -1455,20 +1526,12 @@ export default function CalendarSchedule() {
         />
       ) : null}
 
-      {/* Feb-2026 · Schedule map — pins for every stop of the
-          focused day. Auto-hides when zero stops have coords so
-          the page never shows an empty gray box. Reuses the same
-          ``techColorMap`` the schedule calendar / DnD panel key on
-          so a stop's colour matches across surfaces. */}
-      {mode === "grid" ? (
-        <ScheduleMapErrorBoundary>
-          <ScheduleMap
-            jobs={dayJobs}
-            techs={techs}
-            techColorMap={techColorMap}
-          />
-        </ScheduleMapErrorBoundary>
-      ) : null}
+      {/* Feb-2026 · Batched Wave #2 — the ``<ScheduleMap />`` that
+          used to render below the grid moved ABOVE the calendar/grid
+          block (see ``schedule-map-wrap`` above) and is now
+          controlled by the persistent ``mapVisible`` toggle. Do NOT
+          re-add a second render here — it would double-render the
+          map and duplicate every marker on the day. */}
 
       {/* Feb-2026 · Numbered-order reorder — the previous
           <ScheduleDayDnDPanel /> mount lived here; DnD was
@@ -2049,7 +2112,27 @@ function GridPanel({
                         was removed. The schedule day view is
                         already tech-scoped in the header, so the
                         per-card avatar was redundant clutter. */}
-                    <span>{j.customer_name || "Unknown"}</span>
+                    <span
+                      className="flex-1 min-w-0"
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      data-testid={`grid-job-title-${j.id}`}
+                    >
+                      {j.customer_name || "Unknown"}
+                    </span>
+                    {/* Feb-2026 · Batched Wave #1 — per-job
+                        Navigate button lives INSIDE the title row
+                        (adjacent to the customer name) so it
+                        matches the mobile card layout. Prefers
+                        lat/lng, falls back to address, disabled
+                        (with tooltip) when neither is present.
+                        stopPropagation lives in NavigateJobButton
+                        so a tap doesn't accidentally open the
+                        parent job card. */}
+                    <NavigateJobButton job={j} />
                     {j.customer_is_vip ? (
                       <span
                         className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider"
@@ -2190,12 +2273,12 @@ function GridPanel({
                 >
                   {pill.label}
                 </div>
-                {/* Feb-2026 · Schedule polish — per-job Navigate
-                    button. Opens Google Maps in a new tab; prefers
-                    lat/lng, falls back to the address string, and
-                    disables itself with a tooltip when neither is
-                    present. */}
-                <NavigateJobButton job={j} />
+                {/* Feb-2026 · Batched Wave #1 — the per-job
+                    <NavigateJobButton> that used to render here
+                    (at the far right of the card) moved into the
+                    title row above so it sits adjacent to the
+                    customer name (mobile parity). Intentionally
+                    NOT rendered a second time here. */}
                 <button
                   onClick={(e) => { e.stopPropagation(); onOpenJob(j.id); }}
                   // Feb-2026 HOTFIX (live user report) — was a bare
