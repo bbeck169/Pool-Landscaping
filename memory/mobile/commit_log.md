@@ -1554,3 +1554,15 @@
 - **Files modified**: src/components/checklist/WaterBodyPanel.tsx, src/components/checklist/PoolChecklistForm.tsx
 - **Files created**: __tests__/chemistry-ui-trim.test.tsx
 - **Test results**: 6/6 new tests passing, no regressions
+
+
+## Iteration 79 — Port Phase A line-item decline + schedule refresh + VIP inline
+- **Commit**: dd808147a7bb6f644bb48b3e0d19b20c0a2f657c
+- **Date**: 2026-09-09
+- **Changes**:
+  - ITEM 1: Full Phase A line-item decline + top-level approve/decline on estimate view
+  - ITEM 2: Schedule refresh button in header toolbar (schedule-refresh testID)
+  - ITEM 3: VIP pill + NavigateJobButton moved inline with customer name on schedule cards
+- **Files modified**: estimate-view/[id].tsx, estimatesFull.ts, calendar.tsx
+- **Files created**: __tests__/parity-phase-a.test.tsx
+- **Test results**: 8/8 passing
