@@ -1,3 +1,18 @@
+## Iteration 76 — Schedule map show/hide toggle
+- **Commit**: 453db872
+- **Date**: 2026-09-08
+- **Changes**:
+  - Added collapsible map toggle bar in Schedule Grid view
+  - "Hide map" / "Show map" toggle hides DailyRouteMap + List|Map segmented control
+  - Preference persisted via `storage.setItem("schedule.mapVisible", boolean)` (AsyncStorage)
+  - Proper accessibility: `accessibilityLabel`, `accessibilityRole="button"`, dynamic label
+  - 8 Jest tests covering: default state, toggle flip, persistence across mount/unmount, accessibility
+- **Files modified**: `mobile/app/(app)/schedule/calendar.tsx`
+- **Files created**: `mobile/__tests__/schedule-map-toggle.test.tsx`
+- **Web files referenced**: None (mobile-only feature)
+
+
+
 ## Iteration 75 — Task 6b E2E Verification (Testing Agent)
 - **Commit**: a9f5f483 (code unchanged; E2E test added)
 - **Date**: 2026-09-08
