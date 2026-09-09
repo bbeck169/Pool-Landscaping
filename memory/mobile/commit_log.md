@@ -1,3 +1,16 @@
+## Iteration 81 — Outcome C: /estimates/* → /quotes/* URL rename
+- **Commit**: b114a901
+- **Date**: 2026-09-09
+- **Changes**:
+  - `src/api/estimatesFull.ts` lines 48/51/54/57: `/estimates/${eid}/*` → `/quotes/${eid}/*` (4 paths)
+  - `src/api/media.ts` line 31: `/estimates/${id}/videos` → `/quotes/${id}/videos` (1 path)
+  - `app/estimate-view/[id].tsx` line 4: docstring updated to reference `/quotes/*` canonical
+  - Zero remaining old `/estimates/` paths outside estimator/ (confirmed via grep)
+  - No test file changes needed (no mocks referenced old paths)
+- **Files modified**: `mobile/src/api/estimatesFull.ts`, `mobile/src/api/media.ts`, `mobile/app/estimate-view/[id].tsx`
+
+
+
 ## Iteration 80 — P45 "More filters" bottom sheet + Add card row polish
 - **Commit**: ffa2ce23
 - **Date**: 2026-09-09
