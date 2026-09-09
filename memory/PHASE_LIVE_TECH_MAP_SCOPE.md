@@ -469,3 +469,72 @@ plus a user acceptance walkthrough of the preview environment.
 * No test files created.
 * No external repo cloned/pushed.
 * No Chunk 3 files touched.
+
+---
+
+## 9 · Phase 2 — SHIPPED (Feb-2026)
+
+Delivered on top of Phase 1's palette + palette-locked PATCH endpoints.
+
+### What landed
+* **Shared palette hook** `frontend/src/hooks/useTechColorsPalette.js`
+  * Fetches `/api/tech-colors/palette` once and caches in a module-scoped Promise so multiple pickers on `/team` + `/crews` don't race.
+  * Network failure → falls back to the local mirror at `lib/techColorsPalette.js` so the UI never renders empty chips.
+* **Shared component** `frontend/src/components/team/PaletteChipPicker.jsx`
+  * 12-chip flex-wrap row, active chip gets a `2px` ring + `1.1x` scale.
+  * Click a chip → `onPick(hex)` fires immediately (no intermediate Save button).
+  * `disabled` state fades chips + `cursor: not-allowed`.
+* **`TechColorSwatch` (in `OpsHub.jsx`)** — the `<input type="color">` + Save/Cancel flow was replaced with the shared picker + Clear + Close. Save happens on chip click. Popover stays open on failure so the operator can retry.
+* **Crews modal color picker** (in `OpsHub.jsx`) — the `CREW_COLOR_PRESETS` grid + free-form HEX input was replaced with the shared 12-chip picker. Default `form.color` moved from `#0284C7` (off-palette) → `#3B82F6` (palette blue) so a first-time crew save doesn't 400 under the Phase-1 palette lock.
+* **`CREW_COLOR_PRESETS`** constant retired (single source of truth on the wire).
+* Auth gate reused — `TechColorSwatch` already receives `editable={isAdmin && !isSuper}`; non-admins can't open the picker.
+
+### RTL / regression coverage (Feb-2026)
+* `phase21-team-color-swatch.test.jsx` — rewritten for the new UI. 6/6 green.
+* `phase2-live-tech-map-palette-picker.test.jsx` — new suite for the shared picker (12 chips, active state, click-to-onPick, disabled blocks clicks, endpoint-failure fallback). 5/5 green.
+* Regression sweep: `k73-crew-palette`, `opshub-team-picker-tech-both`, `opshub-all-both-filter`, `dispatch-live-pins`, `schedule-navigate-button`, `tech-schedule-map-toggle`. **60/60 green.**
+* Backend Phase-1 pytest suite (`test_phase1_live_tech_map.py`) rerun after Phase 2 lands: 23/23 still green.
+
+### Files touched
+* Created: `frontend/src/hooks/useTechColorsPalette.js`, `frontend/src/components/team/PaletteChipPicker.jsx`, `frontend/src/test/phase2-live-tech-map-palette-picker.test.jsx`.
+* Modified: `frontend/src/pages/ops/OpsHub.jsx` (import, `TechColorSwatch` refactor, `Crews` picker refactor, `CREW_COLOR_PRESETS` retired), `frontend/src/test/phase21-team-color-swatch.test.jsx` (rewritten).
+
+### Verified interactively (screenshots)
+* Team page rendered with 15 color swatches at 1440×900.
+* Popover open on `Mike Rivera` — 12 palette chips visible, violet chip outlined as active.
+* After clicking the emerald chip — swatch flipped to `#10B981` and a "Color set for Mike Rivera" success toast surfaced.
+
+### STOP for user verification before Phase 4.core+4.a+4.b batched (dispatch live map + `DispatchSchedulePanel` + click-to-focus).
+
+---
+
+## 10 · Phase 6 — Tenant-branding polish (STUB, DO NOT SHIP)
+
+**Status:** planned, not started. Ships **after** Phase 5.
+
+### One-liner
+Auto-assign the tenant's two brand hexes to the morning's top-two-load techs via a cron so dispatch pins reinforce the tenant's brand identity.
+
+### Contract (draft, subject to Phase 5 findings)
+* Read the tenant's two brand hexes from `tenant.brand.primary_hex` + `tenant.brand.secondary_hex` (existing fields).
+* **Guardrails**: brand hexes MUST be in the approved palette. If not, log a warning and skip that hex — never persist an off-palette color, ever.
+* Nightly cron (~05:00 tenant-local):
+  1. Query the day's routed jobs → tech load counts.
+  2. Sort desc by load.
+  3. Top-1 tech → `display_color_hex = tenant.brand.primary_hex` (if palette-valid).
+  4. Top-2 tech → `display_color_hex = tenant.brand.secondary_hex` (if palette-valid).
+  5. All other techs — untouched (preserve any admin overrides + hash-fill defaults).
+* **Idempotent**: if today's top-two haven't changed vs. yesterday, no writes.
+* **Reversible**: adds a `display_color_hex_source` audit field (`brand-cron` | `admin-set` | `hash-fill`) so an admin override always wins over cron.
+* Feature-flagged: `LTM_PHASE6_BRAND_TOPTWO_ENABLED` (defaults off).
+
+### Deliverables (when picked up)
+* `backend/services/tenant_brand_toptwo.py` (~120 LOC).
+* Cron registration in `server.py::startup`.
+* `display_color_hex_source` field added to `db.users` (schema audit required — potential guardrail conflict — clarify with user).
+* Pytest suite: idempotency, palette-guard on brand hexes, admin override never overwritten.
+* PRD update.
+
+### Why STUB and not code
+Ships after Phase 5 mobile parity + Q6 ping cadence. Slot cleanly on top of Phase 5's completed roster. Also depends on the exact source-of-truth for tenant brand hexes — a small audit is needed before code.
+

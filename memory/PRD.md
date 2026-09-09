@@ -17162,3 +17162,34 @@ Shipped 2026-02-XX. Foundational backend for the Live-Tech-Map roadmap (Q1–Q8 
 
 **STOP for user verification** before starting Phase 2.
 
+
+## Feb-2026 · Live-Tech-Map Phase 2 — Team Colors Settings UI (SHIPPED)
+Delivered on top of Phase 1's palette + palette-locked PATCH endpoints. Web only; mobile parity is Phase 5 material.
+
+### What landed
+* **Shared palette-picker component** — `frontend/src/components/team/PaletteChipPicker.jsx`. 12 chips, click-to-save (no intermediate Save button), active state via outline + scale.
+* **Shared palette-fetch hook** — `frontend/src/hooks/useTechColorsPalette.js`. Fetches `/api/tech-colors/palette` once + caches per-page. Falls back to the local mirror on network failure.
+* **`TechColorSwatch` refactor** — the `<input type="color">` picker in `OpsHub.jsx` was swapped for the 12-chip picker. Kept every existing testid (`team-row-color-swatch-*`, `team-color-picker-popover-*`, `team-color-picker-clear-*`, `team-color-picker-cancel-*`). Retired: `team-color-picker-save-*`, `team-color-picker-input-*` (obsolete after Save-on-click).
+* **Crews modal picker refactor** — replaced `CREW_COLOR_PRESETS` grid + free-form HEX input with the shared 12-chip picker. Default `form.color` moved to `#3B82F6` (palette blue) so a naive save no longer 400s under Phase-1 palette lock.
+* Auth gate reused — admin/super-admin only (`editable={isAdmin && !isSuper}`).
+
+### Tests
+* `phase21-team-color-swatch.test.jsx` — rewritten for new UI. 6/6 green.
+* `phase2-live-tech-map-palette-picker.test.jsx` — 5/5 green (renders 12 chips, active data-attribute, click fires onPick, disabled blocks, network fallback).
+* Regression sweep (`k73-crew-palette`, `opshub-team-picker-tech-both`, `opshub-all-both-filter`, `dispatch-live-pins`, `schedule-navigate-button`, `tech-schedule-map-toggle`) — 60/60 green.
+* Backend Phase-1 pytest (23 cases) rerun — still green.
+
+### Verified interactively
+* `/team` renders 15 color swatches at 1440×900.
+* Clicking Mike Rivera's swatch opens the popover with 12 chips (violet chip active).
+* Clicking the emerald chip flips his row swatch to `#10B981` and surfaces "Color set for Mike Rivera" toast.
+
+### Backlog (unblocked, awaiting user green light)
+* Phase 4.core + 4.a + 4.b batched — dispatch live-map + `DispatchSchedulePanel` + click-to-focus (Q4 user override).
+* Phase 3 — schedule "you are here" pin (Q7 500 m accuracy guard).
+* Phase 5 — mobile parity + Q6 ping-cadence patch.
+* Phase 6 — tenant-branding polish (stub in audit doc, planned after Phase 5).
+* **Next after standing order** — customer detail page unified "Sent documents" tab (audit + ship). Queued after Phase 2 verification.
+
+**STOP for user verification** before starting Phase 4.core+4.a+4.b batched or the Sent Documents task.
+

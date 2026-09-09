@@ -11,18 +11,20 @@ import { PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, 
 import { useAttendance } from "@/hooks/useAttendance";
 import WorkstreamJobDrawer from "@/pages/ops/WorkstreamJobDrawer";
 import EditItemModal from "@/components/pricebook/EditItemModal";
+// Feb-2026 · Live-Tech-Map · Phase 2 — Team colors ship. Replaces
+// the free-form ``<input type="color">`` + hex-input pickers with
+// the 12-chip palette picker so the UI can only produce colors
+// that Phase 1 palette-locked backend endpoints accept.
+import PaletteChipPicker from "@/components/team/PaletteChipPicker";
 
 /* ═══ Ops hub – one page, many tabs. Kept compact by construction. ═══ */
 
 
-// Feb-2026 · Crew color-picker presets. 12 hand-picked hues that stay
-// legible on both light and dark theme surfaces. Users can still paste
-// an arbitrary hex via the fallback text input.
-const CREW_COLOR_PRESETS = [
-  "#0284C7", "#7C3AED", "#DB2777", "#DC2626",
-  "#EA580C", "#CA8A04", "#16A34A", "#059669",
-  "#0891B2", "#4338CA", "#475569", "#0F766E",
-];
+// Feb-2026 · Live-Tech-Map Phase 2 — the ``CREW_COLOR_PRESETS``
+// palette that used to live here (12 hand-picked hues) was
+// retired when the Crews color picker migrated to the shared
+// ``PaletteChipPicker`` (fed by ``GET /api/tech-colors/palette``).
+// Removing keeps a single source of truth on the wire.
 
 const SECTIONS = [
   { k: "dispatch",   label: "Dispatch",     icon: Truck },
@@ -511,10 +513,16 @@ function Crews() {
   const [techs] = useList("/technicians");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: "", color: "#0284C7", tech_ids: [] });
+  // Feb-2026 · Live-Tech-Map Phase 2 — default the new-crew form to
+  // a palette color (blue-500). Was ``#0284C7`` (sky-600, off-
+  // palette); creating a crew without touching the picker used to
+  // save fine but now 400s under the Phase-1 palette lock. Palette
+  // blue-500 is a safe, on-palette default that matches the
+  // tech-side default hue.
+  const [form, setForm] = useState({ name: "", color: "#3B82F6", tech_ids: [] });
   const [toast, setToast] = useState(null);
-  const openNew = () => { setEditing(null); setForm({ name: "", color: "#0284C7", tech_ids: [] }); setOpen(true); };
-  const openEdit = (c) => { setEditing(c); setForm({ name: c.name, color: c.color || "#0284C7", tech_ids: c.tech_ids || [] }); setOpen(true); };
+  const openNew = () => { setEditing(null); setForm({ name: "", color: "#3B82F6", tech_ids: [] }); setOpen(true); };
+  const openEdit = (c) => { setEditing(c); setForm({ name: c.name, color: c.color || "#3B82F6", tech_ids: c.tech_ids || [] }); setOpen(true); };
   const save = async () => {
     // Feb-2026 · Crew-save P0 fix. The prior implementation did TWO
     // things: (1) ``api.put('/crews/…')`` inside a try/except that
@@ -566,29 +574,21 @@ function Crews() {
         footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} testid="crew-save">Save</Button></>}>
         <div className="space-y-3">
           <TextInput label="NAME" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} testid="crew-name" />
-          {/* Feb-2026 · Crew color picker parity with Team members.
-              12-swatch grid + hex fallback. No new deps — same
-              pattern as ``ColorSwatchInline`` for users. Backend
-              ``crews.color`` already exists in the schema. */}
+          {/* Feb-2026 · Live-Tech-Map Phase 2 — palette-locked color
+              picker. Was a free-form hex input + CREW_COLOR_PRESETS
+              grid; now uses the shared 12-chip picker so the crew
+              color matches the tech-color palette exactly. Free-
+              form HEX input removed — Phase 1 palette-locked the
+              backend PATCH so an off-palette value would 400. */}
           <div>
             <div className="text-xs font-semibold mb-2" style={{ color: colors.muted }}>COLOR</div>
-            <div className="flex flex-wrap gap-2 mb-2" data-testid="crew-color-swatches">
-              {CREW_COLOR_PRESETS.map((hex) => {
-                const active = (form.color || "").toUpperCase() === hex.toUpperCase();
-                return (
-                  <button key={hex} type="button" onClick={() => setForm({ ...form, color: hex })}
-                          data-testid={`crew-color-swatch-${hex.slice(1).toLowerCase()}`}
-                          aria-label={`Set crew color ${hex}`}
-                          className="w-6 h-6 rounded-full transition-transform"
-                          style={{ backgroundColor: hex,
-                                    outline: active ? `2px solid ${colors.onSurface}` : "none",
-                                    outlineOffset: "2px" }} />
-                );
-              })}
+            <div data-testid="crew-color-swatches">
+              <PaletteChipPicker
+                value={form.color}
+                onPick={(hex) => setForm({ ...form, color: hex })}
+                testidPrefix="crew-color-chip"
+              />
             </div>
-            <TextInput label="HEX (custom)" value={form.color}
-                        onChange={(e) => setForm({ ...form, color: e.target.value })}
-                        testid="crew-color-hex" />
           </div>
           <div>
             <div className="text-xs font-semibold mb-2" style={{ color: colors.muted }}>MEMBERS</div>
@@ -1448,22 +1448,36 @@ function DeleteTeamMemberDialog({ target, onClose, onDone, onError }) {
 export function TechColorSwatch({ user, editable, onChange }) {
   const [open, setOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
-  const [draft, setDraft] = React.useState(
-    (user.display_color_hex || "#0EA5E9").toUpperCase(),
-  );
-  React.useEffect(() => {
-    setDraft((user.display_color_hex || "#0EA5E9").toUpperCase());
-  }, [user.display_color_hex]);
 
   const currentColor = user.display_color_hex || null;
 
-  const save = async (hex) => {
+  // Feb-2026 · Live-Tech-Map · Phase 2 — palette-only picker.
+  // Click a chip → save immediately (no intermediate "Save" step).
+  // The palette IS the whitelist, so an accidental click is one
+  // more click to correct — matches native OS colour-picker feel.
+  // If the PATCH throws we surface a toast via ``onChange``'s
+  // rejection but keep the popover open so the operator can retry.
+  const pick = async (hex) => {
+    if (saving) return;
     setSaving(true);
     try {
       await onChange(hex);
       setOpen(false);
     } catch {
       /* parent toasted; keep popover open so user can retry */
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clear = async () => {
+    if (saving || !currentColor) return;
+    setSaving(true);
+    try {
+      await onChange(null);
+      setOpen(false);
+    } catch {
+      /* parent toasted */
     } finally {
       setSaving(false);
     }
@@ -1492,7 +1506,7 @@ export function TechColorSwatch({ user, editable, onChange }) {
       </button>
       {open && editable ? (
         <div
-          className="absolute z-50 mt-1 right-0 rounded-xl shadow-lg p-3 w-56"
+          className="absolute z-50 mt-1 right-0 rounded-xl shadow-lg p-3 w-64"
           style={{
             backgroundColor: colors.surface,
             border: `1px solid ${colors.border}`,
@@ -1502,25 +1516,16 @@ export function TechColorSwatch({ user, editable, onChange }) {
           <div className="text-xs font-semibold mb-2" style={{ color: colors.onSurface }}>
             Display color
           </div>
-          <div className="flex items-center gap-2 mb-3">
-            <input
-              type="color"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value.toUpperCase())}
-              className="w-10 h-10 rounded cursor-pointer"
-              data-testid={`team-color-picker-input-${user.id}`}
-            />
-            <code
-              className="text-xs px-2 py-1 rounded"
-              style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
-            >
-              {draft}
-            </code>
-          </div>
-          <div className="flex items-center justify-between gap-2">
+          <PaletteChipPicker
+            value={currentColor}
+            onPick={pick}
+            disabled={saving}
+            testidPrefix={`team-color-chip-${user.id}`}
+          />
+          <div className="flex items-center justify-between gap-2 mt-3">
             <button
               type="button"
-              onClick={() => save(null)}
+              onClick={clear}
               disabled={saving || !currentColor}
               className="text-xs px-2 py-1 rounded font-semibold"
               style={{
@@ -1530,30 +1535,18 @@ export function TechColorSwatch({ user, editable, onChange }) {
               }}
               data-testid={`team-color-picker-clear-${user.id}`}
             >
-              Clear
+              {saving ? "Saving…" : "Clear"}
             </button>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                disabled={saving}
-                className="text-xs px-2 py-1 rounded"
-                style={{ color: colors.muted }}
-                data-testid={`team-color-picker-cancel-${user.id}`}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => save(draft)}
-                disabled={saving}
-                className="text-xs px-3 py-1 rounded font-bold text-white"
-                style={{ backgroundColor: colors.brand }}
-                data-testid={`team-color-picker-save-${user.id}`}
-              >
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              disabled={saving}
+              className="text-xs px-2 py-1 rounded"
+              style={{ color: colors.muted }}
+              data-testid={`team-color-picker-cancel-${user.id}`}
+            >
+              Close
+            </button>
           </div>
         </div>
       ) : null}
