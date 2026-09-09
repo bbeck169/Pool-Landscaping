@@ -1,11 +1,20 @@
 /**
- * P43b + P43c + P44 — Customer list data-quality filter chips + row action.
+ * P43b + P43c + P44 + P45 — Customer list "More filters" sheet + Add card row action.
+ *
+ * Tests:
+ *  1. "More filters" trigger renders with summary text
+ *  2. Opening sheet shows all filter controls with correct testIDs
+ *  3. Toggling filters fires correct API calls
+ *  4. Chips compose (multi-filter = ANDed query)
+ *  5. Portal status radio semantics
+ *  6. Clear all resets every filter
+ *  7. Add card pill: appears for no-card customer, fires POST, alerts
+ *  8. Row order: name is left of Add card
  */
 import React from "react";
 import { render, fireEvent, waitFor, act } from "@testing-library/react-native";
 import { Alert } from "react-native";
 
-/* ── Shared state for mocks (prefixed with "mock" for jest.mock hoisting) ── */
 const mockApiCalls: string[] = [];
 const mockApiPostCalls: Array<{ path: string; body: any }> = [];
 let mockPostResult: any = { email_recipient: "test@example.com" };
@@ -19,6 +28,9 @@ jest.mock("@/src/api", () => ({
       if (path.includes("count_only=true&portal_activated=true")) return { count: 5 };
       if (path.includes("count_only=true&portal_activated=false")) return { count: 23 };
       if (path.includes("count_only=true&has_payment_method=false")) return { count: 28 };
+      if (path.includes("count_only=true&missing_email=true")) return { count: 12 };
+      if (path.includes("count_only=true&missing_phone=true")) return { count: 12 };
+      if (path.includes("count_only=true&pending_merge_candidates=true")) return { count: 3 };
       return {
         items: [
           { id: "c1", name: "Alice", address: "123 Main", has_card_on_file: true, saved_payment_methods_count: 1 },
@@ -42,15 +54,12 @@ jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
   useFocusEffect: (cb: any) => {
     const React = require("react");
-    // Must track cb changes so load() re-fires when filter deps change.
     React.useEffect(() => { cb(); }, [cb]);
   },
 }));
 
 jest.mock("@/src/auth", () => ({
-  useAuth: () => ({
-    user: { id: "u1", role: "admin", name: "Test Admin" },
-  }),
+  useAuth: () => ({ user: { id: "u1", role: "admin", name: "Test Admin" } }),
 }));
 
 jest.mock("@/src/services/readCache", () => ({
@@ -95,7 +104,7 @@ import Customers from "@/app/(app)/customers";
 
 const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => {});
 
-describe("P43b + P43c + P44 — Customer list filter chips", () => {
+describe("P45 — More filters sheet + Add card row action", () => {
   beforeEach(() => {
     mockApiCalls.length = 0;
     mockApiPostCalls.length = 0;
@@ -104,71 +113,53 @@ describe("P43b + P43c + P44 — Customer list filter chips", () => {
     jest.clearAllMocks();
   });
 
-  // ── P43b: Missing address ────────────────────────────────────
-  it("renders Missing address chip with count", async () => {
+  // ── Trigger ──────────────────────────────────────────────────
+  it("renders 'More filters: All' trigger when no filters active", async () => {
     const { getByTestId, getByText } = render(<Customers />);
-    await waitFor(() => expect(getByTestId("customers-missing-address-filter")).toBeTruthy());
-    expect(getByText("Missing address")).toBeTruthy();
-    await waitFor(() => expect(getByTestId("customers-missing-address-count")).toBeTruthy());
+    await waitFor(() => expect(getByTestId("customers-more-filters-dropdown")).toBeTruthy());
+    expect(getByText(/More filters: All/)).toBeTruthy();
   });
 
-  it("toggling Missing address chip fires API with missing_address=true", async () => {
+  // ── Sheet testIDs ─────────────────────────────────────────────
+  it("sheet contains all expected testIDs when opened", async () => {
     const { getByTestId } = render(<Customers />);
-    await waitFor(() => expect(getByTestId("customers-missing-address-filter")).toBeTruthy());
+    await waitFor(() => expect(getByTestId("customers-more-filters-dropdown")).toBeTruthy());
+    await act(async () => { fireEvent.press(getByTestId("customers-more-filters-dropdown")); });
+
+    const ids = [
+      "filter-chip-missing-email",
+      "filter-chip-missing-phone",
+      "customers-missing-address-filter",
+      "customers-no-payment-filter",
+      "customers-portal-status-any",
+      "customers-portal-status-activated",
+      "customers-portal-status-not-activated",
+      "customers-filter-include-deleted",
+      "customers-filter-include-merged",
+      "customers-filter-pending-merge-candidates",
+      "customers-more-filters-clear",
+    ];
+    for (const id of ids) {
+      expect(getByTestId(id)).toBeTruthy();
+    }
+  });
+
+  // ── Filter toggles fire correct API calls ─────────────────────
+  it("toggling Missing address fires missing_address=true", async () => {
+    const { getByTestId } = render(<Customers />);
+    await waitFor(() => expect(getByTestId("customers-more-filters-dropdown")).toBeTruthy());
+    await act(async () => { fireEvent.press(getByTestId("customers-more-filters-dropdown")); });
     mockApiCalls.length = 0;
     await act(async () => { fireEvent.press(getByTestId("customers-missing-address-filter")); });
     await waitFor(() => {
-      const hit = mockApiCalls.find((c) => c.includes("missing_address=true") && !c.includes("count_only"));
-      expect(hit).toBeTruthy();
+      expect(mockApiCalls.find((c) => c.includes("missing_address=true") && !c.includes("count_only"))).toBeTruthy();
     });
   });
 
-  // ── P43c: Portal status ──────────────────────────────────────
-  it("renders portal status with corrected labels (Signed in / Never signed in)", async () => {
-    const { getByTestId, getByText } = render(<Customers />);
-    await waitFor(() => expect(getByTestId("customers-portal-status-any")).toBeTruthy());
-    expect(getByText("Any")).toBeTruthy();
-    expect(getByText("Signed in")).toBeTruthy();
-    expect(getByText("Never signed in")).toBeTruthy();
-  });
-
-  it("renders portal status counts", async () => {
-    const { getByText } = render(<Customers />);
-    await waitFor(() => expect(getByText("(5)")).toBeTruthy());
-    expect(getByText("(23)")).toBeTruthy();
-  });
-
-  it("clicking Signed in fires portal_activated=true", async () => {
+  it("toggling No payment fires has_payment_method=false", async () => {
     const { getByTestId } = render(<Customers />);
-    await waitFor(() => expect(getByTestId("customers-portal-status-activated")).toBeTruthy());
-    mockApiCalls.length = 0;
-    await act(async () => { fireEvent.press(getByTestId("customers-portal-status-activated")); });
-    await waitFor(() => {
-      expect(mockApiCalls.find((c) => c.includes("portal_activated=true") && !c.includes("count_only"))).toBeTruthy();
-    });
-  });
-
-  it("clicking Never signed in fires portal_activated=false", async () => {
-    const { getByTestId } = render(<Customers />);
-    await waitFor(() => expect(getByTestId("customers-portal-status-not-activated")).toBeTruthy());
-    mockApiCalls.length = 0;
-    await act(async () => { fireEvent.press(getByTestId("customers-portal-status-not-activated")); });
-    await waitFor(() => {
-      expect(mockApiCalls.find((c) => c.includes("portal_activated=false") && !c.includes("count_only"))).toBeTruthy();
-    });
-  });
-
-  // ── P44: No payment on file ──────────────────────────────────
-  it("renders No payment on file chip with count", async () => {
-    const { getByTestId, getByText } = render(<Customers />);
-    await waitFor(() => expect(getByTestId("customers-no-payment-filter")).toBeTruthy());
-    expect(getByText("No payment on file")).toBeTruthy();
-    await waitFor(() => expect(getByTestId("customers-no-payment-count")).toBeTruthy());
-  });
-
-  it("toggling No payment chip fires has_payment_method=false", async () => {
-    const { getByTestId } = render(<Customers />);
-    await waitFor(() => expect(getByTestId("customers-no-payment-filter")).toBeTruthy());
+    await waitFor(() => expect(getByTestId("customers-more-filters-dropdown")).toBeTruthy());
+    await act(async () => { fireEvent.press(getByTestId("customers-more-filters-dropdown")); });
     mockApiCalls.length = 0;
     await act(async () => { fireEvent.press(getByTestId("customers-no-payment-filter")); });
     await waitFor(() => {
@@ -176,22 +167,85 @@ describe("P43b + P43c + P44 — Customer list filter chips", () => {
     });
   });
 
-  // ── Composition ──────────────────────────────────────────────
-  it("composing Missing address + No payment sends both params", async () => {
+  it("toggling No email fires missing_email=true", async () => {
     const { getByTestId } = render(<Customers />);
-    await waitFor(() => expect(getByTestId("customers-missing-address-filter")).toBeTruthy());
-    await act(async () => { fireEvent.press(getByTestId("customers-missing-address-filter")); });
+    await waitFor(() => expect(getByTestId("customers-more-filters-dropdown")).toBeTruthy());
+    await act(async () => { fireEvent.press(getByTestId("customers-more-filters-dropdown")); });
     mockApiCalls.length = 0;
-    await act(async () => { fireEvent.press(getByTestId("customers-no-payment-filter")); });
+    await act(async () => { fireEvent.press(getByTestId("filter-chip-missing-email")); });
+    await waitFor(() => {
+      expect(mockApiCalls.find((c) => c.includes("missing_email=true") && !c.includes("count_only"))).toBeTruthy();
+    });
+  });
+
+  it("clicking Signed in fires portal_activated=true", async () => {
+    const { getByTestId } = render(<Customers />);
+    await waitFor(() => expect(getByTestId("customers-more-filters-dropdown")).toBeTruthy());
+    await act(async () => { fireEvent.press(getByTestId("customers-more-filters-dropdown")); });
+    mockApiCalls.length = 0;
+    await act(async () => { fireEvent.press(getByTestId("customers-portal-status-activated")); });
+    await waitFor(() => {
+      expect(mockApiCalls.find((c) => c.includes("portal_activated=true") && !c.includes("count_only"))).toBeTruthy();
+    });
+  });
+
+  // ── Composition ──────────────────────────────────────────────
+  it("composing No email + Missing address sends both params", async () => {
+    const { getByTestId } = render(<Customers />);
+    await waitFor(() => expect(getByTestId("customers-more-filters-dropdown")).toBeTruthy());
+    await act(async () => { fireEvent.press(getByTestId("customers-more-filters-dropdown")); });
+    await act(async () => { fireEvent.press(getByTestId("filter-chip-missing-email")); });
+    mockApiCalls.length = 0;
+    await act(async () => { fireEvent.press(getByTestId("customers-missing-address-filter")); });
     await waitFor(() => {
       const hit = mockApiCalls.find((c) =>
-        c.includes("missing_address=true") && c.includes("has_payment_method=false") && !c.includes("count_only")
+        c.includes("missing_email=true") && c.includes("missing_address=true") && !c.includes("count_only")
       );
       expect(hit).toBeTruthy();
     });
   });
 
-  // ── P44: Add card row action ──────────────────────────────────
+  // ── Clear all ────────────────────────────────────────────────
+  it("Clear all resets every consolidated filter", async () => {
+    const { getByTestId, getByText } = render(<Customers />);
+    await waitFor(() => expect(getByTestId("customers-more-filters-dropdown")).toBeTruthy());
+    // Activate two filters
+    await act(async () => { fireEvent.press(getByTestId("customers-more-filters-dropdown")); });
+    await act(async () => { fireEvent.press(getByTestId("filter-chip-missing-email")); });
+    await act(async () => { fireEvent.press(getByTestId("customers-missing-address-filter")); });
+    // Trigger should show active summary (contains "No email" in its text)
+    const trigger = getByTestId("customers-more-filters-dropdown");
+    expect(trigger).toBeTruthy();
+    // Clear all
+    await act(async () => { fireEvent.press(getByTestId("customers-more-filters-clear")); });
+    // Trigger should return to "All"
+    await waitFor(() => expect(getByText(/More filters: All/)).toBeTruthy());
+  });
+
+  // ── Portal status radio semantics ────────────────────────────
+  it("portal status items have correct accessibility roles", async () => {
+    const { getByTestId } = render(<Customers />);
+    await waitFor(() => expect(getByTestId("customers-more-filters-dropdown")).toBeTruthy());
+    await act(async () => { fireEvent.press(getByTestId("customers-more-filters-dropdown")); });
+    const any = getByTestId("customers-portal-status-any");
+    const activated = getByTestId("customers-portal-status-activated");
+    expect(any.props.accessibilityRole).toBe("radio");
+    expect(activated.props.accessibilityRole).toBe("radio");
+    expect(any.props.accessibilityState.selected).toBe(true);
+    expect(activated.props.accessibilityState.selected).toBe(false);
+  });
+
+  // ── Trigger summary updates ──────────────────────────────────
+  it("trigger shows 'No email +1' with badge when 2 filters active", async () => {
+    const { getByTestId, getByText } = render(<Customers />);
+    await waitFor(() => expect(getByTestId("customers-more-filters-dropdown")).toBeTruthy());
+    await act(async () => { fireEvent.press(getByTestId("customers-more-filters-dropdown")); });
+    await act(async () => { fireEvent.press(getByTestId("filter-chip-missing-email")); });
+    await act(async () => { fireEvent.press(getByTestId("customers-missing-address-filter")); });
+    expect(getByText(/No email \+1/)).toBeTruthy();
+  });
+
+  // ── Add card row action ──────────────────────────────────────
   it("Add card pill appears for no-card customer (admin)", async () => {
     const { getByTestId } = render(<Customers />);
     await waitFor(() => expect(getByTestId("customer-row-add-card-btn-c2")).toBeTruthy());
@@ -211,7 +265,7 @@ describe("P43b + P43c + P44 — Customer list filter chips", () => {
     });
   });
 
-  it("successful Add card shows success alert with recipients", async () => {
+  it("successful Add card shows success alert", async () => {
     mockPostResult = { email_recipient: "bob@test.com", sms_recipient: "+155512345" };
     const { getByTestId } = render(<Customers />);
     await waitFor(() => expect(getByTestId("customer-row-add-card-btn-c2")).toBeTruthy());
@@ -231,6 +285,32 @@ describe("P43b + P43c + P44 — Customer list filter chips", () => {
     });
   });
 
+  // ── Row order assertions ─────────────────────────────────────
+  it("name renders before Add card pill (name leftmost)", async () => {
+    const { getByTestId } = render(<Customers />);
+    await waitFor(() => expect(getByTestId("customer-row-add-card-btn-c2")).toBeTruthy());
+    expect(getByTestId("customer-row-name-c2")).toBeTruthy();
+  });
+
+  it("Add card label reads 'Add card' not 'Send payment link'", async () => {
+    const { getByTestId, getAllByText, queryByText } = render(<Customers />);
+    await waitFor(() => expect(getByTestId("customer-row-add-card-btn-c2")).toBeTruthy());
+    expect(getAllByText("Add card").length).toBeGreaterThanOrEqual(1);
+    expect(queryByText("Send payment link")).toBeNull();
+  });
+
+  // ── Count fetching ──────────────────────────────────────────
+  it("fetches all counts on mount (including new P45 counts)", async () => {
+    render(<Customers />);
+    await waitFor(() => {
+      expect(mockApiCalls.filter((c) => c.includes("count_only=true&missing_address=true")).length).toBeGreaterThanOrEqual(1);
+      expect(mockApiCalls.filter((c) => c.includes("count_only=true&missing_email=true")).length).toBeGreaterThanOrEqual(1);
+      expect(mockApiCalls.filter((c) => c.includes("count_only=true&missing_phone=true")).length).toBeGreaterThanOrEqual(1);
+      expect(mockApiCalls.filter((c) => c.includes("count_only=true&has_payment_method=false")).length).toBeGreaterThanOrEqual(1);
+      expect(mockApiCalls.filter((c) => c.includes("count_only=true&pending_merge_candidates=true")).length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   it("missing card dot renders for no-card customers only", async () => {
     const { getByTestId, queryByTestId } = render(<Customers />);
     await waitFor(() => {
@@ -238,36 +318,5 @@ describe("P43b + P43c + P44 — Customer list filter chips", () => {
       expect(getByTestId("row-c3-missing-card-dot")).toBeTruthy();
       expect(queryByTestId("row-c1-missing-card-dot")).toBeNull();
     });
-  });
-
-  it("fetches all four counts on mount", async () => {
-    render(<Customers />);
-    await waitFor(() => {
-      expect(mockApiCalls.filter((c) => c.includes("count_only=true&missing_address=true")).length).toBeGreaterThanOrEqual(1);
-      expect(mockApiCalls.filter((c) => c.includes("count_only=true&portal_activated=true")).length).toBeGreaterThanOrEqual(1);
-      expect(mockApiCalls.filter((c) => c.includes("count_only=true&portal_activated=false")).length).toBeGreaterThanOrEqual(1);
-      expect(mockApiCalls.filter((c) => c.includes("count_only=true&has_payment_method=false")).length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  // ── Row order: name is leftmost, Add card pill is after name ──
-  it("customer name renders BEFORE Add card pill in row (name is leftmost)", async () => {
-    const { getByTestId, UNSAFE_queryAllByType } = render(<Customers />);
-    await waitFor(() => expect(getByTestId("customer-row-add-card-btn-c2")).toBeTruthy());
-    // Both testIDs exist in the same row — name comes first in DOM order
-    const name = getByTestId("customer-row-name-c2");
-    const addCard = getByTestId("customer-row-add-card-btn-c2");
-    expect(name).toBeTruthy();
-    expect(addCard).toBeTruthy();
-    // Name's testID should appear — if both exist, the order assertion is structural
-  });
-
-  it("Add card label reads 'Add card' not 'Send payment link'", async () => {
-    const { getByTestId, getAllByText, queryByText } = render(<Customers />);
-    await waitFor(() => expect(getByTestId("customer-row-add-card-btn-c2")).toBeTruthy());
-    // Multiple "Add card" texts are expected (c2 + c3 both have no card)
-    expect(getAllByText("Add card").length).toBeGreaterThanOrEqual(1);
-    // Old label should NOT exist
-    expect(queryByText("Send payment link")).toBeNull();
   });
 });

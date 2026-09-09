@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, FlatList, TextInput, RefreshControl, Pressable, Platform, Alert, Modal } from "react-native";
+import { View, Text, StyleSheet, FlatList, TextInput, RefreshControl, Pressable, Platform, Alert, Modal, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -70,6 +70,16 @@ export default function Customers() {
   const [noPaymentCount, setNoPaymentCount] = useState<number | null>(null);
   const [sendingPaymentLink, setSendingPaymentLink] = useState<Set<string>>(new Set());
 
+  // P45 — Additional consolidated filters.
+  const [missingEmailFilter, setMissingEmailFilter] = useState(false);
+  const [missingEmailCount, setMissingEmailCount] = useState<number | null>(null);
+  const [missingPhoneFilter, setMissingPhoneFilter] = useState(false);
+  const [missingPhoneCount, setMissingPhoneCount] = useState<number | null>(null);
+  const [includeMerged, setIncludeMerged] = useState(false);
+  const [pendingMergeCandidates, setPendingMergeCandidates] = useState(false);
+  const [pendingMergeCount, setPendingMergeCount] = useState<number | null>(null);
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
+
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
   const bulk = useBulkSelect(visibleIds);
 
@@ -93,6 +103,11 @@ export default function Customers() {
       if (missingAddressFilter) qp.set("missing_address", "true");
       // P44 — No payment on file filter.
       if (noPaymentFilter) qp.set("has_payment_method", "false");
+      // P45 — Additional consolidated filters.
+      if (missingEmailFilter) qp.set("missing_email", "true");
+      if (missingPhoneFilter) qp.set("missing_phone", "true");
+      if (includeMerged) qp.set("include_merged", "true");
+      if (pendingMergeCandidates) qp.set("pending_merge_candidates", "true");
       const res: any = await api.get(`/customers?${qp.toString()}`);
       const rows = Array.isArray(res) ? res : (res?.items || []);
       const tp = Number.isFinite(res?.total_pages)
@@ -116,7 +131,7 @@ export default function Customers() {
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter, missingEmailFilter, missingPhoneFilter, includeMerged, pendingMergeCandidates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMore = useCallback(() => {
     if (loadingMore) return;
@@ -186,21 +201,27 @@ export default function Customers() {
     }
   };
 
-  // P43b + P43c + P44 — Fetch filter counts on mount (parallel, stable badges).
+  // P43b + P43c + P44 + P45 — Fetch filter counts on mount (parallel, stable badges).
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [addrRes, paRes, pnaRes, payRes] = await Promise.all([
+      const [addrRes, paRes, pnaRes, payRes, emailRes, phoneRes, mergeRes] = await Promise.all([
         api.get("/customers?count_only=true&missing_address=true").catch(() => null),
         api.get("/customers?count_only=true&portal_activated=true").catch(() => null),
         api.get("/customers?count_only=true&portal_activated=false").catch(() => null),
         api.get("/customers?count_only=true&has_payment_method=false").catch(() => null),
+        api.get("/customers?count_only=true&missing_email=true").catch(() => null),
+        api.get("/customers?count_only=true&missing_phone=true").catch(() => null),
+        api.get("/customers?count_only=true&pending_merge_candidates=true").catch(() => null),
       ]);
       if (cancelled) return;
       setMissingAddressCount(addrRes?.count ?? null);
       setPortalActivatedCount(paRes?.count ?? null);
       setPortalNotActivatedCount(pnaRes?.count ?? null);
       setNoPaymentCount(payRes?.count ?? null);
+      setMissingEmailCount(emailRes?.count ?? null);
+      setMissingPhoneCount(phoneRes?.count ?? null);
+      setPendingMergeCount(mergeRes?.count ?? null);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -221,6 +242,39 @@ export default function Customers() {
     } finally {
       setSendingPaymentLink((s) => { const n = new Set(s); n.delete(cust.id); return n; });
     }
+  };
+
+  // P45 — "More filters" trigger summary.
+  const activeFilterLabels = useMemo(() => {
+    const labels: string[] = [];
+    if (missingEmailFilter) labels.push("No email");
+    if (missingPhoneFilter) labels.push("No phone");
+    if (missingAddressFilter) labels.push("Missing address");
+    if (noPaymentFilter) labels.push("No payment");
+    if (portalFilter === "activated") labels.push("Signed in");
+    if (portalFilter === "not_activated") labels.push("Never signed in");
+    if (includeDeleted) labels.push("Deleted");
+    if (includeMerged) labels.push("Merged");
+    if (pendingMergeCandidates) labels.push("Pending merge");
+    return labels;
+  }, [missingEmailFilter, missingPhoneFilter, missingAddressFilter, noPaymentFilter, portalFilter, includeDeleted, includeMerged, pendingMergeCandidates]);
+
+  const moreFiltersSummary = activeFilterLabels.length === 0
+    ? "All"
+    : activeFilterLabels.length === 1
+      ? activeFilterLabels[0]
+      : `${activeFilterLabels[0]} +${activeFilterLabels.length - 1}`;
+
+  const clearAllFilters = () => {
+    setMissingEmailFilter(false);
+    setMissingPhoneFilter(false);
+    setMissingAddressFilter(false);
+    setNoPaymentFilter(false);
+    setPortalFilter("");
+    setIncludeDeleted(false);
+    setIncludeMerged(false);
+    setPendingMergeCandidates(false);
+    setPage(1);
   };
 
   return (
@@ -260,79 +314,26 @@ export default function Customers() {
           </Pressable>
         ))}
       </View>
-      {/* P43b + P43c + P44 — Data-quality filter chips.
-          Each chip toggles a backend filter param. Counts are stable
-          (fetched once on mount, NOT composed with other filters). */}
-      <View style={cs.chipRow} testID="customer-data-quality-filters">
-        {/* P43b — Missing address */}
-        <Pressable
-          onPress={() => { setMissingAddressFilter((v) => !v); setPage(1); }}
-          style={[cs.dqChip, missingAddressFilter && cs.dqChipActive]}
-          testID="customers-missing-address-filter"
-          accessibilityRole="button"
-          accessibilityLabel={`Missing address${missingAddressCount != null ? ` (${missingAddressCount})` : ""}`}
-        >
-          <View style={[cs.dqDot, missingAddressFilter && cs.dqDotActive]} />
-          <Text style={[cs.dqChipText, missingAddressFilter && cs.dqChipTextActive]}>
-            Missing address
-          </Text>
-          {missingAddressCount != null ? (
-            <Text style={[cs.dqChipCount, missingAddressFilter && cs.dqChipCountActive]} testID="customers-missing-address-count">
-              ({missingAddressCount})
-            </Text>
-          ) : null}
-        </Pressable>
+      {/* P45 — Single "More filters" trigger replacing individual chip rows. */}
+      <Pressable
+        onPress={() => setMoreFiltersOpen(true)}
+        style={cs.moreFiltersTrigger}
+        testID="customers-more-filters-dropdown"
+        accessibilityRole="button"
+        accessibilityLabel={`More filters: ${moreFiltersSummary}`}
+      >
+        <Ionicons name="options-outline" size={16} color={activeFilterLabels.length > 0 ? colors.brand : colors.muted} />
+        <Text style={[cs.moreFiltersTriggerText, activeFilterLabels.length > 0 && { color: colors.brand }]}>
+          More filters: {moreFiltersSummary}
+        </Text>
+        {activeFilterLabels.length >= 2 ? (
+          <View style={cs.moreFiltersBadge}>
+            <Text style={cs.moreFiltersBadgeText}>{activeFilterLabels.length}</Text>
+          </View>
+        ) : null}
+        <Ionicons name="chevron-down" size={14} color={colors.muted} />
+      </Pressable>
 
-        {/* P44 — No payment on file */}
-        <Pressable
-          onPress={() => { setNoPaymentFilter((v) => !v); setPage(1); }}
-          style={[cs.dqChip, noPaymentFilter && cs.dqChipActive]}
-          testID="customers-no-payment-filter"
-          accessibilityRole="button"
-          accessibilityLabel={`No payment on file${noPaymentCount != null ? ` (${noPaymentCount})` : ""}`}
-        >
-          <View style={[cs.dqDot, noPaymentFilter && cs.dqDotActive]} />
-          <Text style={[cs.dqChipText, noPaymentFilter && cs.dqChipTextActive]}>
-            No payment on file
-          </Text>
-          {noPaymentCount != null ? (
-            <Text style={[cs.dqChipCount, noPaymentFilter && cs.dqChipCountActive]} testID="customers-no-payment-count">
-              ({noPaymentCount})
-            </Text>
-          ) : null}
-        </Pressable>
-      </View>
-
-      {/* P43c corrected — Portal status tri-state segmented control.
-          "Any" | "Signed in (N)" | "Never signed in (N)". */}
-      <View style={cs.portalRow} testID="customers-portal-status-filter">
-        <Ionicons name="key-outline" size={13} color={colors.muted} style={{ marginRight: 4 }} />
-        {([
-          { value: "" as const, label: "Any", count: null, testid: "customers-portal-status-any" },
-          { value: "activated" as const, label: "Signed in", count: portalActivatedCount, testid: "customers-portal-status-activated" },
-          { value: "not_activated" as const, label: "Never signed in", count: portalNotActivatedCount, testid: "customers-portal-status-not-activated" },
-        ]).map((opt) => {
-          const active = portalFilter === opt.value;
-          return (
-            <Pressable
-              key={opt.value || "any"}
-              onPress={() => { setPortalFilter(opt.value); setPage(1); }}
-              style={[cs.portalChip, active && cs.portalChipActive]}
-              testID={opt.testid}
-              accessibilityRole="button"
-            >
-              <Text style={[cs.portalChipText, active && cs.portalChipTextActive]}>
-                {opt.label}
-              </Text>
-              {opt.count != null ? (
-                <Text style={[cs.portalChipCount, active && cs.portalChipCountActive]}>
-                  ({opt.count})
-                </Text>
-              ) : null}
-            </Pressable>
-          );
-        })}
-      </View>
       <View style={styles.searchWrap}>
         <View style={styles.searchBox}>
           {selectMode ? (
@@ -355,19 +356,6 @@ export default function Customers() {
             autoCapitalize="none"
           />
         </View>
-        {/* Ship 2 · "Show deleted" toggle chip — admin+ only */}
-        {canManageDeleted ? (
-          <Pressable
-            style={[cs.deletedChip, includeDeleted && cs.deletedChipActive]}
-            onPress={() => setIncludeDeleted((v) => !v)}
-            testID="customers-filter-include-deleted"
-          >
-            <View style={[cs.deletedDot, includeDeleted && cs.deletedDotActive]} />
-            <Text style={[cs.deletedChipText, includeDeleted && cs.deletedChipTextActive]}>
-              Show deleted
-            </Text>
-          </Pressable>
-        ) : null}
       </View>
       {loading ? (
         <Loading testID="customers-loading" />
@@ -397,6 +385,10 @@ export default function Customers() {
               </View>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  {/* P44 — missing card dot (before name) */}
+                  {!item.has_card_on_file ? (
+                    <View style={cs.missingCardDot} testID={`row-${item.id}-missing-card-dot`} />
+                  ) : null}
                   <Text style={[styles.name, item.deleted_at && cs.nameDeleted]} numberOfLines={1} testID={`customer-row-name-${item.id}`}>{item.name}</Text>
                   {item.deleted_at && canManageDeleted ? (
                     <RestoreCustomerButton
@@ -408,29 +400,26 @@ export default function Customers() {
                       onError={(msg) => Alert.alert("Restore failed", msg)}
                     />
                   ) : null}
-                  {/* P44 — missing card dot + "Add card" pill (after name) */}
-                  {!item.has_card_on_file ? (
-                    <View style={cs.missingCardDot} testID={`row-${item.id}-missing-card-dot`} />
-                  ) : null}
-                  {isAdmin && !item.has_card_on_file ? (
-                    <Pressable
-                      onPress={() => { handleSendPaymentLink(item); }}
-                      disabled={sendingPaymentLink.has(item.id)}
-                      style={[cs.addCardPill, sendingPaymentLink.has(item.id) && { opacity: 0.5 }]}
-                      testID={`customer-row-add-card-btn-${item.id}`}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Add card for ${item.name}`}
-                      accessibilityHint="Email and SMS a secure link to add a card for auto-pay"
-                    >
-                      <Ionicons name="card-outline" size={10} color="#92400E" />
-                      <Text style={cs.addCardPillText}>
-                        {sendingPaymentLink.has(item.id) ? "Sending…" : "Add card"}
-                      </Text>
-                    </Pressable>
-                  ) : null}
                 </View>
                 <Text style={styles.sub} numberOfLines={1}>{item.address || item.phone || item.email || "—"}</Text>
               </View>
+              {/* P45 — Add card pill in right actions cluster (navy/white) */}
+              {isAdmin && !item.has_card_on_file ? (
+                <Pressable
+                  onPress={() => { handleSendPaymentLink(item); }}
+                  disabled={sendingPaymentLink.has(item.id)}
+                  style={[cs.addCardPill, sendingPaymentLink.has(item.id) && { opacity: 0.5 }]}
+                  testID={`customer-row-add-card-btn-${item.id}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add card for ${item.name}`}
+                  accessibilityHint="Email and SMS a secure link to add a card for auto-pay"
+                >
+                  <Ionicons name="card-outline" size={10} color="#FFFFFF" />
+                  <Text style={cs.addCardPillText}>
+                    {sendingPaymentLink.has(item.id) ? "Sending…" : "Add card"}
+                  </Text>
+                </Pressable>
+              ) : null}
               {!selectMode ? <Ionicons name="chevron-forward" size={18} color={colors.muted} /> : null}
             </Pressable>
           )}
@@ -449,6 +438,153 @@ export default function Customers() {
           { key: "bulk-delete-customers", label: "Delete", icon: "trash-outline", tone: "danger", onPress: bulkDelete },
         ]}
       />
+
+      {/* P45 — "More filters" sheet (modal) */}
+      <Modal
+        visible={moreFiltersOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setMoreFiltersOpen(false)}
+      >
+        <Pressable style={mfStyles.backdrop} onPress={() => setMoreFiltersOpen(false)}>
+          <Pressable style={mfStyles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={mfStyles.sheetHeader}>
+              <Text style={mfStyles.sheetTitle}>More filters</Text>
+              <View style={{ flexDirection: "row", gap: 12 }}>
+                <Pressable
+                  onPress={() => { clearAllFilters(); }}
+                  testID="customers-more-filters-clear"
+                  accessibilityRole="button"
+                >
+                  <Text style={mfStyles.clearText}>Clear all</Text>
+                </Pressable>
+                <Pressable onPress={() => setMoreFiltersOpen(false)} accessibilityLabel="Close filters">
+                  <Ionicons name="close" size={22} color={colors.onSurface} />
+                </Pressable>
+              </View>
+            </View>
+
+            <ScrollView style={{ maxHeight: 480 }}>
+              {/* Group 1: Contact info missing */}
+              <Text style={mfStyles.groupLabel}>Contact info missing</Text>
+              {/* No email */}
+              <Pressable
+                style={mfStyles.checkRow}
+                onPress={() => { setMissingEmailFilter((v) => !v); setPage(1); }}
+                testID="filter-chip-missing-email"
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: missingEmailFilter }}
+              >
+                <Ionicons name={missingEmailFilter ? "checkbox" : "square-outline"} size={20} color={missingEmailFilter ? colors.brand : colors.muted} />
+                <Text style={mfStyles.checkLabel}>No email</Text>
+                {missingEmailCount != null ? <Text style={mfStyles.countBadge}>({missingEmailCount})</Text> : null}
+              </Pressable>
+              {/* No phone */}
+              <Pressable
+                style={mfStyles.checkRow}
+                onPress={() => { setMissingPhoneFilter((v) => !v); setPage(1); }}
+                testID="filter-chip-missing-phone"
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: missingPhoneFilter }}
+              >
+                <Ionicons name={missingPhoneFilter ? "checkbox" : "square-outline"} size={20} color={missingPhoneFilter ? colors.brand : colors.muted} />
+                <Text style={mfStyles.checkLabel}>No phone number</Text>
+                {missingPhoneCount != null ? <Text style={mfStyles.countBadge}>({missingPhoneCount})</Text> : null}
+              </Pressable>
+              {/* Missing address */}
+              <Pressable
+                style={mfStyles.checkRow}
+                onPress={() => { setMissingAddressFilter((v) => !v); setPage(1); }}
+                testID="customers-missing-address-filter"
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: missingAddressFilter }}
+              >
+                <Ionicons name={missingAddressFilter ? "checkbox" : "square-outline"} size={20} color={missingAddressFilter ? colors.brand : colors.muted} />
+                <Text style={mfStyles.checkLabel}>Missing address</Text>
+                {missingAddressCount != null ? <Text style={mfStyles.countBadge} testID="customers-missing-address-count">({missingAddressCount})</Text> : null}
+              </Pressable>
+
+              {/* Group 2: Payment */}
+              <Text style={mfStyles.groupLabel}>Payment</Text>
+              <Pressable
+                style={mfStyles.checkRow}
+                onPress={() => { setNoPaymentFilter((v) => !v); setPage(1); }}
+                testID="customers-no-payment-filter"
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: noPaymentFilter }}
+              >
+                <Ionicons name={noPaymentFilter ? "checkbox" : "square-outline"} size={20} color={noPaymentFilter ? colors.brand : colors.muted} />
+                <Text style={mfStyles.checkLabel}>No payment on file</Text>
+                {noPaymentCount != null ? <Text style={mfStyles.countBadge} testID="customers-no-payment-count">({noPaymentCount})</Text> : null}
+              </Pressable>
+
+              {/* Group 3: Portal status — radio group */}
+              <Text style={mfStyles.groupLabel}>Portal status</Text>
+              <View accessibilityRole="radiogroup" testID="customers-portal-status-filter">
+                {([
+                  { value: "" as const, label: "Any", count: null, testid: "customers-portal-status-any" },
+                  { value: "activated" as const, label: "Signed in", count: portalActivatedCount, testid: "customers-portal-status-activated" },
+                  { value: "not_activated" as const, label: "Never signed in", count: portalNotActivatedCount, testid: "customers-portal-status-not-activated" },
+                ] as const).map((opt) => {
+                  const sel = portalFilter === opt.value;
+                  return (
+                    <Pressable
+                      key={opt.value || "any"}
+                      style={mfStyles.checkRow}
+                      onPress={() => { setPortalFilter(opt.value); setPage(1); }}
+                      testID={opt.testid}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: sel }}
+                    >
+                      <Ionicons name={sel ? "radio-button-on" : "radio-button-off"} size={20} color={sel ? colors.brand : colors.muted} />
+                      <Text style={mfStyles.checkLabel}>{opt.label}</Text>
+                      {opt.count != null ? <Text style={mfStyles.countBadge}>({opt.count})</Text> : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {/* Group 4: Administrative — admin-only */}
+              {isAdmin ? (
+                <>
+                  <Text style={mfStyles.groupLabel}>Administrative</Text>
+                  <Pressable
+                    style={mfStyles.checkRow}
+                    onPress={() => { setIncludeDeleted((v) => !v); setPage(1); }}
+                    testID="customers-filter-include-deleted"
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: includeDeleted }}
+                  >
+                    <Ionicons name={includeDeleted ? "checkbox" : "square-outline"} size={20} color={includeDeleted ? "#B91C1C" : colors.muted} />
+                    <Text style={mfStyles.checkLabel}>Show deleted</Text>
+                  </Pressable>
+                  <Pressable
+                    style={mfStyles.checkRow}
+                    onPress={() => { setIncludeMerged((v) => !v); setPage(1); }}
+                    testID="customers-filter-include-merged"
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: includeMerged }}
+                  >
+                    <Ionicons name={includeMerged ? "checkbox" : "square-outline"} size={20} color={includeMerged ? colors.brand : colors.muted} />
+                    <Text style={mfStyles.checkLabel}>Show merged</Text>
+                  </Pressable>
+                  <Pressable
+                    style={mfStyles.checkRow}
+                    onPress={() => { setPendingMergeCandidates((v) => !v); setPage(1); }}
+                    testID="customers-filter-pending-merge-candidates"
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: pendingMergeCandidates }}
+                  >
+                    <Ionicons name={pendingMergeCandidates ? "checkbox" : "square-outline"} size={20} color={pendingMergeCandidates ? colors.brand : colors.muted} />
+                    <Text style={mfStyles.checkLabel}>Pending merge candidates</Text>
+                    {pendingMergeCount != null ? <Text style={mfStyles.countBadge}>({pendingMergeCount})</Text> : null}
+                  </Pressable>
+                </>
+              ) : null}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Feb-2026 · Bulk-mark-inactive hard-confirm modal (mobile). */}
       <Modal
@@ -599,40 +735,6 @@ const styles = StyleSheet.create({
 
 // Ship 2 · extra styles for soft-deleted UX
 const cs = StyleSheet.create({
-  deletedChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: 6,
-    marginTop: spacing.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceSecondary,
-  },
-  deletedChipActive: {
-    backgroundColor: "#FEE2E2",
-    borderColor: "#FCA5A5",
-  },
-  deletedDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#94A3B8",
-  },
-  deletedDotActive: {
-    backgroundColor: "#B91C1C",
-  },
-  deletedChipText: {
-    fontFamily: font.semibold,
-    fontSize: fontSize.xs,
-    color: colors.onSurfaceSecondary,
-  },
-  deletedChipTextActive: {
-    color: "#991B1B",
-  },
   rowDeleted: {
     opacity: 0.6,
   },
@@ -670,93 +772,7 @@ const cs = StyleSheet.create({
   segmentTextActive: {
     color: colors.onSurface,
   },
-  portalRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.sm,
-    gap: 4,
-  },
-  portalChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceTertiary,
-  },
-  portalChipActive: {
-    backgroundColor: "#0D9488",
-  },
-  portalChipText: {
-    fontFamily: font.bold,
-    fontSize: 11,
-    color: colors.muted,
-  },
-  portalChipTextActive: {
-    color: "#fff",
-  },
-  portalChipCount: {
-    fontFamily: font.bold,
-    fontSize: 10,
-    color: colors.muted,
-    opacity: 0.8,
-  },
-  portalChipCountActive: {
-    color: "#fff",
-    opacity: 0.9,
-  },
-  // P43b + P44 — Data-quality filter chip row.
-  chipRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.sm,
-    gap: 6,
-  },
-  dqChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radius.md,
-    backgroundColor: colors.surfaceSecondary,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  dqChipActive: {
-    backgroundColor: "#DBEAFE",
-    borderColor: "#93C5FD",
-  },
-  dqDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: "#94A3B8",
-  },
-  dqDotActive: {
-    backgroundColor: "#1E40AF",
-  },
-  dqChipText: {
-    fontFamily: font.semibold,
-    fontSize: 11,
-    color: colors.onSurfaceSecondary,
-  },
-  dqChipTextActive: {
-    color: "#1E3A8A",
-  },
-  dqChipCount: {
-    fontFamily: font.semibold,
-    fontSize: 10,
-    color: colors.onSurfaceSecondary,
-    opacity: 0.9,
-  },
-  dqChipCountActive: {
-    color: "#1E3A8A",
-  },
-  // P44 — Missing card dot + Send payment link pill.
+  // P44 — Missing card dot.
   missingCardDot: {
     width: 8,
     height: 8,
@@ -767,16 +783,118 @@ const cs = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: radius.sm,
-    backgroundColor: "#FEF3C7",
+    backgroundColor: "#1E293B",
     borderWidth: 1,
-    borderColor: "#FDE68A",
+    borderColor: "#0F172A",
   },
   addCardPillText: {
     fontFamily: font.semibold,
     fontSize: 10,
-    color: "#92400E",
+    color: "#FFFFFF",
+  },
+  // P45 — "More filters" trigger.
+  moreFiltersTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  moreFiltersTriggerText: {
+    flex: 1,
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+  },
+  moreFiltersBadge: {
+    backgroundColor: colors.brand,
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  moreFiltersBadgeText: {
+    fontFamily: font.bold,
+    fontSize: 10,
+    color: "#FFFFFF",
+  },
+});
+
+
+// P45 — More Filters sheet styles.
+const mfStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.45)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    paddingBottom: 34,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderBottomWidth: 0,
+    maxHeight: "80%",
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  sheetTitle: {
+    fontFamily: font.bold,
+    fontSize: fontSize.xl,
+    color: colors.onSurface,
+  },
+  clearText: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.brand,
+  },
+  groupLabel: {
+    fontFamily: font.bold,
+    fontSize: fontSize.xs,
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xs,
+  },
+  checkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 10,
+  },
+  checkLabel: {
+    flex: 1,
+    fontFamily: font.regular,
+    fontSize: fontSize.base,
+    color: colors.onSurface,
+  },
+  countBadge: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.muted,
   },
 });
