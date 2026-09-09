@@ -67,6 +67,9 @@ import WeekStrip from "@/components/schedule/WeekStrip";
 // Intentionally not imported here.
 import ScheduleJobEditModal from "@/pages/schedule/ScheduleJobEditModal";
 import { useNumberedOrder, NumberOrderInput, ReorderBanner, BulkReorderModal } from "@/pages/schedule/NumberedReorder";
+// Feb-2026 · Batch #4 · Item 3 (continuation) — shared refresh
+// button used by every schedule surface (month/agenda/grid + Today).
+import ScheduleRefreshButton from "@/components/schedule/ScheduleRefreshButton";
 // Feb-2026 · numbered-order reorder — the ScheduleDayDnDPanel import
 // was removed as part of the DnD → numbered-input pivot.  The number
 // input primitives + the bulk-reorder modal are imported above.
@@ -1072,6 +1075,20 @@ export default function CalendarSchedule() {
             </button>
           ) : null}
         </Gate>
+        {/* Feb-2026 · Batch #4 · Item 3 (continuation) — top-level
+            refresh button. Previously the refresh affordance lived
+            inside <GridPanel>, so techs viewing the Calendar mode
+            (month/agenda) had no way to refetch without a full
+            page reload. Lifted to the shared toolbar via the
+            <ScheduleRefreshButton> component (also used by
+            TodaySchedule) so the same
+            ``data-testid="schedule-refresh"`` is present regardless
+            of ``mode`` or the RBC internal ``view``. Wired to
+            ``load({force:true})`` so route-cache is bypassed. */}
+        <ScheduleRefreshButton
+          busy={busy}
+          onRefresh={() => load({ force: true })}
+        />
         {isAdminRole ? (
           <button
             data-testid="calendar-send-to-dispatch"
@@ -1507,7 +1524,6 @@ export default function CalendarSchedule() {
           onOptimizeRoute={optimizeRoute}
           optimizing={optimizing}
           reorderableJobIds={reorderableJobs.map((j) => j.id)}
-          onRefresh={() => load({ force: true })}
         />
       )}
 
@@ -1718,13 +1734,6 @@ export function GridPanel({
   // set that is actually reorderable (non-terminal only).
   orderController, onOpenBulkReorder, reorderableJobIds,
   onOptimizeRoute, optimizing,
-  // Feb-2026 · Batch #4 · Item 3 fix — refresh handler injected from
-  // the parent (``CalendarSchedule``). The button previously called
-  // an in-scope ``load`` symbol that only exists in the parent
-  // component, throwing ``ReferenceError: load is not defined``
-  // when a tech clicked it. Now wired via prop so the handler is
-  // always defined at the correct call site.
-  onRefresh,
 }) {
   const focusISO = format(date, "yyyy-MM-dd");
   const isToday = focusISO === format(new Date(), "yyyy-MM-dd");
@@ -1770,34 +1779,13 @@ export function GridPanel({
         >
           <ChevronRight size={16} />
         </button>
-        {/* Feb-2026 · Batch #4 · Item 3 — refresh button. Refetches
-            the same day's schedule payload (jobs + map pins) so
-            techs see newly-assigned jobs without a page reload.
-            Debounced against double-clicks via the ``busy`` guard
-            and shows an inline spinner while the request is in
-            flight. */}
-        <button
-          onClick={() => {
-            if (busy) return;
-            onRefresh?.();
-          }}
-          disabled={busy}
-          className="w-9 h-9 rounded-lg flex items-center justify-center"
-          style={{ background: colors.surfaceSecondary,
-                    border: `1px solid ${colors.border}`,
-                    color: colors.onSurface,
-                    opacity: busy ? 0.6 : 1,
-                    cursor: busy ? "wait" : "pointer" }}
-          title="Refresh schedule"
-          aria-label="Refresh schedule"
-          data-testid="schedule-refresh"
-        >
-          <RefreshCw
-            size={16}
-            className={busy ? "animate-spin" : ""}
-            data-testid={busy ? "schedule-refresh-spinner" : undefined}
-          />
-        </button>
+        {/* Feb-2026 · Batch #4 · Item 3 (continuation) — the refresh
+            affordance was hoisted to the CalendarSchedule top-level
+            toolbar so it renders on Calendar (month/agenda) modes
+            too, not just Grid. See the ``schedule-refresh`` button
+            near ``calendar-send-to-dispatch``. This intentionally
+            leaves the GridPanel without its own local refresh — one
+            testid per page, no ambiguity for automation. */}
         <div className="flex-1" />
         <div className="text-sm font-semibold" style={{ color: colors.onSurface }} data-testid="grid-day-label">
           {dayLabel}

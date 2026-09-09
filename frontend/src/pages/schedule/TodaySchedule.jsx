@@ -34,6 +34,9 @@ import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
 import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide } from "lucide-react";
 // Feb-2026 · Batch #4 · Item 2 — inline nav-arrow next to customer name.
 import NavigateJobButton from "../../components/schedule/NavigateJobButton";
+// Feb-2026 · Batch #4 · Item 3 (continuation) — shared refresh button
+// used across all schedule surfaces (Today + Calendar + Grid).
+import ScheduleRefreshButton from "@/components/schedule/ScheduleRefreshButton";
 
 const GOOGLE_LIBS = ["places"];
 
@@ -512,13 +515,7 @@ export default function TodaySchedule() {
               ))}
             </div>
           ) : null}
-          <button onClick={load}
-                  className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
-                  style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface,
-                           border: `1px solid ${colors.border}` }}
-                  data-testid="schedule-refresh">
-            <RefreshCw size={14}/> Refresh
-          </button>
+          <ScheduleRefreshButton busy={busy} onRefresh={load} />
           {/* Feb-2026 HOTFIX (live user report): Optimize Route is a
               dispatcher/planner action. Techs must not see it — they
               only see the reordered route via ``orderedJobItems``.

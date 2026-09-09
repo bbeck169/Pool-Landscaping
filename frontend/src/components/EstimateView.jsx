@@ -29,6 +29,9 @@ import {
 import { api, TOKEN_KEY } from "@/api";
 import "@/components/InvoiceView.css";
 import "./EstimateView.css";
+// Feb-2026 · Batch #4 · Logo ship — shared tenant logo helper so
+// every doc surface renders the same asset the PDF pipeline uses.
+import { getTenantLogoUrl, DEFAULT_LOGO_ALT } from "@/lib/tenantLogo";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -365,12 +368,17 @@ export default function EstimateView({
           <div className="iv-header-left">
             {/* Phase 34 · Feb 2026 — brand logo header. Falls back to
                 the shared /logo-full.png bundled with the frontend so
-                every estimate preview matches PDFs, invoices + emails. */}
+                every estimate preview matches PDFs, invoices + emails.
+                Feb-2026 · Batch #4 · Logo ship — routed through
+                ``getTenantLogoUrl`` so per-tenant overrides work
+                without touching this JSX. ``doc-header-logo`` is the
+                cross-surface testid (invoice / quote / estimate). */}
             <img
-              src={company.logo_url || "/logo-full.png"}
-              alt={company.name || "Pool & Landscaping of Vistancia"}
+              src={getTenantLogoUrl(company)}
+              alt={company.name || DEFAULT_LOGO_ALT}
               className="iv-brand-logo"
-              data-testid="estimate-brand-logo"
+              data-testid="doc-header-logo"
+              data-surface="estimate"
             />
             <div className="iv-company-name">{company.name}</div>
             {company.address ? <div>{company.address}</div> : null}

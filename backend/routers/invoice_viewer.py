@@ -42,23 +42,54 @@ router = APIRouter()
 # Prefer a per-tenant custom logo when one has been uploaded; fall back
 # to the shared brand mark shipped with the frontend so every generated
 # invoice PDF still carries brand identity.
-_FALLBACK_LOGO_PATH = os.path.join(
+#
+# Feb-2026 · Batch #4 · Logo ship — routed through a single helper
+# (`get_tenant_logo_path`) so the P2 tenant-scoped upload flow only
+# needs to change the constants below. The new Pool & Landscaping of
+# Vistancia asset ships as the primary default; the legacy
+# `/logo-full.png` stays as a last-resort fallback so any host that
+# doesn't have the new asset yet still gets branded output.
+_DEFAULT_LOGO_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "static", "logos", "pool-landscaping-of-vistancia.png",
+)
+_LEGACY_LOGO_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "frontend", "public", "logo-full.png",
 )
+# Web-preview URL served by the frontend. Included in the API's
+# ``company`` payload so the React viewers pick up the same asset the
+# PDF renderer uses.
+_DEFAULT_LOGO_URL = "/logos/pool-landscaping-of-vistancia@1x.png"
+
+
+def get_tenant_logo_path(tenant: Dict[str, Any]) -> Optional[str]:
+    """Filesystem path to the tenant's logo for ReportLab. Returns
+    ``None`` when neither the override nor either default exists."""
+    settings = (tenant or {}).get("settings") or {}
+    biz = settings.get("business_card") or {}
+    override = biz.get("logo_local_path") or (tenant or {}).get("logo_local_path")
+    if override and os.path.exists(override):
+        return override
+    if os.path.exists(_DEFAULT_LOGO_PATH):
+        return _DEFAULT_LOGO_PATH
+    if os.path.exists(_LEGACY_LOGO_PATH):
+        return _LEGACY_LOGO_PATH
+    return None
+
+
+def get_tenant_logo_url(tenant: Dict[str, Any]) -> str:
+    """Web-preview URL for the tenant's logo. Returns the tenant's
+    configured URL when present, else the shared default so every
+    doc surface (invoice / quote / estimate / magic link) renders
+    the same asset without a per-tenant seed."""
+    t = tenant or {}
+    return t.get("logo_url") or _DEFAULT_LOGO_URL
 
 
 def _resolve_logo_path(tenant: Dict[str, Any]) -> Optional[str]:
-    """Return a filesystem path to the logo image for ReportLab, or None
-    if we should render the PDF without a logo."""
-    settings = (tenant or {}).get("settings") or {}
-    biz = settings.get("business_card") or {}
-    override = biz.get("logo_local_path") or tenant.get("logo_local_path")
-    if override and os.path.exists(override):
-        return override
-    if os.path.exists(_FALLBACK_LOGO_PATH):
-        return _FALLBACK_LOGO_PATH
-    return None
+    """Back-compat shim for callers that still import the old name."""
+    return get_tenant_logo_path(tenant)
 
 
 DEFAULT_NOTE = (
@@ -92,6 +123,12 @@ async def _load_company(tenant_id: str) -> Dict[str, Any]:
         "phone": t.get("support_phone_number") or "",
         "website": t.get("website") or "www.plofv.com",
         "email": t.get("support_email") or "",
+        # Feb-2026 · Batch #4 · Logo ship — surface the tenant logo
+        # URL so the shared React viewers (InvoiceView / EstimateView)
+        # can render the same brand asset the PDF pipeline uses. Falls
+        # back to the Pool & Landscaping of Vistancia default when the
+        # tenant hasn't uploaded its own logo yet (P2 admin flow).
+        "logo_url": get_tenant_logo_url(t),
     }
 
 
