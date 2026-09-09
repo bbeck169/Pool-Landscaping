@@ -796,12 +796,32 @@ async def get_quote(qid: str,
     return doc
 
 
-@router.post("/quotes/{qid}/decision")
+@router.post("/quotes/{qid}/decision", deprecated=True)
 async def customer_quote_decision(qid: str,
                                   decision: str = Query(...),
                                   user: dict = Depends(get_current_user),
                                   tenant: dict = Depends(get_current_tenant)):
-    """Customer approves or declines their own estimate."""
+    """DEPRECATED (Feb-2026, Phase A) — legacy customer approve/decline.
+
+    This endpoint predates ``routers/estimate_viewer.py`` and does not
+    populate ``decision``, ``accepted_by``, drip events, or admin
+    notifications. New callers MUST use::
+
+        POST /api/portal/quotes/via-token/{token}/approve
+        POST /api/portal/quotes/via-token/{token}/decline
+        POST /api/quotes/{qid}/accept    (auth'd)
+        POST /api/quotes/{qid}/decline   (auth'd)
+
+    Retained for one release cycle to avoid breaking pinned mobile
+    clients. Slated for removal after Phase C ships.
+    """
+    from config import logger as _logger
+    _logger.warning(
+        "[phase-a] deprecated endpoint hit: POST /quotes/%s/decision "
+        "decision=%s user=%s tenant=%s — migrate to /portal/quotes/"
+        "via-token/{token}/approve or /decline.",
+        qid, decision, user.get("id"), tenant.get("id"),
+    )
     if user.get("role") != "customer":
         raise HTTPException(403, "Customers only")
     doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})

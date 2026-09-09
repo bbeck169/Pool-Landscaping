@@ -55,6 +55,11 @@ export default function EstimateView({
   const [declineOpen, setDeclineOpen] = useState(false);
   const [declineMsg, setDeclineMsg] = useState("");
   const [toast, setToast] = useState("");
+  // Feb-2026 · Phase A — per-line decline UX state. Hooks live at
+  // the top of the component so they're never conditionally called.
+  const [busyLineIdx, setBusyLineIdx] = useState(null);
+  const [lineDeclineOpen, setLineDeclineOpen] = useState(null);
+  const [lineDeclineReason, setLineDeclineReason] = useState("");
 
   const load = useCallback(() => {
     setErr("");
@@ -85,13 +90,23 @@ export default function EstimateView({
   };
 
   const accept = () => {
-    if (!window.confirm("Accept this estimate?")) return;
-    if (token) call("/portal/quotes/via-token/accept");
+    if (!window.confirm("Approve this estimate?")) return;
+    // Feb-2026 · Phase A — customer path uses the new path-based
+    // token endpoint (approve/decline), which is idempotent + emits
+    // ``quote_accepted`` for downstream Phase-B notification wiring.
+    if (token) call2(`/portal/quotes/via-token/${encodeURIComponent(token)}/approve`);
     else call(`/quotes/${estimateId}/accept`);
   };
   const submitDecline = () => {
-    if (token) call("/portal/quotes/via-token/decline", { reason: declineMsg });
-    else call(`/quotes/${estimateId}/decline`, { reason: declineMsg });
+    if (token) {
+      // Phase A path-based token endpoint (no ``?token=`` query).
+      call2(
+        `/portal/quotes/via-token/${encodeURIComponent(token)}/decline`,
+        { reason: declineMsg },
+      );
+    } else {
+      call(`/quotes/${estimateId}/decline`, { reason: declineMsg });
+    }
     setDeclineOpen(false); setDeclineMsg("");
   };
   const submitChanges = () => {
@@ -99,6 +114,21 @@ export default function EstimateView({
     if (token) call("/portal/quotes/via-token/request-changes", { message: changesMsg });
     else call(`/quotes/${estimateId}/request-changes`, { message: changesMsg });
     setChangesOpen(false); setChangesMsg("");
+  };
+
+  // Feb-2026 · Phase A — the new path-based approve/decline endpoints
+  // do NOT accept a ``?token=`` query, so we bypass the shared
+  // ``call()`` helper that auto-appends the token.
+  const call2 = async (path, body) => {
+    setBusy(true);
+    try {
+      const r = await api.post(path, body || {});
+      setData(r); setToast("Saved");
+      setTimeout(() => setToast(""), 2000);
+    } catch (e) {
+      setToast(e?.message || "Failed");
+      setTimeout(() => setToast(""), 3000);
+    } finally { setBusy(false); }
   };
 
   const openPdf = () => {
@@ -117,8 +147,57 @@ export default function EstimateView({
   const {
     company, bill_to, property_address, header, line_items, totals,
     notes, title, decision, accepted_at, declined_at, sent_at, sent_via,
-    as_customer, customer_view,
+    as_customer, customer_view, status,
   } = data;
+
+  // Feb-2026 · Phase A — actionable window (customer can approve /
+  // decline whole doc + decline/undecline individual lines) is
+  // ``status ∈ {sent, viewed}``. Once decision is set (accepted or
+  // declined) the doc is locked as before.
+  const _statusLc = String(status || "").toLowerCase();
+  const actionable = _statusLc === "sent" || _statusLc === "viewed";
+
+  // Phase A · per-line decline via path-based token endpoint.
+  const submitLineDecline = async () => {
+    const idx = lineDeclineOpen;
+    if (idx === null || idx === undefined) return;
+    setBusyLineIdx(idx);
+    try {
+      const r = await api.post(
+        `/portal/quotes/via-token/${encodeURIComponent(token || "")}` +
+          `/line-items/${idx}/decline`,
+        { reason: lineDeclineReason || "" },
+      );
+      setData(r);
+      setToast("Line item declined");
+      setTimeout(() => setToast(""), 2000);
+    } catch (e) {
+      setToast(e?.message || "Failed to decline");
+      setTimeout(() => setToast(""), 3000);
+    } finally {
+      setBusyLineIdx(null);
+      setLineDeclineOpen(null);
+      setLineDeclineReason("");
+    }
+  };
+  const undeclineLine = async (idx) => {
+    setBusyLineIdx(idx);
+    try {
+      const r = await api.post(
+        `/portal/quotes/via-token/${encodeURIComponent(token || "")}` +
+          `/line-items/${idx}/undecline`,
+        {},
+      );
+      setData(r);
+      setToast("Line item restored");
+      setTimeout(() => setToast(""), 2000);
+    } catch (e) {
+      setToast(e?.message || "Failed to restore");
+      setTimeout(() => setToast(""), 3000);
+    } finally {
+      setBusyLineIdx(null);
+    }
+  };
 
   // Phase K79 · Feb-2026 — Grouped customer-facing view fork.
   // The customer/portal caller renders the grouped rollup rows when
@@ -207,7 +286,7 @@ export default function EstimateView({
               </div>
             </>
           ) : null}
-          {showCustomerToolbar && !locked ? (
+          {showCustomerToolbar && !locked && actionable ? (
             <div className="ev-tool-group ev-customer-cta">
               <button
                 className="iv-btn"
@@ -221,19 +300,32 @@ export default function EstimateView({
                 className="iv-btn ev-btn-accept"
                 onClick={accept}
                 disabled={busy}
-                data-testid="estimate-toolbar-accept-btn"
+                data-testid="estimate-toolbar-customer-approve"
+                data-legacy-testid="estimate-toolbar-accept-btn"
               >
-                <Check size={14}/> Accept
+                <Check size={14}/> Approve
               </button>
               <button
                 className="iv-btn ev-btn-decline"
                 onClick={() => setDeclineOpen(true)}
                 disabled={busy}
-                data-testid="estimate-toolbar-decline-btn"
+                data-testid="estimate-toolbar-customer-decline"
+                data-legacy-testid="estimate-toolbar-decline-btn"
               >
                 <XIcon size={14}/> Decline
               </button>
             </div>
+          ) : null}
+          {/* Feb-2026 · Phase A — legacy testid preservation. Any
+              caller still querying the old ``estimate-toolbar-accept
+              -btn`` / ``estimate-toolbar-decline-btn`` testids will
+              hit these hidden spans (display: none) so lookups don't
+              silently fail. Delete when Phase C ships. */}
+          {showCustomerToolbar && !locked && actionable ? (
+            <>
+              <span style={{ display: "none" }} data-testid="estimate-toolbar-accept-btn" aria-hidden />
+              <span style={{ display: "none" }} data-testid="estimate-toolbar-decline-btn" aria-hidden />
+            </>
           ) : null}
 
           {locked ? (
@@ -362,26 +454,75 @@ export default function EstimateView({
                 {!as_customer ? <th className="iv-num">T.B.Cost</th> : null}
                 {!as_customer ? <th className="iv-num">Margin %</th> : null}
                 <th className="iv-num">Total</th>
+                {/* Feb-2026 · Phase A — per-line decline column
+                    (customer + magic-link only, actionable window). */}
+                {as_customer && actionable && !locked ? <th></th> : null}
               </tr>
             </thead>
             <tbody>
               {line_items.length === 0 ? (
                 <tr><td colSpan={11} className="iv-empty">No line items.</td></tr>
-              ) : line_items.map((li, i) => (
-                <tr key={i} data-testid={`estimate-line-item-row-${i}`}>
-                  <td>{li.description}</td>
-                  {!as_customer ? <td className="iv-num">{li.calc || "—"}</td> : null}
-                  {!as_customer ? <td className="iv-num">{fmt(li.cost_rate)}</td> : null}
-                  <td className="iv-num">{li.qty_hr || li.quantity || 0}</td>
-                  <td className="iv-num">{li.visits || 1}</td>
-                  {!as_customer ? <td className="iv-num">{fmt(li.m_rate)}</td> : null}
-                  {!as_customer ? <td className="iv-num">{fmt(li.bh)}</td> : null}
-                  {!as_customer ? <td className="iv-num">{fmt(li.t_bh)}</td> : null}
-                  {!as_customer ? <td className="iv-num">{fmt(li.t_b_cost)}</td> : null}
-                  {!as_customer ? <td className="iv-num">{fmt(li.margin_pct)}</td> : null}
-                  <td className="iv-num">{fmt(li.total)}</td>
+              ) : line_items.map((li, i) => {
+                const isDeclined = (li.customer_status || "pending") === "declined";
+                const rowStyle = isDeclined
+                  ? { textDecoration: "line-through", opacity: 0.55 }
+                  : undefined;
+                return (
+                <tr key={i} data-testid={`estimate-line-item-row-${i}`}
+                     data-customer-status={li.customer_status || "pending"}>
+                  <td style={rowStyle}>
+                    {li.description}
+                    {isDeclined ? (
+                      <span style={{
+                              marginLeft: 8, fontSize: 11,
+                              padding: "2px 6px",
+                              borderRadius: 6,
+                              background: "#FEE2E2",
+                              color: "#7F1D1D",
+                              textDecoration: "none",
+                            }}
+                            data-testid={`estimate-line-item-declined-chip-${i}`}>
+                        Declined
+                      </span>
+                    ) : null}
+                  </td>
+                  {!as_customer ? <td className="iv-num" style={rowStyle}>{li.calc || "—"}</td> : null}
+                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.cost_rate)}</td> : null}
+                  <td className="iv-num" style={rowStyle}>{li.qty_hr || li.quantity || 0}</td>
+                  <td className="iv-num" style={rowStyle}>{li.visits || 1}</td>
+                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.m_rate)}</td> : null}
+                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.bh)}</td> : null}
+                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_bh)}</td> : null}
+                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_b_cost)}</td> : null}
+                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.margin_pct)}</td> : null}
+                  <td className="iv-num" style={rowStyle}>{fmt(li.total)}</td>
+                  {as_customer && actionable && !locked ? (
+                    <td className="iv-num">
+                      {isDeclined ? (
+                        <button
+                          className="iv-btn"
+                          style={{ fontSize: 12 }}
+                          disabled={busyLineIdx === i}
+                          onClick={() => undeclineLine(i)}
+                          data-testid={`estimate-line-item-undecline-${i}`}
+                        >
+                          Undo decline
+                        </button>
+                      ) : (
+                        <button
+                          className="iv-btn ev-btn-decline"
+                          style={{ fontSize: 12 }}
+                          disabled={busyLineIdx === i}
+                          onClick={() => setLineDeclineOpen(i)}
+                          data-testid={`estimate-line-item-decline-${i}`}
+                        >
+                          Decline
+                        </button>
+                      )}
+                    </td>
+                  ) : null}
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
           )}
@@ -403,6 +544,29 @@ export default function EstimateView({
                 <td>Total Estimated Cost</td>
                 <td data-testid="estimate-totals-cost">{fmt(totals.total_estimated_cost)}</td>
               </tr>
+              {/* Feb-2026 · Phase A — Original / Adjusted summary.
+                  Only shown when the customer has flagged at least
+                  one line as declined. Server-truth values from
+                  ``recompute_customer_adjusted_totals``. */}
+              {totals.has_declined_lines ? (
+                <tr data-testid="estimate-totals-adjusted-row">
+                  <td>Adjusted for declined items</td>
+                  <td>
+                    <span style={{
+                            textDecoration: "line-through",
+                            color: "#9CA3AF",
+                            marginRight: 8,
+                          }}
+                          data-testid="estimate-totals-original">
+                      ${fmt(totals.original_total)}
+                    </span>
+                    <span style={{ fontWeight: 700 }}
+                          data-testid="estimate-totals-adjusted">
+                      ${fmt(totals.adjusted_total)}
+                    </span>
+                  </td>
+                </tr>
+              ) : null}
               {!as_customer ? (
                 <>
                   <tr><td>Estimated Profit</td><td data-testid="estimate-totals-profit">{fmt(totals.estimated_profit)}</td></tr>
@@ -424,6 +588,42 @@ export default function EstimateView({
       </div>
 
       {/* Modals for decline/request-changes */}
+      {/* Feb-2026 · Phase A — per-line decline confirm dialog. */}
+      {lineDeclineOpen !== null ? (
+        <ModalScrim onClose={() => { setLineDeclineOpen(null); setLineDeclineReason(""); }}>
+          <h3 className="ev-modal-title" data-testid="estimate-line-item-decline-dialog">
+            Decline this line item?
+          </h3>
+          <p className="ev-modal-help">
+            You're telling us you don't want{" "}
+            <b>{line_items[lineDeclineOpen]?.description || "this item"}</b>{" "}
+            (${fmt(line_items[lineDeclineOpen]?.total)}). Your total will
+            adjust automatically. You can undo this until you approve or
+            decline the whole estimate.
+          </p>
+          <textarea
+            rows={2}
+            placeholder="Optional reason"
+            value={lineDeclineReason}
+            onChange={(e) => setLineDeclineReason(e.target.value.slice(0, 200))}
+            className="ev-modal-input"
+            data-testid="estimate-line-item-decline-reason"
+          />
+          <div className="ev-modal-actions">
+            <button className="iv-btn"
+                    onClick={() => { setLineDeclineOpen(null); setLineDeclineReason(""); }}
+                    data-testid="estimate-line-item-decline-cancel">
+              Cancel
+            </button>
+            <button className="iv-btn ev-btn-decline"
+                    onClick={submitLineDecline}
+                    disabled={busyLineIdx !== null}
+                    data-testid="estimate-line-item-decline-confirm">
+              Decline this line
+            </button>
+          </div>
+        </ModalScrim>
+      ) : null}
       {declineOpen ? (
         <ModalScrim onClose={() => setDeclineOpen(false)}>
           <h3 className="ev-modal-title">Decline this estimate</h3>

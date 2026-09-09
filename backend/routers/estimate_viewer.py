@@ -106,6 +106,12 @@ def _compute_totals(est: dict) -> Dict[str, Any]:
     est_profit = float(est.get("estimated_profit") or 0)
     total_bhrs = float(est.get("total_b_hrs") or 0)
     total_bhrs_rev = float(est.get("total_b_hrs_revenue") or 0)
+    # Feb-2026 · Phase A · Customer per-line decline — surface the
+    # original/adjusted totals block that the customer viewer uses
+    # for the strike-through summary. Numbers come from the shared
+    # helper so the frontend never disagrees with the server.
+    from services.quotes.totals import recompute_customer_adjusted_totals
+    adj = recompute_customer_adjusted_totals(est)
     return {
         "subtotal": round(subtotal, 2),
         "taxes": round(tax, 2),
@@ -114,6 +120,19 @@ def _compute_totals(est: dict) -> Dict[str, Any]:
         "estimated_profit": round(est_profit, 2),
         "total_b_hrs": round(total_bhrs, 2),
         "total_b_hrs_revenue": round(total_bhrs_rev, 2),
+        # Adjusted-total block (Phase A) — always present so the
+        # frontend renders the strike-through only when
+        # ``has_declined_lines`` is true.
+        "original_subtotal": adj["original_subtotal"],
+        "original_discount_value": adj["original_discount_value"],
+        "original_tax": adj["original_tax"],
+        "original_total": adj["original_total"],
+        "adjusted_subtotal": adj["adjusted_subtotal"],
+        "adjusted_discount_value": adj["adjusted_discount_value"],
+        "adjusted_tax": adj["adjusted_tax"],
+        "adjusted_total": adj["adjusted_total"],
+        "has_declined_lines": adj["has_declined_lines"],
+        "declined_line_count": adj["declined_line_count"],
     }
 
 
@@ -341,7 +360,7 @@ async def decline_estimate(qid: str, body: DeclineIn,
         raise HTTPException(409, "Estimate is already locked")
     await _mark_declined(est, tenant["id"], user.get("id"), body.reason)
     await _notify_admins(
-        tenant["id"], kind="quote_accepted",
+        tenant["id"], kind="quote_declined",
         title=f"Estimate declined by {est.get('customer_name') or 'customer'}",
         body=(body.reason or "No reason given")[:200],
         href=f"/estimates/{qid}",
@@ -364,7 +383,7 @@ async def request_changes(qid: str, body: RequestChangesIn,
         raise HTTPException(409, "Estimate is already locked")
     await _mark_changes_requested(est, tenant["id"], user.get("id"), body.message)
     await _notify_admins(
-        tenant["id"], kind="quote_accepted",
+        tenant["id"], kind="quote_change_requested",
         title=f"Estimate change request from {est.get('customer_name') or 'customer'}",
         body=body.message[:200],
         href=f"/estimates/{qid}",
@@ -468,7 +487,7 @@ async def decline_via_token(body: DeclineIn, token: str = Query(...)):
         raise HTTPException(409, "Estimate is already locked")
     await _mark_declined(est, ctx["tenant"]["id"], f"token:{ctx['cid']}", body.reason)
     await _notify_admins(
-        ctx["tenant"]["id"], kind="quote_accepted",
+        ctx["tenant"]["id"], kind="quote_declined",
         title="Estimate declined via link",
         body=(body.reason or "No reason given")[:200],
         href=f"/estimates/{est['id']}",
@@ -492,7 +511,7 @@ async def changes_via_token(body: RequestChangesIn, token: str = Query(...)):
         est, ctx["tenant"]["id"], f"token:{ctx['cid']}", body.message,
     )
     await _notify_admins(
-        ctx["tenant"]["id"], kind="quote_accepted",
+        ctx["tenant"]["id"], kind="quote_change_requested",
         title="Estimate change request via link",
         body=body.message[:200],
         href=f"/estimates/{est['id']}",
@@ -501,6 +520,238 @@ async def changes_via_token(body: RequestChangesIn, token: str = Query(...)):
         await db.quotes.find_one({"id": est["id"]}, {"_id": 0}),
         ctx["tenant"], as_customer=True,
     )
+
+
+# ══════════════════════════════════════════════════════════════════
+# Feb-2026 · Phase A · Customer per-line-item decline + top-level
+# approve/decline (path-based token endpoints)
+#
+# The pre-existing accept/decline endpoints (query-string token) at
+# ``/portal/quotes/via-token/{accept,decline,request-changes}`` stay
+# in place for back-compat. The four endpoints below are the Phase A
+# API surface used by the customer portal for the new decline UX:
+#
+#   POST /api/portal/quotes/via-token/{token}/line-items/{index}/decline
+#   POST /api/portal/quotes/via-token/{token}/line-items/{index}/undecline
+#   POST /api/portal/quotes/via-token/{token}/approve
+#   POST /api/portal/quotes/via-token/{token}/decline
+#
+# Rules:
+#   1. Idempotent: repeating the same action on an already-in-state doc
+#      returns 200 with the current state, never 4xx. Line-item decline
+#      of an already-declined row is a no-op; approve of an already-
+#      accepted doc likewise.
+#   2. Approve / top-level decline are only actionable when
+#      ``status ∈ {'sent', 'viewed'}``. Otherwise 409 with a
+#      machine-readable ``error_code``.
+#   3. Line-item decline / undecline honor the same
+#      ``status ∈ {'sent', 'viewed'}`` gate so an already-decided doc
+#      can't be mutated by the customer.
+#   4. Notifications are NOT wired in Phase A. Phase B will consume
+#      the emitted ``quote_accepted`` / ``quote_declined`` events.
+#   5. Totals recomputation runs on every mutation via
+#      ``services.quotes.totals.recompute_customer_adjusted_totals``.
+# ══════════════════════════════════════════════════════════════════
+_PHASE_A_ACTIONABLE_STATUSES = {"sent", "viewed"}
+_PHASE_A_TERMINAL_DECISIONS = {"accepted", "declined"}
+
+
+class _PhaseALineDeclineIn(BaseModel):
+    reason: Optional[str] = None
+
+
+class _PhaseATopLevelDeclineIn(BaseModel):
+    reason: Optional[str] = None
+
+
+# In-memory rate limiter (Phase A minimum viable — replace with a
+# Redis-backed limiter when we get one). Key = ``(token_hash, bucket)``,
+# value = list of timestamps within the window. Two buckets:
+#   * ``"line"`` → 30 requests / 5 min per token
+#   * ``"decision"`` → 5 requests / 5 min per token
+# The limiter is process-local — sufficient for single-worker preview;
+# multi-worker prod will multiply the effective limit which is fine
+# for Phase A.
+import time as _time_mod
+from hashlib import sha256 as _sha256
+
+_PHASE_A_RATE_BUCKETS: Dict[str, List[float]] = {}
+_PHASE_A_RATE_LIMITS = {"line": (30, 300.0), "decision": (5, 300.0)}
+
+
+def _phase_a_rate_gate(token: str, bucket: str) -> None:
+    """Raise 429 when the token has burned through its rate budget."""
+    max_hits, window = _PHASE_A_RATE_LIMITS[bucket]
+    key = f"{bucket}:{_sha256(token.encode()).hexdigest()[:16]}"
+    now = _time_mod.monotonic()
+    hits = [t for t in _PHASE_A_RATE_BUCKETS.get(key, []) if now - t < window]
+    if len(hits) >= max_hits:
+        raise HTTPException(
+            status_code=429,
+            detail={"error_code": "rate_limited",
+                     "message": f"Too many requests. Wait a few seconds."},
+        )
+    hits.append(now)
+    _PHASE_A_RATE_BUCKETS[key] = hits
+
+
+async def _phase_a_recompute_and_persist(est: dict, tenant_id: str) -> None:
+    """Recompute the ``original_*`` / ``adjusted_*`` totals block and
+    persist it onto the quote row. Mutates ``est`` in place with the
+    new fields so callers can pass it to ``_build_payload`` without
+    a second Mongo read."""
+    from services.quotes.totals import recompute_customer_adjusted_totals
+    block = recompute_customer_adjusted_totals(est)
+    est.update(block)
+    await db.quotes.update_one(
+        {"id": est["id"], "tenant_id": tenant_id},
+        {"$set": block},
+    )
+
+
+def _phase_a_assert_actionable(est: dict) -> None:
+    """Gate mutations to the ``sent`` / ``viewed`` window."""
+    if est.get("decision") in _PHASE_A_TERMINAL_DECISIONS:
+        raise HTTPException(
+            status_code=409,
+            detail={"error_code": "already_finalized",
+                     "message": "This estimate is already finalized."},
+        )
+    status = str(est.get("status") or "").lower()
+    if status not in _PHASE_A_ACTIONABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail={"error_code": "not_actionable",
+                     "status": status,
+                     "message": (
+                         "Estimate can only be acted on while it's in "
+                         "'sent' or 'viewed' state."
+                     )},
+        )
+
+
+@router.post("/portal/quotes/via-token/{token}/line-items/{index}/decline")
+async def phase_a_decline_line_item(
+    token: str, index: int,
+    body: Optional[_PhaseALineDeclineIn] = None,
+):
+    _phase_a_rate_gate(token, "line")
+    ctx = await _load_est_from_token(token)
+    est = ctx["est"]
+    _phase_a_assert_actionable(est)
+    line_items = list(est.get("line_items") or [])
+    if index < 0 or index >= len(line_items):
+        raise HTTPException(
+            status_code=404,
+            detail={"error_code": "line_index_out_of_range",
+                     "index": index,
+                     "count": len(line_items),
+                     "message": "Line item does not exist."},
+        )
+    reason = (getattr(body, "reason", None) or "").strip()[:200] if body else ""
+    row = line_items[index]
+    # Idempotent — already declined stays declined; refresh reason if provided.
+    row["customer_status"] = "declined"
+    row["customer_declined_at"] = now_iso()
+    if reason:
+        row["customer_decline_reason"] = reason
+    line_items[index] = row
+    est["line_items"] = line_items
+    await db.quotes.update_one(
+        {"id": est["id"], "tenant_id": ctx["tenant"]["id"]},
+        {"$set": {"line_items": line_items}},
+    )
+    await _phase_a_recompute_and_persist(est, ctx["tenant"]["id"])
+    return await _build_payload(est, ctx["tenant"], as_customer=True)
+
+
+@router.post("/portal/quotes/via-token/{token}/line-items/{index}/undecline")
+async def phase_a_undecline_line_item(token: str, index: int):
+    _phase_a_rate_gate(token, "line")
+    ctx = await _load_est_from_token(token)
+    est = ctx["est"]
+    _phase_a_assert_actionable(est)
+    line_items = list(est.get("line_items") or [])
+    if index < 0 or index >= len(line_items):
+        raise HTTPException(
+            status_code=404,
+            detail={"error_code": "line_index_out_of_range",
+                     "index": index,
+                     "count": len(line_items),
+                     "message": "Line item does not exist."},
+        )
+    row = line_items[index]
+    # Idempotent — already pending stays pending.
+    row["customer_status"] = "pending"
+    row["customer_declined_at"] = None
+    row["customer_decline_reason"] = None
+    line_items[index] = row
+    est["line_items"] = line_items
+    await db.quotes.update_one(
+        {"id": est["id"], "tenant_id": ctx["tenant"]["id"]},
+        {"$set": {"line_items": line_items}},
+    )
+    await _phase_a_recompute_and_persist(est, ctx["tenant"]["id"])
+    return await _build_payload(est, ctx["tenant"], as_customer=True)
+
+
+@router.post("/portal/quotes/via-token/{token}/approve")
+async def phase_a_approve_via_token(token: str):
+    _phase_a_rate_gate(token, "decision")
+    ctx = await _load_est_from_token(token)
+    est = ctx["est"]
+    # Idempotent: if already accepted, return current state (200).
+    if est.get("decision") == "accepted":
+        return await _build_payload(est, ctx["tenant"], as_customer=True)
+    _phase_a_assert_actionable(est)
+    await _mark_accepted(est, ctx["tenant"]["id"], f"token:{ctx['cid']}")
+    # Refresh + recompute so the response reflects the accepted state
+    # AND the adjusted-total block (in case the customer had declined
+    # some lines before approving).
+    est_fresh = await db.quotes.find_one(
+        {"id": est["id"], "tenant_id": ctx["tenant"]["id"]}, {"_id": 0},
+    )
+    await _phase_a_recompute_and_persist(est_fresh, ctx["tenant"]["id"])
+    # NOTE: notifications are wired in Phase B. Phase A leaves the
+    # existing bell fanout intact but does NOT dispatch email/SMS.
+    await _notify_admins(
+        ctx["tenant"]["id"], kind="quote_accepted",
+        title="Estimate approved via portal",
+        body=f"Estimate #{(est.get('id') or '')[:8]} approved via portal.",
+        href=f"/estimates/{est['id']}",
+    )
+    return await _build_payload(est_fresh, ctx["tenant"], as_customer=True)
+
+
+@router.post("/portal/quotes/via-token/{token}/decline")
+async def phase_a_decline_via_token(
+    token: str,
+    body: Optional[_PhaseATopLevelDeclineIn] = None,
+):
+    _phase_a_rate_gate(token, "decision")
+    ctx = await _load_est_from_token(token)
+    est = ctx["est"]
+    # Idempotent: if already declined, return current state (200).
+    if est.get("decision") == "declined":
+        return await _build_payload(est, ctx["tenant"], as_customer=True)
+    _phase_a_assert_actionable(est)
+    reason = (getattr(body, "reason", None) or "").strip()[:200] if body else ""
+    await _mark_declined(est, ctx["tenant"]["id"], f"token:{ctx['cid']}", reason)
+    est_fresh = await db.quotes.find_one(
+        {"id": est["id"], "tenant_id": ctx["tenant"]["id"]}, {"_id": 0},
+    )
+    await _phase_a_recompute_and_persist(est_fresh, ctx["tenant"]["id"])
+    # Phase A: bell fanout only. Phase B wires email + SMS through the
+    # ``notify_admin_on_decline`` tenant flag.
+    await _notify_admins(
+        ctx["tenant"]["id"], kind="quote_declined",
+        title="Estimate declined via portal",
+        body=(reason or "No reason given")[:200],
+        href=f"/estimates/{est['id']}",
+    )
+    return await _build_payload(est_fresh, ctx["tenant"], as_customer=True)
+
+
 
 
 # ══════════════════════════════════════════════════════════════════
