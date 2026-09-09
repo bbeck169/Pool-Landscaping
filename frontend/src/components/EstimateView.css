@@ -16,8 +16,14 @@
   flex-wrap: wrap;
 }
 .ev-tool-group.ev-right { margin-left: auto; }
-.ev-btn-accept { background: #0F172A; color: #FFFFFF; border-color: #0F172A; }
-.ev-btn-accept:hover { background: #1E293B; }
+/* Feb-2026 · Batch #4 · Approve-button greening.
+ * Previously navy; users kept confusing the primary CTA with the
+ * page background chrome. Emerald-600 (Tailwind palette) matches
+ * the "Completed" pill green used across schedule cards, giving
+ * the approve action a positive-affirmation reading that's
+ * consistent with the rest of the app. Decline stays red. */
+.ev-btn-accept { background: #059669; color: #FFFFFF; border-color: #059669; }
+.ev-btn-accept:hover { background: #047857; border-color: #047857; }
 .ev-btn-decline { background: #DC2626; color: #FFFFFF; border-color: #DC2626; }
 .ev-btn-decline:hover { background: #B91C1C; }
 .ev-btn-danger { background: #FEE2E2; color: #991B1B; border-color: #FCA5A5; }

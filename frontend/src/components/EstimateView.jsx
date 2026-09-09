@@ -199,17 +199,28 @@ export default function EstimateView({
     }
   };
 
+  const locked = decision === "accepted" || decision === "declined";
+
   // Phase K79 · Feb-2026 — Grouped customer-facing view fork.
   // The customer/portal caller renders the grouped rollup rows when
   // ``customer_group_display`` is on. Admin/printable views keep the
   // fully-itemized surface unchanged.
+  //
+  // Feb-2026 · Batch #4 · Item 1 fix — on the magic-link surface
+  // (``token`` present) the grouped rollup HIDES the per-line
+  // decline buttons because it collapses individual ``line_items``
+  // into category-level rows. Phase A's whole point is customer
+  // per-line action, so force itemized rendering whenever the doc
+  // is actionable via a magic link. Once the doc is locked
+  // (accepted/declined) we fall back to the grouped rollup so the
+  // customer's post-decision view stays consistent with the rest
+  // of the portal.
   const showGrouped = Boolean(
     as_customer
     && customer_view
-    && customer_view.customer_group_display,
+    && customer_view.customer_group_display
+    && !(token && actionable && !locked),
   );
-
-  const locked = decision === "accepted" || decision === "declined";
   const showAdminToolbar = isAdmin && !printable;
   const showCustomerToolbar = !isAdmin && !printable;
 

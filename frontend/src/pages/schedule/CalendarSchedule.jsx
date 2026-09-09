@@ -1507,6 +1507,7 @@ export default function CalendarSchedule() {
           onOptimizeRoute={optimizeRoute}
           optimizing={optimizing}
           reorderableJobIds={reorderableJobs.map((j) => j.id)}
+          onRefresh={() => load({ force: true })}
         />
       )}
 
@@ -1694,7 +1695,10 @@ export default function CalendarSchedule() {
 }
 
 /* ═══ Phase 30W · Grid panel ═════════════════════════════════════════ */
-function GridPanel({
+// Feb-2026 · Batch #4 · Item 3 — named export so the Vitest suite
+// can render GridPanel in isolation and assert the refresh button's
+// wiring without spinning up the entire CalendarSchedule tree.
+export function GridPanel({
   date, setDate, jobs, loading, checked, onToggle, canWrite,
   onBulkComplete, onOpenMove, moveOpen, setMoveOpen, moveDate, setMoveDate,
   onConfirmMove, busy, onOpenJob, onNewJob,
@@ -1714,6 +1718,13 @@ function GridPanel({
   // set that is actually reorderable (non-terminal only).
   orderController, onOpenBulkReorder, reorderableJobIds,
   onOptimizeRoute, optimizing,
+  // Feb-2026 · Batch #4 · Item 3 fix — refresh handler injected from
+  // the parent (``CalendarSchedule``). The button previously called
+  // an in-scope ``load`` symbol that only exists in the parent
+  // component, throwing ``ReferenceError: load is not defined``
+  // when a tech clicked it. Now wired via prop so the handler is
+  // always defined at the correct call site.
+  onRefresh,
 }) {
   const focusISO = format(date, "yyyy-MM-dd");
   const isToday = focusISO === format(new Date(), "yyyy-MM-dd");
@@ -1768,7 +1779,7 @@ function GridPanel({
         <button
           onClick={() => {
             if (busy) return;
-            load({ force: true });
+            onRefresh?.();
           }}
           disabled={busy}
           className="w-9 h-9 rounded-lg flex items-center justify-center"
@@ -1779,7 +1790,7 @@ function GridPanel({
                     cursor: busy ? "wait" : "pointer" }}
           title="Refresh schedule"
           aria-label="Refresh schedule"
-          data-testid="schedule-refresh-btn"
+          data-testid="schedule-refresh"
         >
           <RefreshCw
             size={16}
