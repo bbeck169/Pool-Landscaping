@@ -49,11 +49,19 @@ def _tenant_of(user: Dict[str, Any]) -> str:
 
 
 def _is_unscheduled(j: Dict[str, Any]) -> bool:
-    """A job is 'unscheduled' iff it has no tech AND no scheduled_date."""
+    """A job is 'unscheduled' iff it has no tech, no crew, and no scheduled_date.
+
+    Feb-2026 (Phase 4 fold-in) — the Unscheduled Jobs panel on the
+    Dispatch board must ONLY surface jobs that are not yet assigned
+    to anyone (no technician AND no crew) AND have no schedule
+    date. Jobs assigned to a crew but not yet dated are handled by
+    the crew's own schedule view, not this dispatcher inbox.
+    """
     has_tech = bool(j.get("tech_user_id") or j.get("assigned_to")
                      or j.get("technician_id"))
+    has_crew = bool(j.get("crew_id"))
     has_date = bool(j.get("scheduled_date"))
-    return not has_tech and not has_date
+    return not has_tech and not has_crew and not has_date
 
 
 def _cheapest_slot(origin: Tuple[float, float],
@@ -105,6 +113,10 @@ async def list_unscheduled_jobs(
     limit: int = 100,
 ):
     tenant_id = _tenant_of(caller)
+    # Feb-2026 (Phase 4 fold-in) — additionally exclude jobs with a
+    # ``crew_id``. The Unscheduled Jobs panel is a dispatcher inbox
+    # for jobs with NO assignment at all; crew-assigned-but-undated
+    # jobs are surfaced elsewhere.
     q = {"tenant_id": tenant_id,
          "$and": [
              {"$or": [{"scheduled_date": None},
@@ -114,6 +126,7 @@ async def list_unscheduled_jobs(
                  {"tech_user_id": {"$exists": True, "$nin": [None, ""]}},
                  {"assigned_to": {"$exists": True, "$nin": [None, ""]}},
                  {"technician_id": {"$exists": True, "$nin": [None, ""]}},
+                 {"crew_id": {"$exists": True, "$nin": [None, ""]}},
              ]},
          ]}
     items: List[Dict[str, Any]] = []

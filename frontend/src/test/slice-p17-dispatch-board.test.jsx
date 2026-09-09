@@ -40,11 +40,21 @@ vi.mock("@googlemaps/markerclusterer", () => ({
 // Sonner toast — stub out.
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-const { apiGetMock, apiPostMock } = vi.hoisted(() => ({
+const { apiGetMock, apiPostMock, boardPollMock } = vi.hoisted(() => ({
   apiGetMock: vi.fn(),
   apiPostMock: vi.fn(),
+  boardPollMock: vi.fn(),
 }));
 vi.mock("@/api", () => ({ api: { get: apiGetMock, post: apiPostMock } }));
+// Feb-2026 · Live-Tech-Map · Phase 4.core — the board load now goes
+// through ``fetchBoardWithEtag`` which uses raw ``fetch`` for
+// ``If-None-Match`` support. Mock the module so the ETag-aware helper
+// still resolves synchronously and records apiGetMock calls (the
+// existing ``tech_user_id=t-mike`` assertion needs those). The mock
+// is populated from the ``BOARD_FIXTURE`` fixture in ``beforeEach``.
+vi.mock("@/pages/dispatch/dispatchBoardPoll", () => ({
+  fetchBoardWithEtag: boardPollMock,
+}));
 
 vi.mock("@/auth", () => ({
   useAuth: () => ({ user: { role: "admin", id: "u-1", name: "Admin" } }),
@@ -78,6 +88,7 @@ const BOARD_FIXTURE = {
 beforeEach(() => {
   apiGetMock.mockReset();
   apiPostMock.mockReset();
+  boardPollMock.mockReset();
   apiGetMock.mockImplementation((path) => {
     if (path.startsWith("/dispatch/board")) return Promise.resolve(BOARD_FIXTURE);
     if (path.startsWith("/users")) return Promise.resolve([
@@ -85,6 +96,21 @@ beforeEach(() => {
     ]);
     return Promise.resolve(null);
   });
+  boardPollMock.mockImplementation(({ day, tech_user_id, route_type, global_view }) => {
+    // Feb-2026 · Phase 4.core — mirror the query string so the
+    // ``tech_user_id=t-mike`` assertion below still resolves.
+    const qs = Object.entries({
+      day: day || "all", tech_user_id, route_type: route_type || "all",
+      global: global_view ? "true" : undefined,
+    }).filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k}=${v}`).join("&");
+    apiGetMock(`/dispatch/board?${qs}`);
+    return Promise.resolve({ status: 200, data: BOARD_FIXTURE, etag: null });
+  });
+  global.fetch = vi.fn(() => Promise.resolve({
+    ok: true, status: 200, headers: { get: () => null },
+    json: () => Promise.resolve({}), text: () => Promise.resolve(""),
+  }));
 });
 
 describe("DispatchBoardPage (Phase 17)", () => {

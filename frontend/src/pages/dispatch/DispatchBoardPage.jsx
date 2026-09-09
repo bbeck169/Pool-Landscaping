@@ -29,7 +29,11 @@ import { colors } from "@/theme";
 import {
   fetchBoard, optimizeBoard, applyBoardOrder,
 } from "@/pages/dispatch/dispatchBoardApi";
+// Feb-2026 · Live-Tech-Map · Phase 4.core — ETag-aware poll helper.
+import { fetchBoardWithEtag } from "@/pages/dispatch/dispatchBoardPoll";
 import DispatchMapView from "@/pages/dispatch/DispatchMapView";
+// Feb-2026 · Live-Tech-Map · Phase 4.a — schedule panel in the left col.
+import DispatchSchedulePanel from "@/pages/dispatch/DispatchSchedulePanel";
 import useLiveTechPositions from "@/hooks/useLiveTechPositions";
 import useCrossingToasts from "@/hooks/useCrossingToasts";
 import RouteDetailsList from "@/pages/dispatch/RouteDetailsList";
@@ -120,6 +124,14 @@ export default function DispatchBoardPage() {
   const previewCacheRef = React.useRef({}); // key: `${tech}|${date}|${idsHash}` → {at, previews}
   const setPinColorModePersistent = (m) => { setPinColorMode(m); savePinColorMode(m); };
 
+  // Feb-2026 · Live-Tech-Map Phase 4.core — isolate + focus state.
+  // ``isolatedTechId`` dims every other tech's pin/polyline on the
+  // map AND the schedule panel; ``focusedStopId`` pans the map to a
+  // single stop. Both cleared when the user toggles filters or picks
+  // a new day so the visual noise doesn't leak between contexts.
+  const [isolatedTechId, setIsolatedTechId] = React.useState(null);
+  const [focusedStopId, setFocusedStopId] = React.useState(null);
+
   // Phase P2 · Feb-2026 — live technician GPS markers on the map.
   // Toggle default ON, persisted to localStorage. Poll every 30 s while
   // the toggle is on; hook is a no-op when off.
@@ -161,11 +173,27 @@ export default function DispatchBoardPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const load = React.useCallback(async () => {
-    setLoading(true);
+  // Feb-2026 · Live-Tech-Map · Phase 4.core — ETag-aware polling
+  // for the dispatch board.
+  //   * First load: no ``If-None-Match``, we cache the returned ETag.
+  //   * Subsequent polls (30 s cadence): send the cached ETag; if
+  //     the server responds 304 we skip the ``setBoard`` call so
+  //     React doesn't re-render on an unchanged payload.
+  //   * A user-initiated filter change (day / tech / route type)
+  //     re-runs ``load`` from scratch (no If-None-Match) so the
+  //     new filter result always fetches fresh.
+  //   * ``inFlightRef`` guards against overlapping polls if the
+  //     30 s tick fires while a previous request hasn't returned.
+  const etagRef = React.useRef(null);
+  const inFlightRef = React.useRef(false);
+
+  const load = React.useCallback(async ({ useEtag = false, signal } = {}) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    if (!useEtag) setLoading(true);
     try {
       const isoDate = isoDateForDayKey(day);  // null for "all"
-      const data = await fetchBoard({
+      const res = await fetchBoardWithEtag({
         day, tech_user_id: techId,
         route_type: routeType, global_view: globalView,
         // Feb-2026 · resolve the weekday tab to a concrete calendar
@@ -173,19 +201,49 @@ export default function DispatchBoardPage() {
         // customer-denorm path is empty. Null for the "All" tab so
         // legacy behaviour is preserved.
         date: isoDate,
-      });
-      setBoard(data);
-      // Reset optimizer state whenever filters change.
-      setPolyline(null);
-      setSavings(null);
+      }, useEtag ? etagRef.current : null, signal);
+      if (res.status === 304) {
+        // Nothing changed — keep existing board + ETag as-is.
+        return;
+      }
+      etagRef.current = res.etag;
+      setBoard(res.data);
+      // Reset optimizer state whenever a full (non-poll) load happens.
+      if (!useEtag) {
+        setPolyline(null);
+        setSavings(null);
+      }
     } catch (e) {
-      toast.error(`Failed to load dispatch board: ${e.message || e}`);
+      if (e?.name === "AbortError") return;
+      if (!useEtag) toast.error(`Failed to load dispatch board: ${e.message || e}`);
     } finally {
-      setLoading(false);
+      if (!useEtag) setLoading(false);
+      inFlightRef.current = false;
     }
   }, [day, techId, routeType, globalView]);
 
-  React.useEffect(() => { load(); }, [load]);
+  // Fresh load whenever filters change.
+  React.useEffect(() => {
+    etagRef.current = null;
+    setIsolatedTechId(null);
+    setFocusedStopId(null);
+    load({ useEtag: false });
+  }, [load]);
+
+  // Feb-2026 · Phase 4.core — 30 s poll with ETag. Poll cancels on
+  // unmount + skips itself while another request is in flight. The
+  // interval is intentionally low-frequency (30 s) — the board's
+  // primary data (routes, tech load) shifts slowly; live tech pings
+  // ride the separate ``useLiveTechPositions`` hook.
+  React.useEffect(() => {
+    const controller = new AbortController();
+    const tick = () => { load({ useEtag: true, signal: controller.signal }); };
+    const handle = setInterval(tick, 30_000);
+    return () => {
+      clearInterval(handle);
+      controller.abort();
+    };
+  }, [load]);
 
   // Phase 17 · pull active shifts on mount + on reload for the sidebar.
   const loadActiveShifts = React.useCallback(async () => {
@@ -371,9 +429,41 @@ export default function DispatchBoardPage() {
     }
   };
 
-  const pins = board?.pins || []; // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: derived value stable-by-reference; downstream useMemo already tracks the real source deps
-  const techLoad = board?.tech_load || [];
-  const unrouted = board?.unrouted_customers || [];
+  const pins = React.useMemo(() => board?.pins || [], [board]);
+  const techLoad = React.useMemo(() => board?.tech_load || [], [board]);
+  const unrouted = React.useMemo(() => board?.unrouted_customers || [], [board]);
+
+  // Feb-2026 · Live-Tech-Map · Phase 4.b — client-side filter chain.
+  // The endpoint already tenant-scopes and applies the coarse
+  // ``tech_user_id`` + ``route_type`` server-side filters; this
+  // layer stacks the additional customer-name filter (from the
+  // ``Select Customer`` search box) on top so BOTH the map's pin
+  // set AND the new schedule panel react to the same query. Order:
+  //   1. ``pins`` already contains the tech/route-type-scoped set.
+  //   2. Narrow by customer-name substring, when set.
+  // The schedule panel derives its own view-model from
+  // ``filteredPins`` so the pill panel + map stay in lockstep.
+  const [customerQuery, setCustomerQuery] = React.useState("");
+  const filteredPins = React.useMemo(() => {
+    if (!customerQuery.trim()) return pins;
+    const q = customerQuery.trim().toLowerCase();
+    return pins.filter((p) => (p.name || "").toLowerCase().includes(q));
+  }, [pins, customerQuery]);
+
+  // Tech-name lookup for the panel + legend labels. Prefers the
+  // ``tech_load`` entry (already tenant-scoped, always accurate)
+  // and falls back to the ``techs`` directory for anyone who has
+  // zero jobs today.
+  const techNameById = React.useMemo(() => {
+    const acc = {};
+    for (const tl of techLoad) {
+      if (tl.tech_user_id) acc[tl.tech_user_id] = tl.tech_name || tl.tech_user_id;
+    }
+    for (const t of techs) {
+      if (t.id && !acc[t.id]) acc[t.id] = t.name || t.id;
+    }
+    return acc;
+  }, [techLoad, techs]);
 
   // Phase 17 · derive banners for shift-in / shift-away when a
   // specific tech is selected.
@@ -665,9 +755,30 @@ export default function DispatchBoardPage() {
           </div>
 
           <SelectCustomerPanel
-            pins={pins}
+            pins={filteredPins}
             selectedCustomerId={selectedCustomerId}
             onSelect={setSelectedCustomerId}
+            query={customerQuery}
+            onQueryChange={setCustomerQuery}
+          />
+
+          {/* Feb-2026 · Live-Tech-Map · Phase 4.a — schedule panel.
+              Below existing filters + customer picker; groups the
+              day's scheduled stops by tech/crew/service_day
+              matching the active ``pinColorMode``. Q4: clicking a
+              row focuses the map on that stop. */}
+          <DispatchSchedulePanel
+            pins={filteredPins}
+            pinColorMode={pinColorMode}
+            techColorById={techColorById}
+            techNameById={techNameById}
+            dayLabel={DAYS.find((d) => d.key === day)?.label || day}
+            focusedStopId={focusedStopId}
+            isolatedTechId={isolatedTechId}
+            onFocusStop={(p) => {
+              setFocusedStopId(p.customer_id);
+              setSelectedCustomerId(p.customer_id);
+            }}
           />
         </aside>
 
@@ -713,14 +824,18 @@ export default function DispatchBoardPage() {
             </div>
           ) : null}
           <DispatchMapView
-            pins={pins}
+            pins={filteredPins}
             unroutedPins={(unrouted || []).filter((u) => u.lat != null && u.lng != null)}
             polyline={polyline}
             techColorById={techColorById}
+            techNameById={techNameById}
             activeCustomerId={selectedCustomerId}
             onSelectCustomer={setSelectedCustomerId}
             pinColorMode={pinColorMode}
             liveTechPositions={showLiveTechs ? livePositions : []}
+            isolatedTechId={isolatedTechId}
+            onIsolateTech={setIsolatedTechId}
+            focusedStopId={focusedStopId}
           />
         </section>
 
@@ -749,8 +864,17 @@ export default function DispatchBoardPage() {
             </div>
             <TechLoadStrip
               loads={techLoad}
-              selectedTechId={techId}
-              onSelect={setTechId}
+              selectedTechId={isolatedTechId || techId}
+              onSelect={(id) => {
+                // Feb-2026 · Phase 4.core — clicking a Tech Load row
+                // isolates that tech on the map + schedule panel
+                // (dim all others) rather than reloading the board
+                // under a hard filter. Users can still hard-filter
+                // via the Tech dropdown at the top; isolate is a
+                // client-side dim that leaves the fetched data set
+                // intact.
+                setIsolatedTechId((prev) => prev === id ? null : id);
+              }}
             />
           </div>
 
@@ -968,16 +1092,15 @@ function ColorLegend({ mode, techLoad = [] }) {
 }
 
 // ─── Side panel ────────────────────────────────────────────────
-function SelectCustomerPanel({ pins, selectedCustomerId, onSelect }) {
-  const [query, setQuery] = React.useState("");
+function SelectCustomerPanel({ pins, selectedCustomerId, onSelect, query, onQueryChange }) {
+  const _q = (query || "").trim().toLowerCase();
   const filtered = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const rows = q
-      ? pins.filter((p) => (p.name || "").toLowerCase().includes(q)
-          || formatAddress(p.address).toLowerCase().includes(q))
+    const rows = _q
+      ? pins.filter((p) => (p.name || "").toLowerCase().includes(_q)
+          || formatAddress(p.address).toLowerCase().includes(_q))
       : pins;
     return rows.slice(0, 40);
-  }, [pins, query]);
+  }, [pins, _q]);
 
   return (
     <div
@@ -993,8 +1116,8 @@ function SelectCustomerPanel({ pins, selectedCustomerId, onSelect }) {
       </div>
       <input
         type="search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        value={query || ""}
+        onChange={(e) => onQueryChange(e.target.value)}
         placeholder="Search name or address…"
         className="w-full rounded-lg px-2.5 py-1.5 text-sm mb-2 focus:outline-none"
         style={{

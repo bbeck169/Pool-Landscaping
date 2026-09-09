@@ -11,8 +11,18 @@
 //     currently filters anything older than 300 s, but if the window
 //     changes we still render sanely.
 //
-// The backend guarantees positions are already tenant-scoped and 5-min
-// fresh — we do NOT re-filter here.
+// Feb-2026 · Phase 4.core additions:
+//   • ``staleThresholdMs`` (default 15 min · 900 000 ms) — pins
+//     older than this fade to 35% + get a "Last seen HH:MM ago"
+//     hint in the InfoWindow. The stale threshold is deliberately
+//     LARGER than the backend's 300 s freshness window because the
+//     backend already drops pings > 5 min, so anything we see is
+//     fresh; the 15-min guard is a UI-level warning for cases
+//     where the backend window is bumped or a network hiccup
+//     temporarily fed us cached data.
+//   • ``isolatedTechId`` — when set, every OTHER tech renders at
+//     35% opacity so admins can trace a single tech's route on a
+//     crowded board.
 import React from "react";
 import { AdvancedMarker, InfoWindow } from "../../lib/maps";
 import { colors } from "@/theme";
@@ -29,20 +39,25 @@ function firstName(full) {
   return s.split(/\s+/)[0] || "";
 }
 
-function TechDot({ position, active, onClick }) {
+function TechDot({ position, active, dimmed, stale, onClick }) {
   const color = tintFor(position.staleness_s);
   const label = firstName(position.user_name);
+  const opacity = dimmed ? 0.35 : (stale ? 0.5 : 1);
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={`Technician ${position.user_name}`}
       data-testid={`dispatch-live-tech-${position.user_id}`}
+      data-stale={stale ? "true" : "false"}
+      data-dimmed={dimmed ? "true" : "false"}
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
         transform: "translateY(-4px)",
+        opacity,
+        filter: stale ? "grayscale(60%)" : "none",
       }}
     >
       <span
@@ -76,7 +91,23 @@ function TechDot({ position, active, onClick }) {
   );
 }
 
-export default function LiveTechPinsLayer({ positions = [] }) {
+const STALE_MS_DEFAULT = 15 * 60 * 1000;
+
+function _fmtAgo(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "just now";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m ago`;
+}
+
+export default function LiveTechPinsLayer({
+  positions = [],
+  isolatedTechId = null,
+  staleThresholdMs = STALE_MS_DEFAULT,
+}) {
   const [activeId, setActiveId] = React.useState(null);
   const active = React.useMemo(
     () => positions.find((p) => p.user_id === activeId) || null,
@@ -87,22 +118,29 @@ export default function LiveTechPinsLayer({ positions = [] }) {
 
   return (
     <>
-      {positions.map((p) => (
-        <AdvancedMarker
-          key={`live-tech-${p.user_id}`}
-          position={{ lat: p.lat, lng: p.lon }}
-          onClick={() => setActiveId(p.user_id)}
-        >
-          <TechDot
-            position={p}
-            active={activeId === p.user_id}
-            onClick={(e) => {
-              e.stopPropagation();
-              setActiveId(p.user_id);
-            }}
-          />
-        </AdvancedMarker>
-      ))}
+      {positions.map((p) => {
+        const stalenessMs = (p.staleness_s || 0) * 1000;
+        const stale = stalenessMs >= staleThresholdMs;
+        const dimmed = isolatedTechId && p.user_id !== isolatedTechId;
+        return (
+          <AdvancedMarker
+            key={`live-tech-${p.user_id}`}
+            position={{ lat: p.lat, lng: p.lon }}
+            onClick={() => setActiveId(p.user_id)}
+          >
+            <TechDot
+              position={p}
+              active={activeId === p.user_id}
+              dimmed={dimmed}
+              stale={stale}
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveId(p.user_id);
+              }}
+            />
+          </AdvancedMarker>
+        );
+      })}
       {active ? (
         <InfoWindow
           position={{ lat: active.lat, lng: active.lon }}
@@ -115,8 +153,9 @@ export default function LiveTechPinsLayer({ positions = [] }) {
             <div style={{ fontWeight: 600, fontSize: 13 }}>
               {active.user_name || "Technician"}
             </div>
-            <div style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>
-              Captured {Math.max(0, active.staleness_s)} seconds ago
+            <div style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}
+                 data-testid={`dispatch-live-tech-lastseen-${active.user_id}`}>
+              Last seen {_fmtAgo((active.staleness_s || 0) * 1000)}
             </div>
             {typeof active.accuracy_m === "number" ? (
               <div style={{ fontSize: 11, color: colors.muted, marginTop: 2 }}>

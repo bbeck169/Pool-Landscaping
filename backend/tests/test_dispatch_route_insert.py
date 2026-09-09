@@ -258,3 +258,90 @@ def test_cross_tenant_job_returns_404():
         assert r.status_code == 404, r.text
     finally:
         _sync.jobs.delete_one({"id": new_id})
+
+
+
+# ── 7. Unscheduled Jobs panel filter (Phase 4 fold-in) ────────────
+#
+# User clarification (Feb 2026): the Dispatch → Unscheduled Jobs
+# panel must ONLY show jobs with NO tech and NO crew and NO
+# scheduled_date. Both one-time and recurring jobs qualify — the
+# filter is on assignment, not job type.
+def _seed_unscheduled_variants() -> dict:
+    tenant_id = _tenant_of("manager@aquaterra.com")
+    tech = _tech_id()
+    marker = f"TEST_p4u_{uuid.uuid4().hex[:6]}"
+
+    # a. Fully unscheduled one-time → SHOULD appear.
+    a_id = f"{marker}_A_oneoff"
+    _sync.jobs.insert_one({
+        "id": a_id, "tenant_id": tenant_id,
+        "scheduled_date": None, "tech_user_id": None, "assigned_to": None,
+        "technician_id": None, "crew_id": None,
+        "lat": 33.5, "lon": -112.0, "address": "unassigned one-off",
+        "title": "One-off unassigned",
+    })
+    # b. Fully unscheduled recurring instance → SHOULD appear.
+    b_id = f"{marker}_B_recurring"
+    _sync.jobs.insert_one({
+        "id": b_id, "tenant_id": tenant_id,
+        "scheduled_date": None, "tech_user_id": None, "assigned_to": None,
+        "technician_id": None, "crew_id": None,
+        "recurring_template_id": "tmpl_x", "lat": 33.5, "lon": -112.0,
+        "address": "unassigned recurring", "title": "Recurring unassigned",
+    })
+    # c. Has technician_id → MUST be filtered out.
+    c_id = f"{marker}_C_hasTech"
+    _sync.jobs.insert_one({
+        "id": c_id, "tenant_id": tenant_id,
+        "scheduled_date": None, "technician_id": tech,
+        "crew_id": None,
+        "lat": 33.5, "lon": -112.0, "address": "has-tech-no-date",
+        "title": "Tech-assigned no date",
+    })
+    # d. Has crew_id → MUST be filtered out (new Phase 4 rule).
+    d_id = f"{marker}_D_hasCrew"
+    _sync.jobs.insert_one({
+        "id": d_id, "tenant_id": tenant_id,
+        "scheduled_date": None, "tech_user_id": None, "technician_id": None,
+        "assigned_to": None, "crew_id": "crew-abc",
+        "lat": 33.5, "lon": -112.0, "address": "has-crew-no-date",
+        "title": "Crew-assigned no date",
+    })
+    # e. Has scheduled_date → MUST be filtered out.
+    e_id = f"{marker}_E_hasDate"
+    _sync.jobs.insert_one({
+        "id": e_id, "tenant_id": tenant_id,
+        "scheduled_date": "2026-12-10",
+        "tech_user_id": None, "technician_id": None, "crew_id": None,
+        "lat": 33.5, "lon": -112.0, "address": "has-date-no-assign",
+        "title": "Dated but unassigned",
+    })
+    return {"marker": marker,
+             "a_id": a_id, "b_id": b_id, "c_id": c_id,
+             "d_id": d_id, "e_id": e_id}
+
+
+def test_unscheduled_panel_lists_only_unassigned_undated_jobs():
+    seed = _seed_unscheduled_variants()
+    try:
+        tok = _login("manager@aquaterra.com")
+        r = requests.get(f"{API}/dispatch/route/unscheduled-jobs",
+                          headers={"Authorization": f"Bearer {tok}"},
+                          timeout=10)
+        assert r.status_code == 200, r.text
+        ids = {it["id"] for it in r.json()["items"]}
+        # a + b (recurring) must appear.
+        assert seed["a_id"] in ids, (
+            f"one-off unassigned missing: {ids}")
+        assert seed["b_id"] in ids, (
+            f"recurring unassigned missing: {ids}")
+        # c (tech), d (crew), e (dated) must NOT appear.
+        assert seed["c_id"] not in ids, (
+            f"tech-assigned leaked into unscheduled: {seed['c_id']}")
+        assert seed["d_id"] not in ids, (
+            f"crew-assigned leaked into unscheduled: {seed['d_id']}")
+        assert seed["e_id"] not in ids, (
+            f"dated leaked into unscheduled: {seed['e_id']}")
+    finally:
+        _cleanup(seed["marker"])

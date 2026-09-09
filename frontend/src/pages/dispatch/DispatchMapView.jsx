@@ -15,6 +15,7 @@ import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import { colors } from "@/theme";
 import { colorForPin } from "@/pages/dispatch/dispatchColors";
 import LiveTechPinsLayer from "@/pages/dispatch/LiveTechPinsLayer";
+import DispatchColorLegend from "@/pages/dispatch/DispatchColorLegend";
 import formatAddress from "@/utils/formatAddress";
 
 const AZ_CENTER = { lat: 33.6975, lng: -112.3708 }; // Vistancia/Peoria default
@@ -73,10 +74,18 @@ function PolylineOverlay({ encoded }) {
   return null;
 }
 
-function PinsLayer({ pins, techColorById, onSelect, pinColorMode = "tech" }) {
+function PinsLayer({ pins, techColorById, onSelect, pinColorMode = "tech", isolatedTechId = null }) {
   const map = useMap();
   const clustererRef = React.useRef(null);
   const markersRef = React.useRef([]);
+
+  // Feb-2026 · Phase 4.core — helper: is this pin dimmed under
+  // the current isolate? Only "tech" mode drives isolate.
+  const _isDimmed = React.useCallback((p) => {
+    if (!isolatedTechId) return false;
+    if (pinColorMode !== "tech") return false;
+    return !(p.assigned_tech_ids || []).includes(isolatedTechId);
+  }, [isolatedTechId, pinColorMode]);
 
   React.useEffect(() => {
     if (!map || typeof window === "undefined" || !window.google?.maps) return undefined;
@@ -100,6 +109,7 @@ function PinsLayer({ pins, techColorById, onSelect, pinColorMode = "tech" }) {
       dot.style.border = p.is_scheduled_this_day ? "3px solid #FDE68A" : "2px solid #ffffff";
       dot.style.boxShadow = "0 1px 3px rgba(0,0,0,0.35)";
       dot.style.cursor = "pointer";
+      dot.style.opacity = _isDimmed(p) ? "0.3" : "1";
       const marker = new gm.marker.AdvancedMarkerElement({
         position: { lat: p.lat, lng: p.lng },
         content: dot,
@@ -117,24 +127,29 @@ function PinsLayer({ pins, techColorById, onSelect, pinColorMode = "tech" }) {
         clustererRef.current = null;
       }
     };
-  }, [map, pins, techColorById, onSelect, pinColorMode]);
+  }, [map, pins, techColorById, onSelect, pinColorMode, _isDimmed]);
 
   if (!pins || pins.length === 0) return null;
   if (pins.length > 30) return null;
-  return pins.map((p) => (
-    <AdvancedMarker
-      key={p.customer_id}
-      position={{ lat: p.lat, lng: p.lng }}
-      onClick={() => onSelect(p.customer_id)}
-    >
-      <PinDot
-        scheduled={p.is_scheduled_this_day}
-        colorHex={colorForPin(p, pinColorMode, techColorById)}
-        onClick={(e) => { e.stopPropagation(); onSelect(p.customer_id); }}
-        testId={`dispatch-pin-${p.customer_id}`}
-      />
-    </AdvancedMarker>
-  ));
+  return pins.map((p) => {
+    const dimmed = _isDimmed(p);
+    return (
+      <AdvancedMarker
+        key={p.customer_id}
+        position={{ lat: p.lat, lng: p.lng }}
+        onClick={() => onSelect(p.customer_id)}
+      >
+        <div style={{ opacity: dimmed ? 0.3 : 1 }} data-dimmed={dimmed ? "true" : "false"}>
+          <PinDot
+            scheduled={p.is_scheduled_this_day}
+            colorHex={colorForPin(p, pinColorMode, techColorById)}
+            onClick={(e) => { e.stopPropagation(); onSelect(p.customer_id); }}
+            testId={`dispatch-pin-${p.customer_id}`}
+          />
+        </div>
+      </AdvancedMarker>
+    );
+  });
 }
 
 /** Unrouted customers — gray hollow pins, always styled the same
@@ -165,16 +180,43 @@ function UnroutedPinsLayer({ pins, onSelect }) {
   ));
 }
 
+// Feb-2026 · Phase 4 · Q4 — Map focus helper. Pans+zooms the map
+// to the coords of the focused stop and briefly flashes it. Runs
+// against the underlying google.maps.Map returned by ``useMap()``
+// so we don't need to hoist a ref up to the parent.
+function FocusOnStop({ pins, focusedStopId }) {
+  const map = useMap();
+  React.useEffect(() => {
+    if (!map || !focusedStopId) return;
+    const stop = pins.find((p) => p.customer_id === focusedStopId);
+    if (!stop || typeof stop.lat !== "number" || typeof stop.lng !== "number") return;
+    try {
+      map.panTo({ lat: stop.lat, lng: stop.lng });
+      // Preserve the current zoom if it's already zoomed in; only
+      // zoom-in if we're currently zoomed out.
+      const z = map.getZoom?.();
+      if (z !== undefined && z < 14) map.setZoom(14);
+    } catch { /* SSR / stub map — ignore */ }
+  }, [map, focusedStopId, pins]);
+  return null;
+}
+
 export default function DispatchMapView({
   pins = [],
   unroutedPins = [],
   polyline = null,
   techColorById = {},
+  techNameById = {},
   activeCustomerId = null,
   onSelectCustomer = () => {},
   mapId,
   pinColorMode = "tech",
   liveTechPositions = [],
+  // ── Feb-2026 · Phase 4.core additions ─────────────────────────
+  isolatedTechId = null,
+  onIsolateTech = () => {},
+  focusedStopId = null,
+  staleThresholdMs,
 }) {
   const active = React.useMemo(
     () => pins.find((p) => p.customer_id === activeCustomerId) || null,
@@ -189,7 +231,7 @@ export default function DispatchMapView({
 
   return (
     <div
-      className="rounded-xl overflow-hidden"
+      className="rounded-xl overflow-hidden relative"
       style={{
         border: `1px solid ${colors.border}`,
         height: "min(72vh, 720px)",
@@ -197,6 +239,23 @@ export default function DispatchMapView({
       }}
       data-testid="dispatch-map-container"
     >
+      {/* Feb-2026 · Phase 4 batched — Team color legend pill.
+          Sticky top-right overlay. Reuses the same isolate state
+          as the Tech Load strip; clicking a tech dims all other
+          pins on the map. */}
+      <div
+        className="absolute z-10"
+        style={{ top: 8, right: 8, pointerEvents: "auto" }}
+      >
+        <DispatchColorLegend
+          pins={pins}
+          pinColorMode={pinColorMode}
+          techColorById={techColorById}
+          techNameById={techNameById}
+          isolatedKey={isolatedTechId}
+          onIsolate={onIsolateTech}
+        />
+      </div>
       <Map
         mapId={mapId || "DEMO_MAP_ID"}
         defaultCenter={initialCenter}
@@ -211,13 +270,19 @@ export default function DispatchMapView({
           techColorById={techColorById}
           onSelect={onSelectCustomer}
           pinColorMode={pinColorMode}
+          isolatedTechId={isolatedTechId}
         />
         <UnroutedPinsLayer
           pins={unroutedPins}
           onSelect={onSelectCustomer}
         />
         {/* Phase P2 · Feb-2026 — live technician GPS markers. */}
-        <LiveTechPinsLayer positions={liveTechPositions} />
+        <LiveTechPinsLayer
+          positions={liveTechPositions}
+          isolatedTechId={isolatedTechId}
+          staleThresholdMs={staleThresholdMs}
+        />
+        <FocusOnStop pins={pins} focusedStopId={focusedStopId} />
         {polyline ? <PolylineOverlay encoded={polyline} /> : null}
         {active ? (
           <InfoWindow

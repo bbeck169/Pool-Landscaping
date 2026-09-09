@@ -98,12 +98,79 @@ def install_resend_gate() -> bool:
                     "[sdk_intercept] blocked resend send to %s (not demo)",
                     r,
                 )
+                # Feb-2026 · P0 comms — record blocked send in the
+                # audit log so ops can see WHY Brian got nothing.
+                try:
+                    from services.comms_send_log import record_attempt as _rec2
+                    _tid = None
+                    if isinstance(payload, dict):
+                        _h = payload.get("headers") or {}
+                        if isinstance(_h, dict):
+                            _tid = _h.get("X-Tenant-Id") or None
+                    _rec2(
+                        "email", ok=False, tenant_id=_tid, recipient=r,
+                        template="direct_sdk_call",
+                        provider="resend",
+                        provider_status="suppressed_by_gate",
+                        was_mock=False, routed_via="sdk_intercept",
+                        error="Gate blocked: not_demo_account (non-prod)",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
                 return {"suppressed_by_gate": True,
                          "reason": "not_demo_account",
                          "recipient": r}
 
         # All recipients cleared the gate — pass to the real SDK.
-        return original_send(payload, *args, **kwargs)
+        # Feb-2026 · P0 comms — also record the attempt to
+        # ``db.comms_send_log`` so direct SDK callers (estimator,
+        # signatures, jobs, dunning, etc.) surface in the customer
+        # audit endpoint. Best-effort; never blocks the send.
+        try:
+            from services.comms_send_log import (
+                record_attempt as _rec,
+                format_exc as _fmt,
+            )
+        except Exception:  # noqa: BLE001
+            _rec = None
+            _fmt = None
+
+        _to_first = recipients[0] if recipients else None
+        _subject = payload.get("subject") if isinstance(payload, dict) else None
+        _tenant = None
+        _template = None
+        if isinstance(payload, dict):
+            _hdrs = payload.get("headers") or {}
+            if isinstance(_hdrs, dict):
+                _template = _hdrs.get("X-Template") or None
+                _tenant = _hdrs.get("X-Tenant-Id") or None
+
+        try:
+            resp = original_send(payload, *args, **kwargs)
+            provider_id = None
+            if isinstance(resp, dict):
+                provider_id = resp.get("id") or resp.get("data", {}).get("id") if isinstance(resp.get("data"), dict) else resp.get("id")
+            if _rec:
+                _rec(
+                    "email", ok=True,
+                    tenant_id=_tenant, recipient=_to_first,
+                    template=_template or "direct_sdk_call",
+                    provider="resend", provider_status="sent",
+                    provider_response_id=provider_id, was_mock=False,
+                    routed_via="sdk_intercept",
+                )
+            return resp
+        except Exception as exc:
+            if _rec and _fmt:
+                _rec(
+                    "email", ok=False,
+                    tenant_id=_tenant, recipient=_to_first,
+                    template=_template or "direct_sdk_call",
+                    provider="resend", provider_status="failed",
+                    was_mock=False, routed_via="sdk_intercept",
+                    **_fmt(exc),
+                )
+            raise
 
     _gated_send._aquaterra_original = original_send  # type: ignore[attr-defined]
     Emails.send = _gated_send  # type: ignore[assignment]

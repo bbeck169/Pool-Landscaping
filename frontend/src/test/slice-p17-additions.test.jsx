@@ -24,10 +24,16 @@ vi.mock("@googlemaps/markerclusterer", () => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
-const { apiGetMock, apiPostMock } = vi.hoisted(() => ({
-  apiGetMock: vi.fn(), apiPostMock: vi.fn(),
+const { apiGetMock, apiPostMock, boardPollMock } = vi.hoisted(() => ({
+  apiGetMock: vi.fn(), apiPostMock: vi.fn(), boardPollMock: vi.fn(),
 }));
 vi.mock("@/api", () => ({ api: { get: apiGetMock, post: apiPostMock } }));
+// Feb-2026 · Live-Tech-Map · Phase 4.core — dispatch board load now
+// uses ``fetchBoardWithEtag`` (raw ``fetch`` for ``If-None-Match``).
+// Mock the helper so tests keep resolving via the ``BOARD`` fixture.
+vi.mock("@/pages/dispatch/dispatchBoardPoll", () => ({
+  fetchBoardWithEtag: boardPollMock,
+}));
 vi.mock("@/auth", () => ({
   useAuth: () => ({ user: { role: "admin", id: "u-1", name: "Admin" } }),
 }));
@@ -71,7 +77,7 @@ const ACTIVE_SHIFTS = { items: [{
 
 beforeEach(() => {
   try { localStorage.clear(); } catch { /* jsdom */ }
-  apiGetMock.mockReset(); apiPostMock.mockReset();
+  apiGetMock.mockReset(); apiPostMock.mockReset(); boardPollMock.mockReset();
   apiGetMock.mockImplementation((path) => {
     if (path.startsWith("/dispatch/board")) return Promise.resolve(BOARD);
     if (path.startsWith("/dispatch/reassign")) return Promise.resolve(ACTIVE_SHIFTS);
@@ -81,6 +87,13 @@ beforeEach(() => {
     ]);
     return Promise.resolve(null);
   });
+  boardPollMock.mockImplementation(() =>
+    Promise.resolve({ status: 200, data: BOARD, etag: null }),
+  );
+  global.fetch = vi.fn(() => Promise.resolve({
+    ok: true, status: 200, headers: { get: () => null },
+    json: () => Promise.resolve({}), text: () => Promise.resolve(""),
+  }));
 });
 
 describe("Phase 17 additions", () => {
