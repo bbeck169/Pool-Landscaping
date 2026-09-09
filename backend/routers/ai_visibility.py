@@ -51,14 +51,26 @@ async def _claude_query(prompt: str) -> Dict[str, Any]:
         return {"error": "provider_disabled",
                  "reason": "EMERGENT_LLM_KEY not configured"}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = (LlmChat(api_key=key, session_id=f"aiv-{new_id()[:8]}",
-                          system_message="You are a helpful assistant that answers "
-                                          "local business questions with specific "
-                                          "company names and links when possible.")
-                .with_model("anthropic", "claude-sonnet-4-5-20250929"))
-        resp = await chat.send_message(UserMessage(text=prompt))
-        text = getattr(resp, "text", str(resp))
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply. On cap-exceeded / error we surface an
+        # ``provider_error`` shape so the per-run row still records
+        # the attempt (matches Perplexity / Gemini error handling).
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
+        result = await call_llm_with_fallback(
+            system_prompt=("You are a helpful assistant that answers "
+                            "local business questions with specific "
+                            "company names and links when possible."),
+            user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-5-20250929",
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result):
+            return {"error": "provider_error", "reason": "ai_spend_cap_exceeded"}
+        if result.get("error"):
+            return {"error": "provider_error", "reason": str(result.get("error"))[:200]}
+        text = (result.get("raw") or {}).get("text") or ""
         return {"response_text": text, "sources": [], "raw": {"provider": "claude"},
                  "api_cost_usd": 0.005}
     except Exception as e:

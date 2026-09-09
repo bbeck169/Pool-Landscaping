@@ -178,7 +178,18 @@ async def chat_with_employee(eid: str, body: ChatIn, admin: dict = Depends(requi
         )
     else:
         try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+            # central AI chokepoint so per-tenant BYO keys + AI spend
+            # caps apply. The prior-turn REPLAY loop (each prior user
+            # msg was sent to the SDK to build session context) is
+            # replaced by inline history concatenation because the
+            # chokepoint creates a new session per call — the
+            # ``[user] ...`` preamble reconstructs the same context
+            # in a single request. Same observable output for the
+            # UI: a fresh assistant reply concatenated onto
+            # ``ai_chat_turns``.
+            from services.llm_provider import call_llm_with_fallback
+            from services.ai.cap_http import is_ai_cap_exceeded
             guardrail_block = (
                 "\n\nStrict guardrails (never violate):\n- "
                 + "\n- ".join(emp.get("guardrails") or ["Be helpful and safe."])
@@ -188,20 +199,28 @@ async def chat_with_employee(eid: str, body: ChatIn, admin: dict = Depends(requi
                 (emp.get('system_prompt') or fallback_sys)
                 + guardrail_block + "\n\nBe concise (under 200 words) and action-oriented."
             )
-            chat = LlmChat(
-                api_key=EMERGENT_LLM_KEY,
-                session_id=thread_id,
-                system_message=system,
-            ).with_model("anthropic", "claude-sonnet-4-5")
             # Replay prior turns for context (last 20 to stay under token limits).
             prior = await db.ai_chat_turns.find(
                 {"thread_id": thread_id}, {"_id": 0}
             ).sort("created_at", 1).to_list(20)
+            preamble = ""
             for t in prior:
-                if t.get("role") == "user":
-                    await chat.send_message(UserMessage(text=t.get("content", "")))
-            raw = await chat.send_message(UserMessage(text=body.message))
-            response_text = raw if isinstance(raw, str) else str(raw)
+                role = t.get("role", "user")
+                preamble += f"\n[{role}] {t.get('content', '')}"
+            combined = (preamble + f"\n[user] {body.message}").strip()
+            result = await call_llm_with_fallback(
+                system_prompt=system, user_text=combined,
+                provider="anthropic", model="claude-sonnet-4-5",
+                tenant_id=admin.get("tenant_id"),
+                parse_json=False,
+            )
+            if is_ai_cap_exceeded(result):
+                response_text = f"[{emp['name']}] AI monthly spend cap reached — please retry after the tenant admin raises the cap."
+                stubbed = True
+            elif result.get("error"):
+                raise RuntimeError(str(result.get("error")))
+            else:
+                response_text = ((result.get("raw") or {}).get("text") or "").strip()
         except Exception as e:
             logger.warning(f"ai-ops chat LLM call failed: {e}")
             response_text = f"[{emp['name']}] AI service hit an error — please retry. ({type(e).__name__})"

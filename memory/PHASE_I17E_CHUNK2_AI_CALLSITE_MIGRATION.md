@@ -287,3 +287,23 @@ chunk-1 messaging invariant) forbids future refactors from pulling
 | Dispatcher cap-exceeded doc still present | ✅ | `test_dispatcher_module_docs_still_present` |
 | P0 checklist 429 regression suite green | ✅ | `test_p0_checklist_429_leak_regression.py` (5/5) |
 | Chunk 1 + all prior I1.7 BYO chunks green | ✅ | Full I1.7 sweep (152 passed, 1 skipped) |
+
+---
+
+## Chunk 2.b follow-up (SHIPPED · Feb-2026)
+
+The 8 messaging-adjacent AI callers migrated in Chunk 2 covered
+transactional + BYO-opt-in. Chunk 2.b finished the job by migrating
+the remaining **21 backend files** off the raw
+`emergentintegrations.llm.chat.LlmChat` SDK onto the same chokepoint.
+
+* **Scope:** 19 §3.1 main-pass files + 2 §3.2 base64-vision files +
+  2 §3.3 chemistry/service_reports files (plumbing-only).
+* **Chokepoint extension:** `call_llm_with_fallback` now accepts
+  `image_b64s`, `parse_json`, and `max_tokens` (all additive).
+* **New test suite:** `test_i17e_chunk2b_raw_sdk_migration.py` — 101
+  passing tests, all four Chunk 2 chunks green.
+* **Full write-up:** `memory/PHASE_I17E_CHUNK2B_RAW_SDK_MIGRATION.md`.
+
+The AST guards there make it a compile-time regression to re-import
+the raw SDK on any of the 21 files.

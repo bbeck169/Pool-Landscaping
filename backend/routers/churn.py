@@ -94,27 +94,37 @@ async def _signal_bundle(tenant_id: str, customer_id: str) -> Dict[str, Any]:
     }
 
 
-async def _call_claude(signals: Dict[str, Any]) -> Dict[str, Any]:
+async def _call_claude(signals: Dict[str, Any], tenant_id: Optional[str] = None) -> Dict[str, Any]:
     if not EMERGENT_LLM_KEY:
         return {"mocked": True,
                  "reason": "EMERGENT_LLM_KEY not configured",
                  "risk_score": 50, "tier": "medium",
                  "top_signals": [], "recommended_actions": []}
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:
-        return {"mocked": True, "reason": f"llm import failed: {e}",
-                 "risk_score": 50, "tier": "medium",
-                 "top_signals": [], "recommended_actions": []}
+    # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the central
+    # AI chokepoint so per-tenant BYO keys + AI spend caps apply.
+    # Cap-exceeded surfaces as a mocked-shaped fallback so the churn
+    # analyzer keeps writing rows (mocked=True) and the batch cron
+    # keeps making progress across tenants.
+    from services.llm_provider import call_llm_with_fallback
+    from services.ai.cap_http import is_ai_cap_exceeded
     prompt = ("Signal bundle (last 90 days unless noted):\n"
                 + json.dumps(signals, indent=2, default=str))
     try:
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                         system_message=_SYSTEM)
-                .with_model("anthropic", "claude-sonnet-4-6"))
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        result = await call_llm_with_fallback(
+            system_prompt=_SYSTEM, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-6",
+            tenant_id=tenant_id,
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result):
+            return {"mocked": True, "reason": "ai_spend_cap_exceeded",
+                     "risk_score": 50, "tier": "medium",
+                     "top_signals": [], "recommended_actions": []}
+        if result.get("error"):
+            return {"mocked": True, "reason": f"llm error: {result.get('error')}",
+                     "risk_score": 50, "tier": "medium",
+                     "top_signals": [], "recommended_actions": []}
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try: data = json.loads(text)
@@ -139,7 +149,7 @@ async def _call_claude(signals: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _analyze_and_store(tenant_id: str, customer_id: str) -> Dict[str, Any]:
     signals = await _signal_bundle(tenant_id, customer_id)
-    scored = await _call_claude(signals)
+    scored = await _call_claude(signals, tenant_id=tenant_id)
     doc = {
         "tenant_id": tenant_id,
         "customer_id": customer_id,
@@ -344,18 +354,29 @@ async def create_retention_campaign(
         + json.dumps(prompt_rows, ensure_ascii=False, default=str)
     )
 
-    # 4) LLM call — reuse the Phase 32/33 fixed pattern.
+    # 4) LLM call — Phase I1.7.e · Chunk 2.b · Feb-2026: routed through
+    #    the central AI chokepoint so per-tenant BYO keys + AI spend
+    #    caps apply. ``max_tokens=1500`` maps through
+    #    ``call_llm_with_fallback`` → ``LlmChat.with_max_tokens``.
     text, err, tokens = None, None, 0
     if EMERGENT_LLM_KEY:
         try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
-            chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                             system_message=_RETENTION_LLM_SYSTEM)
-                    .with_model("anthropic", "claude-sonnet-4-6")
-                    .with_params(max_tokens=1500))
-            raw = await chat.send_message(UserMessage(text=prompt))
-            text = raw if isinstance(raw, str) else str(raw)
-            tokens = int(len(text) / 4)
+            from services.llm_provider import call_llm_with_fallback
+            from services.ai.cap_http import is_ai_cap_exceeded
+            result = await call_llm_with_fallback(
+                system_prompt=_RETENTION_LLM_SYSTEM, user_text=prompt,
+                provider="anthropic", model="claude-sonnet-4-6",
+                tenant_id=tid,
+                parse_json=False,
+                max_tokens=1500,
+            )
+            if is_ai_cap_exceeded(result):
+                err = "ai_spend_cap_exceeded"
+            elif result.get("error"):
+                err = f"llm error: {result.get('error')}"
+            else:
+                text = (result.get("raw") or {}).get("text") or ""
+                tokens = int(len(text) / 4)
         except Exception as e:
             logger.warning(f"Retention LLM failed: {e}")
             err = f"llm error: {e}"

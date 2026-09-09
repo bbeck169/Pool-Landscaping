@@ -528,20 +528,31 @@ async def _llm_semantic(target: str, sample: str) -> Dict[str, Any]:
         return {"score": 60, "critique": "LLM key not configured (stub).",
                 "mocked": True}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY,
-                        session_id=new_id(),
-                        system_message=(
-                          "You are an SEO editor. Score the semantic "
-                          "relevance of the content to the target keyword "
-                          "(0-100) and give a two-sentence critique. "
-                          "Reply as JSON: {\"score\": int, \"critique\": str}."
-                        )).with_model("anthropic", "claude-sonnet-4-6"))
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         prompt = (f"Target keyword: {target}\n\nContent:\n"
                   f"{sample[:4000]}")
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        result = await call_llm_with_fallback(
+            system_prompt=(
+              "You are an SEO editor. Score the semantic "
+              "relevance of the content to the target keyword "
+              "(0-100) and give a two-sentence critique. "
+              "Reply as JSON: {\"score\": int, \"critique\": str}."
+            ),
+            user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-6",
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result):
+            return {"score": 60,
+                     "critique": "ai_spend_cap_exceeded (stub).",
+                     "mocked": True}
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:
@@ -696,21 +707,31 @@ async def content_suggestions(body: ContentSuggestionsIn,
             "mocked": True,
         }
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY,
-                        session_id=new_id(),
-                        system_message=(
-                            "You are an SEO content strategist. "
-                            "Return strict JSON: {\"outline\": [{\"h2\": str,"
-                            " \"points\": [str]}], \"internal_links_suggested\":"
-                            " [str], \"faq\": [{\"q\": str, \"a\": str}]}. "
-                            "5-6 H2s, 3 points each, 3 FAQ pairs."
-                        )).with_model("anthropic", "claude-sonnet-4-6"))
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         prompt = (f"Topic: {body.topic}\nTarget keyword: {body.target_keyword}\n"
                   f"Existing content excerpt:\n{(body.existing_html or '')[:2000]}")
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        result = await call_llm_with_fallback(
+            system_prompt=(
+                "You are an SEO content strategist. "
+                "Return strict JSON: {\"outline\": [{\"h2\": str,"
+                " \"points\": [str]}], \"internal_links_suggested\":"
+                " [str], \"faq\": [{\"q\": str, \"a\": str}]}. "
+                "5-6 H2s, 3 points each, 3 FAQ pairs."
+            ),
+            user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-6",
+            tenant_id=tenant["id"],
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result):
+            raise HTTPException(429, "ai_spend_cap_exceeded")
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:
@@ -720,6 +741,8 @@ async def content_suggestions(body: ContentSuggestionsIn,
             out = json.loads(m.group(1)) if m else {}
         out["mocked"] = False
         return out
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning(f"content-suggestions LLM failed: {e}")
         raise HTTPException(502, f"AI failed: {e}")
@@ -884,24 +907,36 @@ async def _generate_tree(seed: str, ctx: str) -> Dict[str, Any]:
                            "parent": None, "level": 0}],
                 "edges": []}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                        system_message=(
-                            "You are an SEO strategist. Given a seed keyword, "
-                            "produce a topical map as strict JSON:\n"
-                            "{\"nodes\":[{\"id\":str,\"title\":str,"
-                            "\"intent\":\"informational|commercial|navigational|transactional\","
-                            "\"estimated_search_volume\":int,\"suggested_url_slug\":str,"
-                            "\"parent\":str|null,\"level\":int (0=pillar,1=cluster,2=support)}],"
-                            "\"edges\":[{\"from\":str,\"to\":str}]}. "
-                            "1 pillar (level 0), 5-8 clusters (level 1), "
-                            "3-5 supports per cluster (level 2). "
-                            "Volumes are ROUGH estimates."
-                        )).with_model("anthropic", "claude-sonnet-4-6"))
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         prompt = f"Seed keyword: {seed}\nBusiness context: {ctx or 'general'}"
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        result = await call_llm_with_fallback(
+            system_prompt=(
+                "You are an SEO strategist. Given a seed keyword, "
+                "produce a topical map as strict JSON:\n"
+                "{\"nodes\":[{\"id\":str,\"title\":str,"
+                "\"intent\":\"informational|commercial|navigational|transactional\","
+                "\"estimated_search_volume\":int,\"suggested_url_slug\":str,"
+                "\"parent\":str|null,\"level\":int (0=pillar,1=cluster,2=support)}],"
+                "\"edges\":[{\"from\":str,\"to\":str}]}. "
+                "1 pillar (level 0), 5-8 clusters (level 1), "
+                "3-5 supports per cluster (level 2). "
+                "Volumes are ROUGH estimates."
+            ),
+            user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-6",
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result):
+            return {"estimated": True, "mocked": True,
+                     "nodes": [], "edges": [],
+                     "error": "ai_spend_cap_exceeded"}
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:
@@ -976,19 +1011,30 @@ async def generate_node_content(mid: str, body: GenerateContentIn,
     if not EMERGENT_LLM_KEY:
         return {"mocked": True, "outline": [], "first_draft_html": ""}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                        system_message=(
-                            "SEO editor. Given a topic node, return strict JSON "
-                            "{\"outline\":[{\"h2\":str,\"points\":[str]}],"
-                            "\"first_draft_html\":str}. 5 H2s, 3 points each, "
-                            "~500 word HTML draft."
-                        )).with_model("anthropic", "claude-sonnet-4-6"))
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         prompt = (f"Node: {node['title']}\nIntent: {node.get('intent')}\n"
                   f"Pillar keyword: {d['seed_keyword']}")
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        result = await call_llm_with_fallback(
+            system_prompt=(
+                "SEO editor. Given a topic node, return strict JSON "
+                "{\"outline\":[{\"h2\":str,\"points\":[str]}],"
+                "\"first_draft_html\":str}. 5 H2s, 3 points each, "
+                "~500 word HTML draft."
+            ),
+            user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-6",
+            tenant_id=tenant["id"],
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result):
+            raise HTTPException(429, "ai_spend_cap_exceeded")
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:
@@ -998,6 +1044,8 @@ async def generate_node_content(mid: str, body: GenerateContentIn,
             out = json.loads(m.group(1)) if m else {}
         out["mocked"] = False
         return out
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"AI failed: {e}")
 
@@ -1071,27 +1119,41 @@ async def _run_query_on_claude(query_text: str, expected_brand: str) -> Dict[str
                 "raw_response": "", "brand_mentioned": False,
                 "position": None, "competitors": [],
                 "quote": "", "sentiment": "unknown"}
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+    # central AI chokepoint so per-tenant BYO keys + AI spend
+    # caps apply. Two-hop (answer + analyze) preserved verbatim.
+    from services.llm_provider import call_llm_with_fallback
+    from services.ai.cap_http import is_ai_cap_exceeded
     # Step 1: raw answer
-    ans_chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                        system_message="You are a helpful assistant. Answer briefly.")
-                .with_model("anthropic", "claude-sonnet-4-6"))
-    raw = await ans_chat.send_message(UserMessage(text=query_text))
-    raw_text = raw if isinstance(raw, str) else str(raw)
+    r1 = await call_llm_with_fallback(
+        system_prompt="You are a helpful assistant. Answer briefly.",
+        user_text=query_text,
+        provider="anthropic", model="claude-sonnet-4-6",
+        parse_json=False,
+    )
+    if is_ai_cap_exceeded(r1) or r1.get("error"):
+        return {"mocked": True,
+                "reason": r1.get("error") or "ai_spend_cap_exceeded",
+                "raw_response": "", "brand_mentioned": False,
+                "position": None, "competitors": [],
+                "quote": "", "sentiment": "unknown"}
+    raw_text = (r1.get("raw") or {}).get("text") or ""
 
     # Step 2: analysis
-    analyze = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                       system_message=(
-                           "Analyze if the target brand appears in the response. "
-                           "Return strict JSON: {\"brand_mentioned\":bool,"
-                           "\"position\":int|null (1-based rank in list, else null),"
-                           "\"competitors\":[str],\"quote\":str,"
-                           "\"sentiment\":\"positive|neutral|negative\"}."
-                       )).with_model("anthropic", "claude-sonnet-4-6"))
     prompt = (f"Target brand: {expected_brand}\n\nResponse to analyze:\n{raw_text}")
-    analysis_raw = await analyze.send_message(UserMessage(text=prompt))
-    analysis_text = analysis_raw if isinstance(analysis_raw, str) else str(analysis_raw)
-    analysis_text = analysis_text.strip()
+    r2 = await call_llm_with_fallback(
+        system_prompt=(
+            "Analyze if the target brand appears in the response. "
+            "Return strict JSON: {\"brand_mentioned\":bool,"
+            "\"position\":int|null (1-based rank in list, else null),"
+            "\"competitors\":[str],\"quote\":str,"
+            "\"sentiment\":\"positive|neutral|negative\"}."
+        ),
+        user_text=prompt,
+        provider="anthropic", model="claude-sonnet-4-6",
+        parse_json=False,
+    )
+    analysis_text = ((r2.get("raw") or {}).get("text") or "").strip()
     if analysis_text.startswith("```"):
         analysis_text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", analysis_text).strip()
     try:
@@ -1266,13 +1328,23 @@ async def _atlas_route(message: str, tenant_id: str, user: dict) -> Dict[str, An
         return {"assistant": "LLM key not configured.", "tool_calls": [],
                 "mocked": True}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                        system_message=_ATLAS_SYSTEM)
-                .with_model("anthropic", "claude-sonnet-4-6"))
-        raw = await chat.send_message(UserMessage(text=message))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
+        result = await call_llm_with_fallback(
+            system_prompt=_ATLAS_SYSTEM, user_text=message,
+            provider="anthropic", model="claude-sonnet-4-6",
+            tenant_id=tenant_id,
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result):
+            return {"assistant": "ai_spend_cap_exceeded — please retry after tenant cap reset.",
+                     "tool_calls": [], "mocked": True}
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:

@@ -817,22 +817,30 @@ def _build_prompt(items: List[Dict[str, str]]) -> str:
         + json.dumps(items, ensure_ascii=False)
     )
 
-async def _llm_classify(items: List[Dict[str, str]]) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str], int]:
+async def _llm_classify(items: List[Dict[str, str]],
+                          tenant_id: Optional[str] = None) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str], int]:
     """Returns (results, error_reason, tokens_used_estimate)."""
     if not EMERGENT_LLM_KEY:
         return None, "EMERGENT_LLM_KEY not configured", 0
+    # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the central
+    # AI chokepoint so per-tenant BYO keys + AI spend caps apply.
+    # Plaintext (``parse_json=False``) preserves the local
+    # fenced-block JSON extract + category-normalisation logic.
+    from services.llm_provider import call_llm_with_fallback
+    from services.ai.cap_http import is_ai_cap_exceeded
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:
-        return None, f"llm import failed: {e}", 0
-    try:
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                         system_message=_LLM_SYSTEM)
-                .with_model(*_MODEL)
-                .with_params(max_tokens=_LLM_MAX_OUTPUT_TOKENS))
-        raw = await chat.send_message(UserMessage(text=_build_prompt(items)))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        result = await call_llm_with_fallback(
+            system_prompt=_LLM_SYSTEM, user_text=_build_prompt(items),
+            provider=_MODEL[0], model=_MODEL[1],
+            tenant_id=tenant_id,
+            parse_json=False,
+            max_tokens=_LLM_MAX_OUTPUT_TOKENS,
+        )
+        if is_ai_cap_exceeded(result):
+            return None, "ai_spend_cap_exceeded", 0
+        if result.get("error"):
+            return None, f"llm error: {result.get('error')}", 0
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:
@@ -1100,23 +1108,30 @@ async def _build_financial_context(
 
 
 async def _call_llm_text(system_prompt: str, user_prompt: str,
-                          max_tokens: int) -> Tuple[Optional[str], Optional[str], int]:
+                          max_tokens: int,
+                          tenant_id: Optional[str] = None) -> Tuple[Optional[str], Optional[str], int]:
     """Returns (text, error_reason, tokens_used_estimate)."""
     if not EMERGENT_LLM_KEY:
         return None, "EMERGENT_LLM_KEY not configured", 0
+    # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the central
+    # AI chokepoint so per-tenant BYO keys + AI spend caps apply.
+    from services.llm_provider import call_llm_with_fallback
+    from services.ai.cap_http import is_ai_cap_exceeded
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:
-        return None, f"llm import failed: {e}", 0
-    try:
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                         system_message=system_prompt)
-                .with_model(*_MODEL)
-                .with_params(max_tokens=max_tokens))
-        raw = await chat.send_message(UserMessage(text=user_prompt))
-        text = raw if isinstance(raw, str) else str(raw)
+        result = await call_llm_with_fallback(
+            system_prompt=system_prompt, user_text=user_prompt,
+            provider=_MODEL[0], model=_MODEL[1],
+            tenant_id=tenant_id,
+            parse_json=False,
+            max_tokens=max_tokens,
+        )
+        if is_ai_cap_exceeded(result):
+            return None, "ai_spend_cap_exceeded", 0
+        if result.get("error"):
+            return None, f"llm error: {result.get('error')}", 0
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         tokens = int(len(text) / 4)
-        return text.strip(), None, tokens
+        return text, None, tokens
     except Exception as e:
         logger.warning(f"CFO LLM call failed: {e}")
         return None, f"llm error: {e}", 0

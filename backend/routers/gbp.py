@@ -19,7 +19,8 @@ from models import (
     GbpSettingsIn, GbpPostIn, GbpReplyIn, GbpAiPostReq, GbpAiReplyReq, GbpBusinessUpdate,
     GbpAutopost, GbpCalendarEdit,
 )
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from services.llm_provider import call_llm_with_fallback
+from services.ai.cap_http import raise_if_ai_cap_exceeded
 
 router = APIRouter()
 
@@ -266,9 +267,20 @@ async def gbp_update_business(body: GbpBusinessUpdate, user: dict = Depends(requ
 async def _ai_text(system: str, prompt: str, session: str) -> str:
     if not EMERGENT_LLM_KEY:
         raise HTTPException(503, "AI is not configured")
-    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session, system_message=system).with_model("anthropic", "claude-sonnet-4-6")
-    raw = await chat.send_message(UserMessage(text=prompt))
-    return (raw if isinstance(raw, str) else str(raw)).strip()
+    # Phase I1.7.e · Chunk 2.b · Feb-2026 — GBP AI text helper routed
+    # through the central AI chokepoint so per-tenant BYO keys + AI
+    # spend caps apply. Plaintext (``parse_json=False``) preserves the
+    # legacy string return the two callers (post-from-article,
+    # reply-draft) already ``.strip()`` locally.
+    result = await call_llm_with_fallback(
+        system_prompt=system, user_text=prompt,
+        provider="anthropic", model="claude-sonnet-4-6",
+        parse_json=False,
+    )
+    raise_if_ai_cap_exceeded(result)
+    if result.get("error"):
+        raise HTTPException(503, "AI is not configured")
+    return ((result.get("raw") or {}).get("text") or "").strip()
 
 
 async def _draft_post_from_article(art: dict, session: str) -> str:

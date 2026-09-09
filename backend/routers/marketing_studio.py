@@ -158,7 +158,12 @@ async def _ai_variant(channel: str, topic: str, brand: dict, session: Optional[s
     limit = CHANNEL_LIMITS.get(channel, 500)
     tag_count = CHANNEL_HASHTAGS.get(channel, 0)
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.  Plaintext (``parse_json=False``) preserves
+        # the local fenced-block JSON extract + truncation logic.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         import json as _json, re as _re
         zips = ", ".join(brand.get("service_zips") or [])
         system = (
@@ -171,10 +176,14 @@ async def _ai_variant(channel: str, topic: str, brand: dict, session: Optional[s
             f"Hard cap: {limit} chars in the 'copy' field. Include exactly {tag_count} on-brand hashtags. "
             "Return JSON: {\"copy\": str, \"hashtags\": str, \"cta\": str}."
         )
-        chat = LlmChat(api_key=key, session_id=session or f"mkt-{new_id()[:8]}",
-                       system_message=system).with_model("anthropic", "claude-sonnet-4-5")
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = (raw if isinstance(raw, str) else str(raw)).strip()
+        result = await call_llm_with_fallback(
+            system_prompt=system, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-5",
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result) or result.get("error"):
+            return _stub_variant(channel, topic, brand)
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = _re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:
@@ -198,7 +207,11 @@ async def _ai_email(topic: str, goal: str, brand: dict, session: Optional[str] =
     if not key:
         return {"subject": f"[{brand.get('tone')}] {goal[:60]}", "copy": _stub_note()}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         import json as _json, re as _re
         system = (
             f"You are the {brand.get('tone', 'professional')} email marketer for a pool & landscaping "
@@ -208,10 +221,14 @@ async def _ai_email(topic: str, goal: str, brand: dict, session: Optional[str] =
             f"Write a marketing email supporting the campaign goal '{goal}' about '{topic}'. "
             "150-220 words in the body. Return JSON: {\"subject\": str (<=60 chars), \"copy\": str}."
         )
-        chat = LlmChat(api_key=key, session_id=session or f"mkt-email-{new_id()[:8]}",
-                       system_message=system).with_model("anthropic", "claude-sonnet-4-5")
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = (raw if isinstance(raw, str) else str(raw)).strip()
+        result = await call_llm_with_fallback(
+            system_prompt=system, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-5",
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result) or result.get("error"):
+            return {"subject": f"[{brand.get('tone')}] {goal[:60]}", "copy": _stub_note()}
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = _re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:
@@ -232,7 +249,11 @@ async def _ai_sms(topic: str, goal: str, brand: dict, session: Optional[str] = N
     if not key:
         return f"{goal[:80]} — {_stub_note()}"[:160]
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         system = (
             f"You are the {brand.get('tone', 'professional')} SMS copywriter for a pool & landscaping "
             "service. Reply with ONE plaintext SMS message only — no quotes, no preface, no JSON."
@@ -241,10 +262,14 @@ async def _ai_sms(topic: str, goal: str, brand: dict, session: Optional[str] = N
             f"Write ONE SMS (max 155 chars) supporting the goal '{goal}' about '{topic}'. "
             "Include one clear call to action."
         )
-        chat = LlmChat(api_key=key, session_id=session or f"mkt-sms-{new_id()[:8]}",
-                       system_message=system).with_model("anthropic", "claude-sonnet-4-5")
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = (raw if isinstance(raw, str) else str(raw)).strip().strip('"').strip("'")
+        result = await call_llm_with_fallback(
+            system_prompt=system, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-5",
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result) or result.get("error"):
+            return f"{goal[:80]} — {_stub_note()}"[:160]
+        text = ((result.get("raw") or {}).get("text") or "").strip().strip('"').strip("'")
         return text[:160] or (f"{goal[:80]} — Book today"[:160])
     except Exception as e:
         logger.warning(f"marketing _ai_sms fallback: {e}")

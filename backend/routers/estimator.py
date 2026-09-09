@@ -528,16 +528,10 @@ _GENERATE_SYSTEM = (
 )
 
 
-async def _call_generate(scope: Dict[str, Any]) -> Dict[str, Any]:
+async def _call_generate(scope: Dict[str, Any],
+                          tenant_id: Optional[str] = None) -> Dict[str, Any]:
     if not EMERGENT_LLM_KEY:
         return {"mocked": True, "reason": "EMERGENT_LLM_KEY not configured",
-                 "line_items": [], "upsells": []}
-    try:
-        from emergentintegrations.llm.chat import (
-            LlmChat, UserMessage, ImageContent,
-        )
-    except Exception as e:
-        return {"mocked": True, "reason": f"llm import failed: {e}",
                  "line_items": [], "upsells": []}
     prompt_lines = [
         f"Service type: {scope.get('service_type')}",
@@ -557,15 +551,17 @@ async def _call_generate(scope: Dict[str, Any]) -> Dict[str, Any]:
     prompt = "\n".join(prompt_lines)
 
     try:
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                         system_message=_GENERATE_SYSTEM)
-                .with_model("anthropic", "claude-sonnet-4-6"))
-        # Fetch each photo URL and base64-encode — the current
-        # `emergentintegrations` SDK requires `ImageContent(image_base64=...)`.
-        # Individual URL failures (404, timeout) are logged but do not crash
-        # the whole generate call.
-        file_contents = []
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint (base64 vision) so per-tenant BYO
+        # keys + AI spend caps apply.  Photos are fetched + base64-
+        # encoded here (per-URL failures logged, not fatal — matches
+        # pre-migration behavior) then threaded via ``image_b64s``.
+        # Plaintext (``parse_json=False``) preserves the local
+        # fenced-block JSON extract logic.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         skipped_photos: List[Dict[str, Any]] = []
+        image_b64s: List[str] = []
         import base64 as _b64
         import httpx as _httpx
         async with _httpx.AsyncClient(timeout=15,
@@ -578,16 +574,25 @@ async def _call_generate(scope: Dict[str, Any]) -> Dict[str, Any]:
                     r = await _c.get(url)
                     if r.status_code != 200:
                         raise RuntimeError(f"http {r.status_code}")
-                    b64 = _b64.b64encode(r.content).decode("ascii")
-                    file_contents.append(ImageContent(image_base64=b64))
+                    image_b64s.append(_b64.b64encode(r.content).decode("ascii"))
                 except Exception as _ex:
                     logger.warning(
                         f"Estimator photo fetch failed for {url}: {_ex}")
                     skipped_photos.append({"url": url, "reason": str(_ex)})
-        msg = UserMessage(text=prompt, file_contents=file_contents or None)
-        raw = await chat.send_message(msg)
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        llm_result = await call_llm_with_fallback(
+            system_prompt=_GENERATE_SYSTEM, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-6",
+            tenant_id=tenant_id,
+            image_b64s=image_b64s or None,
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(llm_result):
+            return {"mocked": True, "reason": "ai_spend_cap_exceeded",
+                     "line_items": [], "upsells": [],
+                     "skipped_photos": skipped_photos}
+        if llm_result.get("error"):
+            raise RuntimeError(str(llm_result.get("error")))
+        text = ((llm_result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:

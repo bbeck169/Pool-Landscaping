@@ -225,10 +225,12 @@ async def content_rewrite(sid: str, url_hash: str,
                     "reason": "EMERGENT_LLM_KEY not configured"}
     else:
         try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
-            chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                             system_message=_REWRITE_SYSTEM)
-                    .with_model("anthropic", "claude-sonnet-4-6"))
+            # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+            # central AI chokepoint so per-tenant BYO keys + AI spend
+            # caps apply. Plaintext (``parse_json=False``) preserves
+            # the local fenced-block JSON extract logic bit-for-bit.
+            from services.llm_provider import call_llm_with_fallback
+            from services.ai.cap_http import is_ai_cap_exceeded
             prompt = (
                 f"Target keyword: {body.target_keyword or entry['title']}\n"
                 f"Tone: {body.tone or 'professional'}\n"
@@ -239,32 +241,42 @@ async def content_rewrite(sid: str, url_hash: str,
                 f"Source HTML (truncated to 8000 chars):\n"
                 f"{source_html[:8000]}"
             )
-            raw = await chat.send_message(UserMessage(text=prompt))
-            text = raw if isinstance(raw, str) else str(raw)
-            text = text.strip()
-            if text.startswith("```"):
-                text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "",
-                                 text).strip()
-            try: data = json.loads(text)
-            except Exception:
-                m = re.search(r"(\{.*\})", text, re.S)
-                data = json.loads(m.group(1)) if m else {}
-            rewritten = data.get("rewritten_html", "")
-            re_score = _score_page(
-                f"<html><head><title>{data.get('title','')}</title>"
-                f"<meta name='description' content='{data.get('meta_description','')}'>"
-                f"</head><body>{rewritten}</body></html>",
-                entry["url"])
-            result = {
-                "mocked": False,
-                "title": data.get("title"),
-                "meta_description": data.get("meta_description"),
-                "rewritten_html": rewritten,
-                "rewritten_score": re_score["score"],
-                "diff_summary": data.get("diff_summary", ""),
-                "target_keyword_used":
-                    data.get("target_keyword_used") or body.target_keyword,
-            }
+            llm_result = await call_llm_with_fallback(
+                system_prompt=_REWRITE_SYSTEM, user_text=prompt,
+                provider="anthropic", model="claude-sonnet-4-6",
+                tenant_id=tenant["id"],
+                parse_json=False,
+            )
+            if is_ai_cap_exceeded(llm_result):
+                result = {"mocked": True, "reason": "ai_spend_cap_exceeded"}
+            elif llm_result.get("error"):
+                result = {"mocked": True,
+                            "reason": f"llm error: {llm_result.get('error')}"}
+            else:
+                text = ((llm_result.get("raw") or {}).get("text") or "").strip()
+                if text.startswith("```"):
+                    text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "",
+                                     text).strip()
+                try: data = json.loads(text)
+                except Exception:
+                    m = re.search(r"(\{.*\})", text, re.S)
+                    data = json.loads(m.group(1)) if m else {}
+                rewritten = data.get("rewritten_html", "")
+                re_score = _score_page(
+                    f"<html><head><title>{data.get('title','')}</title>"
+                    f"<meta name='description' content='{data.get('meta_description','')}'>"
+                    f"</head><body>{rewritten}</body></html>",
+                    entry["url"])
+                result = {
+                    "mocked": False,
+                    "title": data.get("title"),
+                    "meta_description": data.get("meta_description"),
+                    "rewritten_html": rewritten,
+                    "rewritten_score": re_score["score"],
+                    "diff_summary": data.get("diff_summary", ""),
+                    "target_keyword_used":
+                        data.get("target_keyword_used") or body.target_keyword,
+                }
         except Exception as e:
             logger.warning(f"Rewrite LLM failed: {e}")
             result = {"mocked": True, "reason": f"llm error: {e}"}

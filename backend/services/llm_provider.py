@@ -69,11 +69,26 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
 async def _call_emergent_text(*, system_prompt: str, user_text: str,
                                 photo_urls: Optional[List[str]] = None,
+                                image_b64s: Optional[List[str]] = None,
                                 provider: str = "anthropic",
                                 model: str = "claude-sonnet-4-5",
+                                parse_json: bool = True,
+                                max_tokens: Optional[int] = None,
                                 ) -> Dict[str, Any]:
     """Single Emergent LLM round-trip. Returns ``{"raw": <parsed json>}``
-    on success or ``{"error": "..."}`` on any failure."""
+    on success or ``{"error": "..."}`` on any failure.
+
+    Feb-2026 · I1.7.e Chunk 2.b — supports both URL (``photo_urls``) and
+    base64 (``image_b64s``) vision so raw-SDK callers migrated in this
+    chunk can round-trip through the chokepoint. Cap of 8 images total
+    (across both lists) matches the pre-migration behavior of the
+    direct-SDK sites.
+
+    ``parse_json=False`` skips the JSON round-trip and returns
+    ``{"raw": {"text": <plaintext response>}}`` — the shape plaintext
+    callers (review replies, SMS drafts, some AI-brain agents) expect.
+    ``max_tokens`` maps to ``.with_max_tokens(n)`` on the ``LlmChat``.
+    """
     key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
     if not key:
         return {"error": "emergent_key_missing"}
@@ -87,17 +102,35 @@ async def _call_emergent_text(*, system_prompt: str, user_text: str,
         chat = (LlmChat(api_key=key, session_id=new_id(),
                           system_message=system_prompt)
                 .with_model(provider, model))
-        parts: List[Any] = [user_text]
-        for url in (photo_urls or [])[:8]:
+        if max_tokens:
             try:
-                parts.append(ImageContent(image_url=url))
+                chat = chat.with_max_tokens(int(max_tokens))
             except Exception:
                 pass
-        msg = UserMessage(text="\n".join(str(p) for p in parts
-                                            if isinstance(p, str)))
+        file_contents: List[Any] = []
+        for url in (photo_urls or [])[:8]:
+            try:
+                file_contents.append(ImageContent(image_url=url))
+            except Exception:
+                pass
+        remaining = 8 - len(file_contents)
+        for b64 in (image_b64s or [])[:max(0, remaining)]:
+            try:
+                file_contents.append(ImageContent(image_base64=b64))
+            except Exception:
+                pass
+        msg = UserMessage(text=user_text,
+                            file_contents=file_contents or None)
         resp = await asyncio.wait_for(chat.send_message(msg),
                                         timeout=_TIMEOUT_SECONDS)
         raw_text = str(resp).strip()
+        if not parse_json:
+            # Plaintext branch — return the response verbatim in the
+            # legacy ``{"raw": {"text": ...}}`` shape so migrated
+            # callers can .get("raw", {}).get("text") uniformly.
+            if not raw_text:
+                return {"error": "emergent_empty_text"}
+            return {"raw": {"text": raw_text}}
         payload = _extract_json(raw_text)
         if not payload:
             return {"error": "emergent_empty_json"}
@@ -111,7 +144,10 @@ async def _call_emergent_text(*, system_prompt: str, user_text: str,
 
 async def _call_openai_text(*, system_prompt: str, user_text: str,
                               photo_urls: Optional[List[str]] = None,
+                              image_b64s: Optional[List[str]] = None,
                               model: Optional[str] = None,
+                              parse_json: bool = True,
+                              max_tokens: Optional[int] = None,
                               ) -> Dict[str, Any]:
     """OpenAI fallback branch — **STUBBED OUT** as of Feb 2026 per the
     user's decision to run on Emergent only.
@@ -139,6 +175,18 @@ async def _call_openai_text(*, system_prompt: str, user_text: str,
                 "type": "image_url",
                 "image_url": {"url": url, "detail": "low"},
             })
+        remaining = 8 - max(0, len(user_parts) - 1)
+        for b64 in (image_b64s or [])[:max(0, remaining)]:
+            # OpenAI accepts base64 via a `data:` URL — no separate
+            # image_base64 param, matches the Anthropic Emergent branch
+            # by input surface but a different wire format.
+            user_parts.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{b64}",
+                    "detail": "low",
+                },
+            })
         completion = await asyncio.to_thread(
             client.chat.completions.create,
             model=model or OPENAI_DEFAULT_MODEL,
@@ -146,12 +194,17 @@ async def _call_openai_text(*, system_prompt: str, user_text: str,
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_parts},
             ],
-            response_format={"type": "json_object"},
+            **({"response_format": {"type": "json_object"}} if parse_json else {}),
+            **({"max_tokens": int(max_tokens)} if max_tokens else {}),
             temperature=0.3,
         )
         text = ""
         if completion and completion.choices:
             text = (completion.choices[0].message.content or "").strip()
+        if not parse_json:
+            if not text:
+                return {"error": "openai_empty_text"}
+            return {"raw": {"text": text}}
         payload = _extract_json(text)
         if not payload:
             return {"error": "openai_empty_json"}
@@ -165,10 +218,13 @@ async def _call_openai_text(*, system_prompt: str, user_text: str,
 
 async def call_llm_with_fallback(*, system_prompt: str, user_text: str,
                                     photo_urls: Optional[List[str]] = None,
+                                    image_b64s: Optional[List[str]] = None,
                                     provider: str = "anthropic",
                                     model: str = "claude-sonnet-4-5",
                                     openai_model: Optional[str] = None,
                                     tenant_id: Optional[str] = None,
+                                    parse_json: bool = True,
+                                    max_tokens: Optional[int] = None,
                                     ) -> Dict[str, Any]:
     """High-level dispatcher.
 
@@ -273,19 +329,28 @@ async def call_llm_with_fallback(*, system_prompt: str, user_text: str,
         r = await _call_openai_text(system_prompt=system_prompt,
                                        user_text=user_text,
                                        photo_urls=photo_urls,
-                                       model=openai_model)
+                                       image_b64s=image_b64s,
+                                       model=openai_model,
+                                       parse_json=parse_json,
+                                       max_tokens=max_tokens)
         return {**r, "provider": _PROVIDER_OPENAI}
     if forced == _PROVIDER_EMERGENT:
         r = await _call_emergent_text(system_prompt=system_prompt,
                                          user_text=user_text,
                                          photo_urls=photo_urls,
-                                         provider=provider, model=model)
+                                         image_b64s=image_b64s,
+                                         provider=provider, model=model,
+                                         parse_json=parse_json,
+                                         max_tokens=max_tokens)
         return {**r, "provider": _PROVIDER_EMERGENT}
 
     first = await _call_emergent_text(system_prompt=system_prompt,
                                          user_text=user_text,
                                          photo_urls=photo_urls,
-                                         provider=provider, model=model)
+                                         image_b64s=image_b64s,
+                                         provider=provider, model=model,
+                                         parse_json=parse_json,
+                                         max_tokens=max_tokens)
     if not first.get("error"):
         return {**first, "provider": _PROVIDER_EMERGENT}
     if not openai_available():
@@ -300,5 +365,8 @@ async def call_llm_with_fallback(*, system_prompt: str, user_text: str,
     second = await _call_openai_text(system_prompt=system_prompt,
                                         user_text=user_text,
                                         photo_urls=photo_urls,
-                                        model=openai_model)
+                                        image_b64s=image_b64s,
+                                        model=openai_model,
+                                        parse_json=parse_json,
+                                        max_tokens=max_tokens)
     return {**second, "provider": _PROVIDER_OPENAI}

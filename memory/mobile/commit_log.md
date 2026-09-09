@@ -1542,3 +1542,15 @@
   - Bug 2: Fixed Header component in widgets.tsx — added minWidth: 0 + flexShrink: 1 to title column, numberOfLines={1} + ellipsizeMode="tail" to subtitle Text to prevent RN Web flexbox collapse
 - **Files modified**: src/components/widgets.tsx
 - **Web files referenced**: DailyRouteMap.web.tsx, OfflineBadge.tsx, calendar.tsx
+
+
+## Iteration 78 — Trim Chemistry UI on Expo Web Checklist
+- **Commit**: 284fc1f7f41657bdb78c40945b132f772f20e20f
+- **Date**: 2026-09-09
+- **Changes**:
+  - WaterBodyPanel.tsx: Wrapped "Chemicals Used" block (label + chemical rows + "Add chemical") in Platform.OS !== "web" guard
+  - PoolChecklistForm.tsx: Wrapped "Chemical Readings" heading in Platform.OS !== "web" guard (classify prompt untouched)
+  - Added 6-test guard RTL test: chemistry-ui-trim.test.tsx
+- **Files modified**: src/components/checklist/WaterBodyPanel.tsx, src/components/checklist/PoolChecklistForm.tsx
+- **Files created**: __tests__/chemistry-ui-trim.test.tsx
+- **Test results**: 6/6 new tests passing, no regressions

@@ -296,17 +296,27 @@ SYSTEM_PROMPT = (
 )
 
 
-async def _ai_call(system: str, prompt: str) -> Optional[str]:
+async def _ai_call(system: str, prompt: str,
+                    tenant_id: Optional[str] = None) -> Optional[str]:
     key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
     if not key:
         return None
+    # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the central
+    # AI chokepoint so per-tenant BYO keys + AI spend caps apply.
+    # Plaintext (``parse_json=False``) preserves the local
+    # ``_parse_ai_json`` fenced-block extract logic bit-for-bit.
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = (LlmChat(api_key=key, session_id=new_id(),
-                        system_message=system)
-                .with_model("anthropic", "claude-sonnet-4-5"))
-        resp = await chat.send_message(UserMessage(text=prompt))
-        return str(resp)
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
+        result = await call_llm_with_fallback(
+            system_prompt=system, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-5",
+            tenant_id=tenant_id,
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result) or result.get("error"):
+            return None
+        return (result.get("raw") or {}).get("text") or ""
     except Exception as e:
         logger.warning(f"Social AI error: {e}")
         return None
@@ -1150,16 +1160,39 @@ async def ai_alt_text(body: AltTextReq,
                 "alt_text": "Photo related to pool or landscape service (set EMERGENT_LLM_KEY for real vision)."}
     raw = None
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
-        chat = (LlmChat(api_key=key, session_id=new_id(), system_message=system)
-                .with_model("anthropic", "claude-sonnet-4-5"))
-        # Only pass ImageContent when it is an http(s) URL Claude can fetch;
-        # data URLs also supported by the SDK.
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint (base64 vision) so per-tenant BYO
+        # keys + AI spend caps apply.  Media URLs are fetched +
+        # base64-encoded here since the chokepoint's ``image_b64s``
+        # kwarg is base64-only (the pre-migration path used
+        # ``ImageContent(image_url=...)`` which the SDK exposed
+        # as a URL passthrough — that path is retained for the
+        # rare provider that still needs it, via best-effort local
+        # base64 fetch).
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
+        import base64 as _b64, httpx as _httpx
+        image_b64: Optional[str] = None
         try:
-            msg = UserMessage(text=prompt, file_contents=[ImageContent(image_url=url)])
+            async with _httpx.AsyncClient(timeout=15,
+                                              follow_redirects=True) as _c:
+                _r = await _c.get(url)
+            if _r.status_code == 200:
+                image_b64 = _b64.b64encode(_r.content).decode("ascii")
         except Exception:
-            msg = UserMessage(text=prompt)
-        raw = str(await chat.send_message(msg))
+            image_b64 = None
+        kwargs = {"image_b64s": [image_b64]} if image_b64 else {}
+        result = await call_llm_with_fallback(
+            system_prompt=system, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-5",
+            tenant_id=tenant["id"],
+            parse_json=False,
+            **kwargs,
+        )
+        if is_ai_cap_exceeded(result) or result.get("error"):
+            raw = None
+        else:
+            raw = (result.get("raw") or {}).get("text") or ""
     except Exception as e:
         logger.warning(f"alt-text vision AI error: {e}")
         raw = None

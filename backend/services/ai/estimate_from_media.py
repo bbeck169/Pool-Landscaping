@@ -265,14 +265,30 @@ def _voice_user_prompt(transcript: str, context_hint: Optional[str]) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Claude Vision call (Emergent Universal LLM Key)
+# Claude Vision call (via services.llm_provider chokepoint)
 # ─────────────────────────────────────────────────────────────────────
 async def _call_claude_vision(*, user_text: str,
-                                 image_b64: Optional[str] = None
+                                 image_b64: Optional[str] = None,
+                                 tenant_id: Optional[str] = None,
                                  ) -> Dict[str, Any]:
     """Single Claude Sonnet 4.5 call. Returns ``{"raw_text": str}`` on
-    success or ``{"error": "..."}`` on any failure. Uses the Emergent
-    Universal LLM Key via ``emergentintegrations``.
+    success or ``{"error": "..."}`` on any failure.
+
+    Phase I1.7.e · Chunk 2.b · Feb-2026 — Migrated from a direct
+    ``emergentintegrations.llm.chat.LlmChat`` construction to
+    :func:`services.llm_provider.call_llm_with_fallback` so this
+    surface honours per-tenant BYO routing + AI spend-cap enforcement
+    + ``AI_TESTMODE_MOCK``. Base64 vision is now first-class through
+    the chokepoint's ``image_b64s=`` kwarg. Plaintext-response mode
+    (``parse_json=False``) preserves the legacy ``raw_text`` contract
+    that :func:`estimate_from_photo` and :func:`estimate_from_voice`
+    parse locally via ``_extract_json``.
+
+    Cap-exceeded surfaces as ``{"error": "ai_spend_cap_exceeded",
+    "cap_exceeded": True}`` so the upstream endpoint
+    (``POST /api/ai/estimate-from-photo``) can raise
+    ``HTTPException(429)`` via
+    :func:`services.ai.cap_http.raise_if_ai_cap_exceeded`.
     """
     if _mock_enabled():
         mock = _next_mock()
@@ -285,38 +301,37 @@ async def _call_claude_vision(*, user_text: str,
             "confidence": 78,
             "raw_analysis": "Mocked estimate — TEST_LLM_MOCK=1.",
         })}
-    key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
-    if not key:
-        return {"error": "emergent_key_missing",
-                 "reason": "EMERGENT_LLM_KEY is not configured on this pod."}
-    try:
-        from emergentintegrations.llm.chat import (
-            LlmChat, UserMessage, ImageContent,
-        )
-    except Exception as e:  # pragma: no cover — env-level failure
-        return {"error": "emergent_import_failed", "reason": str(e)[:200]}
-    try:
-        import asyncio
-        chat = (LlmChat(api_key=key, session_id=f"ai-est-{new_id()[:8]}",
-                          system_message=_SYSTEM_PROMPT)
-                .with_model(CLAUDE_PROVIDER, CLAUDE_MODEL))
-        file_contents = []
-        if image_b64:
-            file_contents.append(ImageContent(image_base64=image_b64))
-        msg = UserMessage(text=user_text, file_contents=file_contents or None)
-        resp = await asyncio.wait_for(chat.send_message(msg),
-                                        timeout=LLM_TIMEOUT_SECONDS)
-        text = str(resp).strip()
-        if not text:
-            return {"error": "empty_response",
-                     "reason": "Claude returned an empty response."}
-        return {"raw_text": text}
-    except asyncio.TimeoutError:  # noqa: F821  # imported inside try
-        return {"error": "llm_timeout",
-                 "reason": f"Claude did not respond within {LLM_TIMEOUT_SECONDS:.0f}s."}
-    except Exception as e:
-        logger.warning(f"[ai.estimate] claude call failed: {e}")
-        return {"error": "llm_error", "reason": str(e)[:200]}
+    from services.llm_provider import call_llm_with_fallback
+    from services.ai.cap_http import is_ai_cap_exceeded
+
+    result = await call_llm_with_fallback(
+        system_prompt=_SYSTEM_PROMPT,
+        user_text=user_text,
+        image_b64s=[image_b64] if image_b64 else None,
+        provider=CLAUDE_PROVIDER,
+        model=CLAUDE_MODEL,
+        tenant_id=tenant_id,
+        parse_json=False,
+    )
+    if is_ai_cap_exceeded(result):
+        return {"error": "ai_spend_cap_exceeded", "cap_exceeded": True,
+                 "reason": "Monthly AI spend cap exceeded for this tenant."}
+    err = result.get("error")
+    if err:
+        # Map chokepoint error codes to the legacy shape upstream expects.
+        mapping = {
+            "emergent_timeout": "llm_timeout",
+            "openai_empty_text": "empty_response",
+            "emergent_empty_text": "empty_response",
+        }
+        return {"error": mapping.get(err, "llm_error"),
+                 "reason": str(err)[:200]}
+    text = (result.get("raw", {}) or {}).get("text") or ""
+    text = text.strip()
+    if not text:
+        return {"error": "empty_response",
+                 "reason": "Claude returned an empty response."}
+    return {"raw_text": text}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -380,7 +395,8 @@ async def estimate_from_photo(image_bytes: bytes, *,
         return {"error": "empty_image", "reason": "No image bytes received."}
     b64 = base64.b64encode(image_bytes).decode("ascii")
     user_text = _photo_user_prompt(context_hint)
-    r = await _call_claude_vision(user_text=user_text, image_b64=b64)
+    r = await _call_claude_vision(user_text=user_text, image_b64=b64,
+                                     tenant_id=tenant_id)
     if r.get("error"):
         return r
     raw = _extract_json(r["raw_text"])
@@ -416,7 +432,8 @@ async def estimate_from_voice(audio_bytes: bytes, *,
         return w
     transcript = w["text"]
     user_text = _voice_user_prompt(transcript, context_hint)
-    r = await _call_claude_vision(user_text=user_text, image_b64=None)
+    r = await _call_claude_vision(user_text=user_text, image_b64=None,
+                                     tenant_id=tenant_id)
     if r.get("error"):
         return {**r, "transcript": transcript}
     raw = _extract_json(r["raw_text"])

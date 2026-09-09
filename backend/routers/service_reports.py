@@ -1511,10 +1511,14 @@ async def analyze_water_photo(body: WaterPhotoIn,
                     "overall_assessment": None}
     else:
         try:
-            from emergentintegrations.llm.chat import (
-                LlmChat, UserMessage, ImageContent,
-            )
-            # Current SDK requires base64. Fetch remote URL first.
+            # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+            # central AI chokepoint so per-tenant BYO keys + AI spend
+            # caps apply. ``image_b64s`` plumbs the base64 photo
+            # through to ``ImageContent`` inside the chokepoint. On
+            # cap-exceeded / error we degrade to the same
+            # ``mocked=True`` shape the pre-migration code produced.
+            from services.llm_provider import call_llm_with_fallback
+            from services.ai.cap_http import is_ai_cap_exceeded
             import base64, httpx
             try:
                 async with httpx.AsyncClient(timeout=15,
@@ -1525,9 +1529,6 @@ async def analyze_water_photo(body: WaterPhotoIn,
                 image_b64 = base64.b64encode(r.content).decode("ascii")
             except Exception as ex:
                 raise RuntimeError(f"photo fetch failed: {ex}")
-            chat = (LlmChat(api_key=_KEY, session_id=new_id(),
-                             system_message=_WATER_SYSTEM)
-                    .with_model("anthropic", "claude-sonnet-4-6"))
             ctx_lines = []
             if body.current_readings:
                 ctx_lines.append(
@@ -1536,25 +1537,37 @@ async def analyze_water_photo(body: WaterPhotoIn,
                 ctx_lines.append(f"Pool gallons: {body.pool_gallons}")
             if not ctx_lines:
                 ctx_lines.append("No readings provided — provide ranges.")
-            msg = UserMessage(text="\n".join(ctx_lines),
-                                file_contents=[ImageContent(image_base64=image_b64)])
-            raw = await chat.send_message(msg)
-            text = raw if isinstance(raw, str) else str(raw)
-            text = text.strip()
-            if text.startswith("```"):
-                text = _re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "",
-                                  text).strip()
-            try: data = _json.loads(text)
-            except Exception:
-                m = _re.search(r"(\{.*\})", text, _re.S)
-                data = _json.loads(m.group(1)) if m else {}
-            result = {
-                "mocked": False,
-                "clarity": data.get("clarity"),
-                "issues": data.get("issues") or [],
-                "recommendations": data.get("recommendations") or [],
-                "overall_assessment": data.get("overall_assessment"),
-            }
+            llm_result = await call_llm_with_fallback(
+                system_prompt=_WATER_SYSTEM,
+                user_text="\n".join(ctx_lines),
+                provider="anthropic", model="claude-sonnet-4-6",
+                tenant_id=tenant["id"],
+                image_b64s=[image_b64],
+                parse_json=False,
+            )
+            if is_ai_cap_exceeded(llm_result):
+                result = {"mocked": True, "reason": "ai_spend_cap_exceeded",
+                            "clarity": None, "issues": [],
+                            "recommendations": [],
+                            "overall_assessment": None}
+            elif llm_result.get("error"):
+                raise RuntimeError(str(llm_result.get("error")))
+            else:
+                text = ((llm_result.get("raw") or {}).get("text") or "").strip()
+                if text.startswith("```"):
+                    text = _re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "",
+                                      text).strip()
+                try: data = _json.loads(text)
+                except Exception:
+                    m = _re.search(r"(\{.*\})", text, _re.S)
+                    data = _json.loads(m.group(1)) if m else {}
+                result = {
+                    "mocked": False,
+                    "clarity": data.get("clarity"),
+                    "issues": data.get("issues") or [],
+                    "recommendations": data.get("recommendations") or [],
+                    "overall_assessment": data.get("overall_assessment"),
+                }
         except Exception as ex:
             logger.warning(f"Water photo analysis failed: {ex}")
             result = {"mocked": True, "reason": f"llm error: {ex}",
@@ -1618,10 +1631,6 @@ async def _llm_rephrase_reasons(recs: list[dict]) -> tuple[list[dict], int, Opti
         return recs, 0, f"llm import failed: {e}"
     if not EMERGENT_LLM_KEY:
         return recs, 0, "EMERGENT_LLM_KEY not configured"
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:
-        return recs, 0, f"llm import failed: {e}"
     import json as _json2, re as _re2
     payload = [
         {"chemical": r["chemical"], "quantity": r["quantity"], "unit": r["unit"],
@@ -1630,13 +1639,25 @@ async def _llm_rephrase_reasons(recs: list[dict]) -> tuple[list[dict], int, Opti
     ]
     prompt = "Rewrite each 'reason' below. Return the JSON array only.\n" + _json2.dumps(payload)
     try:
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                         system_message=_DOSING_LLM_SYSTEM)
-                .with_model("anthropic", "claude-sonnet-4-6")
-                .with_params(max_tokens=800))
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply. ``max_tokens=800`` maps through to
+        # ``LlmChat.with_max_tokens``.  On cap-exceeded / error we
+        # return the recs untouched (same as the pre-migration
+        # graceful degradation).
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
+        result_llm = await call_llm_with_fallback(
+            system_prompt=_DOSING_LLM_SYSTEM, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-6",
+            parse_json=False,
+            max_tokens=800,
+        )
+        if is_ai_cap_exceeded(result_llm):
+            return recs, 0, "ai_spend_cap_exceeded"
+        if result_llm.get("error"):
+            return recs, 0, f"llm error: {result_llm.get('error')}"
+        text = ((result_llm.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = _re2.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         arr = _json2.loads(text)

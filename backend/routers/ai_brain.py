@@ -376,22 +376,38 @@ async def copilot_message(
     # or key not provisioned) we degrade to a canned response so the
     # UI + audit log flow still work — pytest can mock this path.
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage  # type: ignore
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply. The SDK-native ``chat`` session preserved
+        # multi-turn context automatically; the chokepoint creates a
+        # new session per call, so the tool-call loop below rebuilds
+        # the running transcript in ``combined`` before every call.
+        # Observable behavior is identical: same tool fences parsed,
+        # same tool executed, same follow-up message shape.
+        from services.llm_provider import call_llm_with_fallback  # type: ignore
+        from services.ai.cap_http import is_ai_cap_exceeded  # type: ignore
         emergent_key = os.environ.get("EMERGENT_LLM_KEY") or ""
         if not emergent_key:
             raise RuntimeError("EMERGENT_LLM_KEY not set")
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=thread_id,
-            system_message=system_prompt,
-        ).with_model("anthropic", "claude-sonnet-4-5")
-        first = await chat.send_message(UserMessage(text=body.message))
+
+        async def _turn(prompt: str) -> str:
+            _r = await call_llm_with_fallback(
+                system_prompt=system_prompt, user_text=prompt,
+                provider="anthropic", model="claude-sonnet-4-5",
+                tenant_id=tenant["id"],
+                parse_json=False,
+            )
+            if is_ai_cap_exceeded(_r):
+                raise RuntimeError("ai_spend_cap_exceeded")
+            if _r.get("error"):
+                raise RuntimeError(str(_r.get("error")))
+            return ((_r.get("raw") or {}).get("text") or "").strip()
+
+        transcript = f"[user] {body.message}"
+        cur = await _turn(transcript)
         # Basic tool-call loop — up to 3 rounds. Frontier LLMs almost
         # never need more than 2 in this Copilot's read-only shape.
-        cur = first
         for _ in range(3):
-            if not isinstance(cur, str):
-                cur = str(cur)
             # Look for a ```tool ...``` fence.
             fence_open = cur.find("```tool")
             if fence_open < 0:
@@ -399,9 +415,9 @@ async def copilot_message(
             fence_close = cur.find("```", fence_open + 7)
             if fence_close < 0:
                 break
-            raw = cur[fence_open + 7:fence_close].strip()
+            raw_tool = cur[fence_open + 7:fence_close].strip()
             try:
-                call = json.loads(raw)
+                call = json.loads(raw_tool)
             except Exception:
                 break
             tname = str(call.get("name") or "")
@@ -410,7 +426,8 @@ async def copilot_message(
             tool_calls.append({"name": tname, "args": targs,
                                 "result_preview": str(result)[:400]})
             follow = f"Tool `{tname}` returned:\n```json\n{json.dumps(result, default=str)[:4000]}\n```"
-            cur = await chat.send_message(UserMessage(text=follow))
+            transcript += f"\n[assistant] {cur}\n[user] {follow}"
+            cur = await _turn(transcript)
         reply_text = str(cur)
     except Exception as exc:
         logger.warning("[copilot] LLM path failed: %s", exc)

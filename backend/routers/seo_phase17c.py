@@ -66,7 +66,11 @@ async def _claude_patch(issue_code: str, page_url: str,
         return {"suggested_value": "", "patch_snippet": "",
                 "rationale": "LLM key not configured", "mocked": True}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         system = (
             "You are OTTO, an SEO auto-fix agent. Given a page and an issue "
             "code, produce a concrete replacement patch. Respond in STRICT "
@@ -80,12 +84,17 @@ async def _claude_patch(issue_code: str, page_url: str,
             f"Current value: {current_value or '(missing)'}\n"
             f"Page context (first 800 chars):\n{page_context[:800]}"
         )
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                        system_message=system)
-                .with_model("anthropic", "claude-sonnet-4-6"))
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        result = await call_llm_with_fallback(
+            system_prompt=system, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-6",
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result):
+            return {"suggested_value": "", "patch_snippet": "",
+                     "rationale": "ai_spend_cap_exceeded", "mocked": True}
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:
@@ -458,19 +467,29 @@ async def studio_auto_fill(pid: str, body: StudioAutoFillIn,
         return {"sections": [], "mocked": True,
                 "reason": "LLM key not configured"}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                        system_message=_STUDIO_AUTOFILL_SYSTEM)
-                .with_model("anthropic", "claude-sonnet-4-6"))
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         want_types = body.section_types or list(_ALLOWED_SECTION_TYPES)
         prompt = (
             f"Business context: {body.business_context}\n"
             f"Target keyword: {body.target_keyword}\n"
             f"Preferred section types (subset ok): {', '.join(want_types)}"
         )
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        result = await call_llm_with_fallback(
+            system_prompt=_STUDIO_AUTOFILL_SYSTEM, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-6",
+            tenant_id=tenant["id"],
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result):
+            return {"sections": [], "mocked": True,
+                     "reason": "ai_spend_cap_exceeded"}
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:
@@ -736,7 +755,11 @@ async def _claude_exec_summary(brand: str, data: Dict[str, Any]) -> Dict[str, An
     if not EMERGENT_LLM_KEY:
         return {"summary": "", "mocked": True}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         summary_bits = []
         a = data.get("audit") or {}
         if a:
@@ -770,12 +793,17 @@ async def _claude_exec_summary(brand: str, data: Dict[str, Any]) -> Dict[str, An
         )
         prompt = (f"Brand: {brand}\n"
                     f"Data points:\n- " + "\n- ".join(summary_bits))
-        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
-                        system_message=system)
-                .with_model("anthropic", "claude-sonnet-4-6"))
-        raw = await chat.send_message(UserMessage(text=prompt))
-        text = raw if isinstance(raw, str) else str(raw)
-        text = text.strip()
+        result = await call_llm_with_fallback(
+            system_prompt=system, user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-6",
+            parse_json=False,
+        )
+        if is_ai_cap_exceeded(result):
+            return {"summary": "", "mocked": True,
+                     "error": "ai_spend_cap_exceeded"}
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         if text.startswith("```"):
             text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
         try:

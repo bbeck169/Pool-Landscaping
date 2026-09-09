@@ -7,7 +7,8 @@ from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
 from models import AIChatIn, AccessUpdate
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from services.llm_provider import call_llm_with_fallback
+from services.ai.cap_http import raise_if_ai_cap_exceeded
 
 router = APIRouter()
 
@@ -51,12 +52,23 @@ async def ai_chat(body: AIChatIn, user: dict = Depends(require_admin)):
         "role": "user", "text": body.message, "created_at": now_iso(),
     })
     try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=session_id,
-            system_message=emp["system"],
-        ).with_model("anthropic", "claude-sonnet-4-6")
-        reply = await chat.send_message(UserMessage(text=body.message))
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend caps
+        # apply. Same session_id + system_message wiring; plaintext
+        # (``parse_json=False``) preserves the legacy string return.
+        result = await call_llm_with_fallback(
+            system_prompt=emp["system"],
+            user_text=body.message,
+            provider="anthropic", model="claude-sonnet-4-6",
+            tenant_id=user.get("tenant_id"),
+            parse_json=False,
+        )
+        raise_if_ai_cap_exceeded(result)
+        if result.get("error"):
+            raise RuntimeError(result.get("error"))
+        reply = (result.get("raw") or {}).get("text") or ""
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning(f"AI chat failed: {e}")
         raise HTTPException(502, "AI request failed")

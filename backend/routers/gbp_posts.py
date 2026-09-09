@@ -79,15 +79,14 @@ async def _llm_draft(tenant_id: str, card: Dict[str, Any], body_in: GenerateIn) 
     if not key:
         return _fallback_draft(card, body_in)
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply. JSON draft parse is done locally to keep the
+        # existing fenced-block fallback tolerance.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
         from routers.ai_brain import build_system_prompt
         sys_prompt = await build_system_prompt(tenant_id)
-        chat = (
-            LlmChat(api_key=key, session_id=f"gbp-{tenant_id}-{new_id()}",
-                     system_message=sys_prompt or "You are a helpful assistant.")
-            .with_model("anthropic", "claude-sonnet-4-5-20250929")
-            .with_max_tokens(600)
-        )
         prompt = (
             f"Draft a Google Business Profile post.\n"
             f"Purpose: {body_in.purpose}\n"
@@ -100,7 +99,17 @@ async def _llm_draft(tenant_id: str, card: Dict[str, Any], body_in: GenerateIn) 
             f"image_prompt (a photorealistic image description). "
             f"No prose outside the JSON."
         )
-        raw = (await chat.send_message(UserMessage(text=prompt))) or ""
+        result = await call_llm_with_fallback(
+            system_prompt=sys_prompt or "You are a helpful assistant.",
+            user_text=prompt,
+            provider="anthropic", model="claude-sonnet-4-5-20250929",
+            tenant_id=tenant_id,
+            parse_json=False,
+            max_tokens=600,
+        )
+        if is_ai_cap_exceeded(result) or result.get("error"):
+            return _fallback_draft(card, body_in)
+        raw = ((result.get("raw") or {}).get("text") or "")
         import json as _json
         # Best-effort JSON extract.
         raw = raw.strip()
@@ -134,7 +143,6 @@ async def _generate_image(prompt: str, tenant_id: str) -> Optional[str]:
     if not key:
         return None
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
         # Nano banana lives under Gemini image gen. Use the shared
         # library entry — return URL if the SDK exposes one.
         # The image URL persists in media_library so it's stable.

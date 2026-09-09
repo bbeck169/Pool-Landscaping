@@ -164,18 +164,32 @@ async def seed_business_os() -> None:
 
 # ─── AI helper (Lana persona) ──────────────────────────────────────────────
 async def _ai_generate(system_prompt: str, user_prompt: str,
-                       max_tokens: int = 800) -> str:
-    """Best-effort LLM call. Silent stub when EMERGENT_LLM_KEY is missing."""
+                       max_tokens: int = 800,
+                       tenant_id: Optional[str] = None) -> str:
+    """Best-effort LLM call. Silent stub when EMERGENT_LLM_KEY is missing.
+
+    Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the central
+    AI chokepoint so per-tenant BYO keys + AI spend caps apply. On
+    cap-exceeded / error we degrade to a friendly stub instead of
+    raising so the SOP / huddle / retro drafters remain resilient."""
     key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
     if not key:
         return "(AI-stub — set EMERGENT_LLM_KEY to enable Lana's generation.)"
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = (LlmChat(api_key=key, session_id=new_id(),
-                        system_message=system_prompt)
-                .with_model("anthropic", "claude-sonnet-4-5"))
-        resp = await chat.send_message(UserMessage(text=user_prompt))
-        return str(resp)
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
+        result = await call_llm_with_fallback(
+            system_prompt=system_prompt, user_text=user_prompt,
+            provider="anthropic", model="claude-sonnet-4-5",
+            tenant_id=tenant_id,
+            parse_json=False,
+            max_tokens=max_tokens,
+        )
+        if is_ai_cap_exceeded(result):
+            return "(AI unavailable — monthly spend cap reached.)"
+        if result.get("error"):
+            return f"(AI unavailable — {result.get('error')})"
+        return ((result.get("raw") or {}).get("text") or "").strip()
     except Exception as e:
         logger.warning(f"Lana AI generation failed: {e}")
         return f"(AI unavailable — {e})"
@@ -957,12 +971,26 @@ async def lana_chat(body: LanaChatIn,
         mocked = True
     else:
         try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
-            chat = (LlmChat(api_key=key, session_id=conv_id,
-                            system_message=system)
-                    .with_model("anthropic", "claude-sonnet-4-5"))
-            resp = await chat.send_message(UserMessage(text=body.message))
-            reply = str(resp)
+            # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+            # central AI chokepoint so per-tenant BYO keys + AI spend
+            # caps apply. Plaintext (``parse_json=False``) preserves
+            # the legacy string return for the Lana chat surface.
+            from services.llm_provider import call_llm_with_fallback
+            from services.ai.cap_http import is_ai_cap_exceeded
+            result = await call_llm_with_fallback(
+                system_prompt=system, user_text=body.message,
+                provider="anthropic", model="claude-sonnet-4-5",
+                tenant_id=tenant["id"],
+                parse_json=False,
+            )
+            if is_ai_cap_exceeded(result):
+                reply = "(Lana AI unavailable — monthly spend cap reached.)"
+                mocked = True
+            elif result.get("error"):
+                reply = f"(Lana AI unavailable — {result.get('error')})"
+                mocked = True
+            else:
+                reply = ((result.get("raw") or {}).get("text") or "").strip()
         except Exception as e:
             logger.warning(f"Lana chat error: {e}")
             reply = f"(Lana AI unavailable — {e})"

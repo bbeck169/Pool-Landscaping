@@ -16,7 +16,8 @@ from models import (
     SeoKeywordReq, SeoArticleReq, SeoAuditReq, WpSettingsIn, SeoPublishReq,
     SeoScheduleReq, SeoScheduleSettings,
 )
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from services.llm_provider import call_llm_with_fallback
+from services.ai.cap_http import raise_if_ai_cap_exceeded
 
 router = APIRouter()
 
@@ -30,9 +31,22 @@ async def _ai_json(system: str, prompt: str, session: str, stub: dict | None = N
         if stub:
             base.update(stub)
         return base
-    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session, system_message=system).with_model("anthropic", "claude-sonnet-4-6")
-    raw = await chat.send_message(UserMessage(text=prompt))
-    text = raw if isinstance(raw, str) else str(raw)
+    # Phase I1.7.e · Chunk 2.b · Feb-2026 — SEO JSON helper routed
+    # through the central AI chokepoint so per-tenant BYO keys + AI
+    # spend caps apply. Plaintext (``parse_json=False``) keeps the
+    # helper's existing markdown-fence + regex JSON extraction logic
+    # bit-for-bit identical — the response is normalised here to the
+    # legacy raw-string shape.
+    result = await call_llm_with_fallback(
+        system_prompt=system, user_text=prompt,
+        provider="anthropic", model="claude-sonnet-4-6",
+        parse_json=False,
+    )
+    raise_if_ai_cap_exceeded(result)
+    if result.get("error"):
+        logger.warning(f"SEO AI call failed: {result.get('error')}")
+        raise HTTPException(502, "AI returned an unexpected format, please retry")
+    text = (result.get("raw") or {}).get("text") or ""
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()

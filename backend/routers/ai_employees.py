@@ -498,23 +498,33 @@ async def _llm_chat(system_prompt: str, user_text: str,
     key = EMERGENT_LLM_KEY
     if not key:
         return {"text": f"[stub] {user_text[:200]}", "provider": "stub"}
+    # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the central
+    # AI chokepoint so per-tenant BYO keys + AI spend caps apply. On
+    # cap-exceeded / error, degrades to a stub so chat still returns
+    # a response (the AI Employees UI expects a text turn).
+    from services.llm_provider import call_llm_with_fallback
+    from services.ai.cap_http import is_ai_cap_exceeded
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:
-        return {"text": f"[stub-import-failed] {e}", "provider": "stub"}
-    try:
-        chat = (LlmChat(api_key=key, session_id=new_id(),
-                          system_message=system_prompt)
-                .with_model("anthropic", "claude-sonnet-4-5"))
-        # Fold recent history into the user prompt so the LLM has
-        # context without a per-turn re-send.
         preamble = ""
         for h in history[-6:]:
             role = h.get("role", "user")
             preamble += f"\n[{role}] {h.get('text', '')}"
-        msg = UserMessage(text=(preamble + f"\n[user] {user_text}").strip())
-        resp = await asyncio.wait_for(chat.send_message(msg), timeout=30)
-        return {"text": str(resp).strip(), "provider": "emergent"}
+        combined = (preamble + f"\n[user] {user_text}").strip()
+        result = await asyncio.wait_for(
+            call_llm_with_fallback(
+                system_prompt=system_prompt, user_text=combined,
+                provider="anthropic", model="claude-sonnet-4-5",
+                parse_json=False,
+            ),
+            timeout=30,
+        )
+        if is_ai_cap_exceeded(result):
+            return {"text": "[stub-cap-exceeded] monthly AI spend cap reached",
+                     "provider": "stub"}
+        if result.get("error"):
+            return {"text": f"[stub-error] {result.get('error')}", "provider": "stub"}
+        return {"text": ((result.get("raw") or {}).get("text") or "").strip(),
+                 "provider": "emergent"}
     except Exception as e:
         logger.warning(f"[ae1] llm chat failed: {e}")
         return {"text": f"[stub-error] {e}", "provider": "stub"}

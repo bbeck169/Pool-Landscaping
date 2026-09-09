@@ -51,7 +51,13 @@ async def virtual_bid_generate(body: VirtualBidIn, user: dict = Depends(require_
     )
     if EMERGENT_LLM_KEY:
         try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+            # central AI chokepoint so per-tenant BYO keys + AI spend
+            # caps apply. Best-effort — on cap-exceeded / error we
+            # keep the existing narrative stub so the bid endpoint
+            # never fails on a missing / capped AI provider.
+            from services.llm_provider import call_llm_with_fallback
+            from services.ai.cap_http import is_ai_cap_exceeded
             facts = ", ".join([
                 f"lot {int(body.lot_size_sqft):,} sqft" if body.lot_size_sqft else "",
                 f"home {int(body.home_sqft):,} sqft" if body.home_sqft else "",
@@ -59,8 +65,6 @@ async def virtual_bid_generate(body: VirtualBidIn, user: dict = Depends(require_
                 f"{body.beds} bd / {body.baths} ba" if body.beds else "",
                 f"Zestimate ${int(body.zestimate):,}" if body.zestimate else "",
             ]).strip(", ")
-            chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"vbid-{new_id()[:8]}",
-                           system_message="You write concise, persuasive property-specific pool + landscape service proposals. Return plaintext, 120-160 words.")
             prompt = (
                 f"Property: {body.address}. {facts}. Estimated pool volume: {est_gal:,} gallons. "
                 f"Recommended weekly service price: ${weekly_price}/mo. One-time cleanup: ${cleanup_price}. "
@@ -68,8 +72,16 @@ async def virtual_bid_generate(body: VirtualBidIn, user: dict = Depends(require_
                 "why the price makes sense for this property, and one seasonal recommendation for Peoria AZ climate. "
                 "Do not repeat the address or facts verbatim — reference them naturally."
             )
-            raw = await chat.send_message(UserMessage(text=prompt))
-            narrative = raw if isinstance(raw, str) else str(raw)
+            result = await call_llm_with_fallback(
+                system_prompt=("You write concise, persuasive property-specific pool + landscape "
+                                "service proposals. Return plaintext, 120-160 words."),
+                user_text=prompt,
+                provider="anthropic", model="claude-sonnet-4-5",
+                tenant_id=user.get("tenant_id"),
+                parse_json=False,
+            )
+            if not is_ai_cap_exceeded(result) and not result.get("error"):
+                narrative = ((result.get("raw") or {}).get("text") or narrative).strip()
         except Exception as e:
             logger.warning(f"virtual-bid LLM fallback: {e}")
 

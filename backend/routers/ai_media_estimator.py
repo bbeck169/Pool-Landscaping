@@ -128,6 +128,10 @@ async def estimate_from_photo(
         context_hint=context_hint,
         filename=file.filename, content_type=ct or None,
     )
+    # Phase I1.7.e · Chunk 2.b · Feb-2026 — Close Chunk 2.c HUMAN_REQUIRED
+    # by surfacing cap-exceeded as a real 429 (not a silent 200 wrap).
+    from services.ai.cap_http import raise_if_ai_cap_exceeded
+    raise_if_ai_cap_exceeded(result)
     gid = await _log_generation(
         tenant_id=tenant_id, user_id=user.get("id") or "?",
         endpoint="photo", filename=file.filename,
@@ -179,6 +183,8 @@ async def estimate_from_voice(
         context_hint=context_hint,
         filename=file.filename, content_type=ct or None,
     )
+    from services.ai.cap_http import raise_if_ai_cap_exceeded
+    raise_if_ai_cap_exceeded(result)
     gid = await _log_generation(
         tenant_id=tenant_id, user_id=user.get("id") or "?",
         endpoint="voice", filename=file.filename,

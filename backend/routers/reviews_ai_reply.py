@@ -93,17 +93,23 @@ async def generate_reply(
     if not key:
         return _fallback_reply(rating, review_author)
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = (
-            LlmChat(api_key=key, session_id=f"reply-{tenant_id}",
-                     system_message=system_prompt
-                                     or "You are a helpful assistant.")
-            .with_model("anthropic", "claude-sonnet-4-5-20250929")
-            .with_max_tokens(400)
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — routed through the
+        # central AI chokepoint so per-tenant BYO keys + AI spend
+        # caps apply. Plaintext + max_tokens preserves the legacy
+        # trim + [REVIEWER] substitute path.
+        from services.llm_provider import call_llm_with_fallback
+        from services.ai.cap_http import is_ai_cap_exceeded
+        result = await call_llm_with_fallback(
+            system_prompt=system_prompt or "You are a helpful assistant.",
+            user_text=user_prompt,
+            provider="anthropic", model="claude-sonnet-4-5-20250929",
+            tenant_id=tenant_id,
+            parse_json=False,
+            max_tokens=400,
         )
-        msg = UserMessage(text=user_prompt)
-        response = await chat.send_message(msg)
-        text = (response or "").strip()
+        if is_ai_cap_exceeded(result) or result.get("error"):
+            return _fallback_reply(rating, review_author)
+        text = ((result.get("raw") or {}).get("text") or "").strip()
         # Post-generation substitute — the reviewer's real name is
         # NEVER in the prompt but IS in the final published reply.
         if text and review_author:

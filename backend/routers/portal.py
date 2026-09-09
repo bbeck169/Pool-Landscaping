@@ -6,7 +6,8 @@ from config import db, logger, EMERGENT_LLM_KEY
 from utils import now_iso, new_id, get_current_user, require_admin, notify_customer, create_staff_notification
 from routers.tenants import get_current_tenant
 from models import MessageIn, DocumentIn, BookIn
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from services.llm_provider import call_llm_with_fallback
+from services.ai.cap_http import raise_if_ai_cap_exceeded
 
 router = APIRouter()
 
@@ -74,19 +75,28 @@ async def generate_ai_reply(cid: str, incoming: str):
             f"Answer general pool/landscaping questions too. Be concise (under 120 words), friendly. "
             f"If something needs a human, say a team member will follow up shortly."
         )
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"portal-{cid}",
-            system_message=system,
-        ).with_model("anthropic", "claude-sonnet-4-6")
+        # Phase I1.7.e · Chunk 2.b · Feb-2026 — Marina auto-reply
+        # routed through the central AI chokepoint so per-tenant BYO
+        # keys + AI spend caps apply. Same system + user_text shape.
+        # Plaintext (``parse_json=False``) preserves the legacy string
+        # return. Best-effort — on cap-exceeded / error we degrade to
+        # ``None`` so the portal message insert still succeeds and the
+        # customer just doesn't get an auto-reply.
         user_text = (
             f"Recent conversation for context:\n{convo}\n\n"
             f"LATEST CUSTOMER MESSAGE: \"{incoming}\"\n\n"
             f"Answer THIS latest message directly and specifically. If it is about billing or what they owe, "
             f"lead with the billing details. Only bring up appointment times if they are asking about scheduling."
         )
-        reply = await chat.send_message(UserMessage(text=user_text))
-        text = reply if isinstance(reply, str) else str(reply)
+        result = await call_llm_with_fallback(
+            system_prompt=system, user_text=user_text,
+            provider="anthropic", model="claude-sonnet-4-6",
+            parse_json=False,
+        )
+        if result.get("error"):
+            return None, None
+        text = (result.get("raw") or {}).get("text") or ""
+        text = text.strip()
         return text, (slots if _wants_scheduling(incoming) else None)
     except Exception as e:
         logger.warning(f"AI auto-reply failed: {e}")

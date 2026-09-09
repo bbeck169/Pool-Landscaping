@@ -6,6 +6,13 @@ Emergent LLM (Claude Sonnet) with a strict system prompt that returns JSON only.
 
 If EMERGENT_LLM_KEY is missing the endpoint returns HTTP 424 with a friendly message —
 no stack trace, no crash.
+
+Phase I1.7.e · Chunk 2.b · Feb-2026 — Callsite-only migration: the AI
+call goes through :func:`services.llm_provider.call_llm_with_fallback`
+for BYO routing + per-tenant AI cap. Zero behavior surface change to
+the ``POST /chemicals/dosing-recommendation`` endpoint: same request
+shape, same 400 / 424 / 500 response paths, same JSON body. Only the
+plumbing between the request and Claude is now tenant-aware.
 """
 import json
 import re
@@ -13,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import now_iso, new_id, require_admin, get_current_user
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -27,7 +35,9 @@ async def chemicals_catalog(user: dict = Depends(get_current_user)):
 
 
 @router.post("/chemicals/dosing-recommendation")
-async def chemicals_dosing(body: dict, user: dict = Depends(get_current_user)):
+async def chemicals_dosing(body: dict,
+                              user: dict = Depends(get_current_user),
+                              tenant: dict = Depends(get_current_tenant)):
     """AI-powered dosing recommendation.
     body: { volume_gal: float, readings: { fc, ph, ta, cya, salt? } }
     Returns { recommendations: [{chemical, amount_oz, reason}], warnings: [...] }.
@@ -42,9 +52,6 @@ async def chemicals_dosing(body: dict, user: dict = Depends(get_current_user)):
             status_code=424,
             detail="AI dosing unavailable — EMERGENT_LLM_KEY not configured.",
         )
-
-    # Lazy import — the library ships with the base image.
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
 
     system = (
         "You are a certified pool chemistry assistant. Given a pool volume in "
@@ -69,25 +76,22 @@ async def chemicals_dosing(body: dict, user: dict = Depends(get_current_user)):
         f"Return the JSON."
     )
 
-    try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"dosing-{new_id()[:8]}",
-            system_message=system,
-        ).with_model("anthropic", "claude-sonnet-4-5")
-        raw = await chat.send_message(UserMessage(text=prompt))
-    except Exception as e:
-        logger.warning(f"Dosing LLM call failed: {e}")
-        raise HTTPException(status_code=424, detail="AI dosing service unavailable right now.")
+    from services.llm_provider import call_llm_with_fallback
+    from services.ai.cap_http import raise_if_ai_cap_exceeded
+    result = await call_llm_with_fallback(
+        system_prompt=system, user_text=prompt,
+        provider="anthropic", model="claude-sonnet-4-5",
+        tenant_id=tenant["id"],
+    )
+    raise_if_ai_cap_exceeded(result)
+    if result.get("error"):
+        logger.warning(f"Dosing LLM call failed: {result.get('error')}")
+        raise HTTPException(status_code=424,
+                              detail="AI dosing service unavailable right now.")
 
-    # Extract the first JSON object from the response.
-    text = raw if isinstance(raw, str) else str(raw)
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
+    parsed = result.get("raw") or {}
+    if not parsed:
         raise HTTPException(500, "AI returned an unparseable response")
-    try:
-        parsed = json.loads(m.group(0))
-    except json.JSONDecodeError:
         raise HTTPException(500, "AI returned invalid JSON")
 
     # Persist audit trail (best effort).
