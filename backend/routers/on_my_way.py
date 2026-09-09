@@ -142,9 +142,13 @@ async def _already_sent_today(tenant_id: str, job_id: str) -> bool:
 async def _eta_minutes(origin_lat: Optional[float],
                         origin_lng: Optional[float],
                         dest_lat: Optional[float],
-                        dest_lng: Optional[float]) -> Optional[int]:
+                        dest_lng: Optional[float],
+                        tenant_id: str) -> Optional[int]:
     """Google Routes v2 point-to-point ETA in minutes; ``None`` when
-    either endpoint is missing coordinates or the API call fails."""
+    either endpoint is missing coordinates or the API call fails.
+
+    Chunk 3 · Feb-2026 — ``tenant_id`` is threaded so the call routes
+    through the BYO Maps dispatcher when ``MAPS_BYO_ENABLED=true``."""
     if (origin_lat is None or origin_lng is None
             or dest_lat is None or dest_lng is None):
         return None
@@ -153,6 +157,7 @@ async def _eta_minutes(origin_lat: Optional[float],
         route = await compute_route_no_optimize(
             (origin_lat, origin_lng),
             [(dest_lat, dest_lng)],
+            tenant_id=tenant_id,
         )
     except Exception as e:  # pragma: no cover — network path
         logger.warning("[on_my_way] directions API failed: %s", e)
@@ -264,6 +269,7 @@ async def on_my_way(
     eta_min = await _eta_minutes(
         body.origin_lat, body.origin_lng,
         prop["lat"], prop["lng"],
+        tid,
     )
 
     # Body render.

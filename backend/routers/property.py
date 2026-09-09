@@ -541,40 +541,49 @@ async def property_search(address: str = Query(..., min_length=5),
 async def maps_reverse_geocode(
     lat: float = Query(...), lng: float = Query(...),
     user: dict = Depends(require_tech_or_admin),
+    tenant: dict = Depends(get_current_tenant),
 ):
     """Feb-2026 · Lightweight reverse-geocode helper used by the Rank
     Tracker "Boost this area" CTA. Returns just ``{formatted_address,
     city, state, zip}`` — no property search, no persistence. Returns
-    a fallback payload (not a 4xx) when the Google API key isn't
-    configured so callers can degrade gracefully."""
-    if not GOOGLE_API_KEY:
+    a fallback payload (not a 4xx) when neither Google nor Mapbox is
+    configured so callers can degrade gracefully.
+
+    Chunk 3 · Feb-2026 — refactored to route through
+    :func:`services.reverse_geocoder.reverse_geocode` (which is BYO
+    dispatcher-gated) instead of a direct inline httpx call to
+    Google. Preserves the "not configured → 200 with available=False"
+    contract."""
+    from services.reverse_geocoder import (
+        reverse_geocode as _rg, mapbox_token_configured,
+    )
+    from services.maps.cap_http import raise_if_maps_cap_exceeded
+
+    if not GOOGLE_API_KEY and not mapbox_token_configured():
         return {"formatted_address": "", "city": "", "state": "", "zip": "",
-                 "available": False, "reason": "GOOGLE_API_KEY not configured"}
+                 "available": False,
+                 "reason": "Neither GOOGLE_API_KEY nor MAPBOX_ACCESS_TOKEN configured"}
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(
-                "https://maps.googleapis.com/maps/api/geocode/json",
-                params={"latlng": f"{lat},{lng}", "key": GOOGLE_API_KEY},
-            )
-        gj = r.json() or {}
-        results = gj.get("results") or []
-        if not results:
-            return {"formatted_address": "", "city": "", "state": "", "zip": "",
-                     "available": True, "reason": "no_results"}
-        r0 = results[0]
-        formatted = r0.get("formatted_address") or ""
-        city = state = zipc = ""
-        for comp in (r0.get("address_components") or []):
-            types = comp.get("types") or []
-            if "locality" in types: city = comp.get("long_name") or city
-            elif "administrative_area_level_1" in types: state = comp.get("short_name") or state
-            elif "postal_code" in types: zipc = comp.get("long_name") or zipc
-        return {"formatted_address": formatted, "city": city, "state": state,
-                 "zip": zipc, "available": True}
+        res = await _rg(lat, lng, tenant["id"])
     except Exception as e:
         logger.warning(f"[maps.reverseGeocode] failed: {e}")
         return {"formatted_address": "", "city": "", "state": "", "zip": "",
                  "available": False, "reason": str(e)}
+    # Transactional endpoint → propagate cap-exceeded as 429.
+    raise_if_maps_cap_exceeded(res)
+    if res.get("status") == "no_token":
+        return {"formatted_address": "", "city": "", "state": "", "zip": "",
+                 "available": False,
+                 "reason": "GOOGLE_API_KEY not configured"}
+    if res.get("status") != "resolved":
+        return {"formatted_address": "", "city": "", "state": "", "zip": "",
+                 "available": True, "reason": res.get("error", "no_results")}
+    addr = res.get("address") or {}
+    return {"formatted_address": addr.get("formatted") or "",
+             "city": addr.get("city") or "",
+             "state": addr.get("state") or "",
+             "zip": addr.get("postcode") or "",
+             "available": True}
 
 
 @router.get("/property/search-by-coords")

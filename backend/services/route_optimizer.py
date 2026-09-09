@@ -246,6 +246,7 @@ async def try_google_directions_optimize(
     waypoints: list[dict[str, Any]],
     dest_lat: Optional[float] = None,
     dest_lng: Optional[float] = None,
+    tenant_id: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """Attempt a Google Routes API v2 optimize call.
 
@@ -284,7 +285,7 @@ async def try_google_directions_optimize(
             dest = (float(dest_lat), float(dest_lng))
         except (TypeError, ValueError):
             dest = None
-    result = await _google(origin, coords, destination=dest)
+    result = await _google(origin, coords, destination=dest, tenant_id=tenant_id)
     if not result:
         return None
     ordered_indices = result.get("ordered_indices") or list(range(len(waypoints)))
@@ -313,6 +314,7 @@ async def compute_optimization_v2(
     current_order_jobs: list[dict[str, Any]],
     start_lat: float,
     start_lng: float,
+    tenant_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Google-Directions-first version of :func:`compute_optimization`.
 
@@ -342,7 +344,7 @@ async def compute_optimization_v2(
 
     google = await try_google_directions_optimize(
         start_lat=start_lat, start_lng=start_lng,
-        waypoints=reshuf,
+        waypoints=reshuf, tenant_id=tenant_id,
     )
     if google is None:
         base = compute_optimization(

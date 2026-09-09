@@ -507,13 +507,17 @@ async def optimize_board(
     from services.google_maps.directions import optimize_route  # noqa: WPS433
 
     # 1) Baseline order (as caller sent) — total drive time.
-    baseline = await optimize_route(origin, waypoints)  # optimize:true always;
+    # Chunk 3 · Feb-2026 — thread tenant_id so BYO Maps + monthly cap
+    # fire when ``MAPS_BYO_ENABLED=true``. Behavior unchanged when off.
+    baseline = await optimize_route(origin, waypoints, tenant_id=tenant["id"])
     # Google gives us the reorder plus an OVERVIEW polyline. The
     # frontend also wants the "before" total, so we call again with
     # the caller's order pinned. Cheap because both hit the same 30-
     # day billing tier and each request is bounded to <= 25 stops
     # (Directions API limit).
-    baseline_pinned = await _directions_no_optimize(origin, waypoints)
+    baseline_pinned = await _directions_no_optimize(
+        origin, waypoints, tenant_id=tenant["id"],
+    )
 
     if not baseline:
         raise HTTPException(502, "Google Directions failed — check API key + quota")
@@ -551,12 +555,18 @@ async def optimize_board(
 
 
 async def _directions_no_optimize(origin: Tuple[float, float],
-                                    waypoints: List[Tuple[float, float]]):
+                                    waypoints: List[Tuple[float, float]],
+                                    tenant_id: Optional[str] = None):
     """Compute the caller's baseline drive time (no reordering) so
     the optimize endpoint can report a savings delta. Delegates to
-    the Routes API v2 wrapper; never raises."""
+    the Routes API v2 wrapper; never raises.
+
+    Chunk 3 · Feb-2026 — ``tenant_id`` threaded so the underlying
+    call routes through the BYO Maps dispatcher when the flag is on."""
     from services.google_maps.directions import compute_route_no_optimize
-    res = await compute_route_no_optimize(origin, waypoints)
+    res = await compute_route_no_optimize(
+        origin, waypoints, tenant_id=tenant_id,
+    )
     if not res:
         return None
     return {

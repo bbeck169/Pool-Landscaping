@@ -322,6 +322,7 @@ async def preview(body: PreviewBody,
         current_order_jobs=hydrated,
         start_lat=float(start_lat),
         start_lng=float(start_lng),
+        tenant_id=tenant_id,
     )
     return {
         **result,

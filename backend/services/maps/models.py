@@ -58,6 +58,7 @@ class MapsProviderUsage(BaseModel):
     provider: str                # "google" | "mapbox"
     period_yyyymm: str
     geocode: int = 0
+    reverse_geocode: int = 0     # Chunk 3, Feb-2026 — Mapbox reverse-geocode op
     route: int = 0
     static_map: int = 0
     total: int = 0
@@ -115,4 +116,7 @@ class TenantMapsRequestCapExceeded(MapsError):
 
 
 # ── Operation enum-ish ───────────────────────────────────────────
-OPERATIONS = ("geocode", "route", "static_map")
+# Chunk 3, Feb-2026 — added ``reverse_geocode`` as its own op with a
+# dedicated cap key. Mapbox is the platform reverse-geocode provider
+# today; BYO adapters may back it with Google or Mapbox.
+OPERATIONS = ("geocode", "reverse_geocode", "route", "static_map")

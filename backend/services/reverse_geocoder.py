@@ -10,6 +10,15 @@ Design goals:
   ``(tenant_id, lat_rounded, lon_rounded)`` where lat/lon are rounded
   to 5 decimals (~1m).
 * TTL: 90 days matching ping retention. Negative results cached 1h.
+
+Phase I1.7.e Chunk 3 (Feb-2026):
+* :func:`_platform_reverse_geocode_http` — raw-httpx-plus-parse
+  helper. Isolated so :mod:`services.maps.dispatcher` can call it
+  directly for the platform-fallback branch of
+  :func:`services.maps.dispatcher.dispatch_maps_reverse_geocode`.
+* :func:`reverse_geocode` — public entrypoint. When
+  ``MAPS_BYO_ENABLED=true`` routes through the BYO dispatcher.
+  When off, byte-for-byte identical to pre-Chunk-3.
 """
 from __future__ import annotations
 
@@ -71,7 +80,6 @@ def _parse_mapbox(payload: Dict[str, Any]) -> Dict[str, Any]:
     f = features[0] if isinstance(features[0], dict) else {}
     formatted = f.get("place_name") or None
     parts: Dict[str, Any] = {"formatted": formatted}
-    # Street: place_type=address has address (number) + text (street name).
     place_types = f.get("place_type") or []
     if isinstance(place_types, list) and "address" in place_types:
         number = f.get("address")
@@ -87,7 +95,6 @@ def _parse_mapbox(payload: Dict[str, Any]) -> Dict[str, Any]:
         if cid.startswith("place"):
             parts["city"] = text
         elif cid.startswith("region"):
-            # short_code looks like "US-AZ" — keep just AZ if present.
             code = short.split("-")[-1] if short else None
             parts["state"] = code or text
         elif cid.startswith("postcode"):
@@ -133,30 +140,21 @@ async def _cache_write(tenant_id: str, lat_r: float, lon_r: float,
     )
 
 
-async def reverse_geocode(lat: float, lon: float,
-                              tenant_id: str) -> Dict[str, Any]:
-    """Return ``{status, address}``. Never raises.
-
-    * ``status="no_token"`` — env var absent, no network call.
-    * ``status="resolved"`` — cache hit or fresh Mapbox result.
-    * ``status="error"``   — Mapbox non-2xx or transport failure.
-    """
-    if lat is None or lon is None:
-        return {"status": "error", "address": None,
-                "error": "missing_coords"}
-    lat_r, lon_r = _round(lat, lon)
-
-    cached = await _cache_lookup(tenant_id, lat_r, lon_r)
-    if cached:
-        # Never re-hit the network for a live cache entry, even for
-        # cached errors within their negative-TTL window.
-        return {"status": cached.get("status") or "resolved",
-                "address": cached.get("address"),
-                "cached": True}
-
+# ═════════════════════════════════════════════════════════════════
+# Phase I1.7.e · Chunk 3 · Feb-2026 — Platform raw-httpx impl.
+# Extracted so :mod:`services.maps.dispatcher` can call it directly
+# for the reverse-geocode platform-fallback branch. Never touches
+# the cache — that lives in :func:`reverse_geocode`.
+# ═════════════════════════════════════════════════════════════════
+async def _platform_reverse_geocode_http(
+    *, lat: float, lng: float, tenant_id: str,
+) -> Dict[str, Any]:
+    """Raw Mapbox reverse-geocode call + response parse. No cache.
+    No BYO. Returns ``{status, address}`` in the same shape as
+    :func:`reverse_geocode` so the dispatcher can consume it."""
     if not mapbox_token_configured():
         return {"status": "no_token", "address": None}
-
+    lat_r, lon_r = _round(lat, lng)
     token = os.environ["MAPBOX_ACCESS_TOKEN"].strip()
     url = f"{_MAPBOX_URL}/{lon_r},{lat_r}.json"
     params = {"access_token": token,
@@ -168,41 +166,126 @@ async def reverse_geocode(lat: float, lon: float,
                 r = await client.get(url, params=params, timeout=_TIMEOUT)
     except Exception as e:                                              # noqa: BLE001
         logger.info("[reverse_geocoder] transport error: %s", e)
-        await _cache_write(tenant_id, lat_r, lon_r,
-                              address=None, status="error",
-                              ttl_seconds=_NEG_CACHE_TTL_SECONDS)
         return {"status": "error", "address": None,
                 "error": f"transport:{e}"}
-
     if r.status_code != 200:
-        await _cache_write(tenant_id, lat_r, lon_r,
-                              address=None, status="error",
-                              ttl_seconds=_NEG_CACHE_TTL_SECONDS)
         return {"status": "error", "address": None,
                 "error": f"http_{r.status_code}"}
-
     try:
         payload = r.json()
     except Exception:                                                    # noqa: BLE001
-        await _cache_write(tenant_id, lat_r, lon_r,
-                              address=None, status="error",
-                              ttl_seconds=_NEG_CACHE_TTL_SECONDS)
         return {"status": "error", "address": None,
                 "error": "invalid_json"}
-
     parsed = _parse_mapbox(payload)
     if not parsed.get("formatted"):
-        # Mapbox returned zero features — treat as negative cache.
-        await _cache_write(tenant_id, lat_r, lon_r,
-                              address=None, status="error",
-                              ttl_seconds=_NEG_CACHE_TTL_SECONDS)
         return {"status": "error", "address": None,
                 "error": "no_features"}
+    return {"status": "resolved", "address": parsed}
 
+
+async def reverse_geocode(lat: float, lon: float,
+                              tenant_id: str) -> Dict[str, Any]:
+    """Return ``{status, address}``. Never raises.
+
+    * ``status="no_token"`` — env var absent, no network call.
+    * ``status="resolved"`` — cache hit or fresh Mapbox result.
+    * ``status="error"``   — Mapbox non-2xx or transport failure.
+    * ``status="cap_exceeded"`` — Chunk 3, tenant BYO Maps cap hit.
+
+    Phase I1.7.e Chunk 3: when ``MAPS_BYO_ENABLED=true`` the network
+    call routes through :func:`services.maps.dispatcher.dispatch_maps_reverse_geocode`.
+    Cache read/write stays put — tenant-scoped in either mode.
+    """
+    if lat is None or lon is None:
+        return {"status": "error", "address": None,
+                "error": "missing_coords"}
+    lat_r, lon_r = _round(lat, lon)
+
+    # Chunk 3 · Feb-2026 — pre-flight no-token check MUST happen
+    # BEFORE the cache lookup. Callers who don't have Mapbox
+    # configured shouldn't touch Mongo (motor loop pitfalls in
+    # non-app event loops surface here). Preserves the pre-Chunk-3
+    # contract asserted by ``test_missing_token_returns_no_token``.
+    if not mapbox_token_configured():
+        # Chunk 3 addition: when BYO is on AND the tenant has a BYO
+        # provider configured, we still route through the dispatcher
+        # (BYO adapters may carry their own key). Otherwise honour
+        # the pre-Chunk-3 fast path.
+        try:
+            from services.maps.feature_flag import maps_byo_enabled as _byo
+        except Exception:
+            _byo = lambda: False  # noqa: E731
+        if not (tenant_id and _byo()):
+            return {"status": "no_token", "address": None}
+
+    cached = await _cache_lookup(tenant_id, lat_r, lon_r)
+    if cached:
+        return {"status": cached.get("status") or "resolved",
+                "address": cached.get("address"),
+                "cached": True}
+
+    # Chunk 3 · Feb-2026 — feature-flag gate.
+    try:
+        from services.maps.feature_flag import maps_byo_enabled
+        from services.maps.dispatcher import dispatch_maps_reverse_geocode
+        from services.maps.models import TenantMapsRequestCapExceeded
+    except Exception:
+        maps_byo_enabled = lambda: False  # noqa: E731
+        dispatch_maps_reverse_geocode = None
+        TenantMapsRequestCapExceeded = Exception
+
+    if tenant_id and maps_byo_enabled() and dispatch_maps_reverse_geocode:
+        try:
+            env = await dispatch_maps_reverse_geocode(
+                tenant_id=tenant_id, lat=lat, lng=lon,
+            )
+            parsed_raw = (env.raw or {}).get("address") if isinstance(env.raw, dict) else None
+            if env.formatted_address:
+                addr = parsed_raw or {"formatted": env.formatted_address}
+                await _cache_write(tenant_id, lat_r, lon_r,
+                                       address=addr, status="resolved",
+                                       ttl_seconds=_CACHE_TTL_DAYS * 86400)
+                return {"status": "resolved", "address": addr, "cached": False}
+            # Empty envelope → treat as negative cache hit.
+            await _cache_write(tenant_id, lat_r, lon_r,
+                                   address=None, status="error",
+                                   ttl_seconds=_NEG_CACHE_TTL_SECONDS)
+            return {"status": "error", "address": None,
+                    "error": "no_features"}
+        except TenantMapsRequestCapExceeded as cap:
+            logger.warning(
+                "[reverse_geocoder] tenant=%s cap exceeded provider=%s "
+                "used=%s/%s — skipping",
+                tenant_id, cap.provider, cap.used, cap.cap,
+            )
+            return {"status": "cap_exceeded", "address": None,
+                    "cap_exceeded": True,
+                    "error": "maps_spend_cap_exceeded",
+                    "http_status": 429,
+                    "provider": cap.provider}
+        except Exception as e:  # pragma: no cover
+            logger.warning("[reverse_geocoder] dispatcher error: %s", e)
+            # Fall through to platform path.
+
+    # Legacy platform-direct path (byte-for-byte identical to pre-Chunk-3).
+    if not mapbox_token_configured():
+        return {"status": "no_token", "address": None}
+    res = await _platform_reverse_geocode_http(
+        lat=lat, lng=lon, tenant_id=tenant_id,
+    )
+    if res.get("status") == "resolved":
+        await _cache_write(tenant_id, lat_r, lon_r,
+                              address=res.get("address"),
+                              status="resolved",
+                              ttl_seconds=_CACHE_TTL_DAYS * 86400)
+        return {"status": "resolved", "address": res.get("address"),
+                "cached": False}
+    # error / no_features / http_* → negative-cache
     await _cache_write(tenant_id, lat_r, lon_r,
-                          address=parsed, status="resolved",
-                          ttl_seconds=_CACHE_TTL_DAYS * 86400)
-    return {"status": "resolved", "address": parsed, "cached": False}
+                          address=None, status="error",
+                          ttl_seconds=_NEG_CACHE_TTL_SECONDS)
+    return {"status": res.get("status", "error"), "address": None,
+            "error": res.get("error", "unknown")}
 
 
 async def purge_expired_geocode_cache() -> Dict[str, int]:

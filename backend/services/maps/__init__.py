@@ -1,6 +1,7 @@
 """services.maps — Tenant Maps BYO adapter registry (Phase I1.7.c.2)."""
 from .dispatcher import (  # noqa: F401
     dispatch_maps_geocode,
+    dispatch_maps_reverse_geocode,
     dispatch_maps_route,
     dispatch_maps_static_map_url,
     TenantMapsRequestCapExceeded,
@@ -27,4 +28,20 @@ from .models import (  # noqa: F401
     TenantMapsNotConnected,
     UnknownMapsProvider,
     OPERATIONS,
+)
+# Phase I1.7.e · Chunk 3 · Feb-2026 — chokepoint scaffolding
+from .feature_flag import maps_byo_enabled  # noqa: F401
+from .testmode import (  # noqa: F401
+    is_maps_testmode,
+    mock_geocode_result,
+    mock_reverse_geocode_result,
+    mock_route_result,
+    mock_static_map_url,
+)
+from .cap_http import (  # noqa: F401
+    CAP_EXCEEDED_HTTP_STATUS,
+    CAP_EXCEEDED_ERROR_CODE,
+    is_maps_cap_exceeded,
+    raise_if_maps_cap_exceeded,
+    translate_tenant_maps_cap_exception,
 )

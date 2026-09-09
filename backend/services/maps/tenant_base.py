@@ -36,6 +36,16 @@ class MapsProvider(ABC):
     ) -> MapsGeocodeResult:
         raise NotImplementedError
 
+    # Chunk 3, Feb-2026 — reverse-geocode is opt-in per provider. Base
+    # class returns None → dispatcher falls back to the platform
+    # (Mapbox) reverse-geocode implementation. Providers that support
+    # reverse-geocode may override.
+    async def reverse_geocode(
+        self, *, tenant_id: str, lat: float, lng: float,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Optional[MapsGeocodeResult]:
+        return None
+
     @abstractmethod
     async def route(
         self, *, tenant_id: str,

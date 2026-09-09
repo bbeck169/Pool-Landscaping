@@ -235,6 +235,7 @@ async def optimize_route(
             start_lat=float(google_start_lat),
             start_lng=float(google_start_lng),
             waypoints=google_waypoints,
+            tenant_id=tenant["id"],
         )
 
     if google is not None:

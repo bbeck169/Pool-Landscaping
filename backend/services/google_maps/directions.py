@@ -1,27 +1,22 @@
 """Phase 17 · Feb-2026 — Google Routes API wrapper (v2).
 
 Uses the modern Routes API (``routes.googleapis.com/directions/v2:computeRoutes``)
-rather than the deprecated legacy Directions API, which Google
-disables by default for new projects. Routes API is the officially
-supported successor and supports waypoint optimization out of the
-box via ``optimizeWaypointOrder: true``.
+rather than the deprecated legacy Directions API. Routes API is the
+officially supported successor and supports waypoint optimization
+out of the box via ``optimizeWaypointOrder: true``.
 
-The wrapper exposes two entry points:
-
-* ``optimize_route(origin, waypoints, destination=None)`` — asks
-  Google to reorder the intermediates for shortest total duration
-  and returns ``{ordered_indices, polyline, total_distance_m,
-  total_duration_s, legs}``. Never raises; returns ``None`` on any
-  failure so the caller falls back to the caller-supplied order.
-
-* ``compute_route_no_optimize(origin, waypoints, destination=None)``
-  — same shape but without waypoint reordering. Used to compute
-  the caller's baseline drive time so the router can report a
-  savings delta.
-
-Auth: ``X-Goog-Api-Key`` header + ``X-Goog-FieldMask`` limiting the
-response payload to the fields we consume (Google bills by fields
-returned).
+Phase I1.7.e Chunk 3 (Feb-2026) additions:
+  * :func:`_platform_optimize_route_http` /
+    :func:`_platform_compute_route_no_optimize_http` — raw-httpx-plus-
+    parse helpers. Isolated so :mod:`services.maps.dispatcher` can
+    call them directly for the platform-fallback branch WITHOUT
+    creating recursion into the public shim entrypoints.
+  * :func:`optimize_route` / :func:`compute_route_no_optimize` now
+    take ``tenant_id`` + ``db`` kwargs. When ``MAPS_BYO_ENABLED=true``
+    AND ``tenant_id`` is supplied the call routes through
+    :func:`services.maps.dispatcher.dispatch_maps_route`. When the
+    flag is off, OR ``tenant_id=None``, behavior is byte-for-byte
+    identical to pre-Chunk-3.
 """
 from __future__ import annotations
 
@@ -103,12 +98,18 @@ def _parse_route(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def optimize_route(
+# ═════════════════════════════════════════════════════════════════
+# Phase I1.7.e · Chunk 3 · Feb-2026 — Platform raw-httpx impls.
+# Extracted so :mod:`services.maps.dispatcher` can call them for the
+# platform-fallback branch without recursing through the public
+# ``optimize_route`` / ``compute_route_no_optimize`` entrypoints.
+# ═════════════════════════════════════════════════════════════════
+async def _platform_optimize_route_http(
     origin: Tuple[float, float],
     waypoints: List[Tuple[float, float]],
     destination: Optional[Tuple[float, float]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Optimizer with waypoint reordering."""
+    """Raw Routes v2 optimize call — no BYO / no cap enforcement."""
     if not waypoints:
         return None
     dest = destination or origin
@@ -124,20 +125,17 @@ async def optimize_route(
     if not data:
         return None
     parsed = _parse_route(data)
-    # If Google didn't return an optimized index list (e.g. only 1
-    # intermediate), synthesize the passthrough sequence so callers
-    # can always index into the waypoints array.
     if not parsed["ordered_indices"]:
         parsed["ordered_indices"] = list(range(len(waypoints)))
     return parsed
 
 
-async def compute_route_no_optimize(
+async def _platform_compute_route_no_optimize_http(
     origin: Tuple[float, float],
     waypoints: List[Tuple[float, float]],
     destination: Optional[Tuple[float, float]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Pinned-order compute — used to measure the caller's baseline."""
+    """Raw Routes v2 pinned-order call — no BYO / no cap enforcement."""
     if not waypoints:
         return None
     dest = destination or origin
@@ -151,3 +149,111 @@ async def compute_route_no_optimize(
     }
     data = await _post(body)
     return _parse_route(data) if data else None
+
+
+# ─── BYO-aware dispatch helper ───────────────────────────────────
+async def _maybe_dispatch_route(
+    *, tenant_id: Optional[str],
+    origin: Tuple[float, float],
+    waypoints: List[Tuple[float, float]],
+    destination: Optional[Tuple[float, float]] = None,
+    db_conn: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """When ``MAPS_BYO_ENABLED=true`` AND ``tenant_id`` is supplied,
+    route through the dispatcher and reshape to the legacy dict
+    contract. Returns ``None`` on cap-exceeded (transactional
+    callers should call :func:`raise_if_maps_cap_exceeded` themselves
+    if they want a 429 instead)."""
+    try:
+        from services.maps.feature_flag import maps_byo_enabled
+        from services.maps.dispatcher import dispatch_maps_route
+        from services.maps.models import TenantMapsRequestCapExceeded
+    except Exception:
+        return None
+    if not (tenant_id and maps_byo_enabled()):
+        return None
+    dest = destination or origin
+    all_dests = [*waypoints, dest]
+    try:
+        env = await dispatch_maps_route(
+            tenant_id=tenant_id, origin=origin,
+            destinations=all_dests, db=db_conn,
+        )
+    except TenantMapsRequestCapExceeded as cap:
+        logger.warning(
+            "[routes-v2] tenant=%s cap exceeded provider=%s used=%s/%s",
+            tenant_id, cap.provider, cap.used, cap.cap,
+        )
+        return {
+            "cap_exceeded": True,
+            "error": "maps_spend_cap_exceeded",
+            "http_status": 429,
+            "provider": cap.provider,
+        }
+    except Exception as e:  # pragma: no cover
+        logger.warning("[routes-v2] dispatcher error: %s", e)
+        return None
+    return {
+        "ordered_indices": env.ordered_indices or list(range(len(waypoints))),
+        "polyline": env.polyline or "",
+        "total_distance_m": env.total_distance_m,
+        "total_duration_s": env.total_duration_s,
+        "legs": [
+            {"distance_m": leg.distance_m, "duration_s": leg.duration_s,
+             "start_address": "", "end_address": ""}
+            for leg in env.legs
+        ],
+    }
+
+
+async def optimize_route(
+    origin: Tuple[float, float],
+    waypoints: List[Tuple[float, float]],
+    destination: Optional[Tuple[float, float]] = None,
+    *,
+    tenant_id: Optional[str] = None,
+    db_conn: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """Optimizer with waypoint reordering.
+
+    Phase I1.7.e Chunk 3: when ``MAPS_BYO_ENABLED`` + ``tenant_id``,
+    routes through the BYO Maps dispatcher. Otherwise raw platform.
+    """
+    dispatched = await _maybe_dispatch_route(
+        tenant_id=tenant_id, origin=origin, waypoints=waypoints,
+        destination=destination, db_conn=db_conn,
+    )
+    if dispatched is not None:
+        if dispatched.get("cap_exceeded"):
+            return None
+        # Optimize path — dispatcher doesn't currently reorder,
+        # so we fall back to raw impl for the reorder-specific
+        # ``ordered_indices`` payload. This matches Chunk 3 sizing —
+        # the dispatcher's ``route`` op is pinned-order.
+    return await _platform_optimize_route_http(origin, waypoints, destination)
+
+
+async def compute_route_no_optimize(
+    origin: Tuple[float, float],
+    waypoints: List[Tuple[float, float]],
+    destination: Optional[Tuple[float, float]] = None,
+    *,
+    tenant_id: Optional[str] = None,
+    db_conn: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """Pinned-order compute — used to measure the caller's baseline.
+
+    Phase I1.7.e Chunk 3: when ``MAPS_BYO_ENABLED`` + ``tenant_id``,
+    routes through the BYO Maps dispatcher. Otherwise raw platform.
+    """
+    dispatched = await _maybe_dispatch_route(
+        tenant_id=tenant_id, origin=origin, waypoints=waypoints,
+        destination=destination, db_conn=db_conn,
+    )
+    if dispatched is not None:
+        if dispatched.get("cap_exceeded"):
+            return None
+        return dispatched
+    return await _platform_compute_route_no_optimize_http(
+        origin, waypoints, destination,
+    )

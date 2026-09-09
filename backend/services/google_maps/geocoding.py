@@ -3,6 +3,19 @@
 Google's ToS forbids indefinite address→latlng caching but allows up
 to 30 days, which is what we honor. Cache keyed by normalized address
 in ``db.geocode_cache`` so every call is idempotent + bounded.
+
+Phase I1.7.e Chunk 3 (Feb-2026) additions:
+  * :func:`_platform_geocode_http` — raw-httpx-plus-parse helper.
+    Isolated so :mod:`services.maps.dispatcher` can call it directly
+    for the platform-fallback branch WITHOUT going through
+    :func:`geocode_address` (which would create recursion once the
+    ``MAPS_BYO_ENABLED`` flag is on).
+  * :func:`geocode_address` now takes ``tenant_id`` + ``db`` kwargs.
+    When ``MAPS_BYO_ENABLED=true`` AND ``tenant_id`` is supplied the
+    call routes through :func:`services.maps.dispatcher.dispatch_maps_geocode`
+    so per-tenant BYO keys + monthly caps fire. When the flag is off,
+    OR ``tenant_id=None``, behavior is byte-for-byte identical to the
+    pre-Chunk-3 implementation.
 """
 from __future__ import annotations
 
@@ -32,11 +45,6 @@ def _flatten_addr(raw: Any) -> str:
     string; the dict shape blew up the P37 backfill with an
     ``AttributeError`` on ``.strip()``. This helper is the single
     read-side normalizer.
-
-    * ``str``  → stripped as-is.
-    * ``dict`` → joined ``"{street} {city} {state} {postal_code|zip}"``.
-    * anything else (None, list, int, …) → empty string, so callers
-      fall through to their per-field builders.
     """
     if isinstance(raw, str):
         return raw.strip()
@@ -50,10 +58,60 @@ def _flatten_addr(raw: Any) -> str:
     return ""
 
 
-async def geocode_address(address: str) -> Optional[Dict[str, Any]]:
-    """Return ``{lat, lng, formatted_address, place_id, precision}`` or
-    None on ZERO_RESULTS / error. Never raises."""
+# ═════════════════════════════════════════════════════════════════
+# Phase I1.7.e · Chunk 3 · Feb-2026 — Platform raw-httpx impl.
+# Extracted so :mod:`services.maps.dispatcher` can call it directly
+# for the platform-fallback branch. Never touches the cache — that
+# lives in :func:`geocode_address`.
+# ═════════════════════════════════════════════════════════════════
+async def _platform_geocode_http(address: str) -> Optional[Dict[str, Any]]:
+    """Raw Google Geocoding v1 call + response parse. No cache. No
+    persistence. Returns ``{lat, lng, formatted_address, place_id,
+    precision}`` or ``None`` on ZERO_RESULTS / error / missing key."""
     if not address or not _API_KEY:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(_ENDPOINT, params={
+                "address": address, "key": _API_KEY,
+            })
+            data = r.json()
+    except Exception as exc:
+        logger.warning("[geocode] http error for %r: %s", address, exc)
+        return None
+    if data.get("status") == "REQUEST_DENIED":
+        logger.error("[geocode] REQUEST_DENIED — check GOOGLE_MAPS_API_KEY + Geocoding API enabled: %s", data.get("error_message"))
+        return None
+    results = data.get("results") or []
+    if not results:
+        return None
+    top = results[0]
+    loc = top["geometry"]["location"]
+    return {
+        "lat": loc["lat"], "lng": loc["lng"],
+        "formatted_address": top.get("formatted_address"),
+        "place_id": top.get("place_id"),
+        "precision": top["geometry"].get("location_type"),
+    }
+
+
+async def geocode_address(
+    address: str,
+    *,
+    tenant_id: Optional[str] = None,
+    db_conn: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """Return ``{lat, lng, formatted_address, place_id, precision}`` or
+    None on ZERO_RESULTS / error. Never raises.
+
+    Phase I1.7.e Chunk 3 (Feb-2026): when ``MAPS_BYO_ENABLED=true``
+    AND ``tenant_id`` is supplied, routes through the BYO Maps
+    dispatcher so per-tenant BYO keys + monthly caps fire. When the
+    flag is off, OR ``tenant_id`` is None, uses
+    :func:`_platform_geocode_http` directly — byte-for-byte
+    identical to the pre-Chunk-3 code path.
+    """
+    if not address:
         return None
     norm = _normalize(address)
     now = datetime.now(timezone.utc)
@@ -69,30 +127,46 @@ async def geocode_address(address: str) -> Optional[Dict[str, Any]]:
         except Exception:
             pass
 
+    result: Optional[Dict[str, Any]] = None
+    # Chunk 3 · Feb-2026 — feature-flag gate.
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(_ENDPOINT, params={
-                "address": address, "key": _API_KEY,
-            })
-            data = r.json()
-    except Exception as exc:
-        logger.warning("[geocode] http error for %r: %s", address, exc)
-        return None
-    if data.get("status") == "REQUEST_DENIED":
-        logger.error("[geocode] REQUEST_DENIED — check GOOGLE_MAPS_API_KEY + Geocoding API enabled: %s", data.get("error_message"))
-        return None
-    results = data.get("results") or []
-    if not results:
-        result = None
+        from services.maps.feature_flag import maps_byo_enabled
+        from services.maps.dispatcher import dispatch_maps_geocode
+        from services.maps.models import TenantMapsRequestCapExceeded
+    except Exception:  # pragma: no cover
+        maps_byo_enabled = lambda: False  # noqa: E731
+        dispatch_maps_geocode = None
+        TenantMapsRequestCapExceeded = Exception
+
+    use_dispatcher = bool(
+        tenant_id and maps_byo_enabled() and dispatch_maps_geocode is not None
+    )
+    if use_dispatcher:
+        try:
+            env = await dispatch_maps_geocode(
+                tenant_id=tenant_id, address=address, db=db_conn,
+            )
+            if env and (env.lat or env.lng or env.formatted_address):
+                result = {
+                    "lat": float(env.lat),
+                    "lng": float(env.lng),
+                    "formatted_address": env.formatted_address,
+                    "place_id": env.provider_response_id,
+                    "precision": (env.raw or {}).get("precision"),
+                }
+        except TenantMapsRequestCapExceeded as cap:
+            logger.warning(
+                "[geocode] tenant=%s cap exceeded provider=%s used=%s/%s — "
+                "skipping",
+                tenant_id, cap.provider, cap.used, cap.cap,
+            )
+            return None
+        except Exception as e:  # pragma: no cover — defensive
+            logger.warning("[geocode] dispatcher error: %s", e)
+            result = None
     else:
-        top = results[0]
-        loc = top["geometry"]["location"]
-        result = {
-            "lat": loc["lat"], "lng": loc["lng"],
-            "formatted_address": top.get("formatted_address"),
-            "place_id": top.get("place_id"),
-            "precision": top["geometry"].get("location_type"),
-        }
+        result = await _platform_geocode_http(address)
+
     await db.geocode_cache.update_one(
         {"key": norm},
         {"$set": {"key": norm, "result": result,
@@ -127,7 +201,7 @@ async def geocode_and_persist_customer(customer_id: str, tenant_id: str) -> bool
     ]))
     if not addr.strip():
         return False
-    hit = await geocode_address(addr)
+    hit = await geocode_address(addr, tenant_id=tenant_id)
     if not hit:
         return False
     await db.customers.update_one(
@@ -214,7 +288,7 @@ async def geocode_and_persist_job(job_id: str, tenant_id: str) -> bool:
                 ]))).strip()
     if not addr:
         return False
-    hit = await geocode_address(addr)
+    hit = await geocode_address(addr, tenant_id=tenant_id)
     if not hit:
         return False
     await db.jobs.update_one(
@@ -254,7 +328,7 @@ async def geocode_and_persist_property(property_id: str,
     ])).strip()
     if not addr:
         return False
-    hit = await geocode_address(addr)
+    hit = await geocode_address(addr, tenant_id=tenant_id)
     if not hit:
         return False
     await db.properties.update_one(

@@ -11,9 +11,13 @@ Fallback rules (identical to AI):
      HARD BLOCK; raise ``TenantMapsRequestCapExceeded``. NO fallback.
   3. BYO row exists and cap ok → dispatch, record usage on success.
 
-**This module deliberately does NOT rewire any existing app maps
-call-sites** — that migration is scoped to phase I1.7.e alongside
-the AI callsite migration.
+Phase I1.7.e Chunk 3 additions (Feb-2026):
+  * ``dispatch_maps_reverse_geocode`` op with a dedicated cap key
+    (``reverse_geocode``). Platform-fallback backend is Mapbox (via
+    :mod:`services.reverse_geocoder`).
+  * ``MAPS_TESTMODE_MOCK`` short-circuits every op — both BYO and
+    platform branches — with a deterministic mock envelope. Enforced
+    boot-time via :func:`services.maps.testmode._assert_boot_safe`.
 """
 from __future__ import annotations
 
@@ -57,7 +61,14 @@ async def _platform_geocode(
     wrapper (env-keyed). Kept simple — the platform default is
     whatever's already wired into the app today."""
     used = _platform_provider_key()
-    if maps_testmode_mock() or used == "platform:none":
+    if maps_testmode_mock():
+        # Chunk 3 · Feb-2026 — deterministic mock envelope short-circuit.
+        from .testmode import mock_geocode_result
+        return mock_geocode_result(
+            tenant_id=tenant_id, address=address,
+            provider_used="platform:testmode_mock",
+        )
+    if used == "platform:none":
         return MapsGeocodeResult(
             address=address, lat=0.0, lng=0.0,
             formatted_address=f"[platform fallback] {address}",
@@ -68,8 +79,14 @@ async def _platform_geocode(
             raw={"platform": True, "at": now_iso()},
         )
     try:
-        from services.google_maps.geocoding import geocode_address
-        res = await geocode_address(address)
+        # Chunk 3 · Feb-2026 — reach for the raw-httpx implementation
+        # that lives INSIDE the legacy module. When Chunk 3 flag is
+        # ON, callers reach us via the shim; the shim skips us and we
+        # call the raw httpx directly (no recursion). We import
+        # lazily so the legacy module can be a thin shim with the
+        # raw-httpx impl gated on ``_dispatcher_platform_call=True``.
+        from services.google_maps.geocoding import _platform_geocode_http
+        res = await _platform_geocode_http(address)
     except Exception as e:  # pragma: no cover — defensive
         log.warning("[maps.dispatch] platform geocode error: %s", e)
         res = None
@@ -93,6 +110,59 @@ async def _platform_geocode(
     )
 
 
+async def _platform_reverse_geocode(
+    *, tenant_id: str, lat: float, lng: float,
+    options: Optional[Dict[str, Any]] = None,
+) -> MapsGeocodeResult:
+    """Chunk 3 · Feb-2026 — reverse-geocode platform-fallback path.
+    Backed by Mapbox via :mod:`services.reverse_geocoder`."""
+    used = "platform:mapbox" if (
+        os.environ.get("MAPBOX_ACCESS_TOKEN") or ""
+    ).strip() else "platform:none"
+    if maps_testmode_mock():
+        from .testmode import mock_reverse_geocode_result
+        return mock_reverse_geocode_result(
+            tenant_id=tenant_id, lat=lat, lng=lng,
+            provider_used="platform:testmode_mock",
+        )
+    if used == "platform:none":
+        return MapsGeocodeResult(
+            address=f"reverse:{lat},{lng}", lat=float(lat), lng=float(lng),
+            formatted_address=None, provider_response_id=None,
+            provider_key="maps_platform", provider_used=used,
+            tenant_id=tenant_id,
+            raw={"platform_no_token": True, "at": now_iso()},
+        )
+    try:
+        from services.reverse_geocoder import _platform_reverse_geocode_http
+        res = await _platform_reverse_geocode_http(
+            lat=lat, lng=lng, tenant_id=tenant_id,
+        )
+    except Exception as e:  # pragma: no cover — defensive
+        log.warning("[maps.dispatch] platform reverse-geocode error: %s", e)
+        res = None
+    if not res or res.get("status") != "resolved":
+        return MapsGeocodeResult(
+            address=f"reverse:{lat},{lng}",
+            lat=float(lat), lng=float(lng),
+            formatted_address=None, provider_response_id=None,
+            provider_key="maps_platform", provider_used=used,
+            tenant_id=tenant_id,
+            raw={"platform_no_result": True, "status": (res or {}).get("status")},
+        )
+    parsed = res.get("address") or {}
+    return MapsGeocodeResult(
+        address=f"reverse:{lat},{lng}",
+        lat=float(lat), lng=float(lng),
+        formatted_address=parsed.get("formatted"),
+        provider_response_id=None,
+        provider_key="maps_platform",
+        provider_used=used,
+        tenant_id=tenant_id,
+        raw=res,
+    )
+
+
 async def _platform_route(
     *, tenant_id: str,
     origin: Tuple[float, float],
@@ -100,7 +170,13 @@ async def _platform_route(
     options: Optional[Dict[str, Any]] = None,
 ) -> MapsRouteResult:
     used = _platform_provider_key()
-    if maps_testmode_mock() or used == "platform:none":
+    if maps_testmode_mock():
+        from .testmode import mock_route_result
+        return mock_route_result(
+            tenant_id=tenant_id, origin=origin, destinations=destinations,
+            provider_used="platform:testmode_mock",
+        )
+    if used == "platform:none":
         return MapsRouteResult(
             legs=[MapsRouteLeg(distance_m=0, duration_s=0) for _ in destinations],
             total_distance_m=0, total_duration_s=0, polyline=None,
@@ -115,8 +191,12 @@ async def _platform_route(
     final = destinations[-1]
     intermediates = destinations[:-1]
     try:
-        from services.google_maps.directions import compute_route_no_optimize
-        res = await compute_route_no_optimize(origin, intermediates, final)
+        from services.google_maps.directions import (
+            _platform_compute_route_no_optimize_http,
+        )
+        res = await _platform_compute_route_no_optimize_http(
+            origin, intermediates, final,
+        )
     except Exception as e:  # pragma: no cover — defensive
         log.warning("[maps.dispatch] platform route error: %s", e)
         res = None
@@ -151,6 +231,12 @@ async def _platform_static_map_url(
     markers: Optional[List[Tuple[float, float]]] = None,
 ) -> MapsStaticMapURL:
     used = _platform_provider_key()
+    if maps_testmode_mock():
+        from .testmode import mock_static_map_url
+        return mock_static_map_url(
+            tenant_id=tenant_id, center=center, path=path, size=size,
+            markers=markers, provider_used="platform:testmode_mock",
+        )
     key = (os.environ.get("GOOGLE_MAPS_API_KEY") or "").strip()
     params: List[str] = [f"size={int(size[0])}x{int(size[1])}"]
     if key:
@@ -182,6 +268,13 @@ async def _dispatch_op(
     short = short_name_for(provider.provider_key) or provider.provider_key
     await enforce_cap_or_raise(tenant_id=tenant_id, provider=short, db=db)
     result = await call_tenant(provider)
+    # Chunk 3, Feb-2026 — reverse_geocode adapters may return None
+    # when the provider doesn't implement it → fall back to platform
+    # WITHOUT recording usage on the tenant's BYO row.
+    if result is None:
+        log.info("[maps.dispatch] tenant=%s op=%s BYO returned None — "
+                 "falling back to platform", tenant_id, operation)
+        return await call_platform()
     try:
         await record_usage(
             tenant_id=tenant_id, provider=short, operation=operation, db=db,
@@ -203,6 +296,27 @@ async def dispatch_maps_geocode(
         ),
         call_platform=lambda: _platform_geocode(
             tenant_id=tenant_id, address=address, options=options,
+        ),
+    )
+
+
+async def dispatch_maps_reverse_geocode(
+    *, tenant_id: str, lat: float, lng: float,
+    options: Optional[Dict[str, Any]] = None,
+    db=None,
+) -> MapsGeocodeResult:
+    """Chunk 3 · Feb-2026 — reverse-geocode dispatcher op with a
+    dedicated cap key (``reverse_geocode``). Providers that don't
+    implement :meth:`MapsProvider.reverse_geocode` return ``None`` →
+    dispatcher falls back to the platform Mapbox path without
+    charging the tenant's BYO cap."""
+    return await _dispatch_op(
+        tenant_id=tenant_id, operation="reverse_geocode", db=db,
+        call_tenant=lambda p: p.reverse_geocode(
+            tenant_id=tenant_id, lat=lat, lng=lng, options=options,
+        ),
+        call_platform=lambda: _platform_reverse_geocode(
+            tenant_id=tenant_id, lat=lat, lng=lng, options=options,
         ),
     )
 
@@ -250,6 +364,7 @@ async def dispatch_maps_static_map_url(
 
 __all__ = [
     "dispatch_maps_geocode",
+    "dispatch_maps_reverse_geocode",
     "dispatch_maps_route",
     "dispatch_maps_static_map_url",
     "TenantMapsRequestCapExceeded",

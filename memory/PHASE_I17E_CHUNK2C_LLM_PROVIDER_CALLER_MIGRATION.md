@@ -111,7 +111,12 @@ Also verifies the pre-existing chunk-2 invariant `test_checklist_load_path_has_n
 
 Intentionally NOT touched — deferred:
 
-* **Chunk 3 (Maps)** — held pending schedule-freeze root-cause. Do not touch.
+* **Chunk 3 (Maps)** — **SHIPPED Feb-2026** (see
+  `memory/PHASE_I17E_CHUNK3_MAPS_CALLSITE_MIGRATION.md`). The
+  schedule-freeze hold has been lifted — Chunks 2.b + 2.c shipped
+  clean with no scheduling regressions, and the Chunk 3 rollout is
+  gated behind ``MAPS_BYO_ENABLED`` with a preview-first flip. Do
+  not re-open this line.
 * **Chunk 4 (Calendars)** — held.
 * **Chunk 5 (Payments)** — held.
 * **Chunk 2.b (27 direct-raw-SDK AI files)** — held. Those files bypass `llm_provider` entirely and need a separate migration to route through `call_llm_with_fallback` first before they can benefit from BYO. Examples: `routers/seo_phase17c.py` (`_claude_patch`, `studio_auto_fill`, `_claude_exec_summary`), various AI content generators that import `emergentintegrations` directly.

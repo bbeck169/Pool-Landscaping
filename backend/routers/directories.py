@@ -223,7 +223,7 @@ async def validate_nap_profile(user: dict = Depends(require_admin),
             from services.google_maps import geocode_address as _geo
             addr_line = f"{addr.get('line1','')}, {addr.get('city','')}, " \
                           f"{addr.get('state','')} {addr.get('postal_code','')}"
-            g = await _geo(addr_line)
+            g = await _geo(addr_line, tenant_id=tenant["id"])
             if not g or not g.get("formatted_address"):
                 geocode_status = "not_found"
                 issues.append({"field": "address", "code": "not_geocodable",
