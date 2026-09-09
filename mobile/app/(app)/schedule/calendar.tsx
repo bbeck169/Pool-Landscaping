@@ -117,6 +117,7 @@ type Job = {
 
 type Mode = "grid" | "calendar";
 const MODE_KEY = "aq-schedule-mode-v1";
+const MAP_VISIBLE_KEY = "schedule.mapVisible";
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const addDays = (d: Date, n: number) => { const c = new Date(d); c.setDate(c.getDate() + n); return c; };
@@ -815,6 +816,21 @@ function GridView(props: any) {
   const isToday = focusISO === iso(new Date());
   const [actionsOpen, setActionsOpen] = useState(false);
 
+  // Map show/hide toggle — persisted per-device.
+  const [mapVisible, setMapVisible] = useState(true);
+  useEffect(() => {
+    storage.getItem<boolean>(MAP_VISIBLE_KEY, true).then((v) => {
+      setMapVisible(v !== false);
+    }).catch(() => {});
+  }, []);
+  const toggleMapVisible = useCallback(() => {
+    setMapVisible((prev) => {
+      const next = !prev;
+      storage.setItem(MAP_VISIBLE_KEY, next).catch(() => {});
+      return next;
+    });
+  }, []);
+
   /** Next-job: first non-terminal job in route order. */
   const _TERMINAL = new Set(["completed", "canceled", "cancelled", "skipped", "could_not_service"]);
   const nextJob = jobs.find((j: Job) => !_TERMINAL.has((j.status || "").toLowerCase()));
@@ -963,39 +979,64 @@ function GridView(props: any) {
         />
       ) : null}
 
-      {/* Feb-2026 · Daily Route Map — collapsible @rnmapbox/maps view
-          for the currently-selected day. Hides itself when 0 jobs.
-          Per-tech expand/collapse state persists in AsyncStorage
-          keyed by user_id. */}
-      <MapErrorBoundary testID="daily-route-map-error-boundary">
-        <DailyRouteMap jobs={dayJobs || jobs} userId={userId} />
-      </MapErrorBoundary>
+      {/* Map section — collapsible via toggle bar.
+          When hidden, shows a compact "Show map" bar. When visible,
+          shows DailyRouteMap + List|Map sub-mode toggle + ScheduleMapLazy. */}
+      <Pressable
+        onPress={toggleMapVisible}
+        style={gStyles.mapToggleBar}
+        testID="schedule-map-toggle"
+        accessibilityLabel={mapVisible ? "Hide map" : "Show map"}
+        accessibilityRole="button"
+      >
+        <Ionicons
+          name={mapVisible ? "map" : "map-outline"}
+          size={16}
+          color={mapVisible ? colors.brand : colors.muted}
+        />
+        <Text style={[gStyles.mapToggleText, mapVisible && { color: colors.brand }]}>
+          {mapVisible ? "Hide map" : "Show map"}
+        </Text>
+        <Ionicons
+          name={mapVisible ? "chevron-up" : "chevron-down"}
+          size={14}
+          color={mapVisible ? colors.brand : colors.muted}
+        />
+      </Pressable>
 
-      {/* List | Map toggle */}
-      <View style={gStyles.subModeRow} testID="grid-sub-mode-toggle">
-        {(["list", "map"] as const).map((sm) => {
-          const active = gridSubMode === sm;
-          return (
-            <Pressable
-              key={sm}
-              onPress={() => setGridSubMode(sm)}
-              style={[gStyles.subModeBtn, active && gStyles.subModeBtnActive]}
-              testID={`grid-sub-mode-${sm}`}
-            >
-              <Ionicons
-                name={sm === "list" ? "list-outline" : "map-outline"}
-                size={12}
-                color={active ? "#fff" : colors.onSurfaceSecondary}
-              />
-              <Text style={[gStyles.subModeText, active && { color: "#fff" }]}>
-                {sm === "list" ? "List" : "Map"}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      {mapVisible ? (
+        <>
+          <MapErrorBoundary testID="daily-route-map-error-boundary">
+            <DailyRouteMap jobs={dayJobs || jobs} userId={userId} />
+          </MapErrorBoundary>
 
-      {gridSubMode === "map" ? (
+          {/* List | Map toggle */}
+          <View style={gStyles.subModeRow} testID="grid-sub-mode-toggle">
+            {(["list", "map"] as const).map((sm) => {
+              const active = gridSubMode === sm;
+              return (
+                <Pressable
+                  key={sm}
+                  onPress={() => setGridSubMode(sm)}
+                  style={[gStyles.subModeBtn, active && gStyles.subModeBtnActive]}
+                  testID={`grid-sub-mode-${sm}`}
+                >
+                  <Ionicons
+                    name={sm === "list" ? "list-outline" : "map-outline"}
+                    size={12}
+                    color={active ? "#fff" : colors.onSurfaceSecondary}
+                  />
+                  <Text style={[gStyles.subModeText, active && { color: "#fff" }]}>
+                    {sm === "list" ? "List" : "Map"}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      ) : null}
+
+      {gridSubMode === "map" && mapVisible ? (
         <ScheduleMapLazy jobs={dayJobs || jobs} testID="schedule-day-map" />
       ) : (
         <>
@@ -1508,6 +1549,24 @@ const styles = StyleSheet.create({
 });
 
 const gStyles = StyleSheet.create({
+  mapToggleBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.xs,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  mapToggleText: {
+    flex: 1,
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+  },
   vipBadge: {
     flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
     gap: 2, backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
