@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
-import { Plus, Search, Upload, Download, Filter, MoreVertical, Users, Tag, BellRing, UserCheck, UserX, Star } from "lucide-react";
+import { Plus, Search, Upload, Download, Filter, MoreVertical, Users, Tag, BellRing, UserCheck, UserX, Star, Send } from "lucide-react";
 import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -302,6 +302,46 @@ export default function CustomersList() {
   });
   const [portalActivatedCount, setPortalActivatedCount] = useState(null);
   const [portalNotActivatedCount, setPortalNotActivatedCount] = useState(null);
+  // Feb-2026 · P44 — "No payment on file" data-quality chip.
+  //   toggle ON  → ``?has_payment_method=false``
+  //   toggle OFF → param dropped
+  // Hydrated from ``?has_payment_method=0`` (canonical shorthand).
+  // Count badge is populated by a stand-alone ``count_only`` fetch
+  // that does not compose with other filters (badge stability).
+  const [noPaymentFilter, setNoPaymentFilter] = useState(() => {
+    const raw = searchParams.get("has_payment_method");
+    return raw === "0" || raw === "false";
+  });
+  const [noPaymentCount, setNoPaymentCount] = useState(null);
+  // Feb-2026 · P44 — Per-row busy set for the "Send payment link"
+  // row action. Storing customer ids keeps concurrent clicks on
+  // different rows independent while preventing double-fire on the
+  // same row.
+  const [sendingPaymentLink, setSendingPaymentLink] = useState(new Set());
+  const handleSendPaymentLink = async (cust) => {
+    if (!cust?.id) return;
+    setSendingPaymentLink((s) => new Set(s).add(cust.id));
+    try {
+      const res = await api.post(
+        `/customers/${cust.id}/send-card-add-link`, {},
+      );
+      const to = [res.email_recipient, res.sms_recipient]
+        .filter(Boolean).join(" and ");
+      setToast({
+        tone: "success",
+        message: to ? `Payment link sent to ${to}` : "Payment link sent",
+      });
+    } catch (e) {
+      const msg = e?.detail?.code === "RATE_LIMITED"
+        ? "Please wait a few minutes before sending another link."
+        : (e?.message || "Failed to send link");
+      setToast({ tone: "error", message: msg });
+    } finally {
+      setSendingPaymentLink((s) => {
+        const n = new Set(s); n.delete(cust.id); return n;
+      });
+    }
+  };
   // Feb-2026 · P46 — ``city`` filter state must live above ``load()``
   // so its dep-array reference during render doesn't hit the TDZ.
   // Hydrated from ``?city=<value>``; URL sync lives further down.
@@ -401,6 +441,8 @@ export default function CustomersList() {
     // Feb-2026 · P43c — Portal status tri-state.
     if (portalStatusFilter === "activated") params.set("portal_activated", "true");
     else if (portalStatusFilter === "not_activated") params.set("portal_activated", "false");
+    // Feb-2026 · P44 — "No payment on file" chip.
+    if (noPaymentFilter) params.set("has_payment_method", "false");
     // Feb-2026 · P46 — city + multi-tag now flow through the backend
     // so pagination + tab counts stay honest. Repeat the ``tags``
     // key per selected value so backend gets a proper list.
@@ -468,6 +510,9 @@ export default function CustomersList() {
       if (missingAddress) p43.push("missing_address=true");
       if (portalStatusFilter === "activated") p43.push("portal_activated=true");
       else if (portalStatusFilter === "not_activated") p43.push("portal_activated=false");
+      // Feb-2026 · P44 — include "No payment on file" in the tab-count
+      // shared suffix so the tab badges stay in sync with the list.
+      if (noPaymentFilter) p43.push("has_payment_method=false");
       // Feb-2026 · P46 — tab counts must also honor city + multi-tag
       // filters so tab badges match the paginated envelope's total.
       if (city && city.trim()) {
@@ -526,7 +571,7 @@ export default function CustomersList() {
     // missing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
-       missingPhone, missingAddress, portalStatusFilter, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
+       missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
 
   // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
   // first invocation so hydrating chips from the URL on mount does
@@ -547,10 +592,12 @@ export default function CustomersList() {
     if (portalStatusFilter === "activated") next.set("portal_activated", "1");
     else if (portalStatusFilter === "not_activated") next.set("portal_activated", "0");
     else next.delete("portal_activated");
+    if (noPaymentFilter) next.set("has_payment_method", "0");
+    else next.delete("has_payment_method");
     setSearchParams(next, { replace: true });
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter]);
+  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter, noPaymentFilter]);
 
   // Feb-2026 · P43b — Fetch the total "missing address" count once
   // on mount (and whenever the tenant scope changes) so the chip
@@ -588,6 +635,24 @@ export default function CustomersList() {
       if (cancelled) return;
       setPortalActivatedCount(a?.count ?? null);
       setPortalNotActivatedCount(na?.count ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [scope]);
+
+  // Feb-2026 · P44 — "No payment on file" count. Standalone fetch;
+  // does NOT compose with other filters so the badge stays stable
+  // as the admin narrows the list.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.get(
+          "/customers?count_only=true&has_payment_method=false",
+        );
+        if (!cancelled) setNoPaymentCount(r?.count ?? 0);
+      } catch {
+        if (!cancelled) setNoPaymentCount(null);
+      }
     })();
     return () => { cancelled = true; };
   }, [scope]);
@@ -1382,6 +1447,43 @@ export default function CustomersList() {
             </span>
           ) : null}
         </button>
+        {/* Feb-2026 · P44 — "No payment on file" data-quality chip.
+             Server-side filter via ``?has_payment_method=false``.
+             Source-of-truth agrees with ``CardOnFileWarningBanner``
+             (both key on ``saved_payment_methods_count``). Counts
+             both cards AND ACH (Stripe ``us_bank_account``) — a
+             customer with either is EXCLUDED. */}
+        <button
+          onClick={() => setNoPaymentFilter((v) => !v)}
+          data-testid="customers-no-payment-filter"
+          title="Customers with no card AND no ACH bank account on file. Matches the same 'Card on file required — none saved' banner shown on customer detail."
+          className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+          style={{
+            backgroundColor: noPaymentFilter ? "#DBEAFE" : colors.surfaceSecondary,
+            color: noPaymentFilter ? "#1E3A8A" : colors.onSurfaceSecondary,
+            border: `1px solid ${noPaymentFilter ? "#93C5FD" : colors.border}`,
+          }}
+          aria-pressed={noPaymentFilter ? "true" : "false"}
+        >
+          <span
+            className="inline-block w-2 h-2 rounded-full"
+            style={{ backgroundColor: noPaymentFilter ? "#1E40AF" : "#94A3B8" }}
+          />
+          No payment on file
+          {noPaymentCount != null ? (
+            <span
+              className="ml-1 tabular-nums"
+              data-testid="customers-no-payment-count"
+              style={{
+                color: noPaymentFilter ? "#1E3A8A" : colors.onSurfaceSecondary,
+                fontWeight: 600,
+                opacity: 0.9,
+              }}
+            >
+              ({noPaymentCount})
+            </span>
+          ) : null}
+        </button>
         {/* Feb-2026 · P43c — "Portal status" tri-state segmented
              control. Only one option can be selected at a time; the
              Any option clears the filter. Two count badges hydrate
@@ -1614,6 +1716,30 @@ export default function CustomersList() {
         </div>
       ) : null}
 
+      {/* Feb-2026 · P44 — contextual banner shown ONLY when the
+          "No payment on file" chip is active. Explains WHY the
+          operator is looking at these rows and points at the row
+          action button. */}
+      {noPaymentFilter ? (
+        <div
+          className="rounded-md border p-3 mb-3 text-sm inline-flex items-start gap-2"
+          style={{
+            background: "#EFF6FF",
+            borderColor: "#BFDBFE",
+            color: "#1E3A8A",
+          }}
+          data-testid="customers-no-payment-banner"
+          role="note"
+        >
+          <span aria-hidden="true">&#9432;</span>
+          <span>
+            These customers can&rsquo;t be auto-charged for invoices
+            until they add a payment method. Use &ldquo;Send payment
+            link&rdquo; on any row to invite them to add one.
+          </span>
+        </div>
+      ) : null}
+
       {/* Data table */}
       <div
         className="rounded-2xl overflow-hidden"
@@ -1737,6 +1863,39 @@ export default function CustomersList() {
                           data-testid={`row-${c.id}-missing-card-dot`}
                           title="Card on file required — none saved"
                         />
+                      ) : null}
+                      {/* Feb-2026 · P44 — "Send payment link" row
+                          action. Visible to admins when the customer
+                          has no card AND no ACH on file (source of
+                          truth: ``has_card_on_file`` derived from
+                          ``saved_payment_methods_count``). Hits the
+                          same endpoint as the detail-page
+                          ``CardOnFileWarningBanner``, so rate limit
+                          + audit trail are unchanged. */}
+                      {isAdmin && !c.has_card_on_file ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSendPaymentLink(c);
+                          }}
+                          disabled={sendingPaymentLink.has(c.id)}
+                          data-testid={`customer-row-send-payment-link-btn-${c.id}`}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded inline-flex items-center gap-1 hover:brightness-110"
+                          style={{
+                            backgroundColor: "#FEF3C7",
+                            color: "#92400E",
+                            border: "1px solid #FDE68A",
+                            opacity: sendingPaymentLink.has(c.id) ? 0.6 : 1,
+                            cursor: sendingPaymentLink.has(c.id)
+                              ? "not-allowed" : "pointer",
+                          }}
+                          title="Email + SMS the customer a secure link to add a card or bank account"
+                        >
+                          <Send size={10} />
+                          {sendingPaymentLink.has(c.id)
+                            ? "Sending…" : "Send payment link"}
+                        </button>
                       ) : null}
                       <span
                         className="font-semibold"

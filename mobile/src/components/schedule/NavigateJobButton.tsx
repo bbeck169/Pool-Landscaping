@@ -8,12 +8,11 @@
  *   - testID: schedule-job-nav-{job_id}
  */
 import React, { useRef } from "react";
-import { Pressable, StyleSheet, Alert, Animated } from "react-native";
+import { Pressable, StyleSheet, Alert, Animated, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { openNativeNavTo } from "@/src/utils/nativeNav";
 
-/* M2 hotfix — prominent filled navy pill for nav arrow (was faint gray). */
-const NAV_NAVY = "#1B1F5C";
+const NAV_BG = "#F97316";
 
 type Props = {
   job: {
@@ -108,7 +107,7 @@ export default function NavigateJobButton({ job }: Props) {
       >
         <Ionicons
           name="navigate"
-          size={18}
+          size={16}
           color={disabled ? "#9CA3AF" : "#FFFFFF"}
         />
       </Pressable>
@@ -118,12 +117,17 @@ export default function NavigateJobButton({ job }: Props) {
 
 const s = StyleSheet.create({
   btn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: NAV_NAVY,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: NAV_BG,
     alignItems: "center",
     justifyContent: "center",
+    ...Platform.select({
+      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4 },
+      android: { elevation: 3 },
+      default: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4 },
+    }),
   },
   btnDisabled: {
     opacity: 0.35,

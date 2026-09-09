@@ -483,6 +483,22 @@ async def list_customers(
         ),
     ),
     is_muted: Optional[bool] = Query(None, description="Feb-2026 · P28 admin/super_admin only — filter to muted (true) or non-muted (false); absent = no filter"),
+    # Feb-2026 · P44 — "No payment on file" data-quality chip.
+    #   ``has_payment_method=false`` → customer has ZERO saved
+    #     payment methods (no card AND no us_bank_account). Uses the
+    #     same ``customers.saved_payment_methods_count`` denorm the
+    #     ``CardOnFileWarningBanner`` reads (maintained by every
+    #     Stripe attach + detach code path in
+    #     ``services/payments/stripe_charge.py``). Because the denorm
+    #     counts ALL payment_methods rows regardless of ``type``, the
+    #     filter honours both cards and ACH bank accounts without a
+    #     $lookup.
+    #   ``has_payment_method=true`` → count > 0 (any card OR ACH).
+    #   Omitted (``None``) → no filter.
+    # NOTE: banner + filter must agree. If ``has_card_on_file`` is
+    # true for a customer, they must NOT match
+    # ``has_payment_method=false``.
+    has_payment_method: Optional[bool] = None,
     count_only: bool = False,
     include_deleted: bool = Query(False, description="Feb-2026 · P25 super_admin only — include soft-deleted customers"),
     include_merged: bool = Query(False, description="Feb-2026 · Customer Merge — include records whose ``merged_into`` is set. Default false — merged rows are hidden so admins don't see stale duplicates."),
@@ -803,6 +819,23 @@ async def list_customers(
                 ],
             }]
         # ``all`` → intentionally no-op.
+    # Feb-2026 · P44 — "No payment on file" filter body. Matches the
+    # exact source-of-truth the ``CardOnFileWarningBanner`` reads —
+    # ``customers.saved_payment_methods_count`` — so filter and
+    # banner never disagree.
+    if has_payment_method is not None:
+        if has_payment_method:
+            q["$and"] = q.get("$and", []) + [{
+                "saved_payment_methods_count": {"$gt": 0},
+            }]
+        else:
+            q["$and"] = q.get("$and", []) + [{
+                "$or": [
+                    {"saved_payment_methods_count": {"$exists": False}},
+                    {"saved_payment_methods_count": None},
+                    {"saved_payment_methods_count": 0},
+                ],
+            }]
     if count_only:
         return {"count": await db.customers.count_documents(q)}
 
