@@ -150,7 +150,8 @@ def _stub_variant(channel: str, topic: str, brand: dict) -> dict:
             "cta": "Book your first visit today.", "character_limit": limit}
 
 
-async def _ai_variant(channel: str, topic: str, brand: dict, session: Optional[str] = None) -> dict:
+async def _ai_variant(channel: str, topic: str, brand: dict, session: Optional[str] = None,
+                       tenant_id: Optional[str] = None) -> dict:
     """Real LLM-generated post variant. Falls back to stub if key absent or call fails."""
     key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
     if not key:
@@ -179,6 +180,7 @@ async def _ai_variant(channel: str, topic: str, brand: dict, session: Optional[s
         result = await call_llm_with_fallback(
             system_prompt=system, user_text=prompt,
             provider="anthropic", model="claude-sonnet-4-5",
+            tenant_id=tenant_id,
             parse_json=False,
         )
         if is_ai_cap_exceeded(result) or result.get("error"):
@@ -201,7 +203,8 @@ async def _ai_variant(channel: str, topic: str, brand: dict, session: Optional[s
         return _stub_variant(channel, topic, brand)
 
 
-async def _ai_email(topic: str, goal: str, brand: dict, session: Optional[str] = None) -> dict:
+async def _ai_email(topic: str, goal: str, brand: dict, session: Optional[str] = None,
+                     tenant_id: Optional[str] = None) -> dict:
     """LLM-generated email (subject + body). Falls back to stub."""
     key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
     if not key:
@@ -224,6 +227,7 @@ async def _ai_email(topic: str, goal: str, brand: dict, session: Optional[str] =
         result = await call_llm_with_fallback(
             system_prompt=system, user_text=prompt,
             provider="anthropic", model="claude-sonnet-4-5",
+            tenant_id=tenant_id,
             parse_json=False,
         )
         if is_ai_cap_exceeded(result) or result.get("error"):
@@ -243,7 +247,8 @@ async def _ai_email(topic: str, goal: str, brand: dict, session: Optional[str] =
         return {"subject": f"[{brand.get('tone')}] {goal[:60]}", "copy": _stub_note()}
 
 
-async def _ai_sms(topic: str, goal: str, brand: dict, session: Optional[str] = None) -> str:
+async def _ai_sms(topic: str, goal: str, brand: dict, session: Optional[str] = None,
+                   tenant_id: Optional[str] = None) -> str:
     """LLM-generated SMS (<=160 chars). Falls back to stub."""
     key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
     if not key:
@@ -265,6 +270,7 @@ async def _ai_sms(topic: str, goal: str, brand: dict, session: Optional[str] = N
         result = await call_llm_with_fallback(
             system_prompt=system, user_text=prompt,
             provider="anthropic", model="claude-sonnet-4-5",
+            tenant_id=tenant_id,
             parse_json=False,
         )
         if is_ai_cap_exceeded(result) or result.get("error"):
@@ -363,7 +369,7 @@ async def generate_campaign(cid: str,
     for ch in channels:
         if ch in ("email", "sms"):
             continue
-        v = await _ai_variant(ch, goal, brand, session=session)
+        v = await _ai_variant(ch, goal, brand, session=session, tenant_id=tenant["id"])
         items_created.append(await _create_queue_item({
             "type": "social_post", "channel": ch, "campaign_id": cid,
             "copy": v["copy"], "cta": v["cta"], "hero_image_url": None,
@@ -372,20 +378,22 @@ async def generate_campaign(cid: str,
         }, tenant_id=tenant["id"]))
     if "email" in channels:
         for i in range(2):
-            em = await _ai_email(f"{goal} — variant {i+1}", goal, brand, session=session)
+            em = await _ai_email(f"{goal} — variant {i+1}", goal, brand, session=session,
+                                    tenant_id=tenant["id"])
             items_created.append(await _create_queue_item({
                 "type": "email", "channel": "email", "campaign_id": cid,
                 "subject": em["subject"], "copy": em["copy"],
             }, tenant_id=tenant["id"]))
     if "sms" in channels:
         for i in range(3):
-            sms_copy = await _ai_sms(f"{goal} — variant {i+1}", goal, brand, session=session)
+            sms_copy = await _ai_sms(f"{goal} — variant {i+1}", goal, brand, session=session,
+                                          tenant_id=tenant["id"])
             items_created.append(await _create_queue_item({
                 "type": "sms", "channel": "sms", "campaign_id": cid,
                 "copy": sms_copy,
             }, tenant_id=tenant["id"]))
     if "gbp" in channels or "google" in channels:
-        v = await _ai_variant("gbp", goal, brand, session=session)
+        v = await _ai_variant("gbp", goal, brand, session=session, tenant_id=tenant["id"])
         items_created.append(await _create_queue_item({
             "type": "gbp_post", "channel": "gbp", "campaign_id": cid,
             "copy": v["copy"],
@@ -425,7 +433,8 @@ async def generate_post_variants(body: PostGenIn,
     session = f"posts-{new_id()[:8]}"
     variants = []
     for ch in body.channels:
-        variants.append(await _ai_variant(ch, body.topic, brand, session=session))
+        variants.append(await _ai_variant(ch, body.topic, brand, session=session,
+                                              tenant_id=tenant["id"]))
     items = []
     for v in variants:
         items.append(await _create_queue_item({

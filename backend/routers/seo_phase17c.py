@@ -59,7 +59,8 @@ _PATCH_TYPE = {
 
 
 async def _claude_patch(issue_code: str, page_url: str,
-                          current_value: str, page_context: str) -> Dict[str, Any]:
+                          current_value: str, page_context: str,
+                          tenant_id: Optional[str] = None) -> Dict[str, Any]:
     """Ask Claude for a concrete patch. Returns
     {suggested_value, patch_snippet, rationale, mocked:bool}."""
     if not EMERGENT_LLM_KEY:
@@ -87,6 +88,7 @@ async def _claude_patch(issue_code: str, page_url: str,
         result = await call_llm_with_fallback(
             system_prompt=system, user_text=prompt,
             provider="anthropic", model="claude-sonnet-4-6",
+            tenant_id=tenant_id,
             parse_json=False,
         )
         if is_ai_cap_exceeded(result):
@@ -183,7 +185,8 @@ async def otto_generate_fixes(body: OttoGenerateIn,
             elif code.startswith("H1"):
                 current_value = ""
 
-            ai = await _claude_patch(code, page_url, current_value, page_context)
+            ai = await _claude_patch(code, page_url, current_value, page_context,
+                                          tenant_id=tenant["id"])
             if not ai.get("patch_snippet"):
                 fb = _static_fallback_patch(code, page_url, current_value)
                 if not ai.get("suggested_value"):

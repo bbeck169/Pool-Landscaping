@@ -522,7 +522,8 @@ def _flesch_reading_ease(text: str) -> float:
     return round(max(0.0, min(100.0, score)), 1)
 
 
-async def _llm_semantic(target: str, sample: str) -> Dict[str, Any]:
+async def _llm_semantic(target: str, sample: str,
+                          tenant_id: Optional[str] = None) -> Dict[str, Any]:
     """Real Claude call for semantic relevance + short critique."""
     if not EMERGENT_LLM_KEY:
         return {"score": 60, "critique": "LLM key not configured (stub).",
@@ -544,6 +545,7 @@ async def _llm_semantic(target: str, sample: str) -> Dict[str, Any]:
             ),
             user_text=prompt,
             provider="anthropic", model="claude-sonnet-4-6",
+            tenant_id=tenant_id,
             parse_json=False,
         )
         if is_ai_cap_exceeded(result):
@@ -648,7 +650,8 @@ async def content_score(body: ContentScoreIn,
 
     # LLM semantic.
     llm = await _llm_semantic(body.target_keyword,
-                              plain[:4000] if plain else html[:4000])
+                              plain[:4000] if plain else html[:4000],
+                              tenant_id=tenant["id"])
 
     breakdown = {
         "readability":         min(100, int(readability)),

@@ -266,7 +266,8 @@ async def generate_sop(body: SopGenReq, admin: dict = Depends(require_admin),
         f"Extra context: {body.hint or 'none'}\n"
         f"Format as a numbered list of concrete tech-friendly steps."
     )
-    content = await _ai_generate(LANA_SYSTEM, prompt, max_tokens=600)
+    content = await _ai_generate(LANA_SYSTEM, prompt, max_tokens=600,
+                                    tenant_id=tenant["id"])
     return {"title": body.title, "category": body.category, "content": content}
 
 
@@ -455,7 +456,8 @@ async def draft_agenda(hid: str, admin: dict = Depends(require_admin),
         f"Use headings: 1) Wins & Recognition, 2) KPI Check, 3) Rocks, "
         f"4) Customer / Issues, 5) IDS (Identify-Discuss-Solve), 6) Action Items."
     )
-    agenda = await _ai_generate(LANA_SYSTEM, prompt, max_tokens=500)
+    agenda = await _ai_generate(LANA_SYSTEM, prompt, max_tokens=500,
+                                   tenant_id=tenant["id"])
     await db.huddles.update_one(
         {"id": hid, "tenant_id": tenant["id"]},
         {"$set": {"agenda": agenda, "agenda_generated_at": now_iso()}},
@@ -650,7 +652,8 @@ async def draft_retro(sid: str, admin: dict = Depends(require_admin),
         f"Misses: {s.get('review', {}).get('misses') or []}\n"
         f"Return three sections: 'Keep', 'Stop', 'Start' — 3 bullets each."
     )
-    text = await _ai_generate(LANA_SYSTEM, prompt, max_tokens=400)
+    text = await _ai_generate(LANA_SYSTEM, prompt, max_tokens=400,
+                                  tenant_id=tenant["id"])
     await db.sprints.update_one(
         {"id": sid, "tenant_id": tenant["id"]},
         {"$set": {"retro_ai": text, "retro_ai_at": now_iso()}},

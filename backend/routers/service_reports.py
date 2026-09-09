@@ -1620,7 +1620,8 @@ _DOSING_LLM_SYSTEM = (
 )
 
 
-async def _llm_rephrase_reasons(recs: list[dict]) -> tuple[list[dict], int, Optional[str]]:
+async def _llm_rephrase_reasons(recs: list[dict],
+                                    tenant_id: Optional[str] = None) -> tuple[list[dict], int, Optional[str]]:
     """Best-effort — returns (new_recs, tokens_used, error_or_None).
     On any failure returns the recs untouched."""
     if not recs:
@@ -1650,6 +1651,7 @@ async def _llm_rephrase_reasons(recs: list[dict]) -> tuple[list[dict], int, Opti
         result_llm = await call_llm_with_fallback(
             system_prompt=_DOSING_LLM_SYSTEM, user_text=prompt,
             provider="anthropic", model="claude-sonnet-4-6",
+            tenant_id=tenant_id,
             parse_json=False,
             max_tokens=800,
         )
@@ -1734,7 +1736,7 @@ async def recommend_chemicals(body: RecommendChemicalsBody,
     tokens = 0
     llm_error: Optional[str] = None
     if body.use_llm_phrasing and recs:
-        recs, tokens, llm_error = await _llm_rephrase_reasons(recs)
+        recs, tokens, llm_error = await _llm_rephrase_reasons(recs, tenant_id=tenant["id"])
         source = "deterministic+llm" if not llm_error else "deterministic-only"
 
     return {

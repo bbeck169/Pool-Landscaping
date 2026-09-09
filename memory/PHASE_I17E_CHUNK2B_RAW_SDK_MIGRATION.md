@@ -147,14 +147,41 @@ passing tests** (Feb-2026), broken down as:
 Regression sweep: prior chunk 2 + 2.c suites still 100 % green
 (27 tests, verified during ship).
 
-## Callers that still opt out of BYO (follow-up)
+## Callers that still opt out of BYO (follow-up) — SHIPPED · Feb-2026
 
-Every migrated helper accepts `tenant_id=…` but a handful still pass
-`None` to preserve backward-compatibility with pre-Chunk 2.b callers
-that didn't have the tenant in scope. Threading `tenant_id` is a
-one-line follow-up per callsite and doesn't require a new phase —
-same shape as the "BYO opt-in" migration described in the Chunk 2
-memory doc.
+Every migrated helper accepts `tenant_id=…`. In the initial Chunk 2.b
+push a handful of callers still passed `None` to preserve the "zero
+behavior change" invariant. The follow-up push threaded the real
+`tenant["id"]` down each of those 5 callsites so per-tenant BYO keys
++ spend caps actually fire:
+
+| # | File | Caller function | Callsite endpoint(s) | Cap posture |
+| - | ---- | --------------- | -------------------- | ----------- |
+| 1 | `routers/business_os.py` | `_ai_generate` (accepts `tenant_id`; 3 callers pass it) | `POST /sops/generate`, `POST /huddles/{hid}/agenda-ai`, `POST /sprints/{sid}/retro-ai` | best-effort — degrades to friendly stub |
+| 2 | `routers/marketing_studio.py` | `_ai_variant` / `_ai_email` / `_ai_sms` (all three signatures gained `tenant_id`) | `POST /marketing/campaigns/{cid}/generate` (5 callsites), `POST /marketing/posts/generate` (1) | best-effort — falls back to deterministic stub |
+| 3 | `routers/seo_phase17c.py` | `_claude_patch` | `POST /otto/generate-fixes` (per-issue loop) | transactional — returns `mocked=True` + `rationale="ai_spend_cap_exceeded"` per issue so the aggregated endpoint response has an audit trail (does NOT raise 429 mid-loop) |
+| 4 | `routers/seo_agentic.py` | `_llm_semantic` | `POST /seo/content-score` | best-effort — returns mocked `score=60` so the composite 8-input score still succeeds |
+| 5 | `routers/service_reports.py` | `_llm_rephrase_reasons` | `POST /service-report/recommend-chemicals` | best-effort — passes deterministic recs through untouched + surfaces `err="ai_spend_cap_exceeded"` |
+
+**Cap posture note (§3 in the callout above):** OTTO's `_claude_patch`
+is called from a transactional endpoint but keeps the "return mocked"
+posture on cap-exceeded (not raise-429). Rationale: the endpoint
+loops over multiple issues per audit; raising 429 mid-loop would kill
+the partial batch. The `mocked=True` shape lets the endpoint persist
+each issue's outcome (including the "we skipped this one because AI
+cap was exceeded" audit trail) and still return a coherent aggregated
+response. Consistent with the pre-follow-up cap posture already in
+the file — no posture change was needed.
+
+**Zero-behavior-change guarantee:** every migrated helper's default
+`tenant_id=None` value is preserved so pre-follow-up callers that
+never had a tenant in scope keep working unchanged.
+
+**Test coverage (Chunk 2.b follow-up):** 5 runtime tests
+(`test_<file>_threads_tenant_id`) + 5 parametrised AST guards
+(`test_byo_followup_callers_thread_tenant_id_in_source`) asserting
+the callsite fragments literally reference `tenant["id"]`.  All 10
+green.  All tests are monkeypatch-only; no Mongo required.
 
 ## Guardrails honored (from the scope §7)
 

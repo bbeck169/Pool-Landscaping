@@ -354,3 +354,351 @@ def test_chokepoint_cap_exceeded_doc_still_present():
         or "TenantAIUsageCapExceeded" in src
         or "ai_spend_cap_exceeded" in src
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 10. BYO opt-in follow-up (Chunk 2.b · Feb-2026, second push)
+# ─────────────────────────────────────────────────────────────────────
+# The initial Chunk 2.b push migrated 21 files off the raw SDK but a
+# handful of callers still passed ``tenant_id=None`` to preserve the
+# "zero behavior change" invariant. This second push threads the real
+# ``tenant["id"]`` down each of those 5 callsites so BYO keys +
+# per-tenant cap actually kick in.
+#
+# The tests below patch ``call_llm_with_fallback`` and drive each
+# migrated function to prove:
+#
+#   (a) the chokepoint receives a non-None ``tenant_id`` kwarg, AND
+#   (b) the existing cap posture is preserved (transactional callers
+#       raise / caller-side-map to 429; background / helper callers
+#       degrade gracefully to the mocked shape).
+#
+# All tests are import + monkeypatch-only — no Mongo required, so
+# they run even while preview Mongo is down.
+import asyncio
+from typing import Any, Dict, Optional
+from unittest.mock import AsyncMock
+
+
+def _make_ok_result(text: str = '{"score": 82, "critique": "ok"}') -> Dict[str, Any]:
+    """A chokepoint result that mimics the ``parse_json=False`` shape
+    the Chunk 2.b callers expect. Never cap-exceeded, never errored."""
+    return {"raw": {"text": text}, "provider": "anthropic", "error": None}
+
+
+def _make_cap_exceeded_result() -> Dict[str, Any]:
+    """Cap-exceeded shape per the chokepoint's Chunk 2 contract."""
+    return {"raw": None, "provider": None,
+             "error": "ai_spend_cap_exceeded",
+             "cap_exceeded": True}
+
+
+# ── 1. business_os._ai_generate — best-effort helper (degrades) ──
+def test_business_os_ai_generate_threads_tenant_id(monkeypatch):
+    """``_ai_generate`` MUST forward the caller's ``tenant_id`` to the
+    chokepoint. Cap-exceeded path degrades to a friendly stub — never
+    raises — because SOP / huddle / retro drafters are non-blocking."""
+    from routers import business_os
+
+    monkeypatch.setenv("EMERGENT_LLM_KEY", "test-key")
+    monkeypatch.setattr(business_os, "EMERGENT_LLM_KEY", "test-key")
+
+    captured: Dict[str, Any] = {}
+
+    async def fake_call(**kwargs):
+        captured.update(kwargs)
+        return _make_ok_result("Step 1. Suit up.\nStep 2. Test.")
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", fake_call,
+    )
+
+    out = asyncio.run(business_os._ai_generate(
+        "system", "user prompt", max_tokens=600,
+        tenant_id="tenant-abc-123",
+    ))
+    assert "Step 1" in out
+    assert captured.get("tenant_id") == "tenant-abc-123", (
+        "BYO regression: business_os._ai_generate did not forward "
+        "tenant_id to call_llm_with_fallback. Per-tenant BYO keys / "
+        "AI spend caps will not fire."
+    )
+
+    # Cap-exceeded posture — best-effort, degrades to stub, no raise.
+    async def fake_call_cap(**kwargs):
+        return _make_cap_exceeded_result()
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", fake_call_cap,
+    )
+    out = asyncio.run(business_os._ai_generate(
+        "system", "user prompt", max_tokens=600,
+        tenant_id="tenant-abc-123",
+    ))
+    assert "cap" in out.lower() or "unavailable" in out.lower(), (
+        "Cap-exceeded posture regression: business_os._ai_generate "
+        "should degrade to a friendly stub on cap-exceeded, not raise."
+    )
+
+
+# ── 2. marketing_studio._ai_variant — best-effort helper (degrades) ──
+def test_marketing_studio_ai_variant_threads_tenant_id(monkeypatch):
+    """``_ai_variant`` / ``_ai_email`` / ``_ai_sms`` all accept
+    ``tenant_id`` post-follow-up. Best-effort — cap-exceeded falls
+    back to a deterministic stub."""
+    from routers import marketing_studio
+
+    monkeypatch.setenv("EMERGENT_LLM_KEY", "test-key")
+    monkeypatch.setattr(marketing_studio, "EMERGENT_LLM_KEY", "test-key")
+
+    captured: Dict[str, Any] = {}
+
+    async def fake_call(**kwargs):
+        captured.update(kwargs)
+        return _make_ok_result(
+            '{"copy": "Pool day!", "hashtags": "#pool", "cta": "Book now"}'
+        )
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", fake_call,
+    )
+
+    brand = {"tone": "professional", "service_area": "Peoria",
+              "service_zips": ["85383"]}
+    out = asyncio.run(marketing_studio._ai_variant(
+        "facebook", "spring cleanup", brand, tenant_id="tenant-mkt-77",
+    ))
+    assert out["channel"] == "facebook"
+    assert captured.get("tenant_id") == "tenant-mkt-77", (
+        "BYO regression: marketing_studio._ai_variant did not "
+        "forward tenant_id to the chokepoint."
+    )
+
+    # Cap-exceeded — falls back to _stub_variant, no raise.
+    async def fake_call_cap(**kwargs):
+        return _make_cap_exceeded_result()
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", fake_call_cap,
+    )
+    out = asyncio.run(marketing_studio._ai_variant(
+        "facebook", "spring cleanup", brand, tenant_id="tenant-mkt-77",
+    ))
+    # Stub variant returns the same schema shape; test that it didn't
+    # raise + shape is preserved.
+    assert isinstance(out, dict) and "copy" in out
+
+
+# ── 3. seo_phase17c._claude_patch — transactional (OTTO generate) ──
+def test_seo_phase17c_claude_patch_threads_tenant_id(monkeypatch):
+    """OTTO ``_claude_patch`` is invoked from the transactional
+    ``POST /otto/generate-fixes`` endpoint (user clicks button and
+    waits). Cap-exceeded returns ``mocked=True`` + reason so the
+    caller can still write the fix row — the endpoint aggregates
+    per-issue outcomes and does not raise 429 mid-loop."""
+    from routers import seo_phase17c
+
+    monkeypatch.setenv("EMERGENT_LLM_KEY", "test-key")
+    monkeypatch.setattr(seo_phase17c, "EMERGENT_LLM_KEY", "test-key")
+
+    captured: Dict[str, Any] = {}
+
+    async def fake_call(**kwargs):
+        captured.update(kwargs)
+        return _make_ok_result(
+            '{"suggested_value": "Pool Cleaning Peoria AZ",'
+            ' "patch_snippet": "<title>Pool Cleaning Peoria AZ</title>",'
+            ' "rationale": "keyword-rich"}'
+        )
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", fake_call,
+    )
+
+    out = asyncio.run(seo_phase17c._claude_patch(
+        "TITLE_MISSING", "https://example.com", "",
+        "Pool cleaning services in Peoria",
+        tenant_id="tenant-seo-42",
+    ))
+    assert out["patch_snippet"].startswith("<title>")
+    assert captured.get("tenant_id") == "tenant-seo-42", (
+        "BYO regression: seo_phase17c._claude_patch did not forward "
+        "tenant_id. Per-tenant cap on OTTO generate will not fire."
+    )
+
+    # Cap-exceeded — returns mocked=True (loop-safe), no raise.
+    async def fake_call_cap(**kwargs):
+        return _make_cap_exceeded_result()
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", fake_call_cap,
+    )
+    out = asyncio.run(seo_phase17c._claude_patch(
+        "TITLE_MISSING", "https://example.com", "",
+        "Pool cleaning services in Peoria",
+        tenant_id="tenant-seo-42",
+    ))
+    assert out.get("mocked") is True
+    assert out.get("rationale") == "ai_spend_cap_exceeded", (
+        "Cap-exceeded posture regression: OTTO _claude_patch should "
+        "surface 'ai_spend_cap_exceeded' in the rationale so the "
+        "endpoint's aggregated response has an audit trail."
+    )
+
+
+# ── 4. seo_agentic._llm_semantic — best-effort helper (degrades) ──
+def test_seo_agentic_llm_semantic_threads_tenant_id(monkeypatch):
+    """The semantic-relevance scorer is one input among 8 in the
+    ``/seo/content-score`` breakdown. Cap-exceeded returns a mocked
+    ``score=60`` so the composite score endpoint still succeeds."""
+    from routers import seo_agentic
+
+    monkeypatch.setenv("EMERGENT_LLM_KEY", "test-key")
+    monkeypatch.setattr(seo_agentic, "EMERGENT_LLM_KEY", "test-key")
+
+    captured: Dict[str, Any] = {}
+
+    async def fake_call(**kwargs):
+        captured.update(kwargs)
+        return _make_ok_result('{"score": 88, "critique": "on-topic"}')
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", fake_call,
+    )
+
+    out = asyncio.run(seo_agentic._llm_semantic(
+        "pool cleaning", "Weekly pool cleaning in Peoria AZ.",
+        tenant_id="tenant-agentic-99",
+    ))
+    assert out["score"] == 88
+    assert captured.get("tenant_id") == "tenant-agentic-99", (
+        "BYO regression: seo_agentic._llm_semantic did not forward "
+        "tenant_id to the chokepoint."
+    )
+
+    # Cap-exceeded — mocked score=60, no raise.
+    async def fake_call_cap(**kwargs):
+        return _make_cap_exceeded_result()
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", fake_call_cap,
+    )
+    out = asyncio.run(seo_agentic._llm_semantic(
+        "pool cleaning", "Weekly pool cleaning in Peoria AZ.",
+        tenant_id="tenant-agentic-99",
+    ))
+    assert out.get("mocked") is True
+    assert out.get("score") == 60, (
+        "Cap-exceeded posture regression: seo_agentic._llm_semantic "
+        "should return score=60 (mocked stub) so the composite "
+        "content-score endpoint still succeeds."
+    )
+
+
+# ── 5. service_reports._llm_rephrase_reasons — best-effort helper ──
+def test_service_reports_rephrase_threads_tenant_id(monkeypatch):
+    """The dosing rephraser is best-effort — the underlying
+    deterministic recs are ALREADY computed and returned; the LLM only
+    prettifies the ``reason`` field. Cap-exceeded returns the recs
+    untouched + an ``ai_spend_cap_exceeded`` error string."""
+    from routers import service_reports
+
+    monkeypatch.setenv("EMERGENT_LLM_KEY", "test-key")
+    import config
+    monkeypatch.setattr(config, "EMERGENT_LLM_KEY", "test-key")
+
+    captured: Dict[str, Any] = {}
+
+    async def fake_call(**kwargs):
+        captured.update(kwargs)
+        return _make_ok_result(
+            '[{"chemical": "chlorine", "quantity": 2, "unit": "cups",'
+            ' "reason": "Raise free chlorine to 3ppm target"}]'
+        )
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", fake_call,
+    )
+
+    recs_in = [{"chemical": "chlorine", "quantity": 2, "unit": "cups",
+                 "reason": "Bring FC up."}]
+    recs_out, tokens, err = asyncio.run(service_reports._llm_rephrase_reasons(
+        recs_in, tenant_id="tenant-svc-11",
+    ))
+    assert err is None
+    assert recs_out[0]["reason"].startswith("Raise free chlorine")
+    assert captured.get("tenant_id") == "tenant-svc-11", (
+        "BYO regression: service_reports._llm_rephrase_reasons did "
+        "not forward tenant_id to the chokepoint. Per-tenant BYO "
+        "keys / cap enforcement on the dosing rephraser will not fire."
+    )
+
+    # Cap-exceeded — recs pass through unchanged + error string.
+    async def fake_call_cap(**kwargs):
+        return _make_cap_exceeded_result()
+
+    monkeypatch.setattr(
+        "services.llm_provider.call_llm_with_fallback", fake_call_cap,
+    )
+    recs_out, tokens, err = asyncio.run(service_reports._llm_rephrase_reasons(
+        recs_in, tenant_id="tenant-svc-11",
+    ))
+    assert err == "ai_spend_cap_exceeded"
+    assert recs_out == recs_in, (
+        "Cap-exceeded posture regression: rephraser should pass "
+        "recs through untouched when the AI cap is exceeded (the "
+        "underlying deterministic recs are still valid)."
+    )
+    assert tokens == 0
+
+
+# ── AST guard: every follow-up callsite explicitly threads tenant_id ──
+_BYO_FOLLOWUP_CALLERS = [
+    ("routers/business_os.py",
+       ["_ai_generate(LANA_SYSTEM"]),
+    ("routers/marketing_studio.py",
+       ["_ai_variant(ch, goal, brand, session=session, tenant_id=tenant",
+        "_ai_email(f\"{goal} — variant {i+1}\", goal, brand, session=session,",
+        "_ai_sms(f\"{goal} — variant {i+1}\", goal, brand, session=session,",
+        "_ai_variant(\"gbp\", goal, brand, session=session, tenant_id=tenant",
+        "_ai_variant(ch, body.topic, brand, session=session,"]),
+    ("routers/seo_phase17c.py",
+       ["_claude_patch(code, page_url, current_value, page_context,"]),
+    ("routers/seo_agentic.py",
+       ["_llm_semantic(body.target_keyword,"]),
+    ("routers/service_reports.py",
+       ["_llm_rephrase_reasons(recs, tenant_id="]),
+]
+
+
+@pytest.mark.parametrize("rel,fragments", _BYO_FOLLOWUP_CALLERS)
+def test_byo_followup_callers_thread_tenant_id_in_source(rel, fragments):
+    """Compile-time AST guard: the five follow-up callsites MUST
+    reference the migrated helper WITH a ``tenant_id=`` (or
+    ``tenant["id"]``) argument at the callsite. Removing the
+    ``tenant_id=`` on any of these callsites would silently regress
+    BYO opt-in without breaking any runtime test."""
+    src = _read(rel)
+    for frag in fragments:
+        assert frag in src, (
+            f"BYO regression in {rel}: expected callsite fragment "
+            f"{frag!r} not found. The follow-up migration threaded "
+            f"tenant_id explicitly at each callsite — a callsite "
+            f"that no longer passes it silently reverts BYO opt-in."
+        )
+    # Also assert every callsite fragment is followed within 200 chars
+    # by ``tenant`` (either ``tenant_id=`` or ``tenant["id"]``).
+    for frag in fragments:
+        idx = src.find(frag)
+        window = src[idx:idx + 500]
+        assert (
+            "tenant_id=tenant" in window
+            or "tenant_id=admin" in window
+            or "tenant_id=user" in window
+            or "tenant[\"id\"]" in window
+        ), (
+            f"BYO regression in {rel} near fragment {frag!r}: "
+            f"callsite does not thread a real tenant identifier "
+            f"within 500 chars.  Threading ``tenant_id=None`` is "
+            f"explicitly banned by the follow-up."
+        )
