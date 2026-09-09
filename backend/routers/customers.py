@@ -447,32 +447,39 @@ async def list_customers(
     # chip count exactly matches "customers that can't be pinned on
     # the map".
     missing_address: Optional[bool] = False,
-    # Feb-2026 · P43c — "Portal status" tri-state filter.
-    #   ``portal_activated=true``  → customer has EITHER ``has_login``
-    #     True (staff / self-serve created a portal password) OR
-    #     ``last_portal_login_at`` set (customer has actually signed
-    #     in at least once). Any single positive signal counts.
+    # Feb-2026 · P43c CORRECTED — "Portal status" tri-state filter.
+    #   ``portal_activated=true``  → customer has EITHER
+    #     ``portal_password_set_at`` set (customer chose their own
+    #     password via ``/auth/reset-password`` or in-portal Change
+    #     Password) OR ``last_portal_login_at`` set (customer has
+    #     actually signed in at least once). Any single positive
+    #     signal counts. This is the **customer engagement** signal.
     #   ``portal_activated=false`` → NEITHER signal is present —
-    #     ``has_login`` is not truthy AND ``last_portal_login_at``
-    #     is null/missing/empty. These are the "created by staff
-    #     but never onboarded" customers the chip surfaces.
+    #     the admin may have sent an invite (``has_login=True``)
+    #     but the customer has not chosen a password AND has never
+    #     signed in. These are the "invited but not onboarded"
+    #     customers the chip surfaces.
     #   Omitted (``None``) → no filter, all customers pass.
-    # The two positive signals are the strongest ones on the
-    # ``customers`` document; no cross-collection join into ``users``
-    # is needed. Composes AND with every other filter (P43 chips,
-    # search, active/inactive tabs, etc.).
+    # NOTE: ``has_login`` (denorm flipped True by admin invite send)
+    # is INTENTIONALLY excluded — it describes admin state, not
+    # customer engagement. The previous over-loose definition
+    # counted every invited customer as "activated"; the corrected
+    # definition matches the "has this customer actually onboarded
+    # themselves?" question the operator is asking.
     portal_activated: Optional[bool] = None,
     portal_status: Optional[str] = Query(
         None,
         description=(
-            "Phase G4a · Feb-2026 — filter by customer-portal "
-            "activation state. Values: ``all`` (or omit) = no filter; "
-            "``activated`` = customer has an active portal login "
-            "(``customers.has_login == True`` — denorm stamped when "
-            "``POST /customers/{cid}/portal-invite`` provisions the "
-            "``users`` doc); ``not_activated`` = no portal login "
-            "(missing or false). Composes as intersection with "
-            "``is_active`` / ``is_muted`` / search / tag filters."
+            "Phase G4a · Feb-2026 (P43c-corrected) — filter by "
+            "customer-portal activation state. Values: ``all`` "
+            "(or omit) = no filter; ``activated`` = customer has "
+            "``portal_password_set_at`` OR ``last_portal_login_at`` "
+            "set (the customer has actually chosen a password or "
+            "signed in at least once); ``not_activated`` = neither "
+            "signal is present (invited but not onboarded). "
+            "``has_login`` is not part of the definition. Composes "
+            "as intersection with ``is_active`` / ``is_muted`` / "
+            "search / tag filters."
         ),
     ),
     is_muted: Optional[bool] = Query(None, description="Feb-2026 · P28 admin/super_admin only — filter to muted (true) or non-muted (false); absent = no filter"),
@@ -718,14 +725,20 @@ async def list_customers(
                 ]},
             ],
         }]
-    # Feb-2026 · P43c — "Portal status" tri-state filter. Positive
-    # signals: ``has_login: True`` (portal account created — password
-    # persisted) OR ``last_portal_login_at`` set (customer has signed
-    # in at least once). Either counts.
+    # Feb-2026 · P43c CORRECTED — "Portal status" tri-state filter.
+    # Positive signals (customer engagement, not admin state):
+    #   * ``portal_password_set_at`` set — customer chose their own
+    #     password (see ``auth._apply_new_password`` +
+    #     ``auth.change_my_password`` for the denorm).
+    #   * ``last_portal_login_at`` set — customer has signed in at
+    #     least once (see ``auth.login`` / ``auth.login-select``).
+    # ``has_login`` (admin-side invite flag) is INTENTIONALLY not
+    # part of the definition — see the parameter docstring above.
     if portal_activated is not None:
         _activated_signals = {
             "$or": [
-                {"has_login": True},
+                {"portal_password_set_at": {"$exists": True,
+                                              "$nin": [None, ""]}},
                 {"last_portal_login_at": {"$exists": True,
                                              "$nin": [None, ""]}},
             ],
@@ -736,19 +749,19 @@ async def list_customers(
             # Not activated → NEITHER signal is present.
             q["$and"] = q.get("$and", []) + [{
                 "$and": [
-                    {"$or": [{"has_login": {"$exists": False}},
-                              {"has_login": None},
-                              {"has_login": False}]},
+                    {"$or": [{"portal_password_set_at": {"$exists": False}},
+                              {"portal_password_set_at": None},
+                              {"portal_password_set_at": ""}]},
                     {"$or": [{"last_portal_login_at": {"$exists": False}},
                               {"last_portal_login_at": None},
                               {"last_portal_login_at": ""}]},
                 ],
             }]
-    # Phase G4a · Feb-2026 — Portal-activation cohort filter. Uses the
-    # ``customers.has_login`` denorm (set to True on
-    # ``portal-invite``, False on ``portal-revoke``) for O(index)
-    # perf. ``activated`` = denorm True; ``not_activated`` = missing,
-    # false, or null. Unknown values → 400 so typos surface early.
+    # Phase G4a · Feb-2026 — Portal-activation cohort filter (string
+    # alias). Uses the same corrected definition as the boolean
+    # ``portal_activated`` param above; ``has_login`` is
+    # intentionally not part of the definition. Unknown values → 400
+    # so typos surface early.
     #
     # NB: ``isinstance(portal_status, str)`` — direct callers (e.g.
     # tests that bypass FastAPI's DI) leave FastAPI ``Query(None,
@@ -770,12 +783,23 @@ async def list_customers(
                 },
             )
         if _ps == "activated":
-            q["$and"] = q.get("$and", []) + [{"has_login": True}]
-        elif _ps == "not_activated":
             q["$and"] = q.get("$and", []) + [{
                 "$or": [
-                    {"has_login": {"$ne": True}},
-                    {"has_login": {"$exists": False}},
+                    {"portal_password_set_at": {"$exists": True,
+                                                  "$nin": [None, ""]}},
+                    {"last_portal_login_at": {"$exists": True,
+                                                 "$nin": [None, ""]}},
+                ],
+            }]
+        elif _ps == "not_activated":
+            q["$and"] = q.get("$and", []) + [{
+                "$and": [
+                    {"$or": [{"portal_password_set_at": {"$exists": False}},
+                              {"portal_password_set_at": None},
+                              {"portal_password_set_at": ""}]},
+                    {"$or": [{"last_portal_login_at": {"$exists": False}},
+                              {"last_portal_login_at": None},
+                              {"last_portal_login_at": ""}]},
                 ],
             }]
         # ``all`` → intentionally no-op.

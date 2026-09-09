@@ -1,12 +1,14 @@
-"""Feb-2026 · P43c — "Portal status" tri-state filter.
+"""Feb-2026 · P43c CORRECTED — "Portal status" tri-state filter.
 
-Pins the following behaviours on ``GET /api/customers``:
+Pins the corrected behaviour on ``GET /api/customers``:
 
 * ``portal_activated=true`` matches customers with EITHER
-  ``has_login=True`` OR ``last_portal_login_at`` set.
+  ``portal_password_set_at`` set (customer chose their own password)
+  OR ``last_portal_login_at`` set (signed in at least once).
 * ``portal_activated=false`` matches customers with NEITHER signal
-  present (has_login is not truthy AND last_portal_login_at is
-  null/missing/empty).
+  present — INCLUDING customers with only ``has_login=True`` (invite
+  sent but customer never onboarded). ``has_login`` is intentionally
+  NOT part of the definition.
 * Omitted → no filter (all customers pass).
 * ``count_only=true`` variants of both truth values return matching
   cardinality.
@@ -59,16 +61,32 @@ def tenant_id():
 
 @pytest.fixture
 def seeded_customers(tenant_id):
-    """One customer per relevant portal-signal combination."""
+    """One customer per relevant portal-signal combination.
+
+    ACTIVATED (customer engagement present):
+      A. ``portal_password_set_at`` set (customer chose password)
+      B. ``last_portal_login_at`` set (signed in at least once)
+      C. both signals set
+
+    NOT ACTIVATED (no customer engagement — regardless of admin state):
+      D. no signals at all
+      E. ``portal_password_set_at`` null, ``last_portal_login_at`` null
+      F. ``last_portal_login_at`` empty string
+      G. **``has_login=True`` ONLY** — invite sent but customer never
+         chose a password or signed in. This is the entire point of
+         the corrected P43c definition: an invited-but-not-onboarded
+         customer must NOT be counted as activated.
+    """
     marker = f"p43c-{uuid.uuid4().hex[:8]}"
     now = "2026-02-14T12:00:00+00:00"
     rows = [
-        # A. has_login True, no login yet — ACTIVATED
+        # A. portal_password_set_at set — ACTIVATED
         {"id": str(uuid.uuid4()), "tenant_id": tenant_id,
-         "name": f"{marker} A_activated_login_set",
-         "is_active": True, "has_login": True,
+         "name": f"{marker} A_activated_pw_set",
+         "is_active": True,
+         "portal_password_set_at": "2026-02-01T12:00:00+00:00",
          "_p43c_marker": marker, "created_at": now},
-        # B. last_portal_login_at set, has_login missing — ACTIVATED
+        # B. last_portal_login_at set — ACTIVATED
         {"id": str(uuid.uuid4()), "tenant_id": tenant_id,
          "name": f"{marker} B_activated_logged_in",
          "is_active": True,
@@ -77,24 +95,34 @@ def seeded_customers(tenant_id):
         # C. both signals set — ACTIVATED
         {"id": str(uuid.uuid4()), "tenant_id": tenant_id,
          "name": f"{marker} C_activated_both",
-         "is_active": True, "has_login": True,
+         "is_active": True,
+         "portal_password_set_at": "2026-02-02T12:00:00+00:00",
          "last_portal_login_at": "2026-02-01T12:00:00+00:00",
          "_p43c_marker": marker, "created_at": now},
-        # D. neither field present — NOT ACTIVATED
+        # D. no fields present — NOT ACTIVATED
         {"id": str(uuid.uuid4()), "tenant_id": tenant_id,
          "name": f"{marker} D_no_signals",
          "is_active": True,
          "_p43c_marker": marker, "created_at": now},
-        # E. has_login=False + last_login=None — NOT ACTIVATED
+        # E. both fields null — NOT ACTIVATED
         {"id": str(uuid.uuid4()), "tenant_id": tenant_id,
-         "name": f"{marker} E_explicit_false",
-         "is_active": True, "has_login": False,
+         "name": f"{marker} E_explicit_nulls",
+         "is_active": True,
+         "portal_password_set_at": None,
          "last_portal_login_at": None,
          "_p43c_marker": marker, "created_at": now},
         # F. last_login empty string — NOT ACTIVATED
         {"id": str(uuid.uuid4()), "tenant_id": tenant_id,
          "name": f"{marker} F_empty_login",
          "is_active": True, "last_portal_login_at": "",
+         "_p43c_marker": marker, "created_at": now},
+        # G. has_login=True ONLY, no customer engagement — NOT ACTIVATED
+        # This is the corrected-definition invariant: the old loose
+        # definition would count this row as activated. The new
+        # definition must NOT.
+        {"id": str(uuid.uuid4()), "tenant_id": tenant_id,
+         "name": f"{marker} G_invited_but_not_onboarded",
+         "is_active": True, "has_login": True,
          "_p43c_marker": marker, "created_at": now},
     ]
     _sync_db.customers.insert_many(rows)
@@ -133,7 +161,7 @@ def test_portal_activated_true_matches_positive_signals(
     marker, _ = seeded_customers
     names = _list_names(admin_token, f"portal_activated=true&search={marker}")
     assert names == {
-        f"{marker} A_activated_login_set",
+        f"{marker} A_activated_pw_set",
         f"{marker} B_activated_logged_in",
         f"{marker} C_activated_both",
     }, names
@@ -143,17 +171,34 @@ def test_portal_activated_false_matches_no_signals(
         admin_token, seeded_customers):
     marker, _ = seeded_customers
     names = _list_names(admin_token, f"portal_activated=false&search={marker}")
+    # G must be here — invited-but-not-onboarded is the whole point.
     assert names == {
         f"{marker} D_no_signals",
-        f"{marker} E_explicit_false",
+        f"{marker} E_explicit_nulls",
         f"{marker} F_empty_login",
+        f"{marker} G_invited_but_not_onboarded",
     }, names
+
+
+def test_has_login_alone_is_not_activated(admin_token, seeded_customers):
+    """Corrected-definition invariant. ``has_login=True`` without
+    ``portal_password_set_at`` or ``last_portal_login_at`` describes
+    ADMIN state (invite sent), not customer engagement, and must
+    NOT count as activated.
+    """
+    marker, _ = seeded_customers
+    activated = _list_names(admin_token,
+                              f"portal_activated=true&search={marker}")
+    assert f"{marker} G_invited_but_not_onboarded" not in activated, activated
+    not_activated = _list_names(admin_token,
+                                  f"portal_activated=false&search={marker}")
+    assert f"{marker} G_invited_but_not_onboarded" in not_activated, not_activated
 
 
 def test_omitted_returns_all(admin_token, seeded_customers):
     marker, _ = seeded_customers
     names = _list_names(admin_token, f"search={marker}")
-    assert len({n for n in names if n.startswith(marker)}) == 6, names
+    assert len({n for n in names if n.startswith(marker)}) == 7, names
 
 
 def test_counts_partition_the_seeded_set(admin_token, seeded_customers):
@@ -167,7 +212,25 @@ def test_counts_partition_the_seeded_set(admin_token, seeded_customers):
         activated, not_activated, total,
     )
     assert activated == 3
-    assert not_activated == 3
+    assert not_activated == 4
+
+
+def test_portal_status_string_alias_matches_corrected_definition(
+        admin_token, seeded_customers):
+    """``portal_status=activated`` (string alias) must yield the
+    same set as ``portal_activated=true``. Both use the corrected
+    definition — ``has_login`` alone is not enough.
+    """
+    marker, _ = seeded_customers
+    a = _list_names(admin_token, f"portal_status=activated&search={marker}")
+    na = _list_names(admin_token,
+                       f"portal_status=not_activated&search={marker}")
+    assert a == {
+        f"{marker} A_activated_pw_set",
+        f"{marker} B_activated_logged_in",
+        f"{marker} C_activated_both",
+    }, a
+    assert f"{marker} G_invited_but_not_onboarded" in na, na
 
 
 def test_composes_and_with_missing_address(
@@ -194,12 +257,13 @@ def test_composes_and_with_missing_address(
             admin_token,
             f"portal_activated=false&missing_address=true&search={marker}",
         )
-        # Rows D, E, F qualify (no signals + no address). The control
-        # row X_not_activated_with_address has an address so is
-        # excluded.
+        # Rows D, E, F, G qualify (no signals + no address). The
+        # control row X_not_activated_with_address has an address so
+        # is excluded.
         assert f"{marker} D_no_signals" in names
+        assert f"{marker} G_invited_but_not_onboarded" in names
         assert f"{marker} X_not_activated_with_address" not in names
-        assert f"{marker} A_activated_login_set" not in names
+        assert f"{marker} A_activated_pw_set" not in names
     finally:
         _sync_db.customers.delete_one({"id": ctl_id})
 
@@ -217,4 +281,4 @@ def test_composes_and_with_active_search(
     )
     # Only the B row survives the intersected filter.
     assert f"{marker} B_activated_logged_in" in names
-    assert f"{marker} A_activated_login_set" not in names
+    assert f"{marker} A_activated_pw_set" not in names

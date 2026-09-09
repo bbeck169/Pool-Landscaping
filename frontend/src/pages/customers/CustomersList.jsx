@@ -228,8 +228,8 @@ export default function CustomersList() {
   // so adding one later is trivial.
   const _PORTAL_STATUS_OPTIONS = [
     { value: "all",           label: "Portal: All" },
-    { value: "activated",     label: "Portal: Activated" },
-    { value: "not_activated", label: "Portal: Not activated" },
+    { value: "activated",     label: "Portal: Signed in" },
+    { value: "not_activated", label: "Portal: Never signed in" },
   ];
   const [portalStatus, setPortalStatus] = useState("all");
   // Mount-skip guard so the first render doesn't reset page=1 (F6c-
@@ -1394,6 +1394,7 @@ export default function CustomersList() {
           data-value={portalStatusFilter || "any"}
           role="group"
           aria-label="Portal status"
+          title="Portal activation reflects real customer engagement — a customer has either set their own password or signed in at least once. Sending an invite alone does not count."
           className="inline-flex items-stretch rounded-lg overflow-hidden text-xs font-semibold"
           style={{
             border: `1px solid ${colors.border}`,
@@ -1402,11 +1403,13 @@ export default function CustomersList() {
         >
           {[
             { value: "", label: "Any", testid: "customers-portal-status-any" },
-            { value: "activated", label: "Activated",
+            { value: "activated", label: "Signed in",
               count: portalActivatedCount,
+              tooltip: "Customer has set their own password or signed into the portal at least once.",
               testid: "customers-portal-status-activated" },
-            { value: "not_activated", label: "Not activated",
+            { value: "not_activated", label: "Never signed in",
               count: portalNotActivatedCount,
+              tooltip: "These customers received an invite but have not signed in or set a password yet.",
               testid: "customers-portal-status-not-activated" },
           ].map((opt) => {
             const active = portalStatusFilter === opt.value;
@@ -1417,6 +1420,7 @@ export default function CustomersList() {
                 onClick={() => setPortalStatusFilter(opt.value)}
                 data-testid={opt.testid}
                 aria-pressed={active ? "true" : "false"}
+                title={opt.tooltip || undefined}
                 className="px-3 py-1.5 inline-flex items-center gap-1"
                 style={{
                   backgroundColor: active ? "#DBEAFE" : "transparent",

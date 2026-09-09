@@ -739,7 +739,17 @@ async def _load_reset_token(tok: str, ip: str) -> dict:
 
 async def _apply_new_password(user_id: str, new_password: str) -> None:
     """Persist the new bcrypt hash and clear lockout state so the
-    customer can sign in immediately with the new credential."""
+    customer can sign in immediately with the new credential.
+
+    Feb-2026 · P43c correction — additionally denorm
+    ``portal_password_set_at`` onto the customer document so the
+    Customers list "Portal status" filter can distinguish a
+    customer who chose their own password from one who only ever
+    received a temp password. Admin-created / staff-set passwords
+    do NOT go through this helper (see the seed / provision paths),
+    so the denorm is a reliable "customer engagement" signal.
+    """
+    now = now_iso()
     await db.users.update_one(
         {"id": user_id},
         {"$set": {
@@ -747,9 +757,25 @@ async def _apply_new_password(user_id: str, new_password: str) -> None:
             "failed_login_attempts": 0,
             "lockout_until": None,
             "must_change_password_on_next_login": False,
-            "password_updated_at": now_iso(),
+            "password_updated_at": now,
+            "password_customer_set_at": now,
         }},
     )
+    # Mirror the customer-engagement flag to the customer doc for
+    # O(index) filter perf on ``GET /customers?portal_activated=…``.
+    try:
+        user = await db.users.find_one(
+            {"id": user_id},
+            {"_id": 0, "role": 1, "customer_id": 1, "tenant_id": 1},
+        )
+        if user and user.get("role") == "customer" and user.get("customer_id"):
+            await db.customers.update_one(
+                {"id": user["customer_id"],
+                  "tenant_id": user.get("tenant_id")},
+                {"$set": {"portal_password_set_at": now}},
+            )
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"portal_password_set_at denorm skipped: {e}")
 
 
 async def _consume_reset_token(tok: str, ip: str, user_id: str) -> None:
@@ -861,6 +887,7 @@ async def change_my_password(request: Request,
         raise HTTPException(400, err)
 
     new_hash = hash_password(body.new_password)
+    now = now_iso()
     await db.users.update_one(
         {"id": user["id"]},
         {"$set": {
@@ -868,9 +895,23 @@ async def change_my_password(request: Request,
             "failed_login_attempts": 0,
             "lockout_until": None,
             "must_change_password_on_next_login": False,
-            "password_updated_at": now_iso(),
+            "password_updated_at": now,
+            "password_customer_set_at": now,
         }},
     )
+    # Feb-2026 · P43c correction — mirror the customer-engagement
+    # signal to the customer doc (see ``_apply_new_password`` for
+    # the parallel reset-flow write). Kept optional so admin-role
+    # or standalone-user change-password calls don't 500.
+    if user.get("role") == "customer" and user.get("customer_id"):
+        try:
+            await db.customers.update_one(
+                {"id": user["customer_id"],
+                  "tenant_id": user.get("tenant_id")},
+                {"$set": {"portal_password_set_at": now}},
+            )
+        except Exception as e:  # pragma: no cover
+            logger.warning(f"portal_password_set_at denorm skipped: {e}")
     await _audit_auth("password_change", user.get("email", ""), ip, "success")
     return {"ok": True, "message": "Password updated."}
 

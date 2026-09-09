@@ -82,6 +82,20 @@ describe("CustomersList · P43c portal-status filter", () => {
     expect(screen.getByTestId("customers-portal-status-not-activated")).toBeTruthy();
   });
 
+  it("uses the P43c-corrected labels (Signed in / Never signed in)", async () => {
+    _renderAt();
+    await waitFor(() => expect(
+      screen.getByTestId("customers-portal-status-activated")).toBeTruthy());
+    // Corrected copy: emphasises real customer engagement rather than
+    // admin invite-sent state. "Activated" is intentionally NOT used.
+    expect(screen.getByTestId("customers-portal-status-activated").textContent)
+      .toMatch(/Signed in/);
+    expect(screen.getByTestId("customers-portal-status-not-activated").textContent)
+      .toMatch(/Never signed in/);
+    expect(screen.getByTestId("customers-portal-status-activated").textContent)
+      .not.toMatch(/^Activated/);
+  });
+
   it("defaults to Any (no filter)", async () => {
     _renderAt();
     await waitFor(() => {
