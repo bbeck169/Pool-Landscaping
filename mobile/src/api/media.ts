@@ -28,7 +28,7 @@ export type VideoRecord = {
 const MAX_BYTES = 100 * 1024 * 1024;
 
 function entityPath(kind: VideoEntity, id: string): string {
-  return kind === "estimate" ? `/estimates/${id}/videos` : `/jobs/${id}/videos`;
+  return kind === "estimate" ? `/quotes/${id}/videos` : `/jobs/${id}/videos`;
 }
 
 /**

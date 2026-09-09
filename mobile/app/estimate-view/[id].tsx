@@ -1,7 +1,7 @@
 /**
  * Estimate Viewer + Accept/Decline.
  *
- * Fetches GET /api/estimates/{id}/full.
+ * Fetches GET /api/quotes/{id}/full (canonical; /api/estimates/* aliases are deprecated).
  * Renders: company header, bill-to, line items, totals, notes, status.
  * Buttons: Accept, Decline, Request Changes.
  *

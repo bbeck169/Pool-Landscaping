@@ -45,13 +45,13 @@ export type EstimateFull = {
 };
 
 export const getEstimateFull = (eid: string): Promise<EstimateFull> =>
-  api.get(`/estimates/${eid}/full`);
+  api.get(`/quotes/${eid}/full`);
 
 export const acceptEstimate = (eid: string) =>
-  api.post(`/estimates/${eid}/accept`, {});
+  api.post(`/quotes/${eid}/accept`, {});
 
 export const declineEstimate = (eid: string, reason?: string) =>
-  api.post(`/estimates/${eid}/decline`, { reason: reason || "" });
+  api.post(`/quotes/${eid}/decline`, { reason: reason || "" });
 
 export const requestEstimateChanges = (eid: string, message: string) =>
-  api.post(`/estimates/${eid}/request-changes`, { message });
+  api.post(`/quotes/${eid}/request-changes`, { message });
