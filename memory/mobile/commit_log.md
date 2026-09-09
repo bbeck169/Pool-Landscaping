@@ -1532,3 +1532,13 @@
 - **Files modified**: src/auth.tsx, app/login.tsx, src/components/customers/SendCreateSheet.tsx, app/customer/[id].tsx
 - **Test results**: 13 suites, 116 tests, ALL passing, 0 regressions
 
+
+
+## Iteration 77 — Expo Web Schedule Map + Header Layout Bugs
+- **Commit**: 623467c4639607ef5cd4188ca9b5139e28a2a72f
+- **Date**: 2026-09-09
+- **Changes**:
+  - Bug 1: Verified DailyRouteMap.web.tsx Leaflet/OSM iframe map was already complete from prior agent — renders real map tiles with colored circleMarkers
+  - Bug 2: Fixed Header component in widgets.tsx — added minWidth: 0 + flexShrink: 1 to title column, numberOfLines={1} + ellipsizeMode="tail" to subtitle Text to prevent RN Web flexbox collapse
+- **Files modified**: src/components/widgets.tsx
+- **Web files referenced**: DailyRouteMap.web.tsx, OfflineBadge.tsx, calendar.tsx
