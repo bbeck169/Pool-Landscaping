@@ -54,6 +54,56 @@ function _clearSessionAndRedirect() {
   }
 }
 
+// Feb-2026 · Diag-Timeout Task 2 — fire the client telemetry POST when
+// the 30 s fetch abort trips. Fire-and-forget: any exception (fetch
+// failure, JSON serialization, endpoint 429/killswitch) MUST be
+// swallowed so the surfaced timeout Error keeps flowing unchanged.
+// Uses ``navigator.sendBeacon`` when available so the request survives
+// tab-navigation; falls back to a bare ``fetch(..., keepalive: true)``
+// otherwise. Never uses the ``request()`` wrapper below because that
+// would recurse into another 30 s timeout on the same broken pipe.
+function _reportTimeoutTelemetry(payload) {
+  try {
+    const url = `${BASE || ""}/api/admin/client-telemetry/timeout`;
+    const token = (() => {
+      try {
+        return localStorage.getItem(TOKEN_KEY) || "";
+      } catch { return ""; }
+    })();
+    if (!token) return;  // anonymous timeouts skip telemetry (spec §2.3)
+    const body = JSON.stringify({
+      request_url: payload.request_url || "",
+      request_method: payload.request_method || "GET",
+      started_at: payload.started_at || "",
+      ended_at: payload.ended_at || new Date().toISOString(),
+      duration_ms: payload.duration_ms || 0,
+      route_path: (typeof window !== "undefined" && window.location)
+        ? window.location.pathname : "",
+      user_agent: (typeof navigator !== "undefined")
+        ? (navigator.userAgent || "").slice(0, 500) : "",
+      request_id: payload.request_id || "",
+      app_version: (typeof window !== "undefined"
+        && window.__APP_VERSION__) || "",
+    });
+    // sendBeacon needs a Blob w/ Content-Type; it also strips Auth
+    // headers, so we always take the fetch path when a token exists
+    // so the endpoint's ``get_current_user`` dep sees the JWT.
+    const tenantSlug = (() => {
+      try { return localStorage.getItem("tenant_slug") || ""; }
+      catch { return ""; }
+    })();
+    const headers = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    };
+    if (tenantSlug) headers["X-Tenant-Slug"] = tenantSlug;
+    // ``keepalive`` lets the browser complete the send even if the
+    // user navigates away right after the toast appears.
+    fetch(url, { method: "POST", body, headers, keepalive: true })
+      .catch(() => { /* swallow — telemetry MUST NOT surface errors */ });
+  } catch { /* swallow — never break the surfaced timeout */ }
+}
+
 function authHeaders() {
   // Phase K13 · Feb-2026 — when this tab is running an admin
   // impersonation session (opened via ``window.open("/portal/home?
@@ -82,9 +132,17 @@ function authHeaders() {
 async function request(path, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Feb-2026 · Diag-Timeout Task 2 — capture the request start
+  // timestamp + fetch URL/method so the ``AbortError`` catch can
+  // fire client-side telemetry to the new
+  // ``/admin/client-telemetry/timeout`` endpoint. Fire-and-forget:
+  // failure to POST telemetry must NEVER block the surfaced error.
+  const _startedAt = new Date();
+  const _reqUrl = `${BASE}/api${path}`;
+  const _reqMethod = (options.method || "GET").toUpperCase();
   let res;
   try {
-    res = await fetch(`${BASE}/api${path}`, {
+    res = await fetch(_reqUrl, {
       ...options,
       headers: { ...authHeaders(), ...(options.headers || {}) },
       signal: controller.signal,
@@ -92,11 +150,28 @@ async function request(path, options = {}, timeoutMs = 30000) {
   } catch (e) {
     clearTimeout(timer);
     if (e?.name === "AbortError") {
+      _reportTimeoutTelemetry({
+        request_url: _reqUrl,
+        request_method: _reqMethod,
+        started_at: _startedAt.toISOString(),
+        ended_at: new Date().toISOString(),
+        duration_ms: Date.now() - _startedAt.getTime(),
+        request_id: "",   // never got a response — no header available
+      });
       throw new Error("Request timed out — check your connection and try again.");
     }
     throw new Error("Network error — check your connection and try again.");
   }
   clearTimeout(timer);
+  // Preserve the server-issued request-id on the response object so
+  // callers who catch a slow (but successful) or 504 response can
+  // still correlate against the server slow-request log.
+  try {
+    if (res && res.headers && res.headers.get) {
+      const rid = res.headers.get("x-request-id") || res.headers.get("X-Request-Id");
+      if (rid) res.__requestId = rid;
+    }
+  } catch { /* headers may be locked in some polyfills */ }
   const text = await res.text();
   let data = null;
   if (text) {

@@ -572,34 +572,57 @@ async def list_customers(
                      {"merged_into": {"$exists": False}}],
         }]
     if search:
-        # K49b · Feb-2026 — token-wise multi-field search.
-        # ``last_name`` was promoted to a first-class sort key in K49
-        # and the customers list UI now renders the split
-        # ``last_name`` column, so callers routinely search a mix of
-        # tokens that live in different columns (e.g. searching
-        # ``"Kaylan Testcase"`` against a doc with
-        # ``name="Kaylan Testcase"`` + ``last_name="Testcase"``, or
-        # ``"K49b MissingIdFixture"`` against ``name="K49b Missing Id
-        # Fixture …"`` + ``last_name="MissingIdFixture"``).  The old
-        # single-regex-across-name/email/phone/address surface only
-        # matched the raw string against one field at a time and
-        # produced empty results for these split-field cases.
-        # New behaviour: split on whitespace, AND across tokens,
-        # each token matches ANY of the six searchable fields
-        # (``name`` / ``first_name`` / ``last_name`` / ``email`` /
-        # ``phone`` / ``address``).  Single-word searches are a
-        # strict superset of the old behaviour (still matches the
-        # same rows plus any first/last-name hits).
-        import re as _k49b_re
+        # Feb-2026 · Diag-Timeout Task 1 — search-haystack fast path.
+        # The prior implementation OR'd a case-insensitive
+        # ``$regex`` across six fields (``name`` / ``first_name`` /
+        # ``last_name`` / ``email`` / ``phone`` / ``address``) —
+        # Mongo can't use any index for that shape, so a tenant
+        # with 2000 customers scanned the collection six times per
+        # request (+ five more times in the K68 ``$facet`` stage
+        # below). Prod tenants with 1931 customers were tipping the
+        # frontend's 30s ``fetch`` timeout on the ``search=lynn``
+        # query the user reported.
+        #
+        # New shape: match a single ``$regex`` against the
+        # pre-computed lowercase ``search_haystack`` field, which
+        # concatenates all six columns. Combined with the compound
+        # ``(tenant_id, search_haystack)`` index (see
+        # ``services.customers_search_haystack``) Mongo streams a
+        # small tenant-scoped partition through a **single** regex
+        # instead of six. Per-doc work drops 6× and the collection
+        # scans in this handler drop from 12+ (find + count + 5
+        # facet stages, each with 6 fields) to 12 single-field
+        # scans, most of which the (tenant_id, is_active, is_muted)
+        # index already narrows.
+        #
+        # Token semantics unchanged from K49b — split on
+        # whitespace, AND across tokens.  Each token becomes a
+        # ``$regex`` (case-sensitive, since the haystack is already
+        # lowercased) so ``$options`` is elided and the regex
+        # engine skips the case-fold work per byte.
+        #
+        # Legacy fallback: rows created before the backfill
+        # migration ran won't have ``search_haystack``, so the
+        # per-token predicate also OR's the raw name/email/phone
+        # match so those tenants still see hits. The fallback path
+        # is only taken for un-backfilled docs — the boot-time
+        # migration touches every doc once, so the OR arm is dead
+        # code within a minute of a rolling deploy.
+        import re as _search_re
         _tokens = [t for t in (search or "").split() if t.strip()]
         if _tokens:
             _search_and = []
             for _tok in _tokens:
-                _rx = {"$regex": _k49b_re.escape(_tok), "$options": "i"}
+                _tok_lc = _tok.lower()
+                _hay_rx = {"$regex": _search_re.escape(_tok_lc)}
+                _legacy_rx = {"$regex": _search_re.escape(_tok),
+                                "$options": "i"}
                 _search_and.append({"$or": [
-                    {"name": _rx}, {"first_name": _rx},
-                    {"last_name": _rx}, {"email": _rx},
-                    {"phone": _rx}, {"address": _rx},
+                    {"search_haystack": _hay_rx},
+                    # Legacy fallback for un-backfilled rows.
+                    {"name": _legacy_rx}, {"first_name": _legacy_rx},
+                    {"last_name": _legacy_rx}, {"email": _legacy_rx},
+                    {"phone": _legacy_rx}, {"address": _legacy_rx},
                 ]})
             q["$and"] = q.get("$and", []) + _search_and
     if tag:
@@ -1385,6 +1408,11 @@ async def create_customer(body: CustomerIn,
     _apply_multi_contact(doc)
     _apply_vip_stamp(doc, existing=None)
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": now_iso()})
+    # Feb-2026 · Diag-Timeout Task 1 — write ``search_haystack`` on
+    # create so the customers-list fast path works without waiting
+    # for the boot-time backfill migration to catch up.
+    from services.customers_search_haystack import apply_haystack as _apply_hay
+    _apply_hay(doc)
     await db.customers.insert_one(doc)
     doc.pop("_id", None)
     # K31 · Feb-2026 — flag any phone collision with another customer
@@ -1992,6 +2020,15 @@ async def update_customer(cid: str, body: CustomerIn,
     _apply_multi_contact(payload)
     _apply_vip_stamp(payload, existing=existing)
     vip_flipped_on = bool(payload.get("is_vip")) and not bool(existing.get("is_vip"))
+    # Feb-2026 · Diag-Timeout Task 1 — rebuild ``search_haystack``
+    # whenever the write may have mutated any of the six searchable
+    # columns. Cheap; keeps the fast-path index accurate without a
+    # follow-up backfill.
+    from services.customers_search_haystack import (
+        build_haystack as _build_hay,
+    )
+    _merged = {**existing, **payload}
+    payload["search_haystack"] = _build_hay(_merged)
     await db.customers.update_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"$set": payload}
     )

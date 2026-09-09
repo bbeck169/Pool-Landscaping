@@ -424,6 +424,15 @@ api_router.include_router(_p37d_gps_audit_report.router)
 from routers import reports_kpi as _r0_reports_kpi  # noqa: E402
 api_router.include_router(_r0_reports_kpi.router)
 
+# Feb-2026 · Diag-Timeout Task 2 — client-side 30s-timeout telemetry.
+from routers import client_telemetry as _feb2026_client_telemetry  # noqa: E402
+api_router.include_router(_feb2026_client_telemetry.router)
+
+# Feb-2026 · Diag-Timeout Task 1 — admin maintenance endpoints
+# (POST /admin/maintenance/rebuild-customers-haystack).
+from routers import admin_maintenance as _feb2026_admin_maintenance  # noqa: E402
+api_router.include_router(_feb2026_admin_maintenance.router)
+
 # Phase K63 · Feb-2026 — per-tenant Lead Alert recipient CRUD.
 # Backs the new Settings → Notifications → Lead Alerts page and
 # is consumed by ``services.lead_notifications`` when a widget
@@ -1195,17 +1204,58 @@ class _ServerTimingMiddleware(BaseHTTPMiddleware):
         if not request.url.path.startswith("/api/"):
             return await call_next(request)
         request.state.timings = []
+        # Feb-2026 · Diag-Timeout Task 2 — attach a per-request UUID
+        # so client-side telemetry can correlate the 30s toast with
+        # the exact server log line (bounces back on
+        # ``X-Request-Id``). Cheap: single ``uuid4()`` per request.
+        import uuid as _uuid
+        req_id = str(_uuid.uuid4())
+        request.state.request_id = req_id
         t0 = _timing.perf_counter()
         resp = await call_next(request)
         dur_ms = (_timing.perf_counter() - t0) * 1000.0
         parts: list[str] = list(getattr(request.state, "timings", []) or [])
         parts.append(f"total;dur={dur_ms:.1f}")
-        # Existing values (rare — some handlers may already set one)
-        # are preserved and our summary is appended.
         prior = resp.headers.get("Server-Timing")
         resp.headers["Server-Timing"] = (
             f"{prior}, {', '.join(parts)}" if prior else ", ".join(parts)
         )
+        resp.headers["X-Request-Id"] = req_id
+
+        # Slow-request log. Method + bucketed path only (no query
+        # string, no body). Bucket UUID / numeric path segments so
+        # cardinality stays bounded.
+        if dur_ms > 5000 or resp.status_code == 504:
+            try:
+                import re as _re
+                raw_path = request.url.path
+                bucketed = _re.sub(
+                    r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}"
+                    r"-[0-9a-f]{4}-[0-9a-f]{12}",
+                    "/:uuid", raw_path,
+                )
+                bucketed = _re.sub(r"/\d{2,}", "/:num", bucketed)
+                user = getattr(request.state, "auth_user", None) or {}
+                tenant = getattr(request.state, "tenant", None) or {}
+                level = (
+                    "error" if dur_ms > 25000
+                    else "warning" if dur_ms > 10000
+                    else "warning"
+                )
+                msg = (
+                    f"slow_request method={request.method} "
+                    f"path={bucketed} tenant={tenant.get('id') or '-'} "
+                    f"user={user.get('id') or '-'} "
+                    f"role={user.get('role') or '-'} "
+                    f"duration_ms={int(dur_ms)} "
+                    f"status={resp.status_code} request_id={req_id}"
+                )
+                if level == "error":
+                    logger.error(msg)
+                else:
+                    logger.warning(msg)
+            except Exception:  # pragma: no cover
+                pass
         return resp
 
 
@@ -3279,6 +3329,53 @@ async def startup():
             )
     asyncio.create_task(_bg_customers_dashboard_active_inactive_idx())
 
+    # Feb-2026 · Diag-Timeout Task 1 — customers search haystack.
+    # Ships the compound ``(tenant_id, search_haystack)`` index and
+    # backfills the lowercase concatenated field on any pre-existing
+    # doc so ``GET /api/customers?search=…`` short-circuits the six-
+    # field regex scan. Background because the backfill can touch
+    # tens of thousands of rows on large tenants; the runtime search
+    # handler tolerates absent ``search_haystack`` values via the
+    # legacy OR arm so requests during backfill still return data.
+    # Gated by a ``customers_haystack_version`` marker so the full
+    # sweep only runs once per version bump; a fast "missing-only"
+    # sweep still runs on every boot to catch freshly-imported docs.
+    async def _bg_customers_search_haystack():
+        try:
+            from services.customers_search_haystack import (
+                ensure_haystack_indexes,
+                auto_backfill_if_needed,
+            )
+            await ensure_haystack_indexes(db)
+            summary = await auto_backfill_if_needed(db)
+            logger.info(
+                "[customers_search_haystack] index ensured; "
+                "auto-backfill needed=%s reason=%s scanned=%s "
+                "updated=%s duration_seconds=%s tenants=%s",
+                summary["needed"], summary["reason"],
+                summary["scanned"], summary["updated"],
+                summary["duration_seconds"], summary["tenants_touched"],
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"customers_search_haystack boot failed: {e}",
+            )
+    asyncio.create_task(_bg_customers_search_haystack())
+
+    # Feb-2026 · Diag-Timeout Task 2 — TTL + lookup index for the
+    # client_timeout_events collection. Fire-and-forget on boot so
+    # a slow initial index build never blocks the API from serving.
+    async def _bg_client_telemetry_indexes():
+        try:
+            from routers.client_telemetry import (
+                ensure_client_timeout_indexes,
+            )
+            await ensure_client_timeout_indexes()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"client_timeout_events index boot failed: {e}")
+    asyncio.create_task(_bg_client_telemetry_indexes())
+
+
     # K44 · Feb-2026 — Prod perf-index reconciliation. Always-on
     # defense-in-depth migration that force-applies the union of the
     # K15 + K21 + F3.5 perf indexes without sentinel gating. Runs
@@ -3299,6 +3396,30 @@ async def startup():
         except Exception as e:  # noqa: BLE001
             logger.warning(f"k44_perf_indexes migration crashed: {e}")
     asyncio.create_task(_bg_k44_perf_indexes())
+
+    # Feb-2026 · Diag-Timeout Task 3 — Schedule/Dispatch perf indexes.
+    # Additive companion to K44 covering the missing tech-id OR arms
+    # on ``jobs`` and the ``(tenant_id, service_lat|service_days|
+    # assigned_tech_ids)`` shapes on ``customers`` that the
+    # dispatch board full-scans without.
+    async def _bg_diag_schedule_dispatch_indexes():
+        try:
+            from migrations.diag_schedule_dispatch_indexes import (
+                run as _diag_sched_run,
+            )
+            _r = await _diag_sched_run()
+            _s = _r.get("summary") or {}
+            logger.info(
+                "[migration] diag_schedule_dispatch_indexes: "
+                "created=%s already_present=%s errors=%s",
+                _s.get("created"), _s.get("already_present"),
+                len(_s.get("errors") or []),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"diag_schedule_dispatch_indexes migration crashed: {e}",
+            )
+    asyncio.create_task(_bg_diag_schedule_dispatch_indexes())
 
     # K49b · Feb-2026 — Backfill legacy ``customers`` docs missing a
     # top-level ``id`` field.  Idempotent + sentinel-gated so it
