@@ -1,14 +1,20 @@
 /**
- * Estimate Viewer + Accept/Decline.
+ * Estimate Viewer + Phase A Line-Item Decline + Top-Level Approve/Decline.
  *
- * Fetches GET /api/quotes/{id}/full (canonical; /api/estimates/* aliases are deprecated).
- * Renders: company header, bill-to, line items, totals, notes, status.
- * Buttons: Accept, Decline, Request Changes.
+ * Fetches GET /api/quotes/{id}/full (canonical).
+ * Renders: company header, bill-to, line items (with per-line decline),
+ * totals (with adjusted-total block), notes, status.
  *
- * Tech pricing guardrail: the `as_customer` flag from the API controls
- * which columns are visible. We trust the API — do NOT re-derive pricing.
+ * Phase A features:
+ *   - Per-line decline button + decline modal with optional reason
+ *   - Declined line strike-through + "Declined" chip + undecline
+ *   - Top-level Approve (green) / Decline (red) toolbar
+ *   - Adjusted totals (original strikethrough → adjusted bold)
+ *   - Accepted/Declined pill
+ *   - Status guards: actions only when status in {sent, viewed}
+ *   - 409 already_finalized → friendly toast
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState, useRef } from "react";
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   ActivityIndicator, Alert, Modal, TextInput, KeyboardAvoidingView, Platform,
@@ -20,6 +26,8 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import {
   getEstimateFull, acceptEstimate, declineEstimate, requestEstimateChanges,
+  fetchMagicLinkToken, declineLineItem, undeclineLineItem,
+  approveViaToken, declineViaToken,
   type EstimateFull,
 } from "@/src/api/estimatesFull";
 import { InvoiceAttachments } from "@/src/components/files";
@@ -41,13 +49,30 @@ export default function EstimateViewScreen() {
   const [declineMsg, setDeclineMsg] = useState("");
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesMsg, setChangesMsg] = useState("");
+  // Phase A state
+  const [magicToken, setMagicToken] = useState<string | null>(null);
+  const [busyLineIdx, setBusyLineIdx] = useState<number | null>(null);
+  const [lineDeclineOpen, setLineDeclineOpen] = useState<number | null>(null);
+  const [lineDeclineReason, setLineDeclineReason] = useState("");
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = (msg: string, ms = 2500) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(msg);
+    toastTimer.current = setTimeout(() => setToast(""), ms);
+  };
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     setError("");
     try {
-      setData(await getEstimateFull(id));
+      const d = await getEstimateFull(id);
+      setData(d);
+      // Fetch magic-link token for Phase A line-item operations
+      const tok = await fetchMagicLinkToken(id);
+      setMagicToken(tok);
     } catch (e: any) {
       setError(e?.message || "Failed to load estimate");
     } finally {
@@ -57,19 +82,37 @@ export default function EstimateViewScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const onAccept = async () => {
-    Alert.alert("Accept Estimate", "Are you sure you want to accept this estimate?", [
+  // Derived state
+  const statusLc = String(data?.status || "").toLowerCase();
+  const actionable = statusLc === "sent" || statusLc === "viewed";
+  const locked = data?.decision === "accepted" || data?.decision === "declined";
+
+  // ── Top-level approve ──────────────────────────────────────────
+  const onApprove = () => {
+    Alert.alert("Approve Estimate", "Are you sure you want to approve this estimate?", [
       { text: "Cancel", style: "cancel" },
       {
-        text: "Accept", style: "default", onPress: async () => {
+        text: "Approve", style: "default", onPress: async () => {
           setBusy(true);
           try {
-            const res = await acceptEstimate(id!);
-            if (res) setData(res);
-            else await load();
-            Alert.alert("Accepted", "Estimate accepted successfully.");
+            if (magicToken) {
+              const res = await approveViaToken(magicToken);
+              if (res) setData(res);
+              else await load();
+            } else {
+              const res = await acceptEstimate(id!);
+              if (res) setData(res);
+              else await load();
+            }
+            showToast("Estimate approved");
           } catch (e: any) {
-            Alert.alert("Error", e?.message || "Failed to accept");
+            const code = e?.error_code || e?.response?.error_code;
+            if (code === "already_finalized") {
+              showToast("This estimate has already been finalized.", 3000);
+              await load();
+            } else {
+              Alert.alert("Error", e?.message || "Failed to approve");
+            }
           } finally {
             setBusy(false);
           }
@@ -78,22 +121,38 @@ export default function EstimateViewScreen() {
     ]);
   };
 
-  const onDecline = async () => {
+  // ── Top-level decline ──────────────────────────────────────────
+  const onSubmitDecline = async () => {
     setBusy(true);
     try {
-      const res = await declineEstimate(id!, declineMsg);
-      if (res) setData(res);
-      else await load();
+      if (magicToken) {
+        const res = await declineViaToken(magicToken, declineMsg);
+        if (res) setData(res);
+        else await load();
+      } else {
+        const res = await declineEstimate(id!, declineMsg);
+        if (res) setData(res);
+        else await load();
+      }
       setDeclineOpen(false);
       setDeclineMsg("");
-      Alert.alert("Declined", "Estimate declined.");
+      showToast("Estimate declined");
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed to decline");
+      const code = e?.error_code || e?.response?.error_code;
+      if (code === "already_finalized") {
+        showToast("This estimate has already been finalized.", 3000);
+        setDeclineOpen(false);
+        setDeclineMsg("");
+        await load();
+      } else {
+        Alert.alert("Error", e?.message || "Failed to decline");
+      }
     } finally {
       setBusy(false);
     }
   };
 
+  // ── Request changes ────────────────────────────────────────────
   const onRequestChanges = async () => {
     if (!changesMsg.trim()) return;
     setBusy(true);
@@ -103,7 +162,7 @@ export default function EstimateViewScreen() {
       else await load();
       setChangesOpen(false);
       setChangesMsg("");
-      Alert.alert("Sent", "Change request sent.");
+      showToast("Change request sent");
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Failed to send");
     } finally {
@@ -111,6 +170,40 @@ export default function EstimateViewScreen() {
     }
   };
 
+  // ── Per-line decline ───────────────────────────────────────────
+  const submitLineDecline = async () => {
+    if (lineDeclineOpen === null || !magicToken) return;
+    setBusyLineIdx(lineDeclineOpen);
+    try {
+      const res = await declineLineItem(magicToken, lineDeclineOpen, lineDeclineReason);
+      if (res) setData(res);
+      else await load();
+      showToast("Line item declined");
+    } catch (e: any) {
+      showToast(e?.message || "Failed to decline line", 3000);
+    } finally {
+      setBusyLineIdx(null);
+      setLineDeclineOpen(null);
+      setLineDeclineReason("");
+    }
+  };
+
+  const onUndeclineLine = async (idx: number) => {
+    if (!magicToken) return;
+    setBusyLineIdx(idx);
+    try {
+      const res = await undeclineLineItem(magicToken, idx);
+      if (res) setData(res);
+      else await load();
+      showToast("Line item restored");
+    } catch (e: any) {
+      showToast(e?.message || "Failed to restore line", 3000);
+    } finally {
+      setBusyLineIdx(null);
+    }
+  };
+
+  // ── Loading / error states ─────────────────────────────────────
   if (loading) {
     return (
       <View style={[s.center, { paddingTop: insets.top + 60 }]}>
@@ -132,7 +225,7 @@ export default function EstimateViewScreen() {
   }
 
   const { company, bill_to, property_address, header, line_items, totals, notes, title, decision, accepted_at, declined_at, as_customer } = data;
-  const locked = decision === "accepted" || decision === "declined";
+  const canLineDecline = actionable && !locked && !!magicToken;
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -144,10 +237,20 @@ export default function EstimateViewScreen() {
         <View style={{ width: 22 }} />
       </View>
 
+      {/* Toast */}
+      {toast ? (
+        <View style={s.toast} testID="estimate-toast">
+          <Text style={s.toastText}>{toast}</Text>
+        </View>
+      ) : null}
+
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-        {/* Status banner */}
+        {/* Accepted/Declined pill */}
         {locked && (
-          <View style={[s.lockedBanner, decision === "accepted" ? s.acceptedBanner : s.declinedBanner]} testID={`estimate-${decision}-pill`}>
+          <View
+            style={[s.lockedBanner, decision === "accepted" ? s.acceptedBanner : s.declinedBanner]}
+            testID={decision === "accepted" ? "estimate-accepted-pill" : "estimate-declined-pill"}
+          >
             <Ionicons name={decision === "accepted" ? "checkmark-circle" : "close-circle"} size={18} color={decision === "accepted" ? "#166534" : "#991B1B"} />
             <Text style={[s.lockedText, { color: decision === "accepted" ? "#166534" : "#991B1B" }]}>
               {decision === "accepted" ? `Accepted on ${String(accepted_at || "").slice(0, 10)}` : `Declined on ${String(declined_at || "").slice(0, 10)}`}
@@ -174,16 +277,34 @@ export default function EstimateViewScreen() {
           </View>
         </View>
 
-        {/* Action buttons */}
-        {!locked && (
+        {/* Top-level Approve/Decline toolbar — Phase A */}
+        {!locked && actionable && (
           <View style={s.actionRow}>
-            <TouchableOpacity style={s.acceptBtn} onPress={onAccept} disabled={busy} testID="estimate-accept-btn">
+            <TouchableOpacity style={s.approveBtn} onPress={onApprove} disabled={busy} testID="estimate-toolbar-customer-approve">
               <Ionicons name="checkmark" size={18} color="#fff" />
-              <Text style={s.acceptBtnText}>Accept</Text>
+              <Text style={s.approveBtnText}>Approve</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={s.declineBtn} onPress={() => setDeclineOpen(true)} disabled={busy} testID="estimate-decline-btn">
+            <TouchableOpacity style={s.toolbarDeclineBtn} onPress={() => setDeclineOpen(true)} disabled={busy} testID="estimate-toolbar-customer-decline">
               <Ionicons name="close" size={18} color={colors.error} />
-              <Text style={s.declineBtnText}>Decline</Text>
+              <Text style={s.toolbarDeclineBtnText}>Decline</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.changesBtn} onPress={() => setChangesOpen(true)} disabled={busy} testID="estimate-changes-btn">
+              <Ionicons name="chatbubble-ellipses" size={16} color={colors.brand} />
+              <Text style={s.changesBtnText}>Changes</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Legacy action buttons for non-actionable, non-locked states */}
+        {!locked && !actionable && (
+          <View style={s.actionRow}>
+            <TouchableOpacity style={s.approveBtn} onPress={onApprove} disabled={busy} testID="estimate-accept-btn">
+              <Ionicons name="checkmark" size={18} color="#fff" />
+              <Text style={s.approveBtnText}>Accept</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.toolbarDeclineBtn} onPress={() => setDeclineOpen(true)} disabled={busy} testID="estimate-decline-btn">
+              <Ionicons name="close" size={18} color={colors.error} />
+              <Text style={s.toolbarDeclineBtnText}>Decline</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.changesBtn} onPress={() => setChangesOpen(true)} disabled={busy} testID="estimate-changes-btn">
               <Ionicons name="chatbubble-ellipses" size={16} color={colors.brand} />
@@ -214,17 +335,54 @@ export default function EstimateViewScreen() {
           {line_items.length === 0 ? (
             <Text style={s.muted}>No line items</Text>
           ) : (
-            line_items.map((li, i) => (
-              <View key={i} style={s.lineRow} testID={`estimate-line-item-${i}`}>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.lineDesc}>{li.description}</Text>
-                  <Text style={s.lineDetail}>
-                    {li.qty_hr || li.quantity || 0} qty × {li.visits || 1} visit{(li.visits || 1) > 1 ? "s" : ""}
-                  </Text>
+            line_items.map((li, i) => {
+              const isDeclined = (li.customer_status || "pending") === "declined";
+              return (
+                <View key={i} style={[s.lineRow, isDeclined && s.lineRowDeclined]} testID={`estimate-line-item-${i}`}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <Text style={[s.lineDesc, isDeclined && s.lineDeclinedText]}>{li.description}</Text>
+                      {isDeclined && (
+                        <View style={s.declinedChip} testID={`estimate-line-item-declined-chip-${i}`}>
+                          <Text style={s.declinedChipText}>Declined</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={[s.lineDetail, isDeclined && s.lineDeclinedText]}>
+                      {li.qty_hr || li.quantity || 0} qty × {li.visits || 1} visit{(li.visits || 1) > 1 ? "s" : ""}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end", gap: 6 }}>
+                    <Text style={[s.lineTotal, isDeclined && s.lineDeclinedText]}>{fmt(li.total)}</Text>
+                    {canLineDecline && (
+                      isDeclined ? (
+                        <TouchableOpacity
+                          onPress={() => onUndeclineLine(i)}
+                          disabled={busyLineIdx === i}
+                          style={s.undeclineBtn}
+                          testID={`estimate-line-item-undecline-${i}`}
+                        >
+                          <Text style={s.undeclineBtnText}>
+                            {busyLineIdx === i ? "…" : "Undo"}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity
+                          onPress={() => setLineDeclineOpen(i)}
+                          disabled={busyLineIdx === i}
+                          style={s.lineDeclineBtn}
+                          testID={`estimate-line-item-decline-${i}`}
+                        >
+                          <Text style={s.lineDeclineBtnText}>
+                            {busyLineIdx === i ? "…" : "Decline"}
+                          </Text>
+                        </TouchableOpacity>
+                      )
+                    )}
+                  </View>
                 </View>
-                <Text style={s.lineTotal}>{fmt(li.total)}</Text>
-              </View>
-            ))
+              );
+            })
           )}
         </View>
 
@@ -237,6 +395,16 @@ export default function EstimateViewScreen() {
             <Text style={s.totalsLabelBold}>Total Estimated Cost</Text>
             <Text style={s.totalsValueBold}>{fmt(totals.total_estimated_cost)}</Text>
           </View>
+          {/* Phase A — Adjusted totals row */}
+          {totals.has_declined_lines && (
+            <View style={[s.totalsRow, { marginTop: 8 }]} testID="estimate-totals-adjusted-row">
+              <Text style={s.totalsLabel}>Adjusted for declined</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={s.originalTotal} testID="estimate-totals-original">{fmt(totals.original_total)}</Text>
+                <Text style={s.adjustedTotal} testID="estimate-totals-adjusted">{fmt(totals.adjusted_total)}</Text>
+              </View>
+            </View>
+          )}
           {!as_customer && totals.estimated_profit != null && (
             <>
               <View style={s.totalsRow}><Text style={s.totalsLabel}>Est. Profit</Text><Text style={s.totalsValue}>{fmt(totals.estimated_profit)}</Text></View>
@@ -253,7 +421,7 @@ export default function EstimateViewScreen() {
           </View>
         ) : null}
 
-        {/* F2b — Attachments */}
+        {/* Attachments */}
         <InvoiceAttachments docId={id!} isInvoice={false} user={user} />
 
         {/* Disclaimer */}
@@ -264,7 +432,48 @@ export default function EstimateViewScreen() {
         </View>
       </ScrollView>
 
-      {/* Decline modal */}
+      {/* Per-line decline modal — Phase A */}
+      <Modal visible={lineDeclineOpen !== null} transparent animationType="fade" testID="estimate-line-item-decline-dialog">
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Decline this line item?</Text>
+            <Text style={s.modalHelp}>
+              {lineDeclineOpen !== null
+                ? `You're telling us you don't want "${line_items[lineDeclineOpen]?.description || "this item"}" (${fmt(line_items[lineDeclineOpen]?.total)}). Your total will adjust automatically.`
+                : ""}
+            </Text>
+            <TextInput
+              style={s.modalInput}
+              value={lineDeclineReason}
+              onChangeText={(t) => setLineDeclineReason(t.slice(0, 200))}
+              multiline
+              numberOfLines={2}
+              placeholder="Optional reason (max 200 chars)"
+              placeholderTextColor={colors.muted}
+              testID="estimate-line-item-decline-reason"
+            />
+            <View style={s.modalActions}>
+              <TouchableOpacity
+                onPress={() => { setLineDeclineOpen(null); setLineDeclineReason(""); }}
+                style={s.modalCancel}
+                testID="estimate-line-item-decline-cancel"
+              >
+                <Text style={s.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={submitLineDecline}
+                style={s.modalDeclineBtn}
+                disabled={busyLineIdx !== null}
+                testID="estimate-line-item-decline-confirm"
+              >
+                <Text style={s.modalDeclineBtnText}>{busyLineIdx !== null ? "Declining…" : "Decline this line"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Top-level decline modal */}
       <Modal visible={declineOpen} transparent animationType="fade" testID="estimate-decline-modal">
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={s.modalOverlay}>
           <View style={s.modalCard}>
@@ -273,8 +482,8 @@ export default function EstimateViewScreen() {
             <TextInput style={s.modalInput} value={declineMsg} onChangeText={setDeclineMsg} multiline numberOfLines={3} placeholder="Reason (optional)" placeholderTextColor={colors.muted} testID="estimate-decline-reason" />
             <View style={s.modalActions}>
               <TouchableOpacity onPress={() => setDeclineOpen(false)} style={s.modalCancel}><Text style={s.modalCancelText}>Cancel</Text></TouchableOpacity>
-              <TouchableOpacity onPress={onDecline} style={s.modalDeclineBtn} disabled={busy} testID="estimate-decline-confirm">
-                <Text style={s.modalDeclineBtnText}>{busy ? "Declining..." : "Decline"}</Text>
+              <TouchableOpacity onPress={onSubmitDecline} style={s.modalDeclineBtn} disabled={busy} testID="estimate-decline-confirm">
+                <Text style={s.modalDeclineBtnText}>{busy ? "Declining…" : "Decline"}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -291,7 +500,7 @@ export default function EstimateViewScreen() {
             <View style={s.modalActions}>
               <TouchableOpacity onPress={() => setChangesOpen(false)} style={s.modalCancel}><Text style={s.modalCancelText}>Cancel</Text></TouchableOpacity>
               <TouchableOpacity onPress={onRequestChanges} style={s.modalSendBtn} disabled={busy || !changesMsg.trim()} testID="estimate-changes-confirm">
-                <Text style={s.modalSendBtnText}>{busy ? "Sending..." : "Send"}</Text>
+                <Text style={s.modalSendBtnText}>{busy ? "Sending…" : "Send"}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -310,6 +519,8 @@ const s = StyleSheet.create({
   navBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface },
   navTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
   scroll: { padding: spacing.lg, paddingBottom: 40 },
+  toast: { position: "absolute", top: 8, left: 20, right: 20, zIndex: 99, backgroundColor: "#1E293B", borderRadius: radius.md, paddingVertical: 10, paddingHorizontal: 16, alignItems: "center" },
+  toastText: { fontFamily: font.medium, fontSize: fontSize.sm, color: "#fff" },
   lockedBanner: { flexDirection: "row", alignItems: "center", gap: 8, padding: spacing.md, borderRadius: radius.md, marginBottom: spacing.md },
   acceptedBanner: { backgroundColor: "#DCFCE7" },
   declinedBanner: { backgroundColor: "#FEE2E2" },
@@ -326,33 +537,47 @@ const s = StyleSheet.create({
   totalRow: { marginTop: spacing.md, alignItems: "flex-end" },
   totalAmount: { fontFamily: font.bold, fontSize: fontSize["2xl"], color: colors.brand },
   totalLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  // Phase A — Approve (GREEN) / Decline (RED) toolbar
   actionRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
-  acceptBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.success, paddingVertical: 14, borderRadius: radius.md },
-  acceptBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
-  declineBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.surface, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.error },
-  declineBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.error },
+  approveBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.success, paddingVertical: 14, borderRadius: radius.md },
+  approveBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
+  toolbarDeclineBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.surface, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.error },
+  toolbarDeclineBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.error },
   changesBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.surface, paddingVertical: 14, paddingHorizontal: 16, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   changesBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
   companyName: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
   billName: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   muted: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  // Line items — Phase A
   lineRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  lineRowDeclined: { opacity: 0.55 },
   lineDesc: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface },
+  lineDeclinedText: { textDecorationLine: "line-through", color: colors.muted },
   lineDetail: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
   lineTotal: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginLeft: 12 },
+  declinedChip: { backgroundColor: "#FEE2E2", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  declinedChipText: { fontFamily: font.bold, fontSize: 11, color: "#7F1D1D" },
+  lineDeclineBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.error },
+  lineDeclineBtnText: { fontFamily: font.semibold, fontSize: 12, color: colors.error },
+  undeclineBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.brand },
+  undeclineBtnText: { fontFamily: font.semibold, fontSize: 12, color: colors.brand },
+  // Totals — Phase A adjusted block
   totalsRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6 },
   totalsLabel: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },
   totalsValue: { fontFamily: font.medium, fontSize: fontSize.base, color: colors.onSurface },
   totalHighlight: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm, marginTop: spacing.xs },
   totalsLabelBold: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.brand },
   totalsValueBold: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.brand },
+  originalTotal: { fontFamily: font.regular, fontSize: fontSize.base, color: "#9CA3AF", textDecorationLine: "line-through" },
+  adjustedTotal: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
   notesText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, lineHeight: 22 },
   disclaimer: { padding: spacing.md, marginBottom: 20 },
   disclaimerText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, fontStyle: "italic", textAlign: "center", lineHeight: 18 },
+  // Modals
   modalOverlay: { flex: 1, backgroundColor: "rgba(15,23,42,0.5)", justifyContent: "center", padding: 20 },
   modalCard: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.xl },
   modalTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
-  modalHelp: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 4, marginBottom: spacing.md },
+  modalHelp: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 4, marginBottom: spacing.md, lineHeight: 20 },
   modalInput: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.sm, padding: spacing.md, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, minHeight: 80, textAlignVertical: "top", borderWidth: 1, borderColor: colors.border },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: spacing.lg },
   modalCancel: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.sm },

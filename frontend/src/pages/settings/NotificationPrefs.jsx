@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Bell, Mail, MessageSquare, Save, Smartphone, Undo2 } from "lucide-react";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 import { colors } from "@/theme";
 import CommsWhitelistBanner from "@/components/comms/CommsWhitelistBanner";
 
@@ -22,6 +23,8 @@ const CHANNELS = [
 
 export default function NotificationPrefs() {
   const nav = useNavigate();
+  const { user } = useAuth() || {};
+  const isAdmin = ["admin", "super_admin"].includes(user?.role);
   const [kinds, setKinds] = useState([]);
   const [channels, setChannels] = useState({});
   const [initial, setInitial] = useState({});
@@ -136,6 +139,13 @@ export default function NotificationPrefs() {
       {/* Queue Item 4 · Feb-2026 — outbound comms whitelist banner.
           Warns admins that comms are demo-only + shows live counts. */}
       <CommsWhitelistBanner />
+
+      {/* Feb-2026 · Phase B — tenant-scoped decline-notification
+          toggle. Admin-only. Independent from the per-user matrix
+          below (this one gates the fanout at the tenant boundary
+          so a customer decline can be silenced entirely regardless
+          of individual admins' preferences). */}
+      {isAdmin ? <TenantDeclineNotifyToggle /> : null}
 
       <div className="rounded-2xl overflow-hidden"
            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
@@ -462,6 +472,116 @@ function PortalChatSmsBridgeCard() {
           {error}
         </div>
       )}
+    </div>
+  );
+}
+
+
+
+/**
+ * Feb-2026 · Phase B — tenant-scoped decline-notification toggle.
+ *
+ * Reads / writes ``notify_admin_on_decline`` on the tenant settings
+ * doc via the existing ``/api/tenants/mine/settings`` GET+PATCH.
+ * Admin-only (parent gates the mount).
+ *
+ * Gating semantics (matches ``services/quote_notifications``):
+ *   * ``true``  → email + SMS admin fanout fires on top-level decline.
+ *   * ``false`` → bell fanout still fires; email + SMS suppressed.
+ *   * unset    → treated as ``true`` by the backend.
+ */
+export function TenantDeclineNotifyToggle() {
+  const [value, setValue] = useState(null);   // null while loading
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get("/tenants/mine/settings");
+        setValue(Boolean(r?.notify_admin_on_decline ?? true));
+      } catch { setValue(true); }
+    })();
+  }, []);
+
+  const flip = async () => {
+    if (value === null || saving) return;
+    const next = !value;
+    setSaving(true);
+    setValue(next);                            // optimistic
+    try {
+      const r = await api.patch(
+        "/tenants/mine/settings",
+        { notify_admin_on_decline: next },
+      );
+      setValue(Boolean(r?.notify_admin_on_decline ?? next));
+      setToast("Saved");
+    } catch (e) {
+      setValue(!next);                          // rollback
+      setToast(e?.message || "Save failed");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2000);
+    }
+  };
+
+  const on = Boolean(value);
+  const loading = value === null;
+
+  return (
+    <div
+      className="rounded-2xl px-4 py-3 mb-4 flex items-center justify-between gap-3"
+      style={{
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid="tenant-decline-notify-row"
+    >
+      <div className="min-w-0">
+        <div
+          className="text-sm font-semibold"
+          style={{ color: colors.onSurface }}
+        >
+          Notify admins when a customer declines a quote/estimate
+        </div>
+        <p className="text-xs mt-0.5" style={{ color: colors.muted }}>
+          Sends email + SMS to the tenant's notification recipients
+          (falls back to workforce admins). Bell alerts stay on
+          regardless of this setting.
+        </p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {toast ? (
+          <span
+            className="text-[10px] font-semibold px-2 py-1 rounded"
+            style={{ backgroundColor: "#DCFCE7", color: "#166534" }}
+            data-testid="tenant-decline-notify-toast"
+          >
+            {toast}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          onClick={flip}
+          disabled={loading || saving}
+          className="relative inline-flex items-center h-6 w-11 rounded-full transition-colors"
+          style={{
+            backgroundColor: on ? colors.brand : "#D1D5DB",
+            opacity: loading ? 0.5 : 1,
+            cursor: loading ? "wait" : "pointer",
+          }}
+          data-testid="tenant-decline-notify-toggle"
+        >
+          <span
+            className="inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform"
+            style={{
+              transform: `translateX(${on ? 22 : 2}px)`,
+            }}
+          />
+        </button>
+      </div>
     </div>
   );
 }

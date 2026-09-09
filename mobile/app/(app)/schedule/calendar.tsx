@@ -193,6 +193,7 @@ function ScheduleCalendarInner() {
     setJobs((prev) => prev.filter((r) => r.id !== jid));
   }, []);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState("");
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -550,14 +551,22 @@ function ScheduleCalendarInner() {
         subtitle={loading ? "Loading…" : `${jobs.length} jobs in window · ${mode}`}
         right={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            {/* ITEM 2 — Schedule Refresh Button */}
+            <Pressable
+              onPress={() => { if (!refreshing) { setRefreshing(true); load(true).finally(() => setRefreshing(false)); } }}
+              disabled={refreshing}
+              style={[gStyles.refreshBtn, refreshing && { opacity: 0.6 }]}
+              hitSlop={8}
+              testID="schedule-refresh"
+              accessibilityLabel="Refresh schedule"
+            >
+              {refreshing
+                ? <ActivityIndicator size={14} color={colors.onSurface} testID="schedule-refresh-spinner" />
+                : <Ionicons name="refresh" size={16} color={colors.onSurface} />}
+            </Pressable>
             <SyncBadge testID="schedule-header-sync-badge" />
             <OfflineBadge testID="schedule-header-offline-badge" cacheStats={hydrationMeta ? { cached: hydrationMeta.cachedJobs, total: hydrationMeta.totalJobs, lastSyncedAt: hydrationMeta.lastSyncedAt } : undefined} />
             {isTech ? (
-              // Phase 22 · 2026-08-02 · Sub-item B — the ambient shell
-              // hamburger renders at the extreme top-right and was
-              // visually overlapping the bell. Push the bell 44dp left
-              // (hamburger tap target + 8dp gap) so both are fully
-              // tappable and non-colliding.
               <View style={{ marginRight: 52 }} testID="schedule-header-bell">
                 <NotificationBell />
               </View>
@@ -1260,8 +1269,16 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             (e.g. "MR") before the customer name was removed —
             the schedule day view is already tech-scoped in the
             header, so the per-card avatar was redundant clutter. */}
+        {/* ITEM 3 — Customer name + NavigateJobButton + VIP pill on same row */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
-          <Text style={gStyles.cust} numberOfLines={1}>{formatCustomerName(job)}</Text>
+          <Text style={[gStyles.cust, { flexShrink: 1 }]} numberOfLines={1}>{formatCustomerName(job)}</Text>
+          <NavigateJobButton job={job} />
+          {job.customer_is_vip ? (
+            <View style={gStyles.vipBadgeInline} testID={`job-vip-badge-${job.id}`}>
+              <Ionicons name="star" size={9} color="#92400E" />
+              <Text style={gStyles.vipText}>VIP</Text>
+            </View>
+          ) : null}
         </View>
         {job.property_label ? (
           <View
@@ -1280,12 +1297,6 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             <Text style={{ fontSize: 10, fontWeight: "700", color: "#075985" }}>
               🏠 {job.property_label}
             </Text>
-          </View>
-        ) : null}
-        {job.customer_is_vip ? (
-          <View style={gStyles.vipBadge} testID={`job-vip-badge-${job.id}`}>
-            <Ionicons name="star" size={9} color="#92400E" />
-            <Text style={gStyles.vipText}>VIP</Text>
           </View>
         ) : null}
         {hourlyData.length > 0 && (
@@ -1392,7 +1403,6 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
         </View>
       ) : (
         <View style={gStyles.cardRight}>
-          <NavigateJobButton job={job} />
           <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
             <Text style={[gStyles.statusText, { color: pill.fg }]}>{pill.label}</Text>
           </View>
@@ -1574,6 +1584,17 @@ const gStyles = StyleSheet.create({
     gap: 2, backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
     paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill,
     marginTop: 2,
+  },
+  vipBadgeInline: {
+    flexDirection: "row", alignItems: "center",
+    gap: 2, backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
+    paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill,
+  },
+  refreshBtn: {
+    width: 34, height: 34, borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1, borderColor: colors.border,
+    alignItems: "center", justifyContent: "center",
   },
   cachedPill: {
     flexDirection: "row", alignItems: "center", alignSelf: "flex-start",

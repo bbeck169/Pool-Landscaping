@@ -847,6 +847,11 @@ class TenantSettingsUpdate(BaseModel):
     require_card_on_file_default: Optional[bool] = None
     timezone: Optional[str] = None
     auto_send_card_add_on_create: Optional[bool] = None
+    # Feb-2026 · Phase B — email + SMS fanout gate for top-level
+    # decline. Default True (nothing set on the tenant doc counts as
+    # True too via ``.get("notify_admin_on_decline", True)`` on the
+    # read path).
+    notify_admin_on_decline: Optional[bool] = None
 
 
 @router.get(
@@ -877,6 +882,11 @@ async def get_own_settings(user: dict = Depends(get_current_user),
         "timezone": tenant.get("timezone") or "America/Phoenix",
         "auto_send_card_add_on_create": bool(
             tenant.get("auto_send_card_add_on_create", False)),
+        # Feb-2026 · Phase B — top-level decline email + SMS fanout
+        # gate. Default True; only False when the tenant admin
+        # explicitly flipped the toggle in Settings → Notifications.
+        "notify_admin_on_decline": bool(
+            tenant.get("notify_admin_on_decline", True)),
         # Phase 11 · equipment tracker digest
         "equipment_service_customer_reminders_enabled": bool(
             tenant.get("equipment_service_customer_reminders_enabled", False)),

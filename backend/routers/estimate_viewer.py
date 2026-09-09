@@ -261,6 +261,41 @@ async def _notify_admins(tenant_id: str, kind: str,
         logger.warning("[slice-r] admin bell emit failed: %s", exc)
 
 
+# Feb-2026 · Phase B — wire the email + SMS fanout for top-level
+# approve / decline. Kept as a thin wrapper so the 4 endpoints below
+# stay short and readable. Loads the fresh tenant doc so the toggle
+# (``notify_admin_on_decline``) reflects the latest admin state, and
+# the fresh estimate doc so the templates carry the final total /
+# decline_reason.
+async def _notify_admins_email_sms(*, tenant_id: str, doc_id: str,
+                                     event: str,
+                                     actor_id: Optional[str]) -> None:
+    try:
+        tenant = await db.tenants.find_one({"id": tenant_id}, {"_id": 0}) or {}
+        doc = await db.quotes.find_one({"id": doc_id, "tenant_id": tenant_id},
+                                         {"_id": 0}) or {}
+        origin = _public_frontend_origin()
+        from services.quote_notifications import notify_quote_decision
+        await notify_quote_decision(
+            tenant=tenant, doc=doc, event=event,
+            actor_id=actor_id, frontend_origin=origin,
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[phase-b] email/sms fanout failed: %s", exc)
+
+
+def _public_frontend_origin() -> str:
+    """Absolute base URL for admin deep-links. Kept env-driven so
+    email/SMS bodies never leak preview-only hostnames when the app
+    is running in prod."""
+    import os
+    return (
+        os.environ.get("PUBLIC_FRONTEND_ORIGIN")
+        or os.environ.get("REACT_APP_BACKEND_URL")
+        or ""
+    ).rstrip("/")
+
+
 async def _mark_accepted(est: dict, tenant_id: str, actor_id: str) -> None:
     upd = {
         "status": "accepted",
@@ -344,6 +379,11 @@ async def accept_estimate(qid: str,
         body=f"Estimate #{(est.get('id') or '')[:8]} was accepted.",
         href=f"/estimates/{qid}",
     )
+    # Feb-2026 · Phase B — email + SMS fanout in addition to bell.
+    await _notify_admins_email_sms(
+        tenant_id=tenant["id"], doc_id=qid,
+        event="quote_accepted", actor_id=user.get("id"),
+    )
     return await _build_payload(
         await _load_estimate(qid, tenant["id"]), tenant,
         as_customer=(user.get("role") == "customer"),
@@ -364,6 +404,11 @@ async def decline_estimate(qid: str, body: DeclineIn,
         title=f"Estimate declined by {est.get('customer_name') or 'customer'}",
         body=(body.reason or "No reason given")[:200],
         href=f"/estimates/{qid}",
+    )
+    # Feb-2026 · Phase B — email + SMS fanout (gated on tenant toggle).
+    await _notify_admins_email_sms(
+        tenant_id=tenant["id"], doc_id=qid,
+        event="quote_declined", actor_id=user.get("id"),
     )
     return await _build_payload(
         await _load_estimate(qid, tenant["id"]), tenant,
@@ -472,6 +517,11 @@ async def accept_via_token(token: str = Query(...)):
         body=f"Estimate #{(est.get('id') or '')[:8]} accepted via magic link.",
         href=f"/estimates/{est['id']}",
     )
+    # Feb-2026 · Phase B — email + SMS fanout for magic-link accepts.
+    await _notify_admins_email_sms(
+        tenant_id=ctx["tenant"]["id"], doc_id=est["id"],
+        event="quote_accepted", actor_id=f"token:{ctx['cid']}",
+    )
     return await _build_payload(
         await db.quotes.find_one({"id": est["id"]}, {"_id": 0}),
         ctx["tenant"], as_customer=True,
@@ -491,6 +541,11 @@ async def decline_via_token(body: DeclineIn, token: str = Query(...)):
         title="Estimate declined via link",
         body=(body.reason or "No reason given")[:200],
         href=f"/estimates/{est['id']}",
+    )
+    # Feb-2026 · Phase B — email + SMS fanout (gated on tenant toggle).
+    await _notify_admins_email_sms(
+        tenant_id=ctx["tenant"]["id"], doc_id=est["id"],
+        event="quote_declined", actor_id=f"token:{ctx['cid']}",
     )
     return await _build_payload(
         await db.quotes.find_one({"id": est["id"]}, {"_id": 0}),
@@ -712,13 +767,17 @@ async def phase_a_approve_via_token(token: str):
         {"id": est["id"], "tenant_id": ctx["tenant"]["id"]}, {"_id": 0},
     )
     await _phase_a_recompute_and_persist(est_fresh, ctx["tenant"]["id"])
-    # NOTE: notifications are wired in Phase B. Phase A leaves the
-    # existing bell fanout intact but does NOT dispatch email/SMS.
+    # Feb-2026 · Phase B — bell fanout + email + SMS. Approve always
+    # notifies (no gate).
     await _notify_admins(
         ctx["tenant"]["id"], kind="quote_accepted",
         title="Estimate approved via portal",
         body=f"Estimate #{(est.get('id') or '')[:8]} approved via portal.",
         href=f"/estimates/{est['id']}",
+    )
+    await _notify_admins_email_sms(
+        tenant_id=ctx["tenant"]["id"], doc_id=est["id"],
+        event="quote_accepted", actor_id=f"token:{ctx['cid']}",
     )
     return await _build_payload(est_fresh, ctx["tenant"], as_customer=True)
 
@@ -741,13 +800,17 @@ async def phase_a_decline_via_token(
         {"id": est["id"], "tenant_id": ctx["tenant"]["id"]}, {"_id": 0},
     )
     await _phase_a_recompute_and_persist(est_fresh, ctx["tenant"]["id"])
-    # Phase A: bell fanout only. Phase B wires email + SMS through the
-    # ``notify_admin_on_decline`` tenant flag.
+    # Feb-2026 · Phase B — bell fanout + email + SMS (gated on the
+    # tenant's ``notify_admin_on_decline`` flag inside the helper).
     await _notify_admins(
         ctx["tenant"]["id"], kind="quote_declined",
         title="Estimate declined via portal",
         body=(reason or "No reason given")[:200],
         href=f"/estimates/{est['id']}",
+    )
+    await _notify_admins_email_sms(
+        tenant_id=ctx["tenant"]["id"], doc_id=est["id"],
+        event="quote_declined", actor_id=f"token:{ctx['cid']}",
     )
     return await _build_payload(est_fresh, ctx["tenant"], as_customer=True)
 
