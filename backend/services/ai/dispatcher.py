@@ -24,6 +24,17 @@ from .models import (
 )
 from .registry import get_tenant_ai_provider, short_name_for
 from .usage import enforce_cap_or_raise, record_usage
+# Feb-2026 · P1 parallel fix — AI BYO empty-credentials fallback.
+# Mirrors the comms BYO hotfix in ``services.messaging.byo_passthrough``.
+# When a tenant BYO row is ``connected=True`` on paper but its
+# required credentials (``api_key``, etc.) are blank / whitespace,
+# fall back to the Emergent Universal LLM Key. Cap-exceeded
+# semantics unchanged — the ``enforce_cap_or_raise`` HARD BLOCK
+# stays HARD BLOCK per the phase-I1.7.c.1 lock.
+from services.byo_common import (
+    byo_required_fields_present,
+    looks_like_credential_failure,
+)
 
 
 log = logging.getLogger("ai.dispatch")
@@ -99,6 +110,24 @@ async def dispatch_ai_completion(
             tenant_id=tenant_id,
             system_prompt=system_prompt, user_text=user_text,
         )
+    # Feb-2026 · P1 parallel fix — BYO empty-credentials guard.
+    # When the tenant's BYO row exists but every ``required=True``
+    # field on the provider schema is blank / whitespace, treat it
+    # as "not configured" and fall through to platform. This runs
+    # BEFORE the cap check on purpose: a mis-typed / blanked row
+    # shouldn't count against the tenant's monthly cap either.
+    from ._helpers import load_provider_config as _ai_load_cfg
+    if not await byo_required_fields_present(
+        provider, tenant_id, config_loader=_ai_load_cfg, db=db,
+    ):
+        log.warning(
+            "[byo] tenant=%s provider=%s credential fallback → platform",
+            tenant_id, getattr(provider, "provider_key", "?"),
+        )
+        return await _emergent_platform_fallback(
+            tenant_id=tenant_id,
+            system_prompt=system_prompt, user_text=user_text,
+        )
     short = short_name_for(provider.provider_key) or provider.provider_key
     # Rule 2: BYO exists — cap check FIRST.
     await enforce_cap_or_raise(tenant_id=tenant_id, provider=short, db=db)
@@ -111,11 +140,33 @@ async def dispatch_ai_completion(
     # ``result.provider_used == "tenant:{short}"`` semantics
     # unchanged, which downstream analytics + admin UI depend on.
     # Rule 3: dispatch + record.
-    result = await provider.complete(
-        tenant_id=tenant_id,
-        system_prompt=system_prompt, user_text=user_text,
-        model=model, metadata=metadata,
-    )
+    try:
+        result = await provider.complete(
+            tenant_id=tenant_id,
+            system_prompt=system_prompt, user_text=user_text,
+            model=model, metadata=metadata,
+        )
+    except TenantAIUsageCapExceeded:
+        # Cap-exceeded stays HARD BLOCK — never silently degrade.
+        raise
+    except Exception as exc:
+        err = f"{type(exc).__name__}: {exc}"
+        # Feb-2026 · P1 parallel fix — credential-shaped failures
+        # (auth 401/403, "invalid api key") mean the BYO row's key
+        # was rejected upstream. Fall through to platform without
+        # recording usage on the tenant's BYO row (there wasn't a
+        # real call).
+        if looks_like_credential_failure(err):
+            log.warning(
+                "[byo] tenant=%s provider=%s credential-shaped failure "
+                "→ platform: %s",
+                tenant_id, short, err,
+            )
+            return await _emergent_platform_fallback(
+                tenant_id=tenant_id,
+                system_prompt=system_prompt, user_text=user_text,
+            )
+        raise
     # Fire-and-forget usage record (still awaited so tests see it).
     try:
         await record_usage(

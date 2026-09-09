@@ -36,6 +36,16 @@ from .models import (
 )
 from .registry import get_tenant_maps_provider, short_name_for
 from .usage import enforce_cap_or_raise, record_usage
+# Feb-2026 · P1 parallel fix — Maps BYO empty-credentials fallback.
+# Mirrors the comms + AI hotfixes. When the tenant's BYO row is
+# ``connected=True`` on paper but every required credential field
+# is blank / whitespace, fall through to the platform default
+# (Google Maps / Mapbox env keys). Cap-exceeded semantics remain a
+# HARD BLOCK per the phase-I1.7.c.2 lock.
+from services.byo_common import (
+    byo_required_fields_present,
+    looks_like_credential_failure,
+)
 
 
 log = logging.getLogger("maps.dispatch")
@@ -265,9 +275,36 @@ async def _dispatch_op(
         log.info("[maps.dispatch] tenant=%s no BYO — using platform default",
                  tenant_id)
         return await call_platform()
+    # Feb-2026 · P1 parallel fix — BYO empty-credentials guard.
+    # Runs BEFORE the cap check so a mis-typed / blanked row never
+    # consumes the tenant's monthly quota either.
+    from ._helpers import load_provider_config as _maps_load_cfg
+    if not await byo_required_fields_present(
+        provider, tenant_id, config_loader=_maps_load_cfg, db=db,
+    ):
+        log.warning(
+            "[byo] tenant=%s provider=%s credential fallback → platform",
+            tenant_id, getattr(provider, "provider_key", "?"),
+        )
+        return await call_platform()
     short = short_name_for(provider.provider_key) or provider.provider_key
     await enforce_cap_or_raise(tenant_id=tenant_id, provider=short, db=db)
-    result = await call_tenant(provider)
+    try:
+        result = await call_tenant(provider)
+    except TenantMapsRequestCapExceeded:
+        # Cap-exceeded stays HARD BLOCK.
+        raise
+    except Exception as exc:
+        err = f"{type(exc).__name__}: {exc}"
+        # Credential-shaped failures fall through to platform.
+        if looks_like_credential_failure(err):
+            log.warning(
+                "[byo] tenant=%s provider=%s op=%s credential-shaped "
+                "failure → platform: %s",
+                tenant_id, short, operation, err,
+            )
+            return await call_platform()
+        raise
     # Chunk 3, Feb-2026 — reverse_geocode adapters may return None
     # when the provider doesn't implement it → fall back to platform
     # WITHOUT recording usage on the tenant's BYO row.

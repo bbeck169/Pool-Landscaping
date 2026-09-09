@@ -42,6 +42,17 @@ from fastapi import HTTPException
 from .email.registry import get_tenant_email_provider
 from .sms.registry import get_tenant_sms_provider
 
+# Feb-2026 · P1 backlog landed — share the credential-shape helper
+# with the AI and Maps dispatchers via ``services.byo_common``.
+# Local names preserved (``_byo_required_fields_present`` /
+# ``_looks_like_credential_failure``) as backwards-compat aliases;
+# ``test_p0_byo_empty_credentials_fallback.py`` imports the former
+# name and we don't want to churn it.
+from services.byo_common import (
+    byo_required_fields_present as _byo_required_fields_present_shared,
+    looks_like_credential_failure as _looks_like_credential_failure,
+)
+
 
 log = logging.getLogger("messaging.byo_passthrough")
 
@@ -52,53 +63,12 @@ CAP_EXCEEDED_HTTP_STATUS = 429
 async def _byo_required_fields_present(
     provider: Any, tenant_id: str, db=None,
 ) -> bool:
-    """Return True iff every required secret field on the provider's
-    ``config_fields`` schema resolves to a non-blank string in the
-    tenant's saved config.
-
-    Feb-2026 · P0 comms hotfix — the tenant-BYO write path
-    (``save_provider_config``) marks the row ``connected=True`` as
-    soon as ``validate_config`` accepts the input, even though the
-    key is never live-probed. Users who typed a mangled Resend key
-    (or blanked the field after a partial save) end up with a
-    ``connected=True`` row whose ``api_key`` is empty / whitespace.
-    ``get_tenant_*_provider`` then hands back a provider whose every
-    outbound call raises with an empty-auth error, and the
-    passthrough returns ``_envelope_failed(...)`` — which the
-    adapter treats as authoritative and NEVER falls back to the
-    platform provider. Result: both channels silently break the
-    moment BYOP is "connected" but not valid.
-
-    This guard runs before the BYO provider is invoked. When it
-    returns False, the caller returns ``None`` and the send falls
-    through to the platform key. When it returns True, the send
-    routes through the BYO provider as usual (cap-exceeded and
-    genuine send failures continue to surface via envelopes).
-    """
-    try:
-        from ._helpers import load_provider_config
-        cfg = await load_provider_config(
-            tenant_id=tenant_id,
-            provider_key=getattr(provider, "provider_key", ""),
-            db=db,
-        ) or {}
-    except Exception as exc:  # noqa: BLE001
-        log.warning("[byo] config load failed tenant=%s provider=%s: %s",
-                    tenant_id, getattr(provider, "provider_key", "?"), exc)
-        return False
-    schema = getattr(provider, "config_fields", {}) or {}
-    for name, meta in schema.items():
-        if not meta.get("required"):
-            continue
-        val = cfg.get(name)
-        if not isinstance(val, str) or not val.strip():
-            log.warning(
-                "[byo] tenant=%s provider=%s required field %r is "
-                "blank/missing — falling back to platform provider",
-                tenant_id, getattr(provider, "provider_key", "?"), name,
-            )
-            return False
-    return True
+    """Backwards-compat wrapper — delegates to the shared helper
+    with messaging's own ``load_provider_config``."""
+    from ._helpers import load_provider_config
+    return await _byo_required_fields_present_shared(
+        provider, tenant_id, config_loader=load_provider_config, db=db,
+    )
 
 # Substrings we treat as a cap / quota hit when they appear in a
 # provider error message. Kept intentionally coarse — provider error
@@ -128,43 +98,12 @@ def _looks_like_cap_hit(status: Optional[str], error: Optional[str]) -> bool:
     return any(marker in e for marker in _CAP_ERROR_MARKERS)
 
 
-# Feb-2026 · P0 comms hotfix — substrings we treat as "the BYO
-# provider's credentials are broken" and therefore we should fall
-# back to the platform provider rather than bubble a failed
-# envelope. Kept coarse on purpose — over-matching here means one
-# extra platform send, under-matching leaves the user with silent
-# failures. Prefer the former.
-_CREDENTIAL_ERROR_MARKERS = (
-    "unauthorized",
-    "unauthorised",
-    "401",
-    "403",
-    "authentication",
-    "invalid api key",
-    "invalid_api_key",
-    "no resend config",
-    "no ringcentral config",
-    "no twilio config",
-    "no textmagic config",
-    "tenantmessagingnotconnected",
-    "missing required",
-    "missing api",
-    "empty api",
-    "invalid credentials",
-    "invalid_credentials",
-    "api key not valid",
-    "api_key is required",
-)
-
-
-def _looks_like_credential_failure(error: Optional[str]) -> bool:
-    """Return True when the BYO provider raised an error whose
-    text looks like an authentication / credential issue rather
-    than a legitimate send-time failure."""
-    if not error:
-        return False
-    e = error.lower()
-    return any(marker in e for marker in _CREDENTIAL_ERROR_MARKERS)
+# Feb-2026 · P0 comms hotfix → consolidated into ``services.byo_common``.
+# The credential-error substring list + ``looks_like_credential_failure``
+# now live there (imported at the top of this module). Backwards-compat
+# alias ``_looks_like_credential_failure`` is exported from the top import
+# block so callsites + tests that import from ``byo_passthrough`` still
+# resolve.
 
 
 def _envelope_ok(*, provider_key: str, message_id: Optional[str],
