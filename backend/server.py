@@ -595,6 +595,12 @@ api_router.include_router(_lz1_link_callback.router)
 # Feb 2026 — Admin invoice edit (PATCH + audit history).
 from routers import invoice_edit as _invoice_edit  # noqa: E402
 api_router.include_router(_invoice_edit.router)
+# Feb-2026 · Editable Sent Docs · Phase 1 — document versions API
+# (read-only version list for quotes / invoices / estimator
+# estimates). Feature-lives under /api/documents/{doc_type}/{doc_id}
+# — see ``routers/document_versions.py``.
+from routers import document_versions as _document_versions  # noqa: E402
+api_router.include_router(_document_versions.router)
 # Phase K47 · Feb-2026 — Admin invoice view-tracking history endpoint
 # (GET /invoices/{iid}/views). Companion to the tracker service that
 # records every customer-facing view of an invoice on the magic-link

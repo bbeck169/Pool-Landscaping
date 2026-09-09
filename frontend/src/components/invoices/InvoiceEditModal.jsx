@@ -11,6 +11,7 @@ import { colors, money } from "@/theme";
 import { Button, TextInput } from "@/components/ui-kit";
 import { api } from "@/api";
 import CategoryPicker from "@/components/income/CategoryPicker";
+import EditLockConfirmDialog from "@/components/documents/EditLockConfirmDialog";
 
 const MONEY_FIELDS = new Set([
   "line_items", "discount_amount", "discount_type", "tax_rate", "currency",
@@ -57,11 +58,28 @@ const EMPTY_ITEM = () => ({
   pricebook_writeback: false,
 });
 
-export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
+export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }) {
   const status = String(invoice?.status || "draft").toLowerCase();
   const terminal = status === "void" || status === "cancelled";
   const sent = status === "sent";
+  const accepted = status === "accepted";
   const paid = status === "paid";
+  // Feb-2026 · Editable Sent Docs · Phase 1 — the modal now gates
+  // save on a shared confirmation dialog for any locked status
+  // (sent | accepted | paid). ``isStripePaid`` triggers the Stripe-
+  // ledger warning; ``isSigned`` triggers the signature-invalidation
+  // warning. Both stack when both conditions hold.
+  const isLocked = sent || accepted || paid;
+  const isStripePaid = paid && Boolean(
+    invoice?.payment_intent_id
+    || invoice?.charge_id
+    || invoice?.stripe_payment_intent_id
+    || invoice?.payment_url,
+  );
+  const isSigned = Boolean(
+    signInfo?.signed
+    || String(invoice?.signature_status || "").toLowerCase() === "signed",
+  );
 
   const [form, setForm] = useState(() => ({
     customer_id: invoice?.customer_id || "",
@@ -89,7 +107,11 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
     reason: "",
   }));
 
-  const [confirmSent, setConfirmSent] = useState(false);
+  // Feb-2026 · Editable Sent Docs · Phase 1 — shared confirm-dialog
+  // toggle. Any Save on a locked status routes through this dialog
+  // before firing the PATCH. (The legacy inline "acknowledgement
+  // checkbox" flow was retired in the same phase.)
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // Feb-2026 · Invoice inline edit sprint — per-row error state so
@@ -139,20 +161,15 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
   }));
 
   // ── Gate whether Save is allowed ─────────────────────────────
-  // Feb 2026 · Type-to-confirm removed — ``paidNumberOk`` used to
-  // gate Save until the user re-typed the invoice number for PAID
-  // invoices. That friction was retired app-wide. The warning
-  // banner above is the only remaining safety; the backend still
-  // receives ``confirm_edit_paid_invoice_number`` (auto-populated)
-  // for server-side re-verification.
-  const sentOk = !sent || confirmSent;
-  // Feb-2026 · Invoice inline edit sprint — save button stays
-  // enabled even when a line lacks a category; the operator fixes
-  // the row inline after the server error surfaces the issue.
-  const canSave = !terminal && sentOk && !busy;
+  // Feb-2026 · Editable Sent Docs · Phase 1 — the legacy sent-only
+  // acknowledgement checkbox has been replaced by the shared
+  // ``EditLockConfirmDialog``, which fires at Save-time for any
+  // locked status (sent | accepted | paid). ``canSave`` therefore
+  // no longer depends on the ``confirmSent`` checkbox; the dialog
+  // provides the friction instead.
+  const canSave = !terminal && !busy;
 
-  const submit = async () => {
-    if (!canSave) return;
+  const doSubmit = async () => {
     setBusy(true);
     setError("");
     setRowErrors({});
@@ -174,8 +191,21 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
         pricebook_item_id: li.pricebook_item_id || undefined,
         pricebook_writeback: !!li.pricebook_writeback,
       }));
-      if (sent) payload.confirm_edit_sent = true;
-      if (paid) payload.confirm_edit_paid_invoice_number = invoice?.invoice_number || "";
+      // Feb-2026 · Editable Sent Docs · Phase 1 — never send the
+      // invoice_number field; the input is disabled and the backend
+      // treats invoice_number as immutable once assigned.
+      delete payload.invoice_number;
+      // Feb-2026 · Editable Sent Docs · Phase 1 — attach the ack
+      // flag whenever the doc is locked. Legacy fields are still
+      // populated for back-compat with older backend builds.
+      if (isLocked) {
+        payload.acknowledged_lock_bypass = true;
+        if (sent) payload.confirm_edit_sent = true;
+        if (paid) {
+          payload.confirm_edit_paid_invoice_number =
+            invoice?.invoice_number || "";
+        }
+      }
       const res = await api.patch(`/quotes/${invoice.id}`, payload);
       onSaved?.(res);
     } catch (e) {
@@ -201,13 +231,22 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
         const msg = legacyCode === "invoice_number_conflict"
           ? "That invoice number is already in use. Pick a different one."
           : legacyCode === "requires_confirmation"
-          ? "This invoice was sent — please tick the acknowledgement above."
+          ? "This invoice was sent — please acknowledge the confirmation dialog."
           : e?.message || "Save failed. Please try again.";
         setError(msg);
       }
     } finally {
       setBusy(false);
     }
+  };
+
+  const submit = () => {
+    if (!canSave) return;
+    if (isLocked) {
+      setConfirmOpen(true);
+      return;
+    }
+    doSubmit();
   };
 
   return (
@@ -258,24 +297,29 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
                         border: "1px solid #FCD34D" }}
               data-testid="invoice-edit-banner-sent"
             >
-              <div className="flex items-start gap-2 mb-2">
+              <div className="flex items-start gap-2">
                 <AlertTriangle size={16} />
                 <span>
-                  This invoice has been sent to the customer. Editing may
-                  cause confusion if they've already reviewed it. Continue?
+                  This invoice has been sent to the customer. You'll be
+                  asked to confirm before your changes are saved.
                 </span>
               </div>
-              <label className="flex items-center gap-2 mt-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={confirmSent}
-                  onChange={(e) => setConfirmSent(e.target.checked)}
-                  data-testid="invoice-edit-confirm-sent"
-                />
-                <span className="text-sm font-semibold">
-                  I understand and want to continue.
+            </div>
+          ) : null}
+          {accepted && !terminal ? (
+            <div
+              className="rounded-xl p-3 text-sm"
+              style={{ background: "#FEF3C7", color: "#78350F",
+                        border: "1px solid #FCD34D" }}
+              data-testid="invoice-edit-banner-accepted"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={16} />
+                <span>
+                  This invoice has been accepted by the customer. You'll be
+                  asked to confirm before your changes are saved.
                 </span>
-              </label>
+              </div>
             </div>
           ) : null}
           {paid && !terminal ? (
@@ -288,20 +332,29 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
               <div className="flex items-start gap-2">
                 <AlertTriangle size={16} />
                 <span>
-                  This invoice has been PAID. Editing it can break your
-                  accounting audit trail. Only proceed if you know what
-                  you're doing.
+                  This invoice has been PAID. Editing it does <b>not</b>{" "}
+                  auto-refund or reconcile the Stripe ledger — you're on the
+                  hook for any manual refund / adjustment. You'll be asked
+                  to confirm before saving.
                 </span>
               </div>
-              {/* Feb 2026 · Type-to-confirm removed — the "type the
-                  invoice number" input previously gating Save on
-                  paid invoices was retired app-wide. The two-click
-                  safety flow (open modal → click Save) is
-                  preserved; the warning banner above is the only
-                  friction that remains. The backend still receives
-                  ``confirm_edit_paid_invoice_number`` for
-                  server-side re-verification (auto-populated from
-                  the current invoice number). */}
+            </div>
+          ) : null}
+          {isSigned && !terminal ? (
+            <div
+              className="rounded-xl p-3 text-sm"
+              style={{ background: "#FEF3C7", color: "#78350F",
+                        border: "1px solid #FCD34D" }}
+              data-testid="invoice-edit-banner-signed"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={16} />
+                <span>
+                  This document has been signed by the customer. Saving edits
+                  will invalidate the signature — the customer will need to
+                  re-sign.
+                </span>
+              </div>
             </div>
           ) : null}
 
@@ -326,9 +379,11 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
               testid="invoice-edit-customer-id"
             />
             <TextInput
-              label="Invoice Number"
+              label="Invoice Number (locked)"
               value={form.invoice_number}
-              onChange={(e) => set("invoice_number", e.target.value)}
+              readOnly
+              disabled
+              title="Locked — cannot be changed after send."
               testid="invoice-edit-invoice-number"
             />
           </div>
@@ -668,6 +723,21 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
           </Button>
         </footer>
       </div>
+      {/* Feb-2026 · Editable Sent Docs · Phase 1 — shared confirm
+          dialog. Renders on top of the modal when Save is clicked
+          against a locked (sent | accepted | paid) status. */}
+      <EditLockConfirmDialog
+        open={confirmOpen}
+        onCancel={() => { if (!busy) setConfirmOpen(false); }}
+        onConfirm={async () => {
+          setConfirmOpen(false);
+          await doSubmit();
+        }}
+        isStripePaid={isStripePaid}
+        isSigned={isSigned}
+        busy={busy}
+        status={status}
+      />
     </div>
   );
 }

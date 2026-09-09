@@ -1,5 +1,5 @@
 # ruff: noqa: F401
-from fastapi import APIRouter, HTTPException, Depends, Query, Response
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, Response
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 import re
@@ -549,6 +549,7 @@ async def create_quote(body: QuoteIn,
     },
 )
 async def update_quote(qid: str, body: QuoteUpdate,
+                       request: Request,
                        user: dict = Depends(require_admin),
                        tenant: dict = Depends(get_current_tenant)):
     """Partial update of quote/invoice fields (title, notes, terms, tax_rate, due_date, line_items)."""
@@ -557,6 +558,21 @@ async def update_quote(qid: str, body: QuoteUpdate,
     )
     if not existing:
         raise HTTPException(404, "Not found")
+    # Feb-2026 · Editable Sent Docs · Phase 1 — reject any attempt
+    # to mutate a doc-number field BEFORE the status gate. Pydantic
+    # ``QuoteUpdate`` drops unknown fields silently; peek at the raw
+    # body so a client-side hack can't slip an ``invoice_number``
+    # / ``quote_number`` past the schema.
+    try:
+        _raw_body = await request.json()
+    except Exception:  # noqa: BLE001
+        _raw_body = {}
+    if isinstance(_raw_body, dict):
+        for _immut in ("invoice_number", "quote_number", "doc_number"):
+            if _immut in _raw_body and _raw_body[_immut] != existing.get(_immut):
+                raise HTTPException(
+                    400, f"{_immut} is immutable once assigned",
+                )
     # Phase K80.b · Feb-2026 — Status-based mutation gate. Refuse a PUT
     # against a status that our product policy locks. The check runs
     # BEFORE body parsing so we never waste validation cycles on a
@@ -572,10 +588,25 @@ async def update_quote(qid: str, body: QuoteUpdate,
         audit_put_denial,
         is_quote_mutable_for_put,
     )
-    if not is_quote_mutable_for_put(existing):
+    # Feb-2026 · Editable Sent Docs · Phase 1 — honour the frontend
+    # confirm-dialog ``acknowledged_lock_bypass`` flag. Pulled from
+    # the body BEFORE the status gate so ``sent``/``accepted``/
+    # ``paid`` docs unlock when the operator has acknowledged.
+    _ack = bool(getattr(body, "acknowledged_lock_bypass", False))
+    if not is_quote_mutable_for_put(existing, bypass_lock=_ack):
         await audit_put_denial(db, quote=existing, actor=user)
-        assert_quote_mutable_for_put(existing)  # raises 409
+        assert_quote_mutable_for_put(existing, bypass_lock=_ack)  # raises 409
     upd = {k: v for k, v in body.dict().items() if v is not None}
+    # ``acknowledged_lock_bypass`` + ``edit_reason`` are request-only
+    # flags — never persist them on the doc row.
+    _edit_reason = upd.pop("edit_reason", None)
+    upd.pop("acknowledged_lock_bypass", None)
+    # Feb-2026 · Editable Sent Docs · Phase 1 — also reject any
+    # ``quote_number`` mutation defensively (the schema doesn't
+    # include the field but keeps drift-safe).
+    if "quote_number" in upd and upd["quote_number"] != existing.get("quote_number"):
+        raise HTTPException(400, "quote_number is immutable once assigned")
+    upd.pop("quote_number", None)
     # Phase 56.18 — invoice_number is IMMUTABLE once assigned. Reject
     # any attempt to overwrite (defensive; `QuoteUpdate` shouldn't
     # accept it, but guard anyway in case an admin sends raw JSON).
@@ -653,7 +684,36 @@ async def update_quote(qid: str, body: QuoteUpdate,
             "remaining_balance": round(max(total - amount_paid, 0.0), 2),
         })
     upd["updated_at"] = now_iso()
+    # Feb-2026 · Editable Sent Docs · Phase 1 — snapshot the
+    # pre-mutation state BEFORE persisting. Baseline is inserted
+    # inside the helper on first edit of a doc. Best-effort; audit
+    # write failures never break the parent write.
+    from services.documents import (
+        snapshot_before_mutation, invalidate_signature_if_present,
+        has_signature,
+    )
+    _doc_type_for_version = ("invoice" if (existing.get("doc_type") == "invoice")
+                              else "quote")
+    _had_sig = await has_signature(doc_id=qid, tenant_id=tenant["id"])
+    _content_fields_changing = any(
+        k in upd for k in ("line_items", "tax_rate", "notes", "terms",
+                             "title", "due_date")
+    )
+    _sig_will_invalidate = _had_sig and _content_fields_changing
+    await snapshot_before_mutation(
+        doc_type=_doc_type_for_version, doc_id=qid,
+        tenant_id=tenant["id"], current_doc=existing,
+        saved_by_user=user,
+        status_at_edit=(existing.get("status") or "draft"),
+        reason=_edit_reason, lock_bypass_ack=_ack,
+        signature_invalidated=_sig_will_invalidate,
+    )
     await db.quotes.update_one({"id": qid, "tenant_id": tenant["id"]}, {"$set": upd})
+    if _sig_will_invalidate:
+        await invalidate_signature_if_present(
+            doc_type=_doc_type_for_version, doc_id=qid,
+            tenant_id=tenant["id"], collection=db.quotes,
+        )
     # Feb-2026 · Invoice inline edit + pricebook writeback fan-out.
     if "line_items" in upd and any(
         li.get("pricebook_writeback") for li in upd["line_items"]

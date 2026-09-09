@@ -68,6 +68,12 @@ class InvoiceEditBody(BaseModel):
     reason: Optional[str] = None
     confirm_edit_sent: Optional[bool] = None
     confirm_edit_paid_invoice_number: Optional[str] = None
+    # Feb-2026 · Editable Sent Docs · Phase 1 — the frontend
+    # confirm-dialog for ``sent`` / ``accepted`` / ``paid`` invoices
+    # sets this to ``true``. When present, it acts as an alternative
+    # authorization path to the legacy ``confirm_edit_sent`` and
+    # ``confirm_edit_paid_invoice_number`` flags (both still honoured).
+    acknowledged_lock_bypass: Optional[bool] = None
 
 
 def _now() -> datetime:
@@ -198,6 +204,9 @@ async def patch_invoice(
 
     status = (inv.get("status") or "").lower()
 
+    # Feb-2026 · Editable Sent Docs · Phase 1 — confirm-dialog ack.
+    _ack = bool(getattr(body, "acknowledged_lock_bypass", False))
+
     # ── Terminal statuses can never be edited ─────────────────────
     if status in ("void", "cancelled"):
         raise HTTPException(
@@ -206,7 +215,10 @@ async def patch_invoice(
         )
 
     # ── Sent — requires acknowledgement ──────────────────────────
-    if status == "sent" and not body.confirm_edit_sent:
+    #
+    # Either the legacy ``confirm_edit_sent`` or the Phase 1
+    # ``acknowledged_lock_bypass`` flag satisfies the guard.
+    if status == "sent" and not (body.confirm_edit_sent or _ack):
         raise HTTPException(
             status_code=409,
             detail={
@@ -216,18 +228,32 @@ async def patch_invoice(
             },
         )
 
-    # ── Paid — requires typing the invoice number ────────────────
-    if status == "paid":
-        expected = inv.get("invoice_number") or ""
-        submitted = body.confirm_edit_paid_invoice_number or ""
-        if submitted != expected or not expected:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "paid_edit_requires_invoice_number",
-                    "expected_invoice_number": expected,
-                },
-            )
+    # ── Accepted — requires acknowledgement (Phase 1) ────────────
+    if status == "accepted" and not _ack:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "requires_confirmation",
+                "warning": "This invoice was accepted by the customer. "
+                            "Editing may create audit / bookkeeping issues.",
+            },
+        )
+
+    # ── Paid — accepts EITHER typed invoice-number OR Phase 1 ack ─
+    if status in ("paid", "partial"):
+        if _ack:
+            pass  # frontend confirm-dialog authorized the edit
+        else:
+            expected = inv.get("invoice_number") or ""
+            submitted = body.confirm_edit_paid_invoice_number or ""
+            if submitted != expected or not expected:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "paid_edit_requires_invoice_number",
+                        "expected_invoice_number": expected,
+                    },
+                )
 
     # ── Extract & validate line_items early (before diff) ────────
     provided = body.dict(exclude_unset=True)
@@ -382,7 +408,36 @@ async def patch_invoice(
             })
 
     # ── Persist the update ────────────────────────────────────────
+    # Feb-2026 · Editable Sent Docs · Phase 1 — snapshot BEFORE the
+    # write. Baseline is inserted inside the helper on first edit.
+    # Best-effort; audit failure never breaks the parent write.
+    from services.documents import (
+        snapshot_before_mutation, invalidate_signature_if_present,
+        has_signature,
+    )
+    _doc_type_for_version = ("invoice" if (inv.get("doc_type") == "invoice")
+                              else "quote")
+    _had_sig = await has_signature(doc_id=invoice_id, tenant_id=tenant_id)
+    _content_fields_changing = any(
+        k in provided for k in ("line_items", "tax_rate", "notes", "terms",
+                                  "discount_amount", "due_date")
+    )
+    _sig_will_invalidate = _had_sig and _content_fields_changing
+    await snapshot_before_mutation(
+        doc_type=_doc_type_for_version, doc_id=invoice_id,
+        tenant_id=tenant_id, current_doc=inv,
+        saved_by_user=user,
+        status_at_edit=(status or "draft"),
+        reason=body.reason, lock_bypass_ack=_ack,
+        signature_invalidated=_sig_will_invalidate,
+    )
     await _write_update(collection, invoice_id, tenant_id, upd)
+    if _sig_will_invalidate:
+        await invalidate_signature_if_present(
+            doc_type=_doc_type_for_version, doc_id=invoice_id,
+            tenant_id=tenant_id, collection=collection,
+        )
+        auto_effects.append({"kind": "signature_invalidated"})
 
     # ── Feb-2026 · Pricebook writeback fan-out (post-save) ────────
     if "line_items" in provided and any(

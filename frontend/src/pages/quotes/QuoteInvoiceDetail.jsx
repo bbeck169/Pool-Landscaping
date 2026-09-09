@@ -24,6 +24,7 @@ import PaymentForm from "@/components/PaymentForm";
 import { useAuth } from "@/auth";
 import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
+import EditLockConfirmDialog from "@/components/documents/EditLockConfirmDialog";
 import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
 // Phase K79 · Feb-2026 — Customer-facing grouped view controls
 // (checkbox + per-category description editor + preview modal).
@@ -117,6 +118,14 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   // spinner. Shared between the P0 button and the P0.5a auto-flip
   // path on the Email button.
   const [sending, setSending] = useState(false);
+  // Feb-2026 · Editable Sent Docs · Phase 1 — one-time confirm gate
+  // for editing quotes whose status has passed ``draft``. Once the
+  // user acknowledges the shared dialog on this detail page mount,
+  // subsequent inline saves inherit the ack + include the
+  // ``acknowledged_lock_bypass`` flag on the PUT payload.
+  const [lockBypassAcked, setLockBypassAcked] = useState(false);
+  const [pendingLines, setPendingLines] = useState(null);
+  const [lockDialogOpen, setLockDialogOpen] = useState(false);
 
   const load = async () => {
     try {
@@ -481,14 +490,21 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               modal's typed-confirm / warning UX matters (sent, paid,
               void, cancelled). Relabelled "Edit invoice (advanced)" to
               signal it's the fuller surface. */}
+          {/* Feb-2026 · Editable Sent Docs · Phase 1 — expose the
+              advanced-edit modal for sent / accepted / paid invoices.
+              Terminal statuses (void / cancelled) remain locked; the
+              backend PATCH gate refuses them. Accepted + paid open
+              additional confirmation dialogs inside the modal (Stripe-
+              ledger warning on paid; signature-invalidation warning
+              when the doc has been signed). */}
           {isStaff && isInvoice
-            && ["sent", "paid", "void", "cancelled"]
+            && ["sent", "accepted", "paid"]
                 .includes(String(doc.status || "").toLowerCase()) ? (
             <Button
               variant="ghost"
               onClick={() => setEditOpen(true)}
               testid="qd-edit-invoice"
-              title="Adjust line items, discount, or invoice fields — with confirmation guards for sent/paid invoices."
+              title="Adjust line items, discount, or invoice fields — with confirmation guards for sent / accepted / paid invoices."
             >
               <PenTool size={14} /> Edit invoice (advanced)
             </Button>
@@ -514,14 +530,30 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           doc={doc}
           canEdit={
             isStaff
-            && String(doc.status || "").toLowerCase() === "draft"
-            && !(doc.payment_status === "paid")
+            && !["void", "cancelled"]
+                .includes(String(doc.status || "").toLowerCase())
           }
           onLinesUpdated={async (nextLines) => {
+            // Feb-2026 · Editable Sent Docs · Phase 1 — for non-draft
+            // statuses (sent | accepted | paid) we require a one-time
+            // confirmation dialog before the PUT fires. The shared
+            // dialog handles the Stripe-paid + signature-invalidation
+            // warnings. Once ack'd in this session we short-circuit
+            // subsequent inline saves and forward the ack flag on the
+            // PUT body so the backend lock gate accepts the mutation.
+            const _st = String(doc.status || "").toLowerCase();
+            const _locked = ["sent", "accepted", "paid"].includes(_st);
+            if (_locked && !lockBypassAcked) {
+              setPendingLines(nextLines);
+              setLockDialogOpen(true);
+              return false;
+            }
             // PUT /quotes/{id} — server recomputes totals and enforces
             // K71 two-taxonomy validation on any touched line.
             try {
-              await api.put(`/quotes/${id}`, { line_items: nextLines });
+              const _body = { line_items: nextLines };
+              if (_locked) _body.acknowledged_lock_bypass = true;
+              await api.put(`/quotes/${id}`, _body);
               setToast({ tone: "success", message: "Line item saved" });
               await load();
               return true;
@@ -729,7 +761,21 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               <Button
                 onClick={async () => {
                   try {
-                    await api.put(`/quotes/${id}`, { terms: termsDraft });
+                    // Feb-2026 · Editable Sent Docs · Phase 1 —
+                    // forward the lock-bypass ack when the doc has
+                    // moved past ``draft`` so the PUT gate accepts
+                    // this mutation. Uses the same ack flag as the
+                    // K71 inline editor (session-level).
+                    const _st = String(doc.status || "").toLowerCase();
+                    const _locked = ["sent", "accepted", "paid"].includes(_st);
+                    if (_locked && !lockBypassAcked) {
+                      setPendingLines({ __terms__: termsDraft });
+                      setLockDialogOpen(true);
+                      return;
+                    }
+                    const _body = { terms: termsDraft };
+                    if (_locked) _body.acknowledged_lock_bypass = true;
+                    await api.put(`/quotes/${id}`, _body);
                     setTermsEditOpen(false);
                     setToast({ tone: "success", message: "Terms saved" });
                     await load();
@@ -870,6 +916,55 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
       </Modal>
 
       <Toast toast={toast} onClose={() => setToast(null)} />
+      {/* Feb-2026 · Editable Sent Docs · Phase 1 — shared confirm
+          dialog for editing sent / accepted / paid quotes. Fires on
+          the first inline save; the ack persists for the rest of
+          this detail-page session so subsequent edits don't
+          re-prompt. Cancel returns the pending lines to the editor
+          without committing. */}
+      <EditLockConfirmDialog
+        open={lockDialogOpen}
+        onCancel={() => {
+          setLockDialogOpen(false);
+          setPendingLines(null);
+        }}
+        onConfirm={async () => {
+          setLockDialogOpen(false);
+          setLockBypassAcked(true);
+          const _pending = pendingLines;
+          setPendingLines(null);
+          if (!_pending) return;
+          const _st = String(doc.status || "").toLowerCase();
+          try {
+            let _body;
+            if (_pending && typeof _pending === "object" && _pending.__terms__ !== undefined) {
+              _body = { terms: _pending.__terms__, acknowledged_lock_bypass: true };
+              await api.put(`/quotes/${id}`, _body);
+              setTermsEditOpen(false);
+              setToast({ tone: "success", message: "Terms saved" });
+            } else {
+              _body = { line_items: _pending, acknowledged_lock_bypass: true };
+              await api.put(`/quotes/${id}`, _body);
+              setToast({ tone: "success", message: "Line item saved" });
+            }
+            await load();
+          } catch (e) {
+            setToast({ tone: "error",
+                        message: e?.data?.detail?.message
+                                  || e?.message
+                                  || "Save failed" });
+          }
+          void _st;
+        }}
+        isStripePaid={String(doc.status || "").toLowerCase() === "paid"
+                        && Boolean(doc?.payment_intent_id
+                                    || doc?.charge_id
+                                    || doc?.stripe_payment_intent_id
+                                    || doc?.payment_url)}
+        isSigned={Boolean(signInfo?.signed
+                            || String(doc?.signature_status || "").toLowerCase() === "signed")}
+        status={String(doc?.status || "")}
+      />
       {payNowOpen ? (
         <PaymentForm
           invoice={doc}
@@ -881,6 +976,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
       {editOpen && isInvoice ? (
         <InvoiceEditModal
           invoice={doc}
+          signInfo={signInfo}
           onClose={() => setEditOpen(false)}
           onSaved={(res) => {
             if (res?.invoice) setDoc(res.invoice);

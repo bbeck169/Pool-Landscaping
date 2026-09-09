@@ -104,14 +104,71 @@ describe("InvoiceEditModal", () => {
     expect(screen.getByTestId("invoice-edit-subtotal-value").textContent).toMatch(/100/);
   });
 
-  it("shows yellow banner + gates Save on a sent invoice", () => {
+  it("shows yellow banner + routes Save through confirm dialog on a sent invoice", async () => {
     const inv = { ...draftInvoice(), status: "sent" };
+    patchSpy.mockResolvedValue({ ok: true, changed: true, invoice: {} });
     render(<InvoiceEditModal invoice={inv} onClose={() => {}} onSaved={() => {}} />);
+    // Sent banner is informational (no checkbox in Phase 1).
     expect(screen.getByTestId("invoice-edit-banner-sent")).toBeTruthy();
+    // Save is NOT gated inline — click opens the shared confirm dialog.
     const saveBtn = screen.getByTestId("invoice-edit-save");
-    expect(saveBtn.disabled).toBe(true);
-    fireEvent.click(screen.getByTestId("invoice-edit-confirm-sent"));
-    expect(screen.getByTestId("invoice-edit-save").disabled).toBe(false);
+    expect(saveBtn.disabled).toBe(false);
+    fireEvent.click(saveBtn);
+    // Shared confirm dialog surfaces with generic-warning copy
+    // (no Stripe / signature-invalidation warnings for a bare sent doc).
+    expect(screen.getByTestId("edit-lock-confirm-dialog")).toBeTruthy();
+    expect(screen.getByTestId("edit-lock-generic-warning")).toBeTruthy();
+    // Confirm → PATCH fires with acknowledged_lock_bypass=true.
+    fireEvent.click(screen.getByTestId("edit-lock-confirm-continue"));
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(1));
+    const [path, payload] = patchSpy.mock.calls[0];
+    expect(path).toBe("/quotes/inv-e2e-1");
+    expect(payload.acknowledged_lock_bypass).toBe(true);
+    // invoice_number is NEVER sent (input is disabled + immutable).
+    expect(payload.invoice_number).toBeUndefined();
+  });
+
+  it("renders the invoice_number input as disabled (locked once assigned)", () => {
+    render(<InvoiceEditModal invoice={draftInvoice()} onClose={() => {}} onSaved={() => {}} />);
+    const input = screen.getByTestId("invoice-edit-invoice-number");
+    expect(input.disabled).toBe(true);
+    expect(input.readOnly).toBe(true);
+  });
+
+  it("shows accepted banner + generic confirm dialog on an accepted invoice", async () => {
+    const inv = { ...draftInvoice(), status: "accepted" };
+    patchSpy.mockResolvedValue({ ok: true, changed: true, invoice: {} });
+    render(<InvoiceEditModal invoice={inv} onClose={() => {}} onSaved={() => {}} />);
+    expect(screen.getByTestId("invoice-edit-banner-accepted")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("invoice-edit-save"));
+    expect(screen.getByTestId("edit-lock-confirm-dialog")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("edit-lock-confirm-continue"));
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(1));
+    expect(patchSpy.mock.calls[0][1].acknowledged_lock_bypass).toBe(true);
+  });
+
+  it("shows Stripe-paid warning in the confirm dialog when doc has a payment_intent_id", async () => {
+    const inv = {
+      ...draftInvoice(),
+      status: "paid",
+      payment_intent_id: "pi_test_123",
+    };
+    patchSpy.mockResolvedValue({ ok: true, changed: true, invoice: {} });
+    render(<InvoiceEditModal invoice={inv} onClose={() => {}} onSaved={() => {}} />);
+    expect(screen.getByTestId("invoice-edit-banner-paid")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("invoice-edit-save"));
+    // Stripe-specific warning replaces the generic copy.
+    expect(screen.getByTestId("edit-lock-stripe-warning")).toBeTruthy();
+    expect(screen.queryByTestId("edit-lock-generic-warning")).toBeNull();
+  });
+
+  it("shows signature-invalidation warning in confirm dialog when signed", () => {
+    const inv = { ...draftInvoice(), status: "sent", signature_status: "signed" };
+    render(<InvoiceEditModal invoice={inv} onClose={() => {}} onSaved={() => {}} />);
+    // Banner rendered inline on modal body too.
+    expect(screen.getByTestId("invoice-edit-banner-signed")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("invoice-edit-save"));
+    expect(screen.getByTestId("edit-lock-signature-warning")).toBeTruthy();
   });
 
   // TODO(K78-followup) — Phase Hygiene B · Feb-2026 QUARANTINE

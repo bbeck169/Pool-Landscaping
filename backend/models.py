@@ -363,6 +363,15 @@ class QuoteUpdate(BaseModel):
     # not recompute when either changes).
     customer_group_display: Optional[bool] = None
     customer_group_descriptions: Optional[Dict[str, str]] = None
+    # Feb-2026 · Editable Sent Docs · Phase 1 — the frontend
+    # confirm-dialog for editing a ``sent`` / ``accepted`` / ``paid``
+    # doc sets this to ``true``, which unlocks the corresponding
+    # statuses via ``services.quotes.status_gate``. Money-neutral
+    # (not persisted, ignored by every field-level path below).
+    acknowledged_lock_bypass: Optional[bool] = None
+    # Optional operator note surfaced on the ``document_versions``
+    # audit row for this edit.
+    edit_reason: Optional[str] = None
 
 
 class TermsSettingsIn(BaseModel):

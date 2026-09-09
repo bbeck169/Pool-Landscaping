@@ -456,6 +456,16 @@ async def patch_estimate(eid: str, body: EstimatePatch,
     upd.update(totals)
     if e.get("status") in {"generated", "edited"}:
         upd["status"] = "edited"
+    # Feb-2026 · Editable Sent Docs · Phase 1 — snapshot before
+    # mutation. Estimator has no explicit "sent" lock (it was
+    # always fully mutable), so no gate change is needed — we only
+    # add version history.
+    from services.documents import snapshot_before_mutation
+    await snapshot_before_mutation(
+        doc_type="estimator_estimate", doc_id=eid,
+        tenant_id=tenant["id"], current_doc=e, saved_by_user=user,
+        status_at_edit=(e.get("status") or "generated"),
+    )
     await db.estimator_estimates.update_one(
         {"id": eid, "tenant_id": tenant["id"]}, {"$set": upd}
     )

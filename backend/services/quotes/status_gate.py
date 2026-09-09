@@ -51,6 +51,15 @@ _ALLOWED: Dict[str, set[str]] = {
     "invoice": {"draft"},
 }
 
+# Feb-2026 · Editable Sent Docs · Phase 1 — statuses that unlock
+# with an explicit ``acknowledged_lock_bypass=True`` body flag from
+# the frontend confirm-dialog. Anything NOT in this set stays hard-
+# locked regardless of the flag (``void`` / ``cancelled``).
+_ALLOWED_WITH_ACK: Dict[str, set[str]] = {
+    "estimate": {"accepted", "declined"},
+    "invoice": {"sent", "accepted", "paid", "partial"},
+}
+
 
 def _external_doc_type(quote: Dict[str, Any]) -> str:
     """Map DB ``doc_type`` (quote/invoice) → external label
@@ -70,11 +79,23 @@ def _current_status(quote: Dict[str, Any]) -> str:
     return (quote.get("status") or "draft").lower()
 
 
-def is_quote_mutable_for_put(quote: Dict[str, Any]) -> bool:
-    """Pure predicate — returns whether a ``PUT`` may proceed."""
+def is_quote_mutable_for_put(
+    quote: Dict[str, Any], *, bypass_lock: bool = False,
+) -> bool:
+    """Pure predicate — returns whether a ``PUT`` may proceed.
+
+    Feb-2026 · Editable Sent Docs · Phase 1 — with
+    ``bypass_lock=True`` (frontend confirm-dialog ack), the caller
+    additionally unlocks statuses in :data:`_ALLOWED_WITH_ACK`.
+    Statuses NOT in either set stay locked (``void`` / ``cancelled``).
+    """
     doc_type = _external_doc_type(quote)
     status = _current_status(quote)
-    return status in _ALLOWED.get(doc_type, set())
+    if status in _ALLOWED.get(doc_type, set()):
+        return True
+    if bypass_lock and status in _ALLOWED_WITH_ACK.get(doc_type, set()):
+        return True
+    return False
 
 
 def denial_payload(quote: Dict[str, Any]) -> Dict[str, Any]:
@@ -102,14 +123,22 @@ def denial_payload(quote: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def assert_quote_mutable_for_put(quote: Dict[str, Any]) -> None:
+def assert_quote_mutable_for_put(
+    quote: Dict[str, Any], *, bypass_lock: bool = False,
+) -> None:
     """Raise ``HTTPException(409)`` if the quote's status forbids PUT.
 
     Callers should invoke this immediately after loading the doc,
     BEFORE reading ``body`` for mutations, so we don't waste a
     validation pass on rejected writes.
+
+    Feb-2026 · Editable Sent Docs · Phase 1 — pass ``bypass_lock=True``
+    when the caller has an explicit
+    ``acknowledged_lock_bypass: true`` in the request body from the
+    frontend confirm-dialog. This unlocks ``sent``/``accepted``/
+    ``paid``/``partial``/``declined`` per :data:`_ALLOWED_WITH_ACK`.
     """
-    if is_quote_mutable_for_put(quote):
+    if is_quote_mutable_for_put(quote, bypass_lock=bypass_lock):
         return
     raise HTTPException(status_code=409, detail=denial_payload(quote))
 
