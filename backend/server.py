@@ -315,6 +315,38 @@ async def _k8s_health_ready():
         checks["migrations"] = "fail"
         failures.append({"check": "migrations", "error": str(e)[:200]})
 
+    # 4. Feb-2026 · P0 guardrail — production must never boot with any
+    # ``*_TESTMODE_MOCK`` flag on. State is captured at startup by the
+    # boot check (see ``_PROD_MOCKING_FLAGS_ON`` in ``on_startup``).
+    # Re-read env here so an ops flag flip + supervisor restart is
+    # reflected immediately (env is re-read from ``os.environ`` on
+    # every probe hit).
+    checks["prod_guardrail"] = "unknown"
+    try:
+        _prod_gr = (os.environ.get("APP_ENV") or "").strip().lower() == "production"
+        _gr_flags = [
+            "MESSAGING_TESTMODE_MOCK",
+            "AI_TESTMODE_MOCK",
+            "CALENDARS_TESTMODE_MOCK",
+            "PAYMENTS_TESTMODE_MOCK",
+            "ZILLOW_TESTMODE_MOCK",
+        ]
+        _gr_truthy = {"1", "true", "yes", "on"}
+        _gr_on = [
+            n for n in _gr_flags
+            if (os.environ.get(n) or "").strip().lower() in _gr_truthy
+        ]
+        if _prod_gr and _gr_on:
+            checks["prod_guardrail"] = "fail"
+            failures.append({"check": "prod_guardrail",
+                              "reason": "mocking_in_production",
+                              "flags": _gr_on})
+        else:
+            checks["prod_guardrail"] = "ok"
+    except Exception as e:  # noqa: BLE001
+        checks["prod_guardrail"] = "fail"
+        failures.append({"check": "prod_guardrail", "error": str(e)[:200]})
+
     body = {
         "status": "ready" if not failures else "not_ready",
         "checks": checks,
@@ -2355,6 +2387,47 @@ async def startup():
         logger.info(startup_banner())
     except Exception as e:  # pragma: no cover
         logger.warning(f"comms_env_guard startup_banner failed: {e}")
+
+    # Feb-2026 · P0 guardrail — production must never boot with any
+    # ``*_TESTMODE_MOCK`` flag on. A single stale flag silently mocks
+    # every outbound provider (messaging / AI / calendars / payments
+    # / zillow) while all safety gates still report LIVE. Loud CRITICAL
+    # log at boot + ``/health/ready`` 503 with reason
+    # ``mocking_in_production`` so the misconfiguration cannot ship
+    # again. See ``/app/memory/PROD_ENV_CHECKLIST.md``.
+    try:
+        _prod = (os.environ.get("APP_ENV") or "").strip().lower() == "production"
+        _mock_flags = [
+            "MESSAGING_TESTMODE_MOCK",
+            "AI_TESTMODE_MOCK",
+            "CALENDARS_TESTMODE_MOCK",
+            "PAYMENTS_TESTMODE_MOCK",
+            "ZILLOW_TESTMODE_MOCK",
+        ]
+        _truthy = {"1", "true", "yes", "on"}
+        _mocked = [
+            n for n in _mock_flags
+            if (os.environ.get(n) or "").strip().lower() in _truthy
+        ]
+        _PROD_MOCKING_FLAGS_ON = _mocked if _prod else []
+        globals()["_PROD_MOCKING_FLAGS_ON"] = _PROD_MOCKING_FLAGS_ON
+        if _PROD_MOCKING_FLAGS_ON:
+            logger.critical(
+                "[PROD-GUARDRAIL] mocking_in_production — APP_ENV=production "
+                "AND the following testmode flags are truthy: %s. "
+                "Outbound provider calls are being MOCKED. "
+                "/health/ready will 503 with reason=mocking_in_production "
+                "until every flag is set to false.",
+                ",".join(_PROD_MOCKING_FLAGS_ON),
+            )
+        else:
+            logger.info(
+                "[PROD-GUARDRAIL] ok — no *_TESTMODE_MOCK flags truthy "
+                "(prod=%s)",
+                _prod,
+            )
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"[PROD-GUARDRAIL] check failed: {e}")
 
     # Feb-2026 · Comms whitelist SDK-level safety net (P0 directive).
     # Monkey-patches ``resend.Emails.send`` so every direct SDK call
