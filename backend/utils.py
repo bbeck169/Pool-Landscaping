@@ -268,6 +268,7 @@ def send_sms(to: str, body: str, *, tenant_id: Optional[str] = None) -> bool:
         # Lazy import to break circular dep with routers/marketing_preferences
         # which in turn imports helpers from this module.  # noqa: E402
         from services.sms.rc_adapter import send as _sms_send
+        from services.comms_send_log import record_attempt, format_exc
 
         async def _go():
             return await _sms_send(
@@ -291,10 +292,30 @@ def send_sms(to: str, body: str, *, tenant_id: Optional[str] = None) -> bool:
         # "mock" when unconfigured, and provider_status="dry_run" when
         # the comms_env_guard blocks the send. Only accept live RC
         # successes as True.
-        return (provider == "ringcentral"
-                and status in ("queued", "sent", "delivered", "accepted"))
+        ok = (provider == "ringcentral"
+              and status in ("queued", "sent", "delivered", "accepted"))
+        record_attempt(
+            "sms", ok=ok, tenant_id=tenant_id, recipient=to,
+            template="utils.send_sms",
+            provider=provider, provider_status=status,
+            provider_response_id=(res or {}).get("provider_response_id"),
+            was_mock=(provider == "mock"),
+            routed_via=(res or {}).get("routed_via"),
+            error=None if ok else str(res)[:500],
+        )
+        return ok
     except Exception as e:
         logger.warning(f"SMS send failed: {e}")
+        try:
+            from services.comms_send_log import record_attempt, format_exc
+            record_attempt(
+                "sms", ok=False, tenant_id=tenant_id, recipient=to,
+                template="utils.send_sms", provider="ringcentral",
+                provider_status="exception", was_mock=False,
+                **format_exc(e),
+            )
+        except Exception:
+            pass
         return False
 
 

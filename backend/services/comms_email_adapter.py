@@ -16,6 +16,7 @@ import os
 from typing import Any, Dict, Optional
 
 from config import db, logger
+from services.comms_send_log import record_attempt, format_exc
 
 
 async def _is_opted_out(tenant_id: str, email: str) -> bool:
@@ -103,6 +104,13 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
 
     key = os.environ.get("RESEND_API_KEY")
     if not key:
+        record_attempt(
+            "email", ok=False, tenant_id=tenant_id, recipient=to_email,
+            template=(headers or {}).get("X-Template") if headers else None,
+            provider="resend", provider_status="not_sent_missing_key",
+            was_mock=False, routed_via="platform_resend",
+            error="RESEND_API_KEY missing on this pod",
+        )
         return {"status": "not_sent_missing_key"}
 
     _from = from_email or os.environ.get("RESEND_FROM", "onboarding@resend.dev")
@@ -133,6 +141,13 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
             f"comms_email_adapter: gate errored — failing closed: {e}")
         allowed = False
     if not allowed:
+        record_attempt(
+            "email", ok=False, tenant_id=tenant_id, recipient=to_email,
+            template=(headers or {}).get("X-Template") if headers else None,
+            provider="resend", provider_status="suppressed_not_demo",
+            was_mock=False, routed_via="platform_resend_gate",
+            error="Blocked by services.comms.gate.is_comm_allowed",
+        )
         return {"status": "suppressed_not_demo", "provider_id": None}
 
     try:
@@ -142,7 +157,21 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
         provider_id = None
         if isinstance(resp, dict):
             provider_id = resp.get("id")
+        record_attempt(
+            "email", ok=True, tenant_id=tenant_id, recipient=to_email,
+            template=(headers or {}).get("X-Template") if headers else None,
+            provider="resend", provider_status="sent",
+            provider_response_id=provider_id, was_mock=False,
+            routed_via="platform_resend",
+        )
         return {"status": "sent", "provider_id": provider_id}
     except Exception as e:
         logger.warning(f"comms_email_adapter: resend send failed: {type(e).__name__}: {e}")
+        record_attempt(
+            "email", ok=False, tenant_id=tenant_id, recipient=to_email,
+            template=(headers or {}).get("X-Template") if headers else None,
+            provider="resend", provider_status="failed",
+            was_mock=False, routed_via="platform_resend",
+            **format_exc(e),
+        )
         return {"status": "failed", "error": f"{type(e).__name__}: {e}"}

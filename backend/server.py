@@ -512,6 +512,11 @@ api_router.include_router(_f2_data_repair_router.router)
 # the anonymous k8s probes at /health/live and /health/ready.
 from routers import admin_health_check as _i3_admin_health_check  # noqa: E402
 api_router.include_router(_i3_admin_health_check.router)
+# Feb-2026 · P0/2 recurrence — comms diagnostic endpoints.
+# GET /api/admin/comms-diagnostics  → env + in-mem last-send state
+# POST /api/admin/comms-diagnostics/test → admin-triggered live send
+from routers import admin_comms_diagnostics as _p0_comms_diag  # noqa: E402
+api_router.include_router(_p0_comms_diag.router)
 # Phase I4 · Feb-2026 — Soshie brand-brain async ingest endpoints.
 # 202-Accepted job pattern replacing the sync ingest that was
 # timing out on cold crawls (frontend fetch cap 30s vs 60-180s

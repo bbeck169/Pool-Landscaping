@@ -1,3 +1,21 @@
+## Iteration 80 — P45 "More filters" bottom sheet + Add card row polish
+- **Commit**: ffa2ce23
+- **Date**: 2026-09-09
+- **Changes**:
+  - Consolidated 9 filter chips into a single "More filters" bottom sheet (Modal)
+  - Trigger: `customers-more-filters-dropdown` with summary text ("All", first label, "first +N")
+  - Sheet has 4 groups: Contact info missing (No email, No phone, Missing address), Payment (No payment on file), Portal status (Any/Signed in/Never signed in radio), Administrative (Show deleted, Show merged, Pending merge)
+  - All 11 old testIDs preserved inside the sheet + 1 new `customers-more-filters-clear`
+  - Portal status: `accessibilityRole="radio"` + `accessibilityState={{ selected }}` inside `radiogroup`
+  - New filters wired: `missing_email`, `missing_phone`, `include_merged`, `pending_merge_candidates`
+  - New count fetches: missing email (12), missing phone (12), pending merge (3) in parallel on mount
+  - Add card pill moved to right actions cluster, restyled navy #1E293B / white #FFFFFF / border #0F172A
+  - Missing card dot stays before name (left column), Add card pill in right column
+  - 19 Jest tests (all pass): trigger rendering, sheet testIDs, filter toggles, composition, clear all, portal radio a11y, row actions, row order
+- **Files modified**: `mobile/app/(app)/customers.tsx`, `mobile/__tests__/customer-list-filters.test.tsx`
+
+
+
 ## Iteration 79 — P44 row polish: name leftmost, label → "Add card"
 - **Commit**: a1031a02
 - **Date**: 2026-09-09
