@@ -1365,7 +1365,6 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             variant="compact"
           />
         ) : null}
-        <NavigateJobButton job={job} />
       </View>
       {rearrangeMode ? (
         <View style={gStyles.reorderActions}>
@@ -1392,25 +1391,28 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           ) : null}
         </View>
       ) : (
-        <>
+        <View style={gStyles.cardRight}>
+          <NavigateJobButton job={job} />
           <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
             <Text style={[gStyles.statusText, { color: pill.fg }]}>{pill.label}</Text>
           </View>
-          <View testID={`grid-open-${job.id}`}>
-            <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <View testID={`grid-open-${job.id}`}>
+              <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+            </View>
+            {isAdminForCard && onEdit ? (
+              <Pressable
+                onPress={() => onEdit(job)}
+                hitSlop={8}
+                testID={`grid-edit-${job.id}`}
+                accessibilityLabel="Edit job"
+                style={gStyles.editBtn}
+              >
+                <Ionicons name="pencil-outline" size={16} color={colors.muted} />
+              </Pressable>
+            ) : null}
           </View>
-          {isAdminForCard && onEdit ? (
-            <Pressable
-              onPress={() => onEdit(job)}
-              hitSlop={8}
-              testID={`grid-edit-${job.id}`}
-              accessibilityLabel="Edit job"
-              style={gStyles.editBtn}
-            >
-              <Ionicons name="pencil-outline" size={16} color={colors.muted} />
-            </Pressable>
-          ) : null}
-        </>
+        </View>
       )}
     </Pressable>
   );
@@ -1677,11 +1679,18 @@ const gStyles = StyleSheet.create({
   moveBtnGo: { backgroundColor: colors.brand },
   moveBtnGoText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" },
   card: {
-    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    flexDirection: "row", alignItems: "flex-start", gap: spacing.sm,
     padding: spacing.md, marginBottom: spacing.xs,
     borderRadius: radius.md,
     backgroundColor: colors.surface,
     borderWidth: 1, borderColor: colors.border,
+  },
+  cardRight: {
+    alignSelf: "stretch",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 6,
+    paddingLeft: 4,
   },
   checkbox: {
     width: 22, height: 22, borderRadius: 11,
