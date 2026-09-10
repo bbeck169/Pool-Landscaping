@@ -9,7 +9,7 @@ import bcrypt
 
 from config import db, JWT_SECRET, JWT_ALGO, TOKEN_EXPIRE_MINUTES, logger
 
-security = HTTPBearer(auto_error=True)
+security = HTTPBearer(auto_error=False)
 
 
 def now_iso() -> str:
@@ -96,6 +96,18 @@ def create_token(user: dict, impersonator_id: str = None) -> str:
 
 
 async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    # Feb-2026 · Batch-verify follow-up — RFC 7235 401 vs 403.
+    # ``HTTPBearer`` is now configured with ``auto_error=False`` so
+    # requests missing / malformed ``Authorization`` headers reach
+    # this handler as ``creds is None`` and we can raise a proper
+    # **401 Unauthorized** ("credentials required") — previously the
+    # bearer scheme's default 403 was leaking through on every
+    # unauthenticated request, which conflates "no token" with
+    # "wrong role". Downstream role gates (``require_admin`` et al.)
+    # continue to raise **403 Forbidden** for authenticated-but-
+    # insufficient-role paths.
+    if creds is None or not (creds.credentials or "").strip():
+        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=[JWT_ALGO])
     except jwt.ExpiredSignatureError:

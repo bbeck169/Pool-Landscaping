@@ -391,3 +391,76 @@ def test_explicit_from_to_shape(seed):
     payload = r.json()
     assert payload["from"] == yesterday
     assert payload["to"] == today
+
+
+
+# ---------------------------------------------------------------------------
+# Feb-2026 · Batch-verify follow-up · 401 vs 403 auth-guard contract
+# ---------------------------------------------------------------------------
+# ``HTTPBearer(auto_error=False)`` + explicit ``creds is None`` gate in
+# ``utils.get_current_user`` mean the three admin report endpoints now
+# distinguish:
+#   * No / malformed ``Authorization`` header → 401 (RFC 7235
+#     "credentials required").
+#   * Authenticated but wrong role                → 403 (Forbidden).
+#   * Admin                                        → 200.
+# ---------------------------------------------------------------------------
+
+_REPORT_ROUTES = [
+    "/reports/profit",
+    "/reports/profit.csv",
+    "/reports/pricebook-health",
+]
+
+
+@pytest.mark.parametrize("path", _REPORT_ROUTES)
+def test_report_endpoints_return_401_without_token(path):
+    """No ``Authorization`` header → 401, never 403."""
+    r = requests.get(f"{API}{path}", timeout=15)
+    assert r.status_code == 401, (
+        f"{path} returned {r.status_code} for unauthenticated request; "
+        f"expected 401. body={r.text[:200]!r}"
+    )
+
+
+@pytest.mark.parametrize("path", _REPORT_ROUTES)
+def test_report_endpoints_return_401_for_malformed_token(path):
+    """Bogus bearer token → 401 (invalid), never 403."""
+    r = requests.get(
+        f"{API}{path}",
+        headers={"Authorization": "Bearer not-a-real-jwt"},
+        timeout=15,
+    )
+    assert r.status_code == 401, (
+        f"{path} returned {r.status_code} for malformed token; expected 401."
+    )
+
+
+@pytest.mark.parametrize("path", _REPORT_ROUTES)
+def test_report_endpoints_return_403_for_manager(path):
+    """Authenticated ``role='manager'`` → 403 (insufficient role)."""
+    r = requests.get(
+        f"{API}{path}", headers=_hdr("manager@aquaterra.com"), timeout=15,
+    )
+    assert r.status_code == 403, (
+        f"{path} returned {r.status_code} for manager; expected 403."
+    )
+
+
+@pytest.mark.parametrize("path", _REPORT_ROUTES)
+def test_report_endpoints_return_200_for_admin(path):
+    """``role='admin'`` → 200 (baseline sanity)."""
+    # Profit endpoints require ``group_by`` + a date range — pass
+    # both so the 200-sanity check exercises the auth-guard path,
+    # not query validation. ``pricebook-health`` has no required
+    # params.
+    params = (
+        {"group_by": "service_category", "range": "ytd"}
+        if path.startswith("/reports/profit")
+        else None
+    )
+    r = requests.get(f"{API}{path}", headers=_hdr(), params=params, timeout=30)
+    assert r.status_code == 200, (
+        f"{path} returned {r.status_code} for admin; expected 200. "
+        f"body={r.text[:200]!r}"
+    )

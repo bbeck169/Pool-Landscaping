@@ -232,3 +232,79 @@ def test_slim_response_measurably_smaller_than_full(photo_job):
         f"slim={size_slim}B  full={size_full}B  delta={size_full - size_slim}B "
         f"({(size_full - size_slim) / max(size_full, 1) * 100:.1f}% saved)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Feb-2026 · Batch-verify follow-up · include_photos=true is a strict SUPERSET
+# ---------------------------------------------------------------------------
+# When the caller opts back in via ``?include_photos=true`` the response
+# MUST carry all three keys — ``photos``, ``photo_count``, ``photo_ids``
+# — on every row, and they MUST be internally consistent
+# (``len(photos) == photo_count``, every ``photos[i].id`` present in
+# ``photo_ids``). Legacy ``demo-stale-*`` rows where the underlying
+# Mongo doc has no ``photos`` field at all are normalised to
+# ``photos: []`` so the shape is uniform across the payload.
+# ---------------------------------------------------------------------------
+
+
+def test_include_photos_true_is_strict_superset_of_slim(photo_job):
+    """Every row in the ``?include_photos=true`` response MUST carry
+    ``photos`` + ``photo_count`` + ``photo_ids`` (never ``None``) and
+    the three fields MUST be internally consistent."""
+    r = requests.get(
+        f"{API}/jobs",
+        params={"limit": 500, "include_photos": "true"},
+        headers=_hdr(),
+        timeout=30,
+    )
+    r.raise_for_status()
+    rows = r.json()
+    assert len(rows) > 0, "no rows returned — cannot validate superset shape"
+
+    seed = _find_row(rows, photo_job["id"])
+    assert seed is not None, "seeded 10-photo job missing from list"
+
+    for row in rows:
+        rid = row.get("id", "<no-id>")
+        # (a) All three keys present.
+        assert "photos" in row, (
+            f"{rid}: ``photos`` key absent under include_photos=true; "
+            f"legacy row normalisation broken"
+        )
+        assert "photo_count" in row, (
+            f"{rid}: ``photo_count`` key absent under include_photos=true"
+        )
+        assert "photo_ids" in row, (
+            f"{rid}: ``photo_ids`` key absent under include_photos=true"
+        )
+        # (b) Never ``None`` — must be concrete list / int.
+        photos = row["photos"]
+        pc = row["photo_count"]
+        pids = row["photo_ids"]
+        assert isinstance(photos, list), (
+            f"{rid}: photos is {type(photos).__name__}, expected list"
+        )
+        assert isinstance(pc, int), (
+            f"{rid}: photo_count is {type(pc).__name__}, expected int"
+        )
+        assert isinstance(pids, list), (
+            f"{rid}: photo_ids is {type(pids).__name__}, expected list"
+        )
+        # (c) Length agreement.
+        assert len(photos) == pc, (
+            f"{rid}: len(photos)={len(photos)} != photo_count={pc}"
+        )
+        # (d) photo_ids echoes photos[i].id when present.
+        for i, p in enumerate(photos):
+            if isinstance(p, dict) and p.get("id") is not None:
+                assert str(p["id"]) in pids, (
+                    f"{rid}: photos[{i}].id={p['id']!r} missing from "
+                    f"photo_ids={pids!r}"
+                )
+
+    # The seeded row specifically must round-trip 10 photos + 10 ids.
+    assert len(seed["photos"]) == 10
+    assert seed["photo_count"] == 10
+    assert len(seed["photo_ids"]) == 10
+    assert set(seed["photo_ids"]) == set(photo_job["photo_ids"])
+

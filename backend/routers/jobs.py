@@ -917,16 +917,30 @@ async def list_jobs(
     #
     # Opt-in escape hatch: ``?include_photos=true`` restores the
     # pre-slim payload for callers that haven't migrated yet.
-    if not include_photos:
-        for d in docs:
-            plist = d.get("photos") or []
-            if not isinstance(plist, list):
-                plist = []
-            d["photo_count"] = len(plist)
-            d["photo_ids"] = [
-                str(p.get("id")) for p in plist
-                if isinstance(p, dict) and p.get("id") is not None
-            ]
+    #
+    # Feb-2026 batch-verify follow-up — the ``include_photos=true``
+    # variant is a strict SUPERSET of the slim shape:
+    #   * ``photo_count`` and ``photo_ids`` are ALWAYS emitted (never
+    #     ``None``) so consumers can rely on their presence
+    #     regardless of the projection flag.
+    #   * Legacy rows where the underlying Mongo doc has no ``photos``
+    #     field at all (e.g. ``demo-stale-*`` seed jobs) are
+    #     normalized to ``photos: []`` so the response shape is
+    #     uniform across every row.
+    for d in docs:
+        plist = d.get("photos") or []
+        if not isinstance(plist, list):
+            plist = []
+        d["photo_count"] = len(plist)
+        d["photo_ids"] = [
+            str(p.get("id")) for p in plist
+            if isinstance(p, dict) and p.get("id") is not None
+        ]
+        if include_photos:
+            # Superset — keep the full ``photos`` array. Coerce
+            # missing/null to ``[]`` so every row carries the key.
+            d["photos"] = plist
+        else:
             d.pop("photos", None)
     return docs
 
