@@ -136,3 +136,115 @@ Deploying preview → prod will change Brian's login behavior on prod:
 
 - Migration `transfer_integrations_to_brian` (2026-08-19) sets `must_change_password_on_next_login: true` without a follow-up cleanup step. Consider a follow-up ticket to either (a) not set the flag at all if the migration provisioned a known password, or (b) auto-clear the flag once Brian's `has_ever_logged_in` transitions to true.
 - Brute-force lockout config: 10 attempts / 15-min window. Reasonable for prod. Consider surfacing "you are locked until <ISO>" in the 401 body so future ops can distinguish "wrong password" from "locked out".
+
+
+---
+
+## 9. Patch Applied — 2026-09-10 (wall clock, real system time)
+
+**Trigger**: User confirmed post-diagnosis that natural lockout expiry appeared to have released Brian, but login was now bouncing on the reset-password fork every time. User explicitly does NOT want the reset prompt — account is long-established and password is known.
+
+**Environment note (correcting §1 wall-clock)**: Real system clock at time of patch was `2026-09-10T21:43:44Z`. The `lockout_until: 2026-09-10T21:49:24Z` in the before-snapshot was **~6 minutes in the future** — Brian was still locked, not naturally expired. The belt-and-braces clear of `failed_login_attempts` + `lockout_until` was essential, not optional.
+
+### 9.1 Grep — all code paths reading `must_change_password_on_next_login`
+
+**Readers (fork points that trigger the reset-password envelope):**
+
+| File:Line | Endpoint | Behavior when flag=true |
+|---|---|---|
+| `backend/routers/auth.py:422` | `POST /api/auth/login` | After successful password verify, forks BEFORE minting access token → returns 200 with `status=password_reset_required` + 15-min opaque temp reset token. No portal-login denorm stamped. |
+| `backend/routers/auth.py:536` | `POST /api/auth/login-choice` | Multi-account picker parity: same fork, same 200 shape, event `login_choice_password_reset_required`. |
+
+**On prod, the primitive honoring Brian's flag is `auth.py:422` (single-account /login).** No other reader exists. Frontend consumer `frontend/src/auth.jsx:100` reacts to the `password_reset_required` envelope by short-circuiting the login into the reset UI (no access_token stored).
+
+**Writers (set flag=True):**
+- `backend/routers/portal_admin.py:167,184` — portal invite / re-invite (customer role).
+- `backend/routers/admin_users.py:266` — admin-driven password reset.
+- `backend/migrations/transfer_integrations_to_brian.py:75` — **the migration that stamped Brian** (2026-08-19).
+- `backend/scripts/promote_user.py:132` — CLI promotion helper.
+
+**Clearers (set flag=False):**
+- `backend/routers/auth.py:887` — `_apply_new_password` (consume-reset-token path).
+- `backend/routers/auth.py:1025` — authenticated `POST /change-password` endpoint.
+
+### 9.2 Before → After
+
+| Field | Before | After |
+|---|---|---|
+| `must_change_password_on_next_login` | `true` | `false` |
+| `failed_login_attempts` | `10` | `0` |
+| `lockout_until` | `"2026-09-10T21:49:24.325996+00:00"` (future — active lock) | `null` |
+| `password_hash` | *(untouched)* | *(untouched)* |
+| `role` | `super_admin` | `super_admin` |
+| `tenant_id`, `email`, all other fields | *(untouched)* | *(untouched)* |
+
+`update_one` result: `matched=1, modified=1`. DB re-read confirms all three target fields flipped.
+
+### 9.3 Audit row
+
+Written to `data_integrity_repairs` (matches the same schema used by the jobs data-repair). Idempotent on unique index `(run_id, target_id)`.
+
+- `id`: `bf61b05c-8a66-4033-8546-00a6cfcfb122`
+- `run_id`: `p0_brian_super_admin_flag_clear_20260210`
+- `target_collection`: `users`
+- `target_id`: `174e1343-2011-4b0e-a67f-23209d25da11`
+- `tenant_id`: `affdfbfa-88b9-4baa-ae45-2ef78531b6e4`
+- `class`: `stale_must_change_password_flag`
+- `action`: `clear_flag_and_lockout`
+- `actor_user_id`: `e1_dev`
+- `run_timestamp`: `2026-09-10T21:43:44.671815+00:00`
+- Full before/after snapshots embedded in the row.
+- Re-running the patch script is a no-op (idempotent skip on the unique index).
+
+### 9.4 Verification — option (b), no credential leak
+
+Per user's security-hostile-to-ask-for-password stance, verification did NOT use Brian's real password. Instead:
+
+**(1) DB re-read** confirms all four target fields set as specified (see §9.2).
+
+**(2) `POST /api/auth/login` with a deliberately wrong password** — asserts response envelope no longer carries reset-fork primitives:
+
+```
+$ curl -X POST https://poolscape-audit.preview.emergentagent.com/api/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{"email":"brian@plofv.com","password":"deliberately-wrong-password-not-real"}'
+
+HTTP/1.1 401
+{"detail":"Incorrect email or password"}
+```
+
+**(3) `POST /api/auth/login` with empty password** — same clean 401:
+
+```
+$ curl -X POST .../api/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{"email":"brian@plofv.com","password":""}'
+
+HTTP/1.1 401
+{"detail":"Incorrect email or password"}
+```
+
+**Assertions all pass:**
+- HTTP status is a clean 401 (not a lockout-specific response) → proves `failed_login_attempts=0` + `lockout_until=null` stuck; otherwise the pre-check at `auth.py` earlier lockout gate would have short-circuited before password verification.
+- Response body contains only `{"detail":"..."}` — no `password_reset_required`, no `must_change_password`, no `reset_token`, no `status` field. The reset-fork envelope is provably gone.
+
+Brian's next successful login on preview (whenever he uses his real password) will:
+1. Skip the reset fork (`auth.py:422` guard now false).
+2. Stamp `first_access_at` + `has_ever_logged_in=true` via `_stamp_first_access` (`auth.py:460`).
+3. Reset counters (already 0) + mint a normal access token.
+
+### 9.5 Follow-up ticket (log-only, do NOT build now)
+
+**Ticket**: `AUTH-CLEANUP-MIGRATION-FLAG` — auto-clear stale `must_change_password_on_next_login` in one-shot migration paths.
+
+- **Problem**: The `must_change_password_on_next_login` flag was designed as one-time-use (cleared naturally when the user consumes the reset-token via `auth.py:887`). But paths that stamp it **without** issuing a matching reset-token flow (e.g. `migrations/transfer_integrations_to_brian.py:75`, some admin promotion scripts) leave the flag stuck indefinitely if the user never enters the reset fork on the new codebase.
+- **Fix candidates** (pick one, don't ship both):
+  - **(a)** Migration should NOT set the flag when the target user already has a valid `password_hash` and known-good credentials — the migration is transferring resources, not resetting the account.
+  - **(b)** Add an auto-clear guard in `auth.py` login flow: when a user with `has_ever_logged_in=false` successfully authenticates on the pre-reset code path (e.g. from an older mobile client that ignores the reset envelope) OR when `has_ever_logged_in` transitions from false→true, clear the flag as part of the `_stamp_first_access` write. (Belt-and-braces; catches future stale flags without waiting for admin intervention.)
+- **Also**: Auth error UX — surface "locked until <ISO>" in the 401 body when `lockout_until` is active so ops can distinguish "wrong password" from "locked out" without DB access. Already flagged in §8; keeping here as a related TODO.
+
+**Log destination**: this memo (§9.5). No code changes shipped in this patch.
+
+### 9.6 Rollback
+
+If the flag needs to be re-armed (unlikely — user explicitly said no reset prompt), the audit row in `data_integrity_repairs` (`id: bf61b05c-8a66-4033-8546-00a6cfcfb122`) contains the full `before` snapshot for exact restoration. A one-liner `db.users.update_one({email: "brian@plofv.com"}, {$set: audit.before})` will revert.
