@@ -262,3 +262,80 @@ If the fix uses a Modal-based confirm (H1's remediation), the fallback path exis
 ### Screenshot verification
 
 `/tmp/close-job-fixed.png` — shows the in-tree confirm dialog rendering after tapping Close Job on an open job checklist. Dialog displays "Close job? Customer will see the final report." with Cancel and Close job buttons.
+
+
+---
+
+## 9 · Payload-size bench — `GET /api/jobs` slim-photos ship (2026-09-10)
+
+Follow-up backend work that landed independently of the mobile fix in §8. The list endpoint now drops the full `photos` array by default and surfaces only `photo_count: int` + `photo_ids: list[str]`; `?include_photos=true` restores the old shape.
+
+### Bench — single seeded job with 10 base64-encoded photos (~3 KB each)
+
+Seeded via `test_jobs_list_slim_photos.py::photo_job` fixture and measured against the running preview backend, scoped to that fixture's unique `customer_id` so the payload contains exactly the seeded row.
+
+| Variant | Response bytes | Delta | % saved |
+|---|---:|---:|---:|
+| Slim (default)                    | **1,731 B** | — | — |
+| Full (`?include_photos=true`)     | **33,289 B** | **+31,558 B** over slim | — |
+| **Savings on 10-photo scope**     | — | **31,558 B smaller** | **94.8 %** |
+
+**Extrapolation to a typical prod tenant with the K65.fix window** (±30/+60 days ≈ 90 days; 202 jobs on preview; assumed average of 2 photos/job at ~3 KB each in prod — many jobs have 0 photos, a handful have 10+):
+
+| Scale | Slim | Full (previous shape) | Saved |
+|---|---:|---:|---:|
+| 202 jobs @ 2 avg photos of 3 KB each | ~250 KB | ~1.5 MB | ~1.25 MB (~83 %) |
+| 202 jobs @ 5 avg photos of 3 KB each | ~250 KB | ~3.3 MB | ~3.0 MB (~91 %) |
+
+### Correlation call — does payload size explain the silent close-job no-op?
+
+**No — payload size did NOT cause the silent no-op**. The root cause of §8 was device-side (RN's `Alert.alert` silently failing on iOS 17 / Hermes when the presenting UIScene is detached). The fix was to replace both `Alert.alert` sites with in-tree Modals. That fix is orthogonal to how big the list refresh is.
+
+**However**, the slim-photos ship is a legitimate secondary hardening for the same user-visible pain surface:
+
+- The mobile `closeJob` flow triggers a **post-close list refresh** on the schedule / jobs list. With the pre-slim payload, that refresh could be ~1.5–3 MB on tenants with typical photo counts — enough to trip the 20 s `SCHEDULE_LOAD_TIMEOUT_MS` on cellular connections and cause the "0 of 0 jobs" red banner we diagnosed in `DIAG_P0_SCHEDULE_FAILED_TO_FETCH.md`. Slim cuts that surface by 83–94 % in typical scale.
+- The mobile Alert-modal fix restores UI feedback on tap, but a slow post-close network round-trip would still block the "Close job" spinner from resolving. Slim removes that class of secondary UX degradation entirely.
+
+**Verdict**: slim-photos is a defense-in-depth ship for the schedule-load surface, not a fix for the specific "silent tap" bug in §8. The two changes stack cleanly — §8 fixes the tap-feedback path, §9 shrinks the post-tap refresh so the "Closing…" spinner resolves quickly on cellular.
+
+### Regression posture
+
+- `test_jobs_list_slim_photos.py` — **4/4 pass** (slim shape, detail unchanged, opt-in restore, size delta ≥ 15 KB with the seeded 10-photo job).
+- `test_pb2_line_item_overrides.py` — **10/10 pass** (Phase 2 line-item override serializer, unchanged surface).
+- `test_pb3_profit_report.py` — **10/11 pass** — 1 pre-existing flake (`test_sent_status_is_excluded`) confirmed to fail identically on the pre-slim-photos revision of `jobs.py`; not caused by this ship.
+- `test_task6_*` — **43/43 pass** (Quote terms + service-records link + revoke).
+- Web frontend — targeted vitest suite over every file that reads `/api/jobs` or `job.photos` (`task-b-schedule-cache-window`, `customer-profile-tabs`, `phase28-bulk-reassign-toolbar`, `phase34-bulk-select-shared`, `could-not-service`, `chemistry-readings-unification`, `api-401-interceptor`, `pb3-profit-report`) — **167/167 pass across 8 files**.
+
+### Enumeration of what shipped
+
+Backend endpoints touched by the slim-photos ship:
+
+- `GET /api/jobs` — projection now drops `photos` and emits `photo_count` + `photo_ids`; opt-in via `?include_photos=true` restores the pre-slim shape (backward-compat).
+
+Backend endpoints CONFIRMED already slim (no change required):
+
+- `GET /api/jobs/{id}` — single-job detail; still ships the full `photos` array (per ticket requirement — NOT touched).
+- `GET /api/schedule/today` / `GET /api/schedule/day` — hand-crafted item dicts with no `photos` field.
+- `GET /api/workstream/jobs` — already emits a lightweight `media: {photos_count, photos_preview, ...}` via `_media_summary`, capped at 4 preview items.
+- `GET /api/dispatch/route/unscheduled-jobs` — tight explicit projection, no photos.
+- `GET /api/mine-jobs-today` (timeclock_landscaping) — tight projection, no photos.
+- `GET /api/reports/export/jobs` — admin CSV export; serializes only `JOB_COLS`, out of scope for JSON-list slimming.
+
+**Ergo the ticket's "adjacent list endpoints" enumeration is: none needed** — only `/api/jobs` was still shipping the fat photos payload, so only it was slimmed.
+
+### Frontend consumer audit
+
+Web (patched or verified safe by main agent):
+- Every web consumer of `job.photos` in `/app/frontend/src/` reads it on a **detail** context (single-job endpoint), NOT on a list context. `WorkstreamJobDrawer.jsx` fetches `api.get('/jobs/{id}')` before rendering. `JobDetail.jsx` is the detail page. `PortalPhotos.jsx` uses a portal-specific endpoint. `ModerationCheckinsPage.jsx` and `PropertyLookupPage.jsx` iterate check-ins/properties, not jobs. **No web changes required.**
+
+Mobile (identified only — main agent does NOT edit `/app/mobile/`):
+- **`mobile/app/(app)/jobs.tsx`** — line 47 calls `api.get('/jobs')` and renders each row through `<JobCard>`. `JobCard` in `mobile/src/components/widgets.tsx` uses `WorkstreamPhoto` (line 313, reads `job?.photos?.[0]`) and `WorkstreamThumbStrip` (line 336-338, reads `job?.photos`). These will render empty state after the slim ship until the mobile agent migrates them.
+
+  **Recommended fix scope for the mobile agent** (patch ONE file, ~10 lines):
+  1. Simplest opt-in: in `mobile/app/(app)/jobs.tsx` line 47, change `api.get('/jobs')` → `api.get('/jobs?include_photos=true')`. Restores the old shape verbatim; zero UI churn.
+  2. Preferred longer-term: read `job.photo_ids` on `JobCard` and lazy-load individual thumbnails via a per-photo GET (endpoint TBD if not already available). Cuts list bandwidth without dropping the thumb-strip UX.
+  3. Third option: expose `primary_photo_url` alongside `photo_count`/`photo_ids` on the backend if a thumbnail URL is stored on the photo doc. Requires backend follow-up + a schema decision — not part of this ship.
+
+  **All three options are additive to the current slim-photos ship**; the backend contract stays stable.
+
+Other mobile callers of `api.get('/jobs')` (`mobile/app/time-clock.tsx`, `mobile/src/geofence.ts`, `mobile/src/background/jobGeofence.ts`, `mobile/app/(app)/dispatch/board.tsx`) do NOT read `job.photos` — verified via grep. **Safe under the default slim shape.**

@@ -1605,3 +1605,18 @@
 - **Files modified**: app/estimate-view/[id].tsx, src/api/estimatesFull.ts, app/portal/payment-method.tsx
 - **Tests created**: task3-invoice-bypass-mobile.test.tsx (6), task5-save-card-mobile.test.tsx (4), task6-terms-mobile.test.tsx (6), pb2-line-item-overrides.test.tsx (4)
 - **Test results**: 20/20 passing, all pre-existing tests still passing (27/27)
+
+## Iteration 83 — P0 Fix: Close-Job silent no-op
+- **Commit**: 5a1d5e7ec3dc92ac79165296488b563f8449d87f
+- **Date**: 2026-04-16
+- **Changes**:
+  - Root cause: Alert.alert silently no-oping on iOS 17 + Hermes (detached UIScene)
+  - Replaced 2 Alert.alert calls in closeJob with in-tree Modal components
+  - Extracted doCloseJob from inner Alert callback
+  - Added 3s hard cap on outlier check (fail-open advisory)
+  - Fixed handleClose() ReferenceError → doCloseJob() in 429 retry handler
+  - Added 2 new Modals: close-job-confirm-dialog, close-job-outlier-dialog
+- **Files modified**: app/job/[id]/checklist.tsx
+- **Files created**: __tests__/job-close-silent-noop.test.tsx
+- **Test results**: 6/6 new tests passing, 47/47 pre-existing still passing (53 total)
+- **Screenshot**: /tmp/close-job-fixed.png — in-tree confirm dialog renders after tap
