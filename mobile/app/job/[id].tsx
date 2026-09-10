@@ -42,6 +42,9 @@ import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButt
 import LineItemsSection from "@/src/components/jobs/LineItemsSection";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
+// P0 fix — hard timeout so the detail screen never hangs on slow networks.
+const LOAD_TIMEOUT_MS = 20_000;
+
 // Phase 49.0 — inline styles for the "Open Service Report" CTA. Kept
 // local so we don't touch the shared `styles` module.
 const openReportBtn = {
@@ -91,6 +94,8 @@ export default function JobDetail() {
   const [editReason, setEditReason] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
+  // P0 fix — user-visible error when load times out or fails completely.
+  const [loadError, setLoadError] = useState("");
 
   // Phase 47 follow-up — removed the "tech must be clocked in" redirect
   // that used to send technicians to `/(app)/schedule` here. Techs now
@@ -100,11 +105,20 @@ export default function JobDetail() {
   // at read time.
 
   const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
     try {
-      // Sync any offline-captured photos & mutations first, then refresh.
-      await flushPendingMutations().catch(() => null);
-      await flushPendingPhotos().catch(() => null);
-      const fresh = await api.get(`/jobs/${id}`);
+      // P0 fix: fire-and-forget — don't block the fetch on offline flushes.
+      flushPendingMutations().catch(() => {});
+      flushPendingPhotos().catch(() => {});
+
+      // P0 fix: hard 20s timeout on the main API fetch.
+      const fresh = await Promise.race([
+        api.get(`/jobs/${id}`),
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error("__LOAD_TIMEOUT__")), LOAD_TIMEOUT_MS),
+        ),
+      ]);
       setJob(fresh);
       setOfflineRead(false);
       cacheJob(fresh);
@@ -128,7 +142,7 @@ export default function JobDetail() {
       }
       // Line items fetching moved to LineItemsSection component
       setPendingPhotos(await pendingForJob(id));
-    } catch (e) {
+    } catch (e: any) {
       // Phase 1 Offline Read — try SQLite read_cache first (hydrator-populated),
       // then AsyncStorage caches as fallback.
       let found: any = await getCachedJobDetail(String(id)).catch(() => null);
@@ -147,9 +161,14 @@ export default function JobDetail() {
           setProperty(cachedProp || null);
         }
       } else {
-        // Clean empty state — no red error toast.
+        // P0 fix: set user-visible error instead of blank screen.
         setJob(null);
         setOfflineRead(true);
+        setLoadError(
+          e?.message === "__LOAD_TIMEOUT__"
+            ? "Loading timed out. Check your connection and try again."
+            : "Couldn't load job. Retry?"
+        );
       }
       setPendingPhotos(await pendingForJob(id));
     } finally {
@@ -347,6 +366,29 @@ export default function JobDetail() {
   };
 
   if (loading) return <Loading testID="job-detail-loading" />;
+  // P0 fix — timeout / network error with no cache → show retry UI.
+  if (!job && !loading && loadError) {
+    return (
+      <View style={styles.root} testID="job-detail-error">
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
+          <Pressable style={[styles.backBtn, { top: insets.top + 8, left: 12, position: "absolute" }]} onPress={() => router.back()} testID="job-back-error">
+            <Ionicons name="chevron-back" size={24} color={themeColors.onSurface} />
+          </Pressable>
+          <Ionicons name="warning-outline" size={48} color={themeColors.muted} />
+          <Text style={{ fontFamily: themeFont.bold, fontSize: 18, color: themeColors.onSurface, marginTop: spacing.md, textAlign: "center" }} testID="job-detail-error-message">
+            {loadError}
+          </Text>
+          <Pressable
+            style={{ marginTop: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: themeColors.brand, borderRadius: themeRadius.md }}
+            onPress={load}
+            testID="job-detail-retry-btn"
+          >
+            <Text style={{ fontFamily: themeFont.bold, fontSize: 14, color: "#fff" }}>Retry</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
   // Phase 1 Offline Read — clean empty state for uncached offline jobs.
   if (!job && !loading) {
     return (
