@@ -1,14 +1,24 @@
 /**
- * Phase 12 · Feb 2026 — Card-on-file warning banner + "Send add-card
- * link" action. Rendered only when the customer effectively requires
- * a card AND has none saved.
+ * Phase 12 · Feb 2026 — Card-on-file warning banner + "Add card on
+ * file" action (magic-link email flow).
  *
- * Posts to ``POST /api/customers/{cid}/send-card-add-link`` — the
- * backend rate-limits (1 per 5 min per customer) and returns the
- * recipient email + phone that were used.
+ * Feb-2026 · Pivot — the earlier inline SetupIntent modal was
+ * reverted per user clarification: the flow stays as an email
+ * round-trip, but the CTA in the email is a Stripe-hosted magic
+ * link that skips the portal login entirely (see
+ * ``routers/customers.py :: send_card_add_link`` +
+ * ``services/add_card_links.build_add_card_link``). This banner
+ * merely posts to that endpoint and shows a TRUTHFUL toast — the
+ * previous "success toast even on silent no-op" bug is closed by
+ * gating success on ``sent_email || sent_sms`` and surfacing the
+ * exact server reason otherwise.
+ *
+ * Preserved: test-id ``card-on-file-send-link-btn``, admin
+ * visibility gate, banner tone. Label copy renamed from "Send
+ * add-card link" → "Add card on file".
  */
 import React, { useState } from "react";
-import { AlertTriangle, Send } from "lucide-react";
+import { AlertTriangle, CreditCard } from "lucide-react";
 import { api } from "@/api";
 
 
@@ -25,16 +35,45 @@ export default function CardOnFileWarningBanner({ customer, onSent, onError }) {
         `/customers/${customer.id}/send-card-add-link`,
         {},
       );
-      const to = [res.email_recipient, res.sms_recipient]
-        .filter(Boolean).join(" and ");
-      onSent && onSent(
-        to ? `Card add link sent to ${to}` : "Card add link sent",
-      );
+      // Feb-2026 · Truthful toast — do NOT claim success unless at
+      // least one channel actually left the pod. The server always
+      // returns HTTP 200 for silent no-ops (missing email, missing
+      // template, opted-out, deferred, gate-suppressed, missing
+      // Resend key, upstream exception) — inspect the sent flags
+      // instead of trusting the status code alone.
+      const sentEmail = !!res?.sent_email;
+      const sentSms = !!res?.sent_sms;
+      if (sentEmail || sentSms) {
+        const to = [
+          sentEmail ? res?.email_recipient : null,
+          sentSms   ? res?.sms_recipient   : null,
+        ].filter(Boolean).join(" and ");
+        onSent && onSent(
+          to ? `Add-card link sent to ${to}` : "Add-card link sent",
+        );
+      } else {
+        // Nothing was sent — surface the exact reason so ops knows
+        // what to fix (missing email, missing template, blocked
+        // domain, missing Resend key on this pod, etc.).
+        const reason =
+          res?.reason ||
+          "Nothing was sent — check the customer's email/phone and template setup.";
+        onError && onError(reason);
+      }
     } catch (e) {
-      // Backend returns 429 with a structured detail on rate-limit.
-      const msg = e?.detail?.code === "RATE_LIMITED"
-        ? "Please wait a few minutes before sending another link."
-        : (e?.message || "Failed to send link");
+      // Backend returns 429 with a structured detail on rate-limit,
+      // 4xx with a structured detail on all other user-actionable
+      // errors (missing customer email, template not seeded, etc.).
+      let msg;
+      if (e?.detail?.code === "RATE_LIMITED") {
+        msg = "Please wait a few minutes before sending another link.";
+      } else if (typeof e?.detail === "string") {
+        msg = e.detail;
+      } else if (e?.detail?.message) {
+        msg = e.detail.message;
+      } else {
+        msg = e?.message || "Failed to send add-card link";
+      }
       onError && onError(msg);
     } finally {
       setBusy(false);
@@ -44,7 +83,7 @@ export default function CardOnFileWarningBanner({ customer, onSent, onError }) {
   return (
     <div
       data-testid="card-on-file-warning-banner"
-      className="rounded-2xl p-4 mb-4 flex items-start gap-3"
+      className="rounded-2xl p-4 flex items-start gap-3"
       style={{
         backgroundColor: "#FEFCE8",
         border: "1px solid #FDE68A",
@@ -58,7 +97,8 @@ export default function CardOnFileWarningBanner({ customer, onSent, onError }) {
           Card on file required — none saved
         </div>
         <div className="text-xs text-amber-800 mt-1">
-          This customer requires a card on file but hasn't added one yet.
+          Email the customer a secure link to enter their card. The link
+          opens Stripe directly — no portal login required.
         </div>
       </div>
       <button
@@ -71,8 +111,8 @@ export default function CardOnFileWarningBanner({ customer, onSent, onError }) {
           opacity: busy ? 0.7 : 1,
         }}
       >
-        <Send size={13} />
-        {busy ? "Sending…" : "Send add-card link"}
+        <CreditCard size={13} />
+        {busy ? "Sending…" : "Add card on file"}
       </button>
     </div>
   );

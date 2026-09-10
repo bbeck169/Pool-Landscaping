@@ -37,12 +37,13 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-change-me")
 JWT_ALGO = "HS256"
 _TOKEN_SUB = "add_card"
 
-# Feb-2026 · Add-card magic-link TTL — 24 hours by default (per user
-# spec). Env override ``PORTAL_ADD_CARD_LINK_TTL_HOURS`` lets ops
-# widen or narrow the window without a code push. Applies ONLY to
-# the ``add_card`` purpose; login / invoice-pay / quote-approve
-# magic links have their own independent TTLs and are unaffected.
-_DEFAULT_ADD_CARD_TTL_HOURS = 24
+# Feb-2026 · Add-card magic-link TTL — 7 days by default (per user
+# spec — customer may not check their inbox for a few days). Env
+# override ``PORTAL_ADD_CARD_LINK_TTL_HOURS`` lets ops widen or
+# narrow the window without a code push. Applies ONLY to the
+# ``add_card`` purpose; login / invoice-pay / quote-approve magic
+# links have their own independent TTLs and are unaffected.
+_DEFAULT_ADD_CARD_TTL_HOURS = 24 * 7
 try:
     _ttl_hours = int(os.environ.get(
         "PORTAL_ADD_CARD_LINK_TTL_HOURS", _DEFAULT_ADD_CARD_TTL_HOURS,

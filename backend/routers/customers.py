@@ -3699,6 +3699,14 @@ async def send_card_add_link(cid: str,
 
     sent_email = False
     sent_sms = False
+    # Feb-2026 · Add-Card magic-link truthfulness — track the exact
+    # per-channel outcome so the FE toast never lies about success.
+    # ``email_status`` mirrors the ``send_email`` status enum so ops
+    # can filter deliveries by reason without tailing logs.
+    email_status: str | None = None
+    sms_status: str | None = None
+    email_error: str | None = None
+    sms_error: str | None = None
     trigger_id = f"add_card_request:{cid}:{new_id()[:8]}"
 
     if email_tpl and customer.get("email"):
@@ -3712,10 +3720,17 @@ async def send_card_add_link(cid: str,
                 subject=subject_r, html=body_r,
                 from_name=(tenant.get("name") or None),
             ), timeout=8.0)
-            sent_email = (res or {}).get("status") == "sent" or \
-                            (res or {}).get("status") == "sent_no_provider_id"
+            email_status = (res or {}).get("status")
+            sent_email = email_status in ("sent", "sent_no_provider_id")
+            if not sent_email:
+                email_error = (res or {}).get("error") or email_status
         except Exception as exc:
-            logger.warning(f"[phase12] add-card email send failed: {exc}")
+            email_status = "exception"
+            email_error = f"{type(exc).__name__}: {exc}"[:200]
+            logger.warning(
+                "[phase12] add-card email send exception cid=%s: %s",
+                cid, email_error,
+            )
         await db.marketing_deliveries.insert_one({
             "id": new_id(), "tenant_id": tenant["id"],
             "customer_id": cid,
@@ -3725,8 +3740,16 @@ async def send_card_add_link(cid: str,
             "trigger_entity": {"kind": "add_card_request", "id": cid},
             "trigger_id": trigger_id,
             "delivered": sent_email,
+            # Feb-2026 · Persist the truthful outcome so the deliveries
+            # ledger is auditable without cross-referencing app logs.
+            "provider_status": email_status,
+            "error": email_error,
             "created_at": now_iso(),
         })
+    elif not customer.get("email"):
+        email_status = "no_recipient_on_file"
+    elif not email_tpl:
+        email_status = "template_missing"
 
     if sms_tpl and customer.get("phone"):
         body_r, _ = render_template(sms_tpl.get("body") or "", ctx)
@@ -3744,8 +3767,14 @@ async def send_card_add_link(cid: str,
                 timeout=8.0,
             )
             sent_sms = True
+            sms_status = "sent"
         except Exception as exc:
-            logger.warning(f"[phase12] add-card sms send failed: {exc}")
+            sms_status = "exception"
+            sms_error = f"{type(exc).__name__}: {exc}"[:200]
+            logger.warning(
+                "[phase12] add-card sms send exception cid=%s: %s",
+                cid, sms_error,
+            )
         await db.marketing_deliveries.insert_one({
             "id": new_id(), "tenant_id": tenant["id"],
             "customer_id": cid,
@@ -3755,15 +3784,68 @@ async def send_card_add_link(cid: str,
             "trigger_entity": {"kind": "add_card_request", "id": cid},
             "trigger_id": trigger_id,
             "delivered": sent_sms,
+            "provider_status": sms_status,
+            "error": sms_error,
             "created_at": now_iso(),
         })
+    elif not customer.get("phone"):
+        sms_status = "no_recipient_on_file"
+    elif not sms_tpl:
+        sms_status = "template_missing"
+
+    # Feb-2026 · P1 diagnostic follow-up — if nothing left the pod on
+    # either channel, DO NOT return 200 with a false "success" flag.
+    # Surface the exact reason so the FE toast can tell the operator
+    # what to fix.
+    if not sent_email and not sent_sms:
+        outcome = "nothing_sent"
+        reasons = {"email": email_status, "sms": sms_status}
+        # Distinguish the two most-common actionable buckets so the FE
+        # can render user-friendly copy without parsing status strings.
+        if (email_status == "no_recipient_on_file"
+                and sms_status == "no_recipient_on_file"):
+            detail = {
+                "code": "NO_CONTACT_ON_FILE",
+                "message": "Customer has no email or phone on file. Add contact info and try again.",
+                "reasons": reasons,
+            }
+            raise HTTPException(status_code=400, detail=detail)
+        if (email_status in ("template_missing", None)
+                and sms_status in ("template_missing", None)):
+            detail = {
+                "code": "TEMPLATE_MISSING",
+                "message": "Add-card email/SMS templates aren't set up for this tenant.",
+                "reasons": reasons,
+            }
+            raise HTTPException(status_code=409, detail=detail)
+        # Provider-level failure (Resend/RC returned a non-sent
+        # status or the SDK raised). Return 502 so the FE surfaces a
+        # distinct "provider failure" state and ops can chase it.
+        detail = {
+            "code": "PROVIDER_FAILURE",
+            "message": "Provider rejected the send. Check ops logs.",
+            "reasons": reasons,
+            "errors": {"email": email_error, "sms": sms_error},
+        }
+        raise HTTPException(status_code=502, detail=detail)
 
     return {
         "ok": True,
         "sent_email": sent_email,
         "sent_sms": sent_sms,
-        "email_recipient": customer.get("email"),
-        "sms_recipient": customer.get("phone"),
+        "email_recipient": customer.get("email") if sent_email else None,
+        "sms_recipient": customer.get("phone") if sent_sms else None,
+        # Feb-2026 · Persist the per-channel outcome on the response
+        # so the FE toast + any future consumer can distinguish
+        # partial success (e.g., email sent, SMS skipped for lack of
+        # phone) from full success.
+        "outcome": "sent" if (sent_email and sent_sms) else "partial",
+        "channels": {
+            "email": {"sent": sent_email, "status": email_status,
+                        "error": email_error},
+            "sms":   {"sent": sent_sms,   "status": sms_status,
+                        "error": sms_error},
+        },
     }
 
 
