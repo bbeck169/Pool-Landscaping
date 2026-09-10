@@ -380,15 +380,29 @@ export default function CustomerDetail() {
         <ArrowLeft size={14} /> All customers
       </button>
 
-      {/* Phase 12 · Feb 2026 — Card-on-file requirement banner. Only
-          shows when effective_require_card_on_file && !has_card_on_file.
-          Admin + manager only (techs never see this). */}
+      {/* Feb-2026 · Top action stack — Card-on-file trigger (line 1)
+          + Portal invite (line 2) sit together at the top of the
+          admin customer detail so the two most-used contact actions
+          share one visual rhythm. Both children still return
+          ``null`` (Banner) or ``disabled`` (Invite) when the
+          customer state doesn't warrant them; the wrapper collapses
+          gracefully. Layout only — test-ids + click handlers
+          unchanged. Admin/manager only (techs never see this). */}
       {canSeeCardControls && (
-        <CardOnFileWarningBanner
-          customer={customer}
-          onSent={(msg) => setToast({ tone: "success", message: msg })}
-          onError={(msg) => setToast({ tone: "error", message: msg })}
-        />
+        <div
+          className="space-y-2 mb-4"
+          data-testid="customer-detail-top-action-stack"
+        >
+          <CardOnFileWarningBanner
+            customer={customer}
+            onSent={(msg) => setToast({ tone: "success", message: msg })}
+            onError={(msg) => setToast({ tone: "error", message: msg })}
+          />
+          <PortalInviteQuickAction
+            customer={customer}
+            onToast={(t) => setToast(t)}
+          />
+        </div>
       )}
 
       {/* Header card */}
@@ -735,16 +749,12 @@ export default function CustomerDetail() {
                 }}
                 onError={(msg) => setToast({ tone: "error", message: msg })}
               />
-              {/* Feb-2026 · Send Portal Invite relocated from the
-                  Portal Access tab to the main Contact card.  Same
-                  handler + API + toast shape as the old Portal
-                  Access panel button; disabled when the customer
-                  has no email on file.  See the PRD queue entry
-                  #1 for the relocation spec. */}
-              <PortalInviteQuickAction
-                customer={customer}
-                onToast={(t) => setToast(t)}
-              />
+              {/* Feb-2026 · Send Portal Invite promoted to the
+                  top action stack (rendered near the top of this
+                  page alongside the Card-on-file action).  This
+                  Overview slot is intentionally empty — the button
+                  no longer duplicates. See the top-action-stack
+                  block above for the live instance. */}
               {/* Queue Item 3 · Feb-2026 — dedicated Tags section on
                   the customer detail page. Chip render + combobox +
                   inline "Create new: <query>" all live inside

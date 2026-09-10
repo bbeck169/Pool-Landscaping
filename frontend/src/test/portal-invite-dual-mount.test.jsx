@@ -40,15 +40,25 @@ describe("Bug 1 — Send Portal Invite parity on both surfaces", () => {
     expect(quickInPanelIdx).toBeLessThan(8000);
   });
 
-  it("Overview mount is preserved (regression guard on the earlier PR)", () => {
-    // The relocation PR (``customer-portal-invite-relocation.test``)
-    // asserted the button appears after CustomerContactsPanel. Lock
-    // that still holds — the Bug 1 dual-mount didn't accidentally
-    // remove the Overview mount.
+  it("Overview mount is preserved (top action stack — Feb-2026 relocation)", () => {
+    // Feb-2026 · Top-action-stack relocation moved the Overview
+    // PortalInviteQuickAction from below CustomerContactsPanel to
+    // the top action stack (above the header card). The Overview
+    // surface still renders the button — it's just higher up on
+    // the page now. Assert the button appears BEFORE the header /
+    // contacts panel to lock the new invariant.
+    const stackIdx = SRC.indexOf(
+      'data-testid="customer-detail-top-action-stack"',
+    );
     const contactsIdx = SRC.indexOf("<CustomerContactsPanel");
     const firstQuickIdx = SRC.indexOf("<PortalInviteQuickAction");
+    expect(stackIdx).toBeGreaterThan(-1);
     expect(contactsIdx).toBeGreaterThan(-1);
-    expect(firstQuickIdx).toBeGreaterThan(contactsIdx);
+    expect(firstQuickIdx).toBeGreaterThan(-1);
+    // First mount lives INSIDE the top stack, BEFORE the contacts
+    // panel — flipped from the pre-Feb-2026 order.
+    expect(firstQuickIdx).toBeGreaterThan(stackIdx);
+    expect(firstQuickIdx).toBeLessThan(contactsIdx);
   });
 
   it("Same handler + endpoint used by both mounts (no fork)", () => {

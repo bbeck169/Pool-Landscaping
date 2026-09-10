@@ -86,12 +86,20 @@ describe("Send Portal Invite · relocation to main Contact card", () => {
     );
   });
 
-  it("6. Quick-action is mounted inside the Overview tab, after CustomerContactsPanel", () => {
-    // The Overview branch mounts CustomerContactsPanel then the
-    // new quick-action.  Assert lexical order to lock placement.
+  it("6. Quick-action is mounted inside the top action stack (Feb-2026 relocation)", () => {
+    // Feb-2026 · Top action stack — the Overview quick-action was
+    // promoted from below CustomerContactsPanel to sit at the top
+    // of the page, directly under the CardOnFileWarningBanner.
+    // Assert the new invariant: the button appears INSIDE the
+    // stack wrapper AND before CustomerContactsPanel.
+    const stackIdx = src.indexOf(
+      'data-testid="customer-detail-top-action-stack"',
+    );
     const contactsIdx = src.indexOf("<CustomerContactsPanel");
     const quickIdx    = src.indexOf("<PortalInviteQuickAction");
+    expect(stackIdx).toBeGreaterThan(-1);
     expect(contactsIdx).toBeGreaterThan(-1);
-    expect(quickIdx).toBeGreaterThan(contactsIdx);
+    expect(quickIdx).toBeGreaterThan(stackIdx);
+    expect(quickIdx).toBeLessThan(contactsIdx);
   });
 });
