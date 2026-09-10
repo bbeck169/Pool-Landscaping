@@ -13,6 +13,7 @@ import MuteControl from "@/components/customers/MuteControl";
 import CustomersPager from "@/components/customers/CustomersPager";
 import ImportCsvModalP41 from "@/pages/customers/ImportCsvModalP41";
 import MergeCustomersModal from "@/components/customers/MergeCustomersModal";
+import PortalOnboardingHealthTile from "@/components/customers/PortalOnboardingHealthTile";
 
 
 // Feb-2026 · P28 — tiny relative-time formatter for the Muted saved
@@ -1169,6 +1170,9 @@ export default function CustomersList() {
           </>
         }
       />
+
+      {/* Feb-2026 · Portal onboarding health tile — admin-only. */}
+      {isAdmin ? <PortalOnboardingHealthTile /> : null}
 
       {/* Phase 56.2 — Active / Inactive segmented tabs. Counts are live. */}
       <div

@@ -1633,3 +1633,17 @@
 - **Files rewritten**: src/services/routeHydrator.ts, src/components/OfflineBadge.tsx
 - **Files modified**: src/hooks/useRouteHydration.ts, app/(app)/schedule/calendar.tsx
 - **Test results**: 68/68 total (15 new + 53 existing), all passing
+
+## Iteration 85 — Temp-Password + First-Access Parity
+- **Commit**: cf0af6df5a05201a893ab31bda64b98933ebab25
+- **Date**: 2026-04-16
+- **Changes**:
+  - Created /set-password screen with silent re-login after reset
+  - Extended login() and finalizeAccountChoice() to return password_reset_required fork
+  - Updated login.tsx submit() and pickAccount() to handle the fork
+  - Added "Never logged in" filter to admin customers list (?first_access=never)
+  - Token-expired handling with friendly Alert → back to login
+- **Files created**: app/set-password.tsx, 3 test files, memory/MOBILE_TEMP_PASSWORD_PARITY.md
+- **Files modified**: src/auth.tsx, app/login.tsx, app/(app)/customers.tsx
+- **Test results**: 78/78 total (10 new + 68 existing), all passing
+- **Screenshot**: /tmp/mobile-temp-password-reset.png

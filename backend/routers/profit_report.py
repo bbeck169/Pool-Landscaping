@@ -504,3 +504,194 @@ async def pricebook_health(
     }
     _HEALTH_CACHE[cache_key] = {"_at": now, "value": value}
     return value
+
+
+
+# ─────────────────────────────────────────────────────────────────
+# Feb-2026 · Portal onboarding health tile.
+# ─────────────────────────────────────────────────────────────────
+# Single-glance view of the customer portal onboarding funnel so
+# ops can chase stalled cases. Snapshot report — no historical
+# time series (a trend graph is explicitly out of scope). Reuses
+# the existing portal denorms already stamped by the invite /
+# activation / login paths — NO new schema fields:
+#
+#   • ``customers.has_login`` — flipped ``True`` when an admin
+#     provisions the customer's portal user
+#     (``portal_admin._upsert_customer_user``). Anchors the
+#     ``invited`` cohort.
+#   • ``customers.portal_password_set_at`` — stamped when the
+#     customer chooses their own password (self-serve reset or
+#     temp-password consummation via ``auth._apply_new_password``).
+#     Anchors the ``activated`` cohort.
+#   • ``customers.portal_first_login_at`` — stamped ONCE on the
+#     customer's first completed sign-in
+#     (``auth._stamp_first_access``). Anchors the ``signed_in``
+#     cohort AND the ``never_logged_in`` predicate (its ABSENCE).
+#
+# Cohort predicates (documented in the memo — must stay in sync):
+#   • invited          — ``has_login == True``
+#   • activated        — ``portal_password_set_at`` OR
+#                          ``portal_first_login_at`` is set
+#                          (matches the pre-existing
+#                          ``?portal_activated=true`` filter)
+#   • signed_in        — ``portal_first_login_at`` is set
+#   • never_logged_in  — ``portal_first_login_at`` is NOT set
+#                          (matches the ``?first_access=never``
+#                          chip filter verbatim so the tile CTA
+#                          and the resulting list are in
+#                          lockstep). NOTE this is broader than
+#                          "invited AND !first_login" — a
+#                          customer who was never invited also
+#                          counts. That is intentional; ops
+#                          wants the same universe the chip
+#                          shows.
+#
+# Delta timestamps:
+#   • invited          — NO defining timestamp on customer doc
+#                          (``has_login`` is bool-only). Returns
+#                          ``delta_30d = null`` with an assumption
+#                          note in the response envelope.
+#   • activated        — earliest of the two anchor timestamps
+#                          within the trailing window.
+#   • signed_in        — ``portal_first_login_at`` within the
+#                          trailing window.
+#   • never_logged_in  — NO defining event timestamp (the cohort
+#                          is defined by the ABSENCE of a login).
+#                          Returns ``delta_30d = null``.
+#
+# Caching: 60s per (tenant, window_days). Mirrors the sibling
+# ``pricebook-health`` cache pattern verbatim.
+
+_ONBOARDING_CACHE: Dict[str, Any] = {}
+_ONBOARDING_TTL_S = 60
+_ONBOARDING_ASSUMPTIONS = {
+    "invited_delta":
+        "delta_30d is null — customers.has_login is a bool with no "
+        "defining timestamp on the customer document. Chase via the "
+        "audit_events.portal_invite_bulk stream if a dated invite "
+        "cohort is needed.",
+    "never_logged_in_delta":
+        "delta_30d is null — the cohort is defined by the ABSENCE "
+        "of a login timestamp, so trailing-window math is not "
+        "meaningful. Track shrinkage via signed_in delta_30d "
+        "instead.",
+    "activated_predicate":
+        "portal_password_set_at OR portal_first_login_at is set — "
+        "matches the ?portal_activated=true filter on the "
+        "customers list. A customer who chose their own password "
+        "counts as activated even without a sign-in.",
+    "never_logged_in_predicate":
+        "portal_first_login_at is not set — matches ?first_access=never "
+        "verbatim so the tile CTA and the resulting list are in "
+        "lockstep. Broader than 'invited AND !first_login' by "
+        "design.",
+}
+
+
+def _iso_or_none(v: Any) -> Optional[str]:
+    """Coerce a Mongo timestamp field (which may be ISO ``str`` or
+    BSON ``datetime`` depending on the doc's vintage) into an
+    RFC-3339 string so the trailing-window comparison is
+    apples-to-apples."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, datetime):
+        return v.isoformat()
+    return v if isinstance(v, str) else None
+
+
+@router.get("/reports/portal-onboarding-health")
+async def portal_onboarding_health(
+    window_days: int = Query(30, ge=1, le=365),
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the four portal-onboarding cohorts + trailing-window
+    deltas for the current tenant. Cached 60s per
+    (tenant, window_days). See module docstring for cohort
+    predicates + assumption notes.
+    """
+    _require_admin(user)
+    tenant_id = (user or {}).get("tenant_id") or ""
+    if not tenant_id:
+        raise HTTPException(400, {"error": "missing_tenant"})
+
+    now = datetime.now(timezone.utc)
+    cache_key = f"{tenant_id}:{window_days}"
+    cached = _ONBOARDING_CACHE.get(cache_key)
+    if cached and (now - cached["_at"]).total_seconds() < _ONBOARDING_TTL_S:
+        return cached["value"]
+
+    window_start = now - timedelta(days=window_days)
+    window_start_iso = window_start.isoformat()
+
+    # Read-once projection — every cohort predicate is a function of
+    # these four fields. A single scan keeps this cheap even for
+    # tenants past the legacy 2000-row ceiling. The query mirrors
+    # the customers-list defaults (soft-delete + merged hidden,
+    # K49b-orphan excluded) so the tile's ``never_logged_in`` count
+    # matches the ``?first_access=never`` chip verbatim.
+    from routers.customers import _valid_customer_id_predicate
+    q = {
+        "tenant_id": tenant_id,
+        "$or": [{"deleted_at": None},
+                 {"deleted_at": {"$exists": False}}],
+        "$and": [
+            _valid_customer_id_predicate(),
+            {"$or": [{"merged_into": None},
+                       {"merged_into": {"$exists": False}}]},
+        ],
+    }
+    projection = {
+        "_id": 0,
+        "has_login": 1,
+        "portal_password_set_at": 1,
+        "portal_first_login_at": 1,
+    }
+    invited = activated = signed_in = never = 0
+    invited_delta = None            # noqa: F841 — kept null on purpose
+    activated_delta = 0
+    signed_in_delta = 0
+
+    async for c in db.customers.find(q, projection):
+        has_login = bool(c.get("has_login"))
+        pw_set = _iso_or_none(c.get("portal_password_set_at"))
+        first_login = _iso_or_none(c.get("portal_first_login_at"))
+        is_activated = bool(pw_set) or bool(first_login)
+
+        if has_login:
+            invited += 1
+        if is_activated:
+            activated += 1
+            # Earliest anchor timestamp — falls in-window if either
+            # crossed the boundary during the trailing period.
+            anchor = min([t for t in (pw_set, first_login) if t])
+            if anchor >= window_start_iso:
+                activated_delta += 1
+        if first_login:
+            signed_in += 1
+            if first_login >= window_start_iso:
+                signed_in_delta += 1
+        else:
+            # Feb-2026 · Aligned with the ?first_access=never chip
+            # filter — the tile CTA deep-links there so the two
+            # numbers MUST match. Counting non-invited customers
+            # is intentional (they're part of the universe the
+            # chip shows).
+            never += 1
+
+    value = {
+        "as_of": now.isoformat(),
+        "window_days": window_days,
+        "cohorts": {
+            "invited":         {"count": invited, "delta_30d": None},
+            "activated":       {"count": activated,
+                                  "delta_30d": activated_delta},
+            "signed_in":       {"count": signed_in,
+                                  "delta_30d": signed_in_delta},
+            "never_logged_in": {"count": never, "delta_30d": None},
+        },
+        "assumptions": _ONBOARDING_ASSUMPTIONS,
+    }
+    _ONBOARDING_CACHE[cache_key] = {"_at": now, "value": value}
+    return value
