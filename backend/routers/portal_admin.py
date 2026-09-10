@@ -149,12 +149,24 @@ class PortalInviteResp(BaseModel):
 
 
 async def _upsert_customer_user(cid: str, tenant_id: str, email: str, password: str) -> None:
+    # Feb-2026 · Customer temp password + first-access tracking —
+    # every admin-provisioned password is a TEMP password. Set the
+    # ``must_change_password_on_next_login`` flag so the login flow
+    # forks into ``password_reset_required`` on the customer's next
+    # sign-in. The flag is cleared inside ``_apply_new_password``
+    # (see ``auth.py``) so the reset consummation flip is idempotent.
     hashed = hash_password(password)
     existing = await db.users.find_one({"customer_id": cid, "tenant_id": tenant_id}, {"_id": 0})
     if existing:
         await db.users.update_one(
             {"id": existing["id"]},
-            {"$set": {"password_hash": hashed, "email": email.lower(), "active": True}},
+            {"$set": {
+                "password_hash": hashed,
+                "email": email.lower(),
+                "active": True,
+                "must_change_password_on_next_login": True,
+                "temp_password_issued_at": now_iso(),
+            }},
         )
     else:
         await db.users.insert_one({
@@ -169,6 +181,10 @@ async def _upsert_customer_user(cid: str, tenant_id: str, email: str, password: 
             "customer_id": cid,
             "active": True,
             "created_at": now_iso(),
+            "must_change_password_on_next_login": True,
+            "temp_password_issued_at": now_iso(),
+            "has_ever_logged_in": False,
+            "first_access_at": None,
         })
     await db.customers.update_one(
         {"id": cid, "tenant_id": tenant_id}, {"$set": {"email": email.lower(), "has_login": True}}

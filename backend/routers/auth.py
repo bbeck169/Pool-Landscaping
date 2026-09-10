@@ -138,6 +138,100 @@ async def _audit_auth(event: str, email: str, ip: str, status: str, details: str
         logger.warning(f"audit log write failed: {e}")
 
 
+# ── Feb-2026 · Customer temp password + first-access tracking ─────
+# When an admin provisions/rotates a customer's portal password
+# (``routers.portal_admin._upsert_customer_user``), the ``users`` row
+# is stamped ``must_change_password_on_next_login = True``. On the
+# customer's NEXT successful password verification, ``/auth/login``
+# forks into a ``password_reset_required`` response that mints a
+# short-lived opaque token in ``password_reset_tokens`` (reusing the
+# existing Task-O self-serve reset primitive verbatim — no parallel
+# flow) and never issues an access token. The customer is redirected
+# to ``/reset-password?token=<reset_token>`` where the existing
+# ``/auth/reset-password`` endpoint consumes the token, sets the new
+# password, and clears the flag via ``_apply_new_password``.
+#
+# The mid-flow token has a shorter 15-minute TTL (the customer is
+# actively signing in — no reason to keep a live handoff token for
+# 30 min). If it lapses, the customer re-logs with the temp password
+# and gets a fresh token. The TEMP PASSWORD ITSELF never expires
+# until consumed.
+_TEMP_PASSWORD_RESET_TTL_MINUTES = 15
+_TEMP_PASSWORD_RESET_SOURCE = "temp_password_login"
+
+
+async def _mint_temp_password_reset_token(user: dict, ip: str) -> dict:
+    """Mint a single-use reset token for a temp-password login fork.
+    Invalidates any prior unused tokens for this user, mirrors the
+    Task-O shape 1:1, and returns the ``{status, reset_token,
+    user_id, token_ttl_minutes}`` payload the FE consumes."""
+    import secrets
+    await db.password_reset_tokens.update_many(
+        {"user_id": user["id"], "used_at": None},
+        {"$set": {"invalidated_at": now_iso()}},
+    )
+    token = secrets.token_urlsafe(48)
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        minutes=_TEMP_PASSWORD_RESET_TTL_MINUTES)
+    await db.password_reset_tokens.insert_one({
+        "id": new_id(),
+        "token": token,
+        "user_id": user["id"],
+        "tenant_id": user.get("tenant_id"),
+        "email": user.get("email"),
+        "expires_at": expires_at.isoformat(),
+        "used_at": None,
+        "invalidated_at": None,
+        "created_at": now_iso(),
+        "created_ip": ip,
+        "source": _TEMP_PASSWORD_RESET_SOURCE,
+    })
+    return {
+        "status": "password_reset_required",
+        "reset_token": token,
+        "user_id": user["id"],
+        "token_ttl_minutes": _TEMP_PASSWORD_RESET_TTL_MINUTES,
+    }
+
+
+async def _stamp_first_access(user: dict, ip: str) -> None:
+    """Idempotent — mark ``has_ever_logged_in=True`` + stamp
+    ``first_access_at`` on the ``users`` row the FIRST time it
+    completes a successful sign-in, and mirror
+    ``portal_first_login_at`` onto the linked customer doc (for
+    customer-role users) so the ``GET /customers?first_access=…``
+    filter reads a pre-computed field.
+    """
+    if user.get("has_ever_logged_in"):
+        return
+    now_str = now_iso()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "has_ever_logged_in": True,
+            "first_access_at": now_str,
+            "first_access_ip": ip,
+        }},
+    )
+    if user.get("role") == "customer" and user.get("customer_id"):
+        try:
+            # Only stamp if the customer doc hasn't already been
+            # marked (belt-and-braces — the users flag is the
+            # source of truth, this is the denorm for filtering).
+            await db.customers.update_one(
+                {"id": user["customer_id"],
+                  "tenant_id": user.get("tenant_id"),
+                  "$or": [{"portal_first_login_at": None},
+                            {"portal_first_login_at": {"$exists": False}}]},
+                {"$set": {"portal_first_login_at": now_str}},
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "[first-access] customer denorm failed cid=%s: %s",
+                user.get("customer_id"), exc,
+            )
+
+
 @router.post("/auth/login")
 async def login(request: Request, body: LoginRequest):
     email = body.email.lower()
@@ -316,6 +410,22 @@ async def login(request: Request, body: LoginRequest):
     if user.get("active") is False:
         await _audit_auth("login", email, ip, "failure", "account deactivated")
         raise HTTPException(status_code=403, detail="Account is deactivated")
+    # ── Feb-2026 · Temp password fork ─────────────────────────────
+    # If the admin (or the seed / provision path) has flagged this
+    # user as ``must_change_password_on_next_login=True``, fork
+    # BEFORE issuing an access token. The customer gets a 200 with
+    # ``status=password_reset_required`` + a 15-min opaque token
+    # they must consume via ``/auth/reset-password``. No portal
+    # login denorm (last_portal_login_at / first_access_at) is
+    # stamped here — the sign-in isn't complete until the reset
+    # consummates. Reset counters were reset above.
+    if user.get("must_change_password_on_next_login"):
+        payload = await _mint_temp_password_reset_token(user, ip)
+        await _audit_auth(
+            "login_password_reset_required", email, ip, "success",
+            f"user_id={user['id']} ttl_min={_TEMP_PASSWORD_RESET_TTL_MINUTES}",
+        )
+        return payload
     await _audit_auth("login", email, ip, "success")
     # Feb-2026 Portal Access ship — stamp the customer doc with the
     # last portal login timestamp/IP + write a dedicated ``portal_login``
@@ -342,6 +452,12 @@ async def login(request: Request, body: LoginRequest):
             })
         except Exception as e:
             logger.warning(f"portal_login audit skipped: {e}")
+    # Feb-2026 · First-access stamp — idempotent (users.has_ever_logged_in
+    # gates the write). Applies to every role, but the customer denorm
+    # branch inside only fires for customer-role users. Runs AFTER the
+    # portal_login audit so the two events share the same ``now_iso``
+    # window when the customer signs in for the first time.
+    await _stamp_first_access(user, ip)
     return auth_response(user)
 
 
@@ -414,6 +530,16 @@ async def login_select_account(request: Request, body: _SelectAccountBody):
             {"id": user["id"]},
             {"$set": {"failed_login_attempts": 0, "lockout_until": None}},
         )
+    # ── Feb-2026 · Temp password fork (parity with /auth/login) ────
+    # If the picked record is a temp-password account, fork BEFORE
+    # issuing an access token. Same 200 shape as ``login``.
+    if user.get("must_change_password_on_next_login"):
+        payload = await _mint_temp_password_reset_token(user, ip)
+        await _audit_auth(
+            "login_choice_password_reset_required", email, ip, "success",
+            f"user_id={user['id']} ttl_min={_TEMP_PASSWORD_RESET_TTL_MINUTES}",
+        )
+        return payload
     await _audit_auth("login_choice_selected", email, ip, "success",
                         f"role={user.get('role')} user_id={user['id']}")
     await _audit_multi_account_choice(
@@ -445,6 +571,8 @@ async def login_select_account(request: Request, body: _SelectAccountBody):
             })
         except Exception as exc:                    # noqa: BLE001
             logger.warning(f"portal_login audit skipped (chooser): {exc}")
+    # Feb-2026 · First-access stamp — parity with ``/auth/login``.
+    await _stamp_first_access(user, ip)
     return auth_response(user)
 
 

@@ -162,6 +162,17 @@ export default function Login({ variant = "staff" } = {}) {
         setChooser(res);
         return;
       }
+      // Feb-2026 · Customer temp password flow — backend forked into
+      // a mid-flow reset. Redirect to /reset-password with the token
+      // pre-filled so the customer can immediately choose their own
+      // password. No access token was issued.
+      if (res && res.kind === "reset_required") {
+        navigate(
+          `/reset-password?token=${encodeURIComponent(res.reset_token)}&flow=temp_password`,
+          { replace: true },
+        );
+        return;
+      }
       await _postLoginRedirect();
     } catch (err) {
       setError(err.message || "Login failed");
@@ -175,7 +186,14 @@ export default function Login({ variant = "staff" } = {}) {
     setError("");
     setSubmitting(true);
     try {
-      await finalizeAccountChoice(chooser.choice_token, accountId);
+      const pick = await finalizeAccountChoice(chooser.choice_token, accountId);
+      if (pick && pick.kind === "reset_required") {
+        navigate(
+          `/reset-password?token=${encodeURIComponent(pick.reset_token)}&flow=temp_password`,
+          { replace: true },
+        );
+        return;
+      }
       await _postLoginRedirect();
     } catch (err) {
       setError(err.message || "Could not sign in to that account");

@@ -20,6 +20,9 @@ import {
 
 const EMPTY: HydrationMeta = {
   lastSyncedAt: "",
+  lastPartialSyncAt: "",
+  lastError: "",
+  syncStatus: "idle",
   totalJobs: 0,
   cachedJobs: 0,
   inProgress: false,

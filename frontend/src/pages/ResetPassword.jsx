@@ -28,6 +28,8 @@ export default function ResetPassword() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const token = params.get("token") || "";
+  const flow = params.get("flow") || "";
+  const isTempPasswordFlow = flow === "temp_password";
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [busy, setBusy] = useState(false);
@@ -82,12 +84,26 @@ export default function ResetPassword() {
           style={{ color: colors.onSurface }}
           data-testid="reset-password-title"
         >
-          Choose a new password
+          {isTempPasswordFlow ? "Set your permanent password" : "Choose a new password"}
         </h1>
         <p className="text-sm mb-6" style={{ color: colors.muted }}>
-          Pick something you'll remember. We'll sign you back in with the new
-          password.
+          {isTempPasswordFlow
+            ? "For your security, please replace the temporary password your team sent you."
+            : "Pick something you'll remember. We'll sign you back in with the new password."}
         </p>
+        {isTempPasswordFlow ? (
+          <div
+            className="rounded-lg p-3 mb-4 text-sm"
+            style={{
+              background: "#EFF6FF",
+              border: "1px solid #93C5FD",
+              color: "#1E3A8A",
+            }}
+            data-testid="reset-password-temp-flow-banner"
+          >
+            First-time sign-in requires a fresh password.
+          </div>
+        ) : null}
         {error ? (
           <div
             className="rounded-lg p-3 mb-4 text-sm"

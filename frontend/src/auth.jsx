@@ -95,6 +95,19 @@ export function AuthProvider({ children }) {
         choice_token: res.choice_token,
       };
     }
+    // Feb-2026 · Customer temp password flow — backend returns
+    // ``password_reset_required`` when the matched user carries
+    // ``must_change_password_on_next_login=True``. No access token
+    // is issued; the FE must redirect to the reset-password page
+    // with the mid-flow token pre-filled.
+    if (res && res.status === "password_reset_required") {
+      return {
+        kind: "reset_required",
+        reset_token: res.reset_token,
+        user_id: res.user_id,
+        token_ttl_minutes: res.token_ttl_minutes,
+      };
+    }
     persist(res.access_token, res.user);
     return { kind: "success" };
   };
@@ -110,6 +123,14 @@ export function AuthProvider({ children }) {
       choice_token: choiceToken,
       account_id: accountId,
     });
+    if (res && res.status === "password_reset_required") {
+      return {
+        kind: "reset_required",
+        reset_token: res.reset_token,
+        user_id: res.user_id,
+        token_ttl_minutes: res.token_ttl_minutes,
+      };
+    }
     persist(res.access_token, res.user);
     return { kind: "success" };
   };

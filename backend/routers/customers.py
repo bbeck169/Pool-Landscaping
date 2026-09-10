@@ -60,6 +60,9 @@ class CustomerListItem(BaseModel):
     is_vip: Optional[bool] = None
     last_portal_login_at: Optional[str] = None
     last_portal_login_ip: Optional[str] = None
+    # Feb-2026 · First-access denorm (stamped ONCE on the customer's
+    # first completed portal sign-in — never overwritten).
+    portal_first_login_at: Optional[str] = None
     # Master billing (MP1 / MP1.5).
     master_billing_mode: Optional[str] = None
     master_billing_contact_email: Optional[str] = None
@@ -467,6 +470,28 @@ async def list_customers(
     # definition matches the "has this customer actually onboarded
     # themselves?" question the operator is asking.
     portal_activated: Optional[bool] = None,
+    # ── Feb-2026 · Customer first-access filter ─────────────────
+    # ``first_access=never`` → customer has never completed a
+    # sign-in (``portal_first_login_at`` is null/missing).
+    # ``first_access=any``   → customer has signed in at least once
+    # (``portal_first_login_at`` is set). Distinct from
+    # ``portal_activated`` because a customer can chose their own
+    # password via a reset link WITHOUT ever completing a sign-in —
+    # that customer counts as "activated" (portal_password_set_at
+    # set) but ``first_access=never``. Admin/manager/tech gate is
+    # inherited from the list endpoint.
+    first_access: Optional[str] = Query(
+        None,
+        description=(
+            "Feb-2026 — filter by whether the customer has ever "
+            "completed a portal sign-in. Values: ``never`` = "
+            "``portal_first_login_at`` is null/missing (customer "
+            "has never signed in even once); ``any`` = "
+            "``portal_first_login_at`` is set. Distinct from "
+            "``portal_activated`` (which also counts a chosen "
+            "password without a sign-in as activated)."
+        ),
+    ),
     portal_status: Optional[str] = Query(
         None,
         description=(
@@ -842,6 +867,31 @@ async def list_customers(
                 ],
             }]
         # ``all`` → intentionally no-op.
+    # ── Feb-2026 · Customer first-access filter body ────────────
+    if isinstance(first_access, str) and first_access.strip():
+        _fa = first_access.strip().lower()
+        if _fa not in ("never", "any"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "detail": "invalid_first_access",
+                    "message": "first_access must be one of: never, any",
+                    "first_access": first_access,
+                },
+            )
+        if _fa == "never":
+            q["$and"] = q.get("$and", []) + [{
+                "$or": [
+                    {"portal_first_login_at": {"$exists": False}},
+                    {"portal_first_login_at": None},
+                    {"portal_first_login_at": ""},
+                ],
+            }]
+        else:  # any
+            q["$and"] = q.get("$and", []) + [{
+                "portal_first_login_at": {"$exists": True,
+                                             "$nin": [None, ""]},
+            }]
     # Feb-2026 · P44 — "No payment on file" filter body. Matches the
     # exact source-of-truth the ``CardOnFileWarningBanner`` reads —
     # ``customers.saved_payment_methods_count`` — so filter and

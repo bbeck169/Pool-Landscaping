@@ -1160,3 +1160,133 @@ async def backfill_notification_dispatch_log(
     )
     return report
 
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/backfill-first-access
+# Feb-2026 · Customer temp password + first-access tracking rollout.
+#
+# For every ``users`` row this endpoint hunts for positive evidence
+# that the account has completed at least one sign-in — an existing
+# ``last_login_at`` field OR a matching ``audit_logs`` row with
+# ``event="login"`` and ``status="success"`` (workforce) OR
+# ``event="portal_login"`` (customer). When found, the row is stamped
+# ``has_ever_logged_in=True`` + ``first_access_at`` (earliest positive
+# signal available; the ``last_login_at`` timestamp is used as a
+# floor when no dated audit row survives). For customer-role rows the
+# ``portal_first_login_at`` denorm is mirrored to ``customers``.
+#
+# Rules (matches the greenlit spec):
+#   * NO row is marked ``has_ever_logged_in=True`` without evidence.
+#   * ``first_access_at`` may be an upper bound for pre-feature rows
+#     that only survive with a bare ``last_login_at`` (documented in
+#     the memo).
+#   * Idempotent — safe to run twice. Skips rows already stamped.
+#   * Dry-run default; caller must pass ``dry_run=false`` to write.
+# ─────────────────────────────────────────────────────────────────────
+
+class BackfillFirstAccessBody(BaseModel):
+    dry_run: bool = Field(
+        default=True,
+        description="When true (default), returns the counts that would be updated without writing.",
+    )
+    tenant_slug: Optional[str] = Field(
+        default=None,
+        description="Optional — super_admin only. Target a different tenant.",
+    )
+
+
+@router.post(
+    "/admin/migrations/backfill-first-access",
+    operation_id="admin.migrations.backfill_first_access",
+)
+async def backfill_first_access(
+    body: BackfillFirstAccessBody = Body(default_factory=BackfillFirstAccessBody),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """One-shot idempotent backfill for the Feb-2026 first-access
+    tracking rollout. See module docstring for exact evidence rules."""
+    _require_super_admin(user)
+    target = await _resolve_target_tenant(tenant, body.tenant_slug)
+    tid = target["id"]
+
+    counts = {
+        "users_scanned": 0,
+        "users_already_stamped": 0,
+        "users_stamped": 0,
+        "customers_denormed": 0,
+        "no_evidence": 0,
+    }
+
+    q_users = {"tenant_id": tid,
+                "$or": [{"has_ever_logged_in": {"$ne": True}},
+                          {"has_ever_logged_in": {"$exists": False}}]}
+    async for u in db.users.find(q_users, {"_id": 0}):
+        counts["users_scanned"] += 1
+        if u.get("has_ever_logged_in"):
+            counts["users_already_stamped"] += 1
+            continue
+
+        # Evidence hunt.
+        email = (u.get("email") or "").lower()
+        last_login = u.get("last_login_at")
+        first_evidence = None
+
+        # 1) Earliest matching audit row (login success OR portal_login).
+        audit_q: Dict[str, Any] = {
+            "email": email,
+            "$or": [
+                {"event": "login", "status": "success"},
+                {"event": "portal_login"},
+            ],
+        }
+        audit_row = await db.audit_logs.find_one(
+            audit_q,
+            {"_id": 0, "created_at": 1},
+            sort=[("created_at", 1)],
+        )
+        if audit_row and audit_row.get("created_at"):
+            first_evidence = audit_row["created_at"]
+
+        # 2) Fallback — ``last_login_at`` on the user row (floor).
+        if not first_evidence and last_login:
+            first_evidence = (last_login if isinstance(last_login, str)
+                                else last_login.isoformat())
+
+        if not first_evidence:
+            counts["no_evidence"] += 1
+            continue
+
+        counts["users_stamped"] += 1
+        if body.dry_run:
+            continue
+
+        await db.users.update_one(
+            {"id": u["id"]},
+            {"$set": {
+                "has_ever_logged_in": True,
+                "first_access_at": first_evidence,
+                "first_access_backfilled": True,
+            }},
+        )
+        if u.get("role") == "customer" and u.get("customer_id"):
+            res = await db.customers.update_one(
+                {"id": u["customer_id"], "tenant_id": tid,
+                  "$or": [{"portal_first_login_at": None},
+                            {"portal_first_login_at": {"$exists": False}}]},
+                {"$set": {"portal_first_login_at": first_evidence}},
+            )
+            if res.modified_count:
+                counts["customers_denormed"] += 1
+
+    logger.info(
+        "[first-access-backfill] user=%s tenant=%s dry_run=%s counts=%s",
+        user.get("id"), tid, body.dry_run, counts,
+    )
+    return {
+        "ok": True,
+        "dry_run": body.dry_run,
+        "tenant_id": tid,
+        **counts,
+    }
+

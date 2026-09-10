@@ -6,11 +6,15 @@
  * bootstraps). All data stored via the SQLite read_cache layer so the
  * tech can open any job from today's route offline.
  *
- * Does NOT touch write flows — those are Phase 2.
+ * Fix 1 — Replaces N+1 per-job GET calls with a single call to
+ *          GET /api/mobile/offline-bundle.
+ * Fix 3 — Honest sync status: only stamps lastSyncedAt when
+ *          cachedJobs === totalJobs; otherwise sets "partial"/"failed".
  */
 import { api } from "@/src/api";
 import { writeCache, readCache } from "@/src/services/readCache";
 import { isOnlineNow } from "@/src/services/sync/netBus";
+import { stripBase64FromReport } from "@/src/services/photoUrlCache";
 
 // ── Cache key helpers ────────────────────────────────────────────────
 export const CK = {
@@ -20,8 +24,13 @@ export const CK = {
   hydrationMeta: (userId: string) => `hydration:meta:${userId}`,
 } as const;
 
+export type SyncStatus = "synced" | "partial" | "failed" | "idle";
+
 export type HydrationMeta = {
-  lastSyncedAt: string; // ISO
+  lastSyncedAt: string;        // ISO — only stamped when cached === total (clean sync)
+  lastPartialSyncAt: string;   // ISO — stamped on partial or failed sync
+  lastError: string;           // Error message on failure
+  syncStatus: SyncStatus;
   totalJobs: number;
   cachedJobs: number;
   inProgress: boolean;
@@ -32,6 +41,9 @@ type Listener = (meta: HydrationMeta) => void;
 const _listeners = new Set<Listener>();
 let _meta: HydrationMeta = {
   lastSyncedAt: "",
+  lastPartialSyncAt: "",
+  lastError: "",
+  syncStatus: "idle",
   totalJobs: 0,
   cachedJobs: 0,
   inProgress: false,
@@ -54,11 +66,6 @@ export function getHydrationMeta(): HydrationMeta {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
-function _todayISO(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 /** Fetch a single endpoint, returning null on failure (never throws). */
 async function _safeFetch(url: string, signal?: AbortSignal): Promise<any | null> {
   try {
@@ -73,6 +80,9 @@ async function _safeFetch(url: string, signal?: AbortSignal): Promise<any | null
  * Pre-fetch today's route for `userId`. Runs silently; callers can
  * subscribe to progress via `subscribeHydration`.
  *
+ * Fix 1: Single GET /mobile/offline-bundle replaces N+1 per-job fetches.
+ * Fix 3: Honest sync status with partial/failed tracking.
+ *
  * Returns the final HydrationMeta.
  */
 export async function hydrateToday(userId: string): Promise<HydrationMeta> {
@@ -84,37 +94,44 @@ export async function hydrateToday(userId: string): Promise<HydrationMeta> {
   const ac = new AbortController();
   _abortController = ac;
 
-  _meta = { ..._meta, inProgress: true };
+  _meta = { ..._meta, inProgress: true, lastError: "" };
   _notify();
 
   try {
-    const today = _todayISO();
-    const tomorrow = (() => {
-      const d = new Date();
-      d.setDate(d.getDate() + 1);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    })();
-
-    // Step 1: Fetch today's jobs.
-    const jobs = await _safeFetch(
-      `/jobs?start=${today}&end=${tomorrow}&technician_id=${userId}`,
-      ac.signal,
-    );
+    // ─── Fix 1: Single bundle call replaces N+1 ─────────────────────
+    const bundle = await _safeFetch("/mobile/offline-bundle", ac.signal);
     if (ac.signal.aborted) return _meta;
 
-    const jobList: any[] = Array.isArray(jobs)
-      ? jobs
-      : jobs?.items || jobs?.jobs || [];
+    if (!bundle) {
+      // Network error or endpoint failure — mark as failed.
+      _meta = {
+        ..._meta,
+        syncStatus: "failed",
+        lastError: "Could not reach the server.",
+        lastPartialSyncAt: new Date().toISOString(),
+        inProgress: false,
+      };
+      await writeCache(CK.hydrationMeta(userId), _meta).catch(() => {});
+      _notify();
+      return _meta;
+    }
+
+    const jobList: any[] = bundle.jobs || [];
+    const reports: any[] = bundle.service_reports_in_progress || [];
+    const totalFromServer: number = bundle.job_count ?? jobList.length;
 
     // Cache the job list.
     await writeCache(CK.todayJobs(userId), jobList).catch(() => {});
 
-    _meta = { ..._meta, totalJobs: jobList.length, cachedJobs: 0 };
+    _meta = { ..._meta, totalJobs: totalFromServer, cachedJobs: 0 };
     _notify();
 
-    if (!jobList.length) {
+    if (totalFromServer === 0 && jobList.length === 0) {
       _meta = {
         lastSyncedAt: new Date().toISOString(),
+        lastPartialSyncAt: _meta.lastPartialSyncAt,
+        lastError: "",
+        syncStatus: "synced",
         totalJobs: 0,
         cachedJobs: 0,
         inProgress: false,
@@ -124,61 +141,71 @@ export async function hydrateToday(userId: string): Promise<HydrationMeta> {
       return _meta;
     }
 
-    // Step 2: For each job, fetch detail + service report in parallel.
-    // Batch in groups of 4 to avoid flooding.
-    const BATCH = 4;
-    let cached = 0;
-
-    for (let i = 0; i < jobList.length; i += BATCH) {
-      if (ac.signal.aborted) break;
-      const batch = jobList.slice(i, i + BATCH);
-
-      await Promise.allSettled(
-        batch.map(async (job) => {
-          if (ac.signal.aborted) return;
-          const jid = job.id;
-          if (!jid) return;
-
-          // Fetch detail + service report in parallel.
-          const [detail, report] = await Promise.all([
-            _safeFetch(`/jobs/${jid}`, ac.signal),
-            _safeFetch(`/jobs/${jid}/service-report`, ac.signal),
-          ]);
-
-          if (ac.signal.aborted) return;
-
-          // Cache whatever succeeded.
-          if (detail) {
-            await writeCache(CK.jobDetail(jid), detail).catch(() => {});
-          }
-          if (detail && report) {
-            await writeCache(CK.jobBootstrap(jid), { job: detail, report }).catch(() => {});
-            cached++;
-          } else if (detail) {
-            // Cache partial (detail only) — checklist won't work but job detail will.
-            await writeCache(CK.jobBootstrap(jid), { job: detail, report: null }).catch(() => {});
-            cached++;
-          }
-        }),
-      );
-
-      // Update progress after each batch.
-      _meta = { ..._meta, cachedJobs: cached };
-      _notify();
+    // Build report lookup by job_id for O(1) matching.
+    const reportByJobId = new Map<string, any>();
+    for (const r of reports) {
+      const jid = r.job_id || r.jobId;
+      if (jid) reportByJobId.set(jid, r);
     }
 
-    // Finalize.
+    // Cache each job + its matching service report.
+    let cached = 0;
+    let errors = 0;
+    for (const job of jobList) {
+      if (ac.signal.aborted) break;
+      const jid = job.id;
+      if (!jid) { errors++; continue; }
+
+      try {
+        const report = reportByJobId.get(jid) || null;
+        // Fix 2: Strip base64 blobs from report photos (backward compat).
+        const cleanReport = stripBase64FromReport(report);
+        await writeCache(CK.jobDetail(jid), job);
+        await writeCache(CK.jobBootstrap(jid), { job, report: cleanReport });
+        cached++;
+      } catch {
+        errors++;
+      }
+
+      // Update progress every 5 jobs.
+      if (cached % 5 === 0 || cached === jobList.length) {
+        _meta = { ..._meta, cachedJobs: cached };
+        _notify();
+      }
+    }
+
+    // ─── Fix 3: Honest sync status ──────────────────────────────────
+    const now = new Date().toISOString();
+    const allCached = cached >= totalFromServer;
+    let syncStatus: SyncStatus;
+    if (cached === 0 && totalFromServer > 0) {
+      syncStatus = "failed";
+    } else if (allCached) {
+      syncStatus = "synced";
+    } else {
+      syncStatus = "partial";
+    }
+
     _meta = {
-      lastSyncedAt: new Date().toISOString(),
-      totalJobs: jobList.length,
+      lastSyncedAt: allCached ? now : _meta.lastSyncedAt,
+      lastPartialSyncAt: !allCached ? now : (_meta.lastPartialSyncAt || ""),
+      lastError: errors > 0 ? `${errors} job(s) failed to cache.` : "",
+      syncStatus,
+      totalJobs: totalFromServer,
       cachedJobs: cached,
       inProgress: false,
     };
     await writeCache(CK.hydrationMeta(userId), _meta).catch(() => {});
     _notify();
     return _meta;
-  } catch {
-    _meta = { ..._meta, inProgress: false };
+  } catch (e: any) {
+    _meta = {
+      ..._meta,
+      inProgress: false,
+      syncStatus: "failed",
+      lastError: e?.message || "Hydration failed.",
+      lastPartialSyncAt: new Date().toISOString(),
+    };
     _notify();
     return _meta;
   }

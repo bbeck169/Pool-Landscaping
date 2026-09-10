@@ -621,7 +621,7 @@ function ScheduleCalendarInner() {
                 : <Ionicons name="refresh" size={16} color={colors.onSurface} />}
             </Pressable>
             <SyncBadge testID="schedule-header-sync-badge" />
-            <OfflineBadge testID="schedule-header-offline-badge" cacheStats={hydrationMeta ? { cached: hydrationMeta.cachedJobs, total: hydrationMeta.totalJobs, lastSyncedAt: hydrationMeta.lastSyncedAt } : undefined} />
+            <OfflineBadge testID="schedule-header-offline-badge" cacheStats={hydrationMeta ? { cached: hydrationMeta.cachedJobs, total: hydrationMeta.totalJobs, lastSyncedAt: hydrationMeta.lastSyncedAt, syncStatus: hydrationMeta.syncStatus } : undefined} />
             {isTech ? (
               <View style={{ marginRight: 52 }} testID="schedule-header-bell">
                 <NotificationBell />
@@ -643,13 +643,20 @@ function ScheduleCalendarInner() {
         </View>
       )}
 
-      {/* Cache freshness label */}
-      {hydrationMeta?.lastSyncedAt && !syncingRoute && !hydrationMeta?.inProgress && (
+      {/* Cache freshness label — Fix 3: honest sync status */}
+      {(hydrationMeta?.lastSyncedAt || hydrationMeta?.syncStatus === "partial" || hydrationMeta?.syncStatus === "failed") && !syncingRoute && !hydrationMeta?.inProgress && (
         <View style={gStyles.cacheFreshnessRow} testID="schedule-cache-freshness">
-          <Ionicons name="time-outline" size={11} color={colors.muted} />
-          <Text style={gStyles.cacheFreshnessText}>
+          <Ionicons
+            name={hydrationMeta?.syncStatus === "failed" ? "alert-circle" : hydrationMeta?.syncStatus === "partial" ? "sync-outline" : "time-outline"}
+            size={11}
+            color={hydrationMeta?.syncStatus === "failed" ? "#DC2626" : hydrationMeta?.syncStatus === "partial" ? "#D97706" : colors.muted}
+          />
+          <Text style={[gStyles.cacheFreshnessText, hydrationMeta?.syncStatus === "failed" && { color: "#DC2626" }, hydrationMeta?.syncStatus === "partial" && { color: "#D97706" }]}>
             {(() => {
-              const ts = new Date(hydrationMeta.lastSyncedAt).getTime();
+              const status = hydrationMeta?.syncStatus || "synced";
+              if (status === "failed") return "Sync failed — tap sync to retry";
+              if (status === "partial") return `Partial sync: ${hydrationMeta?.cachedJobs || 0} of ${hydrationMeta?.totalJobs || 0}`;
+              const ts = new Date(hydrationMeta!.lastSyncedAt).getTime();
               const now = Date.now();
               const diffMin = Math.round((now - ts) / 60000);
               if (diffMin < 1) return "Cached just now";

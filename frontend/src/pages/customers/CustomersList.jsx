@@ -302,6 +302,14 @@ export default function CustomersList() {
   });
   const [portalActivatedCount, setPortalActivatedCount] = useState(null);
   const [portalNotActivatedCount, setPortalNotActivatedCount] = useState(null);
+  // Feb-2026 · Customer temp password + first-access — "Never logged
+  // in" chip.  toggle ON  → ``?first_access=never``. Distinct from
+  // Portal Status because a customer may have chosen their own
+  // password (activated) but STILL never signed in. Hydrated from
+  // ``?first_access=never`` in the URL and persisted back on toggle.
+  const [neverLoggedIn, setNeverLoggedIn] = useState(
+    () => searchParams.get("first_access") === "never");
+  const [neverLoggedInCount, setNeverLoggedInCount] = useState(null);
   // Feb-2026 · P44 — "No payment on file" data-quality chip.
   //   toggle ON  → ``?has_payment_method=false``
   //   toggle OFF → param dropped
@@ -449,6 +457,9 @@ export default function CustomersList() {
     else if (portalStatusFilter === "not_activated") params.set("portal_activated", "false");
     // Feb-2026 · P44 — "No payment on file" chip.
     if (noPaymentFilter) params.set("has_payment_method", "false");
+    // Feb-2026 · Customer temp password + first-access — "Never
+    // logged in" chip. Distinct filter from portal_activated.
+    if (neverLoggedIn) params.set("first_access", "never");
     // Feb-2026 · P46 — city + multi-tag now flow through the backend
     // so pagination + tab counts stay honest. Repeat the ``tags``
     // key per selected value so backend gets a proper list.
@@ -577,7 +588,7 @@ export default function CustomersList() {
     // missing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
-       missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
+       missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, neverLoggedIn, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
 
   // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
   // first invocation so hydrating chips from the URL on mount does
@@ -600,10 +611,13 @@ export default function CustomersList() {
     else next.delete("portal_activated");
     if (noPaymentFilter) next.set("has_payment_method", "0");
     else next.delete("has_payment_method");
+    // Feb-2026 · Customer temp password + first-access — URL sync.
+    if (neverLoggedIn) next.set("first_access", "never");
+    else next.delete("first_access");
     setSearchParams(next, { replace: true });
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter, noPaymentFilter]);
+  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, neverLoggedIn]);
 
   // Feb-2026 · P43b — Fetch the total "missing address" count once
   // on mount (and whenever the tenant scope changes) so the chip
@@ -658,6 +672,25 @@ export default function CustomersList() {
         if (!cancelled) setNoPaymentCount(r?.count ?? 0);
       } catch {
         if (!cancelled) setNoPaymentCount(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [scope]);
+
+  // Feb-2026 · Customer temp password + first-access — "Never logged
+  // in" standalone count. Same stability contract as the P43/P44
+  // badges: does not compose with other filters so the badge stays
+  // put while the admin narrows other criteria.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.get(
+          "/customers?count_only=true&first_access=never",
+        );
+        if (!cancelled) setNeverLoggedInCount(r?.count ?? 0);
+      } catch {
+        if (!cancelled) setNeverLoggedInCount(null);
       }
     })();
     return () => { cancelled = true; };
@@ -1408,6 +1441,7 @@ export default function CustomersList() {
               (missingAddress ? 1 : 0) +
               (noPaymentFilter ? 1 : 0) +
               (portalStatusFilter ? 1 : 0) +
+              (neverLoggedIn ? 1 : 0) +
               (includeDeleted ? 1 : 0) +
               (includeMerged ? 1 : 0) +
               (candidateFilterActive ? 1 : 0)
@@ -1419,6 +1453,7 @@ export default function CustomersList() {
             if (noPaymentFilter) summaryBits.push("No payment");
             if (portalStatusFilter === "activated") summaryBits.push("Signed in");
             else if (portalStatusFilter === "not_activated") summaryBits.push("Never signed in");
+            if (neverLoggedIn) summaryBits.push("Never logged in");
             if (includeDeleted) summaryBits.push("Show deleted");
             if (includeMerged) summaryBits.push("Show merged");
             if (candidateFilterActive) summaryBits.push("Merge candidates");
@@ -1694,6 +1729,47 @@ export default function CustomersList() {
                   );
                 })}
               </div>
+            </div>
+
+            {/* Group: First-time sign-in (Feb-2026 · Customer temp password) */}
+            <div className="mb-3">
+              <div className="text-[10px] font-bold uppercase mb-1.5"
+                   style={{ color: colors.muted }}>
+                First-time sign-in
+              </div>
+              <button
+                onClick={() => setNeverLoggedIn((v) => !v)}
+                data-testid="customers-never-logged-in-filter"
+                aria-pressed={neverLoggedIn ? "true" : "false"}
+                title="Customers who have never completed a portal sign-in. A customer may have chosen their own password via a reset link but still not signed in — this filter surfaces the ones the front-office should chase."
+                className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2"
+                style={{
+                  backgroundColor: neverLoggedIn ? "#FEF3C7" : "transparent",
+                  color: neverLoggedIn ? "#78350F" : colors.onSurface,
+                }}
+              >
+                <span
+                  className="inline-block w-3 h-3 rounded border"
+                  style={{
+                    backgroundColor: neverLoggedIn ? "#D97706" : "transparent",
+                    borderColor: neverLoggedIn ? "#D97706" : colors.border,
+                  }}
+                  aria-hidden="true"
+                />
+                <span className="flex-1">Never logged in</span>
+                {neverLoggedInCount != null ? (
+                  <span
+                    className="tabular-nums text-[11px]"
+                    data-testid="customers-never-logged-in-count"
+                    style={{
+                      color: neverLoggedIn ? "#78350F" : colors.muted,
+                      fontWeight: 600,
+                    }}
+                  >
+                    ({neverLoggedInCount})
+                  </span>
+                ) : null}
+              </button>
             </div>
 
             {/* Group: Administrative */}
