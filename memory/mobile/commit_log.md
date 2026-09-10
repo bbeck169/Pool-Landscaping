@@ -1590,3 +1590,18 @@
 - **Files modified**: api.ts, checklist.tsx
 - **Files created**: retryWithBackoff.ts, ChecklistSavePill.tsx, __tests__/p0-429-retry.test.tsx
 - **Test results**: 12/12 passing
+
+
+## Iteration 82 — Mobile Parity: Task 3 + Task 5 + Task 6 + PB2
+- **Commit**: ec03b89b18006a6172e2460d858eaf91bc919621
+- **Date**: 2026-04-16
+- **Changes**:
+  - Task 3: Created magic-link invoice screen at /app/i/[token].tsx (JWT decode, fetch, pay via system browser)
+  - Task 5: Created portal payment-methods screen with card list, remove, set-default + save-card toggle on magic pay
+  - Task 6: Added terms_and_conditions section to estimate-view with empty-state handling
+  - PB2: Documented gap in MOBILE_PARITY_GAPS.md (no admin line-item editor on mobile)
+  - Added "View all cards" link to existing payment-method screen
+- **Files created**: app/i/[token].tsx, app/portal/payment-methods.tsx, memory/MOBILE_PARITY_GAPS.md
+- **Files modified**: app/estimate-view/[id].tsx, src/api/estimatesFull.ts, app/portal/payment-method.tsx
+- **Tests created**: task3-invoice-bypass-mobile.test.tsx (6), task5-save-card-mobile.test.tsx (4), task6-terms-mobile.test.tsx (6), pb2-line-item-overrides.test.tsx (4)
+- **Test results**: 20/20 passing, all pre-existing tests still passing (27/27)
