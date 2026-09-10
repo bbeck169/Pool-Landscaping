@@ -1,36 +1,21 @@
 """PB1 · Feb-2026 — Profit report + CSV export.
+Feb-2026 · PB × Profit-Reporting Phase 3 extensions:
 
-Two admin-only endpoints:
-
-  * ``GET /api/reports/profit`` — JSON summary + per-category
-    breakdown of revenue, COGS, labor cost, gross profit, and margin
-    for the requested date range.
-  * ``GET /api/reports/profit.csv`` — CSV attachment with identical
-    numbers.
-
-Calculation
------------
-Rows summed = ``db.quotes`` documents where
-``doc_type == "invoice"`` AND
-``status in {"paid","partial","sent","overdue"}`` (drafts + cancelled
-excluded) AND ``created_at`` inside the requested window.
-
-For each ``line_item``:
-  * ``revenue = quantity * (retail_price_snapshot OR unit_price)``
-  * ``cogs = quantity * (wholesale_price_snapshot OR 0)``
-  * ``labor = quantity * (labor_cost_snapshot OR 0)``
-  * ``profit = revenue - cogs - labor``
-
-Grouping
---------
-* ``dimension=service_category`` — group by
-  ``items[line.item_id].service_category_id`` → category name.
-  Lines whose item is unknown or missing service_category → "Uncategorized".
-* ``dimension=income_category`` — group by
-  ``line.income_category_id`` → name.  Missing → "Uncategorized".
-
-Breakdown array is capped at 500 entries — enforce so the response
-never blows past our JSON size budget on very-long-tail categories.
+  * Effective-value math now honours the per-line overrides added in
+    Phase 2 (``wholesale_cost_override``, ``labor_cost_override``,
+    ``service_category_id_override``, ``income_category_id_override``)
+    — overrides win over snapshots / line-level base fields.
+  * Eligible invoices restricted to ``{"paid","partial"}``. Partial
+    invoices prorate line-item REVENUE by ``amount_paid / total``.
+    Costs are NOT prorated (cash-basis revenue recognition, snapshot
+    costs = all-or-nothing at fulfilment).
+  * New sibling endpoint ``GET /api/reports/pricebook-health`` surfaces
+    snapshot coverage % across a trailing window so admins can see how
+    much of their profit report is muddled by legacy Uncategorized
+    lines.
+  * Response envelope adds ``rows`` (canonical alias of ``breakdown``),
+    ``currency``, and ``assumptions`` for downstream integrators.
+    ``breakdown`` stays populated for PB1 back-compat.
 """
 from __future__ import annotations
 
@@ -46,9 +31,19 @@ from utils import get_current_user
 
 router = APIRouter()
 
-_ELIGIBLE_STATUSES = {"paid", "partial", "sent", "overdue"}
+_ELIGIBLE_STATUSES = {"paid", "partial"}
 _MAX_BREAKDOWN = 500
 _MAX_CUSTOM_DAYS = 366
+_DEFAULT_CURRENCY = "USD"
+_ASSUMPTIONS = {
+    "partial_invoices": "prorated by amount_paid/total",
+    "tax": "excluded (unit_price treated as pre-tax retail)",
+    "null_snapshots": "bucketed as Uncategorized",
+    "override_precedence": (
+        "override > line-level > item-lookup for categories; "
+        "override > snapshot for wholesale/labor"
+    ),
+}
 
 RANGE_LABELS = {
     "this_month": "This Month",
@@ -60,8 +55,12 @@ RANGE_LABELS = {
 
 
 def _require_admin(user: dict) -> None:
+    # Feb-2026 · Phase 3 — spec is "admin-only, tenant-scoped".
+    # Managers were previously allowed under PB1; tighten now so
+    # the profit report + snapshot health tile stay in the admin
+    # RBAC scope. Owner/super_admin retain access.
     role = (user or {}).get("role") or ""
-    if role not in ("admin", "super_admin", "manager"):
+    if role not in ("admin", "super_admin", "owner"):
         raise HTTPException(403, {"error": "forbidden"})
 
 
@@ -109,8 +108,20 @@ def _resolve_range(
             "label": RANGE_LABELS.get(range_key, range_key)}
 
 
-def _line_value(li: Dict[str, Any]) -> tuple[float, float, float]:
-    """Return (revenue, cogs, labor) contributions for a single line."""
+def _line_value(
+    li: Dict[str, Any], prorate: float = 1.0,
+) -> tuple[float, float, float]:
+    """Return (revenue, cogs, labor) contributions for a single line.
+
+    Feb-2026 · Phase 3 — per-line admin overrides win over the
+    snapshot values (``wholesale_cost_override ??
+    wholesale_price_snapshot``; same for labor). Revenue is
+    prorated by ``prorate`` (1.0 for fully-paid invoices; the
+    ``amount_paid / total`` fraction for partials); costs are NOT
+    prorated because the snapshot values represent the full
+    cost-of-goods incurred at fulfilment (cash-basis revenue vs
+    accrual-cost recognition).
+    """
     try:
         qty = float(li.get("quantity") or 0)
     except (TypeError, ValueError):
@@ -122,15 +133,20 @@ def _line_value(li: Dict[str, Any]) -> tuple[float, float, float]:
         retail_f = float(retail)
     except (TypeError, ValueError):
         retail_f = 0.0
+    # Override-first for wholesale + labor cost.
+    _w_ov = li.get("wholesale_cost_override")
+    wholesale_raw = _w_ov if _w_ov is not None else li.get("wholesale_price_snapshot") or 0
+    _l_ov = li.get("labor_cost_override")
+    labor_raw = _l_ov if _l_ov is not None else li.get("labor_cost_snapshot") or 0
     try:
-        wholesale = float(li.get("wholesale_price_snapshot") or 0)
+        wholesale = float(wholesale_raw or 0)
     except (TypeError, ValueError):
         wholesale = 0.0
     try:
-        labor = float(li.get("labor_cost_snapshot") or 0)
+        labor = float(labor_raw or 0)
     except (TypeError, ValueError):
         labor = 0.0
-    return qty * retail_f, qty * wholesale, qty * labor
+    return qty * retail_f * prorate, qty * wholesale, qty * labor
 
 
 async def _load_service_category_lookup(tenant_id: str) -> Dict[str, str]:
@@ -179,7 +195,10 @@ async def _compute(
     }
     invoices = await db.quotes.find(
         query,
-        {"_id": 0, "id": 1, "line_items": 1, "created_at": 1},
+        {"_id": 0, "id": 1, "line_items": 1, "created_at": 1,
+         # Feb-2026 · Phase 3 — pull ``amount_paid`` + ``total`` so we
+         # can prorate line-item revenue on ``partial`` invoices.
+         "amount_paid": 1, "total": 1, "status": 1},
     ).to_list(10000)
 
     if dimension == "service_category":
@@ -219,20 +238,48 @@ async def _compute(
     total_lines = 0
 
     for inv in invoices:
+        # Feb-2026 · Phase 3 — partial-invoice proration on revenue.
+        # ``prorate`` is capped at 1.0 to guard against amount_paid
+        # exceeding total (data integrity edge case).
+        prorate = 1.0
+        _status = str(inv.get("status") or "").lower()
+        if _status == "partial":
+            try:
+                _paid = float(inv.get("amount_paid") or 0)
+                _total = float(inv.get("total") or 0)
+                if _total > 0:
+                    prorate = max(0.0, min(1.0, _paid / _total))
+                else:
+                    prorate = 0.0
+            except (TypeError, ValueError):
+                prorate = 0.0
         for li in inv.get("line_items") or []:
-            rev, cogs, labor = _line_value(li)
+            rev, cogs, labor = _line_value(li, prorate=prorate)
             total_rev += rev
             total_cogs += cogs
             total_labor += labor
             total_lines += 1
             if dimension == "service_category":
-                cat_id = item_to_svc.get(li.get("item_id") or "", "") or ""
+                # Feb-2026 · Phase 3 — override > line-level >
+                # item-lookup precedence for the service category.
+                cat_id = (
+                    li.get("service_category_id_override")
+                    or li.get("service_category_id")
+                    or item_to_svc.get(li.get("item_id") or "", "")
+                    or ""
+                )
                 cat_name = svc_lookup.get(cat_id) if cat_id else ""
                 if not cat_name:
                     cat_id = "__uncategorized__"
                     cat_name = "Uncategorized"
             else:
-                cat_id = li.get("income_category_id") or "__uncategorized__"
+                # Feb-2026 · Phase 3 — override > line-level for the
+                # income category (item master has no income binding).
+                cat_id = (
+                    li.get("income_category_id_override")
+                    or li.get("income_category_id")
+                    or "__uncategorized__"
+                )
                 cat_name = income_lookup.get(cat_id) if cat_id and cat_id != "__uncategorized__" else "Uncategorized"
                 if not cat_name:
                     cat_name = "Uncategorized"
@@ -277,7 +324,15 @@ async def _compute(
     gross_profit = total_rev - total_cogs - total_labor
     return {
         "range": range_bounds,
+        # Feb-2026 · Phase 3 — canonical envelope keys expected by
+        # spec ("from"/"to"/"group_by"/"rows"/"currency"/"assumptions").
+        # Legacy PB1 keys ("range"/"dimension"/"breakdown") stay
+        # populated for back-compat with the existing frontend.
+        "from": range_bounds["from"],
+        "to": range_bounds["to"],
+        "group_by": dimension,
         "dimension": dimension,
+        "currency": _DEFAULT_CURRENCY,
         "totals": {
             "revenue": round(total_rev, 2),
             "cogs": round(total_cogs, 2),
@@ -287,15 +342,19 @@ async def _compute(
             "line_count": total_lines,
         },
         "breakdown": breakdown,
+        "rows": breakdown,
+        "assumptions": _ASSUMPTIONS,
     }
 
 
 @router.get("/reports/profit")
 async def profit_report(
-    dimension: str = Query(...,
-                              description="service_category | income_category"),
-    range: str = Query(...,
-                          description="this_month|last_month|qtd|ytd|custom"),
+    dimension: Optional[str] = Query(None,
+                                      description="service_category | income_category"),
+    group_by: Optional[str] = Query(None,
+                                     description="Feb-2026 Phase 3 alias for ``dimension``"),
+    range: Optional[str] = Query(None,
+                                  description="this_month|last_month|qtd|ytd|custom"),
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
@@ -304,14 +363,24 @@ async def profit_report(
     tenant_id = (user or {}).get("tenant_id") or ""
     if not tenant_id:
         raise HTTPException(400, {"error": "missing_tenant"})
-    range_bounds = _resolve_range(range, from_, to)
-    return await _compute(tenant_id, range_bounds, dimension)
+    # Feb-2026 · Phase 3 — accept spec-shape query (``group_by`` +
+    # explicit ``from`` / ``to``) alongside the legacy PB1 shape
+    # (``dimension`` + preset ``range``).
+    effective_dim = dimension or group_by
+    if not effective_dim:
+        raise HTTPException(422, {"error": "missing_dimension"})
+    effective_range = range or ("custom" if (from_ and to) else None)
+    if not effective_range:
+        raise HTTPException(422, {"error": "missing_range"})
+    range_bounds = _resolve_range(effective_range, from_, to)
+    return await _compute(tenant_id, range_bounds, effective_dim)
 
 
 @router.get("/reports/profit.csv")
 async def profit_report_csv(
-    dimension: str = Query(...),
-    range: str = Query(...),
+    dimension: Optional[str] = Query(None),
+    group_by: Optional[str] = Query(None),
+    range: Optional[str] = Query(None),
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
@@ -320,8 +389,14 @@ async def profit_report_csv(
     tenant_id = (user or {}).get("tenant_id") or ""
     if not tenant_id:
         raise HTTPException(400, {"error": "missing_tenant"})
-    range_bounds = _resolve_range(range, from_, to)
-    data = await _compute(tenant_id, range_bounds, dimension)
+    effective_dim = dimension or group_by
+    if not effective_dim:
+        raise HTTPException(422, {"error": "missing_dimension"})
+    effective_range = range or ("custom" if (from_ and to) else None)
+    if not effective_range:
+        raise HTTPException(422, {"error": "missing_range"})
+    range_bounds = _resolve_range(effective_range, from_, to)
+    data = await _compute(tenant_id, range_bounds, effective_dim)
 
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -334,24 +409,98 @@ async def profit_report_csv(
     t = data["totals"]
     w.writerow([
         range_bounds["from"], range_bounds["to"], range_bounds["label"],
-        dimension, "__totals__", "TOTALS",
+        effective_dim, "__totals__", "TOTALS",
         t["revenue"], t["cogs"], t["labor"], t["gross_profit"],
         t["margin_pct"], t["line_count"],
     ])
     for row in data["breakdown"]:
         w.writerow([
             range_bounds["from"], range_bounds["to"], range_bounds["label"],
-            dimension, row["category_id"], row["category_name"],
+            effective_dim, row["category_id"], row["category_name"],
             row["revenue"], row["cogs"], row["labor"],
             row["profit"], row["margin_pct"], row["line_count"],
         ])
     csv_bytes = buf.getvalue().encode("utf-8")
+    # Feb-2026 · Phase 3 spec — canonical filename shape
+    # ``profit_report_{from}_{to}.csv``. Legacy PB1 shape stayed
+    # dimension-prefixed; the spec asks for the from/to-only shape
+    # so downstream automations don't have to guess the dimension.
     filename = (
-        f"profit-{dimension}-{range_bounds['from']}_to_"
-        f"{range_bounds['to']}.csv"
+        f"profit_report_{range_bounds['from']}_{range_bounds['to']}.csv"
     )
     return Response(
         content=csv_bytes,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ─── Feb-2026 · Phase 3 — Pricebook health tile ───────────────
+# Simple snapshot-coverage aggregate over PAID/PARTIAL invoices in
+# a trailing window (default 90 days). Answers the "how much of my
+# profit report is muddled by legacy Uncategorized lines" question.
+_HEALTH_CACHE: Dict[str, Any] = {}
+_HEALTH_TTL_S = 60
+
+
+@router.get("/reports/pricebook-health")
+async def pricebook_health(
+    window_days: int = Query(90, ge=1, le=365),
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return snapshot-coverage stats for the trailing ``window_days``."""
+    _require_admin(user)
+    tenant_id = (user or {}).get("tenant_id") or ""
+    if not tenant_id:
+        raise HTTPException(400, {"error": "missing_tenant"})
+    now = datetime.now(timezone.utc)
+    cache_key = f"{tenant_id}:{window_days}"
+    cached = _HEALTH_CACHE.get(cache_key)
+    if cached and (now - cached["_at"]).total_seconds() < _HEALTH_TTL_S:
+        return cached["value"]
+    start = (now - timedelta(days=window_days)).replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    )
+    query = {
+        "tenant_id": tenant_id,
+        "doc_type": "invoice",
+        "status": {"$in": list(_ELIGIBLE_STATUSES)},
+        "created_at": {"$gte": start.isoformat()},
+    }
+    invoices = await db.quotes.find(
+        query, {"_id": 0, "line_items": 1},
+    ).to_list(10000)
+    lines_total = 0
+    with_wholesale = 0
+    with_labor = 0
+    with_any = 0
+    for inv in invoices:
+        for li in inv.get("line_items") or []:
+            lines_total += 1
+            has_w = li.get("wholesale_price_snapshot") not in (None, 0, 0.0)
+            has_l = li.get("labor_cost_snapshot") not in (None, 0, 0.0)
+            if has_w:
+                with_wholesale += 1
+            if has_l:
+                with_labor += 1
+            if has_w or has_l:
+                with_any += 1
+
+    def _pct(num: int, denom: int) -> float:
+        return round((num / denom * 100.0), 2) if denom else 0.0
+
+    value = {
+        "window_days": window_days,
+        "as_of": now.isoformat(),
+        "lines_total": lines_total,
+        "lines_with_wholesale_snapshot": with_wholesale,
+        "lines_with_labor_snapshot": with_labor,
+        "lines_with_any_snapshot": with_any,
+        "coverage_pct": {
+            "wholesale": _pct(with_wholesale, lines_total),
+            "labor": _pct(with_labor, lines_total),
+            "any": _pct(with_any, lines_total),
+        },
+    }
+    _HEALTH_CACHE[cache_key] = {"_at": now, "value": value}
+    return value

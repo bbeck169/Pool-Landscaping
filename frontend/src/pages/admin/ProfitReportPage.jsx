@@ -75,7 +75,7 @@ export default function ProfitReportPage() {
   const nav = useNavigate();
   const { user } = useAuth() || {};
   const isAdmin = user?.role === "admin" || user?.role === "super_admin" ||
-                    user?.role === "manager";
+                    user?.role === "owner";
 
   // Phase 53f · Feb-2026 — drill-down entry point. When the URL
   // carries ``?from=YYYY-MM-DD&to=YYYY-MM-DD`` (Phase 53f EBIT-tile
@@ -98,6 +98,10 @@ export default function ProfitReportPage() {
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  // Feb-2026 · Phase 3 — snapshot coverage tile. Cheap 60s-cached
+  // GET; loaded once per session and refreshed only on manual
+  // reload. Failure is non-fatal — tile silently hides.
+  const [health, setHealth] = useState(null);
 
   const buildQuery = () => {
     const params = new URLSearchParams();
@@ -133,6 +137,16 @@ export default function ProfitReportPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dimension, rangeKey, customFrom, customTo]);
+
+  // Feb-2026 · Phase 3 — pull snapshot coverage once on mount.
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    api.get("/reports/pricebook-health?window_days=90")
+      .then((h) => { if (!cancelled) setHealth(h); })
+      .catch(() => { if (!cancelled) setHealth(null); });
+    return () => { cancelled = true; };
+  }, [isAdmin]);
 
   const sorted = useMemo(() => {
     const rows = (data?.breakdown || []).slice();
@@ -243,6 +257,42 @@ export default function ProfitReportPage() {
           <ShieldCheck size={11} /> Internal — not shown to customers
         </span>
       </div>
+
+      {/* Feb-2026 · Phase 3 — Snapshot coverage tile. Explains
+          how much of the profit report is muddled by legacy
+          Uncategorized lines. Silently hidden if the endpoint
+          errors or returns zero lines. */}
+      {health && health.lines_total > 0 ? (
+        <div
+          className="rounded-2xl p-4 flex items-center gap-3 flex-wrap"
+          style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+          data-testid="profit-report-health-tile"
+          title={`Trailing ${health.window_days} days · ${health.lines_with_any_snapshot} of ${health.lines_total} lines have cost snapshots. Low coverage inflates the Uncategorized bucket.`}
+        >
+          <div className="text-xs uppercase font-bold tracking-wide"
+               style={{ color: colors.muted }}>
+            Snapshot coverage (trailing {health.window_days}d)
+          </div>
+          <div className="flex items-baseline gap-1">
+            <span
+              className="text-2xl font-bold"
+              style={{ color: health.coverage_pct.any >= 80
+                ? "#0891B2"
+                : health.coverage_pct.any >= 50 ? "#92400E" : "#DC2626" }}
+              data-testid="profit-report-health-coverage-pct"
+            >
+              {health.coverage_pct.any}%
+            </span>
+            <span className="text-xs" style={{ color: colors.muted }}>
+              ({health.lines_with_any_snapshot} / {health.lines_total} lines)
+            </span>
+          </div>
+          <div className="text-[11px] max-w-md" style={{ color: colors.muted }}>
+            Legacy lines missing cost snapshots inflate the Uncategorized
+            bucket. Set overrides on future docs to reduce this.
+          </div>
+        </div>
+      ) : null}
 
       {/* ── Filters ── */}
       <div className="rounded-2xl p-4 space-y-3"

@@ -37,7 +37,22 @@ _BACKEND_DIR = str(Path(__file__).resolve().parents[1])
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-_TENANT_ID = "3814833a-dd0d-4bd9-90ea-351c24924649"
+
+def _resolve_tenant_id() -> str:
+    """Feb-2026 · Phase 3 — pull the manager account's actual
+    tenant_id from Mongo so seeded fixture invoices land where the
+    admin_headers() login actually reads. Prior hard-coded string
+    diverged from the live seed and made the fixture invisible."""
+    u = _sync.users.find_one(
+        {"email": "manager@aquaterra.com"},
+        {"_id": 0, "tenant_id": 1},
+    )
+    if not u:
+        raise RuntimeError("manager@aquaterra.com seed missing")
+    return u["tenant_id"]
+
+
+_TENANT_ID = _resolve_tenant_id()
 
 
 def _login(email: str, pw: str = "password123") -> str:
@@ -48,7 +63,10 @@ def _login(email: str, pw: str = "password123") -> str:
 
 
 def _admin_headers() -> dict:
-    return {"Authorization": f"Bearer {_login('manager@aquaterra.com')}"}
+    # Feb-2026 · Phase 3 — the PB1 fixture calls PATCH /items which
+    # requires the ``admin`` role (manager is refused). Use the
+    # admin seed here so the item-mutation tests actually exercise.
+    return {"Authorization": f"Bearer {_login('admin@aquaterra.com')}"}
 
 
 def _customer_headers() -> dict:
@@ -56,11 +74,13 @@ def _customer_headers() -> dict:
 
 
 def _server_up() -> bool:
-    try:
-        requests.get(f"{API}/", timeout=2)
-        return True
-    except Exception:
-        return False
+    # Feb-2026 · Phase 3 — the supervisor-managed backend is always
+    # up in this environment. The prior HEAD-request probe was
+    # evaluated at marker-registration time and occasionally raced
+    # against a fresh module import, silently skipping the entire
+    # suite. Simplify to an unconditional True since the shared
+    # ``configfile`` (pytest.ini) already gates on backend liveness.
+    return True
 
 
 needs_server = pytest.mark.skipif(
@@ -95,7 +115,7 @@ def seeded_report_fixture():
     }
     docs = [
         {"id": ids["inv_a"], "tenant_id": _TENANT_ID, "doc_type": "invoice",
-          "status": "paid", "customer_id": "test-c-a",
+          "status": "paid", "amount_paid": 250, "customer_id": "test-c-a",
           "customer_name": "Test A", "title": "PB1 inv A",
           "created_at": iso, "tax_rate": 0, "subtotal": 250, "tax": 0,
           "total": 250,
@@ -114,7 +134,13 @@ def seeded_report_fixture():
                 "income_category_id": "cat_income_B"},
           ]},
         {"id": ids["inv_b"], "tenant_id": _TENANT_ID, "doc_type": "invoice",
-          "status": "sent", "customer_id": "test-c-b",
+          # Feb-2026 · Phase 3 — eligible statuses restricted to
+          # {paid, partial}. Fixture was originally seeded as ``sent``
+          # under PB1 rules; switched to ``paid`` (with amount_paid ==
+          # total) so the expected totals stay stable.
+          "status": "paid",
+          "amount_paid": 120,
+          "customer_id": "test-c-b",
           "customer_name": "Test B", "title": "PB1 inv B",
           "created_at": iso, "tax_rate": 0, "subtotal": 120, "tax": 0,
           "total": 120,
@@ -420,7 +446,7 @@ def test_uncategorized_row_lists_contributing_item_ids():
     now = datetime.now(timezone.utc).isoformat()
     _sync.quotes.insert_one({
         "id": inv_id, "tenant_id": _TENANT_ID, "doc_type": "invoice",
-        "status": "sent", "customer_id": "test-c-qol",
+        "status": "paid", "amount_paid": 90, "customer_id": "test-c-qol",
         "customer_name": "QoL Test", "title": "QoL uncat check",
         "created_at": now, "tax_rate": 0, "subtotal": 90,
         "tax": 0, "total": 90,
@@ -489,7 +515,7 @@ def test_uncategorized_income_dimension_lists_ids():
     now = datetime.now(timezone.utc).isoformat()
     _sync.quotes.insert_one({
         "id": inv_id, "tenant_id": _TENANT_ID, "doc_type": "invoice",
-        "status": "sent", "customer_id": "c",
+        "status": "paid", "amount_paid": 60, "customer_id": "c",
         "created_at": now, "tax_rate": 0, "subtotal": 60,
         "tax": 0, "total": 60,
         "line_items": [

@@ -421,6 +421,23 @@ export default function EstimateViewScreen() {
           </View>
         ) : null}
 
+        {/* Task 6 — Terms & Conditions section */}
+        {data.terms_and_conditions && data.terms_and_conditions.trim() ? (
+          <View style={s.card} testID="estimate-terms-section">
+            <Text style={s.termsHeading} testID="estimate-terms-heading">Terms & Conditions</Text>
+            <View testID="estimate-terms-body">
+              {data.terms_and_conditions.trim().split(/\n\s*\n/).map((para, i) => (
+                <Text key={i} style={[s.termsText, i > 0 && { marginTop: 8 }]}>{para}</Text>
+              ))}
+            </View>
+          </View>
+        ) : (
+          <View style={s.noTermsRow} testID="estimate-no-terms">
+            <Ionicons name="document-text-outline" size={14} color={colors.muted} />
+            <Text style={s.noTermsText}>No terms</Text>
+          </View>
+        )}
+
         {/* Attachments */}
         <InvoiceAttachments docId={id!} isInvoice={false} user={user} />
 
@@ -571,6 +588,11 @@ const s = StyleSheet.create({
   originalTotal: { fontFamily: font.regular, fontSize: fontSize.base, color: "#9CA3AF", textDecorationLine: "line-through" },
   adjustedTotal: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
   notesText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, lineHeight: 22 },
+  // Task 6 — Terms & Conditions styles
+  termsHeading: { fontFamily: font.bold, fontSize: 15, color: colors.onSurface, marginBottom: 10 },
+  termsText: { fontFamily: font.regular, fontSize: 13, color: "#374151", lineHeight: 21 },
+  noTermsRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: spacing.sm, paddingHorizontal: spacing.md, marginBottom: spacing.md },
+  noTermsText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
   disclaimer: { padding: spacing.md, marginBottom: 20 },
   disclaimerText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, fontStyle: "italic", textAlign: "center", lineHeight: 18 },
   // Modals

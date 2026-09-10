@@ -31,7 +31,7 @@ import React, { useCallback, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
@@ -81,6 +81,7 @@ function _formatMethodLabel(pm: Pm | null): string {
 
 
 export default function PaymentMethod() {
+  const router = useRouter();
   const [pm, setPm] = useState<Pm | null>(null);
   const [stripeConfigured, setStripeConfigured] = useState<boolean>(true);
   const [loading, setLoading] = useState(true);
@@ -210,6 +211,17 @@ export default function PaymentMethod() {
         <Text style={styles.secure}>
           🔒 Payments are handled securely. We never store your card or bank details.
         </Text>
+
+        {/* Task 5 — Link to full saved cards list */}
+        <TouchableOpacity
+          onPress={() => router.push("/portal/payment-methods")}
+          style={styles.viewAllBtn}
+          testID="portal-view-all-cards-btn"
+        >
+          <Ionicons name="list-outline" size={16} color={colors.brand} />
+          <Text style={styles.viewAllText}>View all saved cards</Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+        </TouchableOpacity>
       </ScrollView>
     </View>
   );
@@ -269,5 +281,23 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: spacing.lg,
     lineHeight: 18,
+  },
+  viewAllBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: spacing.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  viewAllText: {
+    flex: 1,
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.brand,
   },
 });

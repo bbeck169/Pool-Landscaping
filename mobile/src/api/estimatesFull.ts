@@ -52,6 +52,8 @@ export type EstimateFull = {
     adjusted_subtotal?: number;
   };
   notes?: string;
+  /** Task 6 — Terms & Conditions text (from doc or tenant fallback). */
+  terms_and_conditions?: string;
 };
 
 export const getEstimateFull = (eid: string): Promise<EstimateFull> =>
