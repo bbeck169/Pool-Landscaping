@@ -971,7 +971,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                       }
                       setTermsSaving(true);
                       try {
-                        const _body = { terms: termsDraft };
+                        const _body = { terms_and_conditions: termsDraft };
                         if (_locked) _body.acknowledged_lock_bypass = true;
                         await api.put(`/quotes/${id}`, _body);
                         setToast({ tone: "success", message: "Terms saved" });
@@ -1159,7 +1159,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           try {
             let _body;
             if (_pending && typeof _pending === "object" && _pending.__terms__ !== undefined) {
-              _body = { terms: _pending.__terms__, acknowledged_lock_bypass: true };
+              _body = { terms_and_conditions: _pending.__terms__, acknowledged_lock_bypass: true };
               await api.put(`/quotes/${id}`, _body);
               setTermsEditOpen(false);
               setToast({ tone: "success", message: "Terms saved" });

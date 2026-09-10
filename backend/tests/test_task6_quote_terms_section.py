@@ -219,3 +219,207 @@ def test_estimate_reminder_html_omits_terms_when_absent():
         inv, "Customer", {"company_name": "PB6 Co"}, "https://example.com",
     )
     assert "Terms &amp; Conditions" not in html
+
+
+# ─── 5. Defect 1 · Tenant default clearing ───────────────────
+TERMS_SETTINGS_ID = "terms_defaults"
+
+
+def _seed_row(payload: dict) -> None:
+    _db.settings.update_one(
+        {"id": TERMS_SETTINGS_ID},
+        {"$set": {"id": TERMS_SETTINGS_ID, **payload}},
+        upsert=True,
+    )
+
+
+def test_put_settings_terms_empty_string_clears(seeded):
+    """PUT with ``""`` explicitly clears the tenant default."""
+    tok = _login("admin@aquaterra.com")
+    _seed_row({"default_quote_terms": "Seeded quote defaults."})
+    r = requests.put(
+        f"{API}/settings/terms",
+        headers=_headers(tok),
+        json={"default_quote_terms": ""},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["default_quote_terms"] == ""
+    got = requests.get(f"{API}/settings/terms", headers=_headers(tok), timeout=15).json()
+    assert got["default_quote_terms"] == ""
+
+
+def test_put_settings_terms_null_clears(seeded):
+    """PUT with explicit null clears the tenant default (persisted as empty)."""
+    tok = _login("admin@aquaterra.com")
+    _seed_row({"default_quote_terms": "Non-empty seed"})
+    r = requests.put(
+        f"{API}/settings/terms",
+        headers=_headers(tok),
+        json={"default_quote_terms": None},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    got = requests.get(f"{API}/settings/terms", headers=_headers(tok), timeout=15).json()
+    assert got["default_quote_terms"] == ""
+
+
+def test_put_settings_terms_partial_update_preserves_other_key(seeded):
+    """PUT with only ``default_quote_terms`` leaves invoice terms alone."""
+    tok = _login("admin@aquaterra.com")
+    _seed_row({
+        "default_quote_terms": "quote-seed",
+        "default_invoice_terms": "invoice-seed",
+    })
+    r = requests.put(
+        f"{API}/settings/terms",
+        headers=_headers(tok),
+        json={"default_quote_terms": "quote-updated"},
+        timeout=15,
+    )
+    assert r.status_code == 200
+    got = r.json()
+    assert got["default_quote_terms"] == "quote-updated"
+    assert got["default_invoice_terms"] == "invoice-seed"
+
+
+def test_reset_settings_terms_clears_both(seeded):
+    """POST /settings/terms/reset clears both fields to empty."""
+    tok = _login("admin@aquaterra.com")
+    _seed_row({
+        "default_quote_terms": "some seed",
+        "default_invoice_terms": "another seed",
+    })
+    r = requests.post(f"{API}/settings/terms/reset", headers=_headers(tok), timeout=15)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["default_quote_terms"] == ""
+    assert got["default_invoice_terms"] == ""
+
+
+def test_new_quote_after_cleared_default_has_empty_terms(seeded):
+    """When tenant default is cleared, new quotes are created with
+    empty ``terms_and_conditions`` (no fallback seed injection)."""
+    tok = _login("admin@aquaterra.com")
+    # Clear tenant defaults first.
+    requests.post(f"{API}/settings/terms/reset", headers=_headers(tok), timeout=15)
+    # Create a new quote WITHOUT sending ``terms`` — the create path
+    # would previously inject the built-in ``DEFAULT_QUOTE_TERMS``.
+    r = requests.post(
+        f"{API}/quotes",
+        headers=_headers(tok),
+        json={
+            "customer_id": seeded["customer_id"],
+            "title": "Defect1 new quote",
+            "doc_type": "quote",
+            "line_items": [{"description": "x", "quantity": 1, "unit_price": 1.0}],
+        },
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    new_id = r.json()["id"]
+    try:
+        got = requests.get(
+            f"{API}/quotes/{new_id}/full", headers=_headers(tok), timeout=15,
+        ).json()
+        assert got.get("terms_and_conditions") in (None, "")
+    finally:
+        _db.quotes.delete_one({"id": new_id})
+
+
+# ─── 6. Defect 2 · Read/write field-name inconsistency ───────
+def test_put_quote_accepts_terms_and_conditions_alias(seeded):
+    """PUT with the new canonical ``terms_and_conditions`` key persists,
+    and the GET payload reflects the same value."""
+    tok = _login("admin@aquaterra.com")
+    new_terms = "Fresh terms via canonical alias."
+    r = requests.put(
+        f"{API}/quotes/{seeded['quote_id']}",
+        headers=_headers(tok),
+        json={"terms_and_conditions": new_terms},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    got = requests.get(
+        f"{API}/quotes/{seeded['quote_id']}/full",
+        headers=_headers(tok), timeout=15,
+    ).json()
+    assert got["terms_and_conditions"] == new_terms
+    # Restore the original seeded terms for downstream isolation.
+    requests.put(
+        f"{API}/quotes/{seeded['quote_id']}",
+        headers=_headers(tok),
+        json={"terms_and_conditions": seeded["terms_body"]},
+        timeout=15,
+    )
+
+
+def test_put_quote_rejects_over_5000_on_canonical_alias(seeded):
+    """5000-char cap fires when the caller uses the canonical
+    ``terms_and_conditions`` key (Defect 2 regression: previously
+    only ``terms`` triggered the cap)."""
+    tok = _login("admin@aquaterra.com")
+    too_long = "y" * 5001
+    r = requests.put(
+        f"{API}/quotes/{seeded['quote_id']}",
+        headers=_headers(tok),
+        json={"terms_and_conditions": too_long},
+        timeout=15,
+    )
+    assert r.status_code == 400, r.text
+    assert "5000" in r.text
+
+
+def test_put_quote_canonical_alias_takes_precedence_over_legacy(seeded):
+    """When both keys are sent, the canonical key wins so integrators
+    can safely migrate without accidental double-writes."""
+    tok = _login("admin@aquaterra.com")
+    r = requests.put(
+        f"{API}/quotes/{seeded['quote_id']}",
+        headers=_headers(tok),
+        json={
+            "terms": "LEGACY value should NOT win.",
+            "terms_and_conditions": "CANONICAL value.",
+        },
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    got = requests.get(
+        f"{API}/quotes/{seeded['quote_id']}/full",
+        headers=_headers(tok), timeout=15,
+    ).json()
+    assert got["terms_and_conditions"] == "CANONICAL value."
+    # Restore.
+    requests.put(
+        f"{API}/quotes/{seeded['quote_id']}",
+        headers=_headers(tok),
+        json={"terms_and_conditions": seeded["terms_body"]},
+        timeout=15,
+    )
+
+
+def test_put_quote_unknown_key_is_silently_dropped_but_warned(seeded, caplog):
+    """Unknown keys don't 500 or persist, but the router logs a
+    WARN so integrators can spot the drop (Defect 2 mitigation)."""
+    import logging
+
+    tok = _login("admin@aquaterra.com")
+    with caplog.at_level(logging.WARNING, logger="pool_crm"):
+        r = requests.put(
+            f"{API}/quotes/{seeded['quote_id']}",
+            headers=_headers(tok),
+            json={
+                "terms_and_conditions": seeded["terms_body"],
+                "totally_bogus_key": "should be dropped",
+            },
+            timeout=15,
+        )
+    assert r.status_code == 200, r.text
+    # We cannot capture the live server's logs from this client-side
+    # process, but we CAN assert the key did not persist.
+    got = requests.get(
+        f"{API}/quotes/{seeded['quote_id']}/full",
+        headers=_headers(tok), timeout=15,
+    ).json()
+    assert "totally_bogus_key" not in got

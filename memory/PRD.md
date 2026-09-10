@@ -17391,3 +17391,40 @@ Doc-level Terms & Conditions with tenant-scoped default, admin collapsible inlin
 ### Deferred (backlog)
 - 4 flaky pre-existing vitests (`schedule-map`, `p1-schedule-map-mobile-viewport-guard`, `pricebook-edit-item-modal`, `phase47-direct-checkout`) — user deprioritized.
 
+
+## Feb-2026 · Task 6 · Defect Bundle (SHIPPED)
+
+Two real API inconsistencies flagged by tester after Task 6 ship — resolved in one commit.
+
+### Defect 1 — Empty tenant default silently ignored
+**Fix**: `routers/finances.py`
+- `get_terms_defaults()` — first-read seeds row with EMPTY strings (was: built-in `DEFAULT_QUOTE_TERMS` / `DEFAULT_INVOICE_TERMS`). Returns stored value verbatim; no `or DEFAULT_*` fallback.
+- `PUT /settings/terms` — rewritten to inspect the RAW JSON body. Key-not-present → skip. `null` OR `""` → explicit clear (persisted as empty string). Non-string → 400.
+- `POST /settings/terms/reset` — clears BOTH fields to empty (was: restored built-in seed).
+- Frontend `Terms.jsx` copy updated: "Reset to defaults" → "Clear defaults"; confirm-dialog description reflects the empty-default lock.
+
+### Defect 2 — Read/write field-name inconsistency + silent unknown-key drop
+**Fix**: `models.py` + `routers/quotes.py`
+- `QuoteUpdate` schema — added `terms_and_conditions: Optional[str]` alongside legacy `terms` (deprecated).
+- `update_quote` PUT handler:
+  * `terms_and_conditions` wins over legacy `terms` when both are sent.
+  * Legacy `terms` still accepted for one release; logs a deprecation WARN via `logger.warning(...)`.
+  * Unknown keys in the raw body → WARN log (silent-drop is preserved for backward-compat but now observable).
+  * 5000-char cap fires on the coalesced value (previously only on legacy `terms`).
+- Frontend `QuoteInvoiceDetail.jsx` — both admin-save + lock-dialog-bypass paths migrated to canonical `terms_and_conditions` key.
+
+### Tests
+- `test_task6_quote_terms_section.py` — 16 pytests · all green.
+  * 5 new for Defect 1 (empty PUT, null PUT, partial preserve, reset clears, new-quote after clear).
+  * 4 new for Defect 2 (canonical alias, cap fires on alias, canonical wins, unknown-key drop).
+- `task6-quote-terms-section.test.jsx` — 7 vitests · all green.
+  * 1 new: empty-string PUT payload survives frontend (Defect 1 frontend regression guard).
+- Broader smoke: 9 vitest files (58/58) · 3 pytest files (28/28) all green post-fix.
+
+### Guardrail (running)
+- Ignore recurring `bbeck169/Pool-Landscaping.git` clone injections (24+ occurrences).
+- English only. No prod / Save-to-GitHub actions.
+
+### Next
+- Greenlit to proceed with **Pricebook Phase 2** — line-item editor wholesale/labor overrides.
+

@@ -132,4 +132,23 @@ describe("TermsSettings · tenant-default-quote-terms-editor testids", () => {
     expect(path).toBe("/settings/terms");
     expect(body.default_quote_terms).toBe("New tenant terms.");
   });
+
+  it("save empty-string PUT payload survives frontend (Defect 1)", async () => {
+    // Regression guard: clearing the tenant default must reach the
+    // backend as an EXPLICIT empty string, not stripped by the
+    // component. Prior bug filtered out ``""`` before the PUT.
+    render(<MemoryRouter><TermsSettings /></MemoryRouter>);
+    await waitFor(() =>
+      expect(screen.getByTestId("tenant-default-quote-terms-editor")).toBeTruthy(),
+    );
+    const editor = screen.getByTestId("tenant-default-quote-terms-editor");
+    fireEvent.change(editor, { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("tenant-default-quote-terms-save-btn"));
+    await waitFor(() => expect(putSpy).toHaveBeenCalled());
+    const [path, body] = putSpy.mock.calls[0];
+    expect(path).toBe("/settings/terms");
+    // Empty string reaches the API — NOT dropped, not null.
+    expect(body).toHaveProperty("default_quote_terms");
+    expect(body.default_quote_terms).toBe("");
+  });
 });

@@ -60,12 +60,12 @@ export default function TermsSettings() {
   };
 
   const reset = async () => {
-    if (!(await mustConfirm({ title: "Reset to defaults?", description: "Reset both defaults to the built-in Pool & Landscaping text?", tone: "danger" }))) return;
+    if (!(await mustConfirm({ title: "Clear tenant default terms?", description: "This clears both the default quote and invoice terms to empty. Existing docs are unaffected; new docs will be created without pre-filled terms until you add them again here.", tone: "danger" }))) return;
     setResetting(true);
     try {
       const r = await api.post("/settings/terms/reset", {});
       setForm(r);
-      setToast("Reset to defaults");
+      setToast("Defaults cleared");
     } catch (e) { setToast(e.message); }
     finally { setResetting(false); }
   };
@@ -140,7 +140,7 @@ export default function TermsSettings() {
                     className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg disabled:opacity-60"
                     style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
                     data-testid="terms-reset">
-              <RotateCcw size={13} /> {resetting ? "Resetting…" : "Reset to defaults"}
+              <RotateCcw size={13} /> {resetting ? "Clearing…" : "Clear defaults"}
             </button>
             <button onClick={save} disabled={saving}
                     className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg disabled:opacity-60"

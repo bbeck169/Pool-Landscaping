@@ -350,9 +350,15 @@ class QuoteIn(BaseModel):
 
 
 class QuoteUpdate(BaseModel):
+    # Feb-2026 · Task 6 · Defect fix — write side accepts the same
+    # field name the read side emits (``terms_and_conditions``) so
+    # API consumers can round-trip GET → PUT without renaming. The
+    # legacy ``terms`` key is still accepted for one release and
+    # logged as a deprecation warning by the router.
     title: Optional[str] = None
     notes: Optional[str] = None
     terms: Optional[str] = None
+    terms_and_conditions: Optional[str] = None
     tax_rate: Optional[float] = None
     due_date: Optional[str] = None
     line_items: Optional[List[LineItem]] = None

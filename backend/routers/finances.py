@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
@@ -750,18 +750,36 @@ DEFAULT_INVOICE_TERMS = (
 
 
 async def get_terms_defaults() -> dict:
-    """Return the two-key terms defaults. Seed on first read."""
+    """Return the two-key terms defaults.
+
+    Feb-2026 · Task 6 · Defect fix — empty-string / cleared values
+    are now respected verbatim. Prior behaviour silently substituted
+    the built-in seed (``DEFAULT_QUOTE_TERMS`` / ``DEFAULT_INVOICE_TERMS``)
+    whenever the stored value was empty or missing, which made it
+    impossible for tenants to revoke their default terms via the
+    admin UI.
+
+    New contract:
+      * First-time read (no doc yet) → seed the row with EMPTY strings
+        so an admin who never touched the endpoint sees the "empty
+        default with helper text" UX from the frontend.
+      * Any subsequent read returns whatever's on the doc verbatim
+        (including empty strings). The router callers
+        (``routers/quotes.py``, ``routers/estimates.py``,
+        ``routers/jobs.py``) treat empty strings as "no pre-fill",
+        which matches the product lock.
+    """
     doc = await db.settings.find_one({"id": TERMS_SETTINGS_ID}, {"_id": 0})
     if not doc:
         doc = {
             "id": TERMS_SETTINGS_ID,
-            "default_quote_terms": DEFAULT_QUOTE_TERMS,
-            "default_invoice_terms": DEFAULT_INVOICE_TERMS,
+            "default_quote_terms": "",
+            "default_invoice_terms": "",
         }
         await db.settings.insert_one(dict(doc))
     return {
-        "default_quote_terms": doc.get("default_quote_terms") or DEFAULT_QUOTE_TERMS,
-        "default_invoice_terms": doc.get("default_invoice_terms") or DEFAULT_INVOICE_TERMS,
+        "default_quote_terms": doc.get("default_quote_terms") or "",
+        "default_invoice_terms": doc.get("default_invoice_terms") or "",
     }
 
 
@@ -771,8 +789,39 @@ async def get_terms_settings(admin: dict = Depends(require_admin)):
 
 
 @router.put("/settings/terms")
-async def update_terms_settings(body: TermsSettingsIn, admin: dict = Depends(require_admin)):
-    upd = {k: v for k, v in body.dict().items() if v is not None}
+async def update_terms_settings(body: TermsSettingsIn, request: Request,
+                                 admin: dict = Depends(require_admin)):
+    """Feb-2026 · Task 6 · Defect fix — distinguish "field not in
+    payload" (partial update, skip) from "field is null or empty"
+    (explicit clear). Prior behaviour filtered out ``None`` values
+    unconditionally and silently substituted the built-in seed on
+    the response, so admins could not revoke tenant-level defaults.
+
+    New contract:
+      * Only keys that are actually present in the raw JSON body
+        are considered for the write. Missing keys leave the stored
+        value alone.
+      * ``null`` and empty-string values are BOTH treated as an
+        explicit clear (persisted as empty string).
+      * Non-string values raise 400 so callers can't stash garbage.
+    """
+    try:
+        raw = await request.json()
+    except Exception:  # noqa: BLE001
+        raw = {}
+    if not isinstance(raw, dict):
+        raise HTTPException(400, "Body must be a JSON object")
+    upd: dict = {}
+    for key in ("default_quote_terms", "default_invoice_terms"):
+        if key not in raw:
+            continue
+        val = raw[key]
+        if val is None:
+            upd[key] = ""
+        elif isinstance(val, str):
+            upd[key] = val
+        else:
+            raise HTTPException(400, f"{key} must be a string or null")
     if upd:
         await db.settings.update_one(
             {"id": TERMS_SETTINGS_ID},
@@ -784,13 +833,18 @@ async def update_terms_settings(body: TermsSettingsIn, admin: dict = Depends(req
 
 @router.post("/settings/terms/reset")
 async def reset_terms_settings(admin: dict = Depends(require_admin)):
-    """Reset both default terms strings back to their seeded values."""
+    """Feb-2026 · Task 6 · Defect fix — reset clears BOTH default
+    terms strings to empty (matching the "empty default with
+    helper text" lock). Previously reset restored the built-in
+    seed, which prevented admins from removing tenant-level defaults
+    entirely.
+    """
     await db.settings.update_one(
         {"id": TERMS_SETTINGS_ID},
         {"$set": {
             "id": TERMS_SETTINGS_ID,
-            "default_quote_terms": DEFAULT_QUOTE_TERMS,
-            "default_invoice_terms": DEFAULT_INVOICE_TERMS,
+            "default_quote_terms": "",
+            "default_invoice_terms": "",
         }},
         upsert=True,
     )

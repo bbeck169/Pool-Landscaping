@@ -597,6 +597,43 @@ async def update_quote(qid: str, body: QuoteUpdate,
         await audit_put_denial(db, quote=existing, actor=user)
         assert_quote_mutable_for_put(existing, bypass_lock=_ack)  # raises 409
     upd = {k: v for k, v in body.dict().items() if v is not None}
+    # Feb-2026 · Task 6 · Defect fix — coalesce write-side field
+    # names so ``terms_and_conditions`` (matches the GET payload
+    # shape) works as an alias for the legacy ``terms`` key. When
+    # the caller sends the legacy form, log a WARN so the frontend
+    # is nudged to migrate before the deprecation window closes.
+    if "terms_and_conditions" in upd:
+        upd["terms"] = upd.pop("terms_and_conditions")
+    elif "terms" in upd:
+        try:
+            _raw_terms_present = isinstance(_raw_body, dict) and "terms" in _raw_body
+        except Exception:  # noqa: BLE001
+            _raw_terms_present = False
+        if _raw_terms_present:
+            logger.warning(
+                "[quotes.update] DEPRECATED: caller sent ``terms`` on PUT "
+                "/quotes/%s. Please migrate to ``terms_and_conditions`` — "
+                "the legacy key will be removed after Feb-2026.",
+                qid,
+            )
+    # Feb-2026 · Task 6 · Defect fix — surface silent unknown-key
+    # drops. The PUT schema (``QuoteUpdate``) intentionally allows
+    # Pydantic to drop keys it doesn't know about, but that's a
+    # foot-gun for integrators. Peek at the raw JSON body and WARN
+    # for anything that isn't a known schema field (or one of the
+    # request-only bypass flags).
+    if isinstance(_raw_body, dict):
+        _known_keys = set(QuoteUpdate.model_fields.keys()) | {
+            "invoice_number", "quote_number", "doc_number",
+        }
+        _unknown = [k for k in _raw_body.keys() if k not in _known_keys]
+        if _unknown:
+            logger.warning(
+                "[quotes.update] unknown keys silently dropped on PUT "
+                "/quotes/%s: %s. These fields are NOT persisted; check "
+                "the QuoteUpdate schema for the canonical names.",
+                qid, _unknown,
+            )
     # Feb-2026 · Task 6 — Terms & Conditions 5000-char cap. Applies to
     # both estimates and invoices on PATCH so admin operators can't
     # blow past the render buffer / PDF layout budget.
