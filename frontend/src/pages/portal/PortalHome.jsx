@@ -134,7 +134,7 @@ export default function PortalHome() {
           them here now and remove those old inline instances below so
           they're not duplicated. */}
       <div
-        className="mb-4 flex flex-col sm:flex-row gap-3 md:gap-4"
+        className="mt-12 sm:mt-0 mb-4 flex flex-col sm:flex-row gap-3 md:gap-4"
         data-testid="portal-cta-row"
         data-tour-id="portal-cta-row"
       >

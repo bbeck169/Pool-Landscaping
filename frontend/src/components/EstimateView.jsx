@@ -29,9 +29,17 @@ import {
 import { api, TOKEN_KEY } from "@/api";
 import "@/components/InvoiceView.css";
 import "./EstimateView.css";
+import "@/components/documents/docMobile.css";
 // Feb-2026 · Batch #4 · Logo ship — shared tenant logo helper so
 // every doc surface renders the same asset the PDF pipeline uses.
 import { getTenantLogoUrl, DEFAULT_LOGO_ALT } from "@/lib/tenantLogo";
+// Feb-2026 · Universal mobile-responsive redesign — mobile top
+// block + terms slot. Both are gated to mobile viewports via
+// docMobile.css (``.doc-mobile-top-block`` is display:none by
+// default and only visible ≤ 767.98px), so desktop layout is
+// unchanged.
+import DocMobileHeader from "@/components/documents/DocMobileHeader";
+import DocTermsSection from "@/components/documents/DocTermsSection";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -255,8 +263,40 @@ export default function EstimateView({
   const showAdminToolbar = isAdmin && !printable;
   const showCustomerToolbar = !isAdmin && !printable;
 
+  // Feb-2026 · Universal mobile-responsive redesign — customer-only
+  // top block. Rendered unconditionally; ``docMobile.css`` gates
+  // its visibility to < 768px so desktop is unchanged. Admin +
+  // printable surfaces skip it to keep the admin toolbar untouched
+  // and the printable rendering PDF-parity intact.
+  const showCustomerMobileHeader = !isAdmin && !printable;
   return (
     <div className={`ev-shell iv-shell ${printable ? "iv-printable" : ""}`} data-testid="estimate-view">
+      {showCustomerMobileHeader ? (
+        <DocMobileHeader
+          docType="estimate"
+          amount={totals?.total_estimated_cost || totals?.total || 0}
+          hasDeclinedLines={Boolean(totals?.has_declined_lines)}
+          adjustedAmount={totals?.adjusted_total}
+          company={company || {}}
+          docMeta={{
+            number: header?.estimate_number,
+            date: header?.expiration_date || header?.estimate_date,
+          }}
+          onPrimaryAction={locked || !actionable ? undefined : accept}
+          primaryActionDisabled={
+            Boolean(busy) || signatureGateBlocked || locked || !actionable
+          }
+          primaryActionHint={
+            signatureGateBlocked ? "Sign to enable Approve" : null
+          }
+          onSignNow={signatureGateBlocked ? openSignNowFlow : undefined}
+          onDecline={locked || !actionable
+            ? undefined : () => setDeclineOpen(true)}
+          onRequestChanges={locked || !actionable
+            ? undefined : () => setChangesOpen(true)}
+          hideActions={locked || !actionable}
+        />
+      ) : null}
       {/* ── Toolbar ─────────────────────────────────────────── */}
       {!printable ? (
         <div
@@ -572,14 +612,14 @@ export default function EstimateView({
                   </td>
                   {!as_customer ? <td className="iv-num" style={rowStyle}>{li.calc || "—"}</td> : null}
                   {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.cost_rate)}</td> : null}
-                  <td className="iv-num" style={rowStyle}>{li.qty_hr || li.quantity || 0}</td>
-                  <td className="iv-num" style={rowStyle}>{li.visits || 1}</td>
+                  <td className="iv-num" style={rowStyle} data-mlabel="Qty/Hr">{li.qty_hr || li.quantity || 0}</td>
+                  <td className="iv-num" style={rowStyle} data-mlabel="Visits">{li.visits || 1}</td>
                   {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.m_rate)}</td> : null}
                   {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.bh)}</td> : null}
                   {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_bh)}</td> : null}
                   {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_b_cost)}</td> : null}
                   {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.margin_pct)}</td> : null}
-                  <td className="iv-num" style={rowStyle}>{fmt(li.total)}</td>
+                  <td className="iv-num" style={rowStyle} data-mlabel="Total">{fmt(li.total)}</td>
                   {as_customer && actionable && !locked ? (
                     <td className="iv-num">
                       {isDeclined ? (
@@ -661,6 +701,13 @@ export default function EstimateView({
             </tbody>
           </table>
         </div>
+
+        {/* Feb-2026 · Universal mobile-responsive redesign · Terms
+            slot (queue item #5 will populate the doc-level field). */}
+        <DocTermsSection
+          terms={data?.terms_and_conditions}
+          testidPrefix="estimate"
+        />
 
         <div className="ev-disclaimer" data-testid="estimate-disclaimer">
           This estimate is a good faith estimate only and is not a guarantee of final cost.

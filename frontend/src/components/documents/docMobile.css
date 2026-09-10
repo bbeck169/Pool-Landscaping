@@ -1,0 +1,232 @@
+/* Feb-2026 · Universal mobile-responsive redesign · shared design
+ * tokens + responsive rules for every customer-facing doc surface
+ * (EstimateView, InvoiceView).
+ *
+ * Convention
+ * ----------
+ * * Scoped to the existing ``iv-*`` and ``ev-*`` classnames so the
+ *   redesign works on the current markup — no JSX rewrites needed
+ *   at the surface level for the mobile treatment to engage.
+ * * All rules gated behind ``@media (max-width: 767.98px)`` — the
+ *   Tailwind ``md`` breakpoint. At ≥ 768px the existing desktop
+ *   layout in ``InvoiceView.css`` is preserved verbatim.
+ * * Print styles unchanged — the mobile rules never apply to
+ *   ``@media print``.
+ *
+ * Feb-2026 · Design-ref update
+ * ----------------------------
+ * The reference now calls for a dark banner + full-width green
+ * CTA at the TOP of the page (not a sticky bottom bar). The
+ * top-of-page block is rendered as JSX (``DocMobileHeader``) and
+ * hidden ≥ 768px via ``.doc-mobile-top-block``. The existing
+ * ``.iv-toolbar`` / ``.ev-toolbar`` / ``.iv-mobile-pay-bar`` /
+ * ``.ev-customer-cta`` blocks are hidden on mobile since the new
+ * top block owns the primary CTA.
+ *
+ * Line items switch from the previous "table → cards" transform
+ * to a **compact table** on mobile: hairline dividers, tighter
+ * padding, admin/customer extra columns hidden.
+ */
+
+/* ── Design tokens (available at any viewport) ───────────────── */
+:root {
+  --doc-mobile-radius: 12px;
+  --doc-mobile-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+  --doc-mobile-tap: 44px;
+  --doc-mobile-approve: #10B981;   /* emerald-500 */
+  --doc-mobile-approve-hi: #059669;
+  --doc-mobile-decline: #DC2626;   /* red-600 */
+  --doc-mobile-decline-hi: #B91C1C;
+  --doc-mobile-muted: #6B7280;
+  --doc-mobile-line: #E5E7EB;
+  --doc-mobile-banner-bg: #1F2937;
+}
+
+
+/* ── DocMobileHeader is mobile-only ─────────────────────────── */
+.doc-mobile-top-block {
+  display: none;
+}
+
+
+/* ── Mobile rules (< 768px) ──────────────────────────────────── */
+@media (max-width: 767.98px) {
+
+  /* Show the new mobile top block, hide the existing desktop
+     toolbars / header / sticky bottom bars — the new block owns
+     the primary CTA + doc identity on mobile. */
+  .doc-mobile-top-block {
+    display: block;
+  }
+  .iv-toolbar,
+  .ev-toolbar,
+  .iv-mobile-pay-bar,
+  .ev-customer-cta,
+  .ev-signature-gate-hint {
+    display: none !important;
+  }
+  /* Hide the legacy desktop header row (logo + KV table) — the
+     new mobile top block renders its own compact business info.
+     ``.iv-header.iv-header-below-banner`` opts back in for
+     legacy usage that has no top block. */
+  .iv-doc > .iv-header:not(.iv-header-below-banner),
+  .iv-doc > .ev-header:not(.iv-header-below-banner) {
+    display: none !important;
+  }
+
+  /* Shell + doc container */
+  .iv-shell {
+    padding: 0 !important;
+  }
+  .iv-doc {
+    padding: 16px !important;
+    border-radius: 0 !important;
+    border: none !important;
+  }
+  .iv-divider {
+    display: none !important;
+  }
+
+  /* Bill-to + property address stay but tighten. */
+  .iv-bill-to {
+    padding-top: 8px !important;
+    font-size: 13px !important;
+  }
+  .iv-bill-name {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+  }
+  .iv-prop-addr {
+    font-size: 13px !important;
+    margin-top: 6px !important;
+  }
+  .ev-est-title {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    margin: 8px 0 !important;
+  }
+
+  /* Line items — COMPACT TABLE (not cards). Rows keep table
+     semantics for accessibility + a11y screen readers. */
+  .iv-lines-wrap,
+  .ev-lines-wrap {
+    overflow-x: visible !important;
+    margin: 12px 0 4px !important;
+  }
+  .iv-lines {
+    width: 100% !important;
+    font-size: 14px !important;
+    border-collapse: collapse !important;
+  }
+  .iv-lines thead th {
+    padding: 6px 4px !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.4px !important;
+    color: var(--doc-mobile-muted) !important;
+    background: transparent !important;
+    border-bottom: 1px solid var(--doc-mobile-line) !important;
+    font-weight: 700 !important;
+  }
+  .iv-lines tbody td {
+    padding: 8px 4px !important;
+    border-bottom: 1px solid var(--doc-mobile-line) !important;
+    font-size: 14px !important;
+    vertical-align: middle !important;
+    color: #0F172A;
+  }
+  .iv-lines tbody td.iv-num {
+    text-align: right !important;
+    font-variant-numeric: tabular-nums !important;
+    white-space: nowrap;
+  }
+  .iv-lines tbody td:first-child {
+    max-width: 42vw !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  .iv-lines tbody tr[data-customer-status="declined"] td {
+    color: #94A3B8;
+  }
+
+  /* Totals block — full-width, dashed divider above, big final row. */
+  .iv-totals-row,
+  .ev-totals-wrap {
+    display: block !important;
+    margin: 8px 0 20px !important;
+  }
+  .iv-totals-row .iv-notes,
+  .ev-notes {
+    display: block;
+    padding: 0 !important;
+    margin-top: 12px !important;
+    font-size: 13px !important;
+  }
+  .iv-totals,
+  .ev-totals {
+    width: 100% !important;
+    min-width: 0 !important;
+    background: transparent !important;
+    padding: 0 !important;
+    font-size: 15px !important;
+    border: none !important;
+    border-top: 1.5px dashed #94A3B8 !important;
+    margin-top: 8px !important;
+    padding-top: 8px !important;
+  }
+  .iv-totals td,
+  .ev-totals td {
+    padding: 4px 0 !important;
+    font-variant-numeric: tabular-nums !important;
+  }
+  .iv-total-due td,
+  .ev-total-highlight td {
+    font-size: 20px !important;
+    padding-top: 10px !important;
+    font-weight: 800 !important;
+  }
+
+  /* Payment stub — hide on mobile customer view; too dense. */
+  .iv-stub,
+  .iv-stub-divider {
+    display: none !important;
+  }
+
+  /* Disclaimer footer — more readable on tiny screens. */
+  .ev-disclaimer {
+    font-size: 12px !important;
+    line-height: 1.55 !important;
+    color: #6B7280 !important;
+    margin-top: 12px !important;
+    padding: 12px 0 !important;
+  }
+
+  /* Terms section (pre-built for queue item #5). */
+  .doc-terms-section {
+    margin-top: 16px !important;
+    padding: 14px !important;
+    background: #F9FAFB !important;
+    border-radius: var(--doc-mobile-radius) !important;
+    border: 1px solid var(--doc-mobile-line) !important;
+    font-size: 13px !important;
+    line-height: 1.6 !important;
+  }
+  .doc-terms-section h3 {
+    font-size: 14px !important;
+    margin-bottom: 8px !important;
+  }
+}
+
+
+/* ── Print override — mobile rules must never engage in print. ─── */
+@media print {
+  .doc-mobile-top-block {
+    display: none !important;
+  }
+  .iv-toolbar,
+  .ev-toolbar,
+  .iv-mobile-pay-bar,
+  .ev-customer-cta {
+    display: none !important;
+  }
+}

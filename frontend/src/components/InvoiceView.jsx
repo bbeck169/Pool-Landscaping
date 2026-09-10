@@ -16,9 +16,15 @@ import { api, TOKEN_KEY } from "@/api";
 import PaymentForm from "@/components/PaymentForm";
 import InvoiceCreditApplied from "@/components/InvoiceCreditApplied";
 import "./InvoiceView.css";
+import "@/components/documents/docMobile.css";
 // Feb-2026 · Batch #4 · Logo ship — shared tenant logo helper so
 // every doc surface renders the same asset the PDF pipeline uses.
 import { getTenantLogoUrl, DEFAULT_LOGO_ALT } from "@/lib/tenantLogo";
+// Feb-2026 · Universal mobile-responsive redesign — mobile top
+// block + terms slot. Both are gated to mobile viewports via
+// docMobile.css, so desktop layout is unchanged.
+import DocMobileHeader from "@/components/documents/DocMobileHeader";
+import DocTermsSection from "@/components/documents/DocTermsSection";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -105,6 +111,20 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
   return (
     <div className={`iv-shell ${printable ? "iv-printable" : ""}`}
           data-testid="invoice-view">
+      {!printable ? (
+        <DocMobileHeader
+          docType="invoice"
+          amount={totals?.total_due || 0}
+          company={company || {}}
+          docMeta={{
+            number: header?.invoice_number,
+            date: header?.due_date || header?.invoice_date,
+          }}
+          onPrimaryAction={canPay ? () => setPayOpen(true) : undefined}
+          primaryActionDisabled={!canPay}
+          hideActions={!canPay}
+        />
+      ) : null}
       {!printable ? (
         <div className="iv-toolbar" data-testid="invoice-toolbar">
           {canPay ? (
@@ -314,6 +334,14 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
             Due on Receipt
           </div>
         ) : null}
+
+        {/* Feb-2026 · Universal mobile-responsive redesign · Terms
+            slot (queue item #5 will populate the doc-level field). */}
+        <DocTermsSection
+          terms={data?.terms_and_conditions}
+          testidPrefix="invoice"
+        />
+
 
         {/* ── Payment stub ───────────────────────────────── */}
         <div className="iv-stub-divider" />
