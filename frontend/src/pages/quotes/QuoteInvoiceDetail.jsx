@@ -475,12 +475,15 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               </div>
             ) : null}
             {/* Feb-2026 · Editable Sent Docs Phase 2 — trigger for
-                the version-history drawer. Renders only for staff
-                (admin/super_admin) AND only when the doc has at
-                least one snapshot (i.e. was ever edited after
-                initial send). ``hasVersions`` is set from the
-                on-mount pre-flight in ``load()``. */}
-            {isStaff && hasVersions ? (
+                the version-history drawer. Renders for staff
+                (admin/super_admin) on ANY non-draft doc so admins
+                can always confirm the history is empty (drawer
+                renders the ``doc-version-history-empty`` state
+                when ``total==0``). Previously gated on
+                ``hasVersions`` — hid the entry point entirely
+                when the doc was untouched, leaving no way for
+                the admin to reach the drawer to verify. */}
+            {isStaff && String(doc?.status || "") !== "draft" ? (
               <Button
                 size="sm"
                 variant="outline"
@@ -1331,15 +1334,24 @@ export function formatDeclinedTimestamp(iso, nowMs = Date.now()) {
 
 
 function AdminDeclinedLinesBanner({ doc }) {
+  return <AdminDeclinedLinesBannerImpl doc={doc} />;
+}
+
+// Feb-2026 · Phase C — exported for Vitest so the fixture-driven
+// suite can mount the banner + list directly without booting the
+// full QuoteInvoiceDetail page (avoids the router / api /
+// side-effects that were causing the SPA to appear "hung" on
+// legacy docs where an unrelated network call was in flight).
+export function AdminDeclinedLinesBannerImpl({ doc }) {
   const [expanded, setExpanded] = useState(false);
-  const items = (doc.line_items || []);
+  const items = ((doc && doc.line_items) || []).filter(Boolean);
   const total = items.length;
   const declinedCount = Number(
-    doc.declined_line_count
+    (doc && doc.declined_line_count)
     ?? items.filter((li) => (li.customer_status || "") === "declined").length,
   );
-  const original = Number(doc.original_total ?? doc.total ?? 0);
-  const adjusted = Number(doc.adjusted_total ?? doc.total ?? 0);
+  const original = Number((doc && (doc.original_total ?? doc.total)) ?? 0);
+  const adjusted = Number((doc && (doc.adjusted_total ?? doc.total)) ?? 0);
   return (
     <div
       className="rounded-2xl p-4 mb-4"
@@ -1400,6 +1412,14 @@ function AdminDeclinedLinesBanner({ doc }) {
 
 
 function AdminDeclinedLinesList({ lineItems }) {
+  return <AdminDeclinedLinesListImpl lineItems={lineItems} />;
+}
+
+// Feb-2026 · Phase C — exported for Vitest. Defensive filter on
+// falsy line-item entries + safe access to every field so the
+// summary card never throws on unexpected doc shapes.
+export function AdminDeclinedLinesListImpl({ lineItems }) {
+  const safe = (lineItems || []).filter(Boolean);
   return (
     <div
       className="mt-6 rounded-xl p-4"
@@ -1424,7 +1444,7 @@ function AdminDeclinedLinesList({ lineItems }) {
           </tr>
         </thead>
         <tbody>
-          {lineItems.map((li, i) =>
+          {safe.map((li, i) =>
             (li.customer_status || "") === "declined" ? (
               <tr key={i}
                   style={{ borderTop: "1px solid #FECACA" }}

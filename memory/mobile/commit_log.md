@@ -1574,3 +1574,19 @@
 - **Changes**: Changed estimate-toolbar-customer-decline from outlined-red to solid-red (#DC2626) bg with white text/icon
 - **Files modified**: app/estimate-view/[id].tsx, __tests__/parity-phase-a.test.tsx
 - **Test results**: 9/9 passing (new assertion: backgroundColor === "#DC2626")
+
+
+## Iteration 81 — P0 Tech Close Job 429 Fix
+- **Commit**: 2fbda064fa88052cc386d90fa59cbe955e02303f
+- **Date**: 2026-09-10
+- **Changes**:
+  - Created retryWithBackoff.ts: exponential backoff + jitter, honors Retry-After/X-Ratelimit-Source, max 5 retries
+  - Extended ApiError with retryAfterSeconds + rateLimitSource on 429 responses
+  - Created ChecklistSavePill.tsx: single unified pill (saving/retrying/exhausted/synced/offline)
+  - Replaced dual checklist pills (autosave + network) with single unified pill
+  - Wrapped close-job POST + autosave PATCH in retryWithBackoff
+  - Added job-close-error-dialog modal on retry exhaustion
+  - 429 exhaustion enqueues payload to writeQueue for offline safety
+- **Files modified**: api.ts, checklist.tsx
+- **Files created**: retryWithBackoff.ts, ChecklistSavePill.tsx, __tests__/p0-429-retry.test.tsx
+- **Test results**: 12/12 passing
