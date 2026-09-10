@@ -1262,6 +1262,14 @@ class _ServerTimingMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_ServerTimingMiddleware)
 
 
+# Feb-2026 · P0 · 429 observability — logs every 429 leaving the
+# stack with endpoint + tenant + user + source (app vs upstream)
+# so ops can diagnose the field-tech close-job 429s reported from
+# prod. Zero overhead on 2xx paths.
+from services.observability.log_429_middleware import Log429Middleware
+app.add_middleware(Log429Middleware)
+
+
 scheduler = AsyncIOScheduler(timezone="UTC")
 
 
