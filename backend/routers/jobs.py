@@ -69,7 +69,17 @@ class JobListItem(BaseModel):
     scheduled_date: Optional[str] = None
     notes: Optional[str] = None
     price: Optional[float] = None
-    photos: Optional[List[Any]] = None
+    # Feb-2026 · Slim-photos ship — the list endpoint drops the full
+    # ``photos`` array by default and surfaces just the count + ids so
+    # mobile job cards can lazy-load thumbnails without pulling ~100 KB
+    # of base64 per job. Opt back in with ``?include_photos=true`` on
+    # the list endpoint; the full ``photos`` field is then preserved as
+    # an ``extra`` on the response (see ``model_config extra="allow"``
+    # at the top of this model). Single-job detail
+    # (``GET /api/jobs/{id}``) is unchanged and always ships the full
+    # ``photos`` array.
+    photo_count: Optional[int] = None
+    photo_ids: Optional[List[str]] = None
     videos: Optional[List[Any]] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -425,6 +435,7 @@ async def list_jobs(
     recurring_template_id: Optional[str] = Query(None, description="Phase 51.I: filter by recurring template origin"),
     limit: int = Query(1000, ge=1, le=5000, description="Feb-2026: cap on returned rows; default 1000"),
     include_deleted: bool = Query(False, description="Feb-2026 · super_admin only — include soft-deleted jobs"),
+    include_photos: bool = Query(False, description="Feb-2026 · Slim-photos ship — opt back into the full ``photos`` array on list rows. Default (``false``) drops ``photos`` and returns only ``photo_count`` + ``photo_ids`` for cheap lazy-loading."),
 ):
     q = await scope_jobs_query(user, tenant, status, technician_id)
     # Phase F3.5 · Feb-2026 — customer_id filter. Applied AFTER scope_jobs_query
@@ -888,6 +899,35 @@ async def list_jobs(
             d.setdefault("has_water_readings", False)
             d.setdefault("has_chemicals_added", False)
             d.setdefault("has_checklist", False)
+    # Feb-2026 · Slim-photos ship — the list endpoint historically
+    # returned every job's full ``photos`` array (base64 blobs +
+    # per-photo metadata). On tenants with ~200 rows × ~10 photos
+    # each, that inflated the wire payload to 3–4 MB and started
+    # timing out mobile clients on the post-close-job list refresh
+    # (see ``/app/memory/DIAG_P0_MOBILE_CLOSE_JOB_SILENT.md``).
+    #
+    # Default shape now drops ``photos`` and emits:
+    #   * ``photo_count`` — ``len(photos)`` (0 when absent).
+    #   * ``photo_ids``  — list of stable ``id`` strings so the UI
+    #                       can lazy-load individual photos via the
+    #                       existing per-photo GET.
+    #
+    # ``GET /api/jobs/{id}`` (single-job detail) is intentionally
+    # NOT touched — full ``photos`` still ship there.
+    #
+    # Opt-in escape hatch: ``?include_photos=true`` restores the
+    # pre-slim payload for callers that haven't migrated yet.
+    if not include_photos:
+        for d in docs:
+            plist = d.get("photos") or []
+            if not isinstance(plist, list):
+                plist = []
+            d["photo_count"] = len(plist)
+            d["photo_ids"] = [
+                str(p.get("id")) for p in plist
+                if isinstance(p, dict) and p.get("id") is not None
+            ]
+            d.pop("photos", None)
     return docs
 
 

@@ -213,3 +213,52 @@ If the fix uses a Modal-based confirm (H1's remediation), the fallback path exis
 - Does NOT resume Phase 3.1 or start any feature work.
 
 **Ship the memo, hand off to `e1_expo_frontend_dev` with §6's patch scope, then stop and wait.**
+
+---
+
+## 8 · Root-cause fix applied (2026-04-16)
+
+**Root cause confirmed**: H1 from §4 — `Alert.alert` silently no-oping on iOS 17 + Hermes when UIScene is detached. The `closeJob` function relied on two `Alert.alert` calls (outlier prompt at line 575 and close confirmation at line 588) that would both silently return without presenting, leaving zero visible feedback for the user.
+
+**Secondary bug fixed**: Line 1011 referenced `handleClose()` which was undefined — the error retry button's "Try again" onPress would throw a `ReferenceError` if ever reached.
+
+### Changes applied to `checklist.tsx`:
+
+1. **New state**: `showCloseConfirm`, `showOutlierWarning`, `outlierNames` — drive in-tree Modals.
+
+2. **`closeJob` rewritten**: No longer calls `Alert.alert`. Instead:
+   - Outlier check with 3-second hard cap (race against timeout — advisory, fail-open)
+   - If outliers found → `setShowOutlierWarning(true)` (in-tree Modal)
+   - If no outliers → `setShowCloseConfirm(true)` (in-tree Modal)
+
+3. **`doCloseJob` extracted**: The 150-line inner callback from the old `Alert.alert("Close job?")` onPress is now a top-level `doCloseJob` function called by the confirm Modal's "Close job" button.
+
+4. **Two new Modals added** (reusing existing `errorDialog*` styles):
+   - `close-job-confirm-dialog`: "Close job?" with Cancel / Close job buttons
+   - `close-job-outlier-dialog`: "One of your readings looks off" with Let me recheck / Proceed anyway buttons
+
+5. **Fixed `handleClose` → `doCloseJob`** in the 429 error retry handler.
+
+### Test added: `__tests__/job-close-silent-noop.test.tsx` (6 tests)
+
+1. Tap Close Job with Alert.alert mocked as no-op → in-tree confirm dialog appears
+2. Confirm dialog → Close job → submitting=true + API fires
+3. Outlier warning modal renders when outliers found
+4. Outlier → Proceed anyway → confirm dialog opens
+5. Guard: nothing fires when report is null
+6. Error retry button calls doCloseJob (not undefined handleClose)
+
+### Regression results: 53/53 tests passing
+
+- `job-close-silent-noop.test.tsx`: 6/6
+- `task3-invoice-bypass-mobile.test.tsx`: 6/6
+- `task5-save-card-mobile.test.tsx`: 4/4
+- `task6-terms-mobile.test.tsx`: 6/6
+- `pb2-line-item-overrides.test.tsx`: 4/4
+- `parity-phase-a.test.tsx`: 9/9
+- `p0-429-retry.test.tsx`: 12/12
+- `chemistry-ui-trim.test.tsx`: 6/6
+
+### Screenshot verification
+
+`/tmp/close-job-fixed.png` — shows the in-tree confirm dialog rendering after tapping Close Job on an open job checklist. Dialog displays "Close job? Customer will see the final report." with Cancel and Close job buttons.

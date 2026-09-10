@@ -123,6 +123,11 @@ export default function JobChecklistScreen() {
   const [pillState, setPillState] = useState<SavePillState>({ kind: "synced" });
   const [closeJobError, setCloseJobError] = useState<string | null>(null);
   const closeJobPayloadRef = useRef<any>(null);
+  // P0 Close-Job silent no-op fix — in-tree Modals replace Alert.alert
+  // which silently no-ops on iOS 17 + Hermes (detached UIScene bug).
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [showOutlierWarning, setShowOutlierWarning] = useState(false);
+  const [outlierNames, setOutlierNames] = useState<string[]>([]);
   // Phase 39 · Step 2 — Visit Recap modal state, mirrors web.
   const [recapOpen, setRecapOpen] = useState(false);
   const [recapCustomer, setRecapCustomer] = useState<any>(null);
@@ -564,192 +569,172 @@ export default function JobChecklistScreen() {
   };
 
   // ─── Close job ───────────────────────────────────────────────────────
+  // P0 fix — replaced Alert.alert with in-tree Modals to prevent the
+  // iOS 17 + Hermes silent no-op where Alert.alert returns without
+  // displaying on detached UIScene. Now every tap produces a visible
+  // outcome: either the confirm dialog, the outlier warning, or the
+  // spinner.
   const closeJob = async () => {
     if (!report || submitting) return;
-    // Phase 50.B — outlier "Recheck?" confirmation before the regular
-    // Close-job dialog. Fail-open on any error so we never trap the tech.
+    // Phase 50.B — outlier "Recheck?" confirmation. Hard-capped at 3s
+    // so a network hang never blocks the close flow. Advisory only.
+    let outliers: string[] = [];
     try {
-      const outliers = await _mobileComputeOutlierNames(report, job);
-      if (outliers.length > 0) {
-        const proceed = await new Promise<boolean>((resolve) => {
-          Alert.alert(
-            "One of your readings looks off",
-            `${outliers.join(", ")} — proceed anyway?`,
-            [
-              { text: "Let me recheck", style: "cancel", onPress: () => resolve(false) },
-              { text: "Proceed anyway", style: "destructive", onPress: () => resolve(true) },
-            ],
-            { cancelable: true, onDismiss: () => resolve(false) }
-          );
-        });
-        if (!proceed) return;
+      outliers = await Promise.race([
+        _mobileComputeOutlierNames(report, job),
+        new Promise<string[]>((_, rej) =>
+          setTimeout(() => rej(new Error("outlier_timeout")), 3000),
+        ),
+      ]);
+    } catch { /* fail-open: outlier check is advisory */ }
+    if (outliers.length > 0) {
+      setOutlierNames(outliers);
+      setShowOutlierWarning(true);
+      return;
+    }
+    setShowCloseConfirm(true);
+  };
+
+  // Extracted from the former Alert.alert("Close job?") onPress callback.
+  // Called by the in-tree confirm dialog's "Close job" button.
+  const doCloseJob = async () => {
+    setShowCloseConfirm(false);
+    setShowOutlierWarning(false);
+    setSubmitting(true);
+    try {
+      // 1) Final PATCH — flush any pending edits.
+      dirtyRef.current = true;
+      const flushed = await flushSave();
+      if (!flushed.ok) {
+        Alert.alert(
+          "Save failed",
+          `${flushed.error || "Could not save your latest edits."}\n\nJob was not closed — please try again.`,
+        );
+        setSubmitting(false);
+        return;
       }
-    } catch { /* non-blocking */ }
-    Alert.alert(
-      "Close job?",
-      "Customer will see the final report.",
-      [
-        { text: "Cancel", style: "cancel" },
+
+      // 2) Submit / close.
+      if (!online) {
+        const current = reportRef.current;
+        await submitOffline(String(id), current || report);
+        Alert.alert(
+          "Saved — will sync when online",
+          "You're offline — the job will close automatically when your device reconnects.",
+          [{ text: "OK", onPress: () => router.replace("/(app)/schedule/calendar") }],
+        );
+        return;
+      }
+      // P0 429 fix — wrap submit in retryWithBackoff.
+      setPillState({ kind: "saving" });
+      const submitted: any = await retryWithBackoff(
+        () => api.post(`/jobs/${id}/service-report/submit`, {}),
         {
-          text: "Close job", style: "destructive",
-          onPress: async () => {
-            setSubmitting(true);
-            try {
-              // 1) Final PATCH — flush any pending edits.
-              //
-              // K61.b.2 · Feb-2026 — respect ``flushSave``'s result.
-              // If the pre-flush PATCH failed, do NOT proceed to
-              // submit — the submit would either 4xx on stale server
-              // state OR silently succeed with pre-flush data.  Bail
-              // out with a truthful error toast and let the tech
-              // retry after fixing whatever broke the PATCH.
-              dirtyRef.current = true;
-              const flushed = await flushSave();
-              if (!flushed.ok) {
-                Alert.alert(
-                  "Save failed",
-                  `${flushed.error || "Could not save your latest edits."}\n\nJob was not closed — please try again.`,
-                );
-                setSubmitting(false);
-                return;
-              }
-
-              // 2) Submit / close.
-              if (!online) {
-                // Phase O3 — Offline: enqueue service_report.upsert through
-                // the SQLite sync queue (survives force-quit).
-                const current = reportRef.current;
-                await submitOffline(String(id), current || report);
-                Alert.alert(
-                  "Saved — will sync when online",
-                  "You're offline — the job will close automatically when your device reconnects.",
-                  [{ text: "OK", onPress: () => router.replace("/(app)/schedule/calendar") }],
-                );
-                return;
-              }
-              // P0 429 fix — wrap submit in retryWithBackoff so upstream
-              // 429s don't instantly fail. Exponential backoff + jitter,
-              // honors Retry-After header, max 5 retries.
-              setPillState({ kind: "saving" });
-              const submitted: any = await retryWithBackoff(
-                () => api.post(`/jobs/${id}/service-report/submit`, {}),
-                {
-                  maxRetries: 5, baseDelayMs: 2000, maxDelayMs: 30000,
-                  onRetry: (attempt, _delayMs) => {
-                    setPillState({ kind: "retrying", attempt, maxRetries: 5 });
-                  },
-                },
-              );
-
-              // 3) Fire workstream event (best-effort — do not roll back on failure).
-              const template: ChecklistType = getChecklistType(job);
-              const chemsCount = (report.chemicals_added || []).length;
-              const photosCount = (report.photos || []).length;
-              try {
-                await api.post("/workstream/events", {
-                  type: "job.completed",
-                  payload: {
-                    job_id: id,
-                    customer_name: job?.customer_name,
-                    tech_name: user?.name || user?.email,
-                    service_type: job?.service_type,
-                    chemicals_added_count: chemsCount,
-                    photos_count: photosCount,
-                    template,
-                  },
-                  related_ref: { type: "job", id: String(id) },
-                });
-              } catch (e: any) {
-                Alert.alert("Job closed", `Workstream event failed: ${e?.message || "unknown"}`);
-              }
-
-              // 4) Navigate back — but first prompt the tech to send the
-              //    visit recap. The recap modal handles its own close.
-              try {
-                if (job?.customer_id) {
-                  const cust: any = await api.get(`/customers/${job.customer_id}`);
-                  writeThroughCustomer(cust).catch(() => {});
-                  setRecapCustomer({
-                    id: cust?.id, name: cust?.name,
-                    email: cust?.email, phone: cust?.phone,
-                    alert_phone: cust?.alert_phone,
-                  });
-                } else {
-                  setRecapCustomer({ name: formatCustomerName(job) });
-                }
-              } catch {
-                // Offline — try the SQLite read cache before we
-                // fall through to the job's denormalised
-                // ``customer_name``.
-                const cached = job?.customer_id
-                  ? await readCachedCustomer(job.customer_id).catch(() => null)
-                  : null;
-                setRecapCustomer(cached ? {
-                  id: cached.id, name: cached.name,
-                  email: cached.email, phone: cached.phone,
-                  alert_phone: cached.alert_phone,
-                } : { name: formatCustomerName(job) });
-              }
-              setRecapOpen(true);
-            } catch (e: any) {
-              const isApiErr = e instanceof ApiError;
-              const rawDetail: any = isApiErr ? e.detail : null;
-              // P0 429 fix — if retries exhausted on a 429, show the error dialog
-              // instead of the generic alert. Enqueue the payload for later retry.
-              if (isApiErr && e.status === 429) {
-                closeJobPayloadRef.current = { jobId: id, report: reportRef.current || report, job };
-                setPillState({ kind: "exhausted", onRetry: () => setCloseJobError(null) });
-                setCloseJobError(
-                  "The server is temporarily busy (rate-limited). Your job data has been saved locally. Please try closing the job again in a moment."
-                );
-                // Enqueue to offline storage so payload isn't lost.
-                try {
-                  await writeQueue.enqueue({
-                    kind: "submit-service-report",
-                    jobId: String(id),
-                    body: {},
-                  });
-                } catch (_qErr) { /* best effort */ }
-              } else {
-                // ── Existing error handling ──────────────────────────
-                const isChemistryGate =
-                  isApiErr && e.status === 422 &&
-                  rawDetail && typeof rawDetail === "object" &&
-                  (rawDetail as any).detail === "chemistry_core_readings_missing";
-                if (isChemistryGate) {
-                  const missingLabels: string[] = Array.isArray(rawDetail.missing_labels)
-                    ? rawDetail.missing_labels
-                    : [];
-                  const bodyHighlights: Record<number, string[]> = {};
-                  const bodies = waterBodiesRef.current;
-                  for (let bi = 0; bi < bodies.length; bi++) {
-                    const b = bodies[bi];
-                    if (b.type === "pool") {
-                      const missing = missingRequiredReadings(b);
-                      if (missing.length > 0) bodyHighlights[bi] = missing;
-                    }
-                  }
-                  setHighlightBodies(bodyHighlights);
-                  const expanded = missingLabels.length > 0
-                    ? missingLabels.map(expandChemistryLabel).join(", ")
-                    : Object.values(bodyHighlights).flat().map(expandChemistryLabel).join(", ");
-                  Alert.alert(
-                    "Missing required readings",
-                    `Please fill in: ${expanded || "required chemistry fields"}.`,
-                  );
-                } else if (isApiErr) {
-                  Alert.alert("Close failed", e.message || `Request failed (${e.status})`);
-                } else {
-                  Alert.alert("Close failed", e?.message || "Try again.");
-                }
-              }
-            } finally {
-              setSubmitting(false);
-            }
+          maxRetries: 5, baseDelayMs: 2000, maxDelayMs: 30000,
+          onRetry: (attempt, _delayMs) => {
+            setPillState({ kind: "retrying", attempt, maxRetries: 5 });
           },
         },
-      ]
-    );
+      );
+
+      // 3) Fire workstream event (best-effort).
+      const template: ChecklistType = getChecklistType(job);
+      const chemsCount = (report.chemicals_added || []).length;
+      const photosCount = (report.photos || []).length;
+      try {
+        await api.post("/workstream/events", {
+          type: "job.completed",
+          payload: {
+            job_id: id,
+            customer_name: job?.customer_name,
+            tech_name: user?.name || user?.email,
+            service_type: job?.service_type,
+            chemicals_added_count: chemsCount,
+            photos_count: photosCount,
+            template,
+          },
+          related_ref: { type: "job", id: String(id) },
+        });
+      } catch (e: any) {
+        Alert.alert("Job closed", `Workstream event failed: ${e?.message || "unknown"}`);
+      }
+
+      // 4) Navigate back — prompt visit recap first.
+      try {
+        if (job?.customer_id) {
+          const cust: any = await api.get(`/customers/${job.customer_id}`);
+          writeThroughCustomer(cust).catch(() => {});
+          setRecapCustomer({
+            id: cust?.id, name: cust?.name,
+            email: cust?.email, phone: cust?.phone,
+            alert_phone: cust?.alert_phone,
+          });
+        } else {
+          setRecapCustomer({ name: formatCustomerName(job) });
+        }
+      } catch {
+        const cached = job?.customer_id
+          ? await readCachedCustomer(job.customer_id).catch(() => null)
+          : null;
+        setRecapCustomer(cached ? {
+          id: cached.id, name: cached.name,
+          email: cached.email, phone: cached.phone,
+          alert_phone: cached.alert_phone,
+        } : { name: formatCustomerName(job) });
+      }
+      setRecapOpen(true);
+    } catch (e: any) {
+      const isApiErr = e instanceof ApiError;
+      const rawDetail: any = isApiErr ? e.detail : null;
+      // P0 429 fix — retries exhausted on 429 → error dialog.
+      if (isApiErr && e.status === 429) {
+        closeJobPayloadRef.current = { jobId: id, report: reportRef.current || report, job };
+        setPillState({ kind: "exhausted", onRetry: () => setCloseJobError(null) });
+        setCloseJobError(
+          "The server is temporarily busy (rate-limited). Your job data has been saved locally. Please try closing the job again in a moment."
+        );
+        try {
+          await writeQueue.enqueue({
+            kind: "submit-service-report",
+            jobId: String(id),
+            body: {},
+          });
+        } catch (_qErr) { /* best effort */ }
+      } else {
+        const isChemistryGate =
+          isApiErr && e.status === 422 &&
+          rawDetail && typeof rawDetail === "object" &&
+          (rawDetail as any).detail === "chemistry_core_readings_missing";
+        if (isChemistryGate) {
+          const missingLabels: string[] = Array.isArray(rawDetail.missing_labels)
+            ? rawDetail.missing_labels
+            : [];
+          const bodyHighlights: Record<number, string[]> = {};
+          const bodies = waterBodiesRef.current;
+          for (let bi = 0; bi < bodies.length; bi++) {
+            const b = bodies[bi];
+            if (b.type === "pool") {
+              const missing = missingRequiredReadings(b);
+              if (missing.length > 0) bodyHighlights[bi] = missing;
+            }
+          }
+          setHighlightBodies(bodyHighlights);
+          const expanded = missingLabels.length > 0
+            ? missingLabels.map(expandChemistryLabel).join(", ")
+            : Object.values(bodyHighlights).flat().map(expandChemistryLabel).join(", ");
+          Alert.alert(
+            "Missing required readings",
+            `Please fill in: ${expanded || "required chemistry fields"}.`,
+          );
+        } else if (isApiErr) {
+          Alert.alert("Close failed", e.message || `Request failed (${e.status})`);
+        } else {
+          Alert.alert("Close failed", e?.message || "Try again.");
+        }
+      }
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   // ─── Render ──────────────────────────────────────────────────────────
@@ -1007,12 +992,66 @@ export default function JobChecklistScreen() {
                 onPress={() => {
                   setCloseJobError(null);
                   setPillState({ kind: "synced" });
-                  // Re-trigger close job after dismissing the dialog
-                  handleClose();
+                  // P0 fix — was `handleClose()` (undefined). Now calls doCloseJob.
+                  doCloseJob();
                 }}
                 testID="job-close-error-retry"
               >
                 <Text style={styles.errorDialogRetryText}>Try again</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* P0 fix — In-tree close-job confirmation (replaces Alert.alert) */}
+      <Modal visible={showCloseConfirm} transparent animationType="fade" testID="close-job-confirm-dialog">
+        <View style={styles.errorDialogOverlay}>
+          <View style={styles.errorDialogCard}>
+            <Ionicons name="shield-checkmark" size={36} color={colors.brand} />
+            <Text style={styles.errorDialogTitle}>Close job?</Text>
+            <Text style={styles.errorDialogMessage}>Customer will see the final report.</Text>
+            <View style={styles.errorDialogActions}>
+              <TouchableOpacity
+                style={styles.errorDialogDismiss}
+                onPress={() => setShowCloseConfirm(false)}
+                testID="close-job-cancel-btn"
+              >
+                <Text style={styles.errorDialogDismissText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.errorDialogRetry}
+                onPress={doCloseJob}
+                testID="close-job-confirm-btn"
+              >
+                <Text style={styles.errorDialogRetryText}>Close job</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* P0 fix — In-tree outlier warning (replaces Alert.alert) */}
+      <Modal visible={showOutlierWarning} transparent animationType="fade" testID="close-job-outlier-dialog">
+        <View style={styles.errorDialogOverlay}>
+          <View style={styles.errorDialogCard}>
+            <Ionicons name="warning" size={36} color="#D97706" />
+            <Text style={styles.errorDialogTitle}>One of your readings looks off</Text>
+            <Text style={styles.errorDialogMessage}>{outlierNames.join(", ")} — proceed anyway?</Text>
+            <View style={styles.errorDialogActions}>
+              <TouchableOpacity
+                style={styles.errorDialogDismiss}
+                onPress={() => { setShowOutlierWarning(false); setOutlierNames([]); }}
+                testID="close-job-outlier-recheck-btn"
+              >
+                <Text style={styles.errorDialogDismissText}>Let me recheck</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.errorDialogRetry, { backgroundColor: "#DC2626" }]}
+                onPress={() => { setShowOutlierWarning(false); setShowCloseConfirm(true); }}
+                testID="close-job-outlier-proceed-btn"
+              >
+                <Text style={styles.errorDialogRetryText}>Proceed anyway</Text>
               </TouchableOpacity>
             </View>
           </View>
