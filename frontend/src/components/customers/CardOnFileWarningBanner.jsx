@@ -83,16 +83,16 @@ export default function CardOnFileWarningBanner({ customer, onSent, onError }) {
   return (
     <div
       data-testid="card-on-file-warning-banner"
-      className="rounded-2xl p-4 flex items-start gap-3"
+      className="rounded-2xl p-4 flex flex-wrap items-start gap-3"
       style={{
         backgroundColor: "#FEFCE8",
         border: "1px solid #FDE68A",
       }}
     >
-      <div className="mt-0.5">
+      <div className="mt-0.5 shrink-0">
         <AlertTriangle size={20} color="#B45309" />
       </div>
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-[12rem]">
         <div className="text-sm font-semibold text-amber-900">
           Card on file required — none saved
         </div>
@@ -105,14 +105,14 @@ export default function CardOnFileWarningBanner({ customer, onSent, onError }) {
         onClick={send}
         disabled={busy}
         data-testid="card-on-file-send-link-btn"
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white whitespace-nowrap shrink-0 self-center"
         style={{
           backgroundColor: "#B45309",
           opacity: busy ? 0.7 : 1,
         }}
       >
-        <CreditCard size={13} />
-        {busy ? "Sending…" : "Add card on file"}
+        <CreditCard size={13} className="shrink-0" />
+        <span>{busy ? "Sending…" : "Add card on file"}</span>
       </button>
     </div>
   );

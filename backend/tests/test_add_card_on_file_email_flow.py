@@ -147,6 +147,43 @@ def test_happy_path_invokes_resend_and_returns_sent_envelope(
 
 
 # ═════════════════════════════════════════════════════════════════════
+# 8. Feb-2026 follow-up P1 — ledger truthfulness contract.
+#    The delivery row MUST persist ``provider_response_id`` so the
+#    Resend webhook receiver can correlate terminal events back to
+#    THIS row. Also stamps ``accepted_by_provider`` (semantic alias)
+#    and ``terminal_delivered=None`` (flipped by the webhook).
+# ═════════════════════════════════════════════════════════════════════
+def test_delivery_row_persists_provider_id_for_webhook_correlation(
+    fake_db, monkeypatch,
+):
+    cid = _seed_customer(fake_db, phone=None)
+    _seed_templates(fake_db)
+
+    async def _fake_send_email(**kwargs):
+        return {"status": "sent", "provider_id": "resend_msg_ABC"}
+
+    import services.comms_email_adapter as cea
+    monkeypatch.setattr(cea, "send_email", _fake_send_email)
+
+    from routers.customers import send_card_add_link
+    _run(send_card_add_link(cid, user=_admin(), tenant=_tenant()))
+
+    row = next(
+        r for r in fake_db.marketing_deliveries.inserts
+        if r["channel"] == "email"
+    )
+    # ``provider_response_id`` MUST be set so the webhook receiver
+    # can update this row when Resend fires ``email.delivered`` etc.
+    assert row["provider_response_id"] == "resend_msg_ABC"
+    # Ledger truthfulness — ``delivered`` = "provider accepted" is
+    # semantically ambiguous, so the row also carries an unambiguous
+    # ``accepted_by_provider`` alias + a ``terminal_delivered`` tri-
+    # state that only the webhook can flip.
+    assert row["accepted_by_provider"] is True
+    assert row["terminal_delivered"] is None
+
+
+# ═════════════════════════════════════════════════════════════════════
 # 2. No email + no phone → 400 ``NO_CONTACT_ON_FILE``.
 # ═════════════════════════════════════════════════════════════════════
 def test_no_contact_on_file_returns_400_no_contact(fake_db, monkeypatch):
@@ -265,3 +302,84 @@ def test_manager_super_admin_admin_all_allowed(fake_db, monkeypatch):
             tenant=_tenant(),
         ))
         assert out["sent_email"] is True
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 9. SMS parity — silent-fail vector when RC BYO is unconfigured.
+#    ``send_sms`` (legacy sync wrapper) returned True regardless of
+#    whether the RC adapter answered ``provider="mock"`` (BYO
+#    missing) or ``provider_status="dry_run"`` (comms env-guard
+#    downgraded). The Feb-2026 fix calls the RC adapter directly
+#    and surfaces the exact reason on the ledger + response.
+# ═════════════════════════════════════════════════════════════════════
+def test_sms_unconfigured_marks_sms_not_configured_not_sent(
+    fake_db, monkeypatch,
+):
+    cid = _seed_customer(fake_db, email=None)  # SMS-only path
+    _seed_templates(fake_db)
+
+    async def _fake_rc_send(**kwargs):
+        return {"provider": "mock", "provider_status": "not_configured",
+                "provider_response_id": None}
+
+    import services.sms.rc_adapter as rca
+    monkeypatch.setattr(rca, "send", _fake_rc_send)
+
+    from routers.customers import send_card_add_link
+    with pytest.raises(HTTPException) as ei:
+        _run(send_card_add_link(cid, user=_admin(), tenant=_tenant()))
+    assert ei.value.status_code == 502
+    sms_row = next(
+        r for r in fake_db.marketing_deliveries.inserts
+        if r["channel"] == "sms"
+    )
+    assert sms_row["delivered"] is False
+    assert sms_row["accepted_by_provider"] is False
+    assert sms_row["provider_status"] == "sms_not_configured"
+    assert "RingCentral" in sms_row["error"]
+
+
+def test_sms_gate_dry_run_marks_gate_dry_run(fake_db, monkeypatch):
+    cid = _seed_customer(fake_db, email=None)
+    _seed_templates(fake_db)
+
+    async def _fake_rc_send(**kwargs):
+        return {"provider": "ringcentral", "provider_status": "dry_run",
+                "provider_response_id": None}
+
+    import services.sms.rc_adapter as rca
+    monkeypatch.setattr(rca, "send", _fake_rc_send)
+
+    from routers.customers import send_card_add_link
+    with pytest.raises(HTTPException):
+        _run(send_card_add_link(cid, user=_admin(), tenant=_tenant()))
+    sms_row = next(
+        r for r in fake_db.marketing_deliveries.inserts
+        if r["channel"] == "sms"
+    )
+    assert sms_row["provider_status"] == "gate_dry_run"
+    assert "allowlisted" in sms_row["error"]
+
+
+def test_sms_happy_path_persists_provider_id(fake_db, monkeypatch):
+    cid = _seed_customer(fake_db, email=None)
+    _seed_templates(fake_db)
+
+    async def _fake_rc_send(**kwargs):
+        return {"provider": "ringcentral", "provider_status": "queued",
+                "provider_response_id": "rc_msg_XYZ"}
+
+    import services.sms.rc_adapter as rca
+    monkeypatch.setattr(rca, "send", _fake_rc_send)
+
+    from routers.customers import send_card_add_link
+    out = _run(send_card_add_link(cid, user=_admin(), tenant=_tenant()))
+    assert out["sent_sms"] is True
+    assert out["channels"]["sms"]["status"] == "queued"
+    sms_row = next(
+        r for r in fake_db.marketing_deliveries.inserts
+        if r["channel"] == "sms"
+    )
+    assert sms_row["provider_response_id"] == "rc_msg_XYZ"
+    assert sms_row["accepted_by_provider"] is True

@@ -3712,6 +3712,7 @@ async def send_card_add_link(cid: str,
     if email_tpl and customer.get("email"):
         subject_r, _ = render_template(email_tpl.get("subject") or "", ctx)
         body_r, _ = render_template(email_tpl.get("body") or "", ctx)
+        email_provider_id: str | None = None
         try:
             from services.comms_email_adapter import send_email
             import asyncio as _asyncio
@@ -3721,6 +3722,7 @@ async def send_card_add_link(cid: str,
                 from_name=(tenant.get("name") or None),
             ), timeout=8.0)
             email_status = (res or {}).get("status")
+            email_provider_id = (res or {}).get("provider_id")
             sent_email = email_status in ("sent", "sent_no_provider_id")
             if not sent_email:
                 email_error = (res or {}).get("error") or email_status
@@ -3739,10 +3741,36 @@ async def send_card_add_link(cid: str,
             "subject": subject_r, "body": body_r,
             "trigger_entity": {"kind": "add_card_request", "id": cid},
             "trigger_id": trigger_id,
+            # Feb-2026 · Follow-up P1 fix — the ``delivered`` flag on
+            # this row means "Resend accepted the payload" (i.e. the
+            # provider API returned 200 with a message id). It does
+            # NOT mean the recipient's mailbox received it. Terminal
+            # delivery status is stamped by the Resend webhook
+            # receiver at ``routers.resend_webhooks`` and lands in
+            # ``provider_status`` + ``delivered_at`` / ``bounced_at``
+            # / ``complained_at``. To make future consumers'
+            # semantics unambiguous we ALSO store
+            # ``accepted_by_provider`` (alias of ``delivered`` at
+            # insert time) and ``terminal_delivered`` (null until
+            # the ``email.delivered`` webhook fires).
             "delivered": sent_email,
-            # Feb-2026 · Persist the truthful outcome so the deliveries
-            # ledger is auditable without cross-referencing app logs.
+            "accepted_by_provider": sent_email,
+            "terminal_delivered": None,
             "provider_status": email_status,
+            # Feb-2026 · Ledger honesty split — ``provider_status``
+            # is a live cursor that the webhook overwrites as
+            # events arrive (delivered / opened / clicked, or
+            # bounced / complained / delivery_delayed). To keep
+            # the "did the mailbox actually accept it?" question
+            # answerable without walking a status history, we
+            # store the **terminal** outcome separately. Null at
+            # insert; flipped by the webhook when a terminal
+            # event (delivered / bounced / complained) fires.
+            # ``delivery_delayed`` is intentionally NOT terminal —
+            # it's a Resend retry state and can transition to
+            # either delivered or bounced.
+            "provider_terminal_status": None,
+            "provider_response_id": email_provider_id,
             "error": email_error,
             "created_at": now_iso(),
         })
@@ -3753,21 +3781,56 @@ async def send_card_add_link(cid: str,
 
     if sms_tpl and customer.get("phone"):
         body_r, _ = render_template(sms_tpl.get("body") or "", ctx)
+        sms_provider_id: str | None = None
         try:
+            # Feb-2026 · SMS parity fix — call the async RC adapter
+            # DIRECTLY so we can inspect the full response envelope
+            # (``provider``, ``provider_status``,
+            # ``provider_response_id``). The legacy sync wrapper
+            # ``send_sms`` returns bool only, which is why the old
+            # code silently marked ``sent_sms=True`` even when RC
+            # returned ``provider="mock"`` (BYO unconfigured) or the
+            # comms gate downgraded to ``dry_run``.
+            from services.sms.rc_adapter import send as _rc_send
             import asyncio as _asyncio
-            # Phase G2 · Feb-2026 (TD-G1-1) — plumb tenant_id so the
-            # RC adapter honours ``tenants.rc_sms_from_number`` for
-            # the add-card send. Positional args + kwarg matches the
-            # ``send_sms(to, body, *, tenant_id=None)`` signature.
-            await _asyncio.wait_for(
-                _asyncio.to_thread(
-                    send_sms, customer["phone"], body_r,
+            res = await _asyncio.wait_for(
+                _rc_send(
+                    to=customer["phone"], body=body_r,
+                    category="transactional",
                     tenant_id=tenant["id"],
                 ),
                 timeout=8.0,
             )
-            sent_sms = True
-            sms_status = "sent"
+            provider = (res or {}).get("provider")
+            provider_status = (res or {}).get("provider_status")
+            sms_provider_id = (res or {}).get("provider_response_id")
+            # Truthful outcome — only a live RC accept counts as
+            # sent. Everything else (mock provider, dry_run gate,
+            # explicit failure) is surfaced with a distinct status
+            # so ops / the FE toast never lie about success.
+            if provider == "ringcentral" and provider_status in (
+                "queued", "sent", "delivered", "accepted"
+            ):
+                sent_sms = True
+                sms_status = provider_status
+            elif provider == "mock":
+                sms_status = "sms_not_configured"
+                sms_error = (
+                    "RingCentral BYO credentials missing on this "
+                    "tenant — SMS silently mocked. Configure "
+                    "RC_CLIENT_ID / RC_JWT_TOKEN (or the per-tenant "
+                    "RC overrides) to enable live SMS."
+                )
+            elif provider_status == "dry_run":
+                sms_status = "gate_dry_run"
+                sms_error = (
+                    "Comms env-guard downgraded the send to dry-run "
+                    "(recipient not allowlisted for this "
+                    "environment)."
+                )
+            else:
+                sms_status = provider_status or "provider_rejected"
+                sms_error = (res or {}).get("error") or str(res)[:200]
         except Exception as exc:
             sms_status = "exception"
             sms_error = f"{type(exc).__name__}: {exc}"[:200]
@@ -3783,8 +3846,18 @@ async def send_card_add_link(cid: str,
             "subject": None, "body": body_r,
             "trigger_entity": {"kind": "add_card_request", "id": cid},
             "trigger_id": trigger_id,
+            # Feb-2026 · Same ledger-honesty split as the email row —
+            # ``delivered``/``accepted_by_provider`` = "RC accepted",
+            # ``terminal_delivered`` = null (SMS terminal state is
+            # a follow-up — RC delivery webhooks are not yet wired
+            # for this pod), ``provider_terminal_status`` = null
+            # until the RC delivery-status webhook lands.
             "delivered": sent_sms,
+            "accepted_by_provider": sent_sms,
+            "terminal_delivered": None,
             "provider_status": sms_status,
+            "provider_terminal_status": None,
+            "provider_response_id": sms_provider_id,
             "error": sms_error,
             "created_at": now_iso(),
         })

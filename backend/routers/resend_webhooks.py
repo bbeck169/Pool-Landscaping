@@ -122,11 +122,17 @@ async def resend_webhook(request: Request) -> Dict[str, Any]:
         # ``provider_last_event_at`` as the wall-clock cursor for
         # sorting the most-recent event across all types.
         _MAP = {
-            "email.delivered":  ("delivered",  "delivered_at"),
-            "email.bounced":    ("bounced",    "bounced_at"),
-            "email.complained": ("complained", "complained_at"),
-            "email.opened":     ("opened",     "opened_at"),
-            "email.clicked":    ("clicked",    "clicked_at"),
+            "email.delivered":         ("delivered",         "delivered_at"),
+            "email.bounced":           ("bounced",           "bounced_at"),
+            "email.complained":        ("complained",        "complained_at"),
+            "email.opened":            ("opened",            "opened_at"),
+            "email.clicked":           ("clicked",           "clicked_at"),
+            # Feb-2026 · Follow-up P1 — Resend "Delivery Delayed"
+            # state (greylisting / provider hold / temporary
+            # rejection). NOT terminal — will transition to
+            # ``delivered`` or ``bounced`` when the retry
+            # resolves.
+            "email.delivery_delayed":  ("delivery_delayed",  "delivery_delayed_at"),
         }
         entry = _MAP.get(event_type)
         if entry:
@@ -136,6 +142,26 @@ async def resend_webhook(request: Request) -> Dict[str, Any]:
                 "provider_last_event_at": now_iso(),
                 ts_field: now_iso(),
             }
+            # Feb-2026 · Follow-up P1 fix — truthful ``terminal_delivered``
+            # flag so downstream consumers (add-card UI, ops audit) can
+            # ask "did the recipient's mailbox actually accept the
+            # send?" without cross-referencing the raw status enum.
+            # Only ``email.delivered`` flips it to True; any terminal
+            # failure (bounce / complaint) flips it to False so the
+            # tri-state (null / true / false) makes the semantic
+            # unambiguous. ``delivery_delayed`` is retryable and
+            # leaves ``terminal_delivered`` untouched.
+            if event_type == "email.delivered":
+                set_doc["terminal_delivered"] = True
+                set_doc["provider_terminal_status"] = "delivered"
+            elif event_type == "email.bounced":
+                set_doc["terminal_delivered"] = False
+                set_doc["provider_terminal_status"] = "bounced"
+            elif event_type == "email.complained":
+                set_doc["terminal_delivered"] = False
+                set_doc["provider_terminal_status"] = "complained"
+            # opened / clicked / delivery_delayed → engagement or
+            # transient — do NOT touch the terminal-status fields.
             await db.marketing_deliveries.update_one(
                 {"provider_response_id": email_id},
                 {"$set": set_doc},
