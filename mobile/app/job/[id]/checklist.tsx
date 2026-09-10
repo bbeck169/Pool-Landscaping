@@ -23,7 +23,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Alert,
-  Share,
+  Share, Modal, TouchableOpacity,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -49,10 +49,9 @@ import GenericChecklistForm from "@/src/components/checklist/GenericChecklistFor
 import VisitRecapModal from "@/src/components/checklist/VisitRecapModal";
 import WaterBodyManager from "@/src/components/checklist/WaterBodyManager";
 import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/waterBodies";
-// K61.c · Feb-2026 — expand chemistry-abbreviation labels (FC, TA,
-// CYA, …) to human-readable full names when surfacing the "Missing
-// required readings" alert.  See ``@/src/lib/expandChemistryLabel``.
 import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
+import { retryWithBackoff } from "@/src/services/retryWithBackoff";
+import ChecklistSavePill, { type SavePillState } from "@/src/components/sync/ChecklistSavePill";
 import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
 // Phase 1 Offline Read — hydrator cache for offline-first bootstrap.
 import { getCachedJobBootstrap, CK } from "@/src/services/routeHydrator";
@@ -120,6 +119,10 @@ export default function JobChecklistScreen() {
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [submitting, setSubmitting] = useState(false);
+  // P0 429 fix — unified pill state + retry tracking.
+  const [pillState, setPillState] = useState<SavePillState>({ kind: "synced" });
+  const [closeJobError, setCloseJobError] = useState<string | null>(null);
+  const closeJobPayloadRef = useRef<any>(null);
   // Phase 39 · Step 2 — Visit Recap modal state, mirrors web.
   const [recapOpen, setRecapOpen] = useState(false);
   const [recapCustomer, setRecapCustomer] = useState<any>(null);
@@ -168,6 +171,32 @@ export default function JobChecklistScreen() {
     wasOnlineRef.current = online;
   }, [online]);
   useEffect(() => { writeQueue.flush().catch(() => {}); }, []);
+
+  // ── Unified pill derivation ─────────────────────────────────────────
+  // Priority: saving > retrying > exhausted > syncing > error > offline > synced
+  useEffect(() => {
+    // During active save or close-job, saveState drives the pill
+    // (retrying/exhausted set directly by retryWithBackoff callbacks).
+    if (saveState === "saving") {
+      setPillState({ kind: "saving" });
+      return;
+    }
+    // After save success or error, derive from queue + online state
+    const queued = queueState.count;
+    const isSyncing = queueState.syncing;
+    if (isSyncing) {
+      setPillState({ kind: "saving" });
+    } else if (!online) {
+      setPillState({ kind: "offline", queuedCount: queued });
+    } else if (queued > 0) {
+      setPillState({ kind: "saving" }); // about to drain
+    } else if (saveState === "error") {
+      // error state without active retry = exhausted
+      // (but this is transient; retryWithBackoff sets exhausted directly)
+    } else {
+      setPillState({ kind: "synced" });
+    }
+  }, [saveState, online, queueState]);
 
   // ─── Load ───────────────────────────────────────────────────────────
   //
@@ -413,7 +442,15 @@ export default function JobChecklistScreen() {
         endpoint: `/jobs/${id}/service-report`,
         method: "PATCH",
         payload: patchBody,
-        onlineFn: () => api.patch(`/jobs/${id}/service-report`, patchBody),
+        onlineFn: () => retryWithBackoff(
+          () => api.patch(`/jobs/${id}/service-report`, patchBody),
+          {
+            maxRetries: 5, baseDelayMs: 2000, maxDelayMs: 30000,
+            onRetry: (attempt, _delayMs) => {
+              setPillState({ kind: "retrying", attempt, maxRetries: 5 });
+            },
+          },
+        ),
       });
       if (patched && typeof patched === "object") { setReport(patched); reportRef.current = patched; }
       dirtyRef.current = false;
@@ -432,11 +469,11 @@ export default function JobChecklistScreen() {
     } catch (e: any) {
       setSaveState("error");
       savingShownAtRef.current = 0;
-      // K61.b.2 · Feb-2026 — surface the humanised message to the
-      // caller so Save-draft can render a truthful error toast.
-      // Never falsely claim success.  The message defaults through
-      // ``api.ts`` (fetch-based ``ApiError``) or ``ApiNetworkError``
-      // → both attach a readable string to ``e.message``.
+      // P0 429 fix — set exhausted pill with tap-to-retry action.
+      setPillState({
+        kind: "exhausted",
+        onRetry: () => { scheduleAutosave(); },
+      });
       return { ok: false, error: String(e?.message || "Save failed. Try again.") };
     } finally {
       savingRef.current = false;
@@ -590,8 +627,18 @@ export default function JobChecklistScreen() {
                 );
                 return;
               }
-              const submitted: any = await api.post(
-                `/jobs/${id}/service-report/submit`, {}
+              // P0 429 fix — wrap submit in retryWithBackoff so upstream
+              // 429s don't instantly fail. Exponential backoff + jitter,
+              // honors Retry-After header, max 5 retries.
+              setPillState({ kind: "saving" });
+              const submitted: any = await retryWithBackoff(
+                () => api.post(`/jobs/${id}/service-report/submit`, {}),
+                {
+                  maxRetries: 5, baseDelayMs: 2000, maxDelayMs: 30000,
+                  onRetry: (attempt, _delayMs) => {
+                    setPillState({ kind: "retrying", attempt, maxRetries: 5 });
+                  },
+                },
               );
 
               // 3) Fire workstream event (best-effort — do not roll back on failure).
@@ -645,65 +692,56 @@ export default function JobChecklistScreen() {
               }
               setRecapOpen(true);
             } catch (e: any) {
-              // K61.a.2 + K61.c · Feb-2026 — inspect the structured
-              // ``ApiError`` shape rather than fishing for the pre-K61
-              // axios-shaped ``e.response.data.detail`` fields (which
-              // never exist on the fetch-based client and made the
-              // whole branch dead code).  Structured chemistry-gate
-              // detection: ``err.status === 422 && err.detail?.detail
-              // === "chemistry_core_readings_missing"``.
-              //
-              // Missing-labels are surfaced BOTH visually (per-body
-              // ``highlightBodies`` for the ChemistryReadings section)
-              // AND textually (single Alert listing the labels).
-              // Labels get run through the K60 chemistry-label
-              // expander so techs see "Cyanuric Acid" instead of
-              // "CYA" in the alert copy.
               const isApiErr = e instanceof ApiError;
               const rawDetail: any = isApiErr ? e.detail : null;
-              const isChemistryGate =
-                isApiErr && e.status === 422 &&
-                rawDetail && typeof rawDetail === "object" &&
-                (rawDetail as any).detail === "chemistry_core_readings_missing";
-              if (isChemistryGate) {
-                const missingLabels: string[] = Array.isArray(rawDetail.missing_labels)
-                  ? rawDetail.missing_labels
-                  : [];
-                // Map missing reading labels back to body indices for
-                // inline field highlighting.  Pre-K61 code already
-                // wired up ``highlightBodies`` via
-                // ``missingRequiredReadings`` per body — this call
-                // was in place but never fired because the outer
-                // ``if`` was dead code.
-                const bodyHighlights: Record<number, string[]> = {};
-                const bodies = waterBodiesRef.current;
-                for (let bi = 0; bi < bodies.length; bi++) {
-                  const b = bodies[bi];
-                  if (b.type === "pool") {
-                    const missing = missingRequiredReadings(b);
-                    if (missing.length > 0) bodyHighlights[bi] = missing;
-                  }
-                }
-                setHighlightBodies(bodyHighlights);
-                // Expand any short-form labels ("CYA" → "Cyanuric
-                // Acid").  Backend already returns most as readable
-                // strings — expander is idempotent on those.
-                const expanded = missingLabels.length > 0
-                  ? missingLabels.map(expandChemistryLabel).join(", ")
-                  : Object.values(bodyHighlights).flat().map(expandChemistryLabel).join(", ");
-                Alert.alert(
-                  "Missing required readings",
-                  `Please fill in: ${expanded || "required chemistry fields"}.`,
+              // P0 429 fix — if retries exhausted on a 429, show the error dialog
+              // instead of the generic alert. Enqueue the payload for later retry.
+              if (isApiErr && e.status === 429) {
+                closeJobPayloadRef.current = { jobId: id, report: reportRef.current || report, job };
+                setPillState({ kind: "exhausted", onRetry: () => setCloseJobError(null) });
+                setCloseJobError(
+                  "The server is temporarily busy (rate-limited). Your job data has been saved locally. Please try closing the job again in a moment."
                 );
-              } else if (isApiErr) {
-                // Non-chemistry HTTP failure — surface the real
-                // backend reason (already humanised via api.ts's
-                // detail-flattening), not "Something went wrong".
-                Alert.alert("Close failed", e.message || `Request failed (${e.status})`);
+                // Enqueue to offline storage so payload isn't lost.
+                try {
+                  await writeQueue.enqueue({
+                    kind: "submit-service-report",
+                    jobId: String(id),
+                    body: {},
+                  });
+                } catch (_qErr) { /* best effort */ }
               } else {
-                // ApiNetworkError / unexpected — fall through to the
-                // generic message string.
-                Alert.alert("Close failed", e?.message || "Try again.");
+                // ── Existing error handling ──────────────────────────
+                const isChemistryGate =
+                  isApiErr && e.status === 422 &&
+                  rawDetail && typeof rawDetail === "object" &&
+                  (rawDetail as any).detail === "chemistry_core_readings_missing";
+                if (isChemistryGate) {
+                  const missingLabels: string[] = Array.isArray(rawDetail.missing_labels)
+                    ? rawDetail.missing_labels
+                    : [];
+                  const bodyHighlights: Record<number, string[]> = {};
+                  const bodies = waterBodiesRef.current;
+                  for (let bi = 0; bi < bodies.length; bi++) {
+                    const b = bodies[bi];
+                    if (b.type === "pool") {
+                      const missing = missingRequiredReadings(b);
+                      if (missing.length > 0) bodyHighlights[bi] = missing;
+                    }
+                  }
+                  setHighlightBodies(bodyHighlights);
+                  const expanded = missingLabels.length > 0
+                    ? missingLabels.map(expandChemistryLabel).join(", ")
+                    : Object.values(bodyHighlights).flat().map(expandChemistryLabel).join(", ");
+                  Alert.alert(
+                    "Missing required readings",
+                    `Please fill in: ${expanded || "required chemistry fields"}.`,
+                  );
+                } else if (isApiErr) {
+                  Alert.alert("Close failed", e.message || `Request failed (${e.status})`);
+                } else {
+                  Alert.alert("Close failed", e?.message || "Try again.");
+                }
               }
             } finally {
               setSubmitting(false);
@@ -778,90 +816,8 @@ export default function JobChecklistScreen() {
           <Text style={styles.heroSub}>
             {formatCustomerName(job)} · {job.address || ""}
           </Text>
-          <View
-            testID="checklist-autosave-pill"
-            style={[
-              styles.autosavePill,
-              saveState === "saving" && styles.autosavePillSaving,
-              saveState === "saved" && styles.autosavePillSaved,
-              saveState === "error" && styles.autosavePillError,
-            ]}
-          >
-            <Ionicons
-              name={
-                saveState === "saving" ? "sync"
-                : saveState === "saved" ? "checkmark-circle"
-                : saveState === "error" ? "warning"
-                : "ellipse-outline"
-              }
-              size={11}
-              color="#FFFFFF"
-            />
-            <Text style={styles.autosavePillText} testID="checklist-save-state">
-              {saveState === "saving" ? "Saving…"
-               : saveState === "saved" ? (online ? "Saved" : "Saved — will sync when online")
-               : saveState === "error" ? "Save error — will retry"
-               : "Ready"}
-            </Text>
-          </View>
-
-          {/* Phase 40 · Step 2 — expanded network pill. Priority order:
-                1. syncing (any queued entry being flushed right now)
-                2. sync error (server rejected an entry — tap to retry)
-                3. offline + queue count OR offline+cached bootstrap
-                4. online + synced (steady state). */}
-          {(() => {
-            const queued = queueState.count;
-            const isSyncing = queueState.syncing;
-            const isSyncError = !!queueState.lastError && !isSyncing && online;
-            let pillStyle: any = styles.networkPillOnline;
-            let label = "Online · Synced";
-            let icon: any = "cloud-done-outline";
-            let testState = "online";
-            let onPress: (() => void) | undefined;
-            if (isSyncing) {
-              pillStyle = styles.networkPillSyncing;
-              label = queued > 0 ? `Syncing… (${queued})` : "Syncing…";
-              icon = "sync";
-              testState = "syncing";
-            } else if (isSyncError) {
-              pillStyle = styles.networkPillError;
-              label = "Sync error — retry";
-              icon = "alert-circle-outline";
-              testState = "error";
-              onPress = () => { writeQueue.flush().catch(() => {}); };
-            } else if (!online) {
-              pillStyle = styles.networkPillOffline;
-              label = queued > 0
-                ? `Offline · ${queued} queued`
-                : (offlineMode ? "Offline · cached" : "Offline");
-              icon = "cloud-offline-outline";
-              testState = "offline";
-            } else if (queued > 0) {
-              // Online but queue not yet drained — likely just reconnected.
-              pillStyle = styles.networkPillSyncing;
-              label = `Syncing… (${queued})`;
-              icon = "sync";
-              testState = "syncing";
-            }
-            const PillTag: any = onPress ? Pressable : View;
-            return (
-              <PillTag
-                style={[styles.networkPill, pillStyle]}
-                testID="checklist-network-pill"
-                onPress={onPress}
-                accessibilityRole={onPress ? "button" : undefined}
-              >
-                <Ionicons name={icon} size={11} color="#FFFFFF" />
-                <Text
-                  style={styles.networkPillText}
-                  testID={`checklist-network-pill-state-${testState}`}
-                >
-                  {label}
-                </Text>
-              </PillTag>
-            );
-          })()}
+          {/* P0 429 fix — single unified save pill. Never show two contradictory pills. */}
+          <ChecklistSavePill state={pillState} testID="checklist-save-pill" />
 
           {/* Phase 22 — Share Visit pill. Visible once report is locked + has public_uuid. */}
           {locked && report.public_uuid ? (
@@ -1031,6 +987,38 @@ export default function JobChecklistScreen() {
         </View>
       )}
       {/* Phase 39 · Step 2 — Visit Recap prompt (mobile). */}
+      {/* P0 429 fix — job close error dialog (retries exhausted) */}
+      <Modal visible={!!closeJobError} transparent animationType="fade" testID="job-close-error-dialog">
+        <View style={styles.errorDialogOverlay}>
+          <View style={styles.errorDialogCard}>
+            <Ionicons name="alert-circle" size={36} color="#DC2626" />
+            <Text style={styles.errorDialogTitle}>Could not close job</Text>
+            <Text style={styles.errorDialogMessage}>{closeJobError}</Text>
+            <View style={styles.errorDialogActions}>
+              <TouchableOpacity
+                style={styles.errorDialogDismiss}
+                onPress={() => setCloseJobError(null)}
+                testID="job-close-error-dismiss"
+              >
+                <Text style={styles.errorDialogDismissText}>Dismiss</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.errorDialogRetry}
+                onPress={() => {
+                  setCloseJobError(null);
+                  setPillState({ kind: "synced" });
+                  // Re-trigger close job after dismissing the dialog
+                  handleClose();
+                }}
+                testID="job-close-error-retry"
+              >
+                <Text style={styles.errorDialogRetryText}>Try again</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <VisitRecapModal
         visible={recapOpen && !!report?.id}
         serviceReportId={report?.id || null}
@@ -1153,4 +1141,33 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand,
   },
   closeBtnText: { fontFamily: font.bold, color: "#fff", fontSize: fontSize.base },
+  // P0 429 fix — error dialog styles
+  errorDialogOverlay: {
+    flex: 1, backgroundColor: "rgba(15,23,42,0.5)", justifyContent: "center", padding: 24,
+  },
+  errorDialogCard: {
+    backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.xl,
+    alignItems: "center",
+  },
+  errorDialogTitle: {
+    fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface,
+    marginTop: spacing.sm, marginBottom: spacing.xs,
+  },
+  errorDialogMessage: {
+    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted,
+    textAlign: "center", lineHeight: 20, marginBottom: spacing.lg,
+  },
+  errorDialogActions: {
+    flexDirection: "row", gap: spacing.sm, width: "100%",
+  },
+  errorDialogDismiss: {
+    flex: 1, paddingVertical: 12, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border, alignItems: "center",
+  },
+  errorDialogDismissText: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.muted },
+  errorDialogRetry: {
+    flex: 1, paddingVertical: 12, borderRadius: radius.md,
+    backgroundColor: colors.brand, alignItems: "center",
+  },
+  errorDialogRetryText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
 });

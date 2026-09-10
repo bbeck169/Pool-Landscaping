@@ -66,6 +66,10 @@ export class ApiError extends Error {
    * ``null`` when the response body was empty / non-JSON.
    */
   detail: unknown;
+  /** Seconds the client should wait before retrying (from Retry-After header or body). */
+  retryAfterSeconds?: number;
+  /** "app" or "upstream" — from X-Ratelimit-Source header on 429 responses. */
+  rateLimitSource?: string;
   constructor(msg: string, status: number, detail: unknown) {
     super(msg);
     this.name = "ApiError";
@@ -206,7 +210,22 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
     // fragile message substring matching.  ``err.message`` retains the
     // pre-K61 humanised string so every existing catch site keeps
     // working unchanged.
-    throw new ApiError(msg, res.status, rawDetail);
+    const err = new ApiError(msg, res.status, rawDetail);
+    // Attach 429-specific retry metadata so callers can honor backoff.
+    if (res.status === 429) {
+      const retryAfterHeader = res.headers.get("Retry-After");
+      if (retryAfterHeader) {
+        const parsed = Number(retryAfterHeader);
+        if (!isNaN(parsed) && parsed > 0) err.retryAfterSeconds = parsed;
+      }
+      const bodyRetry = typeof rawDetail === "object" && rawDetail !== null
+        ? (rawDetail as any).retry_after_seconds : undefined;
+      if (typeof bodyRetry === "number" && bodyRetry > 0 && !err.retryAfterSeconds) {
+        err.retryAfterSeconds = bodyRetry;
+      }
+      err.rateLimitSource = res.headers.get("X-Ratelimit-Source") || undefined;
+    }
+    throw err;
   }
   logApi({ method: _method, path, status: res.status, ms: Date.now() - _t0 });
   return data;
