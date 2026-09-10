@@ -31,6 +31,15 @@ export default function QuotesList() {
     setParams(s, { replace: true });
   };
 
+  // Phase C · Feb-2026 — "Has declined items" filter chip.
+  const hasDeclined = params.get("has_declined") === "1";
+  const setHasDeclined = (v) => {
+    const s = new URLSearchParams(params);
+    if (v) s.set("has_declined", "1");
+    else s.delete("has_declined");
+    setParams(s, { replace: true });
+  };
+
   useEffect(() => {
     const qs = new URLSearchParams({ doc_type: "quote" });
     if (customerFilter) qs.set("customer_id", customerFilter);
@@ -42,6 +51,7 @@ export default function QuotesList() {
 
   const filtered = (rows || [])
     .filter((r) => (status ? r.status === status || r.decision === status : true))
+    .filter((r) => (hasDeclined ? Boolean(r.has_declined_lines) : true))
     .filter((r) =>
       q
         ? [r.title, r.customer_name].filter(Boolean).some((s) => s.toLowerCase().includes(q.toLowerCase()))
@@ -103,6 +113,19 @@ export default function QuotesList() {
             </option>
           ))}
         </select>
+        {/* Phase C · Feb-2026 — Has-declined-items filter chip. */}
+        <button
+          onClick={() => setHasDeclined(!hasDeclined)}
+          className="text-xs font-semibold px-3 py-2 rounded-lg transition"
+          style={{
+            backgroundColor: hasDeclined ? "#FEE2E2" : "transparent",
+            color: hasDeclined ? "#7F1D1D" : colors.nav.fg,
+            border: `1px solid ${hasDeclined ? "#FCA5A5" : colors.nav.fgMuted}`,
+          }}
+          data-testid="docs-filter-has-declined-items"
+        >
+          Has declined items{hasDeclined ? " ✓" : ""}
+        </button>
       </div>
 
       {rows === null ? (

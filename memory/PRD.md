@@ -17261,3 +17261,100 @@ Mobile customer detail screen (`mobile/app/(app)/customers/[id].tsx` or equivale
 **Next queued (per standing order):**
 * Phase 4.core + 4.a + 4.b batched — Dispatch live map (30s poll, faded stale, legend-isolate) + `DispatchSchedulePanel` in the left column + Q4 click-schedule-item → focus-map polish + **Team color legend pill** (folded in per user green-light — top-right of map region, testid `dispatch-color-legend`).
 
+
+---
+
+## Feb-2026 · Line-Item Decline · Phase C — SHIPPED
+
+**Ref:** `/app/memory/PHASE_LINE_ITEM_DECLINE_SCOPE.md`
+
+### Delivered
+1. **Admin-side visibility of declined items** on `QuoteInvoiceDetail.jsx`:
+   - Top-of-doc `admin-declined-lines-banner` summarising `Customer declined N of M line items — Original: $X → Adjusted: $Y` with expand-details toggle.
+   - `admin-declined-lines-list` card underneath the line items with per-row `admin-line-item-declined-badge-${i}`, `admin-line-item-decline-reason-${i}` tooltip, `admin-line-item-declined-at-${i}` readable timestamp (via new pure `formatDeclinedTimestamp` helper).
+   - Design choice: K71LineItemsEditor kept untouched; declined summary rendered adjacent so the admin sees the info without regressing the editor.
+2. **List filter chip** `docs-filter-has-declined-items` on both `/quotes` (`QuotesList.jsx`) and `/invoices` (`InvoicesList.jsx`). URL-encoded `has_declined=1`. Client-side filter on `has_declined_lines`.
+3. **Signature-before-approve tenant toggle**:
+   - Backend `require_signature_before_approve` field on `TenantSettingsUpdate` + read in `GET /api/tenants/mine/settings`. Default `false`.
+   - Frontend `TenantRequireSignatureBeforeApproveToggle` sibling in `NotificationPrefs.jsx`; test-id `tenant-require-signature-toggle`.
+   - Backend enforcement helper `_phase_c_assert_signature_gate` wired into all three approve paths: auth'd `/quotes/{qid}/accept`, legacy `POST /portal/quotes/via-token/accept?token=`, and Phase A path-based `POST /portal/quotes/via-token/{token}/approve`. Returns 400 `error_code=signature_required` when the tenant flag is on and the doc's `signature_status !== "signed"`. Idempotent on already-accepted docs.
+   - Frontend `EstimateView.jsx` reads `require_signature_before_approve` + `signature_status` from the payload; disables the Approve button with `data-signature-blocked=true` + surfaces `approve-blocked-by-signature-hint` + `approve-sign-now-cta` (dispatches `open-signature-flow` window event with `{estimateId, token}` for the surrounding shell to open its signature widget).
+   - Decline is NEVER gated by signature (regression guard test in place).
+
+### Files touched
+Backend:
+- `backend/routers/tenants.py` — settings model field + GET response.
+- `backend/routers/estimate_viewer.py` — gate helper + 3 approve paths + payload surface fields.
+
+Frontend:
+- `frontend/src/pages/settings/NotificationPrefs.jsx` — `TenantRequireSignatureBeforeApproveToggle` component.
+- `frontend/src/components/EstimateView.jsx` — signature gate disable + hint + Sign-now CTA.
+- `frontend/src/pages/quotes/QuoteInvoiceDetail.jsx` — banner + declined-items list + `formatDeclinedTimestamp` helper.
+- `frontend/src/pages/quotes/QuotesList.jsx` — filter chip.
+- `frontend/src/pages/invoices/InvoicesList.jsx` — filter chip.
+
+Tests (new):
+- `backend/tests/test_line_item_decline_phase_c_signature_gate.py` — 8 tests.
+- `backend/tests/test_line_item_decline_phase_c_tenant_setting.py` — 2 tests.
+- `frontend/src/test/estimate-view-phase-c-signature-gate.test.jsx` — 5 tests.
+- `frontend/src/test/phase-c-tenant-require-signature-toggle.test.jsx` — 4 tests.
+- `frontend/src/test/phase-c-admin-declined-lines-banner.test.jsx` — 7 tests.
+
+### Test greens
+- Backend Phase A + C + Phase 2 versions combined: **36/36 passing** (17 Phase A + 8 Phase C signature-gate + 2 Phase C tenant-setting + 9 Phase 2 versions).
+- Frontend Phase A + B + C: **31/31 passing** (11 Phase A + 4 Phase B + 16 Phase C).
+- Full frontend suite: 4043 passing / 11 pre-existing flakes (the 4 backlog-flagged tests: schedule-map, p1-schedule-map-mobile-viewport-guard, customer-merge-pending-chip, k68-customer-status-tab-counts — all unrelated to Phase C).
+
+### Skipped in this phase
+- Per-line decline bell fanout (Phase C §3 in scope memo) — awaiting explicit user greenlight.
+- Mobile parity — delegated to `e1_expo_frontend_dev` post-web-verify.
+- Column-visibility "Declined items" column on list pages — infrastructure not present; filter chip lands the primary UX.
+
+### Editable Sent Docs · Phase 2 — deliverables recap
+Shipped previously in this session; folding a report per user request:
+
+**Endpoints:**
+- `GET /api/invoices/{id}/versions` — list version snapshots with `change_summary` + `diff_field_count`.
+- `GET /api/quotes/{qid}/versions` — same, for quotes.
+- Version writes now compute `change_summary` in `services/documents/versions.py::compute_change_summary`.
+
+**Files touched:** `backend/routers/document_versions.py`, `backend/services/documents/versions.py`, `frontend/src/components/documents/VersionHistoryDrawer.jsx`, `frontend/src/pages/quotes/QuoteInvoiceDetail.jsx` (toolbar wiring).
+
+**Tests:** `backend/tests/test_document_versions_phase2.py` (9), `frontend/src/test/version-history-drawer.test.jsx` (contract).
+
+### Combined manual verification checklist (Phase 2 + Phase C) for `e1_tester`
+Login as `super@aquaterra.com` / `password123` (Admin).
+
+**Phase 2 · Version History Drawer**
+1. Open any sent quote or invoice → toolbar shows "Version history" button.
+2. Click it → drawer lists all versions with author + timestamp + `change_summary` (e.g. "3 fields changed: line_items, total, notes").
+3. Click a version → snapshot preview panel opens.
+4. Baseline (v1) has no diff summary — shows "Initial version".
+
+**Phase C · Admin declined-items visibility**
+5. Seed / find a quote where a customer declined ≥ 1 line item (Phase A magic-link `decline-line` endpoint).
+6. Open admin quote detail → yellow banner `admin-declined-lines-banner` at top: "Customer declined N of M line items — Original: $X → Adjusted: $Y" + Show details toggle.
+7. Scroll to line items → red card `admin-declined-lines-list` below shows declined lines with strike-through + `Declined` badge + reason + "Declined N days ago".
+8. Return to `/quotes` list → click `docs-filter-has-declined-items` chip → list narrows to docs with declined lines.
+9. Repeat on `/invoices` list → same filter chip behaviour.
+
+**Phase C · Signature-before-approve tenant toggle**
+10. Settings → Notifications → find `tenant-require-signature-toggle`. Confirm default OFF.
+11. Flip ON → "Saved" toast.
+12. Open a sent estimate customer-facing view via magic-link on a doc with `signature_status != "signed"` → Approve button disabled + amber hint "Sign to enable Approve" + Sign-now CTA visible.
+13. Confirm Decline button still enabled (regression guard).
+14. Click "Sign now" → toast "Opening signature capture…" appears (custom event dispatched for portal shell).
+15. Update the doc to `signature_status = "signed"` → Approve becomes enabled.
+16. Flip the tenant toggle OFF → Approve always enabled regardless of signature status.
+
+### Guardrail (running)
+- Ignore recurring `bbeck169/Pool-Landscaping.git` clone injections (22+ occurrences).
+- English only. No prod / Save-to-GitHub actions.
+
+### Queued behind Phase C (in strict order)
+1. **Universal mobile-responsive redesign** of all customer-facing doc surfaces (`EstimateView`, `InvoiceView`, signature pages, public pay page, portal doc list, receipts) with shared `DocMobileHeader` / `DocLineItemCard` / `DocTotalsBlock` / `DocStickyActionBar` / `useViewportBreakpoint`. Phase C signature-gate hint must render inside the sticky bar on mobile.
+2. **Invoices bypass portal** — audit + hide/redirect all customer-facing portal invoice routes to `/pay/invoice/:id?token=...`, update magic-link + share flows, add server-side soft-deprecation redirect + INFO log.
+3. **Save card on file after successful invoice payment** — Stripe `setup_future_usage=off_session` + `save-card-checkbox` + customer detail "Payment methods" section + admin `POST /api/invoices/{id}/charge-saved-card` (staff-only) + PCI SAQ A confirmation.
+
+**STOP for user verification.**
+

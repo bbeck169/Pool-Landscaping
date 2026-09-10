@@ -396,6 +396,14 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           via the Lumino return URL + webhook callback, so nothing
           needs to be polled from here. */}
 
+      {/* Feb-2026 · Phase C — admin visibility banner for declined
+          line items. Rendered above the doc header so it's the
+          first thing the admin sees when opening a doc where the
+          customer has flagged one or more lines as declined. */}
+      {doc.has_declined_lines ? (
+        <AdminDeclinedLinesBanner doc={doc} />
+      ) : null}
+
       <div
         className="rounded-2xl p-6 mb-4"
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
@@ -696,6 +704,15 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
             </div>
           </div>
         </div>
+
+        {/* Feb-2026 · Phase C — admin declined-lines summary card.
+            Rendered underneath the line items when at least one row
+            has ``customer_status === "declined"``. Complements the
+            K71 editor (which is kept unmodified) by giving the admin
+            a scannable list of what the customer refused + why. */}
+        {(doc.line_items || []).some((li) => (li.customer_status || "") === "declined") ? (
+          <AdminDeclinedLinesList lineItems={doc.line_items || []} />
+        ) : null}
 
         {/* PB1 · Feb-2026 · Internal Margin section. Admin-only.
              Renders ONLY when the current session role is admin or
@@ -1289,5 +1306,165 @@ function ConvertToJobModal({ open, onClose, quote, onDone, onError }) {
       <TextInput label="SCHEDULE DATE (optional)" type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} />
       <p className="text-xs mt-2" style={{ color: colors.muted }}>Creates a scheduled job for {quote.customer_name} totaling {money(quote.total)}.</p>
     </Modal>
+  );
+}
+
+
+
+// ─── Phase C · Feb-2026 — admin visibility helpers ─────────────────
+// Pure helper exported for Vitest — turns an ISO ``customer_declined_at``
+// timestamp into a readable "Declined N days/hours ago" string. Kept
+// out of the component body so tests can drive it without React.
+export function formatDeclinedTimestamp(iso, nowMs = Date.now()) {
+  if (!iso) return "";
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const secs = Math.max(0, Math.round((nowMs - then) / 1000));
+  if (secs < 60) return "Declined just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `Declined ${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `Declined ${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `Declined ${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+
+function AdminDeclinedLinesBanner({ doc }) {
+  const [expanded, setExpanded] = useState(false);
+  const items = (doc.line_items || []);
+  const total = items.length;
+  const declinedCount = Number(
+    doc.declined_line_count
+    ?? items.filter((li) => (li.customer_status || "") === "declined").length,
+  );
+  const original = Number(doc.original_total ?? doc.total ?? 0);
+  const adjusted = Number(doc.adjusted_total ?? doc.total ?? 0);
+  return (
+    <div
+      className="rounded-2xl p-4 mb-4"
+      style={{
+        background: "#FEF3C7",
+        border: "1px solid #FCD34D",
+        color: "#78350F",
+      }}
+      data-testid="admin-declined-lines-banner"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-bold" style={{ color: "#78350F" }}>
+            Customer declined {declinedCount} of {total} line
+            item{total === 1 ? "" : "s"}
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: "#92400E" }}>
+            Original: {money(original)} → Adjusted: {money(adjusted)}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-xs font-semibold underline"
+          style={{ color: "#78350F" }}
+          data-testid="admin-declined-lines-banner-toggle"
+        >
+          {expanded ? "Hide details" : "Show details"}
+        </button>
+      </div>
+      {expanded ? (
+        <ul
+          className="mt-3 text-xs space-y-1"
+          data-testid="admin-declined-lines-banner-details"
+        >
+          {items
+            .map((li, i) => ({ li, i }))
+            .filter(({ li }) => (li.customer_status || "") === "declined")
+            .map(({ li, i }) => (
+              <li key={i} className="flex gap-2">
+                <span className="font-semibold">·</span>
+                <span className="flex-1">
+                  <b>{li.description || `Line ${i + 1}`}</b>
+                  {li.customer_decline_reason
+                    ? ` — ${li.customer_decline_reason}`
+                    : ""}
+                </span>
+                <span style={{ color: "#92400E" }}>
+                  {money(li.total)}
+                </span>
+              </li>
+            ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+
+function AdminDeclinedLinesList({ lineItems }) {
+  return (
+    <div
+      className="mt-6 rounded-xl p-4"
+      style={{
+        background: "#FEF2F2",
+        border: "1px solid #FECACA",
+        color: "#7F1D1D",
+      }}
+      data-testid="admin-declined-lines-list"
+    >
+      <div className="text-xs uppercase font-bold tracking-wide mb-2"
+            style={{ color: "#B91C1C" }}>
+        Declined by customer
+      </div>
+      <table className="w-full text-xs" data-testid="admin-declined-lines-table">
+        <thead>
+          <tr style={{ color: "#B91C1C" }}>
+            <th className="text-left py-1">Line</th>
+            <th className="text-left py-1">Reason</th>
+            <th className="text-right py-1">When</th>
+            <th className="text-right py-1">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lineItems.map((li, i) =>
+            (li.customer_status || "") === "declined" ? (
+              <tr key={i}
+                  style={{ borderTop: "1px solid #FECACA" }}
+                  data-testid={`admin-declined-line-row-${i}`}>
+                <td className="py-1"
+                    style={{ textDecoration: "line-through", opacity: 0.75 }}>
+                  <span data-testid={`admin-line-item-declined-badge-${i}`}
+                        style={{
+                          display: "inline-block",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          padding: "1px 6px",
+                          borderRadius: 4,
+                          background: "#FEE2E2",
+                          color: "#7F1D1D",
+                          marginRight: 6,
+                          textDecoration: "none",
+                        }}>
+                    Declined
+                  </span>
+                  {li.description || `Line ${i + 1}`}
+                </td>
+                <td className="py-1"
+                    data-testid={`admin-line-item-decline-reason-${i}`}
+                    title={li.customer_decline_reason || "No reason given"}>
+                  {li.customer_decline_reason || "—"}
+                </td>
+                <td className="py-1 text-right"
+                    title={li.customer_declined_at || ""}
+                    data-testid={`admin-line-item-declined-at-${i}`}>
+                  {formatDeclinedTimestamp(li.customer_declined_at) || "—"}
+                </td>
+                <td className="py-1 text-right font-mono">
+                  {money(li.total)}
+                </td>
+              </tr>
+            ) : null,
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }

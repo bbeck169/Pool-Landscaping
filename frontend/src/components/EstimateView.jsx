@@ -151,6 +151,7 @@ export default function EstimateView({
     company, bill_to, property_address, header, line_items, totals,
     notes, title, decision, accepted_at, declined_at, sent_at, sent_via,
     as_customer, customer_view, status,
+    signature_status, require_signature_before_approve,
   } = data;
 
   // Feb-2026 · Phase A — actionable window (customer can approve /
@@ -159,6 +160,33 @@ export default function EstimateView({
   // declined) the doc is locked as before.
   const _statusLc = String(status || "").toLowerCase();
   const actionable = _statusLc === "sent" || _statusLc === "viewed";
+
+  // Feb-2026 · Phase C — signature-before-approve gate. When the
+  // tenant has flipped ``require_signature_before_approve`` on AND
+  // the doc is not yet signed, disable the Approve button + surface
+  // a "Sign to enable" hint + a "Sign now" CTA. Decline is NOT
+  // gated — customers can always decline without signing.
+  const signatureGateBlocked = Boolean(
+    require_signature_before_approve
+    && String(signature_status || "").toLowerCase() !== "signed",
+  );
+
+  const openSignNowFlow = () => {
+    // The existing signature capture flow is hosted separately;
+    // this CTA emits a DOM custom event so the surrounding shell
+    // (customer portal / magic-link page) can open its signature
+    // widget without EstimateView needing to know about the shell.
+    const eid = estimateId || data?.estimate_id || null;
+    try {
+      window.dispatchEvent(new CustomEvent("open-signature-flow", {
+        detail: { estimateId: eid, token },
+      }));
+    } catch {
+      /* SSR safety */
+    }
+    setToast("Opening signature capture…");
+    setTimeout(() => setToast(""), 2500);
+  };
 
   // Phase A · per-line decline via path-based token endpoint.
   const submitLineDecline = async () => {
@@ -313,9 +341,11 @@ export default function EstimateView({
               <button
                 className="iv-btn ev-btn-accept"
                 onClick={accept}
-                disabled={busy}
+                disabled={busy || signatureGateBlocked}
                 data-testid="estimate-toolbar-customer-approve"
                 data-legacy-testid="estimate-toolbar-accept-btn"
+                data-signature-blocked={signatureGateBlocked ? "true" : "false"}
+                title={signatureGateBlocked ? "Sign to enable" : undefined}
               >
                 <Check size={14}/> Approve
               </button>
@@ -328,6 +358,41 @@ export default function EstimateView({
               >
                 <XIcon size={14}/> Decline
               </button>
+              {signatureGateBlocked ? (
+                <div
+                  className="ev-signature-gate-hint"
+                  data-testid="approve-blocked-by-signature-hint"
+                  style={{
+                    fontSize: 12,
+                    color: "#92400E",
+                    background: "#FEF3C7",
+                    border: "1px solid #FCD34D",
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    marginLeft: 8,
+                  }}
+                >
+                  <span>Sign to enable Approve</span>
+                  <button
+                    type="button"
+                    className="iv-btn"
+                    style={{
+                      fontSize: 12,
+                      padding: "4px 10px",
+                      background: "#0EA5E9",
+                      color: "#fff",
+                      border: "none",
+                    }}
+                    onClick={openSignNowFlow}
+                    data-testid="approve-sign-now-cta"
+                  >
+                    Sign now
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
           {/* Feb-2026 · Phase A — legacy testid preservation. Any

@@ -85,6 +85,14 @@ export default function InvoicesList() {
   const [q, setQ] = useState(params.get("q") || "");
   const status = params.get("status") || "";
   const hasLateFee = params.get("late_fee") === "1";
+  // Phase C · Feb-2026 — "Has declined items" filter chip.
+  const hasDeclined = params.get("has_declined") === "1";
+  const setHasDeclined = (v) => {
+    const s = new URLSearchParams(params);
+    if (v) s.set("has_declined", "1");
+    else s.delete("has_declined");
+    setParams(s, { replace: true });
+  };
   // Feb-2026 · Bulk-pay iteration 1 — card-on-file filter + sort state.
   const cardFilter = params.get("card") || "any"; // any | yes | no
   // Feb-2026 · Item 2 — customer-scoped filter. URL-persisted so
@@ -231,6 +239,7 @@ export default function InvoicesList() {
     let out = enriched
       .filter((r) => (status ? (r.payment_status || "unpaid") === status : true))
       .filter((r) => (hasLateFee ? (r.line_items || []).some((li) => li.is_late_fee) : true))
+      .filter((r) => (hasDeclined ? Boolean(r.has_declined_lines) : true))
       .filter((r) =>
         q
           ? [r.title, r.customer_name].filter(Boolean).some((s) => s.toLowerCase().includes(q.toLowerCase()))
@@ -262,7 +271,7 @@ export default function InvoicesList() {
       });
     }
     return out;
-  }, [rows, pmByInvoice, status, hasLateFee, q, cardFilter, sort]);
+  }, [rows, pmByInvoice, status, hasLateFee, hasDeclined, q, cardFilter, sort]);
 
   // Phase 34 · Task BB · Feb 2026 — visible-page selection helpers.
   const visibleIds = filtered.map((r) => r.id);
@@ -459,6 +468,19 @@ export default function InvoicesList() {
           data-testid="inv-filter-late-fee"
         >
           Has late fee{hasLateFee ? " ✓" : ""}
+        </button>
+        {/* Phase C · Feb-2026 — Has-declined-items filter chip. */}
+        <button
+          onClick={() => setHasDeclined(!hasDeclined)}
+          className="text-xs font-semibold px-3 py-2 rounded-lg transition"
+          style={{
+            backgroundColor: hasDeclined ? "#FEE2E2" : "transparent",
+            color: hasDeclined ? "#7F1D1D" : colors.nav.fg,
+            border: `1px solid ${hasDeclined ? "#FCA5A5" : colors.nav.fgMuted}`,
+          }}
+          data-testid="docs-filter-has-declined-items"
+        >
+          Has declined items{hasDeclined ? " ✓" : ""}
         </button>
         {/* Bulk-pay iteration 1 · card-on-file filter */}
         <select

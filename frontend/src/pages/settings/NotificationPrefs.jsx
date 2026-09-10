@@ -147,6 +147,11 @@ export default function NotificationPrefs() {
           of individual admins' preferences). */}
       {isAdmin ? <TenantDeclineNotifyToggle /> : null}
 
+      {/* Feb-2026 · Phase C — signature-before-approve tenant gate.
+          Admin-only. When enabled, customers cannot approve a
+          quote/estimate until they've captured a signature. */}
+      {isAdmin ? <TenantRequireSignatureBeforeApproveToggle /> : null}
+
       <div className="rounded-2xl overflow-hidden"
            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
         <div className="grid grid-cols-[1fr_repeat(4,88px)] items-center px-4 py-3 border-b"
@@ -573,6 +578,117 @@ export function TenantDeclineNotifyToggle() {
             cursor: loading ? "wait" : "pointer",
           }}
           data-testid="tenant-decline-notify-toggle"
+        >
+          <span
+            className="inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform"
+            style={{
+              transform: `translateX(${on ? 22 : 2}px)`,
+            }}
+          />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ * Feb-2026 · Phase C — signature-before-approve tenant gate.
+ *
+ * Reads / writes ``require_signature_before_approve`` on the tenant
+ * settings doc via the existing ``/api/tenants/mine/settings``
+ * GET+PATCH. Admin-only (parent gates the mount).
+ *
+ * Gating semantics (matches ``routers/estimate_viewer.py``):
+ *   * ``true``  → customers cannot approve a quote/estimate until
+ *                 ``signature_status === "signed"``. Portal Approve
+ *                 button is disabled with a "Sign to enable" hint.
+ *   * ``false`` → legacy behaviour, Approve is always available.
+ *   * unset    → treated as ``false`` by the backend.
+ */
+export function TenantRequireSignatureBeforeApproveToggle() {
+  const [value, setValue] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get("/tenants/mine/settings");
+        setValue(Boolean(r?.require_signature_before_approve ?? false));
+      } catch { setValue(false); }
+    })();
+  }, []);
+
+  const flip = async () => {
+    if (value === null || saving) return;
+    const next = !value;
+    setSaving(true);
+    setValue(next);
+    try {
+      const r = await api.patch(
+        "/tenants/mine/settings",
+        { require_signature_before_approve: next },
+      );
+      setValue(Boolean(r?.require_signature_before_approve ?? next));
+      setToast("Saved");
+    } catch (e) {
+      setValue(!next);
+      setToast(e?.message || "Save failed");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2000);
+    }
+  };
+
+  const on = Boolean(value);
+  const loading = value === null;
+
+  return (
+    <div
+      className="rounded-2xl px-4 py-3 mb-4 flex items-center justify-between gap-3"
+      style={{
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid="tenant-require-signature-row"
+    >
+      <div className="min-w-0">
+        <div
+          className="text-sm font-semibold"
+          style={{ color: colors.onSurface }}
+        >
+          Require customer signature before Approve
+        </div>
+        <p className="text-xs mt-0.5" style={{ color: colors.muted }}>
+          When enabled, customers cannot approve a quote/estimate
+          until they've signed. The Approve button will be disabled
+          with a "Sign to enable" hint until signature is captured.
+        </p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {toast ? (
+          <span
+            className="text-[10px] font-semibold px-2 py-1 rounded"
+            style={{ backgroundColor: "#DCFCE7", color: "#166534" }}
+            data-testid="tenant-require-signature-toast"
+          >
+            {toast}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          onClick={flip}
+          disabled={loading || saving}
+          className="relative inline-flex items-center h-6 w-11 rounded-full transition-colors"
+          style={{
+            backgroundColor: on ? colors.brand : "#D1D5DB",
+            opacity: loading ? 0.5 : 1,
+            cursor: loading ? "wait" : "pointer",
+          }}
+          data-testid="tenant-require-signature-toggle"
         >
           <span
             className="inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform"

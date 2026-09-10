@@ -852,6 +852,12 @@ class TenantSettingsUpdate(BaseModel):
     # True too via ``.get("notify_admin_on_decline", True)`` on the
     # read path).
     notify_admin_on_decline: Optional[bool] = None
+    # Feb-2026 · Phase C — signature-before-approve gate. When True,
+    # customers cannot approve a quote/estimate until they've signed
+    # (``signature_status == "signed"``). Default False — unset
+    # tenants preserve legacy behaviour where Approve does not
+    # require a signature.
+    require_signature_before_approve: Optional[bool] = None
 
 
 @router.get(
@@ -887,6 +893,11 @@ async def get_own_settings(user: dict = Depends(get_current_user),
         # explicitly flipped the toggle in Settings → Notifications.
         "notify_admin_on_decline": bool(
             tenant.get("notify_admin_on_decline", True)),
+        # Feb-2026 · Phase C — signature-before-approve gate.
+        # Default False; unset tenants preserve legacy Approve
+        # behaviour (no signature required).
+        "require_signature_before_approve": bool(
+            tenant.get("require_signature_before_approve", False)),
         # Phase 11 · equipment tracker digest
         "equipment_service_customer_reminders_enabled": bool(
             tenant.get("equipment_service_customer_reminders_enabled", False)),

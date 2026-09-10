@@ -169,6 +169,16 @@ async def _build_payload(est: dict, tenant: dict, *,
     ).to_list(500)
     customer_view = build_customer_view_payload(est, svc_cats)
 
+    # Feb-2026 · Phase C — expose the tenant-scoped signature gate +
+    # the doc's current signature_status so both the auth'd + magic-
+    # link customer surfaces can render the disabled-Approve hint
+    # without a second fetch. Admin surfaces read the same block for
+    # audit/UX consistency.
+    require_signature_before_approve = bool(
+        tenant.get("require_signature_before_approve", False),
+    )
+    signature_status = str(est.get("signature_status") or "").lower() or None
+
     return {
         "estimate_id": est.get("id"),
         "status": est.get("status") or "draft",
@@ -199,6 +209,9 @@ async def _build_payload(est: dict, tenant: dict, *,
         # K79 grouped preview — always included so the admin toolbar's
         # "Preview customer view" can render without a second call.
         "customer_view": customer_view,
+        # Phase C · Feb-2026 — signature gate surface fields.
+        "signature_status": signature_status,
+        "require_signature_before_approve": require_signature_before_approve,
     }
 
 
@@ -245,6 +258,34 @@ async def _authorised_estimate(qid: str, user: dict,
     if role == "customer" and est.get("customer_id") != user.get("customer_id"):
         raise HTTPException(404, "Estimate not found")
     return est
+
+
+# Feb-2026 · Phase C — signature-before-approve gate.
+# Raises 400 with ``error_code=signature_required`` when the tenant
+# has ``require_signature_before_approve=true`` AND the estimate is
+# not yet signed. Idempotent for already-accepted docs (callers
+# short-circuit before hitting this check).
+async def _phase_c_assert_signature_gate(
+    est: dict, tenant_id: str,
+) -> None:
+    tenant = await db.tenants.find_one(
+        {"id": tenant_id},
+        {"_id": 0, "require_signature_before_approve": 1},
+    ) or {}
+    if not bool(tenant.get("require_signature_before_approve", False)):
+        return
+    if str(est.get("signature_status") or "").lower() == "signed":
+        return
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error_code": "signature_required",
+            "message": (
+                "This estimate requires a customer signature "
+                "before it can be approved."
+            ),
+        },
+    )
 
 
 async def _notify_admins(tenant_id: str, kind: str,
@@ -372,6 +413,8 @@ async def accept_estimate(qid: str,
     est = await _authorised_estimate(qid, user, tenant)
     if est.get("decision") in ("accepted", "declined"):
         raise HTTPException(409, "Estimate is already locked")
+    # Feb-2026 · Phase C — signature-before-approve gate (tenant opt-in).
+    await _phase_c_assert_signature_gate(est, tenant["id"])
     await _mark_accepted(est, tenant["id"], user.get("id"))
     await _notify_admins(
         tenant["id"], kind="quote_accepted",
@@ -510,6 +553,8 @@ async def accept_via_token(token: str = Query(...)):
     est = ctx["est"]
     if est.get("decision") in ("accepted", "declined"):
         raise HTTPException(409, "Estimate is already locked")
+    # Feb-2026 · Phase C — signature-before-approve gate.
+    await _phase_c_assert_signature_gate(est, ctx["tenant"]["id"])
     await _mark_accepted(est, ctx["tenant"]["id"], f"token:{ctx['cid']}")
     await _notify_admins(
         ctx["tenant"]["id"], kind="quote_accepted",
@@ -759,6 +804,8 @@ async def phase_a_approve_via_token(token: str):
     if est.get("decision") == "accepted":
         return await _build_payload(est, ctx["tenant"], as_customer=True)
     _phase_a_assert_actionable(est)
+    # Feb-2026 · Phase C — signature-before-approve gate.
+    await _phase_c_assert_signature_gate(est, ctx["tenant"]["id"])
     await _mark_accepted(est, ctx["tenant"]["id"], f"token:{ctx['cid']}")
     # Refresh + recompute so the response reflects the accepted state
     # AND the adjusted-total block (in case the customer had declined
