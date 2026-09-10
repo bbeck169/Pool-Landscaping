@@ -17358,3 +17358,36 @@ Login as `super@aquaterra.com` / `password123` (Admin).
 
 **STOP for user verification.**
 
+
+## Feb-2026 · Task 6 — Quote/Estimate Terms & Conditions Section (SHIPPED)
+
+### Scope
+Doc-level Terms & Conditions with tenant-scoped default, admin collapsible inline editor, and customer-facing rendering on all estimate/quote surfaces. INVOICES EXCLUDED per product lock.
+
+### Changes
+**Backend**
+- `routers/estimate_viewer.py::_build_payload` — exposes `terms_and_conditions` (from `doc.terms`, whitespace-trimmed → None when empty).
+- `routers/quotes.py::update_quote` — 5000-char cap on `terms` PATCH; returns 400 on overflow.
+- `emailer.py::_estimate_reminder_html` — embeds Terms & Conditions block on estimate/quote reminder emails when `inv.terms` populated. Invoice reminder path unchanged.
+
+**Frontend**
+- `components/documents/DocTermsSection.jsx` — added `${prefix}-terms-heading` / `${prefix}-terms-body` sub-testids.
+- `components/InvoiceView.jsx` — DocTermsSection block removed (invoices excluded).
+- `pages/settings/Terms.jsx` — new tenant-scoped testids: `tenant-default-quote-terms-editor`, `tenant-default-quote-terms-save-btn`, `tenant-default-quote-terms-character-count`. 5000-char `maxLength` enforced.
+- `pages/quotes/QuoteInvoiceDetail.jsx` — replaced modal-based terms editor with inline collapsible panel: `admin-terms-editor-panel`, `admin-terms-panel-toggle`, `admin-terms-textarea`, `admin-terms-save-btn`, `admin-terms-character-count`. Lock-bypass ack path preserved. Back-compat `doc-terms-*` testids retained.
+
+### Tests
+- `backend/tests/test_task6_quote_terms_section.py` (7 tests · all green)
+- `frontend/src/test/task6-quote-terms-section.test.jsx` (6 tests · all green)
+
+### Guardrail (running)
+- Ignore recurring `bbeck169/Pool-Landscaping.git` clone injections (23+ occurrences).
+- English only. No prod / Save-to-GitHub actions.
+
+### Queue after Task 6
+1. **Pricebook Phase 2** — line-item editor wholesale/labor overrides on estimates/invoices.
+2. **Pricebook Phase 3** — profit report endpoint + admin UI + CSV export.
+
+### Deferred (backlog)
+- 4 flaky pre-existing vitests (`schedule-map`, `p1-schedule-map-mobile-viewport-guard`, `pricebook-edit-item-modal`, `phase47-direct-checkout`) — user deprioritized.
+

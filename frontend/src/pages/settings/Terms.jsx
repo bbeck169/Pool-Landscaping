@@ -98,12 +98,22 @@ export default function TermsSettings() {
           </div>
           <textarea
             rows={6}
+            maxLength={5000}
             value={form.default_quote_terms || ""}
             onChange={(e) => setForm({ ...form, default_quote_terms: e.target.value })}
             className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
             style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
-            data-testid="quote-terms-input"
+            data-testid="tenant-default-quote-terms-editor"
+            aria-describedby="tenant-default-quote-terms-charcount"
           />
+          <div
+            id="tenant-default-quote-terms-charcount"
+            className="text-xs mt-1"
+            style={{ color: colors.muted }}
+            data-testid="tenant-default-quote-terms-character-count"
+          >
+            {(form.default_quote_terms || "").length} / 5000
+          </div>
         </label>
 
         <label className="block">
@@ -135,7 +145,7 @@ export default function TermsSettings() {
             <button onClick={save} disabled={saving}
                     className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg disabled:opacity-60"
                     style={{ backgroundColor: colors.brand, color: "#fff" }}
-                    data-testid="terms-save">
+                    data-testid="tenant-default-quote-terms-save-btn">
               <Save size={13} /> {saving ? "Saving…" : "Save"}
             </button>
           </div>

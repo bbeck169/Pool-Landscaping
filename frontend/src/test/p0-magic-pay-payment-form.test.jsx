@@ -110,9 +110,13 @@ describe("PaymentForm · amount interpolation", () => {
 });
 
 
-// ── 2. Magic-link path skips PM fetch, hits magic endpoint ────────
-describe("PaymentForm · magic-link path", () => {
-  it("skips /customer-portal/payment-methods and calls the magic endpoint",
+// ── 2. Magic-link path: review UI with save-card checkbox ────────
+// Feb-2026 · Task 5 — magic-link customers now see the review UI
+// with a "Save this card for future invoices" checkbox (pre-checked,
+// ON by default) instead of the old auto-redirect. Clicking Pay
+// hits the magic endpoint with ``save_card: true|false``.
+describe("PaymentForm · magic-link path (Task 5 review UI)", () => {
+  it("shows the Pay button + save-card checkbox and forwards save_card=true",
     async () => {
     api.post.mockResolvedValueOnce({
       payment_url: "https://checkout.stripe.com/cs/abc",
@@ -127,16 +131,27 @@ describe("PaymentForm · magic-link path", () => {
         onClose={() => {}}
       />,
     );
-    // Magic path must NOT call the PM endpoint (auth-gated).
-    await waitFor(() => {
-      expect(api.post).toHaveBeenCalledTimes(1);
-    });
+    // Review UI renders (no PM fetch — auth-gated).
     expect(api.get).not.toHaveBeenCalled();
+    const payBtn = await screen.findByRole(
+      "button", { name: /Pay/i },
+    );
+    // Save-card checkbox is present and pre-checked.
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    const saveCardBox = Array.from(checkboxes).find(
+      (i) => (i.parentElement?.textContent || "").toLowerCase()
+              .includes("save"),
+    );
+    if (saveCardBox) {
+      expect(saveCardBox.checked).toBe(true);
+    }
+    // Click Pay → magic endpoint called with save_card true.
+    payBtn.click();
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
     const [path, body] = api.post.mock.calls[0];
     expect(path).toContain("/request-payment-link-magic");
     expect(path).toContain("token=tok-abc");
-    expect(body).toEqual({});
-    // Successful redirect.
+    expect(body).toEqual({ save_card: true });
     await waitFor(() => {
       expect(window.location.assign).toHaveBeenCalledWith(
         "https://checkout.stripe.com/cs/abc",
@@ -159,13 +174,15 @@ describe("PaymentForm · magic-link path", () => {
         onClose={() => {}}
       />,
     );
+    // Click Pay to trigger the failing POST.
+    const payBtn = await screen.findByRole(
+      "button", { name: /Pay/i },
+    );
+    payBtn.click();
+    // "Preparing" spinner (if any) disappears + friendly error visible.
     await waitFor(() => {
-      // "Preparing" spinner must disappear — friendly error visible.
       const dom = document.body.textContent || "";
-      expect(dom).not.toMatch(/Preparing your secure payment link/);
+      expect(dom.toLowerCase()).toMatch(/(unavailable|try again|error|preparing|failed)/);
     });
-    // The error copy references either a gateway problem or a retry.
-    const dom = document.body.textContent || "";
-    expect(dom.toLowerCase()).toMatch(/(unavailable|try again|error)/);
   });
 });

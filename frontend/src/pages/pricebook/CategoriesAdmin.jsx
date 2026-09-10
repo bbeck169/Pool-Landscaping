@@ -29,9 +29,9 @@
  * hard-delete. Historical docs that reference an archived category
  * surface an "Archived category" badge on the admin doc view.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Archive, ArchiveRestore, Plus, Pencil, X } from "lucide-react";
+import { Archive, ArchiveRestore, Plus, Pencil } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "@/api";
 import { colors } from "@/theme";

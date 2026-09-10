@@ -44,6 +44,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from config import db
 from routers.invoice_magic_view import _verify_invoice_magic_token
@@ -53,9 +54,26 @@ from routers.lumino_link_request import _rate_limit_check
 router = APIRouter()
 
 
+class MagicPayBody(BaseModel):
+    """Feb-2026 · Task 5 — accept an opt-in ``save_card`` flag from the
+    magic-link customer's pay form. When ``True`` we forward to
+    ``create_invoice_checkout_session(save_for_future_billing=True)``
+    which attaches the freshly-charged PM to the Stripe customer via
+    ``setup_future_usage='off_session'`` — the resulting card is then
+    available to admin ``charge-saved-card`` calls + is listed on the
+    customer's portal Payment Methods page next time they log in.
+
+    PCI SAQ A posture — the token payload never touches raw card data
+    (Stripe hosts the checkout page); we only ever store the resulting
+    ``payment_method`` id + display metadata (brand/last4/exp).
+    """
+    save_card: Optional[bool] = False
+
+
 @router.post("/invoices/{iid}/request-payment-link-magic")
 async def request_payment_link_magic(
     iid: str, token: str = Query(""),
+    body: Optional[MagicPayBody] = None,
 ):
     payload = _verify_invoice_magic_token(token)
     if payload.get("invoice_id") != iid:
@@ -105,14 +123,17 @@ async def request_payment_link_magic(
         }
 
     from services.payments import stripe_charge as stripe_svc
+    save_card = bool((body or MagicPayBody()).save_card)
     try:
         out = await stripe_svc.create_invoice_checkout_session(
             tenant_id=tenant_id,
             invoice=inv,
             customer=customer,
-            # Magic-link customers never enter the save-a-card path —
-            # they have no portal account to manage the saved method.
-            save_for_future_billing=False,
+            # Feb-2026 · Task 5 — customer-controlled save opt-in.
+            # ``setup_future_usage='off_session'`` is applied by
+            # ``create_invoice_checkout_session`` when this flag is
+            # True; the resulting PM is mirrored via the webhook.
+            save_for_future_billing=save_card,
         )
     except ValueError as exc:
         code = str(exc)

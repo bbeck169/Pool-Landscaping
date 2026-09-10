@@ -218,6 +218,12 @@ async def _build_payload(est: dict, tenant: dict, *,
         "line_items": line_items,
         "totals": totals,
         "notes": (est.get("notes") or "").strip() or None,
+        # Feb-2026 · Task 6 — Terms & Conditions surfacing for the
+        # customer viewer. Doc-level ``terms`` is normalised (empty
+        # string collapses to None) and exposed on both auth'd + magic-
+        # link payloads so <DocTermsSection> renders on every estimate
+        # / quote surface. Invoices EXCLUDE this field per product lock.
+        "terms_and_conditions": (est.get("terms") or "").strip() or None,
         "as_customer": as_customer,
         # K79 grouped preview — always included so the admin toolbar's
         # "Preview customer view" can render without a second call.

@@ -124,7 +124,7 @@ export default function PaymentForm({ invoice, invoiceId, source, magicToken, am
     });
     try {
       const body = isMagic
-        ? {}
+        ? { save_card: !!(options && options.saveForFuture) }
         : { save_for_future_billing: !!(options && options.saveForFuture) };
       const path = isMagic
         ? `/invoices/${invId}/request-payment-link-magic?token=${encodeURIComponent(magicToken)}`
@@ -164,15 +164,14 @@ export default function PaymentForm({ invoice, invoiceId, source, magicToken, am
     if (startedRef.current) return;
     startedRef.current = true;
     (async () => {
-      // Feb-2026 P0 · Magic-link path skips the PM count fetch and
-      // the save-for-future flow entirely. A public magic-link
-      // customer isn't portal-authed so the PM endpoint 401s, which
-      // used to trigger the global session-clear-and-redirect
-      // and freeze the pay modal. Straight to start().
+      // Feb-2026 · Task 5 — magic-link customers now see the review
+      // UI with the save-card checkbox (pre-checked, ON by default).
+      // The old ``instant-redirect + save_for_future_billing=False``
+      // path silently blocked customers from saving cards even when
+      // they wanted to. ``setPmCount(0)`` triggers ``showReview``.
       if (isMagic) {
-        autoRedirectedRef.current = true;
-        setPmCount(1);        // sentinel: skip review UI
-        await start({ saveForFuture: false });
+        setPmCount(0);
+        setPreparing(false);
         return;
       }
       let count = 1;   // safe default = "1+" → skip checkbox
@@ -270,11 +269,18 @@ export default function PaymentForm({ invoice, invoiceId, source, magicToken, am
               />
               <span className="text-sm text-slate-800">
                 <span className="font-medium">
-                  Save this payment method for future automatic billing
+                  {/* Feb-2026 · Task 5 — customer-facing label per
+                      product spec. Tenant name shown when available
+                      (from ``invoice.company.name`` / prop). */}
+                  Save this card for future invoices
+                  {invoice?.company?.name
+                    ? ` from ${invoice.company.name}`
+                    : ""}
                 </span>
                 <br />
                 <span className="text-xs text-slate-500">
-                  You can remove saved payment methods anytime from your account settings.
+                  You can remove saved payment methods anytime from your
+                  Payment Methods page in the portal.
                 </span>
               </span>
             </label>

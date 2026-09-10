@@ -194,6 +194,27 @@ def _estimate_reminder_html(inv: dict, name: str, tenant: dict,
             f'border-radius:8px;text-decoration:none;display:inline-block">'
             f'Review {doc_type_label.title()}</a></p>'
         )
+    # Feb-2026 · Task 6 — Terms & Conditions block on estimate/quote
+    # reminders only (invoices excluded per lock). Rendered as a
+    # subdued, collapsible-looking panel so the CTA remains primary.
+    terms_html = ""
+    _terms_body = (inv.get("terms") or "").strip()
+    if _terms_body:
+        _safe_terms = (
+            _terms_body
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\n", "<br/>")
+        )
+        terms_html = (
+            '<div style="margin-top:24px;padding:14px 16px;background:#F9FAFB;'
+            'border:1px solid #E5E7EB;border-radius:10px;font-size:12px;'
+            'line-height:1.6;color:#475569;">'
+            '<div style="font-weight:700;color:#0F172A;margin-bottom:6px;">'
+            'Terms &amp; Conditions</div>'
+            f'<div>{_safe_terms}</div></div>'
+        )
     return (
         f'<div style="font-family:sans-serif;max-width:520px;margin:auto">'
         f"<h2>Reminder: your {doc_type_label}</h2>"
@@ -201,7 +222,7 @@ def _estimate_reminder_html(inv: dict, name: str, tenant: dict,
         f"<p>This is a friendly reminder that {doc_type_label} "
         f"<b>{doc_number}</b> from {company} is awaiting your review. "
         f"Please take a moment to approve, request changes, or decline.</p>"
-        f"{attach_html}{cta}"
+        f"{attach_html}{cta}{terms_html}"
         f"<p>Thank you,<br/>{company}</p></div>"
     )
 

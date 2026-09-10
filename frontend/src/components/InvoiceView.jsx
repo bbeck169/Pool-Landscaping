@@ -12,9 +12,13 @@
  */
 import React, { useEffect, useState } from "react";
 import { Printer, Download, Loader2, CreditCard } from "lucide-react";
+import { toast } from "sonner";
 import { api, TOKEN_KEY } from "@/api";
+import { useAuth } from "@/auth";
 import PaymentForm from "@/components/PaymentForm";
 import InvoiceCreditApplied from "@/components/InvoiceCreditApplied";
+// Feb-2026 · Task 5 · Charge on file — admin toolbar button + confirm.
+import InvoiceChargeSavedCardDialog from "@/components/invoices/InvoiceChargeSavedCardDialog";
 import "./InvoiceView.css";
 import "@/components/documents/docMobile.css";
 // Feb-2026 · Batch #4 · Logo ship — shared tenant logo helper so
@@ -24,7 +28,11 @@ import { getTenantLogoUrl, DEFAULT_LOGO_ALT } from "@/lib/tenantLogo";
 // block + terms slot. Both are gated to mobile viewports via
 // docMobile.css, so desktop layout is unchanged.
 import DocMobileHeader from "@/components/documents/DocMobileHeader";
-import DocTermsSection from "@/components/documents/DocTermsSection";
+// Feb-2026 · Task 6 — Terms & Conditions block is excluded from
+// invoices per product lock. Import removed.
+// Feb-2026 · Desktop-unification — shared shell so invoice /
+// estimate / quote all render the same skeleton at ≥ 768 px.
+import DocDesktopShell from "@/components/documents/DocDesktopShell";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -38,6 +46,21 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
   const [err, setErr] = useState("");
   const [payOpen, setPayOpen] = useState(false);
   const [reloadTick, _setReloadTick] = useState(0);
+  // Task 5 · Feb-2026 — admin Charge-on-file surface.
+  const { user } = useAuth() || {};
+  const isAdminSurface = (
+    !magicToken && !printable
+    && user
+    && ["super_admin", "admin", "manager"].includes(user.role)
+  );
+  const [savedCards, setSavedCards] = useState([]);
+  const [chargeOpen, setChargeOpen] = useState(false);
+  useEffect(() => {
+    if (!invoiceId || !isAdminSurface) return;
+    api.get(`/invoices/${invoiceId}/saved-cards`)
+      .then((r) => setSavedCards((r && r.methods) || []))
+      .catch(() => setSavedCards([]));
+  }, [invoiceId, isAdminSurface, reloadTick]);
 
   useEffect(() => {
     if (!invoiceId) return;
@@ -125,63 +148,60 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
           hideActions={!canPay}
         />
       ) : null}
-      {!printable ? (
-        <div className="iv-toolbar" data-testid="invoice-toolbar">
-          {canPay ? (
+      <DocDesktopShell
+        docType="invoice"
+        testId="invoice-desktop-shell"
+        printable={printable}
+        toolbar={!printable ? (
+          <>
+            {canPay ? (
+              <button
+                type="button"
+                onClick={() => setPayOpen(true)}
+                className="iv-btn iv-btn-primary iv-pay-now-cta"
+                data-testid="invoice-pay-now-btn"
+                style={{
+                  background: "#059669",
+                  borderColor: "#059669",
+                  fontSize: 15, fontWeight: 700, padding: "10px 20px",
+                }}
+              >
+                <CreditCard size={16} />
+                &nbsp;Pay ${fmtMoney(totals?.total_due || 0)}
+              </button>
+            ) : null}
+            {isAdminSurface && canPay && savedCards.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setChargeOpen(true)}
+                className="iv-btn"
+                data-testid="invoice-charge-saved-card-btn"
+                style={{ fontSize: 14, fontWeight: 600 }}
+              >
+                <CreditCard size={14} />
+                &nbsp;Charge on file
+              </button>
+            ) : null}
             <button
               type="button"
-              onClick={() => setPayOpen(true)}
-              className="iv-btn iv-btn-primary iv-pay-now-cta"
-              data-testid="invoice-pay-now-btn"
-              /* Feb-2026 · P0 Bug B — customers with a positive
-                  ``total_due`` reported the Pay Now button was too
-                  small to notice (see Hector Guerrero case). Lift
-                  the button to a full "Pay $XXX.XX" tag, size it
-                  up, and pair it with a sticky mobile bottom bar
-                  below the invoice so the CTA never falls below
-                  the fold. Green matches the ``landscape`` token
-                  semantics operators associate with paid revenue. */
-              style={{
-                background: "#059669",
-                borderColor: "#059669",
-                fontSize: 15, fontWeight: 700, padding: "10px 20px",
-              }}
+              onClick={() => window.print()}
+              className="iv-btn"
+              data-testid="invoice-print-btn"
             >
-              <CreditCard size={16} />
-              &nbsp;Pay ${fmtMoney(totals?.total_due || 0)}
+              <Printer size={14} /> Print
             </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="iv-btn"
-            data-testid="invoice-print-btn"
-          >
-            <Printer size={14} /> Print
-          </button>
-          <button
-            type="button"
-            onClick={openPdf}
-            className="iv-btn iv-btn-primary"
-            data-testid="invoice-download-pdf-btn"
-          >
-            <Download size={14} /> Download PDF
-          </button>
-        </div>
-      ) : null}
-
-      <div className="iv-doc">
-        {/* ── Header ─────────────────────────────────────── */}
-        <div className="iv-header" data-testid="invoice-header">
-          <div className="iv-header-left" data-testid="invoice-header-logo">
-            {/* Phase 34 · Feb 2026 — brand logo header. Falls back to
-                the shared /logo-full.png bundled with the frontend so
-                every invoice preview matches PDFs, estimates + emails.
-                Feb-2026 · Batch #4 · Logo ship — resolves through
-                ``getTenantLogoUrl`` so per-tenant overrides work
-                without touching this JSX. ``doc-header-logo`` is a
-                cross-surface alias (invoice / quote / estimate) that
-                automation asserts against. */}
+            <button
+              type="button"
+              onClick={openPdf}
+              className="iv-btn iv-btn-primary"
+              data-testid="invoice-download-pdf-btn"
+            >
+              <Download size={14} /> Download PDF
+            </button>
+          </>
+        ) : null}
+        headerLeft={(
+          <div data-testid="invoice-header-logo">
             <img
               src={getTenantLogoUrl(company)}
               alt={company.name || DEFAULT_LOGO_ALT}
@@ -210,57 +230,52 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
               </div>
             ) : null}
           </div>
-          <div className="iv-header-right">
-            <div className="iv-title">Invoice</div>
-            <table className="iv-kv">
-              <tbody>
-                <tr>
-                  <td className="iv-kv-label">Invoice #</td>
-                  <td className="iv-kv-value" data-testid="invoice-number">
-                    {header.invoice_number}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="iv-kv-label">Invoice Date</td>
-                  <td className="iv-kv-value" data-testid="invoice-date">
-                    {header.invoice_date}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="iv-kv-label">Credit Available</td>
-                  <td className="iv-kv-value" data-testid="invoice-credit-available">
-                    {fmtMoney(header.credit_available)}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="iv-kv-label">Outstanding Balance</td>
-                  <td className="iv-kv-value" data-testid="invoice-outstanding-balance">
-                    {fmtMoney(header.outstanding_balance)}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+        )}
+        title="Invoice"
+        headerMeta={(
+          <table className="iv-kv" data-testid="invoice-header">
+            <tbody>
+              <tr>
+                <td className="iv-kv-label">Invoice #</td>
+                <td className="iv-kv-value" data-testid="invoice-number">
+                  {header.invoice_number}
+                </td>
+              </tr>
+              <tr>
+                <td className="iv-kv-label">Invoice Date</td>
+                <td className="iv-kv-value" data-testid="invoice-date">
+                  {header.invoice_date}
+                </td>
+              </tr>
+              <tr>
+                <td className="iv-kv-label">Credit Available</td>
+                <td className="iv-kv-value" data-testid="invoice-credit-available">
+                  {fmtMoney(header.credit_available)}
+                </td>
+              </tr>
+              <tr>
+                <td className="iv-kv-label">Outstanding Balance</td>
+                <td className="iv-kv-value" data-testid="invoice-outstanding-balance">
+                  {fmtMoney(header.outstanding_balance)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+        billTo={(
+          <div data-testid="invoice-bill-to">
+            <div className="iv-bill-name">{bill_to.name || "—"}</div>
+            {bill_to.address ? (
+              <div className="iv-bill-addr">{bill_to.address}</div>
+            ) : null}
           </div>
-        </div>
-
-        <div className="iv-divider" />
-
-        {/* ── Bill To ────────────────────────────────────── */}
-        <div className="iv-bill-to" data-testid="invoice-bill-to">
-          <div className="iv-bill-name">{bill_to.name || "—"}</div>
-          {bill_to.address ? (
-            <div className="iv-bill-addr">{bill_to.address}</div>
-          ) : null}
-        </div>
-
-        {property_address ? (
-          <div className="iv-prop-addr" data-testid="invoice-property-address">
+        )}
+        propertyAddress={property_address ? (
+          <span data-testid="invoice-property-address">
             <b>Property Address:</b> {property_address}
-          </div>
+          </span>
         ) : null}
-
-        {/* ── Line items ─────────────────────────────────── */}
-        <div className="iv-lines-wrap">
+        lines={(
           <table className="iv-lines" data-testid="invoice-line-items-table">
             <thead>
               <tr>
@@ -287,11 +302,9 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
               ))}
             </tbody>
           </table>
-        </div>
-
-        {/* ── Totals ─────────────────────────────────────── */}
-        <div className="iv-totals-row">
-          <div className="iv-notes" data-testid="invoice-notes">
+        )}
+        notes={(
+          <div data-testid="invoice-notes">
             <div className="iv-notes-title">Notes:</div>
             <div className="iv-notes-body">
               {notes.split(/(\+?[\d()\-\s]{10,})/g).map((seg, i) => {
@@ -306,48 +319,42 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
               })}
             </div>
           </div>
-          <table className="iv-totals">
-            <tbody>
-              <tr>
-                <td>Subtotal</td>
-                <td data-testid="invoice-total-subtotal">{fmtMoney(totals.subtotal)}</td>
-              </tr>
-              <tr>
-                <td>This Invoice</td>
-                <td data-testid="invoice-total-this-invoice">{fmtMoney(totals.this_invoice)}</td>
-              </tr>
-              <tr>
-                <td>Amount Paid</td>
-                <td data-testid="invoice-total-amount-paid">{fmtMoney(totals.amount_paid)}</td>
-              </tr>
-              <tr className="iv-total-due">
-                <td>Total Due</td>
-                <td data-testid="invoice-total-due">{fmtMoney(totals.total_due)}</td>
-              </tr>
-            </tbody>
-          </table>
-          <InvoiceCreditApplied invoice={creditSummary} />
-        </div>
-
-        {is_due_on_receipt ? (
+        )}
+        totals={(
+          <>
+            <table className="iv-totals">
+              <tbody>
+                <tr>
+                  <td>Subtotal</td>
+                  <td data-testid="invoice-total-subtotal">{fmtMoney(totals.subtotal)}</td>
+                </tr>
+                <tr>
+                  <td>This Invoice</td>
+                  <td data-testid="invoice-total-this-invoice">{fmtMoney(totals.this_invoice)}</td>
+                </tr>
+                <tr>
+                  <td>Amount Paid</td>
+                  <td data-testid="invoice-total-amount-paid">{fmtMoney(totals.amount_paid)}</td>
+                </tr>
+                <tr className="iv-total-due">
+                  <td>Total Due</td>
+                  <td data-testid="invoice-total-due">{fmtMoney(totals.total_due)}</td>
+                </tr>
+              </tbody>
+            </table>
+            <InvoiceCreditApplied invoice={creditSummary} />
+          </>
+        )}
+        dueMarker={is_due_on_receipt ? (
           <div className="iv-due-marker" data-testid="invoice-due-on-receipt-marker">
             Due on Receipt
           </div>
         ) : null}
-
-        {/* Feb-2026 · Universal mobile-responsive redesign · Terms
-            slot (queue item #5 will populate the doc-level field). */}
-        <DocTermsSection
-          terms={data?.terms_and_conditions}
-          testidPrefix="invoice"
-        />
-
-
-        {/* ── Payment stub ───────────────────────────────── */}
-        <div className="iv-stub-divider" />
-        <div className="iv-stub" data-testid="invoice-payment-stub">
-          <div className="iv-stub-title">PAYMENT STUB</div>
-          <div className="iv-stub-cols">
+        termsSection={null /* Feb-2026 · Task 6 — Terms & Conditions
+          block is excluded from invoices per product lock. Kept the
+          slot prop so <DocDesktopShell> layout stays stable. */}
+        stub={(
+          <div className="iv-stub-cols" data-testid="invoice-payment-stub">
             <div className="iv-stub-left">
               <div className="iv-bill-name">{bill_to.name || "—"}</div>
               {bill_to.address ? <div>{bill_to.address}</div> : null}
@@ -370,8 +377,8 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
               </tbody>
             </table>
           </div>
-        </div>
-      </div>
+        )}
+      />
       {payOpen ? (
         <PaymentForm
           invoice={data}
@@ -380,6 +387,19 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
           magicToken={magicToken}
           amount={totals?.total_due || 0}
           onClose={() => setPayOpen(false)}
+        />
+      ) : null}
+      {chargeOpen ? (
+        <InvoiceChargeSavedCardDialog
+          invoiceId={invoiceId}
+          savedCards={savedCards}
+          amount={totals?.total_due || 0}
+          onClose={() => setChargeOpen(false)}
+          onSuccess={() => {
+            setChargeOpen(false);
+            toast.success("Payment succeeded — invoice will refresh shortly.");
+            _setReloadTick((t) => t + 1);
+          }}
         />
       ) : null}
       {/* Feb-2026 · P0 Bug B — sticky mobile pay bar. On phones the

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Activity, Waves, Package, History, BarChart3, Plus, Trash2, RefreshCw, MapPin, ChevronRight, Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon, Undo2, ShieldAlert, Loader2, DollarSign, Pencil } from "lucide-react";
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Activity, Waves, Package, History, BarChart3, Plus, Trash2, RefreshCw, MapPin, ChevronRight, Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon, Undo2, ShieldAlert, Loader2, DollarSign, Pencil, FolderCog } from "lucide-react";
 import { api } from "@/api";
 import { SUPPLIER_METADATA } from "@/pages/settings/supplier_metadata";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
@@ -2347,7 +2347,23 @@ export function PriceBook() {
             }}
           />
         </div>
-        <Button onClick={() => setOpen(true)} testid="pb-new"><Plus size={14} /> Add new item</Button>
+        <div className="flex items-center gap-2">
+          {/* Pricebook × Profit-Reporting Phase 1 · Feb-2026 —
+              gateway to the consolidated Categories admin. */}
+          <Link
+            to="/pricebook/categories"
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold"
+            style={{
+              backgroundColor: colors.surface,
+              border: `1px solid ${colors.border}`,
+              color: colors.onSurface,
+            }}
+            data-testid="pricebook-manage-categories-link"
+          >
+            <FolderCog size={14} /> Manage Categories
+          </Link>
+          <Button onClick={() => setOpen(true)} testid="pb-new"><Plus size={14} /> Add new item</Button>
+        </div>
       </div>
       {rows === null ? <Skeleton style={{ height: 160 }} /> :
        (debouncedSearch && filteredRows.length === 0) ? (

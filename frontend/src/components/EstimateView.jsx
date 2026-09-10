@@ -40,6 +40,9 @@ import { getTenantLogoUrl, DEFAULT_LOGO_ALT } from "@/lib/tenantLogo";
 // unchanged.
 import DocMobileHeader from "@/components/documents/DocMobileHeader";
 import DocTermsSection from "@/components/documents/DocTermsSection";
+// Feb-2026 · Desktop-unification — shared shell so invoice /
+// estimate / quote all render the same skeleton at ≥ 768 px.
+import DocDesktopShell from "@/components/documents/DocDesktopShell";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -297,187 +300,182 @@ export default function EstimateView({
           hideActions={locked || !actionable}
         />
       ) : null}
-      {/* ── Toolbar ─────────────────────────────────────────── */}
-      {!printable ? (
-        <div
-          className="ev-toolbar"
-          data-testid={showAdminToolbar ? "estimate-toolbar-admin" : "estimate-toolbar-customer"}
-        >
-          {showAdminToolbar ? (
-            <>
-              <div className="ev-tool-group">
-                <button className="iv-btn" data-testid="estimate-toolbar-send-btn">
-                  <Send size={14}/> Send
-                </button>
-                <button className="iv-btn" onClick={() => window.print()} data-testid="estimate-toolbar-print-btn">
-                  <Printer size={14}/> Print
-                </button>
-                <button className="iv-btn" onClick={openPdf} data-testid="invoice-download-pdf-btn">
-                  <Download size={14}/> PDF
-                </button>
-                <button className="iv-btn" data-testid="estimate-toolbar-duplicate-btn">
-                  <Copy size={14}/> Duplicate
-                </button>
-                <button className="iv-btn" data-testid="estimate-toolbar-archive-btn">
-                  <Archive size={14}/> Archive
-                </button>
-                <button className="iv-btn" data-testid="estimate-toolbar-create-invoice-btn">
-                  <FilePlus size={14}/> Create Invoice
-                </button>
-                <button className="iv-btn" data-testid="estimate-toolbar-create-visit-btn">
-                  <CalendarPlus size={14}/> + Create Visit
-                </button>
-              </div>
-              <div className="ev-tool-group">
-                {!locked ? (
-                  <>
-                    <button
-                      className="iv-btn"
-                      onClick={() => setChangesOpen(true)}
-                      disabled={busy}
-                      data-testid="estimate-toolbar-request-changes-btn"
-                    >
-                      <MessageSquare size={14}/> Request Changes
-                    </button>
-                    <button
-                      className="iv-btn ev-btn-accept"
-                      onClick={accept}
-                      disabled={busy}
-                      data-testid="estimate-toolbar-accept-btn"
-                    >
-                      <Check size={14}/> Accept
-                    </button>
-                    <button
-                      className="iv-btn ev-btn-decline"
-                      onClick={() => setDeclineOpen(true)}
-                      disabled={busy}
-                      data-testid="estimate-toolbar-decline-btn"
-                    >
-                      <XIcon size={14}/> Decline
-                    </button>
-                  </>
-                ) : null}
-              </div>
-              <div className="ev-tool-group ev-right">
-                <button className="iv-btn ev-btn-danger" data-testid="estimate-toolbar-delete-btn">
-                  <Trash2 size={14}/> Delete
-                </button>
-                <button className="iv-btn" data-testid="estimate-toolbar-edit-btn">
-                  <Edit3 size={14}/> Edit
-                </button>
-              </div>
-            </>
-          ) : null}
-          {showCustomerToolbar && !locked && actionable ? (
-            <div className="ev-tool-group ev-customer-cta">
-              <button
-                className="iv-btn"
-                onClick={() => setChangesOpen(true)}
-                disabled={busy}
-                data-testid="estimate-toolbar-request-changes-btn"
-              >
-                <MessageSquare size={14}/> Request Changes
-              </button>
-              <button
-                className="iv-btn ev-btn-accept"
-                onClick={accept}
-                disabled={busy || signatureGateBlocked}
-                data-testid="estimate-toolbar-customer-approve"
-                data-legacy-testid="estimate-toolbar-accept-btn"
-                data-signature-blocked={signatureGateBlocked ? "true" : "false"}
-                title={signatureGateBlocked ? "Sign to enable" : undefined}
-              >
-                <Check size={14}/> Approve
-              </button>
-              <button
-                className="iv-btn ev-btn-decline"
-                onClick={() => setDeclineOpen(true)}
-                disabled={busy}
-                data-testid="estimate-toolbar-customer-decline"
-                data-legacy-testid="estimate-toolbar-decline-btn"
-              >
-                <XIcon size={14}/> Decline
-              </button>
-              {signatureGateBlocked ? (
-                <div
-                  className="ev-signature-gate-hint"
-                  data-testid="approve-blocked-by-signature-hint"
-                  style={{
-                    fontSize: 12,
-                    color: "#92400E",
-                    background: "#FEF3C7",
-                    border: "1px solid #FCD34D",
-                    padding: "6px 10px",
-                    borderRadius: 8,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    marginLeft: 8,
-                  }}
-                >
-                  <span>Sign to enable Approve</span>
-                  <button
-                    type="button"
-                    className="iv-btn"
-                    style={{
-                      fontSize: 12,
-                      padding: "4px 10px",
-                      background: "#0EA5E9",
-                      color: "#fff",
-                      border: "none",
-                    }}
-                    onClick={openSignNowFlow}
-                    data-testid="approve-sign-now-cta"
-                  >
-                    Sign now
+      <DocDesktopShell
+        docType="estimate"
+        testId="estimate-desktop-shell"
+        printable={printable}
+        belowToolbar={!printable ? (
+          <div
+            className="ev-toolbar"
+            data-testid={showAdminToolbar ? "estimate-toolbar-admin" : "estimate-toolbar-customer"}
+          >
+            {showAdminToolbar ? (
+              <>
+                <div className="ev-tool-group">
+                  <button className="iv-btn" data-testid="estimate-toolbar-send-btn">
+                    <Send size={14}/> Send
+                  </button>
+                  <button className="iv-btn" onClick={() => window.print()} data-testid="estimate-toolbar-print-btn">
+                    <Printer size={14}/> Print
+                  </button>
+                  <button className="iv-btn" onClick={openPdf} data-testid="invoice-download-pdf-btn">
+                    <Download size={14}/> PDF
+                  </button>
+                  <button className="iv-btn" data-testid="estimate-toolbar-duplicate-btn">
+                    <Copy size={14}/> Duplicate
+                  </button>
+                  <button className="iv-btn" data-testid="estimate-toolbar-archive-btn">
+                    <Archive size={14}/> Archive
+                  </button>
+                  <button className="iv-btn" data-testid="estimate-toolbar-create-invoice-btn">
+                    <FilePlus size={14}/> Create Invoice
+                  </button>
+                  <button className="iv-btn" data-testid="estimate-toolbar-create-visit-btn">
+                    <CalendarPlus size={14}/> + Create Visit
                   </button>
                 </div>
-              ) : null}
-            </div>
-          ) : null}
-          {/* Feb-2026 · Phase A — legacy testid preservation. Any
-              caller still querying the old ``estimate-toolbar-accept
-              -btn`` / ``estimate-toolbar-decline-btn`` testids will
-              hit these hidden spans (display: none) so lookups don't
-              silently fail. Delete when Phase C ships. */}
-          {showCustomerToolbar && !locked && actionable ? (
-            <>
-              <span style={{ display: "none" }} data-testid="estimate-toolbar-accept-btn" aria-hidden />
-              <span style={{ display: "none" }} data-testid="estimate-toolbar-decline-btn" aria-hidden />
-            </>
-          ) : null}
+                <div className="ev-tool-group">
+                  {!locked ? (
+                    <>
+                      <button
+                        className="iv-btn"
+                        onClick={() => setChangesOpen(true)}
+                        disabled={busy}
+                        data-testid="estimate-toolbar-request-changes-btn"
+                      >
+                        <MessageSquare size={14}/> Request Changes
+                      </button>
+                      <button
+                        className="iv-btn ev-btn-accept"
+                        onClick={accept}
+                        disabled={busy}
+                        data-testid="estimate-toolbar-accept-btn"
+                      >
+                        <Check size={14}/> Accept
+                      </button>
+                      <button
+                        className="iv-btn ev-btn-decline"
+                        onClick={() => setDeclineOpen(true)}
+                        disabled={busy}
+                        data-testid="estimate-toolbar-decline-btn"
+                      >
+                        <XIcon size={14}/> Decline
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+                <div className="ev-tool-group ev-right">
+                  <button className="iv-btn ev-btn-danger" data-testid="estimate-toolbar-delete-btn">
+                    <Trash2 size={14}/> Delete
+                  </button>
+                  <button className="iv-btn" data-testid="estimate-toolbar-edit-btn">
+                    <Edit3 size={14}/> Edit
+                  </button>
+                </div>
+              </>
+            ) : null}
+            {showCustomerToolbar && !locked && actionable ? (
+              <div className="ev-tool-group ev-customer-cta">
+                <button
+                  className="iv-btn"
+                  onClick={() => setChangesOpen(true)}
+                  disabled={busy}
+                  data-testid="estimate-toolbar-request-changes-btn"
+                >
+                  <MessageSquare size={14}/> Request Changes
+                </button>
+                <button
+                  className="iv-btn ev-btn-accept"
+                  onClick={accept}
+                  disabled={busy || signatureGateBlocked}
+                  data-testid="estimate-toolbar-customer-approve"
+                  data-legacy-testid="estimate-toolbar-accept-btn"
+                  data-signature-blocked={signatureGateBlocked ? "true" : "false"}
+                  title={signatureGateBlocked ? "Sign to enable" : undefined}
+                >
+                  <Check size={14}/> Approve
+                </button>
+                <button
+                  className="iv-btn ev-btn-decline"
+                  onClick={() => setDeclineOpen(true)}
+                  disabled={busy}
+                  data-testid="estimate-toolbar-customer-decline"
+                  data-legacy-testid="estimate-toolbar-decline-btn"
+                >
+                  <XIcon size={14}/> Decline
+                </button>
+                {signatureGateBlocked ? (
+                  <div
+                    className="ev-signature-gate-hint"
+                    data-testid="approve-blocked-by-signature-hint"
+                    style={{
+                      fontSize: 12,
+                      color: "#92400E",
+                      background: "#FEF3C7",
+                      border: "1px solid #FCD34D",
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      marginLeft: 8,
+                    }}
+                  >
+                    <span>Sign to enable Approve</span>
+                    <button
+                      type="button"
+                      className="iv-btn"
+                      style={{
+                        fontSize: 12,
+                        padding: "4px 10px",
+                        background: "#0EA5E9",
+                        color: "#fff",
+                        border: "none",
+                      }}
+                      onClick={openSignNowFlow}
+                      data-testid="approve-sign-now-cta"
+                    >
+                      Sign now
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {/* Feb-2026 · Phase A — legacy testid preservation. Any
+                caller still querying the old ``estimate-toolbar-accept
+                -btn`` / ``estimate-toolbar-decline-btn`` testids will
+                hit these hidden spans (display: none) so lookups don't
+                silently fail. Delete when Phase C ships. */}
+            {showCustomerToolbar && !locked && actionable ? (
+              <>
+                <span style={{ display: "none" }} data-testid="estimate-toolbar-accept-btn" aria-hidden />
+                <span style={{ display: "none" }} data-testid="estimate-toolbar-decline-btn" aria-hidden />
+              </>
+            ) : null}
 
-          {locked ? (
-            <div
-              className={`ev-locked-pill ${decision === "accepted" ? "ev-locked-accept" : "ev-locked-decline"}`}
-              data-testid={decision === "accepted" ? "estimate-accepted-pill" : "estimate-declined-pill"}
-            >
-              {decision === "accepted" ? <CheckCircle2 size={16}/> : <XCircle size={16}/>}
-              {decision === "accepted"
-                ? `Accepted on ${String(accepted_at || "").slice(0, 10)}`
-                : `Declined on ${String(declined_at || "").slice(0, 10)}`}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {sent_at && !printable ? (
-        <div className="ev-banner" data-testid="estimate-status-banner">
-          Estimate #{header.estimate_number} was sent to customer by {sent_via || "email"}
-        </div>
-      ) : null}
-
-      {/* ── Body ────────────────────────────────────────────── */}
-      <div className="iv-doc ev-doc">
-        <div className="iv-header ev-header" data-testid="estimate-header">
-          <div className="iv-header-left">
+            {locked ? (
+              <div
+                className={`ev-locked-pill ${decision === "accepted" ? "ev-locked-accept" : "ev-locked-decline"}`}
+                data-testid={decision === "accepted" ? "estimate-accepted-pill" : "estimate-declined-pill"}
+              >
+                {decision === "accepted" ? <CheckCircle2 size={16}/> : <XCircle size={16}/>}
+                {decision === "accepted"
+                  ? `Accepted on ${String(accepted_at || "").slice(0, 10)}`
+                  : `Declined on ${String(declined_at || "").slice(0, 10)}`}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        banner={sent_at && !printable ? (
+          <div className="ev-banner" data-testid="estimate-status-banner">
+            Estimate #{header.estimate_number} was sent to customer by {sent_via || "email"}
+          </div>
+        ) : null}
+        headerLeft={(
+          <>
             {/* Phase 34 · Feb 2026 — brand logo header. Falls back to
                 the shared /logo-full.png bundled with the frontend so
-                every estimate preview matches PDFs, invoices + emails.
-                Feb-2026 · Batch #4 · Logo ship — routed through
-                ``getTenantLogoUrl`` so per-tenant overrides work
-                without touching this JSX. ``doc-header-logo`` is the
-                cross-surface testid (invoice / quote / estimate). */}
+                every estimate preview matches PDFs, invoices + emails. */}
             <img
               src={getTenantLogoUrl(company)}
               alt={company.name || DEFAULT_LOGO_ALT}
@@ -496,9 +494,11 @@ export default function EstimateView({
                 </a>
               </div>
             ) : null}
-          </div>
-          <div className="ev-title" data-testid="estimate-title">Estimate</div>
-          <div className="ev-header-details">
+          </>
+        )}
+        title={<span data-testid="estimate-title">Estimate</span>}
+        headerMeta={(
+          <div data-testid="estimate-header">
             <table className="iv-kv">
               <tbody>
                 <tr><td className="iv-kv-label">Customer #</td><td className="iv-kv-value">{header.customer_number || "—"}</td></tr>
@@ -511,154 +511,149 @@ export default function EstimateView({
               </tbody>
             </table>
           </div>
-        </div>
-
-        <div className="iv-divider"/>
-
-        <div className="iv-bill-to">
-          <div className="iv-bill-name">{bill_to.name || "—"}</div>
-          {bill_to.address ? <div>{bill_to.address}</div> : null}
-        </div>
-
-        {title ? <div className="ev-est-title">{title}</div> : null}
-        {property_address ? (
-          <div className="iv-prop-addr">
-            <b>Property Address:</b> {property_address}
-          </div>
+        )}
+        billTo={(
+          <>
+            <div className="iv-bill-name">{bill_to.name || "—"}</div>
+            {bill_to.address ? <div>{bill_to.address}</div> : null}
+          </>
+        )}
+        midTitle={title ? <div className="ev-est-title">{title}</div> : null}
+        propertyAddress={property_address ? (
+          <span><b>Property Address:</b> {property_address}</span>
         ) : null}
-
-        <div className="iv-lines-wrap ev-lines-wrap">
-          {showGrouped ? (
-            <table className="iv-lines"
-                    data-testid="estimate-grouped-lines-table">
+        lines={(
+          <div className="ev-lines-wrap">
+            {showGrouped ? (
+              <table className="iv-lines"
+                      data-testid="estimate-grouped-lines-table">
+                <thead>
+                  <tr>
+                    <th>Service</th>
+                    <th className="iv-num">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(customer_view.groups || []).length === 0 ? (
+                    <tr><td colSpan={2} className="iv-empty">
+                      No services on this estimate.
+                    </td></tr>
+                  ) : (customer_view.groups || []).map((g, i) => (
+                    <tr key={g.category_id || `other-${i}`}
+                        data-testid={
+                          `estimate-grouped-row-${g.category_id || "other"}`
+                        }>
+                      <td>
+                        <div><b>{g.label}</b></div>
+                        {g.description ? (
+                          <div className="ev-group-desc"
+                                data-testid={
+                                  `estimate-grouped-desc-${g.category_id || "other"}`
+                                }>
+                            {g.description}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="iv-num">{fmt(g.subtotal)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+            <table className="iv-lines" data-testid="estimate-line-items-table">
               <thead>
                 <tr>
-                  <th>Service</th>
-                  <th className="iv-num">Subtotal</th>
+                  <th>Description</th>
+                  {!as_customer ? <th className="iv-num">Calc</th> : null}
+                  {!as_customer ? <th className="iv-num">Cost/Rate</th> : null}
+                  <th className="iv-num">Qty/Hr</th>
+                  <th className="iv-num">Visits</th>
+                  {!as_customer ? <th className="iv-num">M.Rate</th> : null}
+                  {!as_customer ? <th className="iv-num">BH</th> : null}
+                  {!as_customer ? <th className="iv-num">T.BH</th> : null}
+                  {!as_customer ? <th className="iv-num">T.B.Cost</th> : null}
+                  {!as_customer ? <th className="iv-num">Margin %</th> : null}
+                  <th className="iv-num">Total</th>
+                  {/* Feb-2026 · Phase A — per-line decline column
+                      (customer + magic-link only, actionable window). */}
+                  {as_customer && actionable && !locked ? <th></th> : null}
                 </tr>
               </thead>
               <tbody>
-                {(customer_view.groups || []).length === 0 ? (
-                  <tr><td colSpan={2} className="iv-empty">
-                    No services on this estimate.
-                  </td></tr>
-                ) : (customer_view.groups || []).map((g, i) => (
-                  <tr key={g.category_id || `other-${i}`}
-                      data-testid={
-                        `estimate-grouped-row-${g.category_id || "other"}`
-                      }>
-                    <td>
-                      <div><b>{g.label}</b></div>
-                      {g.description ? (
-                        <div className="ev-group-desc"
-                              data-testid={
-                                `estimate-grouped-desc-${g.category_id || "other"}`
-                              }>
-                          {g.description}
-                        </div>
+                {line_items.length === 0 ? (
+                  <tr><td colSpan={11} className="iv-empty">No line items.</td></tr>
+                ) : line_items.map((li, i) => {
+                  const isDeclined = (li.customer_status || "pending") === "declined";
+                  const rowStyle = isDeclined
+                    ? { textDecoration: "line-through", opacity: 0.55 }
+                    : undefined;
+                  return (
+                  <tr key={i} data-testid={`estimate-line-item-row-${i}`}
+                       data-customer-status={li.customer_status || "pending"}>
+                    <td style={rowStyle}>
+                      {li.description}
+                      {isDeclined ? (
+                        <span style={{
+                                marginLeft: 8, fontSize: 11,
+                                padding: "2px 6px",
+                                borderRadius: 6,
+                                background: "#FEE2E2",
+                                color: "#7F1D1D",
+                                textDecoration: "none",
+                              }}
+                              data-testid={`estimate-line-item-declined-chip-${i}`}>
+                          Declined
+                        </span>
                       ) : null}
                     </td>
-                    <td className="iv-num">{fmt(g.subtotal)}</td>
+                    {!as_customer ? <td className="iv-num" style={rowStyle}>{li.calc || "—"}</td> : null}
+                    {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.cost_rate)}</td> : null}
+                    <td className="iv-num" style={rowStyle} data-mlabel="Qty/Hr">{li.qty_hr || li.quantity || 0}</td>
+                    <td className="iv-num" style={rowStyle} data-mlabel="Visits">{li.visits || 1}</td>
+                    {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.m_rate)}</td> : null}
+                    {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.bh)}</td> : null}
+                    {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_bh)}</td> : null}
+                    {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_b_cost)}</td> : null}
+                    {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.margin_pct)}</td> : null}
+                    <td className="iv-num" style={rowStyle} data-mlabel="Total">{fmt(li.total)}</td>
+                    {as_customer && actionable && !locked ? (
+                      <td className="iv-num">
+                        {isDeclined ? (
+                          <button
+                            className="iv-btn"
+                            style={{ fontSize: 12 }}
+                            disabled={busyLineIdx === i}
+                            onClick={() => undeclineLine(i)}
+                            data-testid={`estimate-line-item-undecline-${i}`}
+                          >
+                            Undo decline
+                          </button>
+                        ) : (
+                          <button
+                            className="iv-btn ev-btn-decline"
+                            style={{ fontSize: 12 }}
+                            disabled={busyLineIdx === i}
+                            onClick={() => setLineDeclineOpen(i)}
+                            data-testid={`estimate-line-item-decline-${i}`}
+                          >
+                            Decline
+                          </button>
+                        )}
+                      </td>
+                    ) : null}
                   </tr>
-                ))}
+                );})}
               </tbody>
             </table>
-          ) : (
-          <table className="iv-lines" data-testid="estimate-line-items-table">
-            <thead>
-              <tr>
-                <th>Description</th>
-                {!as_customer ? <th className="iv-num">Calc</th> : null}
-                {!as_customer ? <th className="iv-num">Cost/Rate</th> : null}
-                <th className="iv-num">Qty/Hr</th>
-                <th className="iv-num">Visits</th>
-                {!as_customer ? <th className="iv-num">M.Rate</th> : null}
-                {!as_customer ? <th className="iv-num">BH</th> : null}
-                {!as_customer ? <th className="iv-num">T.BH</th> : null}
-                {!as_customer ? <th className="iv-num">T.B.Cost</th> : null}
-                {!as_customer ? <th className="iv-num">Margin %</th> : null}
-                <th className="iv-num">Total</th>
-                {/* Feb-2026 · Phase A — per-line decline column
-                    (customer + magic-link only, actionable window). */}
-                {as_customer && actionable && !locked ? <th></th> : null}
-              </tr>
-            </thead>
-            <tbody>
-              {line_items.length === 0 ? (
-                <tr><td colSpan={11} className="iv-empty">No line items.</td></tr>
-              ) : line_items.map((li, i) => {
-                const isDeclined = (li.customer_status || "pending") === "declined";
-                const rowStyle = isDeclined
-                  ? { textDecoration: "line-through", opacity: 0.55 }
-                  : undefined;
-                return (
-                <tr key={i} data-testid={`estimate-line-item-row-${i}`}
-                     data-customer-status={li.customer_status || "pending"}>
-                  <td style={rowStyle}>
-                    {li.description}
-                    {isDeclined ? (
-                      <span style={{
-                              marginLeft: 8, fontSize: 11,
-                              padding: "2px 6px",
-                              borderRadius: 6,
-                              background: "#FEE2E2",
-                              color: "#7F1D1D",
-                              textDecoration: "none",
-                            }}
-                            data-testid={`estimate-line-item-declined-chip-${i}`}>
-                        Declined
-                      </span>
-                    ) : null}
-                  </td>
-                  {!as_customer ? <td className="iv-num" style={rowStyle}>{li.calc || "—"}</td> : null}
-                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.cost_rate)}</td> : null}
-                  <td className="iv-num" style={rowStyle} data-mlabel="Qty/Hr">{li.qty_hr || li.quantity || 0}</td>
-                  <td className="iv-num" style={rowStyle} data-mlabel="Visits">{li.visits || 1}</td>
-                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.m_rate)}</td> : null}
-                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.bh)}</td> : null}
-                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_bh)}</td> : null}
-                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_b_cost)}</td> : null}
-                  {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.margin_pct)}</td> : null}
-                  <td className="iv-num" style={rowStyle} data-mlabel="Total">{fmt(li.total)}</td>
-                  {as_customer && actionable && !locked ? (
-                    <td className="iv-num">
-                      {isDeclined ? (
-                        <button
-                          className="iv-btn"
-                          style={{ fontSize: 12 }}
-                          disabled={busyLineIdx === i}
-                          onClick={() => undeclineLine(i)}
-                          data-testid={`estimate-line-item-undecline-${i}`}
-                        >
-                          Undo decline
-                        </button>
-                      ) : (
-                        <button
-                          className="iv-btn ev-btn-decline"
-                          style={{ fontSize: 12 }}
-                          disabled={busyLineIdx === i}
-                          onClick={() => setLineDeclineOpen(i)}
-                          data-testid={`estimate-line-item-decline-${i}`}
-                        >
-                          Decline
-                        </button>
-                      )}
-                    </td>
-                  ) : null}
-                </tr>
-              );})}
-            </tbody>
-          </table>
-          )}
-        </div>
-
-        {notes ? (
-          <div className="iv-notes ev-notes" data-testid="estimate-notes">
+            )}
+          </div>
+        )}
+        notes={notes ? (
+          <div data-testid="estimate-notes">
             <div className="iv-notes-body">{notes}</div>
           </div>
         ) : null}
-
-        <div className="ev-totals-wrap">
+        totals={(
           <table className="ev-totals" data-testid="estimate-totals-table">
             <tbody>
               <tr><td>Subtotal</td><td data-testid="estimate-totals-subtotal">{fmt(totals.subtotal)}</td></tr>
@@ -700,23 +695,23 @@ export default function EstimateView({
               ) : null}
             </tbody>
           </table>
-        </div>
-
-        {/* Feb-2026 · Universal mobile-responsive redesign · Terms
-            slot (queue item #5 will populate the doc-level field). */}
-        <DocTermsSection
-          terms={data?.terms_and_conditions}
-          testidPrefix="estimate"
-        />
-
-        <div className="ev-disclaimer" data-testid="estimate-disclaimer">
-          This estimate is a good faith estimate only and is not a guarantee of final cost.
-          It is based on anticipated labor, materials, and conditions known at the time of
-          estimating. Unforeseen conditions, hidden issues, design changes, or client-requested
-          modifications may result in additional costs beyond this estimate. Any additional
-          charges will be documented and communicated for approval as soon as reasonably possible.
-        </div>
-      </div>
+        )}
+        termsSection={(
+          <DocTermsSection
+            terms={data?.terms_and_conditions}
+            testidPrefix="estimate"
+          />
+        )}
+        disclaimer={(
+          <div className="ev-disclaimer" data-testid="estimate-disclaimer">
+            This estimate is a good faith estimate only and is not a guarantee of final cost.
+            It is based on anticipated labor, materials, and conditions known at the time of
+            estimating. Unforeseen conditions, hidden issues, design changes, or client-requested
+            modifications may result in additional costs beyond this estimate. Any additional
+            charges will be documented and communicated for approval as soon as reasonably possible.
+          </div>
+        )}
+      />
 
       {/* Modals for decline/request-changes */}
       {/* Feb-2026 · Phase A — per-line decline confirm dialog. */}

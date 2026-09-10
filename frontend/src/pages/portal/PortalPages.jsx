@@ -205,6 +205,7 @@ export function PortalInvoices() {
 export function PortalInvoiceDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth() || {};
   const [params] = useSearchParams();
   const printable = params.get("format") === "printable";
   const [doc, setDoc] = useState(null);
@@ -214,6 +215,29 @@ export function PortalInvoiceDetail() {
   // /api/payments/checkout/{id} endpoint returned "Stripe not
   // configured" whenever the older Phase-53 SDK path hit an exception.
   const [payNowOpen, setPayNowOpen] = useState(false);
+  // Feb-2026 · Task 3 · Invoices bypass portal — a logged-in customer
+  // hitting the portal invoice detail is bounced to the canonical
+  // magic-link viewer at ``/i/:token`` so the pay experience is
+  // identical whether they landed via email/SMS or a portal
+  // bookmark. Staff (admin / manager / super_admin) preview access
+  // and printable exports keep the in-portal render.
+  const [redirecting, setRedirecting] = useState(false);
+  useEffect(() => {
+    if (printable) return;
+    const role = (user && user.role) || "";
+    if (role !== "customer") return;
+    setRedirecting(true);
+    api.get(`/invoices/${id}/magic-link`)
+      .then((r) => {
+        const token = (r && r.token) || "";
+        if (token) {
+          navigate(`/i/${token}`, { replace: true });
+        } else {
+          setRedirecting(false);
+        }
+      })
+      .catch(() => setRedirecting(false));
+  }, [id, printable, user, navigate]);
   useEffect(() => { api.get(`/quotes/${id}`).then(setDoc).catch(() => {}); }, [id]);
 
   const balance = doc
@@ -225,7 +249,16 @@ export function PortalInvoiceDetail() {
       className={printable ? "" : "max-w-4xl mx-auto px-2 sm:px-4 lg:px-6 py-4"}
       data-testid="portal-inv-detail"
     >
-      {!printable ? (
+      {redirecting ? (
+        <div
+          className="text-sm text-center py-8"
+          style={{ color: colors.muted }}
+          data-testid="portal-inv-detail-redirecting"
+        >
+          Opening your invoice…
+        </div>
+      ) : null}
+      {!printable && !redirecting ? (
         <div className="max-w-4xl mx-auto flex items-center justify-between mb-3 px-2">
           <button
             onClick={() => navigate("/portal/invoices")}
@@ -249,7 +282,9 @@ export function PortalInvoiceDetail() {
           ) : null}
         </div>
       ) : null}
-      <InvoiceView invoiceId={id} printable={printable} />
+      {!redirecting ? (
+        <InvoiceView invoiceId={id} printable={printable} />
+      ) : null}
       {payNowOpen ? (
         <PaymentForm
           invoice={doc}

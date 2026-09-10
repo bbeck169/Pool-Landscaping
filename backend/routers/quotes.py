@@ -597,6 +597,13 @@ async def update_quote(qid: str, body: QuoteUpdate,
         await audit_put_denial(db, quote=existing, actor=user)
         assert_quote_mutable_for_put(existing, bypass_lock=_ack)  # raises 409
     upd = {k: v for k, v in body.dict().items() if v is not None}
+    # Feb-2026 · Task 6 — Terms & Conditions 5000-char cap. Applies to
+    # both estimates and invoices on PATCH so admin operators can't
+    # blow past the render buffer / PDF layout budget.
+    if "terms" in upd and isinstance(upd["terms"], str) and len(upd["terms"]) > 5000:
+        raise HTTPException(
+            400, "Terms & Conditions may not exceed 5000 characters",
+        )
     # ``acknowledged_lock_bypass`` + ``edit_reason`` are request-only
     # flags — never persist them on the doc row.
     _edit_reason = upd.pop("edit_reason", None)

@@ -180,7 +180,22 @@ def _invoice_pay_url(ctx: Dict[str, Any]) -> str:
                  or "").rstrip("/")
     if not base:
         return ""
-    return f"{base}/portal/invoices/{inv_id}"
+    # Feb-2026 · Task 3 · Invoices bypass portal — customer-facing
+    # {{invoice_pay_url}} merge tag now emits a magic-link URL under
+    # ``/i/<token>`` instead of the portal auto-login path. Callers
+    # that already populate ``ctx['invoice_pay_link']`` win via
+    # ``_invoice_pay_magic_url`` above; this branch is the fallback
+    # when no explicit link was minted at send time (e.g. dunning
+    # reminders processing legacy templates).
+    try:
+        from services.pay_link_builder import issue_invoice_magic_token
+        tenant_id = ((ctx.get("tenant") or {}).get("id") or "")
+        if tenant_id:
+            token = issue_invoice_magic_token(inv_id, tenant_id, days=30)
+            return f"{base}/i/{token}"
+    except Exception:  # noqa: BLE001
+        pass
+    return f"{base}/i/{inv_id}"
 
 
 def _invoice_pay_magic_url(ctx: Dict[str, Any]) -> str:

@@ -68,6 +68,11 @@ import LateFeesSettings from "@/pages/settings/LateFees";
 import IncomeCategoriesPage from "@/pages/settings/IncomeCategoriesPage";
 import PricebookSuppliersAdmin from "@/pages/settings/PricebookSuppliersAdmin";
 import PricebookCostComparison from "@/pages/reports/PricebookCostComparison";
+// Pricebook × Profit-Reporting Phase 1 · Feb-2026 — consolidated
+// Categories admin (Income + Service tabs) reached from the
+// Pricebook toolbar. Coexists with the legacy standalone pages so
+// bookmarked deep-links keep working.
+import CategoriesAdmin from "@/pages/pricebook/CategoriesAdmin";
 import SupplierSpendReport from "@/pages/reports/SupplierSpendReport";
 import ServiceCategoriesPage from "@/pages/settings/ServiceCategoriesPage";
 import JobOutcomeReasonsPage from "@/pages/settings/JobOutcomeReasonsPage";
@@ -261,6 +266,11 @@ import PublicInstaQuotePage from "@/pages/public/PublicInstaQuote";
 import InstaScheduleAdminPage from "@/pages/marketing/InstaScheduleAdmin";
 import PublicInstaSchedulePage from "@/pages/public/PublicInstaSchedule";
 import PublicInvoicePay from "@/pages/public/PublicInvoicePay";
+// Feb-2026 · Task 3 · Invoices bypass portal — new magic-link
+// route `/i/:token` renders the full itemized InvoiceView with an
+// inline Pay Now button. Coexists with `/pay/invoice/:id?token=…`
+// (kept as backwards-compat alias for older emails).
+import PublicInvoiceMagic from "@/pages/public/PublicInvoiceMagic";
 // Phase 22 · Feb 2026 — Public Service Images portal (no auth).
 import ServiceImagesPortalPage from "@/pages/public/ServiceImagesPortalPage";
 // Phase 47c (Feb 2026) — /portal/add-card RESTORED as a direct-Stripe
@@ -338,6 +348,8 @@ import {
   PortalServiceReports, PortalServiceReportDetail,
 } from "@/pages/portal/PortalServiceReports";
 import PortalSignPage from "@/pages/portal/PortalSign";
+// Feb-2026 · Task 5 · Save card on file — portal management page.
+import PortalPaymentMethods from "@/pages/portal/PortalPaymentMethods";
 import { CsatDashboard, CsatDetail, PublicCsat } from "@/pages/csat/CsatPages";
 import { RealtimeProvider } from "@/realtime/NotificationSocket";
 import AnalyticsPage from "@/pages/analytics/AnalyticsPage";
@@ -675,6 +687,11 @@ export default function App() {
 
           {/* Phase 4B · Feb 2026 — public magic-link invoice payer (no auth). */}
           <Route path="/pay/invoice/:id" element={<PublicInvoicePay />} />
+          {/* Feb-2026 · Task 3 — Invoices bypass portal. New canonical
+              magic-link route. Decodes the JWT payload client-side to
+              extract invoice_id, then renders full InvoiceView + inline
+              Pay Now via the existing magic-pay flow. */}
+          <Route path="/i/:token" element={<PublicInvoiceMagic />} />
 
           {/* Phase 22 · Feb 2026 — public service-record images portal (no auth). */}
           <Route path="/portal/service/:uuid" element={<ServiceImagesPortalPage />} />
@@ -768,6 +785,10 @@ export default function App() {
             {/* Phase 56-d · Aug-2026 — Supplier Spend / Margin report. */}
             <Route path="admin/reports/supplier-spend" element={<AdminOnly><SupplierSpendReport /></AdminOnly>} />
             <Route path="settings/service-categories" element={<AdminOnly><ServiceCategoriesPage /></AdminOnly>} />
+            {/* Pricebook × Profit-Reporting Phase 1 · Feb-2026 —
+                consolidated Categories admin (Income + Service tabs)
+                reached from the Pricebook toolbar. */}
+            <Route path="pricebook/categories" element={<AdminOnly><CategoriesAdmin /></AdminOnly>} />
             <Route path="settings/job-outcome-reasons" element={<AdminOnly><JobOutcomeReasonsPage /></AdminOnly>} />
             {/* Feb-2026 · P29b — Muted Reasons manager (super_admin / admin / manager). */}
             <Route path="settings/muted-reasons" element={<AdminOrManagerForMutedReasons><MutedReasonsPage /></AdminOrManagerForMutedReasons>} />
@@ -1288,6 +1309,9 @@ export default function App() {
             <Route path="ai-estimator" element={<AdminOnly><AIEstimatorPage /></AdminOnly>} />
             <Route path="customers/:id/chemistry-history" element={<AdminOnly><CustomerChemistryHistory /></AdminOnly>} />
             <Route path="portal/profile" element={<PortalProfile />} />
+            {/* Feb-2026 · Task 5 · Save Card on File — customer-owned
+                payment-method management (list / set-default / remove). */}
+            <Route path="portal/profile/payment-methods" element={<PortalPaymentMethods />} />
             <Route path="portal/request-service" element={<PortalRequestService />} />
             <Route path="portal/reviews" element={<PortalReviews />} />
             <Route path="portal/payment-complete" element={<PortalPaymentComplete />} />

@@ -235,4 +235,24 @@ async def request_payment_link(
         )
         raise HTTPException(502, "payment_gateway_unavailable")
 
+    # Feb-2026 · Task 3 — Invoices bypass portal. Enrich the response
+    # with a portal-free magic-link URL under `/i/<token>` so callers
+    # (dunning, email/SMS reminders, admin toolbar) can send customers
+    # to the full invoice viewer + inline Pay Now without routing
+    # through the authenticated portal chrome. ``payment_url`` (the
+    # Stripe hosted Checkout) stays as-is for direct-to-Stripe use.
+    try:
+        import os as _os
+        from services.pay_link_builder import issue_invoice_magic_token
+        _tid = inv.get("tenant_id")
+        if _tid:
+            _base = (_os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+            _tok = issue_invoice_magic_token(invoice_id, _tid, days=30)
+            out["magic_link_url"] = (
+                f"{_base}/i/{_tok}" if _base else f"/i/{_tok}"
+            )
+    except Exception:  # noqa: BLE001
+        # Never fail the pay-link request over the enrichment path.
+        pass
+
     return out

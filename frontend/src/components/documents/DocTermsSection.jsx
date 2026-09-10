@@ -40,6 +40,7 @@ export default function DocTermsSection({
       }}
     >
       <h3
+        data-testid={`${testidPrefix}-terms-heading`}
         style={{
           color: brand,
           fontSize: 15,
@@ -49,11 +50,13 @@ export default function DocTermsSection({
       >
         Terms &amp; Conditions
       </h3>
-      {paragraphs.map((p, i) => (
-        <p key={i} style={{ marginBottom: i < paragraphs.length - 1 ? 8 : 0 }}>
-          {p}
-        </p>
-      ))}
+      <div data-testid={`${testidPrefix}-terms-body`}>
+        {paragraphs.map((p, i) => (
+          <p key={i} style={{ marginBottom: i < paragraphs.length - 1 ? 8 : 0 }}>
+            {p}
+          </p>
+        ))}
+      </div>
     </section>
   );
 }

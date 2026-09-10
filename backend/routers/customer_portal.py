@@ -332,15 +332,51 @@ async def list_payment_methods(
 ):
     """List all payment methods (card + ACH) the customer has on file.
 
-    Card data comes from the ``customers`` doc (existing Stripe setup
-    session flow); ACH rows come from the ``payment_methods`` collection.
+    Feb-2026 · Task 5 — card rows now come from the
+    ``db.payment_methods`` mirror written by ``attach_payment_method``
+    on Stripe webhook receipt. This is the same collection used to
+    render admin-side card lists — one source of truth per PM.
+
+    Legacy ``customers.default_payment_method_id`` / ``pm_brand`` /
+    ``pm_last4`` values still surface as a fallback single-card entry
+    for tenants who haven't yet run through the new attach flow so
+    upgrade doesn't blank existing card ledgers.
     """
     cid = _require_customer(user)
     cust = await db.customers.find_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
     ) or {}
     out: List[Dict[str, Any]] = []
-    if cust.get("default_payment_method_id"):
+
+    # Fresh path — rows written by ``attach_payment_method``.
+    card_rows = await db.payment_methods.find(
+        {"tenant_id": tenant["id"], "customer_id": cid,
+         "type": {"$ne": "ach"}},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(50)
+    seen_pm_ids: set = set()
+    for row in card_rows:
+        pm_id = row.get("provider_payment_method_id") or ""
+        if pm_id in seen_pm_ids:
+            continue
+        seen_pm_ids.add(pm_id)
+        out.append({
+            "type": "card",
+            "id": row.get("id") or pm_id,
+            "provider_payment_method_id": pm_id,
+            "brand": row.get("brand") or "Card",
+            "last4": row.get("last4") or "",
+            "exp_month": row.get("exp_month"),
+            "exp_year": row.get("exp_year"),
+            "verified": True,
+            "default": bool(row.get("is_default")),
+            "created_at": row.get("created_at"),
+            "created_from_invoice_id":
+                row.get("created_from_invoice_id"),
+        })
+
+    # Legacy fallback — pre-migration single-card view.
+    if not card_rows and cust.get("default_payment_method_id"):
         out.append({
             "type": "card",
             "brand": cust.get("pm_brand") or "Card",
@@ -348,6 +384,7 @@ async def list_payment_methods(
             "verified": True,
             "default": True,
         })
+
     ach_rows = await db.payment_methods.find(
         {"tenant_id": tenant["id"], "customer_id": cid, "type": "ach"},
         {"_id": 0},
@@ -361,6 +398,96 @@ async def list_payment_methods(
             "created_at": row.get("created_at"),
         })
     return {"methods": out, "stripe_configured": _stripe_configured()}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Task 5 · Feb-2026 — customer-owned remove / set-default endpoints.
+# ═══════════════════════════════════════════════════════════════════════
+# PCI SAQ A posture — we never touch raw card data. Removal detaches
+# the PM from the Stripe customer via ``PaymentMethod.detach`` and
+# splices the mirror row from Mongo. Stripe is the source of truth for
+# vaulting; we only proxy the customer's intent + reflect the outcome.
+
+
+@router.delete("/customer-portal/payment-methods/{pm_id}")
+async def customer_remove_payment_method(
+    pm_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    cid = _require_customer(user)
+    tid = tenant["id"]
+    # Tenant + customer scoped read — no cross-tenant / cross-customer leak.
+    row = await db.payment_methods.find_one(
+        {"tenant_id": tid, "customer_id": cid,
+         "$or": [{"id": pm_id},
+                 {"provider_payment_method_id": pm_id}]},
+        {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "payment_method_not_found")
+    provider_pm_id = row.get("provider_payment_method_id") or ""
+    if provider_pm_id and _stripe_configured():
+        try:
+            import stripe as _stripe
+            import os as _os
+            _stripe.api_key = _os.environ.get("STRIPE_SECRET_KEY") or ""
+            _stripe.PaymentMethod.detach(provider_pm_id)
+        except Exception:  # noqa: BLE001
+            # Detach failure is non-fatal — Mongo is the customer view.
+            pass
+    await db.payment_methods.delete_one(
+        {"tenant_id": tid, "customer_id": cid,
+         "provider_payment_method_id": provider_pm_id},
+    )
+    remaining = await db.payment_methods.count_documents(
+        {"tenant_id": tid, "customer_id": cid},
+    )
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tid},
+        {"$set": {"saved_payment_methods_count": remaining}},
+    )
+    return {"removed": True, "remaining": remaining}
+
+
+class SetDefaultBody(BaseModel):
+    is_default: bool = True
+
+
+@router.patch("/customer-portal/payment-methods/{pm_id}/set-default")
+async def customer_set_default_payment_method(
+    pm_id: str,
+    body: Optional[SetDefaultBody] = None,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    cid = _require_customer(user)
+    tid = tenant["id"]
+    row = await db.payment_methods.find_one(
+        {"tenant_id": tid, "customer_id": cid,
+         "$or": [{"id": pm_id},
+                 {"provider_payment_method_id": pm_id}]},
+        {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "payment_method_not_found")
+    provider_pm_id = row.get("provider_payment_method_id") or ""
+    if not provider_pm_id:
+        raise HTTPException(400, "payment_method_missing_provider_id")
+    await db.payment_methods.update_many(
+        {"tenant_id": tid, "customer_id": cid},
+        {"$set": {"is_default": False}},
+    )
+    await db.payment_methods.update_one(
+        {"tenant_id": tid, "customer_id": cid,
+         "provider_payment_method_id": provider_pm_id},
+        {"$set": {"is_default": True}},
+    )
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tid},
+        {"$set": {"stripe_default_payment_method_id": provider_pm_id}},
+    )
+    return {"default_payment_method_id": provider_pm_id}
 
 
 # ═══════════════════════════════════════════════════════════════════════

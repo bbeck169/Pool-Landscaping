@@ -57,7 +57,14 @@ function _adminNavToGroups() {
     label: g.label,
     entries: g.entries.map((e) => ({
       to: e.to,
-      label: e.subsection ? `${e.subsection} · ${e.label}` : e.label,
+      // Feb-2026 · Task 4 — sidebar / Quick-Access labels render just
+      // the leaf page name (e.g. "Quotes", "Pricebook"). The section
+      // grouping is already implied by the `AddPinModal` group header
+      // and by the breadcrumbs on the destination page, so prefixing
+      // the label with the subsection was double-labelling. Kept
+      // ``subsection`` intact on the source entry so grouping /
+      // filtering still work — this is purely a display change.
+      label: e.label,
       iconKey: iconKeyFor(e.icon),
     })),
   }));

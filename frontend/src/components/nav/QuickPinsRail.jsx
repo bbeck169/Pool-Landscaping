@@ -41,6 +41,19 @@ function _keyForPin(p) {
 }
 
 
+// Feb-2026 · Task 4 — legacy pins persisted with the
+// ``"<Parent> · <Leaf>"`` shape (e.g. ``"Sales · Quotes"``) render as
+// just the leaf name. Newly-added pins are already leaf-only via
+// ``pinRegistry.js`` — this shim protects the display for the pins
+// already on file. Purely UI — the persisted value stays untouched
+// so a future migration can rewrite it in place if desired.
+function _displayLabel(raw) {
+  if (!raw || typeof raw !== "string") return raw || "";
+  const m = raw.match(/^.+ · (.+)$/);
+  return m ? m[1] : raw;
+}
+
+
 function SortableRailPin({ pin, onRequestRemove }) {
   const {
     attributes, listeners, setNodeRef, transform, transition, isDragging,
@@ -67,7 +80,7 @@ function SortableRailPin({ pin, onRequestRemove }) {
         {...listeners}
         className="absolute -left-1 top-1 z-10 opacity-0 group-hover:opacity-100 focus:opacity-100 rounded-full p-0.5 cursor-grab active:cursor-grabbing touch-none"
         style={{ color: colors.nav.fgMuted }}
-        aria-label={`Reorder ${pin.label}`}
+        aria-label={`Reorder ${_displayLabel(pin.label)}`}
         data-testid={`rail-pin-handle-${key}`}
         title="Drag to reorder"
       >
@@ -79,7 +92,7 @@ function SortableRailPin({ pin, onRequestRemove }) {
         onClick={(e) => { e.preventDefault(); onRequestRemove(pin); }}
         className="absolute -right-0 top-1 z-10 opacity-0 group-hover:opacity-100 focus:opacity-100 rounded-full p-0.5"
         style={{ backgroundColor: "rgba(255,255,255,0.14)", color: colors.nav.fg }}
-        aria-label={`Remove ${pin.label} pin`}
+        aria-label={`Remove ${_displayLabel(pin.label)} pin`}
         data-testid={`rail-pin-remove-${key}`}
         title="Remove pin"
       >
@@ -113,11 +126,11 @@ function SortableRailPin({ pin, onRequestRemove }) {
               : "transparent";
         }}
         data-testid={`rail-nav-${key}`}
-        aria-label={pin.label}
-        title={pin.label}
+        aria-label={_displayLabel(pin.label)}
+        title={_displayLabel(pin.label)}
       >
         <Icon size={20} className="transition-colors duration-200" />
-        <span className="leading-none text-center transition-colors duration-200">{pin.label}</span>
+        <span className="leading-none text-center transition-colors duration-200">{_displayLabel(pin.label)}</span>
       </NavLink>
     </div>
   );

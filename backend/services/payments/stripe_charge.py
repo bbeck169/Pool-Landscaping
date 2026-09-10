@@ -407,9 +407,15 @@ async def attach_payment_method(
     customer_id: str,
     payment_method_id: str,
     set_default: bool = True,
+    created_from_invoice_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Attach a Stripe payment method to the customer + mirror card
     metadata into ``db.payment_methods``. Idempotent on the mirrored row.
+
+    Feb-2026 · Task 5 — ``created_from_invoice_id`` stamps the mirror
+    row with the invoice that triggered the save so the portal
+    Payment Methods page can render provenance ("Added from Invoice
+    #INV-2026-…").
     """
     _init_api_key()
 
@@ -494,6 +500,11 @@ async def attach_payment_method(
         "created_at": now,
         "updated_at": now,
     }
+    # Task 5 · Feb-2026 — provenance stamp for portal "Added from
+    # Invoice #…" display. Only set when the caller passes it (webhook
+    # save-on-first-payment does).
+    if created_from_invoice_id:
+        mirror["created_from_invoice_id"] = created_from_invoice_id
     # Idempotent upsert on the provider PM id (Stripe id is globally unique).
     await db.payment_methods.update_one(
         {"provider_payment_method_id": payment_method_id, "tenant_id": tenant_id},
@@ -1237,11 +1248,24 @@ async def create_invoice_checkout_session(
     if save_for_future_billing:
         pi_data["setup_future_usage"] = "off_session"
 
+    # Feb-2026 · Task 3 · Invoices bypass portal — Stripe cancel_url
+    # returns customers to the magic-link viewer under ``/i/<token>``
+    # so a bail-out from Checkout drops them back on the same
+    # portal-free page that sent them in.
+    try:
+        from services.pay_link_builder import issue_invoice_magic_token
+        _cancel_tok = issue_invoice_magic_token(
+            invoice_id, invoice.get("tenant_id") or tenant_id, days=30,
+        )
+        _cancel_url = f"{base}/i/{_cancel_tok}"
+    except Exception:  # noqa: BLE001
+        _cancel_url = f"{base}/i/{invoice_id}"
+
     session_kwargs: Dict[str, Any] = {
         "mode": "payment",
         "line_items": line_items,
         "success_url": f"{base}/portal/payment-complete?session_id={{CHECKOUT_SESSION_ID}}",
-        "cancel_url":  f"{base}/portal/invoices/{invoice_id}",
+        "cancel_url":  _cancel_url,
         "metadata": metadata,
         # Pass the invoice metadata down onto the PaymentIntent that
         # Checkout auto-creates so ``payment_intent.succeeded`` webhooks
@@ -1336,6 +1360,8 @@ async def _save_pm_after_first_payment(
         customer_id=customer_id,
         payment_method_id=pm_id,
         set_default=True,
+        # Task 5 · provenance for portal Payment Methods page.
+        created_from_invoice_id=(metadata or {}).get("crm_invoice_id"),
     )
 
 

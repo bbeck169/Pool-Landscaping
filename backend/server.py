@@ -706,6 +706,14 @@ api_router.include_router(_category_references.router)
 # in prod (see DIAG_P0_MAGIC_PAY.md).
 from routers import invoice_magic_pay as _invoice_magic_pay  # noqa: E402
 api_router.include_router(_invoice_magic_pay.router)
+# Feb-2026 · Task 3 — Invoices bypass portal. Public endpoint that
+# mints a magic-link URL under /i/<token> so customer-facing invoice
+# links never route through the authenticated portal chrome.
+from routers import invoice_magic_link_issue as _invoice_magic_link_issue  # noqa: E402
+api_router.include_router(_invoice_magic_link_issue.router)
+# Feb-2026 · Task 5 — admin ``Charge on file`` endpoint.
+from routers import invoice_charge_saved_card as _invoice_charge_saved_card  # noqa: E402
+api_router.include_router(_invoice_charge_saved_card.router)
 # Feb-2026 P0 · Recurring-jobs orphan backfill — surfaces the 80+
 # Schedule-page-created recurring clusters that never landed on the
 # Recurring Visits admin page because they had no matching

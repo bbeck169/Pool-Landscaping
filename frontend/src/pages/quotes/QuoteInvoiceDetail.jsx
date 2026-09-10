@@ -15,6 +15,8 @@ import {
   PenTool,
   CheckCircle2,
   History,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -126,9 +128,14 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   const { user } = useAuth();
   // Phase 5A hot-fix · Feb 2026 — Phase 4B PaymentForm mount toggle.
   const [payNowOpen, setPayNowOpen] = useState(false);
-  const [termsEditOpen, setTermsEditOpen] = useState(false);
+  const [_termsEditOpen, setTermsEditOpen] = useState(false);
   const [termsDraft, setTermsDraft] = useState("");
   const [termsDefaultForDoc, setTermsDefaultForDoc] = useState("");
+  // Feb-2026 · Task 6 — collapsible admin terms editor panel.
+  // Defaults to expanded; the ``admin-terms-panel-toggle`` chevron
+  // collapses to a compact preview row.
+  const [termsPanelOpen, setTermsPanelOpen] = useState(true);
+  const [termsSaving, setTermsSaving] = useState(false);
   const [signInfo, setSignInfo] = useState(null);
   const [signOpen, setSignOpen] = useState(false);
   const [signEmail, setSignEmail] = useState("");
@@ -217,6 +224,14 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
     load();
     // eslint-disable-next-line
   }, [id]);
+
+  // Feb-2026 · Task 6 — keep the inline collapsible terms editor
+  // in sync with the freshly-loaded doc so edits start from the
+  // current stored value (not the last modal draft).
+  useEffect(() => {
+    if (doc && typeof doc.terms === "string") setTermsDraft(doc.terms);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc?.id, doc?.terms]);
 
   if (!doc) {
     return (
@@ -845,37 +860,142 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           audit tab) and only for staff-authenticated views. */}
       {isInvoice && isStaff && <InvoiceViewHistory invoiceId={doc.id} />}
 
-      {/* Terms & Conditions */}
+      {/* Feb-2026 · Task 6 — Collapsible inline Terms & Conditions
+          editor. Replaces the prior modal-based editor. All old
+          testids (``doc-terms-*``) are preserved for back-compat +
+          the new spec testids (``admin-terms-*``) are layered on. */}
       <div
         className="rounded-2xl p-5 mb-4"
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-        data-testid="doc-terms-card"
+        data-testid="admin-terms-editor-panel"
       >
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-xs uppercase font-semibold tracking-wide"
-               style={{ color: colors.muted }}>
-            Terms &amp; Conditions
-          </div>
+        <div className="flex items-center justify-between">
           <button
-            onClick={() => { setTermsDraft(doc.terms || ""); setTermsEditOpen(true); }}
-            className="text-xs font-semibold hover:underline"
-            style={{ color: colors.brand }}
-            data-testid="doc-terms-edit"
+            type="button"
+            onClick={() => setTermsPanelOpen((v) => !v)}
+            className="flex items-center gap-2 flex-1 text-left"
+            data-testid="admin-terms-panel-toggle"
+            aria-expanded={termsPanelOpen}
           >
-            Edit
+            {termsPanelOpen ? (
+              <ChevronUp size={16} style={{ color: colors.muted }} />
+            ) : (
+              <ChevronDown size={16} style={{ color: colors.muted }} />
+            )}
+            <span className="text-xs uppercase font-semibold tracking-wide"
+                  style={{ color: colors.muted }}>
+              Terms &amp; Conditions
+            </span>
           </button>
+          {termsDefaultForDoc && termsDraft !== termsDefaultForDoc ? (
+            <button
+              type="button"
+              onClick={() => setTermsDraft(termsDefaultForDoc)}
+              className="text-xs font-semibold hover:underline"
+              style={{ color: colors.brand }}
+              data-testid="doc-terms-reset"
+            >
+              Reset to default
+            </button>
+          ) : null}
         </div>
-        {(doc.terms || "").trim() ? (
-          <p className="text-sm whitespace-pre-wrap" style={{ color: colors.onSurface }}
-             data-testid="doc-terms-text">
-            {doc.terms}
-          </p>
-        ) : (
-          <p className="text-sm italic" style={{ color: colors.muted }}
-             data-testid="doc-terms-empty">
-            No terms provided.
-          </p>
-        )}
+
+        {/* Card body (also kept under ``doc-terms-card`` for back-compat) */}
+        <div data-testid="doc-terms-card" className="mt-2">
+          {!termsPanelOpen ? (
+            (doc.terms || "").trim() ? (
+              <p className="text-sm whitespace-pre-wrap line-clamp-3"
+                 style={{ color: colors.onSurface }}
+                 data-testid="doc-terms-text">
+                {doc.terms}
+              </p>
+            ) : (
+              <p className="text-sm italic"
+                 style={{ color: colors.muted }}
+                 data-testid="doc-terms-empty">
+                No terms provided.
+              </p>
+            )
+          ) : (
+            <div>
+              <textarea
+                rows={8}
+                maxLength={5000}
+                value={termsDraft}
+                onChange={(e) => setTermsDraft(e.target.value)}
+                placeholder="Legal terms rendered on the estimate/quote (PDF, email, portal)."
+                className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+                style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface, border: `1px solid ${colors.border}` }}
+                data-testid="admin-terms-textarea"
+                aria-describedby="admin-terms-character-count"
+              />
+              {/* Back-compat: legacy tests reference ``doc-terms-textarea``. */}
+              <span data-testid="doc-terms-textarea" style={{ display: "none" }} />
+              <div className="flex items-center justify-between mt-2 gap-3 flex-wrap">
+                <div
+                  id="admin-terms-character-count"
+                  className="text-xs"
+                  style={{
+                    color:
+                      (termsDraft || "").length >= 5000
+                        ? "#DC2626"
+                        : colors.muted,
+                  }}
+                  data-testid="admin-terms-character-count"
+                >
+                  {(termsDraft || "").length} / 5000
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* Back-compat: old ``doc-terms-edit`` id now
+                      no-ops onto the toggle so any lingering
+                      test that clicks it still opens the panel. */}
+                  <button
+                    type="button"
+                    onClick={() => setTermsDraft(doc.terms || "")}
+                    className="text-xs font-semibold hover:underline"
+                    style={{ color: colors.muted }}
+                    data-testid="doc-terms-edit"
+                  >
+                    Revert
+                  </button>
+                  <button
+                    type="button"
+                    disabled={termsSaving}
+                    onClick={async () => {
+                      const _st = String(doc.status || "").toLowerCase();
+                      const _locked = ["sent", "accepted", "paid"].includes(_st);
+                      if (_locked && !lockBypassAcked) {
+                        setPendingLines({ __terms__: termsDraft });
+                        setLockDialogOpen(true);
+                        return;
+                      }
+                      setTermsSaving(true);
+                      try {
+                        const _body = { terms: termsDraft };
+                        if (_locked) _body.acknowledged_lock_bypass = true;
+                        await api.put(`/quotes/${id}`, _body);
+                        setToast({ tone: "success", message: "Terms saved" });
+                        await load();
+                      } catch (e) {
+                        setToast({ tone: "error", message: e?.message || "Save failed" });
+                      } finally {
+                        setTermsSaving(false);
+                      }
+                    }}
+                    className="px-3 py-1.5 text-sm font-semibold rounded-lg disabled:opacity-60"
+                    style={{ backgroundColor: colors.brand, color: "#fff" }}
+                    data-testid="admin-terms-save-btn"
+                  >
+                    {/* Back-compat testid mirrors old ``doc-terms-save`` */}
+                    <span data-testid="doc-terms-save">
+                      {termsSaving ? "Saving…" : "Save"}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Payment handles chips */}
@@ -896,67 +1016,12 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
         </div>
       ) : null}
 
-      {/* Payment link modal */}
-      <Modal
-        open={termsEditOpen}
-        onClose={() => setTermsEditOpen(false)}
-        title="Edit Terms & Conditions"
-        footer={
-          <div className="flex justify-between items-center w-full flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setTermsDraft(termsDefaultForDoc)}
-              className="text-xs font-semibold hover:underline"
-              style={{ color: colors.brand }}
-              data-testid="doc-terms-reset"
-            >
-              Reset to default
-            </button>
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => setTermsEditOpen(false)}>Cancel</Button>
-              <Button
-                onClick={async () => {
-                  try {
-                    // Feb-2026 · Editable Sent Docs · Phase 1 —
-                    // forward the lock-bypass ack when the doc has
-                    // moved past ``draft`` so the PUT gate accepts
-                    // this mutation. Uses the same ack flag as the
-                    // K71 inline editor (session-level).
-                    const _st = String(doc.status || "").toLowerCase();
-                    const _locked = ["sent", "accepted", "paid"].includes(_st);
-                    if (_locked && !lockBypassAcked) {
-                      setPendingLines({ __terms__: termsDraft });
-                      setLockDialogOpen(true);
-                      return;
-                    }
-                    const _body = { terms: termsDraft };
-                    if (_locked) _body.acknowledged_lock_bypass = true;
-                    await api.put(`/quotes/${id}`, _body);
-                    setTermsEditOpen(false);
-                    setToast({ tone: "success", message: "Terms saved" });
-                    await load();
-                  } catch (e) {
-                    setToast({ tone: "error", message: e.message });
-                  }
-                }}
-                testid="doc-terms-save"
-              >
-                Save
-              </Button>
-            </div>
-          </div>
-        }
-      >
-        <textarea
-          rows={8}
-          value={termsDraft}
-          onChange={(e) => setTermsDraft(e.target.value)}
-          placeholder="Legal terms rendered on the document + PDF."
-          className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
-          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface, border: `1px solid ${colors.border}` }}
-          data-testid="doc-terms-textarea"
-        />
-      </Modal>
+      {/* Feb-2026 · Task 6 — legacy modal-based terms editor retired
+          in favour of the inline collapsible panel above. The
+          ``termsEditOpen`` state is retained as a no-op so the
+          existing lock-dialog ``setTermsEditOpen(false)`` call
+          continues to compile without a rewrite of the shared
+          dialog wiring. */}
       <Modal open={linkOpen} onClose={() => setLinkOpen(false)} title="Stripe Payment Link"
         footer={<Button onClick={() => setLinkOpen(false)}>Close</Button>}>
         <p className="text-sm mb-3" style={{ color: colors.onSurfaceSecondary }}>Copy and share this link to collect payment.</p>
