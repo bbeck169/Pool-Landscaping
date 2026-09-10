@@ -135,6 +135,18 @@ export default function Login() {
         });
         return;
       }
+      if (result?.kind === "password_reset_required") {
+        // Temp password fork — navigate to set-password screen.
+        router.push({
+          pathname: "/set-password",
+          params: {
+            reset_token: result.reset_token,
+            email: em,
+            ttl: String(result.token_ttl_minutes || 15),
+          },
+        });
+        return;
+      }
       setLinkRevokedBanner(false);
       router.replace("/(app)");
     } catch (err: any) {
@@ -150,7 +162,20 @@ export default function Login() {
     setError("");
     setLoading(true);
     try {
-      await finalizeAccountChoice(chooser.choice_token, accountId);
+      const result = await finalizeAccountChoice(chooser.choice_token, accountId);
+      if (result?.kind === "password_reset_required") {
+        // Temp password fork after chooser selection.
+        setChooser(null);
+        router.push({
+          pathname: "/set-password",
+          params: {
+            reset_token: result.reset_token,
+            email: chooser.email,
+            ttl: String(result.token_ttl_minutes || 15),
+          },
+        });
+        return;
+      }
       setChooser(null);
       setLinkRevokedBanner(false);
       router.replace("/(app)");

@@ -99,7 +99,7 @@ Both are stamped by a single idempotent helper `_stamp_first_access(user, ip)` a
 
 | Suite | Cases | Result |
 |---|---|---|
-| `backend/tests/test_customer_temp_password_flow.py` | 8 | ✅ |
+| `backend/tests/test_customer_temp_password_flow.py` | 9 (added drift regression) | ✅ |
 | `backend/tests/test_auth_option_a_account_chooser_task4.py` | 10 | ✅ (no regression) |
 | `backend/tests/test_jobs_list_slim_photos.py` | (existing) | ✅ |
 | Customer suites (mute / muted-exclusivity / detail-tabs / merge×2) | 74 | ✅ (2 pre-existing failures on `test_customer_detail_additions` — confirmed on `main` without changes) |
@@ -124,6 +124,15 @@ $ curl /api/customers?first_access=bogus                  → HTTP 400 invalid_f
 ```
 
 Web admin: the "First-time sign-in → Never logged in (28)" chip renders and toggles the URL to `?first_access=never`. Screenshot: `memory/screenshots/customers_never_logged_in.jpeg`.
+
+## Fix — Feb 10, 2026 · Off-by-one drift (badge vs list)
+
+**Drift shape**: chip badge counted `N`, list rendered `N-1`.
+**Cause**: `list_customers` applied a **Python-side K49b guard** (`_k49b_kept` — drops customer docs without a top-level `id`) *after* `count_documents(q)` had already resolved. The count matched every doc in Mongo (including K49b-orphans); the list dropped them post-fetch. Every K49b-orphan in a tenant added one to the drift.
+
+**Fix**: Promoted the guard to a Mongo-side predicate `_valid_customer_id_predicate()` and merged it into `q` **before** the branch splits, so `count_documents`, the paginated list, the aggregate `$facet` (`counts_by_status`), and every other consumer of `q` all share a single source of truth. The Python `_k49b_kept` filter is kept as a belt-and-braces safety for the (near-zero) race window between count-resolve and `.to_list()`.
+
+**Regression guard**: `test_never_logged_in_count_matches_list_length` seeds 3 valid + 1 soft-deleted + 1 merged + 1 K49b-orphan customer and asserts `count["count"] == len(rows)`. Verified: fails without the fix, passes with it. Also verified live on preview — chip badge and count endpoint both report 27, and the tab-scoped pager's "Showing 1–25 of 26" correctly reflects the intersection of `first_access=never` (27) ∩ `tab=active` (excludes the 1 inactive customer).
 
 ## Follow-ups (out-of-scope handoff)
 

@@ -29,11 +29,12 @@ type AuthCtx = {
   loading: boolean;
   isImpersonating: boolean;
   impersonatorName: string;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<any>;
   signup: (payload: { name: string; email: string; password: string; phone?: string; address?: string }) => Promise<void>;
   logout: () => Promise<void>;
   startImpersonation: (customerId: string) => Promise<void>;
   stopImpersonation: () => Promise<void>;
+  finalizeAccountChoice: (choiceToken: string, accountId: string) => Promise<any>;
 };
 
 const Ctx = createContext<AuthCtx>({} as AuthCtx);
@@ -94,7 +95,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // return and renders the account picker inline.
   type LoginResult =
     | { kind: "success" }
-    | { kind: "choice"; email: string; choices: any[]; choice_token: string };
+    | { kind: "choice"; email: string; choices: any[]; choice_token: string }
+    | { kind: "password_reset_required"; reset_token: string; user_id: string; token_ttl_minutes: number; email: string };
 
   const login = async (email: string, password: string): Promise<LoginResult> => {
     const res = await api.post("/auth/login", { email, password });
@@ -108,6 +110,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       };
     }
 
+    // Temp password fork — user must set a permanent password before
+    // receiving an access_token.
+    if (res && res.status === "password_reset_required") {
+      return {
+        kind: "password_reset_required",
+        reset_token: res.reset_token,
+        user_id: res.user_id,
+        token_ttl_minutes: res.token_ttl_minutes || 15,
+        email,
+      };
+    }
+
     await storage.secureSet(TOKEN_KEY, res.access_token);
     await storage.setItem(USER_KEY, JSON.stringify(res.user));
     await persistJwtExpiry().catch(() => {});
@@ -117,17 +131,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { kind: "success" };
   };
 
-  const finalizeAccountChoice = async (choiceToken: string, accountId: string) => {
+  const finalizeAccountChoice = async (choiceToken: string, accountId: string): Promise<LoginResult> => {
     const res = await api.post("/auth/login/select-account", {
       choice_token: choiceToken,
       account_id: accountId,
     });
+
+    // Temp password fork after account selection.
+    if (res && res.status === "password_reset_required") {
+      return {
+        kind: "password_reset_required",
+        reset_token: res.reset_token,
+        user_id: res.user_id,
+        token_ttl_minutes: res.token_ttl_minutes || 15,
+        email: "", // email not returned by select-account; caller must supply
+      };
+    }
+
     await storage.secureSet(TOKEN_KEY, res.access_token);
     await storage.setItem(USER_KEY, JSON.stringify(res.user));
     await persistJwtExpiry().catch(() => {});
     await writeThroughMe(res.user).catch(() => {});
     await clearImpersonation();
     setUser(res.user);
+    return { kind: "success" };
   };
 
   const signup = async (payload: { name: string; email: string; password: string; phone?: string; address?: string }) => {

@@ -1620,3 +1620,16 @@
 - **Files created**: __tests__/job-close-silent-noop.test.tsx
 - **Test results**: 6/6 new tests passing, 47/47 pre-existing still passing (53 total)
 - **Screenshot**: /tmp/close-job-fixed.png — in-tree confirm dialog renders after tap
+
+## Iteration 84 — Offline Hardening: 3 Fixes
+- **Commit**: 0e2aa4cd367c2dcddcfa8744b6fc75d45cce0db8
+- **Date**: 2026-04-16
+- **Changes**:
+  - Fix 1: Replaced N+1 per-job GET calls in routeHydrator with single GET /mobile/offline-bundle
+  - Fix 2: Created photoUrlCache.ts (URL builder, prefetch, base64 strip, lazy resolve via expo-image)
+  - Fix 3: Honest sync status in HydrationMeta + OfflineBadge (partial/failed/synced)
+  - Updated calendar.tsx freshness label to show honest partial/failed status
+- **Files created**: src/services/photoUrlCache.ts, __tests__/route-hydrator-single-call.test.ts, __tests__/job-photo-url-cache.test.tsx, __tests__/sync-status-partial.test.tsx, memory/MOBILE_OFFLINE_HARDENING.md
+- **Files rewritten**: src/services/routeHydrator.ts, src/components/OfflineBadge.tsx
+- **Files modified**: src/hooks/useRouteHydration.ts, app/(app)/schedule/calendar.tsx
+- **Test results**: 68/68 total (15 new + 53 existing), all passing

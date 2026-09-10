@@ -276,6 +276,26 @@ class CustomerListCount(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────
+# Feb-2026 hotfix · Shared count/list predicate — the K49b guard.
+# ─────────────────────────────────────────────────────────────────
+def _valid_customer_id_predicate() -> Dict[str, Any]:
+    """Mongo predicate that excludes legacy customer docs missing a
+    top-level ``id`` field.
+
+    Applied to ``q`` inside ``list_customers`` BEFORE both the
+    ``count_only=true`` branch AND the list branch so the two
+    queries never drift. Was previously enforced only Python-side
+    (see ``_k49b_kept`` below), which caused the "Never logged in"
+    chip (and every other count/list pair reading ``q``) to drift
+    by the number of K49b-orphan rows in the tenant. The K49b
+    migration seeds ``id = str(_id)`` on boot; this predicate is
+    the runtime guard for the window before the migration lands
+    and for any future doc that slips in without an ``id``.
+    """
+    return {"id": {"$exists": True, "$nin": [None, ""]}}
+
+
+# ─────────────────────────────────────────────────────────────────
 # K49 · Feb-2026 — Customers list Last-Name-A→Z aggregation.
 # ─────────────────────────────────────────────────────────────────
 def _k49_lastname_pipeline(
@@ -909,6 +929,19 @@ async def list_customers(
                     {"saved_payment_methods_count": 0},
                 ],
             }]
+    # ─────────────────────────────────────────────────────────────
+    # Feb-2026 hotfix · Never-logged-in chip off-by-one — keep the
+    # count/list/facet branches in lockstep by promoting the K49b
+    # "row must carry a top-level ``id``" guard from a Python
+    # post-filter (see below) into the Mongo predicate. Before this
+    # change, ``count_documents(q)`` matched legacy customer docs
+    # without a top-level ``id`` while the list branch dropped them
+    # via ``_k49b_kept`` — producing exactly the shape the batch
+    # verification caught (badge N, list N-1). The Python guard is
+    # kept as a belt-and-braces safety for any doc that slips in
+    # AFTER the count query resolves but BEFORE ``.to_list()`` — it
+    # becomes a no-op in the common case.
+    q["$and"] = q.get("$and", []) + [_valid_customer_id_predicate()]
     if count_only:
         return {"count": await db.customers.count_documents(q)}
 

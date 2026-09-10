@@ -402,3 +402,67 @@ def test_customers_first_access_invalid_value_rejected(fake_db, monkeypatch):
         ))
     assert ei.value.status_code == 400
     assert "invalid_first_access" in str(ei.value.detail)
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 7. Off-by-one regression — count and list MUST agree on the same
+#    predicate. Seeds:
+#     * 3 valid never-logged-in customers
+#     * 1 soft-deleted customer (``deleted_at`` set) — must be
+#       excluded from BOTH count and list under the default filter.
+#     * 1 merged customer (``merged_into`` set) — same.
+#     * 1 legacy K49b-orphan customer (no top-level ``id``) — was
+#       counted by ``count_documents`` but dropped by the list
+#       branch, producing the shape the batch verification caught.
+# ═════════════════════════════════════════════════════════════════════
+def test_never_logged_in_count_matches_list_length(fake_db, monkeypatch):
+    from routers import customers as cust_mod
+    monkeypatch.setattr(cust_mod, "db", fake_db)
+    tid = "t-drift"
+    admin = {"id": "u-adm", "role": "admin", "tenant_id": tid}
+    tenant = {"id": tid}
+
+    # 3 valid rows.
+    for i, cid in enumerate(("c-1", "c-2", "c-3")):
+        fake_db.customers.rows.append({
+            "id": cid, "tenant_id": tid, "email": f"{cid}@x",
+            "name": f"C{i}",
+        })
+    # 1 soft-deleted.
+    fake_db.customers.rows.append({
+        "id": "c-del", "tenant_id": tid, "email": "del@x",
+        "name": "Deleted", "deleted_at": "2026-02-01T00:00:00+00:00",
+    })
+    # 1 merged.
+    fake_db.customers.rows.append({
+        "id": "c-mrg", "tenant_id": tid, "email": "mrg@x",
+        "name": "Merged", "merged_into": "c-1",
+    })
+    # 1 K49b-orphan — no top-level ``id`` field. Was the primary
+    # source of the off-by-one drift the user reported.
+    fake_db.customers.rows.append({
+        "tenant_id": tid, "email": "orphan@x", "name": "Orphan",
+    })
+
+    kwargs = dict(
+        user=admin, tenant=tenant, first_access="never",
+        search=None, tag=None, tags=None, city=None, waitlisted=None,
+        unscheduled=None, is_active=None, missing_card=None,
+        missing_email=False, missing_phone=False,
+        missing_address=False, portal_activated=None,
+        portal_status=None, is_muted=None, has_payment_method=None,
+        include_deleted=False, include_merged=False,
+        page=None, page_size=None, sort="created_desc",
+    )
+
+    count = _run(cust_mod.list_customers(count_only=True, **kwargs))
+    rows = _run(cust_mod.list_customers(count_only=False, **kwargs))
+    # The 3 valid rows are visible; deleted, merged, and K49b-orphan
+    # are excluded from BOTH branches (shared predicate).
+    assert count == {"count": 3}
+    assert len(rows) == 3
+    assert {r["id"] for r in rows} == {"c-1", "c-2", "c-3"}
+    # Contract — count MUST equal list length. This is the invariant
+    # the batch verification caught drifting.
+    assert count["count"] == len(rows)

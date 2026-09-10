@@ -80,6 +80,10 @@ export default function Customers() {
   const [pendingMergeCount, setPendingMergeCount] = useState<number | null>(null);
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
 
+  // Temp-password parity — "Never logged in" filter.
+  const [neverLoggedInFilter, setNeverLoggedInFilter] = useState(false);
+  const [neverLoggedInCount, setNeverLoggedInCount] = useState<number | null>(null);
+
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
   const bulk = useBulkSelect(visibleIds);
 
@@ -108,6 +112,8 @@ export default function Customers() {
       if (missingPhoneFilter) qp.set("missing_phone", "true");
       if (includeMerged) qp.set("include_merged", "true");
       if (pendingMergeCandidates) qp.set("pending_merge_candidates", "true");
+      // Temp-password parity — "Never logged in" filter.
+      if (neverLoggedInFilter) qp.set("first_access", "never");
       const res: any = await api.get(`/customers?${qp.toString()}`);
       const rows = Array.isArray(res) ? res : (res?.items || []);
       const tp = Number.isFinite(res?.total_pages)
@@ -131,7 +137,7 @@ export default function Customers() {
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter, missingEmailFilter, missingPhoneFilter, includeMerged, pendingMergeCandidates]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter, missingEmailFilter, missingPhoneFilter, includeMerged, pendingMergeCandidates, neverLoggedInFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMore = useCallback(() => {
     if (loadingMore) return;
@@ -205,7 +211,7 @@ export default function Customers() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [addrRes, paRes, pnaRes, payRes, emailRes, phoneRes, mergeRes] = await Promise.all([
+      const [addrRes, paRes, pnaRes, payRes, emailRes, phoneRes, mergeRes, neverLogRes] = await Promise.all([
         api.get("/customers?count_only=true&missing_address=true").catch(() => null),
         api.get("/customers?count_only=true&portal_activated=true").catch(() => null),
         api.get("/customers?count_only=true&portal_activated=false").catch(() => null),
@@ -213,6 +219,7 @@ export default function Customers() {
         api.get("/customers?count_only=true&missing_email=true").catch(() => null),
         api.get("/customers?count_only=true&missing_phone=true").catch(() => null),
         api.get("/customers?count_only=true&pending_merge_candidates=true").catch(() => null),
+        api.get("/customers?count_only=true&first_access=never").catch(() => null),
       ]);
       if (cancelled) return;
       setMissingAddressCount(addrRes?.count ?? null);
@@ -222,6 +229,7 @@ export default function Customers() {
       setMissingEmailCount(emailRes?.count ?? null);
       setMissingPhoneCount(phoneRes?.count ?? null);
       setPendingMergeCount(mergeRes?.count ?? null);
+      setNeverLoggedInCount(neverLogRes?.count ?? null);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -256,8 +264,9 @@ export default function Customers() {
     if (includeDeleted) labels.push("Deleted");
     if (includeMerged) labels.push("Merged");
     if (pendingMergeCandidates) labels.push("Pending merge");
+    if (neverLoggedInFilter) labels.push("Never logged in");
     return labels;
-  }, [missingEmailFilter, missingPhoneFilter, missingAddressFilter, noPaymentFilter, portalFilter, includeDeleted, includeMerged, pendingMergeCandidates]);
+  }, [missingEmailFilter, missingPhoneFilter, missingAddressFilter, noPaymentFilter, portalFilter, includeDeleted, includeMerged, pendingMergeCandidates, neverLoggedInFilter]);
 
   const moreFiltersSummary = activeFilterLabels.length === 0
     ? "All"
@@ -274,6 +283,7 @@ export default function Customers() {
     setIncludeDeleted(false);
     setIncludeMerged(false);
     setPendingMergeCandidates(false);
+    setNeverLoggedInFilter(false);
     setPage(1);
   };
 
@@ -578,6 +588,19 @@ export default function Customers() {
                     <Ionicons name={pendingMergeCandidates ? "checkbox" : "square-outline"} size={20} color={pendingMergeCandidates ? colors.brand : colors.muted} />
                     <Text style={mfStyles.checkLabel}>Pending merge candidates</Text>
                     {pendingMergeCount != null ? <Text style={mfStyles.countBadge}>({pendingMergeCount})</Text> : null}
+                  </Pressable>
+
+                  {/* Temp-password parity — Never logged in filter */}
+                  <Pressable
+                    style={mfStyles.checkRow}
+                    onPress={() => { setNeverLoggedInFilter((v) => !v); setPage(1); }}
+                    testID="customers-filter-never-logged-in"
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: neverLoggedInFilter }}
+                  >
+                    <Ionicons name={neverLoggedInFilter ? "checkbox" : "square-outline"} size={20} color={neverLoggedInFilter ? colors.brand : colors.muted} />
+                    <Text style={mfStyles.checkLabel}>Never logged in</Text>
+                    {neverLoggedInCount != null ? <Text style={mfStyles.countBadge}>({neverLoggedInCount})</Text> : null}
                   </Pressable>
                 </>
               ) : null}
