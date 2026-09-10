@@ -13,6 +13,7 @@ import {
   Trash2,
   PenTool,
   CheckCircle2,
+  History,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -33,6 +34,10 @@ import K79CustomerViewSection from "@/components/quotes/K79CustomerViewSection";
 // Phase K47 · Feb-2026 — View-history card (admin/office/dispatcher
 // only; the component hides itself when the endpoint 403s).
 import InvoiceViewHistory from "@/components/invoices/InvoiceViewHistory";
+// Feb-2026 · Editable Sent Docs Phase 2 — slide-in version-history
+// drawer + trigger button. Component is a pure display over
+// ``GET /api/invoices|quotes/{id}/versions``.
+import VersionHistoryDrawer from "@/components/documents/VersionHistoryDrawer";
 import { Button, Skeleton, StatusPill, Modal, TextInput, Toast, Chip } from "@/components/ui-kit";
 // Feb-2026 · Batch #4 · Logo ship — shared tenant logo helper so
 // the admin invoice/quote detail header matches the InvoiceView /
@@ -131,6 +136,13 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState(null);
+  // Feb-2026 · Editable Sent Docs Phase 2 — version-history drawer.
+  // We open lazily (drawer fetches the versions endpoint), and we
+  // pre-flight a HEAD-shaped GET on mount to decide whether the
+  // "History" button should render at all (visible only when at
+  // least one snapshot exists).
+  const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
+  const [hasVersions, setHasVersions] = useState(false);
   const isStaff = ["admin", "super_admin"].includes(String(user?.role || ""));
   // Feb-2026 · Item 3 — soft-delete (admin/super only). Two flavours:
   //   * ``deleteInvoiceOpen`` → REST ``DELETE /invoices/{id}`` — full
@@ -174,6 +186,18 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
       }).catch(() => {});
       // Signature status (silently ignore errors — endpoint returns {signed:false} normally)
       api.get(`/quotes/${id}/signature`).then(setSignInfo).catch(() => setSignInfo(null));
+      // Feb-2026 · Editable Sent Docs Phase 2 — probe the versions
+      // endpoint so we know whether to show the "History" trigger.
+      // The trigger is deliberately hidden when the doc has never
+      // been edited (total==0). ``docType`` decides which alias to
+      // hit; both return ``{total: <int>}`` in the payload.
+      const _isInvoice = q?.doc_type === "invoice";
+      const _versionsPath = _isInvoice
+        ? `/invoices/${id}/versions?limit=1`
+        : `/quotes/${id}/versions?limit=1`;
+      api.get(_versionsPath)
+        .then((r) => setHasVersions(Number(r?.total || 0) > 0))
+        .catch(() => setHasVersions(false));
     } catch (e) {
       setToast({ tone: "error", message: e.message });
     }
@@ -435,12 +459,28 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
             </p>
             </div>
           </div>
-          <div className="text-right">
+          <div className="text-right flex flex-col items-end gap-2">
             <div className="text-3xl font-bold" style={{ color: colors.brand }}>{money(doc.total)}</div>
             {isInvoice ? (
               <div className="text-xs mt-1" style={{ color: colors.muted }}>
                 Paid {money(doc.amount_paid || 0)} · Balance {money(balance)}
               </div>
+            ) : null}
+            {/* Feb-2026 · Editable Sent Docs Phase 2 — trigger for
+                the version-history drawer. Renders only for staff
+                (admin/super_admin) AND only when the doc has at
+                least one snapshot (i.e. was ever edited after
+                initial send). ``hasVersions`` is set from the
+                on-mount pre-flight in ``load()``. */}
+            {isStaff && hasVersions ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setVersionDrawerOpen(true)}
+                data-testid="doc-header-history-btn"
+              >
+                <History size={14} className="mr-1" /> History
+              </Button>
             ) : null}
           </div>
         </div>
@@ -1064,9 +1104,25 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
             if (historyOpen && res?.changed) {
               api.get(`/quotes/${id}/edit-history`).then(setHistory).catch(() => {});
             }
+            // Feb-2026 · Phase 2 — a save just created a new
+            // version row, so if this is the first edit the
+            // History trigger should now appear.
+            if (res?.changed) setHasVersions(true);
           }}
         />
       ) : null}
+      {/* Feb-2026 · Editable Sent Docs Phase 2 — the drawer is
+          mounted at the root of the page so it can slide over
+          the whole detail surface. Kept always-mounted to avoid
+          a re-fetch on every open — the drawer itself gates on
+          the ``open`` prop to (a) fetch when opening and
+          (b) reset preview state when closing. */}
+      <VersionHistoryDrawer
+        open={versionDrawerOpen}
+        onOpenChange={setVersionDrawerOpen}
+        docType={isInvoice ? "invoice" : "quote"}
+        docId={id}
+      />
       {isStaff && isInvoice ? (
         <div
           className="rounded-2xl p-4 mt-4"

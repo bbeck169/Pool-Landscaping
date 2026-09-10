@@ -426,6 +426,9 @@ async def patch_invoice(
     await snapshot_before_mutation(
         doc_type=_doc_type_for_version, doc_id=invoice_id,
         tenant_id=tenant_id, current_doc=inv,
+        # Feb-2026 · Phase 2 — merged post-mutation doc for the
+        # write-time change_summary.
+        new_doc={**inv, **upd},
         saved_by_user=user,
         status_at_edit=(status or "draft"),
         reason=body.reason, lock_bypass_ack=_ack,

@@ -89,6 +89,138 @@ def _redact_snapshot(doc: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _money(v: Any) -> float:
+    """Coerce to float defensively — line_items subtotals may arrive
+    as Decimal / int / str depending on the caller."""
+    try:
+        return round(float(v or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _line_item_signature(li: Any) -> tuple:
+    """Feb-2026 · Phase 2 — canonical shape of a single line item
+    for the change-summary diff.  We hash on
+    ``(description, qty, unit_price, category)`` — the four fields
+    users perceive as "the same line item".  ``id`` is ignored
+    because the frontend regenerates it on every save (see
+    ``QuoteInvoiceDetail`` :contentReference).
+    """
+    if not isinstance(li, dict):
+        return (str(li), 0.0, 0.0, "")
+    return (
+        str(li.get("description") or li.get("name") or "").strip().lower(),
+        _money(li.get("qty")),
+        _money(li.get("unit_price") or li.get("price")),
+        str(li.get("category") or "").strip().lower(),
+    )
+
+
+_SUMMARY_FIELDS = (
+    ("subtotal", "$"),
+    ("tax", "$"),
+    ("total", "$"),
+    ("amount_paid", "$"),
+    ("due_date", "date"),
+    ("notes", "text"),
+    ("terms", "text"),
+    ("title", "text"),
+    ("status", "text"),
+)
+
+
+def compute_change_summary(
+    prev_snapshot: Optional[Dict[str, Any]],
+    curr_snapshot: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Feb-2026 · Phase 2 — return a short human string + a numeric
+    ``diff_field_count`` describing how ``curr_snapshot`` differs
+    from ``prev_snapshot``.
+
+    Returns ``{"change_summary": None, "diff_field_count": 0}`` when
+    ``prev_snapshot`` is missing (baseline version) or the two
+    snapshots are byte-identical.  Otherwise returns a short
+    comma-joined string of the highest-signal changes plus the
+    total count of high-signal fields that moved.
+
+    Kept intentionally deterministic — the same input always
+    produces the same string — so drawer copy is stable across
+    reloads and pytest can pin the assertion.
+    """
+    if not prev_snapshot or not curr_snapshot:
+        return {"change_summary": None, "diff_field_count": 0}
+
+    parts: list[str] = []
+    diff_count = 0
+
+    # ── Line items ───────────────────────────────────────────
+    prev_li = prev_snapshot.get("line_items") or []
+    curr_li = curr_snapshot.get("line_items") or []
+    if isinstance(prev_li, list) and isinstance(curr_li, list):
+        prev_sigs = [_line_item_signature(li) for li in prev_li]
+        curr_sigs = [_line_item_signature(li) for li in curr_li]
+        added = max(0, len(curr_sigs) - len(prev_sigs))
+        removed = max(0, len(prev_sigs) - len(curr_sigs))
+        # An "edit" is a line item whose signature changed at the
+        # same index — count only up to min(len).  This intentionally
+        # over-counts reorders as edits (cheap approximation vs. a
+        # full LCS), which is fine for a summary blurb.
+        edited = 0
+        for a, b in zip(prev_sigs, curr_sigs):
+            if a != b:
+                edited += 1
+        if added:
+            parts.append(
+                f"{added} line item{'s' if added != 1 else ''} added",
+            )
+            diff_count += 1
+        if removed:
+            parts.append(
+                f"{removed} line item{'s' if removed != 1 else ''} removed",
+            )
+            diff_count += 1
+        if edited:
+            parts.append(
+                f"{edited} line item{'s' if edited != 1 else ''} edited",
+            )
+            diff_count += 1
+
+    # ── Money + text field deltas ────────────────────────────
+    for field, kind in _SUMMARY_FIELDS:
+        prev_v = prev_snapshot.get(field)
+        curr_v = curr_snapshot.get(field)
+        if kind == "$":
+            p, c = _money(prev_v), _money(curr_v)
+            if abs(p - c) < 0.005:
+                continue
+            delta = c - p
+            sign = "+" if delta >= 0 else "-"
+            parts.append(
+                f"{field} {sign}${abs(delta):,.2f}",
+            )
+            diff_count += 1
+        else:
+            if (prev_v or "") == (curr_v or ""):
+                continue
+            # Text/date fields: just note that they changed — the
+            # raw new value is often multi-line notes not worth
+            # inlining into a summary blurb.
+            label = "Notes" if field == "notes" else (
+                "Terms" if field == "terms" else field.title()
+            )
+            parts.append(f"{label} updated")
+            diff_count += 1
+
+    # Byte-identical snapshots → nothing to report.
+    if not parts:
+        return {"change_summary": None, "diff_field_count": 0}
+
+    return {
+        "change_summary": ", ".join(parts),
+        "diff_field_count": diff_count,
+    }
+
+
 async def _next_version_number(*, doc_type: str, doc_id: str) -> int:
     """Return the next monotonic version number for this doc."""
     last = await db.document_versions.find_one(
@@ -112,6 +244,7 @@ async def snapshot_before_mutation(
     reason: Optional[str] = None,
     lock_bypass_ack: bool = False,
     signature_invalidated: bool = False,
+    new_doc: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Ensure baseline + insert pre-edit snapshot. Return the newly
     inserted version row (metadata only, no snapshot body) or
@@ -156,6 +289,10 @@ async def snapshot_before_mutation(
                                     or (current_doc.get("status") or "draft"),
                 "reason": "retroactive_baseline",
                 "changed_fields": [],
+                # Feb-2026 · Phase 2 — baseline has no prior snapshot
+                # to diff against by definition.
+                "change_summary": None,
+                "diff_field_count": 0,
                 "lock_bypass_ack": False,
                 "signature_invalidated": False,
                 "restore_of_version": None,
@@ -164,6 +301,20 @@ async def snapshot_before_mutation(
             next_v = 2
         else:
             next_v = existing["version"] + 1
+
+        # Feb-2026 · Phase 2 — the change_summary attached to v(N)
+        # describes the edit that transitions the current state
+        # (``current_doc``, pre-mutation) into the target state
+        # (``new_doc``, post-mutation).  This is the intuitive UI
+        # semantics — every non-baseline row's summary describes
+        # "the edit that produced this snapshot's context" (not
+        # a diff between prior stored versions, which would over-
+        # report when snapshots are duplicated across a single
+        # baseline-plus-first-edit pair).
+        if new_doc is not None:
+            _summary = compute_change_summary(current_doc, new_doc)
+        else:
+            _summary = {"change_summary": None, "diff_field_count": 0}
 
         # 2. Insert the pre-mutation snapshot.
         row = {
@@ -183,6 +334,9 @@ async def snapshot_before_mutation(
                                 or (current_doc.get("status") or "draft"),
             "reason": reason,
             "changed_fields": [],
+            # Feb-2026 · Phase 2 — write-time diff summary.
+            "change_summary": _summary["change_summary"],
+            "diff_field_count": _summary["diff_field_count"],
             "lock_bypass_ack": bool(lock_bypass_ack),
             "signature_invalidated": bool(signature_invalidated),
             "restore_of_version": None,

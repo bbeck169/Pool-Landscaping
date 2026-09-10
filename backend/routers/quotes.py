@@ -703,6 +703,10 @@ async def update_quote(qid: str, body: QuoteUpdate,
     await snapshot_before_mutation(
         doc_type=_doc_type_for_version, doc_id=qid,
         tenant_id=tenant["id"], current_doc=existing,
+        # Feb-2026 · Phase 2 — pass the merged post-mutation doc
+        # so the write-time ``change_summary`` describes THIS edit
+        # (line-item / money / notes deltas about to be applied).
+        new_doc={**existing, **upd},
         saved_by_user=user,
         status_at_edit=(existing.get("status") or "draft"),
         reason=_edit_reason, lock_bypass_ack=_ack,

@@ -8,6 +8,7 @@ from .versions import (
     invalidate_signature_if_present,
     has_signature,
     normalize_doc_type,
+    compute_change_summary,
     CANONICAL_DOC_TYPES,
 )
 
@@ -16,5 +17,6 @@ __all__ = [
     "invalidate_signature_if_present",
     "has_signature",
     "normalize_doc_type",
+    "compute_change_summary",
     "CANONICAL_DOC_TYPES",
 ]

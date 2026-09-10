@@ -1566,3 +1566,11 @@
 - **Files modified**: estimate-view/[id].tsx, estimatesFull.ts, calendar.tsx
 - **Files created**: __tests__/parity-phase-a.test.tsx
 - **Test results**: 8/8 passing
+
+
+## Iteration 80 — Solid red Decline button on estimate toolbar
+- **Commit**: 4ed75b4838b2e5348d25ceb9dcdd9a60d00a660c
+- **Date**: 2026-09-10
+- **Changes**: Changed estimate-toolbar-customer-decline from outlined-red to solid-red (#DC2626) bg with white text/icon
+- **Files modified**: app/estimate-view/[id].tsx, __tests__/parity-phase-a.test.tsx
+- **Test results**: 9/9 passing (new assertion: backgroundColor === "#DC2626")

@@ -463,7 +463,9 @@ async def patch_estimate(eid: str, body: EstimatePatch,
     from services.documents import snapshot_before_mutation
     await snapshot_before_mutation(
         doc_type="estimator_estimate", doc_id=eid,
-        tenant_id=tenant["id"], current_doc=e, saved_by_user=user,
+        tenant_id=tenant["id"], current_doc=e,
+        new_doc={**e, **upd},
+        saved_by_user=user,
         status_at_edit=(e.get("status") or "generated"),
     )
     await db.estimator_estimates.update_one(
