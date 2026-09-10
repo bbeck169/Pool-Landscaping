@@ -1,3 +1,24 @@
+## Iteration 82 — P0 Fix: Job detail 20s timeout + error/retry UI
+- **Commit**: 18a60892
+- **Date**: 2026-09-10
+- **Changes**:
+  - Added `LOAD_TIMEOUT_MS = 20_000` constant to `[id].tsx`
+  - Added `loadError` state for user-visible error messages
+  - Made `flushPendingMutations()` and `flushPendingPhotos()` fire-and-forget (removed `await`, kept `.catch(() => {})`)
+  - Wrapped `api.get(/jobs/${id})` in `Promise.race` with 20s timeout — rejects with `__LOAD_TIMEOUT__` error
+  - On timeout/failure with no cache: renders "Couldn't load job. Retry?" UI with `job-detail-error`, `job-detail-error-message`, `job-detail-retry-btn` testIDs
+  - On timeout with cache: falls back to cached job (existing behavior preserved)
+  - Fixed `job-detail-spinner-timeout.test.tsx` — rewrote with 6 tests (4 logic + 2 UI render)
+    - Tests 1-4: Pure async logic tests (fake timers for timeout simulation)
+    - Tests 5-6: Static UI render tests for error/retry and cached-banner states
+  - All 6 tests pass, 0 lint issues, Metro 2308 modules clean
+- **Files modified**: `mobile/app/job/[id].tsx` (load timeout + error UI)
+- **Files modified (tests)**: `mobile/__tests__/job-detail-spinner-timeout.test.tsx` (rewritten)
+- **Root cause**: `load()` sequentially awaited `flushPendingMutations()` and `flushPendingPhotos()` which made blocking API calls. On slow/failing networks, these blocked indefinitely, preventing the job fetch from ever starting.
+- **Fix approach**: Fire-and-forget flushes + Promise.race timeout on main fetch + graceful error UI
+
+
+
 ## Iteration 81 — Outcome C: /estimates/* → /quotes/* URL rename
 - **Commit**: b114a901
 - **Date**: 2026-09-09
