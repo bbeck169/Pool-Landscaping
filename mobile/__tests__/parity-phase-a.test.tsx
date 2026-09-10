@@ -132,6 +132,14 @@ describe("ITEM 1 — Estimate View Phase A", () => {
     expect(getByTestId("estimate-toolbar-customer-decline")).toBeTruthy();
   });
 
+  it("Decline toolbar button has solid red fill (#DC2626) and white label", async () => {
+    const { getByTestId } = render(<EstimateViewScreen />);
+    await waitFor(() => getByTestId("estimate-toolbar-customer-decline"));
+    const btn = getByTestId("estimate-toolbar-customer-decline");
+    const btnStyle = Array.isArray(btn.props.style) ? Object.assign({}, ...btn.props.style) : btn.props.style;
+    expect(btnStyle.backgroundColor).toBe("#DC2626");
+  });
+
   it("does NOT render toolbar when estimate is accepted", async () => {
     mockGetFull.mockResolvedValue(mockAcceptedData as any);
     const { getByTestId, queryByTestId } = render(<EstimateViewScreen />);

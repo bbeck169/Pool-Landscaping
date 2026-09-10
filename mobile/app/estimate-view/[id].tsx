@@ -285,7 +285,7 @@ export default function EstimateViewScreen() {
               <Text style={s.approveBtnText}>Approve</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.toolbarDeclineBtn} onPress={() => setDeclineOpen(true)} disabled={busy} testID="estimate-toolbar-customer-decline">
-              <Ionicons name="close" size={18} color={colors.error} />
+              <Ionicons name="close" size={18} color="#fff" />
               <Text style={s.toolbarDeclineBtnText}>Decline</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.changesBtn} onPress={() => setChangesOpen(true)} disabled={busy} testID="estimate-changes-btn">
@@ -303,7 +303,7 @@ export default function EstimateViewScreen() {
               <Text style={s.approveBtnText}>Accept</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.toolbarDeclineBtn} onPress={() => setDeclineOpen(true)} disabled={busy} testID="estimate-decline-btn">
-              <Ionicons name="close" size={18} color={colors.error} />
+              <Ionicons name="close" size={18} color="#fff" />
               <Text style={s.toolbarDeclineBtnText}>Decline</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.changesBtn} onPress={() => setChangesOpen(true)} disabled={busy} testID="estimate-changes-btn">
@@ -541,8 +541,8 @@ const s = StyleSheet.create({
   actionRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
   approveBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.success, paddingVertical: 14, borderRadius: radius.md },
   approveBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
-  toolbarDeclineBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.surface, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.error },
-  toolbarDeclineBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.error },
+  toolbarDeclineBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#DC2626", paddingVertical: 14, borderRadius: radius.md },
+  toolbarDeclineBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
   changesBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.surface, paddingVertical: 14, paddingHorizontal: 16, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   changesBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
   companyName: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
