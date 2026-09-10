@@ -131,9 +131,9 @@ describe("PB3 · Profit Report page", () => {
     );
     // Uncategorized row visible.
     expect(screen.getByTestId("profit-report-row-__uncategorized__")).toBeTruthy();
-    // Totals row visible with formatted revenue.
-    const totals = screen.getByTestId("profit-report-totals-row");
-    expect(totals.textContent).toMatch(/650/);
+    // Revenue summary tile visible with formatted revenue.
+    const rev = screen.getByTestId("profit-report-tile-revenue");
+    expect(rev.textContent).toMatch(/650/);
   });
 
   it("group-by toggle refetches with income_category param", async () => {
@@ -166,9 +166,9 @@ describe("PB3 · Profit Report page", () => {
     });
     renderPage();
     await waitFor(() =>
-      expect(screen.getByTestId("profit-report-csv-btn")).toBeTruthy(),
+      expect(screen.getByTestId("profit-report-export-csv")).toBeTruthy(),
     );
-    fireEvent.click(screen.getByTestId("profit-report-csv-btn"));
+    fireEvent.click(screen.getByTestId("profit-report-export-csv"));
     await waitFor(() => expect(_fetch).toHaveBeenCalled());
     const [csvUrl, opts] = _fetch.mock.calls[0];
     expect(csvUrl).toContain("/api/reports/profit.csv");
@@ -186,7 +186,7 @@ describe("PB3 · Profit Report page", () => {
       expect(screen.getByTestId("profit-report-row-__uncategorized__")).toBeTruthy(),
     );
     // Fix button testid — provided by PB1 QoL wire-up on the uncat row.
-    const fixBtn = screen.queryByTestId("profit-report-uncategorized-fix");
+    const fixBtn = screen.queryByTestId("profit-report-uncategorized-fix-btn");
     expect(fixBtn).toBeTruthy();
   });
 
@@ -197,7 +197,7 @@ describe("PB3 · Profit Report page", () => {
       expect(screen.getByTestId("profit-report-forbidden")).toBeTruthy(),
     );
     expect(screen.queryByTestId("profit-report-health-tile")).toBeNull();
-    expect(screen.queryByTestId("profit-report-csv-btn")).toBeNull();
+    expect(screen.queryByTestId("profit-report-export-csv")).toBeNull();
     expect(screen.queryAllByTestId(/^profit-report-row-/).length).toBe(0);
   });
 });

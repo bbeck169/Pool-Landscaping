@@ -142,9 +142,17 @@ export default function ProfitReportPage() {
   useEffect(() => {
     if (!isAdmin) return;
     let cancelled = false;
-    api.get("/reports/pricebook-health?window_days=90")
-      .then((h) => { if (!cancelled) setHealth(h); })
-      .catch(() => { if (!cancelled) setHealth(null); });
+    try {
+      const _p = api.get("/reports/pricebook-health?window_days=90");
+      // Defensive: some tests stub ``api.get`` without a value for
+      // this URL. Guard against a non-thenable return.
+      if (_p && typeof _p.then === "function") {
+        _p.then((h) => { if (!cancelled) setHealth(h); })
+          .catch(() => { if (!cancelled) setHealth(null); });
+      }
+    } catch {
+      /* silent — non-fatal tile */
+    }
     return () => { cancelled = true; };
   }, [isAdmin]);
 
