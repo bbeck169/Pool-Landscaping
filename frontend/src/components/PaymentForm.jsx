@@ -73,7 +73,7 @@ export function _redirect(url) {
   }
 }
 
-export default function PaymentForm({ invoice, onClose }) {
+export default function PaymentForm({ invoice, invoiceId, source, magicToken, amount, onClose }) {
   const [errorMsg, setErrorMsg] = useState("");
   const [preparing, setPreparing] = useState(true);
   // Feb 2026 addendum — ``pmCount === null`` means we haven't fetched
@@ -84,19 +84,55 @@ export default function PaymentForm({ invoice, onClose }) {
   const startedRef = useRef(false);
   const autoRedirectedRef = useRef(false);
 
-  const invId = invoice?.id;
+  // Feb-2026 P0 · resolve the correct amount. The pay-link modal
+  // historically read ``invoice.total`` which is undefined on the
+  // magic-link payload shape (the balance lives at
+  // ``invoice.totals.total_due``). Priority chain:
+  //   1. explicit ``amount`` prop passed by the caller
+  //   2. ``invoice.totals.total_due`` (canonical viewer payload)
+  //   3. legacy ``invoice.total - invoice.amount_paid`` shape
+  //   4. 0 (never negative)
+  const resolvedAmount = (() => {
+    if (Number.isFinite(Number(amount))) return Number(amount);
+    const td = invoice?.totals?.total_due;
+    if (Number.isFinite(Number(td))) return Number(td);
+    const legacy = Number(invoice?.total ?? 0) - Number(invoice?.amount_paid ?? 0);
+    return Math.max(0, legacy);
+  })();
+
+  const invId = invoiceId || invoice?.id || invoice?.invoice_id;
+  const isMagic = Boolean(magicToken);
 
   const start = React.useCallback(async (options) => {
-    if (!invId) return;
+    if (!invId) {
+      setErrorMsg("Invoice id missing — please refresh and try again.");
+      setPreparing(false);
+      return;
+    }
     setPreparing(true);
     setErrorMsg("");
-    try {
-      const body = {
-        save_for_future_billing: !!(options && options.saveForFuture),
-      };
-      const result = await api.post(
-        `/invoices/${invId}/request-payment-link`, body,
+    // Feb-2026 P0 · Hard 20 s timeout so the modal NEVER freezes on
+    // "Preparing…". Underlying ``api.post`` already has a 30 s abort
+    // but we surface a friendly message sooner so the customer gets
+    // a retry button rather than staring at a spinner.
+    let timer = null;
+    const timeoutP = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("payment_gateway_timeout")),
+        20000,
       );
+    });
+    try {
+      const body = isMagic
+        ? {}
+        : { save_for_future_billing: !!(options && options.saveForFuture) };
+      const path = isMagic
+        ? `/invoices/${invId}/request-payment-link-magic?token=${encodeURIComponent(magicToken)}`
+        : `/invoices/${invId}/request-payment-link`;
+      const result = await Promise.race([
+        api.post(path, body),
+        timeoutP,
+      ]);
       const url = result?.payment_url;
       if (url) {
         _redirect(url);
@@ -105,12 +141,20 @@ export default function PaymentForm({ invoice, onClose }) {
       // Backend returned 200 but no url — treat as gateway problem.
       setErrorMsg(friendlyFor("payment_gateway_unavailable"));
     } catch (err) {
-      const code = extractErrorCode(err);
-      setErrorMsg(friendlyFor(code));
+      if (err && err.message === "payment_gateway_timeout") {
+        setErrorMsg(
+          "Preparing your payment link is taking longer than expected. " +
+          "Please try again or contact support.",
+        );
+      } else {
+        const code = extractErrorCode(err);
+        setErrorMsg(friendlyFor(code));
+      }
     } finally {
+      if (timer) clearTimeout(timer);
       setPreparing(false);
     }
-  }, [invId]);
+  }, [invId, isMagic, magicToken]);
 
   // Fetch PM count before deciding whether to auto-redirect or show
   // the review UI. If the fetch fails, err ON THE SIDE of NOT saving
@@ -120,6 +164,17 @@ export default function PaymentForm({ invoice, onClose }) {
     if (startedRef.current) return;
     startedRef.current = true;
     (async () => {
+      // Feb-2026 P0 · Magic-link path skips the PM count fetch and
+      // the save-for-future flow entirely. A public magic-link
+      // customer isn't portal-authed so the PM endpoint 401s, which
+      // used to trigger the global session-clear-and-redirect
+      // and freeze the pay modal. Straight to start().
+      if (isMagic) {
+        autoRedirectedRef.current = true;
+        setPmCount(1);        // sentinel: skip review UI
+        await start({ saveForFuture: false });
+        return;
+      }
       let count = 1;   // safe default = "1+" → skip checkbox
       try {
         const r = await api.get("/customer-portal/payment-methods");
@@ -140,7 +195,7 @@ export default function PaymentForm({ invoice, onClose }) {
         setPreparing(false);
       }
     })();
-  }, [start]);
+  }, [start, isMagic]);
 
   const retry = () => {
     // Re-fire the Session-create call with the last-known consent
@@ -157,7 +212,7 @@ export default function PaymentForm({ invoice, onClose }) {
     start({ saveForFuture });
   };
 
-  const amountDue = ((invoice?.total ?? 0) - (invoice?.amount_paid ?? 0)).toFixed(2);
+  const amountDue = resolvedAmount.toFixed(2);
   const showReview = pmCount === 0 && !preparing && !errorMsg;
 
   return (

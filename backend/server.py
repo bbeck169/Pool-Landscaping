@@ -696,6 +696,22 @@ api_router.include_router(_gps_ingest.router)
 # Feb 2026 — Service categories (pricebook business-unit taxonomy).
 from routers import service_categories as _service_categories  # noqa: E402
 api_router.include_router(_service_categories.router)
+# Pricebook × Profit-Reporting Phase 1 · Feb-2026 — reference-count
+# endpoints for the Categories archive-with-warn dialog.
+from routers import category_references as _category_references  # noqa: E402
+api_router.include_router(_category_references.router)
+# Feb-2026 P0 · Public magic-link pay flow — Stripe Checkout Session
+# accessible without a portal-authenticated session. Fixes the
+# "Pay $0.00 / Preparing your secure payment link" freeze reported
+# in prod (see DIAG_P0_MAGIC_PAY.md).
+from routers import invoice_magic_pay as _invoice_magic_pay  # noqa: E402
+api_router.include_router(_invoice_magic_pay.router)
+# Feb-2026 P0 · Recurring-jobs orphan backfill — surfaces the 80+
+# Schedule-page-created recurring clusters that never landed on the
+# Recurring Visits admin page because they had no matching
+# ``db.recurring_job_templates`` row.
+from routers import recurring_jobs_backfill as _rec_backfill  # noqa: E402
+api_router.include_router(_rec_backfill.router)
 # Task TT · Feb 2026 (reconciled TT.5) — OpenWebNinja-Zillow adapter
 # (dry-scaffold). Ships in ``keys_missing → 503 graceful`` mode: routes
 # register unconditionally so a supervisor restart after populating

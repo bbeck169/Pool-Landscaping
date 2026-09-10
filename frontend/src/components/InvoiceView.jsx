@@ -378,6 +378,7 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
           invoiceId={invoiceId}
           source={paySource}
           magicToken={magicToken}
+          amount={totals?.total_due || 0}
           onClose={() => setPayOpen(false)}
         />
       ) : null}

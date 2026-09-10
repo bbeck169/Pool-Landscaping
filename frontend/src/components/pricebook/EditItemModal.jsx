@@ -202,6 +202,13 @@ export default function EditItemModal({
   const [unitPrice, setUnitPrice] = useState("");
   const [taxRate, setTaxRate] = useState("");
   const [laborCostDefault, setLaborCostDefault] = useState("");
+  // Pricebook × Profit-Reporting Phase 1 (Feb-2026) — explicit
+  // ``wholesale_price`` field. Historically we derived a display-
+  // only "effective cost" from the min supplier row; Phase 1
+  // surfaces the persisted ``wholesale_price`` scalar directly so
+  // the margin computation is deterministic even for tenants with
+  // no supplier rows (or a manual override).
+  const [wholesalePrice, setWholesalePrice] = useState("");
   const [suppliers, setSuppliers] = useState([]);
   const [incomeCat, setIncomeCat] = useState(null);       // {id, name}
   const [serviceCat, setServiceCat] = useState(null);     // {id, name}
@@ -222,6 +229,7 @@ export default function EditItemModal({
     setUnitPrice(String(item.unit_price ?? ""));
     setTaxRate(String(item.tax_rate ?? ""));
     setLaborCostDefault(String(item.labor_cost_default ?? ""));
+    setWholesalePrice(String(item.wholesale_price ?? ""));
     setSuppliers(Array.isArray(item.suppliers) ? item.suppliers.map((s) => ({ ..._newSupplierRow(), ...s })) : []);
     setIncomeCat(item.income_category_id
       ? { id: item.income_category_id, name: item.income_category_name || "" }
@@ -318,6 +326,7 @@ export default function EditItemModal({
         unit_price: unitPrice === "" ? 0 : Number(unitPrice),
         tax_rate: taxRate === "" ? 0 : Number(taxRate),
         labor_cost_default: laborCostDefault === "" ? 0 : Number(laborCostDefault),
+        wholesale_price: wholesalePrice === "" ? 0 : Number(wholesalePrice),
         suppliers: cleanSuppliers,
       };
       if (incomeId) payload.income_category_id = incomeId;
@@ -414,7 +423,9 @@ export default function EditItemModal({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs uppercase" style={{ color: colors.muted }}>Retail price ($)</Label>
-                <Input data-testid="ei-unit-price" type="number" step="0.01" min="0"
+                <Input data-testid="ei-unit-price"
+                        data-alias-testid="pricebook-retail-input"
+                        type="number" step="0.01" min="0"
                         value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
               </div>
               <div>
@@ -423,7 +434,27 @@ export default function EditItemModal({
                         value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
               </div>
               <div>
-                <Label className="text-xs uppercase" style={{ color: colors.muted }}>Effective cost</Label>
+                {/* Phase 1 (Feb-2026) · Explicit wholesale override — the
+                    persisted scalar drives profit reporting even when a
+                    tenant has no supplier rows. Leave blank to fall back
+                    to the min-supplier effective cost. */}
+                <Label className="text-xs uppercase" style={{ color: colors.muted }}>Wholesale cost ($, internal)</Label>
+                <Input data-testid="pricebook-wholesale-input"
+                        data-alias-testid="ei-wholesale-price"
+                        type="number" step="0.01" min="0"
+                        value={wholesalePrice}
+                        onChange={(e) => setWholesalePrice(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs uppercase" style={{ color: colors.muted }}>Labor cost ($, internal)</Label>
+                <Input data-testid="pricebook-labor-input"
+                        data-alias-testid="ei-labor-cost"
+                        type="number" step="0.01" min="0"
+                        value={laborCostDefault}
+                        onChange={(e) => setLaborCostDefault(e.target.value)} />
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs uppercase" style={{ color: colors.muted }}>Effective supplier cost</Label>
                 <div data-testid="ei-effective-cost"
                         className="h-9 rounded-md border px-3 text-sm flex items-center font-mono"
                         style={{ borderColor: colors.border, background: colors.surfaceSecondary,
@@ -439,10 +470,41 @@ export default function EditItemModal({
                   ) : null}
                 </div>
               </div>
-              <div>
-                <Label className="text-xs uppercase" style={{ color: colors.muted }}>Labor cost ($, internal)</Label>
-                <Input data-testid="ei-labor-cost" type="number" step="0.01" min="0"
-                        value={laborCostDefault} onChange={(e) => setLaborCostDefault(e.target.value)} />
+              {/* Phase 1 — live margin display. Recomputes as the admin
+                  edits retail / wholesale / labor. Numeric fallback for
+                  zero retail → 0% margin shown, never NaN. */}
+              <div className="col-span-2">
+                <Label className="text-xs uppercase" style={{ color: colors.muted }}>Margin</Label>
+                {(() => {
+                  const retail = Number(unitPrice || 0);
+                  const wholesale = Number(
+                    wholesalePrice !== "" ? wholesalePrice :
+                    (effectiveCost != null ? effectiveCost : 0)
+                  ) || 0;
+                  const labor = Number(laborCostDefault || 0);
+                  const marginDollar = retail - wholesale - labor;
+                  const marginPct = retail > 0 ? (marginDollar / retail) * 100 : 0;
+                  const negative = marginDollar < 0;
+                  return (
+                    <div
+                      data-testid="pricebook-margin-display"
+                      data-margin-dollar={marginDollar.toFixed(2)}
+                      data-margin-pct={marginPct.toFixed(2)}
+                      className="h-9 rounded-md border px-3 text-sm flex items-center font-mono"
+                      style={{
+                        borderColor: negative ? "#DC2626" : colors.border,
+                        background: negative ? "#FEE2E2" : colors.surfaceSecondary,
+                        color: negative ? "#7F1D1D" : colors.onSurface,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {marginPct.toFixed(1)}%
+                      <span className="ml-2 text-xs font-normal" style={{ opacity: 0.75 }}>
+                        ({money(marginDollar)} per unit)
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
             <div className="text-xs" style={{ color: colors.muted }}>
@@ -549,14 +611,14 @@ export default function EditItemModal({
                           data-testid="tab-categories-panel">
             <CategoryAutocomplete
               label="Income category"
-              testidPrefix="ei-income-cat"
+              testidPrefix="pricebook-income-category-select"
               source={incomeSource}
               value={incomeCat}
               onChange={setIncomeCat}
             />
             <CategoryAutocomplete
               label="Service category"
-              testidPrefix="ei-service-cat"
+              testidPrefix="pricebook-service-category-select"
               source={serviceSource}
               value={serviceCat}
               onChange={setServiceCat}

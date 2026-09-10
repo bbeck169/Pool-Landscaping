@@ -66,7 +66,20 @@ TOKEN_SUB = "est"
 MAGIC_LINK_TTL_DAYS = 30
 
 _CUSTOMER_LINE_HIDDEN = ("calc", "m_rate", "bh", "t_bh", "t_b_cost",
-                          "margin_pct", "cost_rate", "unit_price", "cost")
+                          "margin_pct", "cost_rate", "unit_price", "cost",
+                          # Pricebook × Profit-Reporting Phase 1 (Feb-2026) —
+                          # PB1 write-once cost snapshots + admin-only flags
+                          # MUST NEVER surface on customer-facing payloads.
+                          # Enforced-at-boundary; the item modal only ever
+                          # sets these for admin surfaces (see items.py).
+                          "wholesale_price_snapshot",
+                          "labor_cost_snapshot",
+                          "retail_price_snapshot",
+                          "overridden_price",
+                          "pricebook_writeback",
+                          "wholesale_price",
+                          "labor_cost",
+                          "labor_cost_default")
 _CUSTOMER_TOTAL_HIDDEN = ("estimated_profit", "total_b_hrs",
                           "total_b_hrs_revenue")
 

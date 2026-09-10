@@ -53,6 +53,11 @@ export default function RecurringJobs() {
   const [priceErr, setPriceErr] = useState("");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null);
+  // Feb-2026 P0 · Orphan-backfill state. Populated lazily on mount
+  // so operators see a "Missing N template(s)" banner without
+  // running the mutating backfill first.
+  const [orphanPreview, setOrphanPreview] = useState(null);
+  const [orphanBusy, setOrphanBusy] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -71,6 +76,40 @@ export default function RecurringJobs() {
     } catch (e) {
       setError(e?.message || "Failed to load");
     } finally { setLoading(false); }
+    // Feb-2026 P0 · Fire an orphan-preview scan right after the main
+    // load. Best-effort — a failure just leaves the banner hidden.
+    try {
+      const preview = await api.get("/recurring-jobs/orphans");
+      setOrphanPreview(preview);
+    } catch (_e) {
+      setOrphanPreview(null);
+    }
+  };
+
+  const runBackfill = async () => {
+    // eslint-disable-next-line no-alert
+    const ok = window.confirm(
+      `Create ${orphanPreview?.orphan_count || 0} missing recurring-job templates for ` +
+      `${orphanPreview?.total_occurrences || 0} orphan occurrences?\n\n` +
+      `This is idempotent — existing templates stay untouched.`
+    );
+    if (!ok) return;
+    setOrphanBusy(true);
+    try {
+      const res = await api.post("/recurring-jobs/backfill-orphans", {});
+      // Refresh both the main table and the orphan preview.
+      await load();
+      // eslint-disable-next-line no-alert
+      window.alert(
+        `Backfill complete.\n\n` +
+        `Created: ${res?.created ?? 0}\n` +
+        `Skipped (already existed): ${res?.skipped_existing ?? 0}`
+      );
+    } catch (e) {
+      setError(e?.message || "Backfill failed");
+    } finally {
+      setOrphanBusy(false);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -210,6 +249,42 @@ export default function RecurringJobs() {
         <div className="rounded-2xl p-3 mb-4 text-sm"
              style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C" }}
              data-testid="recurring-jobs-error">{error}</div>
+      ) : null}
+
+      {/* Feb-2026 P0 · Orphan cluster banner. Renders only when the
+          orphan-preview scan found at least one cluster missing a
+          matching template. Operator can click "Backfill now" to
+          mint them; idempotent so re-running is safe. */}
+      {orphanPreview && orphanPreview.orphan_count > 0 ? (
+        <div
+          className="rounded-2xl p-4 mb-4 text-sm flex items-start justify-between gap-3"
+          style={{ background: "#FEF3C7", border: "1px solid #FCD34D",
+                    color: "#78350F" }}
+          data-testid="recurring-jobs-orphan-banner"
+        >
+          <div>
+            <div className="font-bold">
+              {orphanPreview.orphan_count} recurring customer
+              {orphanPreview.orphan_count === 1 ? "" : "s"} missing from this list.
+            </div>
+            <div className="mt-0.5 text-xs">
+              Detected {orphanPreview.total_occurrences} pre-scheduled visits from
+              the Schedule page that have no matching recurring template. Click
+              &ldquo;Backfill now&rdquo; to add them here — existing entries won&rsquo;t be touched.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={runBackfill}
+            disabled={orphanBusy}
+            className="inline-flex items-center gap-1 text-xs font-bold px-3 py-2 rounded-md whitespace-nowrap"
+            style={{ background: "#B45309", color: "#FFFFFF", border: 0,
+                      opacity: orphanBusy ? 0.5 : 1 }}
+            data-testid="recurring-jobs-backfill-btn"
+          >
+            {orphanBusy ? "Backfilling…" : "Backfill now"}
+          </button>
+        </div>
       ) : null}
 
       {loading ? (

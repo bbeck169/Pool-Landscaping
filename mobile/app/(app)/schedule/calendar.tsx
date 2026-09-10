@@ -47,6 +47,7 @@ import PendingSyncPill from "@/src/components/PendingSyncPill";
 import { usePendingEntityIds } from "@/src/hooks/usePendingOps";
 // Phase 1 Offline Read — route hydrator + cache status.
 import { useRouteHydration } from "@/src/hooks/useRouteHydration";
+import { useOnline } from "@/src/lib/offline/netStatus";
 import { useCachedJobIds } from "@/src/hooks/useCachedJobIds";
 import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
@@ -177,7 +178,11 @@ function ScheduleCalendarInner() {
   const canWriteJobs = isAdmin || isTech;
 
   // Phase 1 Offline Read — trigger hydration + get cache stats.
-  const { meta: hydrationMeta } = useRouteHydration();
+  const { meta: hydrationMeta, triggerHydrate } = useRouteHydration();
+  const online = useOnline();
+  const [syncingRoute, setSyncingRoute] = useState(false);
+  const [syncToast, setSyncToast] = useState<string | null>(null);
+  const syncToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [mode, setMode] = useState<Mode>("grid");
   const [modeLoaded, setModeLoaded] = useState(false);
@@ -211,6 +216,44 @@ function ScheduleCalendarInner() {
   // error card. Consumed by the render path to swap the spinner for
   // a "Still loading — retry?" fallback.
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
+
+  // ── Sync route handler ──────────────────────────────────────────────
+  const handleSyncRoute = useCallback(async () => {
+    if (syncingRoute || !online) return;
+    setSyncingRoute(true);
+    setSyncToast(null);
+    try {
+      // Call triggerHydrate and wait for the subscription to report completion.
+      triggerHydrate();
+      // Give hydration time to start + finish. The subscription updates
+      // hydrationMeta reactively, but we need a concrete wait.
+      // Poll hydrationMetaRef until inProgress===false (after it was true).
+      let sawInProgress = false;
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const m = hydrationMetaRef.current;
+        if (m?.inProgress) sawInProgress = true;
+        if (sawInProgress && !m?.inProgress) break;
+        // If never saw inProgress (hydration completed instantly), break after 2s
+        if (!sawInProgress && i >= 4) break;
+      }
+      const finalMeta = hydrationMetaRef.current;
+      const cached = finalMeta?.cachedJobs ?? 0;
+      if (syncToastTimer.current) clearTimeout(syncToastTimer.current);
+      setSyncToast(`Route cached — ${cached} job${cached !== 1 ? "s" : ""} offline-ready`);
+      syncToastTimer.current = setTimeout(() => setSyncToast(null), 3500);
+    } catch {
+      if (syncToastTimer.current) clearTimeout(syncToastTimer.current);
+      setSyncToast("Sync failed — try again");
+      syncToastTimer.current = setTimeout(() => setSyncToast(null), 3500);
+    } finally {
+      setSyncingRoute(false);
+    }
+  }, [syncingRoute, online, triggerHydrate]);
+
+  // Ref to track latest hydrationMeta without re-rendering the callback
+  const hydrationMetaRef = useRef(hydrationMeta);
+  useEffect(() => { hydrationMetaRef.current = hydrationMeta; }, [hydrationMeta]);
 
   // Phase F6b — Crew filter state. Selecting a crew passes crew_id to
   // the schedule fetch; clearing resets to "All crews".
@@ -551,6 +594,19 @@ function ScheduleCalendarInner() {
         subtitle={loading ? "Loading…" : `${jobs.length} jobs in window · ${mode}`}
         right={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            {/* Sync route button */}
+            <Pressable
+              onPress={handleSyncRoute}
+              disabled={syncingRoute || hydrationMeta?.inProgress || !online}
+              style={[gStyles.refreshBtn, (!online || syncingRoute || hydrationMeta?.inProgress) && { opacity: 0.5 }]}
+              hitSlop={8}
+              testID="schedule-sync-route"
+              accessibilityLabel={!online ? "You're offline — sync when connected" : "Sync route"}
+            >
+              {(syncingRoute || hydrationMeta?.inProgress)
+                ? <ActivityIndicator size={14} color={colors.brand} testID="schedule-sync-route-progress" />
+                : <Ionicons name="cloud-download-outline" size={16} color={colors.brand} />}
+            </Pressable>
             {/* ITEM 2 — Schedule Refresh Button */}
             <Pressable
               onPress={() => { if (!refreshing) { setRefreshing(true); load(true).finally(() => setRefreshing(false)); } }}
@@ -574,18 +630,38 @@ function ScheduleCalendarInner() {
           </View>
         }
       />
-      {/* Phase 24 · 2026-08-03 — Root scroll wrapper. Prior layout was
-          a flex column with per-view ScrollViews inside GridView /
-          CalendarView, leaving the JobTrackerTiles + WeekStrip +
-          mode-switch band non-scrollable and clipping content on
-          shorter devices. Wrapping the body (everything below the
-          Header, above the Modal) in a single vertical ScrollView
-          makes the whole schedule page scroll top-to-bottom without
-          disturbing the WeekStrip's independent horizontal scroll or
-          the reassign-Modal (which is rendered above via RN's Modal
-          portal, so it's outside this ScrollView anyway). GridView
-          and CalendarView switched their outer <ScrollView> to plain
-          <View>s to avoid nested-vertical-scroll conflicts. */}
+
+      {/* Sync route toast */}
+      {syncToast && (
+        <View style={gStyles.syncToast} testID="schedule-sync-toast">
+          <Ionicons
+            name={syncToast.includes("failed") ? "alert-circle" : "checkmark-circle"}
+            size={14}
+            color={syncToast.includes("failed") ? "#DC2626" : "#166534"}
+          />
+          <Text style={[gStyles.syncToastText, syncToast.includes("failed") && { color: "#DC2626" }]}>{syncToast}</Text>
+        </View>
+      )}
+
+      {/* Cache freshness label */}
+      {hydrationMeta?.lastSyncedAt && !syncingRoute && !hydrationMeta?.inProgress && (
+        <View style={gStyles.cacheFreshnessRow} testID="schedule-cache-freshness">
+          <Ionicons name="time-outline" size={11} color={colors.muted} />
+          <Text style={gStyles.cacheFreshnessText}>
+            {(() => {
+              const ts = new Date(hydrationMeta.lastSyncedAt).getTime();
+              const now = Date.now();
+              const diffMin = Math.round((now - ts) / 60000);
+              if (diffMin < 1) return "Cached just now";
+              if (diffMin < 60) return `Cached ${diffMin} min ago`;
+              const hrs = Math.floor(diffMin / 60);
+              return `Cached ${hrs}h ${diffMin % 60}m ago`;
+            })()}
+          </Text>
+        </View>
+      )}
+
+      {/* Phase 24 · Root scroll wrapper */}
       <ScrollView
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator
@@ -1595,6 +1671,22 @@ const gStyles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary,
     borderWidth: 1, borderColor: colors.border,
     alignItems: "center", justifyContent: "center",
+  },
+  syncToast: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#F0FDF4", borderWidth: 1, borderColor: "#BBF7D0",
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.md,
+    marginHorizontal: spacing.lg, marginTop: spacing.xs,
+  },
+  syncToastText: {
+    fontFamily: font.medium, fontSize: 12, color: "#166534",
+  },
+  cacheFreshnessRow: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: spacing.lg, paddingTop: 4, paddingBottom: 2,
+  },
+  cacheFreshnessText: {
+    fontFamily: font.regular, fontSize: 10, color: colors.muted,
   },
   cachedPill: {
     flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
