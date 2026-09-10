@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useSetDynamicCrumb } from "@/components/nav/dynamicCrumbContext";
 import {
   ArrowLeft,
   Send,
@@ -170,6 +171,16 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   const [lockBypassAcked, setLockBypassAcked] = useState(false);
   const [pendingLines, setPendingLines] = useState(null);
   const [lockDialogOpen, setLockDialogOpen] = useState(false);
+
+  // Feb-2026 · P2/C-follow-up · Register the resolved doc title on
+  // the breadcrumb registry so the current-page crumb resolves
+  // from the "…" skeleton to the doc's real title. Missing this
+  // registration is what left the breadcrumb stuck on "..." in
+  // the tester's prod repro.
+  useSetDynamicCrumb(
+    doc?.doc_type === "invoice" ? "invoice" : "quote",
+    doc?.title || null,
+  );
 
   const load = async () => {
     try {
@@ -399,9 +410,15 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
       {/* Feb-2026 · Phase C — admin visibility banner for declined
           line items. Rendered above the doc header so it's the
           first thing the admin sees when opening a doc where the
-          customer has flagged one or more lines as declined. */}
+          customer has flagged one or more lines as declined.
+          Wrapped in an ErrorBoundary so an unexpected server-side
+          data shape can never take down the whole detail page —
+          root-caused during the prod SPA hang on the tester's
+          verification pass. */}
       {doc.has_declined_lines ? (
-        <AdminDeclinedLinesBanner doc={doc} />
+        <DeclinedLinesErrorBoundary>
+          <AdminDeclinedLinesBanner doc={doc} />
+        </DeclinedLinesErrorBoundary>
       ) : null}
 
       <div
@@ -488,7 +505,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                 size="sm"
                 variant="outline"
                 onClick={() => setVersionDrawerOpen(true)}
-                data-testid="doc-header-history-btn"
+                testid="doc-header-history-btn"
               >
                 <History size={14} className="mr-1" /> History
               </Button>
@@ -712,9 +729,12 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
             Rendered underneath the line items when at least one row
             has ``customer_status === "declined"``. Complements the
             K71 editor (which is kept unmodified) by giving the admin
-            a scannable list of what the customer refused + why. */}
-        {(doc.line_items || []).some((li) => (li.customer_status || "") === "declined") ? (
-          <AdminDeclinedLinesList lineItems={doc.line_items || []} />
+            a scannable list of what the customer refused + why.
+            Wrapped in the same ErrorBoundary as the banner. */}
+        {(doc.line_items || []).some((li) => li && (li.customer_status || "") === "declined") ? (
+          <DeclinedLinesErrorBoundary>
+            <AdminDeclinedLinesList lineItems={doc.line_items || []} />
+          </DeclinedLinesErrorBoundary>
         ) : null}
 
         {/* PB1 · Feb-2026 · Internal Margin section. Admin-only.
@@ -1320,6 +1340,12 @@ function ConvertToJobModal({ open, onClose, quote, onDone, onError }) {
 // out of the component body so tests can drive it without React.
 export function formatDeclinedTimestamp(iso, nowMs = Date.now()) {
   if (!iso) return "";
+  // Only accept ISO-8601-shaped strings. Any non-string shape
+  // (legacy Mongo ``{$date: ...}``, raw numbers, Date objects
+  // that slipped through the API layer) is treated as unknown
+  // and rendered empty. Guards a prod-only render crash the
+  // tester observed on ``/quotes/b565f464-...``.
+  if (typeof iso !== "string") return "";
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return "";
   const secs = Math.max(0, Math.round((nowMs - then) / 1000));
@@ -1330,6 +1356,51 @@ export function formatDeclinedTimestamp(iso, nowMs = Date.now()) {
   if (hrs < 24) return `Declined ${hrs}h ago`;
   const days = Math.round(hrs / 24);
   return `Declined ${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+
+// Feb-2026 · Phase 2/C-follow-up · Isolated error boundary so a
+// crash inside the declined-lines banner or list cannot hang the
+// whole doc-detail page. On the tester's prod verification the
+// page appeared to hang because a React render exception broke the
+// subtree above the K71 editor — this boundary catches any such
+// exception, logs to the console, and renders a compact fallback
+// so the rest of the detail page (K71, totals, action buttons)
+// keeps working.
+class DeclinedLinesErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { err: null };
+  }
+  static getDerivedStateFromError(err) {
+    return { err };
+  }
+  componentDidCatch(err, info) {
+    try {
+      // eslint-disable-next-line no-console
+      console.error("[DeclinedLinesErrorBoundary]", err, info);
+    } catch { /* noop */ }
+  }
+  render() {
+    if (this.state.err) {
+      return (
+        <div
+          className="rounded-2xl p-3 my-3"
+          style={{
+            background: "#FEF2F2",
+            border: "1px solid #FECACA",
+            color: "#7F1D1D",
+            fontSize: 12,
+          }}
+          data-testid="admin-declined-lines-error"
+        >
+          Declined-items summary is temporarily unavailable — the
+          rest of this document is fine to edit.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 

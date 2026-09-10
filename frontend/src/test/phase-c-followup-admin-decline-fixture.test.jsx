@@ -117,6 +117,19 @@ describe("Phase 2/C-F · admin decline banner render contract", () => {
       cleanup();
     });
 
+  it("formatDeclinedTimestamp tolerates non-string legacy Mongo shapes",
+    () => {
+      // Simulates a legacy Mongo ``{$date: ...}`` extended-JSON
+      // envelope that occasionally slips through the API layer.
+      // Must not throw — the render was hanging on prod because
+      // an unexpected shape here was aborting the subtree.
+      expect(
+        formatDeclinedTimestamp({ $date: "2026-02-07T14:22:00Z" })
+      ).toBe("");
+      expect(formatDeclinedTimestamp(42)).toBe("");
+      expect(formatDeclinedTimestamp(undefined)).toBe("");
+    });
+
   it("list is robust against a legacy doc with null line entries",
     () => {
       const items = [null, ...fixture.line_items, null];
