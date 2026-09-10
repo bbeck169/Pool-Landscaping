@@ -1608,6 +1608,109 @@ async def create_customer_login(cid: str, body: CreateLoginRequest,
     return {"ok": True, "email": email}
 
 
+# ─── Feb-2026 · Manual customer re-geocode (UI escape hatch) ─────────
+# Phase 17 (Feb-2026) already auto-geocodes on customer create + on
+# address-field update inside the update endpoint. This endpoint is
+# NOT a second automation — it's the "Re-geocode" button on the
+# customer profile page for when the address is technically valid
+# but Google returned ZERO_RESULTS on the async path, when a rooftop
+# lookup improved after the fact, or when a tenant admin just wants
+# to force a fresh fix without editing the address.
+#
+# ``force=true`` clears the 30-day ``geocoded_at`` short-circuit
+# inside ``geocode_and_persist_customer`` so the helper actually
+# re-hits Google. Without ``force`` a customer that was geocoded
+# less than 30 days ago no-ops (returns ``ok=false, reason=fresh``).
+# RBAC: admin + super_admin + owner + manager (mirrors the geocode-
+# backfill endpoint in dispatch_board.py).
+_MANUAL_GEOCODE_ROLES = {"admin", "super_admin", "owner", "manager"}
+
+
+@router.post("/customers/{cid}/geocode", tags=["customers"],
+             operation_id="customers.manualGeocode")
+async def customer_manual_geocode(
+    cid: str,
+    force: bool = Query(False, description="Clear the 30-day cache short-circuit and force a fresh Google lookup."),
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Synchronous per-customer re-geocode. Not fire-and-forget — the
+    caller is waiting on a UI button. Returns the resulting lat/lng
+    on success, ``ok=false`` + ``reason`` otherwise. Never raises on
+    provider failure; the customer save is not affected."""
+    role = (user.get("role") or "").lower()
+    if role not in _MANUAL_GEOCODE_ROLES:
+        raise HTTPException(403, "Manual geocode is admin/manager only")
+
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "tenant_id": 1, "deleted_at": 1,
+         "service_address": 1, "service_street": 1, "street": 1,
+         "service_city": 1, "city": 1, "service_state": 1, "state": 1,
+         "service_zip": 1, "zip": 1, "geocoded_at": 1,
+         "latitude": 1, "longitude": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "Customer not found")
+    if doc.get("deleted_at"):
+        raise HTTPException(404, "Customer not found")
+
+    # ``force`` clears the 30-day cache short-circuit inside the helper.
+    if force:
+        await db.customers.update_one(
+            {"id": cid, "tenant_id": tenant["id"]},
+            {"$unset": {"geocoded_at": ""}},
+        )
+
+    try:
+        from services.google_maps.geocoding import (
+            geocode_and_persist_customer as _gp,
+        )
+        did = await _gp(cid, tenant["id"])
+    except Exception as exc:
+        logger.warning("[manual-geocode] customer=%s err=%s", cid, exc)
+        return {"ok": False, "reason": "provider_error", "error": str(exc)}
+
+    if not did:
+        # Re-read to distinguish "fresh cache" (already geocoded < 30d,
+        # no ``force``) from "no address" from "ZERO_RESULTS".
+        after = await db.customers.find_one(
+            {"id": cid, "tenant_id": tenant["id"]},
+            {"_id": 0, "latitude": 1, "longitude": 1, "geocoded_at": 1},
+        ) or {}
+        # If the doc already has coords + a stamp, we hit the 30-day
+        # cache. If it has neither, either the address was empty or
+        # Google returned ZERO_RESULTS.
+        if after.get("geocoded_at") and after.get("latitude") is not None:
+            return {
+                "ok": False, "reason": "fresh_cache",
+                "lat": after.get("latitude"), "lng": after.get("longitude"),
+                "geocoded_at": after.get("geocoded_at"),
+            }
+        # Distinguish empty-address from ZERO_RESULTS.
+        from services.google_maps.geocoding import _flatten_addr as _fa
+        addr = (_fa(doc.get("service_address")) or " ".join(filter(None, [
+            doc.get("service_street") or doc.get("street"),
+            doc.get("service_city") or doc.get("city"),
+            doc.get("service_state") or doc.get("state"),
+            doc.get("service_zip") or doc.get("zip"),
+        ]))).strip()
+        if not addr:
+            return {"ok": False, "reason": "no_address"}
+        return {"ok": False, "reason": "not_found",
+                "error": "Google returned ZERO_RESULTS for the address"}
+
+    after = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "latitude": 1, "longitude": 1, "geocoded_at": 1},
+    ) or {}
+    return {
+        "ok": True,
+        "lat": after.get("latitude"), "lng": after.get("longitude"),
+        "geocoded_at": after.get("geocoded_at"),
+    }
+
+
 @router.get("/customers/{cid}")
 async def get_customer(cid: str,
                        user: dict = Depends(get_current_user),

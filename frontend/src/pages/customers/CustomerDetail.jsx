@@ -19,6 +19,7 @@ import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel"
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
+import CustomerGeocodeInfo from "@/components/customers/CustomerGeocodeInfo";
 import { useSetDynamicCrumb }
   from "@/components/nav/dynamicCrumbContext";
 import PropertiesTab from "./PropertiesTab";
@@ -526,6 +527,17 @@ export default function CustomerDetail() {
                 </a>
               );
             })()}
+            {/* Feb-2026 · Customer profile — geocode observability line.
+                Reads customer.latitude / longitude / geocoded_at from
+                the already-Phase-17-populated fields. Non-admin roles
+                see the line but NOT the "Re-geocode" button. See
+                /app/memory/FEATURE_CUSTOMER_MANUAL_REGEOCODE_UI.md. */}
+            <CustomerGeocodeInfo
+              customer={customer}
+              role={meRole}
+              onRefetch={load}
+              onToast={setToast}
+            />
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               {/* Phase 15b · Feb-2026 — inline tag picker with a
                   "+ Add new tag" affordance in the dropdown. Server

@@ -641,28 +641,64 @@ async def apply_order(
 
 # ═════════════════════════════════════════════════════════════════
 # POST /api/admin/customers/geocode-backfill
+#
+# Feb-2026 · Follow-up — Now accepts ``?dry_run=true`` for a scan-
+# only pass (counts what WOULD be geocoded without hitting Google or
+# writing to the customer doc). Also exposed under the canonical
+# ``/admin/migrations/backfill-customer-geocodes`` alias so future
+# callers use the migration-family naming convention. Both routes
+# call the same handler.
 # ═════════════════════════════════════════════════════════════════
 @router.post("/admin/customers/geocode-backfill", tags=["dispatch"],
               operation_id="admin.customersGeocodeBackfill")
+@router.post("/admin/migrations/backfill-customer-geocodes",
+             tags=["dispatch"],
+             operation_id="admin.migrations.backfillCustomerGeocodes")
 async def geocode_backfill(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
     limit: int = Query(500, ge=1, le=5000),
+    dry_run: bool = Query(
+        False,
+        description="Feb-2026 · When true, report which customers WOULD be geocoded without hitting Google or writing to the customer doc. Non-idempotency risk: none.",
+    ),
 ):
     _require_admin(user)
     from services.google_maps.geocoding import geocode_and_persist_customer
+    # Legacy customers persist ``service_address`` as a structured
+    # dict (``{street, city, state, zip}``) — the P37b flattener is
+    # the canonical read-side normalizer.
+    from services.google_maps.geocoding import _flatten_addr
 
     processed = geocoded = skipped = failed = 0
+    would_geocode: List[str] = []
     async for c in db.customers.find(
         {"tenant_id": tenant["id"],
           "$or": [{"is_deleted": {"$ne": True}}, {"is_deleted": {"$exists": False}}]},
-        {"_id": 0, "id": 1, "service_address": 1, "geocoded_at": 1},
+        {"_id": 0, "id": 1, "service_address": 1, "geocoded_at": 1,
+         "latitude": 1, "longitude": 1},
     ):
         if processed >= limit:
             break
         processed += 1
-        if not (c.get("service_address") or "").strip():
+        if not _flatten_addr(c.get("service_address")).strip():
             skipped += 1
+            continue
+        if dry_run:
+            # Mirror the ``geocode_and_persist_customer`` skip-if-fresh
+            # heuristic (30-day cache) so the dry-run count matches
+            # what a live run would actually process.
+            if c.get("geocoded_at"):
+                try:
+                    g = datetime.fromisoformat(
+                        c["geocoded_at"].replace("Z", "+00:00"))
+                    if (datetime.now(timezone.utc) - g).days < 30:
+                        skipped += 1
+                        continue
+                except Exception:
+                    pass
+            would_geocode.append(c["id"])
+            geocoded += 1
             continue
         try:
             did = await geocode_and_persist_customer(c["id"], tenant["id"])
@@ -675,8 +711,12 @@ async def geocode_backfill(
             failed += 1
         await asyncio.sleep(0.1)  # ~10 QPS
 
-    return {"processed": processed, "geocoded": geocoded,
-             "skipped": skipped, "failed": failed}
+    payload = {"processed": processed, "geocoded": geocoded,
+               "skipped": skipped, "failed": failed,
+               "dry_run": bool(dry_run)}
+    if dry_run:
+        payload["would_geocode"] = would_geocode
+    return payload
 
 
 # ═════════════════════════════════════════════════════════════════
