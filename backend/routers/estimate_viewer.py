@@ -79,7 +79,18 @@ _CUSTOMER_LINE_HIDDEN = ("calc", "m_rate", "bh", "t_bh", "t_b_cost",
                           "pricebook_writeback",
                           "wholesale_price",
                           "labor_cost",
-                          "labor_cost_default")
+                          "labor_cost_default",
+                          # Feb-2026 · Pricebook × Profit-Reporting Phase 2 —
+                          # per-line admin cost/category overrides. Same
+                          # posture as Phase 1 cost snapshots: NEVER leak to
+                          # customer-facing payloads (magic-link viewer,
+                          # portal, PDF, email). Effective values are
+                          # computed admin-side; the customer only ever
+                          # sees ``unit_price × quantity``.
+                          "wholesale_cost_override",
+                          "labor_cost_override",
+                          "income_category_id_override",
+                          "service_category_id_override")
 _CUSTOMER_TOTAL_HIDDEN = ("estimated_profit", "total_b_hrs",
                           "total_b_hrs_revenue")
 

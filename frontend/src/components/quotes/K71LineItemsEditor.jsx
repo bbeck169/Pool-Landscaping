@@ -70,16 +70,48 @@ function EditableRow({ line, index, onSave, onCancel }) {
   const [incomeCategoryId, setIncomeCategoryId] = useState(
     line.income_category_id || ""
   );
+  // Feb-2026 · Pricebook × Profit-Reporting Phase 2 — per-line
+  // admin overrides. Empty string in state = "no override, use
+  // the snapshot at read". Serialised as null on save.
+  const [wholesaleOverride, setWholesaleOverride] = useState(
+    line.wholesale_cost_override == null ? "" : String(line.wholesale_cost_override)
+  );
+  const [laborOverride, setLaborOverride] = useState(
+    line.labor_cost_override == null ? "" : String(line.labor_cost_override)
+  );
+  const [serviceCategoryOverride, setServiceCategoryOverride] = useState(
+    line.service_category_id_override || ""
+  );
+  const [incomeCategoryOverride, setIncomeCategoryOverride] = useState(
+    line.income_category_id_override || ""
+  );
   const [attempted, setAttempted] = useState(false);
   const nameRef = useRef(null);
 
   useEffect(() => { nameRef.current?.focus(); }, []);
+
+  // Feb-2026 · Phase 2 — Live margin display. Uses OVERRIDE-first
+  // resolution to match backend ``effective_*`` semantics so admins
+  // see the margin they'll actually book at the reporting layer.
+  const wholesaleSnap = Number(line.wholesale_price_snapshot ?? 0);
+  const laborSnap = Number(line.labor_cost_snapshot ?? 0);
+  const effWholesale = wholesaleOverride === "" ? wholesaleSnap : Number(wholesaleOverride) || 0;
+  const effLabor = laborOverride === "" ? laborSnap : Number(laborOverride) || 0;
+  const retailPerUnit = Number(unitPrice) || 0;
+  const qtyN = Number(quantity) || 0;
+  const lineRevenue = retailPerUnit * qtyN;
+  const lineCost = (effWholesale + effLabor) * qtyN;
+  const marginDollar = lineRevenue - lineCost;
+  const marginPct = lineRevenue > 0 ? (marginDollar / lineRevenue) * 100 : 0;
 
   const commit = () => {
     setAttempted(true);
     if (!description.trim()) return;
     if (!serviceCategoryId || !incomeCategoryId) return;
     if ((longDesc || "").length > MAX_LONG_DESC) return;
+    // Validate override numeric fields are non-negative when set.
+    if (wholesaleOverride !== "" && (Number.isNaN(Number(wholesaleOverride)) || Number(wholesaleOverride) < 0)) return;
+    if (laborOverride !== "" && (Number.isNaN(Number(laborOverride)) || Number(laborOverride) < 0)) return;
     onSave({
       ...line,
       description: description.trim(),
@@ -88,6 +120,13 @@ function EditableRow({ line, index, onSave, onCancel }) {
       unit_price: Number(unitPrice) || 0,
       service_category_id: serviceCategoryId,
       income_category_id: incomeCategoryId,
+      // Feb-2026 · Phase 2 — carry override fields through the save.
+      // Empty-string in state maps to explicit null so the backend
+      // treats it as "no override" (revert to snapshot).
+      wholesale_cost_override: wholesaleOverride === "" ? null : Number(wholesaleOverride),
+      labor_cost_override: laborOverride === "" ? null : Number(laborOverride),
+      service_category_id_override: serviceCategoryOverride || null,
+      income_category_id_override: incomeCategoryOverride || null,
     });
   };
 
@@ -237,6 +276,132 @@ function EditableRow({ line, index, onSave, onCancel }) {
                 Income category is required.
               </div>
             ) : null}
+          </div>
+          {/* Feb-2026 · Phase 2 — Cost & Category Overrides.
+              Admin-only surface; never rendered on customer views. */}
+          <div className="col-span-12 mt-3 p-3 rounded-lg"
+               style={{ background: colors.surface, border: `1px dashed ${colors.border}` }}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] uppercase font-bold tracking-wide"
+                   style={{ color: colors.muted }}>
+                Cost &amp; Category Overrides (admin-only)
+              </div>
+              <div
+                className="text-xs font-bold"
+                style={{ color: marginDollar >= 0 ? colors.brand : "#DC2626" }}
+                data-testid={`line-item-margin-display-${index}`}
+              >
+                Margin: {marginPct.toFixed(1)}% ({money(marginDollar)})
+              </div>
+            </div>
+            <div className="grid grid-cols-12 gap-2">
+              <div className="col-span-6 sm:col-span-3">
+                <label className="text-[10px] uppercase font-bold flex items-center justify-between mb-1"
+                       style={{ color: colors.muted }}>
+                  <span>Wholesale $</span>
+                  {wholesaleOverride !== "" ? (
+                    <button
+                      type="button"
+                      onClick={() => setWholesaleOverride("")}
+                      className="text-[10px] normal-case font-semibold hover:underline"
+                      style={{ color: colors.brand }}
+                      data-testid={`line-item-reset-wholesale-${index}`}
+                    >
+                      reset
+                    </button>
+                  ) : null}
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={wholesaleOverride}
+                  onChange={(e) => setWholesaleOverride(e.target.value)}
+                  placeholder={wholesaleSnap ? String(wholesaleSnap) : "0.00"}
+                  className="w-full px-2 py-1 text-sm rounded text-right"
+                  style={{ background: colors.surfaceSecondary,
+                           border: `1px solid ${colors.border}` }}
+                  data-testid={`line-item-wholesale-override-${index}`}
+                />
+              </div>
+              <div className="col-span-6 sm:col-span-3">
+                <label className="text-[10px] uppercase font-bold flex items-center justify-between mb-1"
+                       style={{ color: colors.muted }}>
+                  <span>Labor $</span>
+                  {laborOverride !== "" ? (
+                    <button
+                      type="button"
+                      onClick={() => setLaborOverride("")}
+                      className="text-[10px] normal-case font-semibold hover:underline"
+                      style={{ color: colors.brand }}
+                      data-testid={`line-item-reset-labor-${index}`}
+                    >
+                      reset
+                    </button>
+                  ) : null}
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={laborOverride}
+                  onChange={(e) => setLaborOverride(e.target.value)}
+                  placeholder={laborSnap ? String(laborSnap) : "0.00"}
+                  className="w-full px-2 py-1 text-sm rounded text-right"
+                  style={{ background: colors.surfaceSecondary,
+                           border: `1px solid ${colors.border}` }}
+                  data-testid={`line-item-labor-override-${index}`}
+                />
+              </div>
+              <div className="col-span-12 sm:col-span-3">
+                <label className="text-[10px] uppercase font-bold flex items-center justify-between mb-1"
+                       style={{ color: colors.muted }}>
+                  <span>Service cat.</span>
+                  {serviceCategoryOverride ? (
+                    <button
+                      type="button"
+                      onClick={() => setServiceCategoryOverride("")}
+                      className="text-[10px] normal-case font-semibold hover:underline"
+                      style={{ color: colors.brand }}
+                      data-testid={`line-item-reset-service-category-${index}`}
+                    >
+                      reset
+                    </button>
+                  ) : null}
+                </label>
+                <CategoryPicker
+                  source="service"
+                  value={serviceCategoryOverride}
+                  onChange={setServiceCategoryOverride}
+                  testid={`line-item-service-category-select-${index}`}
+                  placeholder="No override"
+                />
+              </div>
+              <div className="col-span-12 sm:col-span-3">
+                <label className="text-[10px] uppercase font-bold flex items-center justify-between mb-1"
+                       style={{ color: colors.muted }}>
+                  <span>Income cat.</span>
+                  {incomeCategoryOverride ? (
+                    <button
+                      type="button"
+                      onClick={() => setIncomeCategoryOverride("")}
+                      className="text-[10px] normal-case font-semibold hover:underline"
+                      style={{ color: colors.brand }}
+                      data-testid={`line-item-reset-income-category-${index}`}
+                    >
+                      reset
+                    </button>
+                  ) : null}
+                </label>
+                <CategoryPicker
+                  source="income"
+                  value={incomeCategoryOverride}
+                  onChange={setIncomeCategoryOverride}
+                  testid={`line-item-income-category-select-${index}`}
+                  placeholder="No override"
+                />
+              </div>
+            </div>
           </div>
         </div>
       </td>

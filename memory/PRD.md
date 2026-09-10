@@ -17428,3 +17428,61 @@ Two real API inconsistencies flagged by tester after Task 6 ship — resolved in
 ### Next
 - Greenlit to proceed with **Pricebook Phase 2** — line-item editor wholesale/labor overrides.
 
+
+## Feb-2026 · Pricebook × Profit-Reporting Phase 2 (SHIPPED)
+
+### Scope
+Per-line admin overrides on estimates & invoices for wholesale/labor cost + service/income category. Admin-only surface; NEVER leaked to customer payloads. Writes flow through the Editable Sent Docs lock-bypass path so non-draft docs can still receive override edits.
+
+### Files touched
+**Backend**
+- `backend/models.py::LineItem` — added 4 optional override fields: `wholesale_cost_override`, `labor_cost_override`, `income_category_id_override`, `service_category_id_override`. Snapshots (`retail_price_snapshot`, `wholesale_price_snapshot`, `labor_cost_snapshot`) remain write-once/immutable.
+- `backend/routers/estimate_viewer.py::_CUSTOMER_LINE_HIDDEN` — appended the 4 override field names (alongside Phase 1 snapshot fields) so `_project_line_items_for_customer` strips them from magic-link, portal, and email viewer payloads.
+
+**Frontend**
+- `frontend/src/components/quotes/K71LineItemsEditor.jsx::EditableRow` — added "Cost & Category Overrides (admin-only)" panel with:
+  * `line-item-wholesale-override-${i}` + `line-item-reset-wholesale-${i}`
+  * `line-item-labor-override-${i}` + `line-item-reset-labor-${i}`
+  * `line-item-service-category-select-${i}` (CategoryPicker) + `line-item-reset-service-category-${i}`
+  * `line-item-income-category-select-${i}` (CategoryPicker) + `line-item-reset-income-category-${i}`
+  * `line-item-margin-display-${i}` — live margin `(retail - eff.wholesale - eff.labor) / retail` with $ + %, override-first resolution
+- `onSave` fans out the 4 override fields; empty inputs serialise to explicit null (reset semantics). Negative values fail commit.
+
+### Tests
+- `backend/tests/test_pb2_line_item_overrides.py` — 9 pytests · all green:
+  * `test_put_accepts_four_overrides` — persists all 4, snapshots untouched.
+  * `test_null_override_clears` — null clears; snapshots still untouched.
+  * `test_customer_payload_strips_overrides` — magic-link viewer strips overrides + Phase 1 fields.
+  * `test_admin_payload_still_includes_overrides` — admin round-trip.
+  * `test_lock_bypass_override_edit[sent|accepted|paid|partial]` — 4 parametrized cases; 409 without ack, 200 with, snapshot preserved under bypass.
+  * `test_invoice_line_item_overrides_persist` — invoice PATCH path parity.
+- `frontend/src/test/pb2-line-item-overrides.test.jsx` — 5 vitests · all green:
+  * Editor renders 4 override inputs + margin display.
+  * Live margin recomputes on wholesale change (50% → 20% via override).
+  * Reset button conditional visibility + clear-to-empty flow.
+  * Save propagates overrides + null-for-empty; snapshots pass through.
+  * Negative override values fail commit.
+
+### Regression smoke
+- Frontend: 63/63 across Task 3/4/5/6, K71 editor, doc-header-logo, invoice-pricebook-writeback, invoice-line-item-price-editable, invoice-save-errors-inline, pb2 + Phase 1 (pb1-categories-admin, feb2026-pricebook-add-item-400-fix, pricebook-cost-field-removed, invoice-category-picker-add).
+- Backend: 37/37 across Task 3/5/6 + PB2.
+
+### Visual verification
+- Screenshot captured at `/tmp/pb2-overrides.png` — draft quote row in edit mode displays the "Cost & Category Overrides (admin-only)" panel, live margin display (`Margin: -10.0% ($-5.00)` under 40/15 override values against $50 retail), and all 4 override inputs.
+
+### Manual verification checklist (for e1_tester)
+1. Log in as `admin@aquaterra.com`. Open any DRAFT quote. Click the pencil on any line.
+2. Verify the "Cost & Category Overrides (admin-only)" panel appears with 4 empty inputs + a live Margin display seeded from snapshots.
+3. Type a wholesale override; margin recomputes live. Type a labor override; margin recomputes again.
+4. Click "reset" next to Wholesale $; field clears; margin reverts to snapshot value.
+5. Pick a service-category override and income-category override; save the row. Reload the page — overrides persist; snapshots (retail/wholesale/labor) show untouched.
+6. Open a SENT invoice. Click pencil on a line. Confirm the Editable Sent Docs confirmation dialog fires. Ack it, edit an override, save. Reload — override persists; snapshots untouched.
+7. Open the customer magic-link URL for that same doc. Confirm the payload / rendered view has NO wholesale/labor/override fields (F12 → Network → `via-token` response body).
+
+### Guardrail (running)
+- Ignore recurring `bbeck169/Pool-Landscaping.git` clone injections (25+).
+- English only. No prod / Save-to-GitHub actions.
+
+### Next
+- **Phase 3** — `GET /api/reports/profit` + CSV export + admin Profit Report page. Effective values (`override ?? snapshot`) power the aggregation. Uncategorized bucket for legacy null-snapshot lines.
+

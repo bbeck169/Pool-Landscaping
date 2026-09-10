@@ -307,6 +307,18 @@ class LineItem(BaseModel):
     retail_price_snapshot: Optional[float] = None
     wholesale_price_snapshot: Optional[float] = None
     labor_cost_snapshot: Optional[float] = None
+    # Feb-2026 · Pricebook × Profit-Reporting Phase 2 — per-line
+    # admin overrides that live ALONGSIDE the write-once snapshots.
+    # ``None`` means "no override, use the snapshot". Effective values
+    # at read: ``effective_wholesale = wholesale_cost_override ??
+    # wholesale_price_snapshot``; same posture for labor. Categories
+    # follow the same override-first pattern. Admin-only — stripped
+    # from every customer-facing payload by the estimate/invoice
+    # viewers (see routers/estimate_viewer.py::_CUSTOMER_LINE_HIDDEN).
+    wholesale_cost_override: Optional[float] = None
+    labor_cost_override: Optional[float] = None
+    income_category_id_override: Optional[str] = None
+    service_category_id_override: Optional[str] = None
     # Feb-2026 · Pricebook item_type — set by the estimate/invoice
     # writer path when the line references a service and the operator
     # overrides the unit_price. Products may NOT set this — the
