@@ -2,9 +2,14 @@
  * Feb-2026 · Chase Stalled Invites — frontend behavior tests.
  *
  * Covers the four contracts the tile CTA + modal ship:
- *   1. "Chase" button renders under the Never card when count > 0,
- *      hidden/disabled when count === 0.
- *   2. Click opens the modal + fetches the stalest preview list.
+ *   1. Feb-2026 · Chase-move ship — "Chase" button renders under
+ *      the INVITED card (test-id ``onboarding-tile-invited-chase-cta``),
+ *      enabled when there's a chase audience, disabled when either
+ *      ``invited`` or ``never_logged_in`` cohort is empty (the
+ *      audience is the intersection of the two).
+ *   2. Click opens the modal + fetches the stalest preview list
+ *      via ``?portal_invited=any&first_access=never&sort=stalest_first``
+ *      so we only chase customers who were actually invited.
  *   3. Confirm posts to the bulk endpoint with the id list, then
  *      swaps modal content to the summary state.
  *   4. Close triggers a refetch of
@@ -66,7 +71,8 @@ describe("Chase Stalled Invites (Feb-2026)", () => {
     cleanup();
   });
 
-  it("renders the Chase button when never_logged_in count > 0 and disables it when count === 0", async () => {
+  it("renders the Chase button under the Invited card and enables it based on chase-audience size", async () => {
+    // invited=42 AND never=12 → audience upper bound = 12 > 0 → enabled.
     apiGetImpl.mockImplementation((url) => {
       if (String(url).startsWith("/reports/portal-onboarding-health")) {
         return Promise.resolve(_tilePayload(12));
@@ -78,16 +84,18 @@ describe("Chase Stalled Invites (Feb-2026)", () => {
         <PortalOnboardingHealthTile />
       </MemoryRouter>,
     );
-    const btn = await screen.findByTestId("onboarding-tile-never-chase-cta");
+    const btn = await screen.findByTestId("onboarding-tile-invited-chase-cta");
     expect(btn).toBeTruthy();
     expect(btn.disabled).toBe(false);
+    // The old Never-card Chase testid must no longer exist —
+    // Feb-2026 · Chase-move ship intentionally retires it.
+    expect(
+      screen.queryByTestId("onboarding-tile-never-chase-cta"),
+    ).toBeNull();
 
     cleanup();
 
-    // count===0 → button still rendered but disabled (matches spec:
-    // "Enabled only when count > 0"). We expose the same testid so
-    // ops discovers the affordance even when there's nothing to
-    // chase — hover title explains why.
+    // never=0 → chase audience upper bound = 0 → button disabled.
     apiGetImpl = vi.fn().mockImplementation((url) => {
       if (String(url).startsWith("/reports/portal-onboarding-health")) {
         return Promise.resolve(_tilePayload(0));
@@ -99,11 +107,11 @@ describe("Chase Stalled Invites (Feb-2026)", () => {
         <PortalOnboardingHealthTile />
       </MemoryRouter>,
     );
-    const btn2 = await screen.findByTestId("onboarding-tile-never-chase-cta");
+    const btn2 = await screen.findByTestId("onboarding-tile-invited-chase-cta");
     expect(btn2.disabled).toBe(true);
   });
 
-  it("opens the modal on click and fetches the preview list", async () => {
+  it("opens the modal on click and fetches the preview list with portal_invited=any", async () => {
     const previewCustomers = Array.from({ length: 10 }, (_, i) => ({
       id: `cust_${i}`,
       name: `Stale Customer ${i}`,
@@ -113,7 +121,9 @@ describe("Chase Stalled Invites (Feb-2026)", () => {
       if (String(url).startsWith("/reports/portal-onboarding-health")) {
         return Promise.resolve(_tilePayload(12));
       }
-      if (String(url).startsWith("/customers?first_access=never&sort=stalest_first")) {
+      if (String(url).startsWith(
+        "/customers?portal_invited=any&first_access=never&sort=stalest_first",
+      )) {
         return Promise.resolve(previewCustomers);
       }
       return Promise.resolve([]);
@@ -123,19 +133,18 @@ describe("Chase Stalled Invites (Feb-2026)", () => {
         <PortalOnboardingHealthTile />
       </MemoryRouter>,
     );
-    const btn = await screen.findByTestId("onboarding-tile-never-chase-cta");
+    const btn = await screen.findByTestId("onboarding-tile-invited-chase-cta");
     fireEvent.click(btn);
-    // Modal opens.
     const modal = await screen.findByTestId("chase-stalled-invites-modal");
     expect(modal).toBeTruthy();
-    // Preview list renders 10 rows.
     await waitFor(() => {
       const rows = screen.getAllByTestId("chase-invites-preview-row");
       expect(rows.length).toBe(10);
     });
-    // The API was called with the correct query.
+    // Feb-2026 · Chase-move — preview URL adds ``portal_invited=any``
+    // so we only chase actually-invited customers.
     expect(apiGetImpl).toHaveBeenCalledWith(
-      "/customers?first_access=never&sort=stalest_first&limit=10",
+      "/customers?portal_invited=any&first_access=never&sort=stalest_first&limit=10",
     );
   });
 
@@ -148,7 +157,9 @@ describe("Chase Stalled Invites (Feb-2026)", () => {
       if (String(url).startsWith("/reports/portal-onboarding-health")) {
         return Promise.resolve(_tilePayload(2));
       }
-      if (String(url).startsWith("/customers?first_access=never&sort=stalest_first")) {
+      if (String(url).startsWith(
+        "/customers?portal_invited=any&first_access=never&sort=stalest_first",
+      )) {
         return Promise.resolve(previewCustomers);
       }
       return Promise.resolve([]);
@@ -162,16 +173,14 @@ describe("Chase Stalled Invites (Feb-2026)", () => {
         <PortalOnboardingHealthTile />
       </MemoryRouter>,
     );
-    const btn = await screen.findByTestId("onboarding-tile-never-chase-cta");
+    const btn = await screen.findByTestId("onboarding-tile-invited-chase-cta");
     fireEvent.click(btn);
     await screen.findByTestId("chase-stalled-invites-modal");
-    // Wait for preview.
     await waitFor(() => {
       expect(screen.getAllByTestId("chase-invites-preview-row").length).toBe(2);
     });
     const sendBtn = screen.getByTestId("chase-invites-send-btn");
     fireEvent.click(sendBtn);
-    // POST body should carry the id list.
     await waitFor(() => {
       expect(apiPostImpl).toHaveBeenCalledWith(
         "/admin/customers/portal-invite/bulk",
@@ -179,7 +188,6 @@ describe("Chase Stalled Invites (Feb-2026)", () => {
           reason: "chase_stalled_invites" },
       );
     });
-    // Modal swaps to summary state.
     const summary = await screen.findByTestId("chase-invites-summary");
     expect(summary).toBeTruthy();
     expect(
@@ -197,14 +205,15 @@ describe("Chase Stalled Invites (Feb-2026)", () => {
     const previewCustomers = [
       { id: "cust_X", name: "X", email: "x@e.com" },
     ];
-    // Track health-tile refetches.
     let healthCalls = 0;
     apiGetImpl.mockImplementation((url) => {
       if (String(url).startsWith("/reports/portal-onboarding-health")) {
         healthCalls += 1;
         return Promise.resolve(_tilePayload(1));
       }
-      if (String(url).startsWith("/customers?first_access=never&sort=stalest_first")) {
+      if (String(url).startsWith(
+        "/customers?portal_invited=any&first_access=never&sort=stalest_first",
+      )) {
         return Promise.resolve(previewCustomers);
       }
       return Promise.resolve([]);
@@ -218,19 +227,17 @@ describe("Chase Stalled Invites (Feb-2026)", () => {
         <PortalOnboardingHealthTile />
       </MemoryRouter>,
     );
-    await screen.findByTestId("onboarding-tile-never-chase-cta");
-    expect(healthCalls).toBe(1); // initial mount
-    fireEvent.click(screen.getByTestId("onboarding-tile-never-chase-cta"));
+    await screen.findByTestId("onboarding-tile-invited-chase-cta");
+    expect(healthCalls).toBe(1);
+    fireEvent.click(screen.getByTestId("onboarding-tile-invited-chase-cta"));
     await screen.findByTestId("chase-stalled-invites-modal");
     await waitFor(() => {
       expect(screen.getAllByTestId("chase-invites-preview-row").length).toBe(1);
     });
     fireEvent.click(screen.getByTestId("chase-invites-send-btn"));
     await screen.findByTestId("chase-invites-summary");
-    // Click Done → close → triggers onSent → parent refetch.
     fireEvent.click(screen.getByTestId("chase-invites-done-btn"));
     await waitFor(() => {
-      // Second health-tile fetch fired after Done.
       expect(healthCalls).toBeGreaterThanOrEqual(2);
     });
   });

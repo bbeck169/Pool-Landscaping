@@ -311,6 +311,18 @@ export default function CustomersList() {
   const [neverLoggedIn, setNeverLoggedIn] = useState(
     () => searchParams.get("first_access") === "never");
   const [neverLoggedInCount, setNeverLoggedInCount] = useState(null);
+  // Feb-2026 · Onboarding-tile clickable ship — sibling "Invited"
+  // and "Signed in" chips. Same shape as ``neverLoggedIn`` — a
+  // boolean toggle hydrated from + persisted back to a distinct
+  // URL param. Both intersect with every other filter.
+  //   Invited  chip → ``?portal_invited=any``   (has_login truthy)
+  //   Signed-in chip → ``?first_access=any``    (portal_first_login_at set)
+  const [portalInvitedFilter, setPortalInvitedFilter] = useState(
+    () => searchParams.get("portal_invited") === "any");
+  const [portalInvitedCount, setPortalInvitedCount] = useState(null);
+  const [signedInFilter, setSignedInFilter] = useState(
+    () => searchParams.get("first_access") === "any");
+  const [signedInCount, setSignedInCount] = useState(null);
   // Feb-2026 · P44 — "No payment on file" data-quality chip.
   //   toggle ON  → ``?has_payment_method=false``
   //   toggle OFF → param dropped
@@ -461,6 +473,13 @@ export default function CustomersList() {
     // Feb-2026 · Customer temp password + first-access — "Never
     // logged in" chip. Distinct filter from portal_activated.
     if (neverLoggedIn) params.set("first_access", "never");
+    // Feb-2026 · Onboarding-tile clickable ship — sibling
+    // Invited / Signed-in chips. Mutual exclusion with
+    // ``never`` on the shared ``first_access`` param is enforced
+    // by the toggle handlers below; here we just pass the state
+    // through so the backend sees the intended predicate.
+    else if (signedInFilter) params.set("first_access", "any");
+    if (portalInvitedFilter) params.set("portal_invited", "any");
     // Feb-2026 · P46 — city + multi-tag now flow through the backend
     // so pagination + tab counts stay honest. Repeat the ``tags``
     // key per selected value so backend gets a proper list.
@@ -589,7 +608,7 @@ export default function CustomersList() {
     // missing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
-       missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, neverLoggedIn, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
+       missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, neverLoggedIn, portalInvitedFilter, signedInFilter, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
 
   // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
   // first invocation so hydrating chips from the URL on mount does
@@ -613,12 +632,19 @@ export default function CustomersList() {
     if (noPaymentFilter) next.set("has_payment_method", "0");
     else next.delete("has_payment_method");
     // Feb-2026 · Customer temp password + first-access — URL sync.
+    // ``first_access`` param is shared between "Never logged in"
+    // and "Signed in" chips (mutual exclusion enforced in toggle
+    // handlers).
     if (neverLoggedIn) next.set("first_access", "never");
+    else if (signedInFilter) next.set("first_access", "any");
     else next.delete("first_access");
+    // Feb-2026 · Onboarding-tile clickable ship — Invited chip.
+    if (portalInvitedFilter) next.set("portal_invited", "any");
+    else next.delete("portal_invited");
     setSearchParams(next, { replace: true });
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, neverLoggedIn]);
+  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, neverLoggedIn, portalInvitedFilter, signedInFilter]);
 
   // Feb-2026 · P43b — Fetch the total "missing address" count once
   // on mount (and whenever the tenant scope changes) so the chip
@@ -1492,6 +1518,8 @@ export default function CustomersList() {
               (noPaymentFilter ? 1 : 0) +
               (portalStatusFilter ? 1 : 0) +
               (neverLoggedIn ? 1 : 0) +
+              (portalInvitedFilter ? 1 : 0) +
+              (signedInFilter ? 1 : 0) +
               (includeDeleted ? 1 : 0) +
               (includeMerged ? 1 : 0) +
               (candidateFilterActive ? 1 : 0)
@@ -1504,6 +1532,8 @@ export default function CustomersList() {
             if (portalStatusFilter === "activated") summaryBits.push("Signed in");
             else if (portalStatusFilter === "not_activated") summaryBits.push("Never signed in");
             if (neverLoggedIn) summaryBits.push("Never logged in");
+            if (portalInvitedFilter) summaryBits.push("Invited");
+            if (signedInFilter) summaryBits.push("Signed in");
             if (includeDeleted) summaryBits.push("Show deleted");
             if (includeMerged) summaryBits.push("Show merged");
             if (candidateFilterActive) summaryBits.push("Merge candidates");
@@ -1787,8 +1817,95 @@ export default function CustomersList() {
                    style={{ color: colors.muted }}>
                 First-time sign-in
               </div>
+              {/* Feb-2026 · Onboarding-tile clickable ship — Invited chip.
+                  Sibling of the Never Logged In chip, mirrors the same
+                  toggle-→ ``?portal_invited=any`` URL persistence
+                  pattern. Predicate matches the onboarding-health
+                  ``invited`` cohort (``has_login`` truthy). */}
               <button
-                onClick={() => setNeverLoggedIn((v) => !v)}
+                onClick={() => setPortalInvitedFilter((v) => !v)}
+                data-testid="filter-chip-portal-invited"
+                aria-pressed={portalInvitedFilter ? "true" : "false"}
+                title="Customers with an admin-issued portal invite (has_login=true)."
+                className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2 mb-1"
+                style={{
+                  backgroundColor: portalInvitedFilter ? "#FEF3C7" : "transparent",
+                  color: portalInvitedFilter ? "#78350F" : colors.onSurface,
+                }}
+              >
+                <span
+                  className="inline-block w-3 h-3 rounded border"
+                  style={{
+                    backgroundColor: portalInvitedFilter ? "#D97706" : "transparent",
+                    borderColor: portalInvitedFilter ? "#D97706" : colors.border,
+                  }}
+                  aria-hidden="true"
+                />
+                <span className="flex-1">Invited</span>
+                {portalInvitedCount != null ? (
+                  <span
+                    className="tabular-nums text-[11px]"
+                    data-testid="filter-chip-portal-invited-count"
+                    style={{
+                      color: portalInvitedFilter ? "#78350F" : colors.muted,
+                      fontWeight: 600,
+                    }}
+                  >
+                    ({portalInvitedCount})
+                  </span>
+                ) : null}
+              </button>
+              {/* Signed-in chip (Feb-2026 · Onboarding-tile clickable
+                  ship). Mutually exclusive with "Never logged in" on
+                  the shared ``first_access`` param — toggling one
+                  turns the other off. */}
+              <button
+                onClick={() => {
+                  setSignedInFilter((v) => {
+                    const next = !v;
+                    if (next) setNeverLoggedIn(false);
+                    return next;
+                  });
+                }}
+                data-testid="filter-chip-signed-in"
+                aria-pressed={signedInFilter ? "true" : "false"}
+                title="Customers who have completed a portal sign-in at least once."
+                className="w-full text-left text-xs font-semibold px-2 py-1.5 rounded inline-flex items-center gap-2 mb-1"
+                style={{
+                  backgroundColor: signedInFilter ? "#FEF3C7" : "transparent",
+                  color: signedInFilter ? "#78350F" : colors.onSurface,
+                }}
+              >
+                <span
+                  className="inline-block w-3 h-3 rounded border"
+                  style={{
+                    backgroundColor: signedInFilter ? "#D97706" : "transparent",
+                    borderColor: signedInFilter ? "#D97706" : colors.border,
+                  }}
+                  aria-hidden="true"
+                />
+                <span className="flex-1">Signed in</span>
+                {signedInCount != null ? (
+                  <span
+                    className="tabular-nums text-[11px]"
+                    data-testid="filter-chip-signed-in-count"
+                    style={{
+                      color: signedInFilter ? "#78350F" : colors.muted,
+                      fontWeight: 600,
+                    }}
+                  >
+                    ({signedInCount})
+                  </span>
+                ) : null}
+              </button>
+              <button
+                onClick={() => {
+                  setNeverLoggedIn((v) => {
+                    const next = !v;
+                    if (next) setSignedInFilter(false);
+                    return next;
+                  });
+                }}
                 data-testid="customers-never-logged-in-filter"
                 aria-pressed={neverLoggedIn ? "true" : "false"}
                 title="Customers who have never completed a portal sign-in. A customer may have chosen their own password via a reset link but still not signed in — this filter surfaces the ones the front-office should chase."

@@ -8,25 +8,40 @@
  *   the server, admin-gated).
  *
  * Placement: rendered on the customers-list header (admin-only)
- * so the tile is contextual to the workflow it drives — the
- * "Never logged in" card deep-links to the existing chip
- * (``/customers?first_access=never``) that scopes the list to
- * the same cohort.
+ * so the tile is contextual to the workflow it drives — each
+ * cohort card deep-links to the customers list filtered to just
+ * that cohort using the same predicate the tile counts against
+ * (chip / list / tile stay numerically consistent).
  *
- * Feb-2026 · Chase Stalled Invites ship — the Never card now also
- * carries an inline "Chase" CTA (``onboarding-tile-never-chase-cta``)
- * that opens ``ChaseStalledInvitesModal`` for a one-click batch
- * re-invite of the top-N stalest never-logged-in customers.
+ * Feb-2026 · Onboarding-tile clickable + Chase-move ship
+ *   * All 4 cards are now clickable (Enter/Space + click). Deep-
+ *     link map:
+ *
+ *       Card             → URL
+ *       Invited          → /customers?portal_invited=any
+ *       Activated        → /customers?portal_activated=1
+ *       Signed in        → /customers?first_access=any
+ *       Never logged in  → /customers?first_access=never   (preserved)
+ *
+ *   * The "Chase" button lives under the INVITED card now
+ *     (previously under Never). Semantically the chase audience
+ *     is invited-but-never-signed-in, so the affordance surfaces
+ *     next to the invite concept. Button test-id renamed:
+ *
+ *         onboarding-tile-never-chase-cta  →
+ *         onboarding-tile-invited-chase-cta
+ *
+ *     The old test-id has been retired — see the migration memo
+ *     ``FEATURE_ONBOARDING_TILE_CLICKABLE_AND_CHASE_MOVE.md``.
  *
  * Test-ids:
  *   * ``onboarding-health-tile``
- *   * ``onboarding-cohort-invited``
- *   * ``onboarding-cohort-activated``
- *   * ``onboarding-cohort-signed-in``
- *   * ``onboarding-cohort-never``
+ *   * ``onboarding-cohort-invited`` / ``-activated`` /
+ *     ``-signed-in`` / ``-never``  (per-card blocks)
  *   * ``onboarding-cohort-*-delta``  (per-card delta arrow)
- *   * ``onboarding-tile-never-cta``      (never-card click target — deep-link)
- *   * ``onboarding-tile-never-chase-cta`` (Chase button — opens modal)
+ *   * ``onboarding-tile-invited-cta`` / ``-activated-cta`` /
+ *     ``-signed-in-cta`` / ``-never-cta``  (per-card deep-link)
+ *   * ``onboarding-tile-invited-chase-cta`` (Chase button)
  */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -38,10 +53,30 @@ import ChaseStalledInvitesModal from "@/components/customers/ChaseStalledInvites
 
 
 const COHORT_ORDER = [
-  { key: "invited",         label: "Invited",         testid: "onboarding-cohort-invited" },
-  { key: "activated",       label: "Activated",       testid: "onboarding-cohort-activated" },
-  { key: "signed_in",       label: "Signed in",       testid: "onboarding-cohort-signed-in" },
-  { key: "never_logged_in", label: "Never logged in", testid: "onboarding-cohort-never" },
+  {
+    key: "invited", label: "Invited",
+    testid: "onboarding-cohort-invited",
+    ctaHref: "/customers?portal_invited=any",
+    ctaTestid: "onboarding-tile-invited-cta",
+  },
+  {
+    key: "activated", label: "Activated",
+    testid: "onboarding-cohort-activated",
+    ctaHref: "/customers?portal_activated=1",
+    ctaTestid: "onboarding-tile-activated-cta",
+  },
+  {
+    key: "signed_in", label: "Signed in",
+    testid: "onboarding-cohort-signed-in",
+    ctaHref: "/customers?first_access=any",
+    ctaTestid: "onboarding-tile-signed-in-cta",
+  },
+  {
+    key: "never_logged_in", label: "Never logged in",
+    testid: "onboarding-cohort-never",
+    ctaHref: "/customers?first_access=never",
+    ctaTestid: "onboarding-tile-never-cta",
+  },
 ];
 
 
@@ -125,7 +160,7 @@ function CohortCard({ label, testid, count, delta, ctaHref, ctaTestid }) {
       />
     </div>
   );
-  // The Never card also renders the CTA testid on an inner span
+  // Every clickable card also exposes a hidden CTA test-id anchor
   // so tests can drive the click without depending on the outer
   // div's role attribute (some testing harnesses skip role=button
   // on non-<button> nodes).
@@ -183,10 +218,7 @@ export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
   //
   // Feb-2026 · Bulk-Portal-Invite-from-CustomersList ship — the
   // ``externalRefetchToken`` prop plumbs the SAME refetch signal
-  // from the parent CustomersList toolbar button (which reuses the
-  // Phase H1 bulk modal that lives on the customers page rather
-  // than inside this tile). Any change to the token triggers the
-  // useEffect; identity-stable initial mount stays a single fetch.
+  // from the parent CustomersList toolbar button.
   const [refetchTick, setRefetchTick] = useState(0);
 
   useEffect(() => {
@@ -220,7 +252,14 @@ export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
     return null;
   }
 
-  const neverCount = (data.cohorts?.never_logged_in?.count) || 0;
+  // Feb-2026 · Chase-move ship — the button is enabled based on
+  // the SIZE of the chase audience, not the raw Invited count.
+  // Audience = invited-and-never-signed-in ≈ min(invited, never)
+  // as an upper-bound approximation; the modal fetches the real
+  // list on open so the exact count settles there.
+  const invitedCount = data.cohorts?.invited?.count ?? 0;
+  const neverCount   = data.cohorts?.never_logged_in?.count ?? 0;
+  const chaseAudienceUpperBound = Math.min(invitedCount, neverCount);
 
   return (
     <>
@@ -234,7 +273,7 @@ export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
       >
         {COHORT_ORDER.map((c) => {
           const block = data.cohorts[c.key] || {};
-          const isNever = c.key === "never_logged_in";
+          const isInvited = c.key === "invited";
           return (
             <div
               key={c.key}
@@ -245,15 +284,15 @@ export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
                 testid={c.testid}
                 count={block.count}
                 delta={block.delta_30d}
-                ctaHref={isNever ? "/customers?first_access=never" : null}
-                ctaTestid={isNever ? "onboarding-tile-never-cta" : null}
+                ctaHref={c.ctaHref}
+                ctaTestid={c.ctaTestid}
               />
-              {isNever ? (
+              {isInvited ? (
                 <button
                   type="button"
                   onClick={() => setChaseOpen(true)}
-                  disabled={neverCount === 0}
-                  data-testid="onboarding-tile-never-chase-cta"
+                  disabled={chaseAudienceUpperBound === 0}
+                  data-testid="onboarding-tile-invited-chase-cta"
                   className="inline-flex items-center justify-center rounded-md px-3 py-1.5 text-xs font-semibold hover:brightness-95 disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{
                     backgroundColor: colors.brand,
@@ -261,9 +300,9 @@ export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
                   }}
                   aria-label="Chase stalled portal invites"
                   title={
-                    neverCount === 0
+                    chaseAudienceUpperBound === 0
                       ? "No stalled invites to chase"
-                      : `Chase up to ${neverCount} stalled invite${neverCount === 1 ? "" : "s"}`
+                      : `Chase up to ${chaseAudienceUpperBound} stalled invite${chaseAudienceUpperBound === 1 ? "" : "s"}`
                   }
                 >
                   Chase

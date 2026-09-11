@@ -553,6 +553,27 @@ async def list_customers(
     # definition matches the "has this customer actually onboarded
     # themselves?" question the operator is asking.
     portal_activated: Optional[bool] = None,
+    # ── Feb-2026 · Portal-invited cohort filter ────────────────
+    # ``portal_invited=any``  → customer has ``has_login`` truthy
+    #   (an admin has issued a portal invite / temp-password —
+    #   this is the SAME predicate the
+    #   ``/reports/portal-onboarding-health`` "invited" cohort
+    #   tallies, so the tile deep-link count equals the filtered
+    #   list length verbatim).
+    # ``portal_invited=none`` → ``has_login`` is missing / false.
+    # Omitted (``None``) → no filter.
+    # Composes as intersection with every other filter, incl.
+    # ``first_access=never`` (used by the "Chase Stalled Invites"
+    # modal to target the invited-but-never-signed-in subset).
+    portal_invited: Optional[str] = Query(
+        None,
+        description=(
+            "Feb-2026 — filter by whether the customer has been "
+            "issued a portal invite (matches the onboarding-health "
+            "``invited`` cohort predicate, ``has_login`` truthy). "
+            "Values: ``any`` = invited; ``none`` = not invited."
+        ),
+    ),
     # ── Feb-2026 · Customer first-access filter ─────────────────
     # ``first_access=never`` → customer has never completed a
     # sign-in (``portal_first_login_at`` is null/missing).
@@ -902,6 +923,31 @@ async def list_customers(
                     {"$or": [{"last_portal_login_at": {"$exists": False}},
                               {"last_portal_login_at": None},
                               {"last_portal_login_at": ""}]},
+                ],
+            }]
+    # ── Feb-2026 · Portal-invited cohort filter body ────────────
+    # Predicate: ``has_login`` truthy — same as the onboarding-
+    # health "invited" cohort in ``profit_report.py``. Unknown
+    # values → 400 so typos surface early.
+    if isinstance(portal_invited, str) and portal_invited.strip():
+        _pi = portal_invited.strip().lower()
+        if _pi not in ("any", "none"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "detail": "invalid_portal_invited",
+                    "message": "portal_invited must be one of: any, none",
+                    "portal_invited": portal_invited,
+                },
+            )
+        if _pi == "any":
+            q["$and"] = q.get("$and", []) + [{"has_login": True}]
+        else:  # none
+            q["$and"] = q.get("$and", []) + [{
+                "$or": [
+                    {"has_login": {"$exists": False}},
+                    {"has_login": None},
+                    {"has_login": False},
                 ],
             }]
     # Phase G4a · Feb-2026 — Portal-activation cohort filter (string

@@ -4,14 +4,16 @@
  * Contracts asserted:
  *   1. Loading skeleton renders while the fetch is in flight.
  *   2. All four cohort cards render with counts + delta arrows.
- *   3. Never-logged-in card click navigates to
- *      /customers?first_access=never.
+ *   3. Feb-2026 · Onboarding-tile clickable ship — every one of
+ *      the four cohort cards navigates to the correct filtered
+ *      URL on both click AND Enter/Space keyboard activation:
+ *        Invited   → /customers?portal_invited=any
+ *        Activated → /customers?portal_activated=1
+ *        Signed in → /customers?first_access=any
+ *        Never     → /customers?first_access=never   (preserved)
  *   4. Fetch failure surfaces toast.error and the tile does NOT
  *      render (skeleton removed, error state hidden — the tile is
  *      non-fatal).
- *
- * Uses the same vitest style as reports-unpaid-invoice-reminder-
- * button.test.jsx so the whole `src/test` suite stays consistent.
  */
 import React from "react";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
@@ -63,7 +65,6 @@ describe("PortalOnboardingHealthTile", () => {
   });
 
   it("renders the skeleton while the fetch is pending", async () => {
-    // Never-resolving promise → we stay in loading state.
     apiGetImpl.mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter>
@@ -73,7 +74,6 @@ describe("PortalOnboardingHealthTile", () => {
     expect(
       await screen.findByTestId("onboarding-health-tile-skeleton"),
     ).toBeTruthy();
-    // The tile itself must NOT render yet.
     expect(
       screen.queryByTestId("onboarding-health-tile"),
     ).toBeNull();
@@ -89,12 +89,10 @@ describe("PortalOnboardingHealthTile", () => {
     await waitFor(() =>
       expect(screen.getByTestId("onboarding-health-tile")).toBeTruthy(),
     );
-    // All four cards.
     expect(screen.getByTestId("onboarding-cohort-invited")).toBeTruthy();
     expect(screen.getByTestId("onboarding-cohort-activated")).toBeTruthy();
     expect(screen.getByTestId("onboarding-cohort-signed-in")).toBeTruthy();
     expect(screen.getByTestId("onboarding-cohort-never")).toBeTruthy();
-    // Counts rendered.
     expect(
       screen.getByTestId("onboarding-cohort-invited").textContent,
     ).toContain("42");
@@ -107,7 +105,6 @@ describe("PortalOnboardingHealthTile", () => {
     expect(
       screen.getByTestId("onboarding-cohort-never").textContent,
     ).toContain("12");
-    // Delta arrows present per-cohort.
     expect(
       screen.getByTestId("onboarding-cohort-invited-delta"),
     ).toBeTruthy();
@@ -117,37 +114,69 @@ describe("PortalOnboardingHealthTile", () => {
     expect(
       screen.getByTestId("onboarding-cohort-signed-in-delta").textContent,
     ).toContain("3");
-    // Null-delta cohorts render the dimmed dash.
     expect(
       screen.getByTestId("onboarding-cohort-invited-delta").textContent,
     ).toContain("vs last 30d");
     expect(
       screen.getByTestId("onboarding-cohort-never-delta").textContent,
     ).toContain("vs last 30d");
-    // Fetch was made with the 30-day window.
     expect(apiGetImpl).toHaveBeenCalledWith(
       "/reports/portal-onboarding-health?window_days=30",
     );
   });
 
-  it("never card click navigates to /customers?first_access=never", async () => {
+  // Table-driven test — one assertion per cohort card, one for
+  // click, one for Enter, one for Space. Matches the change-1 spec.
+  const _COHORT_CASES = [
+    { testid: "onboarding-tile-invited-cta",   href: "/customers?portal_invited=any" },
+    { testid: "onboarding-tile-activated-cta", href: "/customers?portal_activated=1" },
+    { testid: "onboarding-tile-signed-in-cta", href: "/customers?first_access=any" },
+    { testid: "onboarding-tile-never-cta",     href: "/customers?first_access=never" },
+  ];
+
+  for (const c of _COHORT_CASES) {
+    it(`${c.testid} click navigates to ${c.href}`, async () => {
+      apiGetImpl.mockResolvedValue(_payload());
+      render(
+        <MemoryRouter>
+          <PortalOnboardingHealthTile />
+        </MemoryRouter>,
+      );
+      const cta = await screen.findByTestId(c.testid);
+      fireEvent.click(cta);
+      expect(navigateMock).toHaveBeenCalledWith(c.href);
+    });
+  }
+
+  it("all four cohort cards support Enter/Space keyboard activation", async () => {
     apiGetImpl.mockResolvedValue(_payload());
     render(
       <MemoryRouter>
         <PortalOnboardingHealthTile />
       </MemoryRouter>,
     );
-    const neverCta = await screen.findByTestId("onboarding-tile-never-cta");
-    fireEvent.click(neverCta);
-    expect(navigateMock).toHaveBeenCalledWith(
-      "/customers?first_access=never",
+    await waitFor(() =>
+      expect(screen.getByTestId("onboarding-health-tile")).toBeTruthy(),
     );
-    // The three other cards are NOT clickable — they must not
-    // register a CTA testid.
-    expect(
-      screen.queryByTestId("onboarding-cohort-invited")
-             .getAttribute("data-cta-testid"),
-    ).toBeNull();
+    for (const c of _COHORT_CASES) {
+      navigateMock.mockReset();
+      // The outer <div> with role="button" is the block card; the
+      // ``data-cta-testid`` attribute makes each cohort card
+      // discoverable in the DOM.
+      const card = document.querySelector(
+        `[data-cta-testid="${c.testid}"]`,
+      );
+      expect(card).toBeTruthy();
+      expect(card.getAttribute("role")).toBe("button");
+      expect(card.getAttribute("tabindex")).toBe("0");
+      // Enter key
+      fireEvent.keyDown(card, { key: "Enter" });
+      expect(navigateMock).toHaveBeenCalledWith(c.href);
+      navigateMock.mockReset();
+      // Space key
+      fireEvent.keyDown(card, { key: " " });
+      expect(navigateMock).toHaveBeenCalledWith(c.href);
+    }
   });
 
   it("fetch failure surfaces toast.error and hides the tile", async () => {
@@ -158,7 +187,6 @@ describe("PortalOnboardingHealthTile", () => {
       </MemoryRouter>,
     );
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    // Tile silently hides on error — no skeleton, no cards.
     expect(
       screen.queryByTestId("onboarding-health-tile"),
     ).toBeNull();

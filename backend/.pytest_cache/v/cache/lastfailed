@@ -1,4 +1,5 @@
 {
   "tests/test_photos_s3_phase1.py::test_upload_does_NOT_stamp_s3_key_when_flag_off": true,
-  "tests/test_photos_s3_phase1.py::test_admin_s3_health_reports_disabled_by_default": true
+  "tests/test_photos_s3_phase1.py::test_admin_s3_health_reports_disabled_by_default": true,
+  "tests/test_customers_portal_status_filter.py::test_g4a_activated_returns_only_customers_with_portal_login": true
 }

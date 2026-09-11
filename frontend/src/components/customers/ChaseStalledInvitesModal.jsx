@@ -2,15 +2,22 @@
  * Feb-2026 · Chase Stalled Invites — confirm + summary modal.
  *
  * Two-phase modal:
- *   1. Confirm — preview list of the top-N stalest never-logged-in
- *      customers + Cancel / "Send N invites" buttons.
+ *   1. Confirm — preview list of the top-N stalest invited-but-
+ *      never-signed-in customers + Cancel / "Send N invites" buttons.
  *   2. Summary — after the bulk POST resolves, replace the confirm
  *      body with "Sent N. Rate-limited M. Failed K." + Done button.
  *
  * Data source:
- *   * Preview list: ``GET /api/customers?first_access=never&sort=stalest_first&limit=N``
- *   * Send:         ``POST /api/admin/customers/portal-invite/bulk``
- *                   with ``{customer_ids, reason: "chase_stalled_invites"}``
+ *   * Preview list:
+ *       GET /api/customers?portal_invited=any&first_access=never
+ *                        &sort=stalest_first&limit=N
+ *     Intersection with ``portal_invited=any`` (Feb-2026 · Chase-move
+ *     ship) means we only target customers where an admin has already
+ *     issued a portal invite. That's the semantically correct chase
+ *     audience — a never-logged-in customer who was never invited
+ *     shouldn't be spammed with a re-invite.
+ *   * Send: ``POST /api/admin/customers/portal-invite/bulk``
+ *           with ``{customer_ids, reason: "chase_stalled_invites"}``
  *
  * Response shape (Feb-2026 · Chase Stalled Invites ship — bulk
  * endpoint returns both the legacy counters AND the spec-shape
@@ -68,7 +75,7 @@ export default function ChaseStalledInvitesModal({ open, onClose, onSent }) {
     setLoadingPreview(true);
     (async () => {
       try {
-        const url = `/customers?first_access=never&sort=stalest_first&limit=${batchN}`;
+        const url = `/customers?portal_invited=any&first_access=never&sort=stalest_first&limit=${batchN}`;
         const r = await api.get(url);
         if (cancelled) return;
         const items = Array.isArray(r) ? r : (r?.items || []);
