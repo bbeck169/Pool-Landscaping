@@ -1,3 +1,32 @@
+## Iteration 85 — Per-endpoint timeouts + Retry wall-clock cap + Retry-After UI
+- **Commit**: 3ad46a32
+- **Date**: 2026-09-11
+- **Changes**:
+  - `api.ts`: Per-endpoint timeout classification (GET→8s, standard write→20s, uploads/multipart→60s). `ApiNetworkError.reason` field distinguishes "timeout" vs "cancelled" vs "network". `classifyTimeout()` heuristic: checks Content-Type header + path regex + HTTP method.
+  - `retryWithBackoff.ts`: Full rewrite — added `maxTotalWaitMs` (default 30s) wall-clock budget, Retry-After honored on ALL retries (not just first), enhanced `onRetryAttempt({attempt, nextDelayMs, retryAfterMs, totalElapsedMs, willStop})` callback. Cancelled requests NOT retried.
+  - `ChecklistSavePill.tsx`: Enhanced state types — `retrying` now has `nextDelayMs`/`totalElapsedMs`, `exhausted` has `totalElapsedMs`. Toast copy: "Save error — retrying in Xs" and "Save failed after Xs — tap to retry".
+  - `checklist.tsx`: Switched both retry call sites from `onRetry` to `onRetryAttempt` with `maxTotalWaitMs: 30000`.
+  - `api-timeout-retry.test.ts`: 11 tests — 7 timeout classification + 4 retry behavior (Retry-After, wall-clock cap, onRetryAttempt payload, cancelled-not-retried). All pass.
+- **Timeout thresholds**: Read 8s, Write 20s, Upload 60s
+- **maxTotalWaitMs default**: 30s — matches existing max backoff + gives time for ~2-3 retries with exponential backoff
+- **Retry state pattern**: Callback (`onRetryAttempt`) — matches existing `onRetry` pattern, no new store/subject needed
+- **Files modified**: `mobile/src/api.ts`, `mobile/src/services/retryWithBackoff.ts`, `mobile/src/components/sync/ChecklistSavePill.tsx`, `mobile/app/job/[id]/checklist.tsx`, `mobile/__tests__/api-timeout-retry.test.ts`
+
+
+
+## Iteration 84 — Dashboard /dashboard fetch loop guard
+- **Commit**: 9abac25a
+- **Date**: 2026-09-11
+- **Changes**:
+  - `useOfflineQuery.ts`: (2a) Added staleTime enforcement via `readCacheWithAge` — returns cached value immediately if `Date.now() - cachedAt < staleTime`, skipping network fetch. Legacy entries without `cachedAt` are treated as stale. (2b) Strategy A — ref-latched `fetcher` via `useRef` + `useEffect`, removed `fetcher` from `execute`'s dep array. `execute` is now stable regardless of fetcher identity. `refetch()` bypasses staleTime via `force=true`.
+  - `(app)/index.tsx`: Wrapped dashboard fetcher in `useCallback([], [])`. Destructured `refetch` from `dashQ` to satisfy exhaustive-deps. Removed wrapper `load` function; `onRefresh` now calls stable `refetch` directly.
+  - Created `use-offline-query-stale.test.ts` — 5 tests: fresh cache skips fetch, stale cache re-fetches, refetch() bypasses staleTime, unstable fetcher identity absorbed, legacy entry treated as stale. All pass.
+- **Strategy chosen**: A (ref-latch) — stronger guarantee than B (ESLint suppress). The hook protects itself; callers don't need to remember `useCallback`.
+- **Cache timestamp shape**: Existing `readCacheWithAge` in `readCache.ts` already returns `{data, cachedAt}` from SQLite `cached_at` column. No schema change needed.
+- **Files modified**: `mobile/src/hooks/useOfflineQuery.ts`, `mobile/app/(app)/index.tsx`, `mobile/__tests__/use-offline-query-stale.test.ts`
+
+
+
 ## Iteration 83 — Multi-Contact Editor + Automations Mute Toggle
 - **Commit**: a4644eb9
 - **Date**: 2026-09-11
