@@ -17,5 +17,16 @@
   "tests/test_jobs_projection_excludes_photo_blobs.py::test_jobs_list_include_photos_true_still_ships_full_data",
   "tests/test_jobs_projection_excludes_photo_blobs.py::test_jobs_list_still_emits_photo_count_and_ids",
   "tests/test_jobs_projection_excludes_photo_blobs.py::test_list_wire_size_smaller_than_include_photos_variant",
-  "tests/test_jobs_projection_excludes_photo_blobs.py::test_shared_helper_exposes_projection_constants"
+  "tests/test_jobs_projection_excludes_photo_blobs.py::test_shared_helper_exposes_projection_constants",
+  "tests/test_photos_s3_phase1.py::test_admin_s3_health_rejects_non_admin",
+  "tests/test_photos_s3_phase1.py::test_admin_s3_health_reports_disabled_by_default",
+  "tests/test_photos_s3_phase1.py::test_detail_endpoint_strips_s3_key_from_wire",
+  "tests/test_photos_s3_phase1.py::test_key_builder_rejects_path_traversal",
+  "tests/test_photos_s3_phase1.py::test_public_read_falls_back_to_base64_when_no_s3_key",
+  "tests/test_photos_s3_phase1.py::test_public_read_returns_302_when_s3_key_present",
+  "tests/test_photos_s3_phase1.py::test_s3_module_swallows_boto3_exceptions",
+  "tests/test_photos_s3_phase1.py::test_strip_s3_metadata_from_photos_removes_s3_keys",
+  "tests/test_photos_s3_phase1.py::test_upload_does_NOT_stamp_s3_key_when_flag_off",
+  "tests/test_photos_s3_phase1.py::test_upload_photo_puts_object_with_correct_key_sse_and_content_type",
+  "tests/test_photos_s3_phase1.py::test_upload_stamps_s3_key_when_flag_on"
 ]

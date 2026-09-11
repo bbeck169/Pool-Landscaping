@@ -1390,6 +1390,14 @@ async def get_job(jid: str,
     # of the ``{"photos.data": 0}`` projection applied everywhere
     # else. See ``services/jobs_slim_photos.py`` module comment.
     doc = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    # Feb-2026 · Photos-in-S3 Phase 1 — strip ``photos[].s3_key`` +
+    # ``photos[].s3_mime`` so the storage backend implementation
+    # detail never ships over the wire.
+    try:
+        from services.jobs_slim_photos import strip_s3_metadata_from_photos
+        strip_s3_metadata_from_photos(doc)
+    except Exception:
+        pass
     if not doc:
         raise HTTPException(404, "Job not found")
     # Feb-2026 · P4.5 — mirror the soft-delete two-branch check that the
@@ -1991,6 +1999,25 @@ async def public_job_photo(jid: str, pid: str):
     photo = next((p for p in (job.get("photos") or []) if p["id"] == pid), None)
     if not photo:
         raise HTTPException(404, "Not found")
+    # ─── Feb-2026 · Photos-in-S3 Phase 1 · read via presigned URL ───
+    # When the photo carries an ``s3_key`` AND the feature flag is
+    # ON, redirect to a short-TTL presigned GET. Otherwise fall
+    # back to the base64 payload so pre-migration photos + flag-off
+    # environments keep working. The ``s3_key`` field is NEVER
+    # exposed to the client — only the redirect target is.
+    s3_key = photo.get("s3_key")
+    if s3_key:
+        try:
+            from services.aws_s3.photos import generate_signed_url
+            signed = generate_signed_url(s3_key)
+            if signed:
+                from fastapi.responses import RedirectResponse
+                return RedirectResponse(url=signed, status_code=302)
+        except Exception as _s3_exc:
+            logger.warning(
+                "[photos-s3] read soft-fail jid=%s pid=%s err=%s",
+                jid, pid, _s3_exc,
+            )
     data = photo["data"]
     if "," in data:
         header, b64 = data.split(",", 1)
@@ -3689,8 +3716,39 @@ async def add_job_photo(jid: str, body: PhotoIn,
               "created_at": now_iso()}
     if body.client_uuid:
         photo["client_uuid"] = body.client_uuid
+    # ─── Feb-2026 · Photos-in-S3 Phase 1 · dual-write ───
+    # Best-effort upload to S3 alongside the existing base64 DB
+    # write. When ``PHOTOS_S3_ENABLED=false`` or creds missing,
+    # the helper is a safe no-op and returns ``None`` — the
+    # base64 DB path continues unchanged. When enabled, we stamp
+    # ``photos[].s3_key`` on the doc so the read path can serve a
+    # presigned URL. Never raises; failures are logged and swallowed
+    # so a hiccuped S3 API never blocks the photo save.
+    # See /app/memory/FEATURE_PHOTOS_S3_PHASE1.md.
+    try:
+        from services.aws_s3.photos import decode_data_url, upload_photo
+        _blob, _mime = decode_data_url(body.data)
+        _s3_key = upload_photo(
+            tenant_id=tenant["id"], job_id=jid, photo_id=photo["id"],
+            blob=_blob, mime=_mime,
+        )
+        if _s3_key:
+            photo["s3_key"] = _s3_key
+            photo["s3_mime"] = _mime
+    except Exception as _s3_exc:
+        logger.warning(
+            "[photos-s3] dual-write soft-fail tenant=%s job=%s photo=%s err=%s",
+            tenant.get("id"), jid, photo["id"], _s3_exc,
+        )
     await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$push": {"photos": photo}})
     resp = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    # Feb-2026 · Photos-in-S3 Phase 1 — strip s3_key from the
+    # wire so the storage backend key never leaks to clients.
+    try:
+        from services.jobs_slim_photos import strip_s3_metadata_from_photos
+        strip_s3_metadata_from_photos(resp)
+    except Exception:
+        pass
     if idem_key:
         await store_response(idem_key, "POST /jobs/{jid}/photos",
                               tenant["id"], resp, idem_body)
@@ -3703,9 +3761,43 @@ async def delete_job_photo(jid: str, pid: str,
                            tenant: dict = Depends(get_current_tenant)):
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
+    # ─── Feb-2026 · Photos-in-S3 Phase 1 · dual-delete ───
+    # Capture ``s3_key`` (if present) BEFORE the ``$pull`` so we
+    # can best-effort delete the S3 object after the DB unlink. If
+    # the S3 delete fails, log — do NOT block the DB delete or the
+    # 200 response. Orphaned S3 objects are a garbage-collector
+    # problem, not a UX problem.
+    _s3_key_to_delete = None
+    try:
+        _existing = await db.jobs.find_one(
+            {"id": jid, "tenant_id": tenant["id"]},
+            {"_id": 0, "photos": 1},
+        )
+        if _existing:
+            _p = next(
+                (p for p in (_existing.get("photos") or [])
+                 if isinstance(p, dict) and p.get("id") == pid),
+                None,
+            )
+            if _p and _p.get("s3_key"):
+                _s3_key_to_delete = _p["s3_key"]
+    except Exception as _exc:
+        logger.warning(
+            "[photos-s3] pre-delete lookup soft-fail jid=%s pid=%s err=%s",
+            jid, pid, _exc,
+        )
     await db.jobs.update_one(
         {"id": jid, "tenant_id": tenant["id"]}, {"$pull": {"photos": {"id": pid}}}
     )
+    if _s3_key_to_delete:
+        try:
+            from services.aws_s3.photos import delete_photo as _s3_delete
+            _s3_delete(_s3_key_to_delete)
+        except Exception as _s3_exc:
+            logger.warning(
+                "[photos-s3] delete soft-fail key=%s err=%s",
+                _s3_key_to_delete, _s3_exc,
+            )
     return await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 

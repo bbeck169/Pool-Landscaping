@@ -21,7 +21,7 @@ response shape is uniform across every row.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -91,7 +91,39 @@ def slim_photos_on_rows(docs: Iterable[Dict[str, Any]],
         if include_photos:
             # Superset — keep the full ``photos`` array. Coerce
             # missing/null to ``[]`` so every row carries the key.
-            d["photos"] = plist
+            # Feb-2026 · Photos-in-S3 Phase 1 — strip S3 metadata
+            # (``s3_key`` / ``s3_mime``) so the storage backend
+            # never leaks over the wire. Callers use the public
+            # photo URL to fetch, not the raw key.
+            d["photos"] = [
+                {k: v for k, v in (p.items() if isinstance(p, dict) else [])
+                 if k not in ("s3_key", "s3_mime")}
+                for p in plist
+            ]
         else:
             d.pop("photos", None)
     return out
+
+
+def strip_s3_metadata_from_photos(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Remove ``photos[].s3_key`` + ``photos[].s3_mime`` from a
+    single job doc that will be shipped over the wire. Used by
+    endpoints that return the full doc (photo upload / detail)
+    without going through ``slim_photos_on_rows``.
+
+    Feb-2026 · Photos-in-S3 Phase 1 — the S3 key is a storage-
+    backend implementation detail; the public read endpoint proxies
+    via a presigned URL, so clients never need the key itself.
+    Mutates + returns ``doc`` for ergonomic chaining. ``None`` in →
+    ``None`` out.
+    """
+    if not doc:
+        return doc
+    plist = doc.get("photos")
+    if isinstance(plist, list):
+        doc["photos"] = [
+            {k: v for k, v in (p.items() if isinstance(p, dict) else [])
+             if k not in ("s3_key", "s3_mime")}
+            for p in plist
+        ]
+    return doc

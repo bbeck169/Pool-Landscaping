@@ -417,6 +417,11 @@ from routers import chemical_cost_report as _feb2026_chem_costs  # noqa: E402
 api_router.include_router(_feb2026_chem_costs.router)
 api_router.include_router(_p37d_gps_audit_report.router)
 
+# Feb-2026 · Photos-in-S3 Phase 1 — admin health-check endpoint.
+# ``GET /api/admin/s3/health`` reports config + tiny self-test.
+from routers import admin_s3_health as _feb2026_s3_health  # noqa: E402
+api_router.include_router(_feb2026_s3_health.router)
+
 # Phase R0 · Feb-2026 — Reporting suite foundation.
 # ``/api/reports/kpi/{metric_key}`` powered by the metric registry
 # in ``services.reporting``. R1–R7 will drop new metrics into
