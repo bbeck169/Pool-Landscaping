@@ -189,16 +189,46 @@ def test_upload_stamps_s3_key_when_flag_on(admin_headers, monkeypatch):
     run_test(_go)
 
 
-def test_upload_does_NOT_stamp_s3_key_when_flag_off(admin_headers):
-    """Default env — PHOTOS_S3_ENABLED=false. Upload must skip
-    the S3 side entirely; DB blob is stamped as always."""
+def test_upload_does_NOT_stamp_s3_key_when_flag_off(admin_headers, monkeypatch):
+    """Flag OFF — upload must skip the S3 side entirely; DB blob is
+    stamped as always.
+
+    Hardened Feb-2026 to be independent of the process's ambient
+    ``PHOTOS_S3_ENABLED`` value: uses direct in-process handler
+    invocation + ``monkeypatch.setattr`` on
+    ``services.aws_s3.photos._cfg`` and ``_is_configured`` so the
+    flag state is scoped to this test only (auto-restored at
+    teardown by the ``monkeypatch`` fixture). Matches the sibling
+    ``test_upload_stamps_s3_key_when_flag_on`` topology.
+    """
+    from routers import jobs as jobs_router
+    from services.aws_s3 import photos as s3mod
+
     prefix = "TEST_S3_OFF_" + uuid.uuid4().hex[:8]
     jid = prefix + "_job"
 
-    async def _seed():
-        db, client = await _db()
+    # Force the flag off for the duration of this test regardless
+    # of the .env / process-env state. ``monkeypatch`` restores at
+    # teardown so we don't leak state into sibling tests.
+    monkeypatch.setattr(
+        s3mod, "_cfg",
+        lambda: {
+            "enabled": False, "access_key": "", "secret_key": "",
+            "region": "us-east-1", "bucket": "",
+            "prefix": "job-photos/", "ttl": 3600,
+        },
+    )
+    monkeypatch.setattr(s3mod, "_is_configured", lambda _cfg: False)
+
+    async def _go(db):
+        tenant = await db.tenants.find_one({"slug": "aquaterra"},
+                                                {"_id": 0, "id": 1})
+        tid = tenant["id"]
+        admin = await db.users.find_one(
+            {"email": "admin@aquaterra.com"},
+            {"_id": 0, "id": 1, "role": 1, "email": 1, "tenant_id": 1},
+        )
         try:
-            tid = await _tid(db)
             await db.jobs.insert_one({
                 "id": jid, "tenant_id": tid,
                 "customer_id": "cust_probe",
@@ -207,43 +237,30 @@ def test_upload_does_NOT_stamp_s3_key_when_flag_off(admin_headers):
                 "scheduled_date": "2026-02-10T09:00:00+00:00",
                 "photos": [],
             })
-            return tid
+            body = jobs_router.PhotoIn(
+                data="data:image/png;base64," +
+                      base64.b64encode(b"fake").decode(),
+                label="probe",
+            )
+            fake_request = MagicMock()
+            fake_request.headers = {}
+            await jobs_router.add_job_photo(
+                jid=jid, body=body, request=fake_request,
+                user=admin, tenant={"id": tid},
+            )
+            doc = await db.jobs.find_one({"id": jid},
+                                              {"_id": 0, "photos": 1})
+            photos = doc.get("photos") or []
+            assert len(photos) == 1
+            assert photos[0].get("data"), "DB blob missing"
+            assert photos[0].get("s3_key") is None, (
+                "s3_key stamped despite flag off"
+            )
+            assert photos[0].get("s3_mime") is None
         finally:
-            client.close()
+            await db.jobs.delete_one({"id": jid})
 
-    tid = _run(_seed())
-    try:
-        r = requests.post(
-            f"{API}/jobs/{jid}/photos",
-            headers={**admin_headers, "Content-Type": "application/json"},
-            json={"data":  "data:image/png;base64," + base64.b64encode(b"fake").decode(),
-                  "label": "probe"},
-            timeout=30,
-        )
-        assert r.status_code == 200, r.text
-
-        async def _check():
-            db, client = await _db()
-            try:
-                doc = await db.jobs.find_one({"id": jid}, {"_id": 0, "photos": 1})
-                return doc
-            finally:
-                client.close()
-        doc = _run(_check())
-        photos = doc.get("photos") or []
-        assert len(photos) == 1
-        assert photos[0].get("data"), "DB blob missing"
-        assert photos[0].get("s3_key") is None, (
-            "s3_key stamped despite flag off"
-        )
-    finally:
-        async def _clean():
-            db, client = await _db()
-            try:
-                await db.jobs.delete_one({"id": jid})
-            finally:
-                client.close()
-        _run(_clean())
+    run_test(_go)
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -345,11 +362,30 @@ def test_public_read_falls_back_to_base64_when_no_s3_key():
 # 5 · Admin health endpoint — reports config honestly
 # ═════════════════════════════════════════════════════════════════
 
-def test_admin_s3_health_reports_disabled_by_default(admin_headers):
-    r = requests.get(f"{API}/admin/s3/health",
-                       headers=admin_headers, timeout=30)
-    assert r.status_code == 200, r.text
-    body = r.json()
+def test_admin_s3_health_reports_disabled_by_default(admin_headers, monkeypatch):
+    """Flag OFF — health endpoint reports the disabled envelope.
+
+    Hardened Feb-2026 to be independent of ambient
+    ``PHOTOS_S3_ENABLED`` / AWS_* env state: calls
+    ``services.aws_s3.photos.health_check`` directly (same helper
+    the router invokes) with ``_cfg`` monkeypatched to the
+    disabled-by-default envelope. ``monkeypatch`` restores at
+    teardown. Auth/authorization at the HTTP boundary is covered by
+    the sibling ``test_admin_s3_health_rejects_non_admin`` test.
+    """
+    from services.aws_s3 import photos as s3mod
+
+    monkeypatch.setattr(
+        s3mod, "_cfg",
+        lambda: {
+            "enabled": False, "access_key": "", "secret_key": "",
+            "region": "us-east-1", "bucket": "",
+            "prefix": "job-photos/", "ttl": 3600,
+        },
+    )
+    monkeypatch.setattr(s3mod, "_is_configured", lambda _cfg: False)
+
+    body = s3mod.health_check()
     assert body["status"] == "disabled"
     assert body["enabled"] is False
     assert body["bucket_set"] is False
