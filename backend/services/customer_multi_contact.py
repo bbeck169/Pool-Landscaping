@@ -24,7 +24,7 @@ from config import db, logger
 from utils import new_id
 
 
-MAX_MOBILES = 3
+MAX_MOBILES = 4
 MAX_EMAILS = 4
 
 
@@ -85,7 +85,16 @@ def normalize_mobiles(raw: Optional[List[dict]],
             "number_e164": number,
             "label": (e.get("label") or "").strip() or "Primary",
             "is_primary": bool(e.get("is_primary")),
-            "sms_ok": bool(e.get("sms_ok", True)),  # default true
+            # Feb-2026 · Multi-contact Phase-1 — accept BOTH the
+            # legacy ``sms_ok`` and the new ``notifications_enabled``
+            # aliases. Emit BOTH on read so old + new consumers agree.
+            "sms_ok": bool(
+                e.get("sms_ok", e.get("notifications_enabled", True))
+            ),
+            "notifications_enabled": bool(
+                e.get("notifications_enabled",
+                      e.get("sms_ok", True))
+            ),
         })
         out.append(entry)
     # Seed from legacy scalar if empty.
@@ -95,6 +104,7 @@ def normalize_mobiles(raw: Optional[List[dict]],
             "label": "Primary",
             "is_primary": True,
             "sms_ok": True,
+            "notifications_enabled": True,
         }))
     out = _dedup_by_key(out, "number_e164")[:MAX_MOBILES]
     out = _ensure_single_primary(out)
@@ -117,7 +127,17 @@ def normalize_emails(raw: Optional[List[dict]],
             "address": address,
             "label": (e.get("label") or "").strip() or "Primary",
             "is_primary": bool(e.get("is_primary")),
-            "marketing_ok": bool(e.get("marketing_ok", True)),  # default true
+            # Feb-2026 · Multi-contact Phase-1 — accept BOTH the
+            # legacy ``marketing_ok`` and the new
+            # ``notifications_enabled`` aliases. Emit BOTH on read.
+            "marketing_ok": bool(
+                e.get("marketing_ok",
+                      e.get("notifications_enabled", True))
+            ),
+            "notifications_enabled": bool(
+                e.get("notifications_enabled",
+                      e.get("marketing_ok", True))
+            ),
         })
         out.append(entry)
     if not out and legacy_email and legacy_email.strip():
@@ -126,6 +146,7 @@ def normalize_emails(raw: Optional[List[dict]],
             "label": "Primary",
             "is_primary": True,
             "marketing_ok": True,
+            "notifications_enabled": True,
         }))
     out = _dedup_by_key(out, "address")[:MAX_EMAILS]
     out = _ensure_single_primary(out)

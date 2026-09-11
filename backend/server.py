@@ -428,6 +428,13 @@ api_router.include_router(_feb2026_s3_health.router)
 from routers import admin_s3_migrate as _feb2026_s3_migrate  # noqa: E402
 api_router.include_router(_feb2026_s3_migrate.router)
 
+# Feb-2026 · Multi-contact Phase-1 — admin HTTP migration wrapper.
+# ``POST /api/admin/migrations/customer-contacts-to-arrays`` seeds
+# the ``customers.emails`` / ``customers.mobiles`` arrays from the
+# legacy scalar ``email`` / ``phone`` fields (idempotent).
+from routers import admin_multi_contact_migrate as _feb2026_mc_migrate  # noqa: E402
+api_router.include_router(_feb2026_mc_migrate.router)
+
 # Phase R0 · Feb-2026 — Reporting suite foundation.
 # ``/api/reports/kpi/{metric_key}`` powered by the metric registry
 # in ``services.reporting``. R1–R7 will drop new metrics into
