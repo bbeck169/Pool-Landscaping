@@ -324,6 +324,9 @@ import ReportsHub from "@/pages/reports/ReportsHub";
 import ReportsSuite from "@/pages/reports/ReportsSuite";
 import BusinessSummary from "@/pages/reports/BusinessSummary";
 import BusinessSnapshot from "@/pages/reports/BusinessSnapshot";
+// Feb-2026 · Reports Gap Fill Phase 5a.1 (Part B).
+import AttritionReport from "@/pages/reports/AttritionReport";
+import TimeToGetPaidReport from "@/pages/reports/TimeToGetPaidReport";
 import Forecast from "@/pages/reports/Forecast";
 import CustomerRetentionReport from "@/pages/reports/CustomerRetentionReport";
 import GpsAutoStartAudit from "@/pages/reports/GpsAutoStartAudit";
@@ -1095,6 +1098,9 @@ export default function App() {
             <Route path="reports/business-summary" element={<AdminOnly><BusinessSummary /></AdminOnly>} />
             {/* Feb-2026 · Reports Gap Fill Phase 5a.1 — Business Snapshot. */}
             <Route path="reports/business-snapshot" element={<AdminOnly><BusinessSnapshot /></AdminOnly>} />
+            {/* Feb-2026 · Reports Gap Fill Phase 5a.1 (Part B) — Attrition + Time to Get Paid. */}
+            <Route path="reports/attrition" element={<AdminOnly><AttritionReport /></AdminOnly>} />
+            <Route path="reports/time-to-get-paid" element={<AdminOnly><TimeToGetPaidReport /></AdminOnly>} />
             <Route path="reports/forecast" element={<AdminOnly><Forecast /></AdminOnly>} />
             <Route path="reports/customer-retention" element={<AdminOnly><CustomerRetentionReport /></AdminOnly>} />
             {/* Feb-2026 · P37d — Dispatcher GPS Auto-Start audit. */}

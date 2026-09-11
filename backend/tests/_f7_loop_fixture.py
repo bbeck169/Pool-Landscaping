@@ -49,6 +49,8 @@ _REBOUND_MODULES = (
     "routers.soshie_moderation",
     "routers.stripe_router",
     "routers.reports_business_snapshot",
+    "routers.reports_attrition",
+    "routers.reports_time_to_get_paid",
     "routers.tenants",
     "server",
     "services.auto_invoice",

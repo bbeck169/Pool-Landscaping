@@ -217,3 +217,259 @@ OpenAPI: `GET /api/openapi.json` returns 200 with 1712 paths
   whose job docs don't denormalize `distance_miles`.** Truthful
   stance chosen over fabricated distances. Rendering shows `—`.
   Ops can request a follow-up to wire on-write denormalization.
+
+
+---
+
+# Part B — Attrition Report + Time to Get Paid
+
+Second dispatch of Phase 5a.1. Ships the remaining 2 reports from
+the original 5a.1 catalog slice. Same shell pattern as Business
+Snapshot: flat-grid `ReportsHub.jsx` tile with a section badge, a
+dedicated `/reports/*` page (`AdminOnly`-gated), a
+`/api/reports/*` endpoint, CSV export, date-range filter (via the
+existing `DateRangePicker` component), tenant scope.
+
+## Attrition Report — endpoint contract
+
+`GET /api/reports/attrition`
+
+| Param | Type | Notes |
+|---|---|---|
+| `start_date` | `str` | `YYYY-MM-DD` (inclusive) |
+| `end_date`   | `str` | `YYYY-MM-DD` (inclusive) |
+| `tenant_id`  | `str?` | **super_admin only.** Other roles → 403. |
+
+Response envelope:
+
+```jsonc
+{
+  "summary": {
+    "total_attrited": 0,
+    "attrition_rate_pct": 0.0,
+    "avg_ltv_of_attrited": 0.0
+  },
+  "rows": [
+    {"customer_id", "customer_name", "became_inactive_at",
+     "inactive_reason", "lifetime_value", "last_service_date"}
+  ],
+  "chart": {"reason_counts": {"<reason>": <int>}},
+  "tenant_id":   "<tid>",
+  "start_date":  "<iso>",
+  "end_date":    "<iso>",
+  "computed_at": "<iso>"
+}
+```
+
+Section badge: `Others`. Route: `/reports/attrition` (`AdminOnly`).
+
+### Sample curl (verified live on preview)
+
+```bash
+API=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2)/api
+TOKEN=$(curl -s -X POST "$API/auth/login" \
+   -H "Content-Type: application/json" \
+   -d '{"email":"super@aquaterra.com","password":"password123"}' \
+   | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+curl -s "$API/reports/attrition?start_date=2026-02-01&end_date=2026-02-28" \
+   -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+```
+
+### Canonical data-source pins (Attrition)
+
+| Field | Source | Notes |
+|---|---|---|
+| Inactive transition | `db.customers.is_active=false` (union of P27-muted rows and plain-deactivated rows) | Excludes `deleted_at`-set rows so cleanup doesn't drift the numbers. |
+| `became_inactive_at` | `muted_at` (mute path) OR `updated_at` (deactivation path) | Rows with neither are excluded — we don't invent a transition date. |
+| `inactive_reason` | `muted_reason` (P29 field) OR `"not_specified"` fallback | Matches the P29 semantic. `not_specified` surfaces the population that was deactivated without a reason. |
+| `lifetime_value` | `routers.analytics._lifetime_revenue_by_customer` (**direct import**) | Cockpit parity is a compile-time guarantee, not copy-paste. Same helper that powers the analytics dashboard. |
+| `last_service_date` | latest `db.jobs.completed_at` per `customer_id` | Mirrors `analytics.churn_risk` picking pattern. |
+| `attrition_rate_pct` | `total_attrited / at_risk_denominator * 100`, 1dp | Denominator = customers created **before** the window (the population "at risk" during it). |
+
+## Time to Get Paid — endpoint contract
+
+`GET /api/reports/time-to-get-paid`
+
+| Param | Type | Notes |
+|---|---|---|
+| `start_date` | `str` | `YYYY-MM-DD` (inclusive) |
+| `end_date`   | `str` | `YYYY-MM-DD` (inclusive) |
+| `tenant_id`  | `str?` | **super_admin only.** Other roles → 403. |
+
+Response envelope:
+
+```jsonc
+{
+  "summary": {
+    "avg_days_to_paid": 0.0,
+    "p50_days": 0.0,
+    "p90_days": 0.0,
+    "invoices_counted": 0
+  },
+  "rows": [
+    {"invoice_id", "customer_id", "customer_name",
+     "sent_at", "paid_at", "days_to_paid"}
+  ],
+  "chart": {"monthly_avg_days":
+    [{"month": "YYYY-MM", "avg_days": <float>}, ...]},
+  "tenant_id":   "<tid>",
+  "start_date":  "<iso>",
+  "end_date":    "<iso>",
+  "computed_at": "<iso>"
+}
+```
+
+Section badge: `Receivables`. Route: `/reports/time-to-get-paid`
+(`AdminOnly`).
+
+### Sample curl (verified live on preview)
+
+```bash
+API=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2)/api
+TOKEN=$(curl -s -X POST "$API/auth/login" \
+   -H "Content-Type: application/json" \
+   -d '{"email":"super@aquaterra.com","password":"password123"}' \
+   | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+curl -s "$API/reports/time-to-get-paid?start_date=2025-11-11&end_date=2026-02-11" \
+   -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+```
+
+### Canonical data-source pins (TTGP)
+
+| Field | Source | Notes |
+|---|---|---|
+| Collection | `db.quotes` where `doc_type="invoice"` AND `payment_status="paid"` | Phase-11 unified invoice ledger; this is what `analytics.churn_risk` reads at L172-192 and what `finances` writes on invoice send. |
+| `sent_at` proxy | invoice `sent_at` if present, else `created_at` | The unified invoice schema does NOT reliably stamp a distinct `sent_at`. `estimator.py:1089` stamps it on estimates, `finances.py:181` bumps status to "sent" without a timestamp on the invoice doc. The helper prefers explicit `sent_at` when it exists, otherwise falls back to `created_at`. Documented deviation from the literal spec wording. |
+| Delta validity | both timestamps present AND `paid_at >= sent_at` | Negatives and NULLs dropped from BOTH summary and rows (spec: "do not compute against partials"). |
+| Percentiles | linear interpolation (Excel-compatible PERCENTILE.INC) | Deterministic on empty input → `0.0`. |
+| Trailing 12-month chart | bucketed by `paid_at.strftime("%Y-%m")` | Independent of the window filter, per spec. |
+
+### Cockpit-parity spot-check (TTGP)
+
+Grep for `time_to_get_paid`, `days_to_paid`, `DSO` across
+`routers/`, `services/`, `frontend/src/`. No cockpit tile with
+the name "Time to Get Paid" currently renders on the preview
+seed data. The closest live surface is `routers/dunning.py:700`
+which computes a **weighted DSO** for AR aging — semantically
+distinct from "days from sent to paid" (DSO is about
+*outstanding* balance, this report is about *cycle time* on
+already-paid invoices). No live parity spot-check possible today;
+when a Time to Get Paid cockpit tile lands, its query should call
+this endpoint (or reuse `_percentile` / `_parse_dt`) rather than
+re-derive the numbers.
+
+Live curl on the current preview tenant (Aquaterra) with a
+90-day filter returned `invoices_counted=2` with all-zero
+percentiles — the paid invoices in the seed data are same-day
+pays. That's the truthful state.
+
+## Files touched (Part B)
+
+**Backend**
+
+* `routers/reports_attrition.py` — new.
+* `routers/reports_time_to_get_paid.py` — new.
+* `server.py` — 2 router imports + registrations (10-line block
+  next to the Business Snapshot registration).
+* `tests/_f7_loop_fixture.py` — 2 module names appended to
+  `_REBOUND_MODULES` for the Motor loop rebind.
+* `tests/test_reports_attrition.py` — new; **5 tests**.
+* `tests/test_reports_time_to_get_paid.py` — new; **5 tests**.
+
+**Frontend**
+
+* `src/pages/reports/AttritionReport.jsx` — new page: 3 summary
+  tiles + horizontal-bar reason chart + row table + CSV export +
+  `DateRangePicker`-driven refetch.
+* `src/pages/reports/TimeToGetPaidReport.jsx` — new page: 4
+  summary tiles + SVG line chart (trailing-12mo monthly avg) +
+  row table (desc by `days_to_paid`) + CSV export +
+  `DateRangePicker`-driven refetch.
+* `src/pages/reports/ReportsHub.jsx` — 2 icon imports
+  (`UserMinus`, `Clock`) + 2 new tiles in `builtTiles` with
+  section badges `Others` / `Receivables`.
+* `src/App.js` — 2 imports + 2 routes (both `AdminOnly`).
+* `src/test/attrition-report.test.jsx` — new; **3 tests**.
+* `src/test/time-to-get-paid-report.test.jsx` — new; **3 tests**.
+
+## Test results (Part B)
+
+Backend:
+
+| Suite | Result |
+|---|---|
+| `test_reports_attrition.py` | **5/5 ✅** |
+| `test_reports_time_to_get_paid.py` | **5/5 ✅** |
+
+Backend regression sweep (7 suites re-run in one shot including
+Business Snapshot, forced-password-reset, temp-password,
+S3 Phase-1, multi-contact Phase-2): **53/53 ✅**.
+
+Frontend:
+
+| Suite | Result |
+|---|---|
+| `attrition-report.test.jsx` | **3/3 ✅** |
+| `time-to-get-paid-report.test.jsx` | **3/3 ✅** |
+
+Frontend regression sweep (7 suites re-run in one shot including
+Business Snapshot, forced-password-reset, chooser, bootstrap,
+portal login): **27/27 ✅**.
+
+OpenAPI: `GET /api/openapi.json` returns 200 with **1715 paths**
+(+3 since the pre-5a.1 baseline of 1712). Both new endpoints
+appear:
+
+* `/api/reports/attrition`
+* `/api/reports/time-to-get-paid`
+
+## Guardrails respected (Part B)
+
+* Preview-only. No prod deploy. No Save-to-GitHub.
+* No `/app/mobile/` files touched.
+* No external repo cloned.
+* English only. Small-diff per report.
+* Phase 5a.2 / 5b NOT started in this dispatch.
+
+## Deviations (Part B)
+
+* **`sent_at` fallback to `created_at`.** The Phase-11 unified
+  invoice ledger doesn't reliably stamp a distinct `sent_at` on
+  the invoice doc — `finances.py:181` sets `status="sent"`
+  without a timestamp, and `estimator.py:1089` stamps `sent_at`
+  on *estimate* docs. The report prefers explicit `sent_at` when
+  present and falls back to `created_at`. If ops wants a precise
+  send-time going forward, a follow-up ticket can wire a
+  `services/invoice_send/sent_at_stamp.py` write on the send
+  path — outside the small-diff scope for this dispatch.
+* **No live cockpit parity for Time to Get Paid.** No cockpit
+  tile with that name renders today; the closest cousin is the
+  weighted DSO tile in `dunning.py` which measures a semantically
+  different thing (outstanding balance vs cycle time).
+* **LTV pinned to `analytics._lifetime_revenue_by_customer`
+  (paid-invoice sum).** The Phase-5a.2 "Client Lifetime Value"
+  report will introduce a richer LTV model. This router imports
+  the current canonical helper by name so a future upgrade
+  auto-propagates without touching this file — Phase-5a.2
+  alignment target per the dispatch brief.
+
+## Queue update
+
+**5a.1 (COMPLETE):**
+
+* ~~Business Snapshot~~ ✅ shipped
+* ~~Attrition Report~~ ✅ shipped (this dispatch)
+* ~~Time to Get Paid~~ ✅ shipped (this dispatch)
+
+**5a.2 (next):**
+
+* Revenue by Service
+* Recurring vs. Project Revenue
+* Client Lifetime Value
+
+**Phase 5b:**
+
+* Close Ratio
+* Time to Close
+* Labor Efficiency
+* Booked Out / Capacity

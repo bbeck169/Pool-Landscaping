@@ -1103,6 +1103,15 @@ api_router.include_router(_route_opt_approval.router)
 from routers import reports_business_snapshot as _p5a1_biz_snap  # noqa: E402
 api_router.include_router(_p5a1_biz_snap.router)
 
+# Feb-2026 · Reports Gap Fill Phase 5a.1 (Part B) — Attrition +
+# Time to Get Paid. Both tenant-scoped; super_admin can override.
+# See ``/app/memory/FEATURE_REPORTS_GAP_FILL_PHASE5A_1.md`` for the
+# canonical data-source pins.
+from routers import reports_attrition as _p5a1_attrition  # noqa: E402
+from routers import reports_time_to_get_paid as _p5a1_ttgp  # noqa: E402
+api_router.include_router(_p5a1_attrition.router)
+api_router.include_router(_p5a1_ttgp.router)
+
 app.include_router(api_router)
 app.include_router(public_social.router)
 

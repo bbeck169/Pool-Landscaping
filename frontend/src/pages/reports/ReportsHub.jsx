@@ -13,6 +13,8 @@ import {
   CalendarClock,
   ChevronRight,
   Lock,
+  UserMinus,
+  Clock,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -194,6 +196,33 @@ export default function ReportsHub() {
       kpi: { loading: false, data: { headline: "Snapshot" } },
       renderKpi: () => "→",
       kpiSubtitle: () => "Current-state",
+    },
+    // Feb-2026 · Reports Gap Fill Phase 5a.1 (Part B) — Attrition.
+    // Static tile (destination reads on mount + date range).
+    // Section badge: "Others".
+    {
+      key: "attrition-report",
+      icon: UserMinus,
+      title: "Attrition Report",
+      description: "Customers who became inactive in the window, by reason.",
+      to: `/reports/attrition`,
+      sectionBadge: "Others",
+      kpi: { loading: false, data: { headline: "Attrition" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "Date-ranged",
+    },
+    // Feb-2026 · Reports Gap Fill Phase 5a.1 (Part B) — Time to
+    // Get Paid. Section badge: "Receivables".
+    {
+      key: "time-to-get-paid",
+      icon: Clock,
+      title: "Time to Get Paid",
+      description: "Invoice cycle-time: avg, p50, p90 + trailing 12mo.",
+      to: `/reports/time-to-get-paid`,
+      sectionBadge: "Receivables",
+      kpi: { loading: false, data: { headline: "TTGP" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "Rolling view",
     },
   ];
 
