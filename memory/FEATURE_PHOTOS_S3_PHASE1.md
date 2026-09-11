@@ -176,3 +176,35 @@ Coverage:
 ## One-line orchestrator summary
 
 > Photos-in-S3 Phase 1 shipped: feature-flagged (`PHOTOS_S3_ENABLED=false` by default), dual-write on upload, 302-redirect reads via presigned URL, dual-delete, admin health endpoint at `GET /api/admin/s3/health`. `s3_key` never leaks over the wire. 24/24 tests green. Operator flips the flag + adds AWS creds + restarts backend to activate — zero prod impact until then.
+
+---
+## Activation follow-up (Feb 2026)
+
+**Fix**: `services/aws_s3/photos.py::_client()` now builds boto3 with
+`Config(signature_version="s3v4", s3={"addressing_style": "virtual"})`.
+
+**Why**: Without this, boto3 emits presigned URLs against the legacy
+global host `<bucket>.s3.amazonaws.com`. S3 responds with a 307
+PermanentRedirect to the region-specific vhost, but following the
+redirect changes the `Host` header — breaking the SigV4 signature
+and returning 403 SignatureDoesNotMatch. Forcing virtual-host
+addressing makes boto3 emit the region-specific vhost
+(`<bucket>.s3.<region>.amazonaws.com`) directly.
+
+**Verified live on preview**:
+- `/api/admin/s3/health` → `status: healthy`, roundtrip 322ms.
+- 67-byte PNG uploaded via `POST /api/jobs/{jid}/photos`.
+- Mongo photo doc carries `s3_key` + `s3_mime` (stripped from wire).
+- Object landed in `s3://emergant/Photos/{tenant}/{jid}/{pid}`,
+  ContentType=image/png, SSE=AES256.
+- `GET /api/public/job-photo/{jid}/{pid}` → 302 → signed URL on
+  `emergant.s3.us-east-2.amazonaws.com`.
+- Signed URL fetch → HTTP 200, 67 bytes, sha1 matches uploaded.
+
+**IAM policy attached to user `Emergant`** grants:
+- `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` on
+  `arn:aws:s3:::emergant/Photos/*`.
+- `s3:ListBucket`, `s3:GetBucketLocation` on `arn:aws:s3:::emergant`.
+- (`HeadObject` intentionally omitted per user — health check
+  uses PutObject → HeadObject → DeleteObject. HeadObject uses
+  `s3:GetObject` permission at the API level, so it still works.)

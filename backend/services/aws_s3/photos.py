@@ -79,15 +79,28 @@ def _client(cfg: Optional[Dict[str, Any]] = None):
         return None
     try:
         import boto3  # noqa: local import so this module loads without boto3.
+        from botocore.config import Config as _BotoConfig
     except Exception as exc:
         logger.warning("[photos-s3] boto3 import failed: %s", exc)
         return None
     try:
+        # Feb-2026 · Force SigV4 + virtual-host addressing so presigned
+        # URLs point at the region-specific vhost
+        # (``<bucket>.s3.<region>.amazonaws.com``). Without this,
+        # boto3 defaults for us-east-* can emit a legacy
+        # ``<bucket>.s3.amazonaws.com`` URL — the sig is scoped to
+        # the correct region but the host mismatches, so S3 returns
+        # a 307 PermanentRedirect, and following it (Host header
+        # changes) invalidates the signature → 403.
         return boto3.client(
             "s3",
             region_name=cfg["region"],
             aws_access_key_id=cfg["access_key"],
             aws_secret_access_key=cfg["secret_key"],
+            config=_BotoConfig(
+                signature_version="s3v4",
+                s3={"addressing_style": "virtual"},
+            ),
         )
     except Exception as exc:
         logger.warning("[photos-s3] boto3 client build failed: %s", exc)
