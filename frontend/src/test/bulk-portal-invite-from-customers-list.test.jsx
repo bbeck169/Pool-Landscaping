@@ -100,4 +100,43 @@ describe("CustomersList · Feb-2026 top-menu Portal Invite button", () => {
       /function PortalOnboardingHealthTile\(\{\s*externalRefetchToken\s*\}\)/,
     );
   });
+
+  it("customers list refetches on EVERY H1 modal close path (Cancel, backdrop, success)", () => {
+    // Feb-2026 batch-tester fix — Cancel + backdrop-click close
+    // paths must invalidate the customers list, not only the
+    // success path. A unified ``closeH1ConfirmModal`` helper
+    // handles all three exits and calls ``load()`` after
+    // ``setH1ConfirmOpen(false)``.
+    //
+    // 1) Helper exists and its body calls both close + refetch.
+    expect(CUSTOMERS_SRC).toMatch(
+      /const closeH1ConfirmModal = useCallback\(\(\) => \{\s*setH1ConfirmOpen\(false\);\s*load\(\);\s*\}, \[load\]\);/,
+    );
+    // 2) Backdrop click routes through the helper (NOT direct
+    //    setH1ConfirmOpen(false) — the raw setter would skip the
+    //    refetch, which is the bug).
+    expect(CUSTOMERS_SRC).toMatch(
+      /if \(e\.target === e\.currentTarget\) closeH1ConfirmModal\(\);/,
+    );
+    // 3) Cancel button routes through the helper.
+    expect(CUSTOMERS_SRC).toMatch(
+      /onClick=\{closeH1ConfirmModal\}[\s\S]{0,300}data-testid="h1-modal-cancel"/,
+    );
+    // 4) Success path (inside doBulkPortalInvite) routes through
+    //    the helper too — no more direct ``setH1ConfirmOpen(false);
+    //    load();`` pair that could drift out of sync.
+    const doBulkIdx = CUSTOMERS_SRC.indexOf("const doBulkPortalInvite");
+    expect(doBulkIdx).toBeGreaterThan(0);
+    // Slice from doBulkPortalInvite definition to the end of its
+    // body (approximated by the next top-level ``const`` /
+    // ``function`` boundary — 3000 chars is more than enough).
+    const doBulkBody = CUSTOMERS_SRC.slice(doBulkIdx, doBulkIdx + 3000);
+    expect(doBulkBody).toMatch(/closeH1ConfirmModal\(\);/);
+    // Belt-and-braces — the doBulkPortalInvite body must NOT
+    // contain the pre-fix inline ``setH1ConfirmOpen(false);\s*load();``
+    // pair. That pair is the bug shape.
+    expect(doBulkBody).not.toMatch(
+      /setH1ConfirmOpen\(false\);\s*load\(\);/,
+    );
+  });
 });

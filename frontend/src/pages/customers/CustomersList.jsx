@@ -1031,6 +1031,18 @@ export default function CustomersList() {
   const [h1ConfirmOpen, setH1ConfirmOpen] = useState(false);
   const [h1Busy, setH1Busy] = useState(false);
   const [h1Result, setH1Result] = useState(null); // {counts, failures}
+  // Feb-2026 · Bulk-Portal-Invite-from-CustomersList follow-up —
+  // batch tester caught that Cancel + backdrop-click close paths
+  // did NOT refetch the customers list (only the success path did,
+  // inside ``doBulkPortalInvite``). This helper unifies the three
+  // close paths (backdrop-click, Cancel, success) so every exit
+  // from the modal invalidates the list. Idempotent on success —
+  // the earlier ``load()`` inside ``doBulkPortalInvite`` is now
+  // gone (moved here) so we don't double-fire.
+  const closeH1ConfirmModal = useCallback(() => {
+    setH1ConfirmOpen(false);
+    load();
+  }, [load]);
   const _h1SelectedRows = () =>
     (rows || []).filter((r) => selected.has(r.id));
   const _h1AlreadyActivatedCount = () =>
@@ -1060,8 +1072,9 @@ export default function CustomersList() {
       setToast({ tone: res.failed_send ? "warning" : "success",
                     message: parts.join(". ") + "." });
       setSelected(new Set());
-      setH1ConfirmOpen(false);
-      load();
+      // ``closeH1ConfirmModal`` handles both the modal-close AND the
+      // customers-list refetch. See the helper comment above.
+      closeH1ConfirmModal();
     } catch (e) {
       const msg = e?.data?.detail?.message || e?.message
         || "Bulk portal invite failed";
@@ -2792,7 +2805,7 @@ export default function CustomersList() {
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
           style={{ background: "rgba(15,23,42,0.55)" }}
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setH1ConfirmOpen(false);
+            if (e.target === e.currentTarget) closeH1ConfirmModal();
           }}
           data-testid="h1-bulk-portal-invite-modal"
         >
@@ -2854,7 +2867,7 @@ export default function CustomersList() {
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setH1ConfirmOpen(false)}
+                onClick={closeH1ConfirmModal}
                 className="px-4 py-2 rounded-xl text-sm font-semibold"
                 style={{ backgroundColor: colors.surfaceSecondary,
                           color: colors.onSurface }}

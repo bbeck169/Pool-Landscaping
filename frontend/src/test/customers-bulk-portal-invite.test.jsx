@@ -68,14 +68,18 @@ describe("CustomersList · H1 bulk portal invite", () => {
 
   it("clears selection on success and refetches the list", () => {
     // ``setSelected(new Set())`` inside the success branch, followed
-    // by ``load()`` to reflect any freshly-flipped ``has_login`` denorms.
+    // by the customers-list refetch. Feb-2026 batch-tester fix —
+    // the refetch is now routed through the unified
+    // ``closeH1ConfirmModal`` helper (which calls ``load()``) so
+    // Cancel/backdrop close paths also invalidate the list. Accept
+    // either the direct ``load()`` (legacy) or the helper call.
     const idx = SRC.indexOf('api.post(\n        "/admin/customers/portal-invite/bulk"');
     // Fallback if line-wrap differs.
     const alt = SRC.indexOf('api.post');
     const start = idx > 0 ? idx : alt;
-    const body = SRC.slice(start, start + 900);
+    const body = SRC.slice(start, start + 1500);
     expect(body).toMatch(/setSelected\(new Set\(\)\)/);
-    expect(body).toMatch(/load\(\)/);
+    expect(body).toMatch(/load\(\)|closeH1ConfirmModal\(\)/);
   });
 
   it("failure-details side-panel renders when non-empty failures come back", () => {
