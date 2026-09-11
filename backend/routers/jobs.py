@@ -927,21 +927,13 @@ async def list_jobs(
     #     field at all (e.g. ``demo-stale-*`` seed jobs) are
     #     normalized to ``photos: []`` so the response shape is
     #     uniform across every row.
-    for d in docs:
-        plist = d.get("photos") or []
-        if not isinstance(plist, list):
-            plist = []
-        d["photo_count"] = len(plist)
-        d["photo_ids"] = [
-            str(p.get("id")) for p in plist
-            if isinstance(p, dict) and p.get("id") is not None
-        ]
-        if include_photos:
-            # Superset — keep the full ``photos`` array. Coerce
-            # missing/null to ``[]`` so every row carries the key.
-            d["photos"] = plist
-        else:
-            d.pop("photos", None)
+    #
+    # Feb-2026 follow-up (customer-detail slim ship) — the row-level
+    # loop was extracted into ``services.jobs_slim_photos`` so the
+    # embedded-jobs list on ``GET /customers/{cid}`` can reuse the
+    # same shape without duplicating the loop.
+    from services.jobs_slim_photos import slim_photos_on_rows
+    slim_photos_on_rows(docs, include_photos=bool(include_photos))
     return docs
 
 

@@ -4,5 +4,13 @@
   "tests/test_chase_stalled_invites.py::test_rbac_no_token_rejects_bulk",
   "tests/test_chase_stalled_invites.py::test_rbac_technician_forbidden_on_bulk",
   "tests/test_chase_stalled_invites.py::test_rbac_technician_forbidden_on_bulk_and_list_with_sort",
-  "tests/test_chase_stalled_invites.py::test_stalest_first_orders_by_invite_stamp_nulls_last"
+  "tests/test_chase_stalled_invites.py::test_stalest_first_orders_by_invite_stamp_nulls_last",
+  "tests/test_customer_detail_slim_photos.py::test_customer_detail_drops_photos_emits_count_and_ids",
+  "tests/test_customer_detail_slim_photos.py::test_customer_detail_every_embedded_job_has_slim_keys",
+  "tests/test_customer_detail_slim_photos.py::test_customer_detail_response_size_smaller_than_full_photos",
+  "tests/test_jobs_list_slim_photos.py::test_detail_endpoint_returns_full_photos_unchanged",
+  "tests/test_jobs_list_slim_photos.py::test_include_photos_true_is_strict_superset_of_slim",
+  "tests/test_jobs_list_slim_photos.py::test_list_default_drops_full_photos_emits_count_and_ids",
+  "tests/test_jobs_list_slim_photos.py::test_list_with_include_photos_true_restores_full_payload",
+  "tests/test_jobs_list_slim_photos.py::test_slim_response_measurably_smaller_than_full"
 ]

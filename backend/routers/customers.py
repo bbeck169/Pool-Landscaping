@@ -1825,6 +1825,19 @@ async def get_customer(cid: str,
     jobs = await db.jobs.find(
         {"customer_id": cid, "tenant_id": tenant["id"], **_nd_cust()}, {"_id": 0}
     ).sort("scheduled_date", -1).to_list(200)
+    # Feb-2026 · Slim-photos follow-up — the customer-detail embedded
+    # jobs list previously shipped every job's full ``photos`` array
+    # (base64 blobs). On customers with ~50 completed jobs × ~10 photos
+    # each, that duplicated the same wire-payload problem the earlier
+    # ``/api/jobs`` slim-photos ship (Feb-2026) solved. Drop ``photos``,
+    # emit ``photo_count`` + ``photo_ids`` — matches the /api/jobs
+    # slim shape verbatim so downstream consumers use one contract.
+    # No ``include_photos`` opt-in here: the customer-detail endpoint
+    # takes no query params for its embedded lists — callers that
+    # need full photos fetch ``GET /jobs/{id}`` per row.
+    # See /app/memory/PERF_SLIM_PHOTOS_WORKSTREAM_AND_CUSTOMER.md.
+    from services.jobs_slim_photos import slim_photos_on_rows
+    slim_photos_on_rows(jobs, include_photos=False)
     doc["jobs"] = jobs
     # Phase 12 · Feb 2026 — derive card-on-file fields at read time.
     doc.update(_compute_card_fields(

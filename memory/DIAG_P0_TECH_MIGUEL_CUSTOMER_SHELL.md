@@ -203,3 +203,95 @@ Decision table on `/api/auth/me`:
 - Does NOT resume Phase 3.1 or unrelated feature work.
 
 **Ship the memo, then stop and hand back.**
+
+
+---
+
+## 6. Wide-scope re-scan — Feb 2026 follow-up
+
+**Context correction**: The original §1 said "Zero matches on the preview DB". Since then, the Brian super-admin diagnostic (see `DIAG_P0_BRIAN_SUPER_ADMIN_LOGIN.md`) confirmed that **preview and prod SHARE the MongoDB cluster** (same `MONGO_URL`, same `DB_NAME` = `Pool_&_Landscaping_of_Vistancia`). That means a re-run of the scan with wider filters is authoritative across BOTH environments — if he isn't in the shared DB, he isn't on prod either.
+
+### 6.1 Search matrix (wall clock 2026-09-10)
+
+Case-insensitive regex `miguel|munoz|mu[nñ]oz` (covers both ASCII "munoz" and UTF-8 "muñoz" encodings) — applied across:
+
+| Collection | Fields probed | Tenant scope |
+|---|---|---|
+| `users` | `email`, `first_name`, `last_name`, `name` | **All tenants** (no tenant_id filter) |
+| `technicians` | `email`, `first_name`, `last_name`, `name` | All tenants |
+| `customers` | `email`, `emails[].address`, `first_name`, `last_name`, `name` | All tenants |
+| `audit_logs` | `email`, `details` | All tenants |
+| `team_invites`, `invites`, `user_invitations`, `onboarding_invitations`, `portal_invites` | `email`, `name` | All tenants (collections not present → silently skipped) |
+
+Full script + output archived at scan time.
+
+### 6.2 Results
+
+**Total real-account hits**: **0**
+
+| Collection | Hits | Notes |
+|---|---|---|
+| `users` | 0 | No user row exists on any tenant matching the regex. |
+| `technicians` | 0 | No technician row exists on any tenant. |
+| `customers` | 0 | No customer row (or nested `emails[].address`) matches on any tenant. |
+| `audit_logs` | 2 | **NOT MIGUEL** — both rows are for `smoke-miguel-c905709a@example.com` (Aug 27 2026 login events). The prefix `smoke-*` + null `tenant_id` on both rows identifies this as a CI/smoke-test artifact, not a person. |
+| Invites collections | — | None of the five candidate collection names exist. |
+
+### 6.3 Interpretation
+
+Because the DB is shared preview↔prod, and the scan found ZERO real rows across every plausible collection + every plausible field + every tenant, we can now say with **HIGH confidence** that:
+
+- **Miguel Munoz has no user, technician, or customer document anywhere in the cluster.**
+- **He has never logged in on any environment** (no non-synthetic audit trail).
+- **He has no pending invite** (no invite-tracking collection matches — and none of those collections even exist in this deployment).
+
+This upgrades §1 H1 ("Miguel is not yet a tech in the DB — customer portal is showing because there's nothing else to route to") from `HIGH (data)` to **CONFIRMED**. The alternate H2/H3 hypotheses (dual-role edge case, corrupted profile) are refuted by the zero-hit evidence.
+
+### 6.4 What Miguel is actually seeing
+
+Since no account for Miguel exists, the "customer portal shell" he sees on TestFlight cannot be his account. Three possibilities remain, in descending likelihood:
+
+1. **Wrong-email login attempt (most likely)** — Miguel typed an email address that either:
+   - Doesn't match any account → the mobile client shows the default unauthenticated/customer-portal landing.
+   - Matches a stray `customer` role account owned by someone else with a similar name.
+2. **Stale session on the device** — a prior tester/demo account is still logged in on the TestFlight build; Miguel is seeing THAT account's portal. Clearing app storage would surface the true auth state.
+3. **Mobile-client routing bug** — the app's post-login role-router defaults to the customer portal when it fails to detect a `technician` role. Would explain a broken tech account, but there IS no account, so this is a red herring for THIS user.
+
+### 6.5 Fix recommendation
+
+**Primary path — admin-UI action, no DB patch needed:**
+
+1. An admin (`admin@aquaterra.com`, `super@aquaterra.com`, or `brian@plofv.com`) opens **Team → Invite** on the web admin.
+2. Enter Miguel's real email + phone, role = `technician`, department as appropriate.
+3. The existing onboarding pipeline (`portal_admin._upsert_customer_user` for customers has a technician equivalent — verify path) will:
+   - Create the `users` row with role=`technician`.
+   - Create the `technicians` row and link `user_id` ↔ `technician_id`.
+   - Stamp `temp_password_issued_at`.
+   - Email/SMS Miguel a login link with a temp password.
+4. Miguel logs in on TestFlight → the mobile router sees `role: "technician"` → routes to the tech home screen (jobs today / clock in / route map).
+
+**No mongosh data patch is warranted** — patching a shell technician row without going through the invite flow would skip the temp-password + email/SMS notification legs and leave Miguel unable to log in.
+
+### 6.6 Information needed from user (relay back)
+
+The scan can't tell us WHICH email Miguel is typing on TestFlight, and that answer determines whether we need to also check for a stray same-name account:
+
+**Question to relay**: "What email address does Miguel type into the TestFlight login screen? (Just the email — do NOT ask for his password.)"
+
+If the answer is:
+- An email we can then match against a `customer` row → possibility (1) above; the customer row belongs to someone else and Miguel is seeing THAT customer's portal by accident.
+- An email that doesn't match anything → possibility (1) confirmed as a typo / wrong-email scenario. Proceed with §6.5 to properly onboard him.
+- Miguel doesn't remember / never got an invite → possibility (1) confirmed. Proceed with §6.5.
+
+### 6.7 One-line summary for orchestrator
+
+> **Miguel Munoz has no user/technician/customer row anywhere in the shared preview↔prod MongoDB cluster — confirmed via wide regex scan across all tenants on 2026-09-10. He was never onboarded. Fix: admin invites him via Team → Invite on the web admin (no DB patch needed). Ask user which email Miguel is typing on TestFlight so we can check for stray same-name customer accounts.**
+
+### 6.8 Constraints honored
+
+- No DB records modified.
+- No prod endpoints touched beyond safe reads.
+- No password reset.
+- No `Save-to-GitHub`.
+- No `/app/mobile/` edits.
+- No `bbeck169/Pool-Landscaping.git` shenanigans.
