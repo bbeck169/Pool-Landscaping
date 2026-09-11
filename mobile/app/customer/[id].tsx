@@ -12,6 +12,8 @@ import { Loading, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, JobCard } from "@/src/components/widgets";
 import CustomerEquipmentLibrary from "@/src/components/customers/CustomerEquipmentLibrary";
 import MultiContact from "@/src/components/customers/MultiContact";
+import CustomerMultiContactEditor from "@/src/components/customers/CustomerMultiContactEditor";
+import AutomationsMuteSection from "@/src/components/customers/AutomationsMuteSection";
 import CustomerTasks from "@/src/components/customers/CustomerTasks";
 import ServiceNotes from "@/src/components/customers/ServiceNotes";
 import SendCreateSheet from "@/src/components/customers/SendCreateSheet";
@@ -119,6 +121,14 @@ export default function CustomerDetail() {
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const isActive = c.is_active !== false;
+
+  // Multi-contact · prefer primary entry from arrays, fall back to scalar.
+  const primaryEmail = (Array.isArray(c.emails) && c.emails.length > 0)
+    ? ((c.emails.find((e: any) => e.is_primary) || c.emails[0]) as any)?.address || c.email
+    : c.email;
+  const primaryPhone = (Array.isArray(c.mobiles) && c.mobiles.length > 0)
+    ? ((c.mobiles.find((m: any) => m.is_primary) || c.mobiles[0]) as any)?.number_e164 || c.phone
+    : c.phone;
 
   // Phase 56.2 — mobile activation toggle. Reuses the shared
   // PATCH /customers/{id}/activation endpoint so the Phase 34f auto-
@@ -361,9 +371,16 @@ export default function CustomerDetail() {
             <Text style={s2.deleteBtnText}>Delete customer</Text>
           </TouchableOpacity>
         ) : null}
+        {/* Multi-Contact Phase 1 · Automations mute toggle + banner.
+            Distinct from MuteControlSheet above which handles is_muted. */}
+        <AutomationsMuteSection
+          customer={c}
+          isAdmin={isAdmin}
+          onUpdated={(patch) => setC((prev: any) => ({ ...prev, ...patch }))}
+        />
         <View style={styles.card}>
-          <ContactRow icon="call-outline" value={c.phone} onPress={() => c.phone && Linking.openURL(`tel:${c.phone}`)} />
-          <ContactRow icon="mail-outline" value={c.email} onPress={() => c.email && Linking.openURL(`mailto:${c.email}`)} />
+          <ContactRow icon="call-outline" value={primaryPhone} onPress={() => primaryPhone && Linking.openURL(`tel:${primaryPhone}`)} />
+          <ContactRow icon="mail-outline" value={primaryEmail} onPress={() => primaryEmail && Linking.openURL(`mailto:${primaryEmail}`)} />
           <ContactRow icon="location-outline" value={c.address} />
           <ContactRow icon="card-outline" value={c.billing_address ? `Billing: ${c.billing_address}` : ""} />
           {/* Phase 34d — always render (with placeholder when null) so it has
@@ -380,8 +397,17 @@ export default function CustomerDetail() {
           </View>
         </View>
 
-        {/* A4. Multi-contact viewer (read-only for tech) */}
-        <MultiContact mobiles={c.mobiles} emails={c.emails} />
+        {/* Multi-Contact Phase 1 — admin gets editable editor; non-admin gets read-only */}
+        {isAdmin ? (
+          <CustomerMultiContactEditor
+            customerId={id as string}
+            initialEmails={c.emails}
+            initialMobiles={c.mobiles}
+            onSaved={load}
+          />
+        ) : (
+          <MultiContact mobiles={c.mobiles} emails={c.emails} />
+        )}
 
         {isAdmin && c.has_login ? (
           <Pressable style={styles.impersonateBtn} onPress={loginAsCustomer} disabled={impersonating} testID="impersonate-customer-button">
