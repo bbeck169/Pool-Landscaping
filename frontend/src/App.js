@@ -334,6 +334,9 @@ import ClientLifetimeValueReport from "@/pages/reports/ClientLifetimeValueReport
 // Feb-2026 · Reports Gap Fill Phase 5b.1 — Close Ratio + Time to Close.
 import CloseRatioReport from "@/pages/reports/CloseRatioReport";
 import TimeToCloseReport from "@/pages/reports/TimeToCloseReport";
+// Feb-2026 · Reports Gap Fill Phase 5b.2 — Labor Efficiency + Booked Out / Capacity.
+import LaborEfficiencyReport from "@/pages/reports/LaborEfficiencyReport";
+import BookedOutCapacityReport from "@/pages/reports/BookedOutCapacityReport";
 import Forecast from "@/pages/reports/Forecast";
 import CustomerRetentionReport from "@/pages/reports/CustomerRetentionReport";
 import GpsAutoStartAudit from "@/pages/reports/GpsAutoStartAudit";
@@ -1115,6 +1118,9 @@ export default function App() {
             {/* Feb-2026 · Reports Gap Fill Phase 5b.1 — Close Ratio + Time to Close. */}
             <Route path="reports/close-ratio" element={<AdminOnly><CloseRatioReport /></AdminOnly>} />
             <Route path="reports/time-to-close" element={<AdminOnly><TimeToCloseReport /></AdminOnly>} />
+            {/* Feb-2026 · Reports Gap Fill Phase 5b.2 — Labor Efficiency + Booked Out / Capacity. */}
+            <Route path="reports/labor-efficiency" element={<AdminOnly><LaborEfficiencyReport /></AdminOnly>} />
+            <Route path="reports/booked-out-capacity" element={<AdminOnly><BookedOutCapacityReport /></AdminOnly>} />
             <Route path="reports/forecast" element={<AdminOnly><Forecast /></AdminOnly>} />
             <Route path="reports/customer-retention" element={<AdminOnly><CustomerRetentionReport /></AdminOnly>} />
             {/* Feb-2026 · P37d — Dispatcher GPS Auto-Start audit. */}

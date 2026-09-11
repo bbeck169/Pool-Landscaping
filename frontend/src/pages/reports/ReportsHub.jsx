@@ -285,6 +285,30 @@ export default function ReportsHub() {
       renderKpi: () => "→",
       kpiSubtitle: () => "Rolling view",
     },
+    // Feb-2026 · Reports Gap Fill Phase 5b.2 — Labor Efficiency +
+    // Booked Out / Capacity.
+    {
+      key: "labor-efficiency",
+      icon: Gauge,
+      title: "Labor Efficiency",
+      description: "Budgeted vs. actual hours per job, worst-first.",
+      to: `/reports/labor-efficiency`,
+      sectionBadge: "Others",
+      kpi: { loading: false, data: { headline: "LE" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "Ops actionable",
+    },
+    {
+      key: "booked-out-capacity",
+      icon: CalendarClock,
+      title: "Booked Out / Capacity",
+      description: "Forward-looking weekly bookings vs. capacity.",
+      to: `/reports/booked-out-capacity`,
+      sectionBadge: "Others",
+      kpi: { loading: false, data: { headline: "BOC" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "Rolling N-week",
+    },
   ];
 
   const comingSoonTiles = [

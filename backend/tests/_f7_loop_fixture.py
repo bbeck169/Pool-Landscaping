@@ -56,6 +56,8 @@ _REBOUND_MODULES = (
     "routers.reports_client_lifetime_value",
     "routers.reports_close_ratio",
     "routers.reports_time_to_close",
+    "routers.reports_labor_efficiency",
+    "routers.reports_booked_out_capacity",
     "routers.tenants",
     "server",
     "services.auto_invoice",

@@ -1130,6 +1130,14 @@ from routers import reports_time_to_close as _p5b1_ttc  # noqa: E402
 api_router.include_router(_p5b1_cr.router)
 api_router.include_router(_p5b1_ttc.router)
 
+# Feb-2026 · Reports Gap Fill Phase 5b.2 — Labor Efficiency +
+# Booked Out / Capacity. Booked Out reuses Business Snapshot's
+# capacity helpers verbatim (see the router-level import).
+from routers import reports_labor_efficiency as _p5b2_le  # noqa: E402
+from routers import reports_booked_out_capacity as _p5b2_boc  # noqa: E402
+api_router.include_router(_p5b2_le.router)
+api_router.include_router(_p5b2_boc.router)
+
 app.include_router(api_router)
 app.include_router(public_social.router)
 
