@@ -3886,7 +3886,26 @@ async def add_job_photo(jid: str, body: PhotoIn,
     # presigned URL. Never raises; failures are logged and swallowed
     # so a hiccuped S3 API never blocks the photo save.
     # See /app/memory/FEATURE_PHOTOS_S3_PHASE1.md.
+    #
+    # Feb-2026 · Photos-in-S3 base64-skip (post-Phase-1) ───
+    # When the flag is ON AND all three S3 puts succeed (original +
+    # thumb + preview), we DROP the base64 ``photos[].data`` blob
+    # so we don't dual-store the payload in Mongo. If ANY put fails,
+    # we retain ``data`` as a durability fallback and emit an audit
+    # row (event=``photos.s3_upload_partial_failure``) so ops can
+    # spot chronic S3 flakiness. Read path is unchanged — it already
+    # prefers ``s3_key`` and falls back to ``data``.
+    # See /app/memory/FEATURE_PHOTOS_S3_BASE64_SKIP.md.
     _s3_key: Optional[str] = None
+    _s3_flag_on: bool = False
+    _s3_puts_succeeded: list = []
+    _s3_puts_failed: list = []
+    _s3_error_class: Optional[str] = None
+    try:
+        from services.aws_s3 import photos as _s3mod
+        _s3_flag_on = _s3mod._is_configured(_s3mod._cfg())
+    except Exception:
+        _s3_flag_on = False
     try:
         from services.aws_s3.photos import upload_photo
         _s3_key = upload_photo(
@@ -3896,11 +3915,17 @@ async def add_job_photo(jid: str, body: PhotoIn,
         if _s3_key:
             photo["s3_key"] = _s3_key
             photo["s3_mime"] = _mime
+            _s3_puts_succeeded.append("original")
+        elif _s3_flag_on:
+            _s3_puts_failed.append("original")
     except Exception as _s3_exc:
         logger.warning(
             "[photos-s3] dual-write soft-fail tenant=%s job=%s photo=%s err=%s",
             tenant.get("id"), jid, photo["id"], _s3_exc,
         )
+        if _s3_flag_on:
+            _s3_puts_failed.append("original")
+            _s3_error_class = type(_s3_exc).__name__
     # ─── Feb-2026 · Thumbnails + preview derivatives ───
     # Generate JPEG derivatives via Pillow (EXIF stripped). Never
     # blocks the upload — if Pillow can't parse or the S3 sibling
@@ -3919,8 +3944,14 @@ async def add_job_photo(jid: str, body: PhotoIn,
                 _pk = derivative_key(_s3_key, "preview")
                 if upload_blob_at_key(_tk, _thumb_bytes, "image/jpeg"):
                     photo["s3_thumb_key"] = _tk
+                    _s3_puts_succeeded.append("thumb")
+                else:
+                    _s3_puts_failed.append("thumb")
                 if upload_blob_at_key(_pk, _preview_bytes, "image/jpeg"):
                     photo["s3_preview_key"] = _pk
+                    _s3_puts_succeeded.append("preview")
+                else:
+                    _s3_puts_failed.append("preview")
             else:
                 # Flag-OFF path — embed base64 derivatives directly
                 # on the doc so list-view thumbnails keep working
@@ -3930,11 +3961,61 @@ async def add_job_photo(jid: str, body: PhotoIn,
                                     + _b64.b64encode(_thumb_bytes).decode())
                 photo["preview"] = ("data:image/jpeg;base64,"
                                       + _b64.b64encode(_preview_bytes).decode())
+                if _s3_flag_on:
+                    # Flag ON but original PUT failed → mark thumb +
+                    # preview as failed too so the audit row reflects
+                    # the full 3-way failure and the base64-skip gate
+                    # cannot fire on the partial-fallback shape.
+                    _s3_puts_failed.extend(["thumb", "preview"])
+        elif _s3_flag_on and _s3_key:
+            # Flag on but Pillow couldn't produce derivatives — we
+            # can't fully commit to S3-only for this row. Mark
+            # thumb+preview as failed so the base64 fallback fires
+            # below and an audit row surfaces the derivative gap.
+            _s3_puts_failed.extend(["thumb", "preview"])
     except Exception as _deriv_exc:
         logger.warning(
             "[photos-deriv] soft-fail tenant=%s job=%s photo=%s err=%s",
             tenant.get("id"), jid, photo["id"], _deriv_exc,
         )
+        if _s3_flag_on and _s3_key:
+            _s3_puts_failed.extend(
+                [x for x in ("thumb", "preview")
+                 if x not in _s3_puts_succeeded and x not in _s3_puts_failed]
+            )
+            if _s3_error_class is None:
+                _s3_error_class = type(_deriv_exc).__name__
+    # ─── Base64-skip decision ───
+    # Flag ON + all three S3 puts succeeded → drop the base64 blob
+    # (S3 is the sole store of the payload). Flag OFF, or ANY S3
+    # put failed → keep ``data`` intact for durability, and if S3
+    # was expected to work, emit an audit row for observability.
+    if _s3_flag_on and not _s3_puts_failed and \
+            len(_s3_puts_succeeded) == 3:
+        photo.pop("data", None)
+    elif _s3_flag_on and _s3_puts_failed:
+        try:
+            await db.audit_logs.insert_one({
+                "id": new_id(), "tenant_id": tenant["id"],
+                "actor_id": user.get("id"),
+                "actor_email": user.get("email"),
+                "event": "photos.s3_upload_partial_failure",
+                "at": now_iso(),
+                "payload": {
+                    "customer_id": (job.get("customer_id")
+                                     if isinstance(job, dict) else None),
+                    "job_id": jid,
+                    "photo_id": photo["id"],
+                    "error_class": _s3_error_class,
+                    "s3_puts_succeeded": list(_s3_puts_succeeded),
+                    "s3_puts_failed": list(_s3_puts_failed),
+                },
+            })
+        except Exception as _audit_exc:
+            logger.warning(
+                "[photos-s3] audit-log soft-fail tenant=%s job=%s photo=%s err=%s",
+                tenant.get("id"), jid, photo["id"], _audit_exc,
+            )
     await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$push": {"photos": photo}})
     resp = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     # Feb-2026 · Photos-in-S3 Phase 1 — strip s3_key from the

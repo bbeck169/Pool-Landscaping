@@ -5,9 +5,11 @@ Locks the seven Phase-1 invariants:
   1. ``upload_photo`` calls ``put_object`` with the canonical key
      format ``{PREFIX}{tenant_id}/{job_id}/{photo_id}``, SSE-S3,
      correct ContentType.
-  2. Photo upload dual-writes — ``photos[].data`` is ALWAYS stamped
-     (Phase 1 keeps the DB blob), ``photos[].s3_key`` is stamped
-     ONLY when the flag is on and boto3 succeeds.
+  2. Photo upload dual-writes — ``photos[].s3_key`` is stamped
+     ONLY when the flag is on and boto3 succeeds. Post-Feb-2026
+     base64-skip: on flag-on + all-three S3 puts OK the base64
+     ``photos[].data`` blob is DROPPED; on flag-on + any S3 put
+     failed the base64 is retained as a durability fallback.
   3. Public read endpoint returns a 302 to the presigned URL when
      ``s3_key`` is present AND the flag is on. Falls back to the
      base64 payload otherwise.
@@ -173,7 +175,15 @@ def test_upload_stamps_s3_key_when_flag_on(admin_headers, monkeypatch):
                                               {"_id": 0, "photos": 1})
             photos = doc.get("photos") or []
             assert len(photos) == 1
-            assert photos[0].get("data"), "DB blob missing"
+            # Feb-2026 · base64-skip: the ``data`` field's presence
+            # depends on whether the payload was Pillow-decodable
+            # (i.e., whether derivatives could be generated). This
+            # test uses a stub payload (``b"fake"``) that Pillow
+            # rejects, so the base64 fallback fires. The base64-skip
+            # contract itself is locked by
+            # ``tests/test_photos_s3_base64_skip.py``. This test's
+            # invariant is just that ``s3_key`` + ``s3_mime`` are
+            # stamped when the flag is on and boto3 succeeds.
             assert photos[0].get("s3_key") == \
                 f"job-photos/{tid}/{jid}/{photos[0]['id']}"
             assert photos[0].get("s3_mime") == "image/png"
