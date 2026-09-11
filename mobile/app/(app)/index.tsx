@@ -28,20 +28,21 @@ export default function Dashboard() {
 
   // Phase O5 · Offline-first dashboard — reads from SQLite cache first,
   // then fetches fresh data in the background when online.
-  const dashQ = useOfflineQuery("dashboard", () => api.get("/dashboard"));
+  // Stable fetcher required to prevent /dashboard fetch loop.
+  const fetchDashboard = useCallback(() => api.get("/dashboard"), []);
+  const dashQ = useOfflineQuery("dashboard", fetchDashboard);
   const data = dashQ.data;
   const loading = dashQ.isLoading;
   const error = dashQ.error?.message || null;
 
-  const load = useCallback(() => {
-    dashQ.refetch();
-  }, [dashQ]);
+  // `refetch` is stable (deps = [execute], execute deps = [key, enabled, staleTime]).
+  const refetch = dashQ.refetch;
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    dashQ.refetch();
+    refetch();
     setTimeout(() => setRefreshing(false), 500);
-  }, []);
+  }, [refetch]);
 
   // Technicians don't have a Dashboard tab — send them to their Today's Schedule.
   if (user?.role === "technician") return <Redirect href="/(app)/today" />;
@@ -96,7 +97,7 @@ export default function Dashboard() {
       <ScrollView
         testID="dashboard-scroll"
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); refetch(); }} />}
       >
         {/* Revenue parity tiles (Feb-2026) — three tap-through
             entries at the very top of the admin Dashboard, above

@@ -3,13 +3,14 @@
  *
  * Pattern:
  *   1. Read SQLite cache immediately → render with cached data.
- *   2. If online → fire network fetch in background.
- *   3. On success → update SQLite cache + re-render with fresh data.
- *   4. On offline → return cached data with isStale=true.
- *   5. No infinite loops — errors don't trigger re-fetch.
+ *   2. If cache is fresh enough (staleTime) → skip network, return cached.
+ *   3. If online → fire network fetch in background.
+ *   4. On success → update SQLite cache + re-render with fresh data.
+ *   5. On offline → return cached data with isStale=true.
+ *   6. No infinite loops — fetcher is ref-latched, errors don't trigger re-fetch.
  */
 import { useEffect, useState, useRef, useCallback } from "react";
-import { readCache, writeCache } from "@/src/services/readCache";
+import { readCacheWithAge, writeCache } from "@/src/services/readCache";
 import { isOnlineNow } from "@/src/services/sync/netBus";
 
 export type OfflineQueryResult<T> = {
@@ -46,23 +47,44 @@ export function useOfflineQuery<T = any>(
   // Guard: prevent duplicate fetches.
   const fetchIdRef = useRef(0);
 
+  // Strategy A — ref-latch the fetcher so `execute` is stable regardless
+  // of whether callers wrap their fetcher in useCallback. This prevents
+  // infinite re-render loops when an inline fetcher is passed.
+  const fetcherRef = useRef(fetcher);
+  useEffect(() => { fetcherRef.current = fetcher; });
+
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
-  const execute = useCallback(async () => {
+  const execute = useCallback(async (force = false) => {
     const fetchId = ++fetchIdRef.current;
     if (!mountedRef.current) return;
 
     setIsLoading(true);
     setError(null);
 
-    // Step 1: Read from cache.
+    // Step 1: Read from cache (with write-timestamp).
     try {
-      const cached = await readCache<T>(key);
+      const { data: cached, cachedAt } = await readCacheWithAge<T>(key);
       if (cached !== null && mountedRef.current && fetchId === fetchIdRef.current) {
         setData(cached);
+
+        // staleTime guard: if the cache entry is younger than staleTime
+        // AND this isn't a forced refetch (pull-to-refresh / explicit
+        // refetch()), return the cached value without hitting the network.
+        if (
+          !force &&
+          staleTime > 0 &&
+          cachedAt != null &&
+          Date.now() - cachedAt < staleTime
+        ) {
+          setIsStale(false);
+          setIsLoading(false);
+          return; // ← fresh cache; skip network.
+        }
+
         setIsStale(true); // Will be flipped to false if fresh fetch succeeds.
       }
     } catch {
@@ -80,7 +102,7 @@ export function useOfflineQuery<T = any>(
     }
 
     try {
-      const fresh = await fetcher();
+      const fresh = await fetcherRef.current();
       if (!mountedRef.current || fetchId !== fetchIdRef.current) return;
 
       setData(fresh);
@@ -97,14 +119,16 @@ export function useOfflineQuery<T = any>(
     } finally {
       if (mountedRef.current && fetchId === fetchIdRef.current) setIsLoading(false);
     }
-  }, [key, fetcher, enabled, staleTime]);
+    // `fetcher` intentionally excluded — ref-latched above to prevent loops.
+  }, [key, enabled, staleTime]);
 
   useEffect(() => {
     execute();
   }, [execute]);
 
+  // refetch() always bypasses staleTime (force = true).
   const refetch = useCallback(() => {
-    execute();
+    execute(true);
   }, [execute]);
 
   return { data, isLoading, isStale, isOffline, error, refetch };
