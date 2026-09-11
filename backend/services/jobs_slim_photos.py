@@ -88,6 +88,17 @@ def slim_photos_on_rows(docs: Iterable[Dict[str, Any]],
             str(p.get("id")) for p in plist
             if isinstance(p, dict) and p.get("id") is not None
         ]
+        # Feb-2026 · Thumbnails ship — additive per-photo thumb URL
+        # so list-view clients can lazy-load without knowing s3 keys.
+        # The route resolves to a 302 signed URL (S3 path) OR an
+        # embedded base64 blob (flag-off path) depending on the
+        # write-time state of the doc.
+        jid = d.get("id")
+        d["photo_thumb_urls"] = [
+            f"/api/public/job-photo/{jid}/{p['id']}/thumb"
+            for p in plist
+            if isinstance(p, dict) and p.get("id") is not None
+        ] if jid else []
         if include_photos:
             # Superset — keep the full ``photos`` array. Coerce
             # missing/null to ``[]`` so every row carries the key.
@@ -95,9 +106,18 @@ def slim_photos_on_rows(docs: Iterable[Dict[str, Any]],
             # (``s3_key`` / ``s3_mime``) so the storage backend
             # never leaks over the wire. Callers use the public
             # photo URL to fetch, not the raw key.
+            # Feb-2026 · Thumbnails ship — also strip the derivative
+            # storage keys and the embedded base64 derivative blobs
+            # (``thumb`` / ``preview``) — clients use the public
+            # ``/thumb`` and ``/preview`` routes to render.
+            _stripped_fields = {
+                "s3_key", "s3_mime",
+                "s3_thumb_key", "s3_preview_key",
+                "thumb", "preview",
+            }
             d["photos"] = [
                 {k: v for k, v in (p.items() if isinstance(p, dict) else [])
-                 if k not in ("s3_key", "s3_mime")}
+                 if k not in _stripped_fields}
                 for p in plist
             ]
         else:
@@ -106,14 +126,18 @@ def slim_photos_on_rows(docs: Iterable[Dict[str, Any]],
 
 
 def strip_s3_metadata_from_photos(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Remove ``photos[].s3_key`` + ``photos[].s3_mime`` from a
-    single job doc that will be shipped over the wire. Used by
-    endpoints that return the full doc (photo upload / detail)
-    without going through ``slim_photos_on_rows``.
+    """Remove S3 metadata + derivative blobs from a single job doc
+    that will be shipped over the wire. Used by endpoints that
+    return the full doc (photo upload / detail) without going
+    through ``slim_photos_on_rows``.
 
     Feb-2026 · Photos-in-S3 Phase 1 — the S3 key is a storage-
     backend implementation detail; the public read endpoint proxies
     via a presigned URL, so clients never need the key itself.
+    Feb-2026 · Thumbnails ship — same rule applies to
+    ``s3_thumb_key`` / ``s3_preview_key`` and the embedded base64
+    derivative blobs (``thumb`` / ``preview``).
+
     Mutates + returns ``doc`` for ergonomic chaining. ``None`` in →
     ``None`` out.
     """
@@ -121,9 +145,14 @@ def strip_s3_metadata_from_photos(doc: Optional[Dict[str, Any]]) -> Optional[Dic
         return doc
     plist = doc.get("photos")
     if isinstance(plist, list):
+        _stripped_fields = {
+            "s3_key", "s3_mime",
+            "s3_thumb_key", "s3_preview_key",
+            "thumb", "preview",
+        }
         doc["photos"] = [
             {k: v for k, v in (p.items() if isinstance(p, dict) else [])
-             if k not in ("s3_key", "s3_mime")}
+             if k not in _stripped_fields}
             for p in plist
         ]
     return doc

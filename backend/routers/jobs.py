@@ -2028,6 +2028,62 @@ async def public_job_photo(jid: str, pid: str):
     return Response(content=base64.b64decode(b64), media_type=media)
 
 
+# ─────────────────────────────────────────────────────────────────
+# Feb-2026 · Thumbnails ship — derivative read endpoints.
+#
+# Same auth model as the parent ``/public/job-photo/{jid}/{pid}``
+# route (unauthenticated, UUID-gated). Selects between:
+#   * 302 → presigned S3 sibling key (``s3_thumb_key`` / ``s3_preview_key``)
+#   * Embedded base64 derivative on the doc (``photos[].thumb`` /
+#     ``photos[].preview``) — flag-off path.
+#   * Falls back to the original photo on any miss so a legacy row
+#     that hasn't been backfilled yet still shows *something*.
+# ─────────────────────────────────────────────────────────────────
+async def _serve_derivative(jid: str, pid: str, kind: str):
+    if kind not in ("thumb", "preview"):
+        raise HTTPException(404, "Not found")
+    job = await db.jobs.find_one({"id": jid}, {"_id": 0, "photos": 1})
+    if not job:
+        raise HTTPException(404, "Not found")
+    photo = next((p for p in (job.get("photos") or []) if p["id"] == pid), None)
+    if not photo:
+        raise HTTPException(404, "Not found")
+    # 1. S3 path — signed sibling URL when the derivative key is stamped.
+    deriv_key = photo.get("s3_thumb_key" if kind == "thumb" else "s3_preview_key")
+    if deriv_key:
+        try:
+            from services.aws_s3.photos import generate_signed_url
+            signed = generate_signed_url(deriv_key)
+            if signed:
+                from fastapi.responses import RedirectResponse
+                return RedirectResponse(url=signed, status_code=302)
+        except Exception as _s3_exc:
+            logger.warning(
+                "[photos-s3] deriv read soft-fail jid=%s pid=%s kind=%s err=%s",
+                jid, pid, kind, _s3_exc,
+            )
+    # 2. Embedded base64 derivative (flag-off write path).
+    inline = photo.get(kind)
+    if inline and isinstance(inline, str) and "," in inline:
+        header, b64 = inline.split(",", 1)
+        media = header.split(";")[0].replace("data:", "") or "image/jpeg"
+        import base64
+        return Response(content=base64.b64decode(b64), media_type=media)
+    # 3. Fallback — legacy row with no derivative. Serve the original
+    # so <img> tags don't 404 while backfill catches up.
+    return await public_job_photo(jid, pid)
+
+
+@router.get("/public/job-photo/{jid}/{pid}/thumb")
+async def public_job_photo_thumb(jid: str, pid: str):
+    return await _serve_derivative(jid, pid, "thumb")
+
+
+@router.get("/public/job-photo/{jid}/{pid}/preview")
+async def public_job_photo_preview(jid: str, pid: str):
+    return await _serve_derivative(jid, pid, "preview")
+
+
 @router.delete("/jobs/{jid}")
 async def delete_job(jid: str,
                      user: dict = Depends(require_admin),
@@ -3716,6 +3772,53 @@ async def add_job_photo(jid: str, body: PhotoIn,
               "created_at": now_iso()}
     if body.client_uuid:
         photo["client_uuid"] = body.client_uuid
+    # ─── Feb-2026 · Upload guardrails ───
+    # Reject non-image MIMEs (415) and oversize payloads (413) up
+    # front so we don't waste S3 / derivative-generation work on
+    # something we're going to throw away anyway. Both checks are
+    # env-tunable via ``PHOTOS_ALLOW_HEIC`` +
+    # ``PHOTOS_MAX_UPLOAD_BYTES`` (see
+    # ``services.photos_derivatives`` for defaults).
+    try:
+        from services.aws_s3.photos import decode_data_url
+        _blob, _mime = decode_data_url(body.data)
+    except Exception as _decode_exc:
+        raise HTTPException(status_code=400, detail={
+            "code": "photo_decode_failed",
+            "message": f"could not decode photo payload: {_decode_exc}",
+        })
+    try:
+        from services.photos_derivatives import (
+            is_allowed_mime, max_upload_bytes,
+        )
+        if not is_allowed_mime(_mime):
+            logger.warning(
+                "[photos-upload] rejected mime tenant=%s user=%s job=%s mime=%s",
+                tenant.get("id"), user.get("id"), jid, _mime,
+            )
+            raise HTTPException(status_code=415, detail={
+                "code": "photo_unsupported_mime",
+                "mime":  _mime,
+                "allowed": sorted(list(__import__('services.photos_derivatives',
+                                                    fromlist=['allowed_mimes']).allowed_mimes())),
+            })
+        _cap = max_upload_bytes()
+        if len(_blob) > _cap:
+            logger.warning(
+                "[photos-upload] rejected size tenant=%s user=%s job=%s bytes=%s cap=%s",
+                tenant.get("id"), user.get("id"), jid, len(_blob), _cap,
+            )
+            raise HTTPException(status_code=413, detail={
+                "code": "photo_too_large",
+                "max_bytes": _cap,
+                "actual_bytes": len(_blob),
+            })
+    except HTTPException:
+        raise
+    except Exception as _guard_exc:
+        # Guardrail helper misbehaved — log and fall through to the
+        # existing write path so a helper bug can't 500 uploads.
+        logger.warning("[photos-upload] guardrail soft-fail err=%s", _guard_exc)
     # ─── Feb-2026 · Photos-in-S3 Phase 1 · dual-write ───
     # Best-effort upload to S3 alongside the existing base64 DB
     # write. When ``PHOTOS_S3_ENABLED=false`` or creds missing,
@@ -3725,9 +3828,9 @@ async def add_job_photo(jid: str, body: PhotoIn,
     # presigned URL. Never raises; failures are logged and swallowed
     # so a hiccuped S3 API never blocks the photo save.
     # See /app/memory/FEATURE_PHOTOS_S3_PHASE1.md.
+    _s3_key: Optional[str] = None
     try:
-        from services.aws_s3.photos import decode_data_url, upload_photo
-        _blob, _mime = decode_data_url(body.data)
+        from services.aws_s3.photos import upload_photo
         _s3_key = upload_photo(
             tenant_id=tenant["id"], job_id=jid, photo_id=photo["id"],
             blob=_blob, mime=_mime,
@@ -3739,6 +3842,40 @@ async def add_job_photo(jid: str, body: PhotoIn,
         logger.warning(
             "[photos-s3] dual-write soft-fail tenant=%s job=%s photo=%s err=%s",
             tenant.get("id"), jid, photo["id"], _s3_exc,
+        )
+    # ─── Feb-2026 · Thumbnails + preview derivatives ───
+    # Generate JPEG derivatives via Pillow (EXIF stripped). Never
+    # blocks the upload — if Pillow can't parse or the S3 sibling
+    # put fails, the doc still saves with only the original.
+    try:
+        from services.photos_derivatives import generate_derivatives
+        _derivs = generate_derivatives(_blob)
+        if _derivs is not None:
+            _thumb_bytes, _preview_bytes = _derivs
+            if _s3_key:
+                # Flag-ON path — upload derivatives as sibling keys.
+                from services.aws_s3.photos import (
+                    derivative_key, upload_blob_at_key,
+                )
+                _tk = derivative_key(_s3_key, "thumb")
+                _pk = derivative_key(_s3_key, "preview")
+                if upload_blob_at_key(_tk, _thumb_bytes, "image/jpeg"):
+                    photo["s3_thumb_key"] = _tk
+                if upload_blob_at_key(_pk, _preview_bytes, "image/jpeg"):
+                    photo["s3_preview_key"] = _pk
+            else:
+                # Flag-OFF path — embed base64 derivatives directly
+                # on the doc so list-view thumbnails keep working
+                # without an object store.
+                import base64 as _b64
+                photo["thumb"] = ("data:image/jpeg;base64,"
+                                    + _b64.b64encode(_thumb_bytes).decode())
+                photo["preview"] = ("data:image/jpeg;base64,"
+                                      + _b64.b64encode(_preview_bytes).decode())
+    except Exception as _deriv_exc:
+        logger.warning(
+            "[photos-deriv] soft-fail tenant=%s job=%s photo=%s err=%s",
+            tenant.get("id"), jid, photo["id"], _deriv_exc,
         )
     await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$push": {"photos": photo}})
     resp = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})

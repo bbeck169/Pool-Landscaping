@@ -41,6 +41,58 @@ router = APIRouter(tags=["admin"])
 _ADMIN_ROLES = {"admin", "super_admin", "owner"}
 
 
+async def _ensure_derivatives(
+    s3mod, sem: asyncio.Semaphore, blob: bytes, base_key: str,
+) -> Dict[str, Optional[str]]:
+    """Feb-2026 · Thumbnails ship — best-effort derivative
+    generation + sibling upload during Phase-2 backfill.
+
+    Returns ``{"thumb": key|None, "preview": key|None}``. Never
+    raises; missing keys mean the caller should skip stamping them.
+    Idempotent — a subsequent run that finds the sibling already
+    present in S3 short-circuits without re-uploading (see
+    ``check_object_exists``)."""
+    out: Dict[str, Optional[str]] = {"thumb": None, "preview": None}
+    try:
+        from services.photos_derivatives import generate_derivatives
+        derivs = generate_derivatives(blob)
+    except Exception as exc:
+        logger.warning("[photos-deriv] Phase-2 gen soft-fail: %s", exc)
+        return out
+    if derivs is None:
+        return out
+    thumb_bytes, preview_bytes = derivs
+    thumb_key = s3mod.derivative_key(base_key, "thumb")
+    preview_key = s3mod.derivative_key(base_key, "preview")
+    async with sem:
+        thumb_exists = await asyncio.to_thread(
+            s3mod.check_object_exists, thumb_key,
+        )
+    if thumb_exists:
+        out["thumb"] = thumb_key
+    else:
+        async with sem:
+            ok = await asyncio.to_thread(
+                s3mod.upload_blob_at_key, thumb_key, thumb_bytes, "image/jpeg",
+            )
+        if ok:
+            out["thumb"] = ok
+    async with sem:
+        preview_exists = await asyncio.to_thread(
+            s3mod.check_object_exists, preview_key,
+        )
+    if preview_exists:
+        out["preview"] = preview_key
+    else:
+        async with sem:
+            ok = await asyncio.to_thread(
+                s3mod.upload_blob_at_key, preview_key, preview_bytes, "image/jpeg",
+            )
+        if ok:
+            out["preview"] = ok
+    return out
+
+
 @router.post(
     "/admin/migrations/migrate-photos-to-s3",
     operation_id="admin.s3.migrate_photos",
@@ -133,10 +185,17 @@ async def migrate_photos_to_s3(
         if exists:
             if not dry_run:
                 try:
+                    # Feb-2026 · Thumbnails ship — best-effort
+                    # ensure derivative sibling keys are present too.
+                    _deriv_keys = await _ensure_derivatives(
+                        s3mod, sem, blob, s3_key,
+                    )
                     updates = {"photos.$[p].s3_key": s3_key,
                                "photos.$[p].s3_mime": mime}
-                    if purge_base64:
-                        pass  # unset handled below
+                    if _deriv_keys.get("thumb"):
+                        updates["photos.$[p].s3_thumb_key"] = _deriv_keys["thumb"]
+                    if _deriv_keys.get("preview"):
+                        updates["photos.$[p].s3_preview_key"] = _deriv_keys["preview"]
                     op = {"$set": updates}
                     if purge_base64:
                         op["$unset"] = {"photos.$[p].data": ""}
@@ -183,6 +242,16 @@ async def migrate_photos_to_s3(
                 "$set": {"photos.$[p].s3_key": put_key,
                           "photos.$[p].s3_mime": mime},
             }
+            # Feb-2026 · Thumbnails ship — generate + upload
+            # derivatives alongside the original. Best-effort;
+            # missing derivatives don't fail the migration.
+            _deriv_keys = await _ensure_derivatives(
+                s3mod, sem, blob, put_key,
+            )
+            if _deriv_keys.get("thumb"):
+                op["$set"]["photos.$[p].s3_thumb_key"] = _deriv_keys["thumb"]
+            if _deriv_keys.get("preview"):
+                op["$set"]["photos.$[p].s3_preview_key"] = _deriv_keys["preview"]
             if purge_base64:
                 op["$unset"] = {"photos.$[p].data": ""}
             await db.jobs.update_one(

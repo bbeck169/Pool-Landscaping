@@ -36,5 +36,13 @@
   "tests/test_photos_s3_phase2_migration.py::test_migration_resumable_with_limit_cursor",
   "tests/test_photos_s3_phase2_migration.py::test_migration_returns_409_when_flag_off",
   "tests/test_photos_s3_phase2_migration.py::test_migration_wet_run_no_purge_stamps_key_and_keeps_data",
-  "tests/test_photos_s3_phase2_migration.py::test_migration_wet_run_with_purge_removes_base64"
+  "tests/test_photos_s3_phase2_migration.py::test_migration_wet_run_with_purge_removes_base64",
+  "tests/test_photos_thumbnails_and_upload_guardrails.py::test_phase2_migration_stamps_derivative_keys",
+  "tests/test_photos_thumbnails_and_upload_guardrails.py::test_public_thumb_and_preview_return_302_when_s3_keys_present",
+  "tests/test_photos_thumbnails_and_upload_guardrails.py::test_public_thumb_returns_base64_body_when_no_s3_key",
+  "tests/test_photos_thumbnails_and_upload_guardrails.py::test_slim_photos_emits_thumb_urls_and_strips_deriv_keys",
+  "tests/test_photos_thumbnails_and_upload_guardrails.py::test_upload_bad_mime_returns_415",
+  "tests/test_photos_thumbnails_and_upload_guardrails.py::test_upload_embeds_base64_derivatives_when_flag_off",
+  "tests/test_photos_thumbnails_and_upload_guardrails.py::test_upload_stamps_derivative_keys_when_flag_on",
+  "tests/test_photos_thumbnails_and_upload_guardrails.py::test_upload_too_large_returns_413"
 ]

@@ -198,6 +198,40 @@ def upload_photo(tenant_id: str, job_id: str, photo_id: str,
     return key
 
 
+def upload_blob_at_key(key: str, blob: bytes, mime: str) -> Optional[str]:
+    """Feb-2026 · Thumbnails ship — generic put helper used to
+    place sibling objects (``{pid}_thumb.jpg`` / ``{pid}_preview.jpg``)
+    next to the original photo. The caller is responsible for
+    computing a path-traversal-safe ``key`` (see ``build_key`` +
+    ``derivative_key`` in this module). Returns the key on success,
+    ``None`` on failure. Never raises."""
+    cfg = _cfg()
+    client = _client(cfg)
+    if client is None or not key:
+        return None
+    try:
+        client.put_object(
+            Bucket=cfg["bucket"], Key=key, Body=blob,
+            ContentType=(mime or "image/jpeg"),
+            ServerSideEncryption="AES256",
+        )
+    except Exception as exc:
+        logger.warning("[photos-s3] put_object(deriv) failed key=%s err=%s",
+                        key, exc)
+        return None
+    return key
+
+
+def derivative_key(base_key: str, kind: str) -> str:
+    """Deterministic sibling key for a photo derivative.
+    ``kind`` ∈ {``"thumb"``, ``"preview"``}. Always emits ``.jpg``
+    since ``photos_derivatives.generate_derivatives`` re-encodes to
+    JPEG regardless of source mime."""
+    if kind not in ("thumb", "preview"):
+        raise ValueError(f"unknown derivative kind: {kind!r}")
+    return f"{base_key}_{kind}.jpg"
+
+
 def generate_signed_url(s3_key: str,
                          ttl_seconds: Optional[int] = None) -> Optional[str]:
     """Return a presigned GET URL for ``s3_key``. TTL is clamped
