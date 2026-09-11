@@ -451,8 +451,12 @@ export default function JobChecklistScreen() {
           () => api.patch(`/jobs/${id}/service-report`, patchBody),
           {
             maxRetries: 5, baseDelayMs: 2000, maxDelayMs: 30000,
-            onRetry: (attempt, _delayMs) => {
-              setPillState({ kind: "retrying", attempt, maxRetries: 5 });
+            maxTotalWaitMs: 30000,
+            onRetryAttempt: (info) => {
+              setPillState({
+                kind: "retrying", attempt: info.attempt, maxRetries: 5,
+                nextDelayMs: info.nextDelayMs, totalElapsedMs: info.totalElapsedMs,
+              });
             },
           },
         ),
@@ -631,8 +635,12 @@ export default function JobChecklistScreen() {
         () => api.post(`/jobs/${id}/service-report/submit`, {}),
         {
           maxRetries: 5, baseDelayMs: 2000, maxDelayMs: 30000,
-          onRetry: (attempt, _delayMs) => {
-            setPillState({ kind: "retrying", attempt, maxRetries: 5 });
+          maxTotalWaitMs: 30000,
+          onRetryAttempt: (info) => {
+            setPillState({
+              kind: "retrying", attempt: info.attempt, maxRetries: 5,
+              nextDelayMs: info.nextDelayMs, totalElapsedMs: info.totalElapsedMs,
+            });
           },
         },
       );

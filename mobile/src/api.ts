@@ -24,10 +24,19 @@ async function authHeaders() {
  * "no network" failure from an HTTP-status failure. Anything thrown here
  * with `kind === "network"` is safe to retry from the offline queue with
  * the same X-Idempotency-Key. HTTP 4xx/5xx are NOT retried automatically.
+ *
+ * `reason` distinguishes "timeout" from "cancelled" from generic "network"
+ * so the retry util can decide whether to retry (timeout/network → yes,
+ * cancelled → no).
  */
 export class ApiNetworkError extends Error {
   kind = "network" as const;
-  constructor(msg: string) { super(msg); this.name = "ApiNetworkError"; }
+  reason: "timeout" | "cancelled" | "network";
+  constructor(msg: string, reason: "timeout" | "cancelled" | "network" = "network") {
+    super(msg);
+    this.name = "ApiNetworkError";
+    this.reason = reason;
+  }
 }
 
 /**
@@ -96,6 +105,24 @@ let _logoutOn401: (() => void) | null = null;
 export function registerLogoutOn401(fn: () => void) { _logoutOn401 = fn; }
 
 const LOGOUT_COOLDOWN_MS = 5_000;
+
+// ── Per-endpoint timeout classification ──────────────────────────
+const TIMEOUT_READ     =  8_000;  // GET / HEAD — fast reads
+const TIMEOUT_WRITE    = 20_000;  // POST / PATCH / PUT / DELETE (standard)
+const TIMEOUT_UPLOAD   = 60_000;  // multipart or photo/upload paths
+
+const UPLOAD_PATH_RE = /\/(photos?|upload|attachments?)\b/i;
+
+function classifyTimeout(
+  method: string,
+  path: string,
+  headers?: Record<string, string>,
+): number {
+  const ct = headers?.["Content-Type"] || headers?.["content-type"] || "";
+  if (ct.includes("multipart/form-data") || UPLOAD_PATH_RE.test(path)) return TIMEOUT_UPLOAD;
+  if (method === "GET" || method === "HEAD") return TIMEOUT_READ;
+  return TIMEOUT_WRITE;
+}
 let _lastLogoutAt = 0;
 function _handle401(path: string) {
   const now = Date.now();
@@ -110,16 +137,18 @@ function _handle401(path: string) {
   _logoutOn401?.();
 }
 
-async function request(path: string, options: RequestInit = {}, timeoutMs = 30000, externalSignal?: AbortSignal) {
+async function request(path: string, options: RequestInit = {}, timeoutMs?: number, externalSignal?: AbortSignal) {
   const headers = await authHeaders();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const _method = String(options.method || "GET").toUpperCase();
+  const effectiveTimeout = timeoutMs ?? classifyTimeout(_method, path, options.headers as Record<string, string> | undefined);
+  const controller = new AbortController();
+  let _timedOut = false;
+  const timer = setTimeout(() => { _timedOut = true; controller.abort(); }, effectiveTimeout);
   const _t0 = Date.now();
   // K15 · external AbortSignal — abort internal controller when external fires.
   let _extCleanup: (() => void) | undefined;
   if (externalSignal) {
-    if (externalSignal.aborted) { clearTimeout(timer); throw new ApiNetworkError("Request aborted"); }
+    if (externalSignal.aborted) { clearTimeout(timer); throw new ApiNetworkError("Request aborted", "cancelled"); }
     const _onAbort = () => controller.abort();
     externalSignal.addEventListener("abort", _onAbort, { once: true });
     _extCleanup = () => externalSignal.removeEventListener("abort", _onAbort);
@@ -134,15 +163,17 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
   } catch (e: any) {
     clearTimeout(timer);
     _extCleanup?.();
-    const isTimeout = e?.name === "AbortError";
+    const isTimeout = e?.name === "AbortError" && _timedOut;
+    const isCancelled = e?.name === "AbortError" && !_timedOut;
     logApi({
       method: _method, path,
       ms: Date.now() - _t0,
-      errorKind: isTimeout ? "timeout" : "network",
+      errorKind: isTimeout ? "timeout" : isCancelled ? "cancelled" : "network",
       errorMsg: e?.message || String(e),
     });
-    if (isTimeout) throw new ApiNetworkError("Request timed out — check your connection and try again.");
-    throw new ApiNetworkError("Network error — check your connection and try again.");
+    if (isTimeout) throw new ApiNetworkError("Request timed out — check your connection and try again.", "timeout");
+    if (isCancelled) throw new ApiNetworkError("Request cancelled.", "cancelled");
+    throw new ApiNetworkError("Network error — check your connection and try again.", "network");
   }
   clearTimeout(timer);
   _extCleanup?.();
@@ -233,13 +264,13 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
 
 export const api = {
   get: (p: string, opts?: { headers?: Record<string, string>; signal?: AbortSignal }) =>
-    request(p, opts?.headers ? { headers: opts.headers } : {}, 30000, opts?.signal),
+    request(p, opts?.headers ? { headers: opts.headers } : {}, undefined, opts?.signal),
   post: (p: string, body?: any, timeoutMs?: number, headers?: Record<string, string>) =>
     request(p, {
       method: "POST",
       body: body ? JSON.stringify(body) : undefined,
       ...(headers ? { headers } : {}),
-    }, timeoutMs ?? 30000),
+    }, timeoutMs),
   put: (p: string, body?: any, headers?: Record<string, string>) =>
     request(p, {
       method: "PUT",

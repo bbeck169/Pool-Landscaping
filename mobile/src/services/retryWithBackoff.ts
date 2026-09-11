@@ -1,15 +1,24 @@
 /**
  * retryWithBackoff — generic async retry with exponential backoff + jitter.
  *
- * Designed for the P0 tech-close-job 429 fix:
- *   - Base delay 2 s, cap 30 s, max 5 retries.
- *   - On 429 with Retry-After header or body `retry_after_seconds`,
- *     honor that value for the FIRST retry instead of the base delay.
- *   - After max retries, throw the last error — caller surfaces UI.
- *   - `onRetry(attempt, delayMs)` callback lets the caller update pill state.
+ * Designed for the P0 tech-close-job 429 fix, enhanced with:
+ *   - Wall-clock budget (`maxTotalWaitMs`) — stops retrying when total
+ *     elapsed time would exceed the budget, regardless of attempt count.
+ *   - Retry-After honored on ALL retries (not just the first).
+ *   - Enhanced `onRetryAttempt` callback exposes `retryAfterMs`,
+ *     `totalElapsedMs`, and `willStop` so the UI can show
+ *     "retrying in Xs" or "save failed after Xs".
  */
 import { ApiError, ApiNetworkError } from "@/src/api";
 import { isOnlineNow } from "@/src/services/sync/netBus";
+
+export type RetryAttemptInfo = {
+  attempt: number;
+  nextDelayMs: number;
+  retryAfterMs: number | null;
+  totalElapsedMs: number;
+  willStop: boolean;
+};
 
 export type RetryOpts = {
   /** Max number of retries (default 5). */
@@ -18,8 +27,12 @@ export type RetryOpts = {
   baseDelayMs?: number;
   /** Max delay cap in ms (default 30000). */
   maxDelayMs?: number;
-  /** Callback on each retry. */
+  /** Wall-clock budget in ms across ALL retries (default 30000). 0 = no limit. */
+  maxTotalWaitMs?: number;
+  /** Legacy callback on each retry. */
   onRetry?: (attempt: number, delayMs: number) => void;
+  /** Enhanced callback with full retry context. */
+  onRetryAttempt?: (info: RetryAttemptInfo) => void;
   /** If true, skip retries and throw immediately when offline. */
   skipWhenOffline?: boolean;
 };
@@ -27,6 +40,7 @@ export type RetryOpts = {
 const DEFAULT_MAX_RETRIES = 5;
 const DEFAULT_BASE_DELAY = 2000;
 const DEFAULT_MAX_DELAY = 30000;
+const DEFAULT_MAX_TOTAL_WAIT = 30000;
 
 function jitter(ms: number): number {
   // ±25% jitter
@@ -38,11 +52,16 @@ function backoffDelay(attempt: number, base: number, cap: number): number {
 }
 
 /**
- * Returns true if the error is retryable (429 or network error).
+ * Returns true if the error is retryable (429 or network/timeout error).
  * Non-retryable errors (400, 401, 403, 404, 422, 500) are thrown immediately.
+ * Cancelled requests (user abort) are NOT retried.
  */
 function isRetryable(e: any): boolean {
-  if (e instanceof ApiNetworkError) return true;
+  if (e instanceof ApiNetworkError) {
+    // User-initiated cancel → don't retry.
+    if (e.reason === "cancelled") return false;
+    return true; // timeout or network
+  }
   if (e instanceof ApiError && e.status === 429) return true;
   return false;
 }
@@ -62,7 +81,9 @@ export async function retryWithBackoff<T>(
   const maxRetries = opts?.maxRetries ?? DEFAULT_MAX_RETRIES;
   const baseDelay = opts?.baseDelayMs ?? DEFAULT_BASE_DELAY;
   const maxDelay = opts?.maxDelayMs ?? DEFAULT_MAX_DELAY;
+  const maxTotalWait = opts?.maxTotalWaitMs ?? DEFAULT_MAX_TOTAL_WAIT;
 
+  const startTime = Date.now();
   let lastError: any;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -80,17 +101,46 @@ export async function retryWithBackoff<T>(
       // If we've exhausted all retries, throw
       if (attempt >= maxRetries) throw e;
 
-      // Calculate delay
+      const totalElapsedMs = Date.now() - startTime;
+
+      // Calculate delay — honor Retry-After on ALL retries.
       let delayMs: number;
       const retryAfterMs = getRetryAfterFromError(e);
-      if (attempt === 0 && retryAfterMs !== null) {
-        // Honor Retry-After for the first retry
-        delayMs = retryAfterMs;
+      if (retryAfterMs !== null) {
+        // Clamp to [0, maxDelay]
+        delayMs = Math.min(retryAfterMs, maxDelay);
       } else {
         delayMs = backoffDelay(attempt, baseDelay, maxDelay);
       }
 
+      // Wall-clock budget check: if the next delay would push us
+      // past the total budget, either clamp or stop.
+      let willStop = false;
+      if (maxTotalWait > 0) {
+        const remaining = maxTotalWait - totalElapsedMs;
+        if (remaining <= 0) {
+          // Budget already exhausted — stop immediately.
+          willStop = true;
+          opts?.onRetry?.(attempt + 1, 0);
+          opts?.onRetryAttempt?.({
+            attempt: attempt + 1, nextDelayMs: 0,
+            retryAfterMs, totalElapsedMs, willStop: true,
+          });
+          throw e;
+        }
+        if (delayMs > remaining) {
+          // Clamp delay to remaining budget, then this will be the last attempt.
+          delayMs = remaining;
+          willStop = true;
+        }
+      }
+
+      // Notify callers.
       opts?.onRetry?.(attempt + 1, delayMs);
+      opts?.onRetryAttempt?.({
+        attempt: attempt + 1, nextDelayMs: delayMs,
+        retryAfterMs, totalElapsedMs, willStop,
+      });
 
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
