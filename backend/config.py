@@ -9,7 +9,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url, maxPoolSize=50)
+client = AsyncIOMotorClient(mongo_url, maxPoolSize=300)
 db = client[os.environ['DB_NAME']]
 
 # SEC-P3-3 hotfix — fail loud if JWT_SECRET is missing / weak. Previously
