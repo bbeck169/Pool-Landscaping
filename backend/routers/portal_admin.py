@@ -961,6 +961,24 @@ async def portal_invite_bulk(
         "batch_id": batch_id,
         "failures": failures,
     }
+    # Feb-2026 · Chase Stalled Invites — surface a per-recipient
+    # outcome shape (``enqueued`` count, ``rate_limited`` id list,
+    # ``failed`` list of ``{id, reason}``) alongside the legacy
+    # counters. Callers using the existing counters keep working;
+    # new callers can consume the tighter shape without deriving
+    # it client-side. ``enqueued`` = successful sends. ``rate_limited``
+    # is derived from mid-batch throttle failures only — 429s at the
+    # sliding-window guard raise HTTPException before the loop runs.
+    payload["enqueued"] = counts["sent"]
+    payload["rate_limited"] = [
+        f["customer_id"] for f in failures
+        if f.get("reason") == "rate_limit_mid_batch"
+    ]
+    payload["failed"] = [
+        {"id": f["customer_id"], "reason": f.get("reason") or "unknown"}
+        for f in failures
+        if f.get("reason") != "rate_limit_mid_batch"
+    ]
     try:
         await db.audit_events.insert_one({
             "id": new_id(),

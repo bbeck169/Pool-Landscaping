@@ -398,6 +398,69 @@ def _k49_lastname_pipeline(
 
 
 # ─────────────────────────────────────────────────────────────────
+# Feb-2026 · Chase Stalled Invites — ``sort=stalest_first`` pipeline.
+# Sorts by staleness of the portal invite (oldest first). Primary
+# key: ``temp_password_issued_at`` (stamped by the portal-invite
+# path in ``portal_admin._upsert_customer_user``). Fallback:
+# ``created_at`` (some legacy customers were promoted to has_login
+# without a dated invite stamp). Nulls-last: rows with neither
+# stamp land at the END (they haven't been chased yet AND have no
+# create date — outliers).
+#
+# Case-insensitive coercion is not needed here — every stamp is an
+# ISO-8601 UTC string, so lexicographic ASC == chronological ASC.
+# ─────────────────────────────────────────────────────────────────
+def _stalest_first_pipeline(
+    match: dict,
+    *,
+    skip: Optional[int] = None,
+    limit: Optional[int] = None,
+) -> List[dict]:
+    """Aggregation pipeline for the ``sort=stalest_first`` order.
+    See module comment for the primary/fallback/nulls-last rules."""
+    stages: List[dict] = [
+        {"$match": match},
+        {"$addFields": {
+            # Coerce every stamp into a string. ``$ifNull`` chain
+            # picks the first non-null in [invite, created]. If
+            # BOTH are missing/null, we synthesise a far-future
+            # sentinel so those docs sort LAST on ASC.
+            "_stale_key": {
+                "$ifNull": [
+                    "$temp_password_issued_at",
+                    {"$ifNull": ["$created_at", "9999-12-31T23:59:59Z"]},
+                ],
+            },
+            "_has_stale_key": {
+                "$cond": [
+                    {"$or": [
+                        {"$ifNull": ["$temp_password_issued_at", False]},
+                        {"$ifNull": ["$created_at", False]},
+                    ]},
+                    1, 0,
+                ],
+            },
+        }},
+        {"$sort": {
+            "_has_stale_key": -1,   # 1 (has any stamp) before 0 (nulls-last)
+            "_stale_key": 1,        # ASC → oldest (stalest) first
+            "_id": 1,
+        }},
+    ]
+    if skip:
+        stages.append({"$skip": int(skip)})
+    if limit is not None:
+        stages.append({"$limit": int(limit)})
+    stages.append({"$project": {
+        "_id": 0,
+        "_stale_key": 0,
+        "_has_stale_key": 0,
+    }})
+    return stages
+
+
+
+# ─────────────────────────────────────────────────────────────────
 # Feb-2026 · P35 — pagination response shape (opt-in).
 # The endpoint keeps returning a bare ``List[CustomerListItem]``
 # when neither ``page`` nor ``page_size`` is supplied so the 20+
@@ -999,6 +1062,14 @@ async def list_customers(
         # ``$sort`` can't express).
         "last_name_asc": [("last_name", 1), ("first_name", 1),
                             ("_id", 1)],
+        # Feb-2026 · Chase Stalled Invites ship — sort by staleness of
+        # the portal invite (oldest ``temp_password_issued_at`` first,
+        # falling back to ``created_at`` for docs that never got a
+        # dated invite stamp). Nulls-last is enforced via the
+        # dedicated ``_stalest_first_pipeline`` aggregation branch;
+        # this map entry is a fallback for the fast-path enum guard
+        # only.
+        "stalest_first": [("temp_password_issued_at", 1), ("_id", 1)],
     }
     _sort_key = sort or ""
     _sort_spec = _SORT_MAP.get(_sort_key, _SORT_MAP["created_desc"])
@@ -1010,6 +1081,9 @@ async def list_customers(
     # have ``name`` but no ``last_name``). Both requirements collapse
     # into a single aggregation stage.
     _use_lastname_pipeline = _sort_key == "last_name_asc"
+    # Feb-2026 · Chase Stalled Invites — same nulls-last requirement
+    # for the ``temp_password_issued_at``-driven staleness sort.
+    _use_stalest_pipeline = _sort_key == "stalest_first"
 
     if _paginated and not _needs_python_postfilter:
         # Fast path — DB-side pagination.
@@ -1018,6 +1092,10 @@ async def list_customers(
         if _use_lastname_pipeline:
             docs = await db.customers.aggregate(
                 _k49_lastname_pipeline(q, skip=skip, limit=page_size),
+            ).to_list(page_size)
+        elif _use_stalest_pipeline:
+            docs = await db.customers.aggregate(
+                _stalest_first_pipeline(q, skip=skip, limit=page_size),
             ).to_list(page_size)
         else:
             docs = await (db.customers.find(q, {"_id": 0})
@@ -1033,6 +1111,10 @@ async def list_customers(
             docs = await db.customers.aggregate(
                 _k49_lastname_pipeline(q),
             ).to_list(length=None)
+        elif _use_stalest_pipeline:
+            docs = await db.customers.aggregate(
+                _stalest_first_pipeline(q),
+            ).to_list(length=None)
         else:
             docs = await (db.customers.find(q, {"_id": 0})
                               .sort(_sort_spec)
@@ -1044,6 +1126,10 @@ async def list_customers(
         if _use_lastname_pipeline:
             docs = await db.customers.aggregate(
                 _k49_lastname_pipeline(q, limit=2000),
+            ).to_list(2000)
+        elif _use_stalest_pipeline:
+            docs = await db.customers.aggregate(
+                _stalest_first_pipeline(q, limit=2000),
             ).to_list(2000)
         else:
             docs = await db.customers.find(q, {"_id": 0}).sort(_sort_spec).to_list(2000)

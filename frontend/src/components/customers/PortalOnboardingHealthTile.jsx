@@ -13,6 +13,11 @@
  * (``/customers?first_access=never``) that scopes the list to
  * the same cohort.
  *
+ * Feb-2026 · Chase Stalled Invites ship — the Never card now also
+ * carries an inline "Chase" CTA (``onboarding-tile-never-chase-cta``)
+ * that opens ``ChaseStalledInvitesModal`` for a one-click batch
+ * re-invite of the top-N stalest never-logged-in customers.
+ *
  * Test-ids:
  *   * ``onboarding-health-tile``
  *   * ``onboarding-cohort-invited``
@@ -20,7 +25,8 @@
  *   * ``onboarding-cohort-signed-in``
  *   * ``onboarding-cohort-never``
  *   * ``onboarding-cohort-*-delta``  (per-card delta arrow)
- *   * ``onboarding-tile-never-cta``  (never-card click target)
+ *   * ``onboarding-tile-never-cta``      (never-card click target — deep-link)
+ *   * ``onboarding-tile-never-chase-cta`` (Chase button — opens modal)
  */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -28,6 +34,7 @@ import { toast } from "sonner";
 
 import { api } from "@/api";
 import { colors } from "@/theme";
+import ChaseStalledInvitesModal from "@/components/customers/ChaseStalledInvitesModal";
 
 
 const COHORT_ORDER = [
@@ -168,6 +175,12 @@ export default function PortalOnboardingHealthTile() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [chaseOpen, setChaseOpen] = useState(false);
+  // Feb-2026 · Chase Stalled Invites — bump on send so the tile
+  // refetches its cohort counts after the batch resolves. The
+  // server has a 60s cache so consecutive bumps within the window
+  // return the same numbers, which is intentional.
+  const [refetchTick, setRefetchTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -191,7 +204,7 @@ export default function PortalOnboardingHealthTile() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [refetchTick]);
 
   if (loading) {
     return <TileSkeleton />;
@@ -200,30 +213,64 @@ export default function PortalOnboardingHealthTile() {
     return null;
   }
 
+  const neverCount = (data.cohorts?.never_logged_in?.count) || 0;
+
   return (
-    <div
-      data-testid="onboarding-health-tile"
-      className="rounded-xl p-3 mb-3 flex flex-col sm:flex-row gap-2"
-      style={{
-        backgroundColor: colors.background,
-        border: `1px solid ${colors.border}`,
-      }}
-    >
-      {COHORT_ORDER.map((c) => {
-        const block = data.cohorts[c.key] || {};
-        const isNever = c.key === "never_logged_in";
-        return (
-          <CohortCard
-            key={c.key}
-            label={c.label}
-            testid={c.testid}
-            count={block.count}
-            delta={block.delta_30d}
-            ctaHref={isNever ? "/customers?first_access=never" : null}
-            ctaTestid={isNever ? "onboarding-tile-never-cta" : null}
-          />
-        );
-      })}
-    </div>
+    <>
+      <div
+        data-testid="onboarding-health-tile"
+        className="rounded-xl p-3 mb-3 flex flex-col sm:flex-row gap-2"
+        style={{
+          backgroundColor: colors.background,
+          border: `1px solid ${colors.border}`,
+        }}
+      >
+        {COHORT_ORDER.map((c) => {
+          const block = data.cohorts[c.key] || {};
+          const isNever = c.key === "never_logged_in";
+          return (
+            <div
+              key={c.key}
+              className="flex-1 min-w-0 flex flex-col gap-2"
+            >
+              <CohortCard
+                label={c.label}
+                testid={c.testid}
+                count={block.count}
+                delta={block.delta_30d}
+                ctaHref={isNever ? "/customers?first_access=never" : null}
+                ctaTestid={isNever ? "onboarding-tile-never-cta" : null}
+              />
+              {isNever ? (
+                <button
+                  type="button"
+                  onClick={() => setChaseOpen(true)}
+                  disabled={neverCount === 0}
+                  data-testid="onboarding-tile-never-chase-cta"
+                  className="inline-flex items-center justify-center rounded-md px-3 py-1.5 text-xs font-semibold hover:brightness-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    backgroundColor: colors.brand,
+                    color: "#fff",
+                  }}
+                  aria-label="Chase stalled portal invites"
+                  title={
+                    neverCount === 0
+                      ? "No stalled invites to chase"
+                      : `Chase up to ${neverCount} stalled invite${neverCount === 1 ? "" : "s"}`
+                  }
+                >
+                  Chase
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      <ChaseStalledInvitesModal
+        open={chaseOpen}
+        onClose={() => setChaseOpen(false)}
+        onSent={() => setRefetchTick((t) => t + 1)}
+      />
+    </>
   );
 }
