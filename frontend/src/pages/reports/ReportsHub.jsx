@@ -15,6 +15,9 @@ import {
   Lock,
   UserMinus,
   Clock,
+  Wrench,
+  RefreshCw,
+  TrendingUp,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -223,6 +226,40 @@ export default function ReportsHub() {
       kpi: { loading: false, data: { headline: "TTGP" } },
       renderKpi: () => "→",
       kpiSubtitle: () => "Rolling view",
+    },
+    // Feb-2026 · Reports Gap Fill Phase 5a.2 — cockpit-mirror trio.
+    {
+      key: "revenue-by-service",
+      icon: Wrench,
+      title: "Revenue by Service",
+      description: "Billed + collected pivoted by invoice service.",
+      to: `/reports/revenue-by-service`,
+      sectionBadge: "Financial",
+      kpi: { loading: false, data: { headline: "RBS" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "Service pivot",
+    },
+    {
+      key: "recurring-vs-project",
+      icon: RefreshCw,
+      title: "Recurring vs. Project Revenue",
+      description: "Split paid revenue using the dashboard predicate.",
+      to: `/reports/recurring-vs-project-revenue`,
+      sectionBadge: "Financial",
+      kpi: { loading: false, data: { headline: "RvP" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "Bucketed",
+    },
+    {
+      key: "client-lifetime-value",
+      icon: TrendingUp,
+      title: "Client Lifetime Value",
+      description: "Per-customer billed / collected + histogram.",
+      to: `/reports/client-lifetime-value`,
+      sectionBadge: "Others",
+      kpi: { loading: false, data: { headline: "CLV" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "All-time by default",
     },
   ];
 

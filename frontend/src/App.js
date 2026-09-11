@@ -327,6 +327,10 @@ import BusinessSnapshot from "@/pages/reports/BusinessSnapshot";
 // Feb-2026 · Reports Gap Fill Phase 5a.1 (Part B).
 import AttritionReport from "@/pages/reports/AttritionReport";
 import TimeToGetPaidReport from "@/pages/reports/TimeToGetPaidReport";
+// Feb-2026 · Reports Gap Fill Phase 5a.2 — cockpit-mirror trio.
+import RevenueByServiceReport from "@/pages/reports/RevenueByServiceReport";
+import RecurringVsProjectReport from "@/pages/reports/RecurringVsProjectReport";
+import ClientLifetimeValueReport from "@/pages/reports/ClientLifetimeValueReport";
 import Forecast from "@/pages/reports/Forecast";
 import CustomerRetentionReport from "@/pages/reports/CustomerRetentionReport";
 import GpsAutoStartAudit from "@/pages/reports/GpsAutoStartAudit";
@@ -1101,6 +1105,10 @@ export default function App() {
             {/* Feb-2026 · Reports Gap Fill Phase 5a.1 (Part B) — Attrition + Time to Get Paid. */}
             <Route path="reports/attrition" element={<AdminOnly><AttritionReport /></AdminOnly>} />
             <Route path="reports/time-to-get-paid" element={<AdminOnly><TimeToGetPaidReport /></AdminOnly>} />
+            {/* Feb-2026 · Reports Gap Fill Phase 5a.2 — cockpit-mirror trio. */}
+            <Route path="reports/revenue-by-service" element={<AdminOnly><RevenueByServiceReport /></AdminOnly>} />
+            <Route path="reports/recurring-vs-project-revenue" element={<AdminOnly><RecurringVsProjectReport /></AdminOnly>} />
+            <Route path="reports/client-lifetime-value" element={<AdminOnly><ClientLifetimeValueReport /></AdminOnly>} />
             <Route path="reports/forecast" element={<AdminOnly><Forecast /></AdminOnly>} />
             <Route path="reports/customer-retention" element={<AdminOnly><CustomerRetentionReport /></AdminOnly>} />
             {/* Feb-2026 · P37d — Dispatcher GPS Auto-Start audit. */}

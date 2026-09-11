@@ -12,7 +12,7 @@ import math
 import statistics
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -49,6 +49,68 @@ def _lifetime_revenue_by_customer(invoices: List[dict]) -> dict:
             continue
         tot[cid] += float(inv.get("total") or 0)
     return dict(tot)
+
+
+# Feb-2026 · Reports Gap Fill Phase 5a.2 — Client Lifetime Value.
+# Wraps ``_lifetime_revenue_by_customer`` with the extra
+# per-customer aggregates the CLV report needs: billed
+# (paid + unpaid), collected (paid only), invoice count, and
+# a simple recurring-vs-project classifier that mirrors
+# ``dashboard.py::L167`` (title-keyword scan). Kept as a new
+# helper so the Attrition report's existing call site
+# (``routers/reports_attrition.py::L123``) stays untouched — the
+# small-diff choice deliberately preserves that boundary.
+_RECURRING_KEYWORDS = ("monthly", "weekly", "recurring")
+
+
+def _is_recurring_invoice(inv: dict) -> bool:
+    """Mirror of ``dashboard.py::recurring`` predicate. Kept as a
+    top-level function so both this analytics module AND the new
+    ``reports_recurring_vs_project`` router can call it (verbatim
+    parity — no re-derivation)."""
+    title = (inv.get("title") or "").lower()
+    return any(kw in title for kw in _RECURRING_KEYWORDS)
+
+
+def _client_lifetime_summary(
+    invoices: List[dict],
+) -> Dict[str, Dict[str, Any]]:
+    """Per-customer aggregation for the Client LTV report.
+
+    Returns ``{customer_id: {"billed": float, "collected": float,
+    "invoice_count": int, "recurring_invoice_count": int}}``.
+
+    Contract:
+      * ``collected`` uses the exact same predicate as
+        ``_lifetime_revenue_by_customer`` (paid-invoice ``total``
+        sum) so the two surfaces cannot drift. Verified by the
+        assertion in ``tests/test_reports_client_lifetime_value``.
+      * ``billed`` sums invoice totals regardless of payment status
+        (excludes soft-deleted rows — the caller is expected to
+        pre-filter via ``_fetch_all_invoices``).
+      * ``recurring_invoice_count`` counts how many invoices scored
+        as recurring by ``_is_recurring_invoice``. The customer's
+        ``client_type`` is derived downstream as
+        ``recurring`` if recurring_count > project_count else
+        ``project``.
+    """
+    per: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {"billed": 0.0, "collected": 0.0,
+                    "invoice_count": 0,
+                    "recurring_invoice_count": 0},
+    )
+    for inv in invoices:
+        cid = inv.get("customer_id")
+        if not cid:
+            continue
+        total = float(inv.get("total") or 0)
+        per[cid]["billed"] += total
+        per[cid]["invoice_count"] += 1
+        if inv.get("payment_status") == "paid":
+            per[cid]["collected"] += total
+        if _is_recurring_invoice(inv):
+            per[cid]["recurring_invoice_count"] += 1
+    return dict(per)
 
 
 def _tier(v: float) -> str:

@@ -1112,6 +1112,16 @@ from routers import reports_time_to_get_paid as _p5a1_ttgp  # noqa: E402
 api_router.include_router(_p5a1_attrition.router)
 api_router.include_router(_p5a1_ttgp.router)
 
+# Feb-2026 · Reports Gap Fill Phase 5a.2 — cockpit-mirror trio.
+# All three tenant-scoped; super_admin can override.
+# See ``/app/memory/FEATURE_REPORTS_GAP_FILL_PHASE5A_2.md``.
+from routers import reports_revenue_by_service as _p5a2_rbs  # noqa: E402
+from routers import reports_recurring_vs_project as _p5a2_rvp  # noqa: E402
+from routers import reports_client_lifetime_value as _p5a2_clv  # noqa: E402
+api_router.include_router(_p5a2_rbs.router)
+api_router.include_router(_p5a2_rvp.router)
+api_router.include_router(_p5a2_clv.router)
+
 app.include_router(api_router)
 app.include_router(public_social.router)
 
