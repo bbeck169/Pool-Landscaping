@@ -113,6 +113,25 @@ class CustomerIn(BaseModel):
     stripe_synced_at: Optional[str] = None
     stripe_sync_status: Optional[str] = None  # attached | no_card | imported
 
+    # ─── Feb-2026 · Multi-Contact Phase 1 · automations-mute ───
+    # Distinct from ``is_muted`` (which suppresses auto-scheduling,
+    # route-suggest, dashboard counts — kept UNCHANGED). This new
+    # field exclusively gates comms fan-out via
+    # ``services.customer_multi_contact.active_email_recipients`` /
+    # ``active_phone_recipients`` when ``context="automation"``.
+    # Manual admin sends (``context="manual"``) bypass this gate.
+    # See /app/memory/FEATURE_MULTI_CONTACT_PHASE1.md for the
+    # 1B "parallel field" decision rationale.
+    automations_muted: Optional[bool] = False
+    automations_muted_reason: Optional[str] = None
+    automations_muted_at: Optional[str] = None      # ISO-8601 UTC
+    automations_muted_by: Optional[str] = None      # user id
+    # Forward-compat: ``"all"`` is the only value honored in Phase 1
+    # (email + sms both muted). ``"email"`` / ``"sms"`` persist as-is
+    # but are treated identically to ``"all"`` by the helpers until
+    # per-channel wiring lands.
+    automations_muted_channel: Optional[str] = "all"
+
     @field_validator("pool_gallons")
     @classmethod
     def _check_pool_gallons(cls, v):

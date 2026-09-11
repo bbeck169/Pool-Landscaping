@@ -2190,6 +2190,107 @@ async def unmute_customer(
     return {"unmuted": True, "customer_id": cid}
 
 
+# ─────────────────────────────────────────────────────────────────
+# Feb-2026 · Multi-Contact Phase 1 · Automations-mute PATCH.
+# Deliberately parallel to the existing ``/mute`` + ``/unmute``
+# endpoints (which flip ``is_muted`` for auto-scheduling /
+# route-suggest). This endpoint flips ``automations_muted`` — a
+# distinct field that ONLY gates comms fan-out. Two fields,
+# two toggles, accepted trade-off per user decision 1B.
+# ─────────────────────────────────────────────────────────────────
+@router.patch("/customers/{cid}/mute-automations")
+async def mute_automations(
+    cid: str,
+    request: Request,
+    body: Dict[str, Any] = Body(...),
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Toggle the automations-mute state on a customer.
+
+    Body: ``{muted: bool, reason?: str, channel?: "all"|"email"|"sms"}``
+
+    Muted=true stamps the audit trail
+    (``automations_muted_reason``, ``automations_muted_at``,
+    ``automations_muted_by``, ``automations_muted_channel``);
+    muted=false clears the four audit fields. Admin+ only.
+    """
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403,
+                              detail={"detail": "role_not_permitted",
+                                       "message": "Only admin or super_admin can mute automations."})
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Body must be an object.")
+    muted = bool(body.get("muted"))
+    reason = body.get("reason")
+    if reason is not None:
+        if not isinstance(reason, str):
+            raise HTTPException(400, "reason must be a string.")
+        reason = reason.strip()[:500] or None
+    channel = body.get("channel") or "all"
+    if channel not in ("all", "email", "sms"):
+        raise HTTPException(400, "channel must be all, email, or sms.")
+
+    from utils import not_deleted_filter as _nd
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"], **_nd()},
+        {"_id": 0, "id": 1, "automations_muted": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "Customer not found")
+
+    if muted:
+        upd = {
+            "$set": {
+                "automations_muted": True,
+                "automations_muted_reason": reason,
+                "automations_muted_at": now_iso(),
+                "automations_muted_by": user.get("id"),
+                "automations_muted_channel": channel,
+            },
+        }
+    else:
+        upd = {
+            "$set": {
+                "automations_muted": False,
+                "automations_muted_reason": None,
+                "automations_muted_at": None,
+                "automations_muted_by": None,
+                "automations_muted_channel": "all",
+            },
+        }
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]}, upd,
+    )
+    # Audit trail.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(), "tenant_id": tenant["id"],
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "customer.automations_mute" if muted
+                       else "customer.automations_unmute",
+            "target_type": "customer",
+            "target_id": cid,
+            "metadata": {"reason": reason, "channel": channel},
+            "created_at": now_iso(),
+        })
+    except Exception as exc:
+        logger.warning("[multi-contact-mute] audit log soft-fail: %s", exc)
+    logger.info(
+        "[multi-contact-mute] cid=%s muted=%s actor=%s reason=%r channel=%s",
+        cid, muted, user.get("email"), reason, channel,
+    )
+    return {
+        "customer_id": cid,
+        "automations_muted": muted,
+        "automations_muted_reason": reason if muted else None,
+        "automations_muted_at": (upd["$set"].get("automations_muted_at")
+                                    if muted else None),
+        "automations_muted_by": user.get("id") if muted else None,
+        "automations_muted_channel": channel if muted else "all",
+    }
 
 
 @router.get("/customers/{cid}/deactivation-preview")
@@ -3957,7 +4058,84 @@ async def send_card_add_link(cid: str,
     sms_error: str | None = None
     trigger_id = f"add_card_request:{cid}:{new_id()[:8]}"
 
-    if email_tpl and customer.get("email"):
+    if email_tpl:
+        # Feb-2026 · Multi-Contact Phase 1 · canary fan-out.
+        # Route through ``active_email_recipients`` so every enabled
+        # address on the customer gets the magic link — honors
+        # ``automations_muted`` (context="automation" → muted
+        # customers receive zero emails).
+        from services.customer_multi_contact import active_email_recipients
+        _recipients = active_email_recipients(customer, context="automation")
+        if _recipients:
+            subject_r, _ = render_template(email_tpl.get("subject") or "", ctx)
+            body_r, _ = render_template(email_tpl.get("body") or "", ctx)
+            per_addr_ok: list[bool] = []
+            for _addr in _recipients:
+                email_provider_id: str | None = None
+                _addr_status: str | None = None
+                _addr_error:  str | None = None
+                try:
+                    from services.comms_email_adapter import send_email
+                    import asyncio as _asyncio
+                    res = await _asyncio.wait_for(send_email(
+                        tenant_id=tenant["id"], to_email=_addr,
+                        subject=subject_r, html=body_r,
+                        from_name=(tenant.get("name") or None),
+                    ), timeout=8.0)
+                    _addr_status = (res or {}).get("status")
+                    email_provider_id = (res or {}).get("provider_id")
+                    _addr_ok = _addr_status in ("sent", "sent_no_provider_id")
+                    if not _addr_ok:
+                        _addr_error = (res or {}).get("error") or _addr_status
+                except Exception as exc:
+                    _addr_status = "exception"
+                    _addr_error = f"{type(exc).__name__}: {exc}"[:200]
+                    _addr_ok = False
+                    logger.warning(
+                        "[phase12] add-card email send exception cid=%s addr=%s: %s",
+                        cid, _addr, _addr_error,
+                    )
+                per_addr_ok.append(_addr_ok)
+                # Reflect the FIRST attempt's status into the
+                # legacy scalar fields so existing wire consumers
+                # (FE toast, ops dashboards) keep reading a single
+                # status; per-recipient rows below carry the truth.
+                if email_status is None:
+                    email_status = _addr_status
+                    email_error = _addr_error
+                # Per-recipient ledger row.
+                await db.marketing_deliveries.insert_one({
+                    "id": new_id(), "tenant_id": tenant["id"],
+                    "customer_id": cid,
+                    "channel": "email", "kind": "transactional",
+                    "recipient": _addr,
+                    "subject": subject_r, "body": body_r,
+                    "trigger_entity": {"kind": "add_card_request", "id": cid},
+                    "trigger_id": trigger_id,
+                    "delivered": _addr_ok,
+                    "accepted_by_provider": _addr_ok,
+                    "terminal_delivered": None,
+                    "provider_status": _addr_status,
+                    "accepted_status": _addr_status,
+                    "accepted_status_at": now_iso(),
+                    "provider_id": email_provider_id,
+                    "error": _addr_error,
+                    "created_at": now_iso(),
+                    # Feb-2026 · Multi-Contact Phase 1 · fan-out marker
+                    "fanned_out": True,
+                    "fanout_recipient_count": len(_recipients),
+                })
+            sent_email = any(per_addr_ok)
+        elif customer.get("automations_muted"):
+            # Muted → deliberately zero-recipient. Stamp a status so
+            # ops can see WHY nothing was sent.
+            email_status = "skipped_muted"
+            sent_email = False
+        else:
+            email_status = "no_recipients"
+            sent_email = False
+
+    if email_tpl and False:  # legacy scalar path — permanently disabled by Multi-Contact Phase 1 fan-out above.
         subject_r, _ = render_template(email_tpl.get("subject") or "", ctx)
         body_r, _ = render_template(email_tpl.get("body") or "", ctx)
         email_provider_id: str | None = None

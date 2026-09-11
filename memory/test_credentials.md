@@ -19,3 +19,12 @@
   finalize their onboarding checklist before route assignment.
 - Emergent LLM key, Resend API key, Stripe test/live keys are in `/app/backend/.env`.
 - `SEED_DEMO_USERS` gate is unchanged — production still refuses to seed these demo users.
+
+## Feb-2026 · Multi-Contact Phase 1 · new gated routes
+- `PATCH /api/customers/{cid}/mute-automations` — **admin / super_admin only** (403 otherwise).
+  Body: `{"muted": bool, "reason": str?, "channel": "all"|"email"|"sms"?}`.
+- `POST /api/admin/migrations/customer-contacts-to-arrays` — **super_admin only** (admin returns 403).
+  Query: `dry_run: bool = True`, `tenant_id: str?`.
+
+For local curl testing use `super@aquaterra.com` for the migration endpoint;
+`admin@aquaterra.com` works for the mute PATCH.

@@ -16,6 +16,7 @@ import DemoAccountToggle from "@/components/comms/DemoAccountToggle";
 import CustomerCommunicationsTimeline from "@/components/customers/CustomerCommunicationsTimeline";
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
+import CustomerMultiContactEditor from "@/components/customers/CustomerMultiContactEditor";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
@@ -183,6 +184,7 @@ export function getPrimaryPropertyAddress(properties) {
 export default function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user: authUser } = useAuth();
   const [customer, setCustomer] = useState(null);
   const [jobs, setJobs] = useState([]);
   // Feb-2026 · Customer profile — primary-property address line under
@@ -760,6 +762,17 @@ export default function CustomerDetail() {
                   setToast({ tone: "success", message: "Contacts saved" });
                 }}
                 onError={(msg) => setToast({ tone: "error", message: msg })}
+              />
+              {/* Feb-2026 · Multi-Contact Phase 1 · editor + mute toggle.
+                  Renders the up-to-4-emails / up-to-4-mobiles multi-row
+                  editor AND the automations-mute admin toggle. Distinct
+                  from the ``is_muted`` control (that one suppresses
+                  auto-scheduling — see CustomerActionDropdowns). */}
+              <CustomerMultiContactEditor
+                customer={customer}
+                isAdmin={authUser?.role === "admin"
+                          || authUser?.role === "super_admin"}
+                onRefresh={load}
               />
               {/* Feb-2026 · Send Portal Invite promoted to the
                   top action stack (rendered near the top of this

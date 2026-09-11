@@ -2,5 +2,7 @@
   "tests/test_photos_s3_phase1.py::test_upload_does_NOT_stamp_s3_key_when_flag_off": true,
   "tests/test_photos_s3_phase1.py::test_admin_s3_health_reports_disabled_by_default": true,
   "tests/test_customers_portal_status_filter.py::test_g4a_activated_returns_only_customers_with_portal_login": true,
-  "tests/test_customer_multi_contacts_phase1.py::test_migration_wet_run_is_idempotent": true
+  "tests/test_customers_portal_status_filter.py::test_g4a_not_activated_returns_the_other_two": true,
+  "tests/test_customers_portal_status_filter.py::test_g4a_composes_with_is_active_intersection": true,
+  "tests/test_customers_portal_status_filter.py::test_g4a_tenant_scoping_prevents_leak": true
 }

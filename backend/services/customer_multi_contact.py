@@ -226,3 +226,131 @@ async def migrate_customer_multi_contact(tenant_filter: Optional[dict] = None) -
     if n:
         logger.info(f"[multi-contact] migrated {n} customer doc(s)")
     return n
+
+
+# ─────────────────────────────────────────────────────────────────
+# Feb-2026 · Multi-Contact Phase 1 · fan-out recipient helpers
+# ─────────────────────────────────────────────────────────────────
+# Every comms send site should route through these two helpers so
+# the automations-mute gate (``customer.automations_muted``) and
+# the per-entry notifications flag stay honored consistently.
+#
+# The ``context`` kwarg encodes intent:
+#   * ``"automation"``  — timer/scheduler/webhook-triggered send.
+#     Muted customers → empty list.
+#   * ``"manual"``      — admin clicked a UI button. Bypass the
+#     customer-level mute (the admin took the explicit action).
+#     Per-entry notification-disabled entries are still filtered
+#     out; a user's per-address opt-out is respected regardless.
+#
+# Phase 1 wires only the Add-Card-On-File send site through the
+# helper. Phase 2 sweeps the remaining 17 clusters — see
+# ``/app/memory/FEATURE_MULTI_CONTACT_PHASE1.md``.
+from typing import Literal
+
+
+def _is_notify_enabled(entry: Dict[str, Any], legacy_flag: str) -> bool:
+    """A recipient is opted-in if the new ``notifications_enabled``
+    alias is truthy, OR the legacy per-channel flag
+    (``marketing_ok`` for emails / ``sms_ok`` for phones) is
+    truthy. Missing → default to opted-in (matches the write-path
+    default so migrated docs still receive comms)."""
+    if "notifications_enabled" in entry:
+        return bool(entry.get("notifications_enabled"))
+    if legacy_flag in entry:
+        return bool(entry.get(legacy_flag))
+    return True
+
+
+def _dedup_preserving_order(items: List[str]) -> List[str]:
+    seen: set = set()
+    out: List[str] = []
+    for x in items:
+        k = (x or "").strip().lower()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(x)
+    return out
+
+
+def _automations_muted(customer: Dict[str, Any], channel: str) -> bool:
+    """Return True when the customer is muted for the given channel.
+
+    Phase 1 honors ``automations_muted_channel="all"`` as
+    "mute email AND sms". Values ``"email"`` / ``"sms"`` persist
+    on the doc but are treated identically to ``"all"`` until the
+    per-channel wiring lands in Phase 2 (see forward-compat note
+    in ``models.py``)."""
+    if not customer.get("automations_muted"):
+        return False
+    # Any recognized channel value → mute both surfaces in Phase 1.
+    return True
+
+
+def active_email_recipients(
+    customer: Optional[Dict[str, Any]],
+    *,
+    context: Literal["automation", "manual"] = "automation",
+) -> List[str]:
+    """Return the ordered list of email addresses that should
+    receive email notifications for this customer.
+
+    Rules:
+      * ``context="automation"`` AND ``automations_muted=True`` → ``[]``.
+      * Otherwise: iterate ``customer.emails[]``, include every
+        entry whose ``notifications_enabled`` (or legacy
+        ``marketing_ok``) is truthy. Empty array → fall back to
+        the scalar ``customer.email``.
+      * Never raises. Non-dict input → ``[]``.
+    """
+    if not isinstance(customer, dict):
+        return []
+    if context == "automation" and _automations_muted(customer, "email"):
+        return []
+    entries = customer.get("emails") or []
+    out: List[str] = []
+    if isinstance(entries, list):
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            addr = (e.get("address") or "").strip().lower()
+            if not addr:
+                continue
+            if _is_notify_enabled(e, "marketing_ok"):
+                out.append(addr)
+    if not out:
+        scalar = (customer.get("email") or "").strip().lower()
+        if scalar:
+            out.append(scalar)
+    return _dedup_preserving_order(out)
+
+
+def active_phone_recipients(
+    customer: Optional[Dict[str, Any]],
+    *,
+    context: Literal["automation", "manual"] = "automation",
+) -> List[str]:
+    """Same contract as :func:`active_email_recipients` for
+    phones. Reads ``customer.mobiles[]`` and falls back to the
+    scalar ``customer.phone`` when arrays are absent/empty."""
+    if not isinstance(customer, dict):
+        return []
+    if context == "automation" and _automations_muted(customer, "sms"):
+        return []
+    entries = customer.get("mobiles") or []
+    out: List[str] = []
+    if isinstance(entries, list):
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            number = (e.get("number_e164") or e.get("number") or "").strip()
+            if not number:
+                continue
+            if _is_notify_enabled(e, "sms_ok"):
+                out.append(number)
+    if not out:
+        scalar = (customer.get("phone") or "").strip()
+        if scalar:
+            out.append(scalar)
+    return _dedup_preserving_order(out)

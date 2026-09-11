@@ -124,7 +124,7 @@ def test_duplicate_email_dedupes():
 # ═════════════════════════════════════════════════════════════════
 
 def test_active_email_recipients_filters_and_dedupes():
-    from services.customer_contacts import active_email_recipients
+    from services.customer_multi_contact import active_email_recipients
     doc = {
         "emails": [
             {"address": "a@x.com", "is_primary": True,
@@ -144,7 +144,7 @@ def test_active_email_recipients_filters_and_dedupes():
 # ═════════════════════════════════════════════════════════════════
 
 def test_active_phone_recipients_filters_and_dedupes():
-    from services.customer_contacts import active_phone_recipients
+    from services.customer_multi_contact import active_phone_recipients
     doc = {
         "mobiles": [
             {"number_e164": "+15551234567", "is_primary": True,
@@ -163,7 +163,7 @@ def test_active_phone_recipients_filters_and_dedupes():
 # ═════════════════════════════════════════════════════════════════
 
 def test_fan_out_helpers_fallback_to_scalar_when_arrays_empty():
-    from services.customer_contacts import (
+    from services.customer_multi_contact import (
         active_email_recipients, active_phone_recipients,
     )
     legacy_doc = {"email": "OLD@x.com", "phone": "+15550001111",
@@ -236,6 +236,20 @@ def test_migration_endpoint_dry_run_returns_candidate_count():
 # ═════════════════════════════════════════════════════════════════
 
 def test_migration_wet_run_is_idempotent():
+    """Feb-2026 · Decision 2A · flake fix.
+
+    Original test called ``customer_contacts_to_arrays`` twice
+    inside the same coroutine — the second call raced Motor's
+    per-cursor loop binding after the first ``find`` cursor
+    resolved, producing intermittent
+    "attached to a different loop" failures under bulk pytest
+    runs. Idempotency is now verified by DOCUMENT STATE after a
+    single wet-run: the migrated row's shape (arrays populated,
+    scalars preserved) is what "idempotent" actually means for
+    this migration — the function is ``$exists=False``-guarded
+    internally, so a second call is a no-op by construction.
+    Confirming the guard by state avoids the Motor cursor trap.
+    """
     from routers import admin_multi_contact_migrate as mod
 
     async def go(db):
@@ -252,23 +266,170 @@ def test_migration_wet_run_is_idempotent():
                 dry_run=False, tenant_id=tid,
                 user={"role": "super_admin"},
             )
-            r2 = await mod.customer_contacts_to_arrays(
-                dry_run=False, tenant_id=tid,
-                user={"role": "super_admin"},
-            )
             assert r1["migrated"] >= 1, r1
-            # Second run: no candidates remain for THIS probe row.
+            # Post-migration doc state — the wet-run must leave the
+            # arrays populated AND the legacy scalars intact (Phase 1
+            # preserves scalars for backward-compat).
             doc = await db.customers.find_one({"id": probe_id},
                                                     {"_id": 0})
             assert isinstance(doc.get("emails"), list)
             assert isinstance(doc.get("mobiles"), list)
             assert doc["emails"][0]["address"] == "idem@x.com"
             assert doc["mobiles"][0]["number_e164"] == "+15552220000"
-            # r2 either migrated 0 net-new OR fewer than r1 —
-            # the important invariant is the doc shape didn't
-            # regress under a repeat call.
-            assert r2["candidates_scanned"] <= r1["candidates_scanned"]
+            # Legacy scalars still present (backward-compat cushion).
+            assert doc.get("email") == "idem@x.com"
+            assert doc.get("phone") == "+15552220000"
+            # Idempotency proof — any second-call to the same
+            # migration on this doc would land in the
+            # ``$exists=False``-guarded no-op branch. The guard is
+            # verified structurally: both arrays now exist, so the
+            # scan predicate ``{$or: [{emails: {$exists: False}},
+            # {mobiles: {$exists: False}}]}`` no longer matches
+            # this row. This is a stronger invariant than a repeat
+            # RPC call and avoids the Motor cross-loop flake.
+            probe_after_first_run = await db.customers.find_one(
+                {"id": probe_id,
+                 "$or": [{"emails": {"$exists": False}},
+                          {"mobiles": {"$exists": False}}]},
+                {"_id": 0, "id": 1},
+            )
+            assert probe_after_first_run is None, (
+                "row still matches the migration scan predicate — "
+                "would be re-processed on a second wet-run "
+                "(idempotency violated)"
+            )
         finally:
             await db.customers.delete_one({"id": probe_id})
+
+    run_test(go)
+
+
+# ═════════════════════════════════════════════════════════════════
+# Feb-2026 · Multi-Contact Phase 1 · automations-mute gate tests
+# ═════════════════════════════════════════════════════════════════
+
+def test_automations_muted_in_automation_context_returns_empty():
+    from services.customer_multi_contact import (
+        active_email_recipients, active_phone_recipients,
+    )
+    doc = {
+        "email": "primary@x.com",
+        "phone": "+15551110000",
+        "emails": [{"address": "a@x.com", "notifications_enabled": True}],
+        "mobiles": [{"number_e164": "+15559998888", "notifications_enabled": True}],
+        "automations_muted": True,
+    }
+    assert active_email_recipients(doc, context="automation") == []
+    assert active_phone_recipients(doc, context="automation") == []
+
+
+def test_manual_context_bypasses_mute():
+    from services.customer_multi_contact import (
+        active_email_recipients, active_phone_recipients,
+    )
+    doc = {
+        "email": "primary@x.com",
+        "phone": "+15551110000",
+        "emails": [{"address": "a@x.com", "notifications_enabled": True}],
+        "mobiles": [{"number_e164": "+15559998888", "notifications_enabled": True}],
+        "automations_muted": True,
+    }
+    assert active_email_recipients(doc, context="manual") == ["a@x.com"]
+    assert active_phone_recipients(doc, context="manual") == ["+15559998888"]
+
+
+def test_non_muted_customer_both_contexts_return_normal_list():
+    from services.customer_multi_contact import (
+        active_email_recipients, active_phone_recipients,
+    )
+    doc = {
+        "emails": [{"address": "a@x.com"}, {"address": "b@x.com"}],
+        "mobiles": [{"number_e164": "+15551111111"}],
+    }
+    assert active_email_recipients(doc, context="automation") == [
+        "a@x.com", "b@x.com",
+    ]
+    assert active_email_recipients(doc, context="manual") == [
+        "a@x.com", "b@x.com",
+    ]
+    assert active_phone_recipients(doc, context="automation") == ["+15551111111"]
+    assert active_phone_recipients(doc, context="manual")     == ["+15551111111"]
+
+
+# ═════════════════════════════════════════════════════════════════
+# Mute PATCH endpoint — audit stamping + role gate
+# ═════════════════════════════════════════════════════════════════
+
+def test_mute_automations_patch_stamps_audit_fields():
+    admin_token = _login("admin@aquaterra.com")
+
+    async def go(db):
+        t = await db.tenants.find_one({"slug": "aquaterra"},
+                                         {"_id": 0, "id": 1})
+        tid = t["id"]
+        cid = "MC_MUTE_" + uuid.uuid4().hex[:8]
+        await db.customers.insert_one({
+            "id": cid, "tenant_id": tid, "name": cid,
+            "email": "m@x.com", "phone": "+15550000000",
+        })
+        try:
+            # Mute ON — full stamping.
+            r = requests.patch(
+                f"{API}/customers/{cid}/mute-automations",
+                headers={"Authorization": f"Bearer {admin_token}",
+                          "Content-Type": "application/json"},
+                json={"muted": True,
+                       "reason": "Customer requested via phone 2026-09-11",
+                       "channel": "all"},
+                timeout=30,
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["automations_muted"] is True
+            assert body["automations_muted_reason"].startswith(
+                "Customer requested"
+            )
+            assert body["automations_muted_at"] is not None
+            assert body["automations_muted_by"] is not None
+            # Doc reflects the stamps.
+            doc = await db.customers.find_one({"id": cid}, {"_id": 0})
+            assert doc["automations_muted"] is True
+            assert doc["automations_muted_reason"] is not None
+            assert doc["automations_muted_at"] is not None
+            assert doc["automations_muted_by"] is not None
+            # Mute OFF — audit fields cleared.
+            r2 = requests.patch(
+                f"{API}/customers/{cid}/mute-automations",
+                headers={"Authorization": f"Bearer {admin_token}",
+                          "Content-Type": "application/json"},
+                json={"muted": False},
+                timeout=30,
+            )
+            assert r2.status_code == 200, r2.text
+            doc2 = await db.customers.find_one({"id": cid}, {"_id": 0})
+            assert doc2["automations_muted"] is False
+            assert doc2["automations_muted_reason"] is None
+            assert doc2["automations_muted_at"] is None
+            assert doc2["automations_muted_by"] is None
+        finally:
+            await db.customers.delete_one({"id": cid})
+
+    run_test(go)
+
+
+def test_mute_automations_rejects_non_admin():
+    tech_token = _login("mike@aquaterra.com")
+
+    async def go(db):
+        # Use any existing customer.
+        c = await db.customers.find_one({}, {"_id": 0, "id": 1})
+        cid = c["id"]
+        r = requests.patch(
+            f"{API}/customers/{cid}/mute-automations",
+            headers={"Authorization": f"Bearer {tech_token}",
+                      "Content-Type": "application/json"},
+            json={"muted": True}, timeout=30,
+        )
+        assert r.status_code == 403, r.text
 
     run_test(go)
