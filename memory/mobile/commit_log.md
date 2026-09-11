@@ -1,3 +1,17 @@
+## Iteration 83 — Multi-Contact Editor + Automations Mute Toggle
+- **Commit**: a4644eb9
+- **Date**: 2026-09-11
+- **Changes**:
+  - Created `CustomerMultiContactEditor.tsx` — admin-only inline editor for customer.emails[] and customer.mobiles[]. Max 4 cap, duplicate detection, email/phone validation, save via PATCH endpoints
+  - Created `AutomationsMuteSection.tsx` — admin-only toggle for automations_muted. Reason modal on mute, amber banner when muted, info modal on banner tap/long-press
+  - Updated `customer/[id].tsx` — imported new components, admin-gated editor vs read-only, primaryEmail/primaryPhone derivation from arrays with scalar fallback
+  - Created `automations-mute-toggle.test.tsx` — 4 Jest tests for mute toggle happy path (all pass)
+- **Files modified**: `mobile/app/customer/[id].tsx`, `mobile/src/components/customers/CustomerMultiContactEditor.tsx`, `mobile/src/components/customers/AutomationsMuteSection.tsx`, `mobile/__tests__/automations-mute-toggle.test.tsx`
+- **Web files referenced**: `frontend/src/components/customers/CustomerMultiContactEditor.jsx`
+- **Feature memo**: `/app/memory/FEATURE_MULTI_CONTACT_MOBILE_PARITY.md`
+
+
+
 ## Iteration 82 — P0 Fix: Job detail 20s timeout + error/retry UI
 - **Commit**: 18a60892
 - **Date**: 2026-09-10

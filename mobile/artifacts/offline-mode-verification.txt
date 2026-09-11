@@ -1,5 +1,5 @@
 Phase 1 offline · schedule day-view verification
-Generated:  2026-09-09T06:26:22.814Z
+Generated:  2026-09-11T10:11:10.699Z
 Airplane mode:  NetInfo mocked with isConnected=false
 Server:  api.get throws ApiNetworkError on every call
 Data source:  SQLite read cache (readCachedWeekJobs)
@@ -34,18 +34,22 @@ Data source:  SQLite read cache (readCachedWeekJobs)
         {
           "type": "View",
           "props": {
-            "style": {
-              "flexDirection": "row",
-              "alignItems": "center",
-              "alignSelf": "flex-start",
-              "gap": 4,
-              "backgroundColor": "#E5E7EB",
-              "borderColor": "#D1D5DB",
-              "borderWidth": 1,
-              "paddingHorizontal": 8,
-              "paddingVertical": 2,
-              "borderRadius": 8
-            },
+            "style": [
+              {
+                "flexDirection": "row",
+                "alignItems": "center",
+                "alignSelf": "flex-start",
+                "gap": 4,
+                "borderColor": "#D1D5DB",
+                "borderWidth": 1,
+                "paddingHorizontal": 8,
+                "paddingVertical": 2,
+                "borderRadius": 8
+              },
+              {
+                "backgroundColor": "#E5E7EB"
+              }
+            ],
             "testID": "offline-badge"
           },
           "children": [
@@ -59,12 +63,17 @@ Data source:  SQLite read cache (readCachedWeekJobs)
             {
               "type": "Text",
               "props": {
-                "style": {
-                  "fontFamily": "PlusJakarta-Bold",
-                  "fontSize": 10,
-                  "color": "#4B5563",
-                  "letterSpacing": 0.4
-                }
+                "style": [
+                  {
+                    "fontFamily": "PlusJakarta-Bold",
+                    "fontSize": 10,
+                    "letterSpacing": 0.4
+                  },
+                  {
+                    "color": "#4B5563"
+                  }
+                ],
+                "testID": "offline-badge-label"
               },
               "children": [
                 "Offline"

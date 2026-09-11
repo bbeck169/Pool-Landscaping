@@ -323,6 +323,7 @@ import RepairCalculatorPage from "@/pages/ops/RepairCalculatorPage";
 import ReportsHub from "@/pages/reports/ReportsHub";
 import ReportsSuite from "@/pages/reports/ReportsSuite";
 import BusinessSummary from "@/pages/reports/BusinessSummary";
+import BusinessSnapshot from "@/pages/reports/BusinessSnapshot";
 import Forecast from "@/pages/reports/Forecast";
 import CustomerRetentionReport from "@/pages/reports/CustomerRetentionReport";
 import GpsAutoStartAudit from "@/pages/reports/GpsAutoStartAudit";
@@ -1092,6 +1093,8 @@ export default function App() {
                 once R5 (Overview) is fully wired. */}
             <Route path="reports/suite" element={<AdminOnly><ReportsSuite /></AdminOnly>} />
             <Route path="reports/business-summary" element={<AdminOnly><BusinessSummary /></AdminOnly>} />
+            {/* Feb-2026 · Reports Gap Fill Phase 5a.1 — Business Snapshot. */}
+            <Route path="reports/business-snapshot" element={<AdminOnly><BusinessSnapshot /></AdminOnly>} />
             <Route path="reports/forecast" element={<AdminOnly><Forecast /></AdminOnly>} />
             <Route path="reports/customer-retention" element={<AdminOnly><CustomerRetentionReport /></AdminOnly>} />
             {/* Feb-2026 · P37d — Dispatcher GPS Auto-Start audit. */}

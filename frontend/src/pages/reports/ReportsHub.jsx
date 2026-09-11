@@ -181,6 +181,20 @@ export default function ReportsHub() {
         return `Net Income · ${sign}${Number(d).toFixed(1)}% vs prior`;
       },
     },
+    // Feb-2026 · Reports Gap Fill Phase 5a.1 — Business Snapshot.
+    // Static-KPI tile (no live cockpit fetch — the destination
+    // page reads the values on mount). Section badge: "Others".
+    {
+      key: "business-snapshot",
+      icon: Gauge,
+      title: "Business Snapshot",
+      description: "Service radius, team size & weekly labor capacity.",
+      to: `/reports/business-snapshot`,
+      sectionBadge: "Others",
+      kpi: { loading: false, data: { headline: "Snapshot" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "Current-state",
+    },
   ];
 
   const comingSoonTiles = [
@@ -252,7 +266,8 @@ export default function ReportsHub() {
  * untouched (per K74 spec).
  */
 function BuiltTile({ tile, isPrimary = false }) {
-  const { icon: Icon, title, description, to, kpi, renderKpi, kpiSubtitle } = tile;
+  const { icon: Icon, title, description, to, kpi, renderKpi, kpiSubtitle,
+          sectionBadge } = tile;
   const sub = kpiSubtitle ? kpiSubtitle(kpi) : null;
   const testIdRoot = `reports-tile-${tile.key}`;
 
@@ -281,11 +296,25 @@ function BuiltTile({ tile, isPrimary = false }) {
           <Icon size={20} />
         </div>
         <div className="flex-1 min-w-0">
-          <div
-            className="font-semibold text-sm"
-            style={{ color: "#FFFFFF" }}
-          >
-            {title}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div
+              className="font-semibold text-sm"
+              style={{ color: "#FFFFFF" }}
+            >
+              {title}
+            </div>
+            {sectionBadge ? (
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                style={{
+                  background: "rgba(255,255,255,0.18)",
+                  color: "#FFFFFF",
+                }}
+                data-testid={`${testIdRoot}-section-badge`}
+              >
+                {sectionBadge}
+              </span>
+            ) : null}
           </div>
           <div
             className="text-xs mt-0.5"

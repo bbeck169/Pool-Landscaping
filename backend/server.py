@@ -1095,6 +1095,14 @@ api_router.include_router(reviews_public_alias.router)
 # dispatch_route_optimize (dispatch board flow); all three coexist.
 api_router.include_router(_route_opt_approval.router)
 
+# Feb-2026 · Reports Gap Fill Phase 5a.1 — Business Snapshot.
+# Current-state 3-tile snapshot exposed at
+# ``GET /api/reports/business-snapshot``. Tenant-scoped; tenant_id
+# override is super_admin-only. See
+# ``/app/memory/FEATURE_REPORTS_GAP_FILL_PHASE5A_1.md``.
+from routers import reports_business_snapshot as _p5a1_biz_snap  # noqa: E402
+api_router.include_router(_p5a1_biz_snap.router)
+
 app.include_router(api_router)
 app.include_router(public_social.router)
 
