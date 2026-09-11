@@ -422,6 +422,12 @@ api_router.include_router(_p37d_gps_audit_report.router)
 from routers import admin_s3_health as _feb2026_s3_health  # noqa: E402
 api_router.include_router(_feb2026_s3_health.router)
 
+# Feb-2026 · Photos-in-S3 Phase 2 — admin backfill migration.
+# ``POST /api/admin/migrations/migrate-photos-to-s3`` walks legacy
+# base64 photos and dual-writes them into S3 (dry-run by default).
+from routers import admin_s3_migrate as _feb2026_s3_migrate  # noqa: E402
+api_router.include_router(_feb2026_s3_migrate.router)
+
 # Phase R0 · Feb-2026 — Reporting suite foundation.
 # ``/api/reports/kpi/{metric_key}`` powered by the metric registry
 # in ``services.reporting``. R1–R7 will drop new metrics into

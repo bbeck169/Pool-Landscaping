@@ -28,5 +28,13 @@
   "tests/test_photos_s3_phase1.py::test_strip_s3_metadata_from_photos_removes_s3_keys",
   "tests/test_photos_s3_phase1.py::test_upload_does_NOT_stamp_s3_key_when_flag_off",
   "tests/test_photos_s3_phase1.py::test_upload_photo_puts_object_with_correct_key_sse_and_content_type",
-  "tests/test_photos_s3_phase1.py::test_upload_stamps_s3_key_when_flag_on"
+  "tests/test_photos_s3_phase1.py::test_upload_stamps_s3_key_when_flag_on",
+  "tests/test_photos_s3_phase2_migration.py::test_migration_dry_run_touches_nothing",
+  "tests/test_photos_s3_phase2_migration.py::test_migration_failure_isolation",
+  "tests/test_photos_s3_phase2_migration.py::test_migration_idempotent_on_second_run",
+  "tests/test_photos_s3_phase2_migration.py::test_migration_rejects_non_admin",
+  "tests/test_photos_s3_phase2_migration.py::test_migration_resumable_with_limit_cursor",
+  "tests/test_photos_s3_phase2_migration.py::test_migration_returns_409_when_flag_off",
+  "tests/test_photos_s3_phase2_migration.py::test_migration_wet_run_no_purge_stamps_key_and_keeps_data",
+  "tests/test_photos_s3_phase2_migration.py::test_migration_wet_run_with_purge_removes_base64"
 ]
