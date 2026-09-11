@@ -78,7 +78,9 @@ class CustomerIn(BaseModel):
     master_billing_contact_email: Optional[str] = None
     master_billing_contact_phone: Optional[str] = None
     # Feb-2026 Customer Detail Additions — multi-contact arrays.
-    # Up to 2 mobiles / 3 emails per customer, each with a label,
+    # Up to 4 mobiles / 4 emails per customer (Phase-1 bump 3→4;
+    # cap constants live in services.customer_multi_contact as
+    # ``MAX_MOBILES`` / ``MAX_EMAILS``). Each entry carries a label,
     # is_primary flag, and marketing/sms consent flag. The legacy
     # scalar ``phone`` / ``email`` fields are auto-synced to the
     # primary entry on every write via services.customer_multi_contact.

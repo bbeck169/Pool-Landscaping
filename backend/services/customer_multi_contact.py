@@ -8,7 +8,7 @@ the new arrays (``mobiles`` / ``emails``). Every write path calls
   see the primary contact.
 * New consumers reading ``customer.mobiles`` / ``customer.emails`` see the
   full list with labels, primary flags, and marketing/sms consent flags.
-* Cap invariants (≤2 mobiles, ≤3 emails) are enforced.
+* Cap invariants (≤4 mobiles, ≤4 emails) are enforced.
 * Exactly one entry per array is flagged ``is_primary`` (the first entry
   wins if none / multiple are set).
 

@@ -4,6 +4,15 @@ Backend ship. Web frontend and `/app/mobile/` are unchanged in
 Phase 2 — mobile parity remains scheduled for the
 `e1_expo_frontend_dev` handoff.
 
+**Storage caps (canonical, verified against code):** up to **4
+mobiles** and **4 emails** per customer. Constants live in
+`services/customer_multi_contact.py::MAX_MOBILES` /
+`MAX_EMAILS`, both set to `4`. Phase 1 bumped the mobile cap from
+3 → 4; Phase-1 memo table row `customer.mobiles` reflects that.
+Any prior docstring / model-comment claiming "2 mobiles / 3
+emails" was stale copy from an earlier iteration and was aligned
+in the tester-fix pass below.
+
 ## Scope executed
 
 * Landed the `log_mute_suppressed` audit helper in
@@ -88,6 +97,16 @@ context:     "automation"
 created_at:  ISO-8601 UTC
 ```
 
+**Row cardinality — read this before opening a "why 2 rows?" bug.**
+Exactly **one audit row per (cluster, channel) tuple** is emitted
+per suppression event. A send-site that spans both email AND SMS
+(e.g. cluster 8, `schedule.py` reschedule) legitimately emits
+**two** rows for a fully-muted customer — one keyed
+`cluster="schedule_reschedule_email"`, one keyed
+`cluster="schedule_reschedule_sms"`. That is the contract, not a
+duplicate. Rollups should `GROUP BY (cluster, channel,
+customer_id, DATE(created_at))`.
+
 `cluster` values in circulation as of Phase 2:
 
 * `add_card_link_email` (canary)
@@ -163,6 +182,47 @@ Backend `tests/test_customer_multi_contacts_phase2.py` —
 
 Phase 1 suite (`test_customer_multi_contacts_phase1.py`) —
 **17/17 still passing**, no regressions from the sweep.
+
+## Tester-fix pass (post-initial-Phase-2 shakedown)
+
+Three tester findings closed after the initial Phase-2 ship:
+
+1. **Cluster 7 (work-order email) had no ledger observability.**
+   The per-recipient loop was fanning out correctly but writing
+   zero rows anywhere. Fixed by adding one `outbound_emails` row
+   per address inside the loop, mirroring cluster 11
+   (`services/auto_visit_email.py`). Row shape:
+   ```
+   {kind: "work_order_email",
+    customer_id, job_id, recipient_email,
+    cluster: "work_order_email",
+    context: "manual",
+    attempted_at (ISO), provider_status,
+    provider_error, fanned_out: true,
+    fanout_recipient_count: N}
+   ```
+   Fire-and-forget on the ledger write — a Mongo trouble can
+   never block the send loop.
+2. **Memo drift on mobiles cap.** Verified in code: `MAX_MOBILES
+   = 4`. Stale docstrings in
+   `services/customer_multi_contact.py` module header ("≤2
+   mobiles, ≤3 emails") and `models.py` (`Up to 2 mobiles / 3
+   emails`) were aligned to the canonical `≤4 mobiles, ≤4
+   emails`. No code change; the cap has been 4 since Phase 1.
+3. **Audit-row cardinality clarity.** Tightened the
+   Suppressed-by-mute contract section above to explicitly state
+   "one audit row per (cluster, channel) tuple" so future
+   readers don't chase a phantom "2-rows-when-fully-muted" bug
+   for cluster 8 (reschedule).
+
+New test — `test_customer_multi_contacts_phase2.py`:
+
+* `test_work_order_email_muted_manual_writes_ledger_per_recipient`
+  — seeds a muted customer with 3 emails, calls the work-order
+  send handler with `context="manual"` (mute-bypass path),
+  patches Resend to succeed, asserts **3** `outbound_emails`
+  rows land with `cluster="work_order_email"`, `context="manual"`,
+  `fanned_out=True`, `fanout_recipient_count=3`.
 
 ## Files touched
 

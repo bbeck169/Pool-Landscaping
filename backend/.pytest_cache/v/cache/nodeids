@@ -74,6 +74,8 @@
   "tests/test_customer_multi_contacts_phase2.py::test_per_entry_notifications_disabled_dropped_in_both_contexts",
   "tests/test_customer_multi_contacts_phase2.py::test_unmuted_customer_three_emails_returns_three_recipients_automation",
   "tests/test_customer_multi_contacts_phase2.py::test_unmuted_customer_three_phones_returns_three_recipients_automation",
+  "tests/test_customer_multi_contacts_phase2.py::test_work_order_email_ledger_rows_stamp_failed_status_when_resend_raises",
+  "tests/test_customer_multi_contacts_phase2.py::test_work_order_email_muted_manual_writes_ledger_per_recipient",
   "tests/test_customer_service_notes.py::test_get_service_notes_for_schedule_returns_slice",
   "tests/test_customer_service_notes.py::test_schedule_today_carries_service_note",
   "tests/test_customer_service_notes.py::test_schedule_today_resolves_service_note_from_job_type_alias",

@@ -1344,7 +1344,10 @@ async def email_work_order(jid: str, body: dict,
         _targets = [to] + _extra
     sent_any = False
     _last_err: str | None = None
+    _fanout_count = len(_targets)
     for _addr in _targets:
+        _provider_status: str = "pending"
+        _provider_error: str | None = None
         try:
             import resend
             from config import EMAIL_FROM
@@ -1360,12 +1363,45 @@ async def email_work_order(jid: str, body: dict,
                 }],
             })
             sent_any = True
+            _provider_status = "sent"
         except Exception as e:
             logger.warning(f"Work-order email failed for {_addr}: {e}")
             _last_err = str(e)
+            _provider_status = "failed"
+            _provider_error = str(e)[:400]
+        # Feb-2026 · Multi-Contact Phase 2 (Fix 1) — per-recipient
+        # ledger row for admin work-order sends. Mirrors the shape
+        # written by cluster 11 (``services/auto_visit_email.py``)
+        # so ops can `db.outbound_emails.find({kind:"work_order_email"})`
+        # for the audit trail. Written for BOTH success and failure
+        # attempts so the observability contract is truthful.
+        try:
+            await db.outbound_emails.insert_one({
+                "id": new_id(),
+                "kind": "work_order_email",
+                "tenant_id": tenant["id"],
+                "customer_id": job.get("customer_id"),
+                "job_id": jid,
+                "recipient_email": _addr,
+                "cluster": "work_order_email",
+                "context": "manual",
+                "attempted_at": now_iso(),
+                "provider_status": _provider_status,
+                "provider_error": _provider_error,
+                "fanned_out": True,
+                "fanout_recipient_count": _fanout_count,
+                "created_at": now_iso(),
+            })
+        except Exception as _led_exc:
+            # Ledger writes are fire-and-forget — never block the
+            # send loop on an audit trouble.
+            logger.warning(
+                "[jobs] work-order ledger write failed cid=%s job=%s addr=%s err=%s",
+                job.get("customer_id"), jid, _addr, _led_exc,
+            )
     if sent_any:
         return {"sent": True, "to": to, "fanned_out": True,
-                "fanout_recipient_count": len(_targets)}
+                "fanout_recipient_count": _fanout_count}
     return {"sent": False, "reason": _last_err or "send-failed", "to": to}
 
 

@@ -340,3 +340,190 @@ def test_add_card_canary_muted_writes_suppressed_by_mute_audit():
             await db.marketing_deliveries.delete_many({"customer_id": cid})
 
     run_test(_go)
+
+
+# ═════════════════════════════════════════════════════════════════
+# 7 · Cluster 7 (work-order email) — per-recipient ledger contract
+# ═════════════════════════════════════════════════════════════════
+
+def test_work_order_email_muted_manual_writes_ledger_per_recipient():
+    """Tester-fix regression: cluster 7 (``routers/jobs.py::
+    email_work_order``) must write one ``outbound_emails`` row per
+    recipient inside the fan-out loop.
+
+    Seeds a muted customer with 3 enabled emails, calls the handler
+    with ``context="manual"`` (mute-bypass path), patches Resend to
+    succeed, and asserts:
+      * exactly 3 outbound_emails rows are written,
+      * each row is stamped with cluster="work_order_email" +
+        context="manual" + fanned_out=True + fanout_recipient_count=3,
+      * mute is bypassed (the 3 sends fire despite
+        automations_muted=True on the customer).
+    """
+    from unittest.mock import patch, MagicMock
+    from utils import new_id
+    from routers import jobs as jobs_router
+    from tests._f7_loop_fixture import run_test
+
+    async def _go(db):
+        tenant = await db.tenants.find_one({"slug": "aquaterra"},
+                                                {"_id": 0, "id": 1, "name": 1})
+        tid = tenant["id"]
+        cid = new_id()
+        jid = new_id()
+        # Customer with 3 enabled emails + automations_muted=True →
+        # manual-context fan-out MUST still deliver to all three.
+        emails = [
+            {"id": new_id(), "address": "one@probe.example",
+             "label": "Primary", "is_primary": True,
+             "marketing_ok": True, "notifications_enabled": True},
+            {"id": new_id(), "address": "two@probe.example",
+             "label": "Owner", "is_primary": False,
+             "marketing_ok": True, "notifications_enabled": True},
+            {"id": new_id(), "address": "three@probe.example",
+             "label": "Ops", "is_primary": False,
+             "marketing_ok": True, "notifications_enabled": True},
+        ]
+        await db.customers.insert_one({
+            "id": cid, "tenant_id": tid,
+            "name": "Phase2 WorkOrder Ledger Probe",
+            "email": "one@probe.example",
+            "emails": emails,
+            "automations_muted": True,
+            "automations_muted_channel": "all",
+            "automations_muted_reason": "phase2-ledger-probe",
+            "is_active": True,
+            "is_muted": False,
+            "created_at": "2026-02-11T00:00:00+00:00",
+        })
+        await db.jobs.insert_one({
+            "id": jid, "tenant_id": tid,
+            "customer_id": cid,
+            "title": "Ledger Probe Job",
+            "status": "completed",
+            "scheduled_date": "2026-02-11T09:00:00+00:00",
+            "photos": [],
+        })
+        try:
+            # Force RESEND_API_KEY present so the handler enters the
+            # send loop, and stub the resend SDK so no real HTTP is
+            # made. The handler does ``from config import RESEND_API_KEY``
+            # at call-time, so we patch the source attribute.
+            with patch("config.RESEND_API_KEY", "sk_probe_test"), \
+                 patch("resend.Emails.send",
+                       new=MagicMock(return_value={"id": "resend_probe"})):
+                # ``body.to`` intentionally empty → handler resolves
+                # via ``active_email_recipients(customer, context="manual")``
+                # and fans out to all 3 addresses.
+                res = await jobs_router.email_work_order(
+                    jid=jid, body={},
+                    user={"id": "admin_probe", "role": "admin"},
+                    tenant={"id": tid, "name": tenant.get("name")},
+                )
+            assert res.get("sent") is True, res
+            assert res.get("fanned_out") is True
+            assert res.get("fanout_recipient_count") == 3
+            # 3 ledger rows — one per recipient.
+            rows = await db.outbound_emails.find(
+                {"customer_id": cid, "kind": "work_order_email"},
+                {"_id": 0},
+            ).sort("attempted_at", 1).to_list(20)
+            assert len(rows) == 3, (
+                f"Expected 3 outbound_emails rows for the 3-recipient "
+                f"fan-out; got {len(rows)}: {rows}"
+            )
+            recipients_written = sorted(r["recipient_email"] for r in rows)
+            assert recipients_written == sorted(
+                e["address"] for e in emails
+            ), recipients_written
+            for r in rows:
+                assert r["cluster"] == "work_order_email"
+                assert r["context"] == "manual"
+                assert r["job_id"] == jid
+                assert r["fanned_out"] is True
+                assert r["fanout_recipient_count"] == 3
+                assert r["provider_status"] == "sent"
+                assert r["provider_error"] is None
+                assert r["attempted_at"]  # ISO-8601 present
+                assert r["tenant_id"] == tid
+            # Mute-bypass witness: the customer IS muted but no
+            # ``comms.suppressed_by_mute`` row landed (manual context).
+            suppress_rows = await db.audit_logs.count_documents({
+                "customer_id": cid,
+                "event": "comms.suppressed_by_mute",
+            })
+            assert suppress_rows == 0, (
+                "manual context must not emit suppressed_by_mute audit"
+            )
+        finally:
+            await db.customers.delete_one({"id": cid})
+            await db.jobs.delete_one({"id": jid})
+            await db.outbound_emails.delete_many({"customer_id": cid})
+            await db.audit_logs.delete_many({"customer_id": cid})
+
+    run_test(_go)
+
+
+def test_work_order_email_ledger_rows_stamp_failed_status_when_resend_raises():
+    """Ledger contract must be **truthful** — a failed provider
+    attempt lands a row with provider_status="failed" and the
+    provider_error captured, not silently dropped."""
+    from unittest.mock import patch, MagicMock
+    from utils import new_id
+    from routers import jobs as jobs_router
+    from tests._f7_loop_fixture import run_test
+
+    async def _go(db):
+        tenant = await db.tenants.find_one({"slug": "aquaterra"},
+                                                {"_id": 0, "id": 1, "name": 1})
+        tid = tenant["id"]
+        cid = new_id()
+        jid = new_id()
+        emails = [
+            {"id": new_id(), "address": "solo@probe.example",
+             "label": "Primary", "is_primary": True,
+             "marketing_ok": True, "notifications_enabled": True},
+        ]
+        await db.customers.insert_one({
+            "id": cid, "tenant_id": tid,
+            "name": "Phase2 WorkOrder Failure Probe",
+            "email": "solo@probe.example",
+            "emails": emails,
+            "automations_muted": False,
+            "is_active": True,
+            "is_muted": False,
+            "created_at": "2026-02-11T00:00:00+00:00",
+        })
+        await db.jobs.insert_one({
+            "id": jid, "tenant_id": tid, "customer_id": cid,
+            "title": "Failure Probe Job", "status": "completed",
+            "scheduled_date": "2026-02-11T09:00:00+00:00", "photos": [],
+        })
+        try:
+            def _raise(*_a, **_kw):
+                raise RuntimeError("resend probe blew up")
+            with patch("config.RESEND_API_KEY", "sk_probe_test"), \
+                 patch("resend.Emails.send",
+                       new=MagicMock(side_effect=_raise)):
+                res = await jobs_router.email_work_order(
+                    jid=jid, body={},
+                    user={"id": "admin_probe", "role": "admin"},
+                    tenant={"id": tid, "name": tenant.get("name")},
+                )
+            assert res.get("sent") is False
+            rows = await db.outbound_emails.find(
+                {"customer_id": cid, "kind": "work_order_email"},
+                {"_id": 0},
+            ).to_list(5)
+            assert len(rows) == 1, rows
+            row = rows[0]
+            assert row["provider_status"] == "failed"
+            assert row["provider_error"]
+            assert "resend probe blew up" in row["provider_error"]
+        finally:
+            await db.customers.delete_one({"id": cid})
+            await db.jobs.delete_one({"id": jid})
+            await db.outbound_emails.delete_many({"customer_id": cid})
+
+    run_test(_go)
+
