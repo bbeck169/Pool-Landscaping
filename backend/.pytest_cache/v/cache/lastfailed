@@ -1,1 +1,4 @@
-{}
+{
+  "tests/test_phase19_dispatch_batch.py::test_bug_b_pricebook_delete_endpoint_exists": true,
+  "tests/test_phase19_dispatch_batch.py::test_password_reset_auto_generates_and_flips_flag": true
+}

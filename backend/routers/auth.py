@@ -191,7 +191,66 @@ async def _mint_temp_password_reset_token(user: dict, ip: str) -> dict:
         "reset_token": token,
         "user_id": user["id"],
         "token_ttl_minutes": _TEMP_PASSWORD_RESET_TTL_MINUTES,
+        # Feb-2026 · P0 loop fix — expose the role so the FE can
+        # defense-in-depth gate the reset redirect. Only customers
+        # ever land here after the backend gate below; the field is
+        # a belt-and-braces signal, not authorization.
+        "role": user.get("role"),
     }
+
+
+# ── Feb-2026 · P0 forced-reset-loop fix — trigger gate + audit ─────
+# The temp-password fork must fire ONLY when ALL of:
+#   1) user.role == "customer"                (non-customer roles
+#      never hit the customer portal reset UX)
+#   2) user.must_change_password_on_next_login is truthy
+#   3) user.has_ever_logged_in is NOT truthy  (once a customer has
+#      completed a real sign-in, the flag is stale — surfacing it
+#      creates the reset loop the P0 was filed against)
+#
+# When (2) is truthy but (3) is ALSO truthy for a customer, we emit
+# a ``customer.suspicious_forced_reset_flag`` audit row so ops can
+# investigate why the flag was re-armed post-first-login. We do NOT
+# fork in that state.
+def _should_fork_temp_password_flow(user: dict) -> bool:
+    role = (user.get("role") or "").strip().lower()
+    if role != "customer":
+        return False
+    if not user.get("must_change_password_on_next_login"):
+        return False
+    if user.get("has_ever_logged_in"):
+        return False
+    return True
+
+
+async def _audit_suspicious_forced_reset_flag(user: dict, ip: str) -> None:
+    """Belt-and-braces observability: a customer with
+    ``has_ever_logged_in=True`` should never carry
+    ``must_change_password_on_next_login=True`` at the same time.
+    If they do, log the anomaly (event + tenant + IDs) so ops can
+    trace the write — but do NOT fork into the reset UX (Trigger
+    condition #3 gates the modal)."""
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": user.get("tenant_id"),
+            "event": "customer.suspicious_forced_reset_flag",
+            "target_user_id": user.get("id"),
+            "target_customer_id": user.get("customer_id"),
+            "email": (user.get("email") or "").lower(),
+            "ip_address": ip,
+            "details": (
+                "must_change_password_on_next_login=True on a "
+                "customer with has_ever_logged_in=True — ignored "
+                "by the login fork gate."
+            ),
+            "created_at": now_iso(),
+        })
+    except Exception as exc:  # pragma: no cover
+        logger.warning(
+            "[forced-reset-audit] insert failed for uid=%s: %s",
+            user.get("id"), exc,
+        )
 
 
 async def _stamp_first_access(user: dict, ip: str) -> None:
@@ -419,13 +478,27 @@ async def login(request: Request, body: LoginRequest):
     # login denorm (last_portal_login_at / first_access_at) is
     # stamped here — the sign-in isn't complete until the reset
     # consummates. Reset counters were reset above.
+    #
+    # Feb-2026 · P0 loop fix — the fork now requires role=customer
+    # AND has_ever_logged_in!=True (via ``_should_fork_temp_password_flow``).
+    # Non-customer roles ignore the flag entirely (defense-in-depth
+    # per the P0 fix spec). Customers with a stale flag post-first-
+    # login get an anomaly audit row and skip the fork.
     if user.get("must_change_password_on_next_login"):
-        payload = await _mint_temp_password_reset_token(user, ip)
-        await _audit_auth(
-            "login_password_reset_required", email, ip, "success",
-            f"user_id={user['id']} ttl_min={_TEMP_PASSWORD_RESET_TTL_MINUTES}",
-        )
-        return payload
+        if _should_fork_temp_password_flow(user):
+            payload = await _mint_temp_password_reset_token(user, ip)
+            await _audit_auth(
+                "login_password_reset_required", email, ip, "success",
+                f"user_id={user['id']} ttl_min={_TEMP_PASSWORD_RESET_TTL_MINUTES}",
+            )
+            return payload
+        # Stale-flag anomaly: customer with the flag but already-
+        # logged-in. Warn ops via audit, then fall through to normal
+        # login (Trigger condition #3 gates the fork).
+        if (user.get("role") or "").strip().lower() == "customer":
+            await _audit_suspicious_forced_reset_flag(user, ip)
+        # Non-customer roles simply fall through — the flag has no
+        # meaning outside the customer temp-password flow.
     await _audit_auth("login", email, ip, "success")
     # Feb-2026 Portal Access ship — stamp the customer doc with the
     # last portal login timestamp/IP + write a dedicated ``portal_login``
@@ -533,13 +606,20 @@ async def login_select_account(request: Request, body: _SelectAccountBody):
     # ── Feb-2026 · Temp password fork (parity with /auth/login) ────
     # If the picked record is a temp-password account, fork BEFORE
     # issuing an access token. Same 200 shape as ``login``.
+    #
+    # Feb-2026 · P0 loop fix — mirror the ``login`` gate:
+    # customer + flag + !has_ever_logged_in. Stale-flag anomaly on
+    # customers gets an audit row. Non-customer roles ignore the flag.
     if user.get("must_change_password_on_next_login"):
-        payload = await _mint_temp_password_reset_token(user, ip)
-        await _audit_auth(
-            "login_choice_password_reset_required", email, ip, "success",
-            f"user_id={user['id']} ttl_min={_TEMP_PASSWORD_RESET_TTL_MINUTES}",
-        )
-        return payload
+        if _should_fork_temp_password_flow(user):
+            payload = await _mint_temp_password_reset_token(user, ip)
+            await _audit_auth(
+                "login_choice_password_reset_required", email, ip, "success",
+                f"user_id={user['id']} ttl_min={_TEMP_PASSWORD_RESET_TTL_MINUTES}",
+            )
+            return payload
+        if (user.get("role") or "").strip().lower() == "customer":
+            await _audit_suspicious_forced_reset_flag(user, ip)
     await _audit_auth("login_choice_selected", email, ip, "success",
                         f"role={user.get('role')} user_id={user['id']}")
     await _audit_multi_account_choice(
@@ -876,18 +956,37 @@ async def _apply_new_password(user_id: str, new_password: str) -> None:
     received a temp password. Admin-created / staff-set passwords
     do NOT go through this helper (see the seed / provision paths),
     so the denorm is a reliable "customer engagement" signal.
+
+    Feb-2026 · P0 loop fix — also flip ``has_ever_logged_in=True``
+    and stamp ``first_password_reset_at`` / ``first_access_at``
+    (if not previously stamped) so a subsequent login cannot re-
+    trigger the temp-password fork (Trigger condition #3). The
+    per-user idempotency: ``first_password_reset_at`` is only
+    stamped on the FIRST reset — later resets update
+    ``password_updated_at`` without touching the first stamp.
     """
     now = now_iso()
+    user_row = await db.users.find_one({"id": user_id}, {"_id": 0}) or {}
+    first_password_reset_at = (
+        user_row.get("first_password_reset_at") or now
+    )
+    set_fields = {
+        "password_hash": hash_password(new_password),
+        "failed_login_attempts": 0,
+        "lockout_until": None,
+        "must_change_password_on_next_login": False,
+        "password_updated_at": now,
+        "password_customer_set_at": now,
+        # P0 loop fix — same-transaction flip so the next login
+        # can't loop back into the fork.
+        "has_ever_logged_in": True,
+        "first_password_reset_at": first_password_reset_at,
+    }
+    if not user_row.get("first_access_at"):
+        set_fields["first_access_at"] = now
     await db.users.update_one(
         {"id": user_id},
-        {"$set": {
-            "password_hash": hash_password(new_password),
-            "failed_login_attempts": 0,
-            "lockout_until": None,
-            "must_change_password_on_next_login": False,
-            "password_updated_at": now,
-            "password_customer_set_at": now,
-        }},
+        {"$set": set_fields},
     )
     # Mirror the customer-engagement flag to the customer doc for
     # O(index) filter perf on ``GET /customers?portal_activated=…``.
@@ -929,6 +1028,15 @@ async def reset_password(request: Request, body: ResetPasswordRequest):
     auth-user's hash, marks the token used, and clears any
     ``failed_login_attempts`` / ``lockout_until`` so the customer
     can sign in immediately with the new credential.
+
+    Feb-2026 · P0 loop fix — when the consumed token was minted by
+    the temp-password login fork (``source == "temp_password_login"``)
+    AND the target user is a customer, we auto-issue a fresh access
+    token so the FE can drop the caller directly into the portal
+    home. This eliminates the "reset → back-to-login → login again"
+    UX that was reported as a loop. Non-temp-password callers (the
+    ordinary self-serve forgot-password flow) keep the pre-existing
+    "please sign in" shape.
     """
     ip = _client_ip(request)
     tok = (body.token or "").strip()
@@ -942,11 +1050,72 @@ async def reset_password(request: Request, body: ResetPasswordRequest):
     if not user:
         # Highly unlikely — but defensive.
         raise HTTPException(400, "Invalid or expired reset link. Please request a new one.")
+    role = (user.get("role") or "").strip().lower()
+    is_temp_flow = row.get("source") == _TEMP_PASSWORD_RESET_SOURCE
+    should_auto_login = is_temp_flow and role == "customer"
+
+    # P0 loop fix — stamp first-access denorms BEFORE
+    # ``_apply_new_password`` flips ``has_ever_logged_in`` to True,
+    # so the ``_stamp_first_access`` idempotency guard (which
+    # short-circuits when has_ever_logged_in is already truthy)
+    # still runs on the pre-reset state and writes the customer
+    # ``portal_first_login_at`` denorm.
+    if should_auto_login:
+        try:
+            await _stamp_first_access(user, ip)
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "[reset-auto-login] first-access stamp skipped uid=%s: %s",
+                user.get("id"), exc,
+            )
     await _apply_new_password(user["id"], body.new_password)
     await _consume_reset_token(tok, ip, user["id"])
     await _audit_auth("password_reset_complete", user.get("email", ""), ip,
                       "success", f"user_id={user['id']}")
-    return {"ok": True, "message": "Password reset. Please sign in."}
+
+    # P0 loop fix — auto-login the customer after their first-time
+    # temp-password reset. Preconditions: source flag on the token
+    # AND role=customer (never auto-login staff via this path).
+    base = {"ok": True, "message": "Password reset. Please sign in."}
+    if not should_auto_login:
+        return base
+    fresh_user = await db.users.find_one({"id": user["id"]}, {"_id": 0}) or user
+    # First-login audit row so ops can attribute the auto-login
+    # event to a real password-reset completion.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": fresh_user.get("tenant_id"),
+            "event": "customer.first_login_password_reset",
+            "target_user_id": fresh_user.get("id"),
+            "target_customer_id": fresh_user.get("customer_id"),
+            "email": (fresh_user.get("email") or "").lower(),
+            "ip_address": ip,
+            "created_at": now_iso(),
+        })
+    except Exception as exc:  # pragma: no cover
+        logger.warning(
+            "[first-login-audit] insert failed uid=%s: %s",
+            fresh_user.get("id"), exc,
+        )
+    # Stamp last_portal_login denorms (mirrors ``/auth/login``).
+    if fresh_user.get("customer_id"):
+        try:
+            await db.customers.update_one(
+                {"id": fresh_user["customer_id"],
+                  "tenant_id": fresh_user.get("tenant_id")},
+                {"$set": {"last_portal_login_at": now_iso(),
+                            "last_portal_login_ip": ip}},
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "[reset-auto-login] portal denorm skipped uid=%s: %s",
+                fresh_user.get("id"), exc,
+            )
+    auth = auth_response(fresh_user)
+    # Merge — keep the existing ``ok``/``message`` for callers
+    # still keyed off them + add the JWT/user for auto-login.
+    return {**base, "auto_login": True, **auth}
 
 
 def _password_reset_email_html(*, first_name: str, reset_link: str,

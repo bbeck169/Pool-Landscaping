@@ -21,6 +21,7 @@ Contract notes:
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -1290,3 +1291,107 @@ async def backfill_first_access(
         **counts,
     }
 
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/clear-stale-forced-reset-flags
+# Feb-2026 · P0 customer forced-password-reset loop fix — backfill.
+#
+# Some customers have both ``has_ever_logged_in=True`` AND
+# ``must_change_password_on_next_login=True`` on their ``users`` row
+# from prior bug exposure (e.g., admin rotated their password AFTER
+# they had already completed a first login). The Feb-2026 login gate
+# now ignores the stale flag for these rows (see ``routers.auth
+# ._should_fork_temp_password_flow``), so leaving them as-is is
+# harmless — but keeping the flag set produces noisy anomaly audits
+# on every login. This migration clears the stale flag on rows where
+# the fix conditions are satisfied.
+#
+# Scope: customer-role users only. Non-customer rows are NEVER
+# touched by this migration.
+#
+# Idempotent. Dry-run default. Super_admin only.
+# ─────────────────────────────────────────────────────────────────────
+
+class ClearStaleForcedResetFlagsBody(BaseModel):
+    dry_run: bool = Field(
+        default=True,
+        description=(
+            "Safety-first default. Set to false to actually flip "
+            "``must_change_password_on_next_login`` to False on the "
+            "affected rows."
+        ),
+    )
+    tenant_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional — super_admin may target a specific tenant. "
+            "When omitted, ALL tenants are scanned."
+        ),
+    )
+
+
+@router.post(
+    "/admin/migrations/clear-stale-forced-reset-flags",
+    operation_id="admin.migrations.clear_stale_forced_reset_flags",
+)
+async def clear_stale_forced_reset_flags(
+    body: ClearStaleForcedResetFlagsBody = Body(
+        default_factory=ClearStaleForcedResetFlagsBody),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Flip ``must_change_password_on_next_login`` to False on
+    customer rows where ``has_ever_logged_in=True`` was already set
+    (i.e., the flag is stale post-first-login). Returns count
+    envelope ``{scanned, flipped, skipped, errors, dry_run}``."""
+    _require_super_admin(user)
+
+    q: Dict[str, Any] = {
+        "role": "customer",
+        "has_ever_logged_in": True,
+        "must_change_password_on_next_login": True,
+    }
+    if body.tenant_id:
+        q["tenant_id"] = body.tenant_id
+
+    counts = {"scanned": 0, "flipped": 0, "skipped": 0, "errors": 0}
+    async for u in db.users.find(q, {"_id": 0, "id": 1, "tenant_id": 1}):
+        counts["scanned"] += 1
+        if body.dry_run:
+            counts["skipped"] += 1
+            continue
+        try:
+            res = await db.users.update_one(
+                {"id": u["id"],
+                  # Re-check inside the write so a concurrent write
+                  # can't undo has_ever_logged_in and leave us
+                  # flipping the wrong row.
+                  "has_ever_logged_in": True,
+                  "must_change_password_on_next_login": True,
+                  "role": "customer"},
+                {"$set": {"must_change_password_on_next_login": False,
+                            "stale_forced_reset_cleared_at": (
+                                datetime.now(timezone.utc).isoformat()
+                            )}},
+            )
+            if getattr(res, "modified_count", 0):
+                counts["flipped"] += 1
+            else:
+                counts["skipped"] += 1
+        except Exception as exc:  # pragma: no cover
+            counts["errors"] += 1
+            logger.warning(
+                "[clear-stale-forced-reset] uid=%s failed: %s",
+                u.get("id"), exc,
+            )
+
+    logger.info(
+        "[clear-stale-forced-reset] user=%s tenant_id=%s dry_run=%s counts=%s",
+        user.get("id"), body.tenant_id, body.dry_run, counts,
+    )
+    return {
+        "ok": True,
+        "dry_run": body.dry_run,
+        "tenant_id": body.tenant_id,
+        **counts,
+    }

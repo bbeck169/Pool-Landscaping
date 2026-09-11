@@ -13,8 +13,20 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 import { colors, gradients } from "@/theme";
 import { useToast } from "@/hooks/use-toast";
+
+// Feb-2026 · P0 loop fix — role → portal-home landing map.
+// Mirrors ``pages/Login.jsx::landingFor`` so we don't create a
+// parallel definition. Kept local (no util yet) to avoid a
+// cross-file rename.
+function _landingFor(role) {
+  if (role === "admin") return "/";
+  if (role === "technician") return "/schedule/today";
+  if (role === "customer") return "/portal/home";
+  return "/";
+}
 
 function scorePassword(pw) {
   const len = pw.length >= 8;
@@ -27,6 +39,7 @@ function scorePassword(pw) {
 export default function ResetPassword() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  const { applyResetAutoLogin } = useAuth();
   const token = params.get("token") || "";
   const flow = params.get("flow") || "";
   const isTempPasswordFlow = flow === "temp_password";
@@ -49,7 +62,26 @@ export default function ResetPassword() {
     setBusy(true);
     setError("");
     try {
-      await api.post("/auth/reset-password", { token, new_password: pw });
+      const res = await api.post("/auth/reset-password", { token, new_password: pw });
+      // Feb-2026 · P0 loop fix — when the backend auto-logs the
+      // customer in (temp-password flow only), the response carries
+      // ``auto_login=true`` + ``access_token`` + ``user``. Persist
+      // it and jump straight to the portal home. No second login.
+      if (res && res.auto_login && res.access_token && res.user &&
+          applyResetAutoLogin(res.access_token, res.user)) {
+        toast({
+          title: "Password reset",
+          description: "You're signed in.",
+        });
+        setTimeout(
+          () => navigate(_landingFor(res.user.role), { replace: true }),
+          400,
+        );
+        return;
+      }
+      // Legacy path — ordinary self-serve forgot-password flow.
+      // Backend didn't auto-login; direct the caller back to the
+      // login screen with a toast.
       toast({
         title: "Password reset",
         description: "Please sign in with your new password.",

@@ -106,6 +106,11 @@ export function AuthProvider({ children }) {
         reset_token: res.reset_token,
         user_id: res.user_id,
         token_ttl_minutes: res.token_ttl_minutes,
+        // Feb-2026 · P0 loop fix — bubble the backend-supplied role
+        // so the Login page can defense-in-depth gate the redirect.
+        // Only ``customer`` should ever trigger the temp-password
+        // reset UX; a non-customer payload is treated as unexpected.
+        role: res.role,
       };
     }
     persist(res.access_token, res.user);
@@ -129,6 +134,7 @@ export function AuthProvider({ children }) {
         reset_token: res.reset_token,
         user_id: res.user_id,
         token_ttl_minutes: res.token_ttl_minutes,
+        role: res.role,
       };
     }
     persist(res.access_token, res.user);
@@ -138,6 +144,17 @@ export function AuthProvider({ children }) {
   const signup = async (payload) => {
     const res = await api.post("/auth/signup", payload);
     persist(res.access_token, res.user);
+  };
+
+  // Feb-2026 · P0 loop fix — the reset-password page calls this
+  // when the ``/auth/reset-password`` response carries a fresh
+  // ``access_token`` + ``user`` (the auto-login envelope). We
+  // persist identically to a normal login so the caller can drop
+  // straight into the portal home, no re-authentication needed.
+  const applyResetAutoLogin = (accessToken, u) => {
+    if (!accessToken || !u) return false;
+    persist(accessToken, u);
+    return true;
   };
 
   const me = async () => {
@@ -160,7 +177,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthCtx.Provider
-      value={{ user, role, loading, token, login, finalizeAccountChoice, signup, me, logout, setUser }}
+      value={{ user, role, loading, token, login, finalizeAccountChoice, signup, applyResetAutoLogin, me, logout, setUser }}
     >
       {children}
     </AuthCtx.Provider>

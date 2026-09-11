@@ -166,7 +166,21 @@ export default function Login({ variant = "staff" } = {}) {
       // a mid-flow reset. Redirect to /reset-password with the token
       // pre-filled so the customer can immediately choose their own
       // password. No access token was issued.
+      //
+      // Feb-2026 · P0 loop fix — defense-in-depth: only honor the
+      // reset-required response for a customer-role payload. If the
+      // backend fixes are in place this is a no-op; if a stale
+      // preview payload leaks a non-customer reset_required, we
+      // surface it as an error instead of dropping the caller into
+      // the customer temp-password UX.
       if (res && res.kind === "reset_required") {
+        if (res.role !== "customer") {
+          setError(
+            "Unexpected sign-in response. Please try again or " +
+            "contact support if the problem persists.",
+          );
+          return;
+        }
         navigate(
           `/reset-password?token=${encodeURIComponent(res.reset_token)}&flow=temp_password`,
           { replace: true },
@@ -188,6 +202,13 @@ export default function Login({ variant = "staff" } = {}) {
     try {
       const pick = await finalizeAccountChoice(chooser.choice_token, accountId);
       if (pick && pick.kind === "reset_required") {
+        if (pick.role !== "customer") {
+          setError(
+            "Unexpected sign-in response. Please try again or " +
+            "contact support if the problem persists.",
+          );
+          return;
+        }
         navigate(
           `/reset-password?token=${encodeURIComponent(pick.reset_token)}&flow=temp_password`,
           { replace: true },
