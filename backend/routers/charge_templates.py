@@ -121,7 +121,7 @@ async def _load_template(tid: str, tenant_id: str,
 
 
 async def _load_job(jid: str, tenant_id: str) -> Dict[str, Any]:
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant_id}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant_id}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     return job

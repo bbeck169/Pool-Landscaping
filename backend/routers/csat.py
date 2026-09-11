@@ -107,7 +107,7 @@ class SendSurveyIn(BaseModel):
 async def send_csat(job_id: str, body: Optional[SendSurveyIn] = None,
                     admin: dict = Depends(require_admin),
                     tenant: dict = Depends(get_current_tenant)):
-    job = await db.jobs.find_one({"id": job_id, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": job_id, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     channel = (body.channel if body else "email") or "email"
@@ -365,7 +365,7 @@ async def run_csat_dispatch_tick() -> None:
     pending = await db.csat_pending.find({"scheduled_for": {"$lte": now}}, {"_id": 0}).to_list(200)
     for p in pending:
         try:
-            job = await db.jobs.find_one({"id": p["job_id"]}, {"_id": 0})
+            job = await db.jobs.find_one({"id": p["job_id"]}, {"_id": 0, "photos.data": 0})
             if job:
                 await _dispatch_survey(job, channel=p.get("channel", "email"))
         except Exception as e:

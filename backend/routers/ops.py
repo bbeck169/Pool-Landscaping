@@ -310,7 +310,7 @@ async def routes_optimize(body: RouteOptimizeIn, user: dict = Depends(require_ad
     if body.tech_id:
         q["technician_id"] = body.tech_id
     q = {**q, **_nd()}
-    jobs = await db.jobs.find(q, {"_id": 0}).to_list(200)
+    jobs = await db.jobs.find(q, {"_id": 0, "photos.data": 0}).to_list(200)
     if not jobs:
         return {"ok": True, "order": [], "note": "No jobs"}
 

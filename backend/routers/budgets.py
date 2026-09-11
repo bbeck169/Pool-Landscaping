@@ -500,7 +500,7 @@ async def job_costing(jid: str,
     """Live job costing snapshot. Reads estimate baseline + actual times/materials."""
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     # Baseline — try attached estimate first.

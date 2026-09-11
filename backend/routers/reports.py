@@ -106,7 +106,7 @@ async def revenue_by_city(start: Optional[str] = None, end: Optional[str] = None
 async def revenue_by_crew(start: Optional[str] = None, end: Optional[str] = None,
                           user: dict = Depends(require_admin)):
     paid = await _fetch_paid(start, end)
-    jobs = await db.jobs.find({}, {"_id": 0}).to_list(10000)
+    jobs = await db.jobs.find({}, {"_id": 0, "photos.data": 0}).to_list(10000)
     job_crew = {j["id"]: j.get("crew_id") for j in jobs}
     crews = await db.crews.find({}, {"_id": 0}).to_list(500)
     crew_name = {c["id"]: c.get("name", "Crew") for c in crews}
@@ -607,7 +607,7 @@ def _to_csv(rows, cols):
 @router.get("/export/jobs")
 async def export_jobs(user: dict = Depends(require_admin),
                       start: Optional[str] = None, end: Optional[str] = None):
-    rows = await db.jobs.find({}, {"_id": 0}).sort("scheduled_date", -1).to_list(10000)
+    rows = await db.jobs.find({}, {"_id": 0, "photos.data": 0}).sort("scheduled_date", -1).to_list(10000)
     if start or end:
         rows = [r for r in rows if _in_range(r.get("scheduled_date") or r.get("created_at"), start, end)]
     # Feb-2026 · P3 — hydrate ``technician_name`` from the current

@@ -641,7 +641,7 @@ async def _apply_resolve_item(
     if action not in _INTEGRITY_ACTIONS:
         raise HTTPException(400, "invalid_action")
 
-    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "job_not_found")
 
@@ -974,7 +974,7 @@ async def _revert_single_audit_row(
     if not job_id:
         return {"job_id": None, "ok": False, "error": "audit_missing_job_id"}
 
-    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0, "photos.data": 0})
     if not job:
         # Hard-deleted after soft-delete — cannot restore.
         return {"job_id": job_id, "ok": False, "error": "job_not_found"}
@@ -1191,7 +1191,7 @@ async def drilldown_line_item_audit(
 
     # K6 hook — only fires when the parent job is completed.
     if inv.get("job_id"):
-        job = await db.jobs.find_one({"id": inv["job_id"]}, {"_id": 0})
+        job = await db.jobs.find_one({"id": inv["job_id"]}, {"_id": 0, "photos.data": 0})
         if job:
             await _emit_k6_completion_audit(
                 job=job, actor=user,

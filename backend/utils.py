@@ -40,7 +40,7 @@ def not_deleted_filter() -> dict:
     Usage::
 
         q = {"tenant_id": tenant["id"], **not_deleted_filter()}
-        docs = await db.jobs.find(q, {"_id": 0}).to_list(...)
+        docs = await db.jobs.find(q, {"_id": 0, "photos.data": 0}).to_list(...)
     """
     return {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]}
 

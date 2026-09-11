@@ -327,7 +327,7 @@ async def log_maintenance(jid: str, body: MaintLogIn, user: dict = Depends(get_c
     from routers.jobs import with_field_report
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    job = await db.jobs.find_one({"id": jid})
+    job = await db.jobs.find_one({"id": jid}, {"photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "technician" and not await is_tech_authorized_on_job(
@@ -360,4 +360,4 @@ async def log_maintenance(jid: str, body: MaintLogIn, user: dict = Depends(get_c
     job_maint["photos"] = photos
     job_maint["logged_at"] = now_iso()
     await db.jobs.update_one({"id": jid}, {"$set": {"maintenance": job_maint, "maintenance_logged": True, "maintenance_type": mtype}})
-    return with_field_report(await db.jobs.find_one({"id": jid}, {"_id": 0}))
+    return with_field_report(await db.jobs.find_one({"id": jid}, {"_id": 0, "photos.data": 0}))

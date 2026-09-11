@@ -308,7 +308,7 @@ async def get_job_detail(
     if role == "customer":
         raise HTTPException(403, "Job detail is a staff-only surface")
 
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
 

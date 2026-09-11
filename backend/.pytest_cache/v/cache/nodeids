@@ -12,5 +12,10 @@
   "tests/test_jobs_list_slim_photos.py::test_include_photos_true_is_strict_superset_of_slim",
   "tests/test_jobs_list_slim_photos.py::test_list_default_drops_full_photos_emits_count_and_ids",
   "tests/test_jobs_list_slim_photos.py::test_list_with_include_photos_true_restores_full_payload",
-  "tests/test_jobs_list_slim_photos.py::test_slim_response_measurably_smaller_than_full"
+  "tests/test_jobs_list_slim_photos.py::test_slim_response_measurably_smaller_than_full",
+  "tests/test_jobs_projection_excludes_photo_blobs.py::test_jobs_detail_still_returns_full_photos_with_base64_data",
+  "tests/test_jobs_projection_excludes_photo_blobs.py::test_jobs_list_include_photos_true_still_ships_full_data",
+  "tests/test_jobs_projection_excludes_photo_blobs.py::test_jobs_list_still_emits_photo_count_and_ids",
+  "tests/test_jobs_projection_excludes_photo_blobs.py::test_list_wire_size_smaller_than_include_photos_variant",
+  "tests/test_jobs_projection_excludes_photo_blobs.py::test_shared_helper_exposes_projection_constants"
 ]

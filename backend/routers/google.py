@@ -99,7 +99,7 @@ async def geocode_addresses(admin: dict = Depends(require_admin)):
             "$and": [{"$or": [{"lat": {"$in": [None, 0]}}, {"lat": {"$exists": False}}]}],
         }
         from utils import not_deleted_filter as _nd
-        async for j in db.jobs.find({**jq, **_nd()}, {"_id": 0}):
+        async for j in db.jobs.find({**jq, **_nd()}, {"_id": 0, "photos.data": 0}):
             processed += 1
             addr = j.get("service_address") or j.get("address")
             if not addr:

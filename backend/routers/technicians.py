@@ -271,7 +271,7 @@ async def get_technician(tid: str, user: dict = Depends(get_current_user)):
     doc = await db.technicians.find_one({"id": tid}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Technician not found")
-    doc["jobs"] = await db.jobs.find({"technician_id": tid}, {"_id": 0}).sort("scheduled_date", -1).to_list(200)
+    doc["jobs"] = await db.jobs.find({"technician_id": tid}, {"_id": 0, "photos.data": 0}).sort("scheduled_date", -1).to_list(200)
     return doc
 
 

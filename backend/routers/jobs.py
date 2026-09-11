@@ -579,11 +579,19 @@ async def list_jobs(
     # ``allowDiskUse=True`` is added as a defense-in-depth guard so
     # a future caller widening the window can't hard-error on a
     # sort spill.
+    # Feb-2026 · PERF-MONGO-PROJECT-EXCLUDE-PHOTOS-ON-JOBS-READS.
+    # The aggregate pipeline's ``$project`` narrows to ``{_id: 0}``
+    # AND drops ``photos.data`` (base64 blob subfield) when the
+    # caller did NOT opt into ``include_photos=true``. The opt-in
+    # branch keeps the full projection so downstream consumers
+    # that legitimately need full photos over the wire still get
+    # them. See ``services/jobs_slim_photos.py`` module comment.
     pipeline: list[dict] = [
         {"$match": q},
         {"$sort": {"scheduled_date": 1}},
         {"$limit": int(limit)},
-        {"$project": {"_id": 0}},
+        {"$project": ({"_id": 0} if include_photos
+                        else {"_id": 0, "photos.data": 0})},
     ]
     docs = await db.jobs.aggregate(pipeline, allowDiskUse=True).to_list(limit)
     # In-Python re-sort to preserve the pre-K65.fix ordering
@@ -1158,7 +1166,7 @@ async def reopen_job(jid: str,
     )
     if cached is not None:
         return cached
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if job.get("status") not in ("completed", "cancelled"):
@@ -1180,7 +1188,7 @@ async def reopen_job(jid: str,
         })
     except Exception:
         pass
-    updated = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    updated = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if idem_key:
         await store_response(idem_key, "POST /jobs/{jid}/reopen",
                               tenant["id"], updated, idem_body)
@@ -1277,7 +1285,7 @@ async def work_order_pdf(jid: str,
                          user: dict = Depends(get_current_user),
                          tenant: dict = Depends(get_current_tenant)):
     """Streams a printable work-order PDF for the given job."""
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     # role scoping — F1 · crew-aware tech gate (was
@@ -1305,7 +1313,7 @@ async def email_work_order(jid: str, body: dict,
     Falls back gracefully with `sent=False, reason='resend-not-configured'` if RESEND_API_KEY absent."""
     import base64
     from config import RESEND_API_KEY
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     to = (body.get("to") or "").strip().lower()
@@ -1376,6 +1384,11 @@ async def create_service_request(body: ServiceRequestIn,
 async def get_job(jid: str,
                   user: dict = Depends(get_current_user),
                   tenant: dict = Depends(get_current_tenant)):
+    # Feb-2026 · PERF-MONGO-PROJECT-EXCLUDE-PHOTOS ship exception —
+    # this is the single-job DETAIL handler; wire contract requires
+    # full ``photos`` including base64 ``data``. Explicitly OPT OUT
+    # of the ``{"photos.data": 0}`` projection applied everywhere
+    # else. See ``services/jobs_slim_photos.py`` module comment.
     doc = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Job not found")
@@ -1436,7 +1449,7 @@ async def update_field_report(jid: str, body: FieldReportUpdate,
                               tenant: dict = Depends(get_current_tenant)):
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "technician" and not await is_tech_authorized_on_job(
@@ -1449,7 +1462,7 @@ async def update_field_report(jid: str, body: FieldReportUpdate,
     # Auto-bill: when chemicals are logged, accrue them onto the customer's monthly invoice.
     if "chemicals_added" in update:
         from routers.finances import accrue_chem_invoice
-        job_fresh = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+        job_fresh = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
         await accrue_chem_invoice(job_fresh)
         # QuoteIQ Q1-B — snapshot chemical usage for profitability rollups.
         # Idempotent per (tenant, service_report_id=jid): re-submits replace
@@ -1469,7 +1482,7 @@ async def update_field_report(jid: str, body: FieldReportUpdate,
         except Exception as _e:
             pass  # snapshot failure never blocks the field-report write
     return with_field_report(
-        await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+        await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     )
 
 
@@ -1516,7 +1529,7 @@ async def log_history(customer_id: str,
 async def update_job(jid: str, body: JobUpdate,
                      user: dict = Depends(get_current_user),
                      tenant: dict = Depends(get_current_tenant)):
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     # Feb-2026 · Schedule-screen inline edit — the Edit affordance
@@ -1786,7 +1799,7 @@ async def update_job(jid: str, body: JobUpdate,
                 }})
             await notify_customer(cid, "Service complete",
                                   f"Your {job.get('service_type', 'service')} is complete. View your report in the app.", job_id=jid)
-            fresh = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+            fresh = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
             await send_completion_email(fresh)
             # Feb-2026 · Door-hanger auto-send on completion transition.
             # Fire-and-forget so the PUT response returns immediately.
@@ -2074,7 +2087,7 @@ async def patch_job_edit_window(
         hours_since_completion, is_within_edit_window,
         role_bypasses_edit_window,
     )
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"photos.data": 0})
     role = (user.get("role") or "").lower()
     # Gate 1 · soft-delete visibility.
     if not job:
@@ -2865,7 +2878,7 @@ async def undelete_job(jid: str,
 async def on_my_way(jid: str,
                     user: dict = Depends(get_current_user),
                     tenant: dict = Depends(get_current_tenant)):
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
@@ -2974,7 +2987,7 @@ async def job_arrive(jid: str, body: JobArriveIn,
         except Exception as _e:
             logger.warning("[p37] audit-log write failed: %s", _e)
 
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
@@ -3089,7 +3102,7 @@ async def undo_job_timer_start(jid: str, body: JobTimerUndoIn,
                                      request: Request,
                                      user: dict = Depends(get_current_user),
                                      tenant: dict = Depends(get_current_tenant)):
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
@@ -3168,7 +3181,7 @@ async def job_timers_report(technician_id: Optional[str] = None, customer_id: Op
         query["technician_id"] = technician_id
     if customer_id:
         query["customer_id"] = customer_id
-    jobs = await db.jobs.find(query, {"_id": 0}).to_list(5000)
+    jobs = await db.jobs.find(query, {"_id": 0, "photos.data": 0}).to_list(5000)
     cust_ids = list({j.get("customer_id") for j in jobs if j.get("customer_id")})
     custs = {c["id"]: c async for c in db.customers.find(
         {"id": {"$in": cust_ids}, "tenant_id": tenant["id"]},
@@ -3639,7 +3652,7 @@ async def add_job_photo(jid: str, body: PhotoIn,
     )
     if cached is not None:
         return cached
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
@@ -3716,7 +3729,7 @@ async def add_service_issue(jid: str, body: ServiceIssueIn,
     )
     if cached is not None:
         return cached
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
@@ -3733,7 +3746,7 @@ async def add_service_issue(jid: str, body: ServiceIssueIn,
                           if isinstance(i, dict)}
         if body.client_uuid in _existing_ids:
             resp_existing = with_field_report(
-                await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+                await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
             )
             if idem_key:
                 await store_response(idem_key, "POST /jobs/{jid}/issues",
@@ -3753,7 +3766,7 @@ async def add_service_issue(jid: str, body: ServiceIssueIn,
         {"id": jid, "tenant_id": tenant["id"]}, {"$push": {"service_issues": issue}}
     )
     resp = with_field_report(
-        await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+        await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     )
     if idem_key:
         await store_response(idem_key, "POST /jobs/{jid}/issues",
@@ -3765,7 +3778,7 @@ async def add_service_issue(jid: str, body: ServiceIssueIn,
 async def approve_service_issue(jid: str, iid: str,
                                 user: dict = Depends(get_current_user),
                                 tenant: dict = Depends(get_current_tenant)):
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer" and job.get("customer_id") != user.get("customer_id"):
@@ -3774,7 +3787,7 @@ async def approve_service_issue(jid: str, iid: str,
         {"id": jid, "tenant_id": tenant["id"], "service_issues.id": iid},
         {"$set": {"service_issues.$.status": "approved", "service_issues.$.approved_at": now_iso()}},
     )
-    updated = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    updated = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     issue = next((i for i in updated.get("service_issues", []) if i["id"] == iid), None)
     if issue:
         await create_staff_notification(
@@ -3795,5 +3808,5 @@ async def delete_service_issue(jid: str, iid: str,
         {"$pull": {"service_issues": {"id": iid}}},
     )
     return with_field_report(
-        await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+        await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     )

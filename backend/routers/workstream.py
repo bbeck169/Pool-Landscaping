@@ -323,7 +323,7 @@ async def list_workstream_jobs(
     # (customer_name / tech_name) after the join. Cap to a safe upper
     # bound; the aggregator is not intended for full-table exports.
     fetch_cap = min(500, max(limit + offset, limit) * 2)
-    docs = await db.jobs.find(q, {"_id": 0}).sort(
+    docs = await db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort(
         "scheduled_date", -1
     ).to_list(fetch_cap)
 

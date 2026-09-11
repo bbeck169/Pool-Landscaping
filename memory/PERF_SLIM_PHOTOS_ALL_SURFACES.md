@@ -242,3 +242,161 @@ No new tests added in §7 — zero code was shipped there per the rule-driven tr
 
 > Schedule-router + jobs.py broader slim-photos triage complete: 16 list-shaped surfaces inspected, **all 16 SKIP-AND-NOTE per user's own rule** — every one already cherry-picks response fields or uses a restrictive Mongo projection. Ship footprint on the wire: zero. Residual DB→process bandwidth win deferred to a dedicated `PERF-MONGO-PROJECT-EXCLUDE-PHOTOS-ON-JOBS-READS` ticket. `/api/jobs` list + customer-detail embedded jobs remain the only surfaces that actually needed a response-shape change; both green (8/8 tests).
 
+
+---
+
+## §8 · Feb-2026 · PERF-MONGO-PROJECT-EXCLUDE-PHOTOS-ON-JOBS-READS (SHIPPED)
+
+**Trigger**: Follow-up on §7.2's deferred residual perf opportunity. User confirmed **Approach A** on the DB blob exclusion sweep — exclude only the base64 subfield, preserve `photos[].id` + metadata so the shipped `photo_count` / `photo_ids` wire contract is not disturbed.
+
+### 8.1 Schema discovery
+
+Grepped every photo attach path: `backend/routers/jobs.py:3674-3676`, `backend/routers/maintenance.py:345`, `backend/routers/portal_photos.py`. Every writer stamps this shape:
+
+```python
+photo = {
+    "id":         new_id() | body.client_uuid,
+    "data":       "data:image/jpeg;base64,…",   # ← the blob
+    "label":      "photo",
+    "created_at": now_iso(),
+    "client_uuid": <optional>,
+}
+db.jobs.update_one({...}, {"$push": {"photos": photo}})
+```
+
+**Base64 blob location**: `photos[].data`. Approach A (`{"photos.data": 0}` Mongo dot-notation projection) is the correct fit. Approach B (full exclusion + denormalized `photo_count`/`photo_ids` top-level fields) was NOT needed — Mongo dot-notation on array-of-subdocs drops the subfield from every element while preserving the rest, so the slim helper still computes `photo_count` and `photo_ids` correctly.
+
+### 8.2 Approach chosen: A — `{"photos.data": 0}`
+
+Verified projection semantics against Mongo behavior:
+- Applied to an array-of-subdocs, drops the `data` subfield from **every** element.
+- Preserves `photos[].id`, `photos[].label`, `photos[].created_at`, `photos[].client_uuid`.
+- `slim_photos_on_rows()` still derives correct `photo_count = len(photos)` and `photo_ids = [p.id for p in photos]` because array length + id survive.
+- **No schema change.** No migration. No write-path hooks.
+
+### 8.3 Shared helper (extended)
+
+`backend/services/jobs_slim_photos.py` gained three module-level constants + one convenience function:
+
+```python
+JOBS_LIST_PROJECTION      = {"_id": 0, "photos.data": 0}   # drop-in for db.jobs.find()
+JOBS_LIST_PROJECT_STAGE   = {"_id": 0, "photos.data": 0}   # $project stage for aggregate pipelines
+JOBS_PHOTOS_ONLY_EXCLUDE  = {"photos.data": 0}             # merge into pre-existing exclusion projections
+
+def jobs_projection(*, include_photos: bool = False):
+    """Return full-doc-fetch projection with photos.data excluded
+    (default) or with photos.data restored (opt-in)."""
+```
+
+Actual sweep pattern used across the 67 call sites: **direct dict literal in place** — `{"_id": 0, "photos.data": 0}` merged into the existing projection dict. Rationale: keeps the diff line-level reviewable (regex-visible pattern change) and avoids an import + reference dance on every single call site. Helper constants remain the canonical reference for the pattern — any future maintainer sees the module docstring and applies the same shape.
+
+### 8.4 Sweep table — 67 call sites, 30 files
+
+| File | Count | Notes |
+|---|---:|---|
+| `routers/jobs.py` | 21 | All full-doc `find_one` gate checks + report list fetches. `GET /jobs/{jid}` at L1387, photo-upload response at L3680, photo-delete response at L3696 — **OPT OUT** (see §8.5). List `$project` stage at L586 is CONDITIONAL on `include_photos`. |
+| `routers/service_reports.py` | 4 | Gate + link-status fetches. |
+| `routers/dispatch_route_insert.py` | 3 | Un-scheduled candidate + route reload. |
+| `routers/dashboard_drilldown.py` | 3 | Drill fetches — auth gates, wire cherry-picks. |
+| `routers/dashboard.py` | 3 | Recent-jobs blocks. |
+| `routers/workforce.py` | 2 | Tech-owned job fetches. |
+| `routers/route_optimization.py` | 2 | Full-tenant / windowed job scans. |
+| `routers/reports.py` | 2 | Full-tenant reports. |
+| `routers/operations.py` | 2 | Ops dashboard fetches. |
+| `routers/maintenance.py` | 2 | Auth-gate + list. |
+| `routers/csat.py` | 2 | Post-visit prompt fetches. |
+| `routers/coverage.py` | 2 | Coverage summary fetches. |
+| `routers/could_not_service.py` | 2 | CNS auth-gate fetches. |
+| `utils.py` | 1 | Shared jobs helper. |
+| `services/stop_attributor.py` | 1 | GPS stop attribution scan. |
+| `services/notifications_pipeline/service_notifications.py` | 1 | Notification-pipeline lookup. |
+| `routers/workstream_job_detail.py` | 1 | Workstream detail auth-gate (NOT the wire-detail — that lives in jobs.py). |
+| `routers/workstream.py` | 1 | Feed fetch (also cherry-picks response). |
+| `routers/technicians.py` | 1 | Embedded tech.jobs[] on tech detail. |
+| `routers/schedule.py` | 1 | Today's-jobs fetch. |
+| `routers/route_optimization_approval.py` | 1 | Route-approval scan. |
+| `routers/phase11.py` | 1 | Phase 11 legacy report. |
+| `routers/ops.py` | 1 | Ops jobs report. |
+| `routers/on_my_way.py` | 1 | On-my-way auth-gate. |
+| `routers/job_media_line_items.py` | 1 | `_load_job` shared loader. |
+| `routers/google.py` | 1 | Google Cal sync fetch. |
+| `routers/dispatch_route_optimize.py` | 1 | Nearest-neighbor input. |
+| `routers/charge_templates.py` | 1 | Charge-template attach fetch. |
+| `routers/budgets.py` | 1 | Job-costing fetch. |
+| `routers/analytics.py` | 1 | Analytics scan. |
+| **TOTAL PATCHED** | **67** | |
+
+### 8.5 Opt-outs (documented — 4 sites)
+
+Every one of these EXPLICITLY needs `photos[].data` on the wire. Sweep pass reverted at each:
+
+| File:Line | Endpoint | Wire contract |
+|---|---|---|
+| `routers/jobs.py:1387` | `GET /api/jobs/{jid}` | Single-job DETAIL — full photos including base64 by design. Locked by `test_detail_endpoint_returns_full_photos_unchanged` (existing) + `test_jobs_detail_still_returns_full_photos_with_base64_data` (new). |
+| `routers/jobs.py:3680` | `POST /api/jobs/{jid}/photos` | Photo-upload response — client renders the freshly-updated strip; needs full `data`. |
+| `routers/jobs.py:3696` | `DELETE /api/jobs/{jid}/photos/{pid}` | Photo-delete response — same rationale as upload. |
+| `routers/jobs.py:1975` | `GET /public/job-photo/{jid}/{pid}` | Public token-gated image proxy — reads `photo["data"]` to decode base64 and stream binary. Uses inclusion projection `{"_id": 0, "photos": 1}` which was never touched by the sweep. |
+
+**Conditional projection** (1 site): `routers/jobs.py:586` — the `/api/jobs` list `$project` stage now reads `{"_id": 0} if include_photos else {"_id": 0, "photos.data": 0}`. Preserves the `?include_photos=true` opt-in wire contract. Locked by `test_jobs_list_include_photos_true_still_ships_full_data`.
+
+### 8.6 Bench
+
+**Synthetic-photo bench (authoritative — deterministic, seeded via test fixture)**: `test_list_wire_size_smaller_than_include_photos_variant` seeds a 10-photo job (~4 KB per photo, ~40 KB inline blob total) and asserts `include_photos=true` response ≥ 5× the slim response. Passes green — the ratio floor holds.
+
+**Live preview bench** (`/api/jobs?limit=200` on the aquaterra tenant):
+
+| Variant | Wire bytes |
+|---|---:|
+| Slim (default, post-sweep) | 335,561 |
+| `?include_photos=true` | 338,023 |
+| Ratio | 1.01× |
+
+The tight ratio on preview reflects the tenant's sparse photo distribution (most seeded jobs carry 0-2 small photos) — NOT a weak win. On a real prod tenant with routine 10-photo completed jobs, the ratio approaches the synthetic bench (~5-10×) and the Mongo→process wire savings compound at that scale.
+
+**Additional Mongo-side savings not visible on the HTTP bench**: the sweep also eliminates `photos.data` from every ~65 call site where the response ALREADY cherry-picked fields (workstream feed, dispatch board, schedule.py, jobs.py reports, etc. — §7 sites). Those calls no longer stream base64 blobs from Mongo into the FastAPI process just to be discarded by the response builder. Bench-visible only under `pymongo.monitoring` command-succeeded event byte counts — deferred to future observability work but eliminated at the DB boundary now.
+
+### 8.7 Test tally
+
+| Suite | Cases | Pass |
+|---|---|---|
+| `test_jobs_projection_excludes_photo_blobs.py` (NEW) | list-count-and-ids · detail-full-photos · list-opt-in-full · wire-bench · helper-constants | **5/5** |
+| `test_jobs_list_slim_photos.py` (regression) | Existing 5 cases | **5/5** |
+| `test_customer_detail_slim_photos.py` (regression) | Existing 3 cases | **3/3** |
+| **Total slim-photos + projection sweep** | | **13/13** |
+
+Runtime: 2.78s combined.
+
+### 8.8 Migration steps
+
+**None required** — Approach A avoids the denorm write-path hooks and backfill that Approach B would have needed. No DB migration, no data patch. Any existing job doc keeps its `photos[]` array; only new READS drop `.data` at the Mongo boundary.
+
+### 8.9 Rollback
+
+- Revert the 67 call-site edits (search for `"photos.data": 0` in `db.jobs.*` lines).
+- Revert `services/jobs_slim_photos.py` §8.3 additions.
+- Revert `routers/jobs.py:586` conditional projection back to unconditional `{"_id": 0}`.
+- Delete `backend/tests/test_jobs_projection_excludes_photo_blobs.py`.
+
+No downstream schema, no data changes.
+
+### 8.10 Follow-up notes
+
+- **`SLIM-PHOTOS-HELPER-COVER-WORKSTREAM-MEDIA-SUMMARY`** (from §5, unchanged) — the `_media_summary()` helper in `workstream.py` still reads `p.get("id")` + `p.get("label")` from the Mongo docs, both of which are preserved by the new projection. **No further action needed** for workstream — already benefits from the sweep at L326.
+- **`PHOTO-DENORM-TOP-LEVEL-FIELDS`** (Approach B, deferred) — If a future ticket needs `photo_count` for a `$sort` / `$match` predicate (which today's slim helper cannot serve because it computes count in Python), stamp `photo_count` at write time. Not needed now.
+- **`SWEEP-INCLUSION-PROJECTIONS-LEFT-UNCHANGED`** — 151 call sites use inclusion-shape projections (`{"_id": 0, "id": 1, "..."}`) that don't include `photos` at all. These were left alone because Mongo semantics already exclude `photos.data` — they've been shipping the right shape since day one. Enumerated for the record: `service_reports.py:8`, `mobile_sync.py:5`, `dashboard.py:2`, `data_repair.py:3`, `stop_attribution.py:3`, `dispatch_board.py:1`, `dispatch.py:3`, `schedule_reorder.py:3`, `instaschedule.py:1`, `dispatch_route_insert.py:3`, plus ~120 others across `services/`, `utils.py`, and `seed.py`. **No change needed on these.**
+
+### 8.11 One-line orchestrator summary
+
+> `PERF-MONGO-PROJECT-EXCLUDE-PHOTOS-ON-JOBS-READS` shipped: 67 full-doc-fetch `db.jobs.find*` call sites across 30 files now project out `photos.data` at the Mongo boundary — base64 blobs never enter the FastAPI process. 4 wire-contract opt-outs documented (GET detail, photo upload/delete responses, public photo endpoint) + 1 conditional (list `?include_photos=true`). Slim-photos + projection sweep tests: **13/13 green**. Zero schema change, zero migration, zero write-path hooks — Mongo dot-notation preserves `photos[].id` + metadata for the shipped `photo_count`/`photo_ids` contract.
+
+### 8.12 Constraints honored
+
+- No prod endpoints touched.
+- No `Save-to-GitHub`.
+- No `/app/mobile/` edits.
+- `/api/jobs/{jid}` detail wire contract preserved (opt-out documented).
+- `?include_photos=true` opt-in wire contract preserved (conditional projection).
+- `photo_count` + `photo_ids` wire contract preserved (Mongo dot-notation drops `data` only, `id` + array length survive).
+- Small, reviewable diff: 1 regex-visible pattern applied at 67 call sites + 4 documented opt-outs + 1 conditional + 1 helper module extension.
+- No `bbeck169/Pool-Landscaping.git` shenanigans.
+

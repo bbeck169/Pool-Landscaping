@@ -152,7 +152,7 @@ async def optimize_route(
         "scheduled_start": {"$gte": day_start, "$lte": day_end},
     }
     query = {**query, **_nd()}
-    jobs = await db.jobs.find(query, {"_id": 0}).to_list(100)
+    jobs = await db.jobs.find(query, {"_id": 0, "photos.data": 0}).to_list(100)
     # Feb-2026 · Slice 4 (MP1.6) — resolve every stop through the
     # shared stop-geo resolver so a job with ``property_id`` set uses
     # the property's coords (lazy-geocoding the property once when
@@ -513,7 +513,7 @@ async def get_route_stops(
         }],
     }
     q = {**q, **_nd()}
-    jobs = await db.jobs.find(q, {"_id": 0}).sort(
+    jobs = await db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort(
         [("route_order", 1), ("scheduled_start", 1)]
     ).to_list(200)
 

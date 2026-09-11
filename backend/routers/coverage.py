@@ -25,7 +25,7 @@ async def _revert_coverage(cov: dict) -> int:
     """Restore original technician on any covered job still not completed. Returns count reverted."""
     reverted = 0
     for jid in cov.get("job_ids", []):
-        job = await db.jobs.find_one({"id": jid}, {"_id": 0})
+        job = await db.jobs.find_one({"id": jid}, {"_id": 0, "photos.data": 0})
         if not job:
             continue
         # Only revert if it's still on the substitute and not completed.
@@ -70,7 +70,7 @@ async def create_coverage(body: CoverageIn, admin: dict = Depends(require_admin)
 
     query = {"technician_id": body.source_technician_id, "status": {"$ne": "completed"}, **date_filter}
     query = {**query, **_nd()}
-    jobs = await db.jobs.find(query, {"_id": 0}).to_list(1000)
+    jobs = await db.jobs.find(query, {"_id": 0, "photos.data": 0}).to_list(1000)
     if not jobs:
         raise HTTPException(400, f"{src['name']} has no open stops to move for {label}.")
 

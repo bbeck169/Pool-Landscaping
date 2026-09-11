@@ -50,7 +50,7 @@ async def dashboard(user: dict = Depends(get_current_user),
             {**base, "status": {"$in": ["pending", "active", "requested"]}, **_nd()}, {"_id": 0}
         ).sort("scheduled_date", 1).to_list(20)
         next_service = upcoming[0] if upcoming else None
-        recent = await db.jobs.find(base, {"_id": 0}).sort("created_at", -1).to_list(5)
+        recent = await db.jobs.find(base, {"_id": 0, "photos.data": 0}).sort("created_at", -1).to_list(5)
         cust = await db.customers.find_one({"id": cid, "tenant_id": tid}, {"_id": 0}) or {}
         unread_messages = await db.messages.count_documents(
             {**base, "sender": "business", "read_by_customer": False}
@@ -130,7 +130,7 @@ async def dashboard(user: dict = Depends(get_current_user),
         "$and": [_not_deleted, _not_muted],
     })
 
-    recent = await db.jobs.find(tenant_q, {"_id": 0}).sort("created_at", -1).to_list(6)
+    recent = await db.jobs.find(tenant_q, {"_id": 0, "photos.data": 0}).sort("created_at", -1).to_list(6)
 
     now = datetime.now(timezone.utc)
     seq = []
@@ -156,7 +156,7 @@ async def dashboard(user: dict = Depends(get_current_user),
     revenue_series = [{"label": month_names[m - 1], "value": round(buckets[f"{y}-{m:02d}"], 2)} for (y, m) in seq]
 
     svc: dict = {}
-    alljobs = await db.jobs.find({**tenant_q, **_nd()}, {"_id": 0}).to_list(2000)
+    alljobs = await db.jobs.find({**tenant_q, **_nd()}, {"_id": 0, "photos.data": 0}).to_list(2000)
     for j in alljobs:
         k = j.get("service_type") or "Other"
         svc[k] = svc.get(k, 0.0) + (j.get("price") or 0.0)

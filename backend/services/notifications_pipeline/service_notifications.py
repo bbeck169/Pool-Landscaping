@@ -382,7 +382,7 @@ async def _due_reminder_jobs_for_tenant(
         "scheduled_date": {"$exists": True, "$ne": None},
     }
     due: List[Dict[str, Any]] = []
-    cursor = db.jobs.find(prefilter, {"_id": 0})
+    cursor = db.jobs.find(prefilter, {"_id": 0, "photos.data": 0})
     async for job in cursor:
         dt = _parse_scheduled_date(job.get("scheduled_date"), tenant)
         if dt is None:

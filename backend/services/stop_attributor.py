@@ -131,7 +131,7 @@ async def find_candidate_jobs(*, tenant_id: str, user_id: str,
     # cap at the fan-out limit — old jobs shouldn't crowd out today's
     # scheduled work.
     jobs: List[Dict[str, Any]] = []
-    async for j in (db.jobs.find(q, {"_id": 0})
+    async for j in (db.jobs.find(q, {"_id": 0, "photos.data": 0})
                     .sort("scheduled_date", -1)
                     .limit(2000)):
         jobs.append(j)

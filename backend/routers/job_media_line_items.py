@@ -73,7 +73,7 @@ def _is_tech(user: Dict[str, Any]) -> bool:
 
 
 async def _load_job(jid: str, tenant_id: str) -> Dict[str, Any]:
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant_id})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant_id}, {"photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     return job

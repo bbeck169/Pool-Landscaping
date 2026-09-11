@@ -125,7 +125,7 @@ async def _load_day_jobs(tenant_id: str,
     }
     q = {**q, **_nd()}
     jobs: list[dict[str, Any]] = []
-    async for j in db.jobs.find(q, {"_id": 0}).sort([("route_index", 1),
+    async for j in db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort([("route_index", 1),
                                                        ("scheduled_start", 1)]):
         jobs.append(j)
     return jobs

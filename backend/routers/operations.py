@@ -83,7 +83,7 @@ async def activity(user: dict = Depends(require_admin),
     """Unified reverse-chronological activity feed across the CRM."""
     tid = tenant["id"]
     events = []
-    jobs = await db.jobs.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", -1).to_list(60)
+    jobs = await db.jobs.find({"tenant_id": tid}, {"_id": 0, "photos.data": 0}).sort("created_at", -1).to_list(60)
     for j in jobs:
         ref = {"type": "job", "id": j.get("id")}
         if j.get("status") == "requested":
@@ -175,7 +175,7 @@ async def _compute_reports(tenant_id: str, date_from: str | None = None, date_to
     month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     revenue_series = [{"label": month_names[m - 1], "value": round(buckets[f"{y}-{m:02d}"], 2)} for (y, m) in seq]
 
-    all_jobs = await db.jobs.find({**tq, **_nd()}, {"_id": 0}).to_list(3000)
+    all_jobs = await db.jobs.find({**tq, **_nd()}, {"_id": 0, "photos.data": 0}).to_list(3000)
     all_jobs = [j for j in all_jobs if _in_range(j.get("scheduled_date") or j.get("created_at"), date_from, date_to)]
     status_counts: dict = {}
     for j in all_jobs:

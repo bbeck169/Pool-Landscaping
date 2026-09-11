@@ -167,7 +167,7 @@ async def optimize_route(body: OptimizeBody,
                   {"technician_id": tech_id}]}
     jobs: List[Dict[str, Any]] = []
     q = {**q, **_nd()}
-    async for j in db.jobs.find(q, {"_id": 0}).sort("route_index", 1):
+    async for j in db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort("route_index", 1):
         jobs.append(j)
     if not jobs:
         raise HTTPException(404, detail="no_jobs_for_tech_on_date")

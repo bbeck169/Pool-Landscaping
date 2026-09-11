@@ -212,7 +212,7 @@ async def could_not_service(
         raise HTTPException(403, "role not permitted")
     tid = tenant["id"]
 
-    job = await db.jobs.find_one({"id": job_id, "tenant_id": tid}, {"_id": 0})
+    job = await db.jobs.find_one({"id": job_id, "tenant_id": tid}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "job not found")
     current_status = str(job.get("status") or "").lower()
@@ -312,7 +312,7 @@ async def could_not_service(
         "[could_not_service] tenant=%s job=%s user=%s reason_key=%s sms=%s",
         tid, job_id, user.get("id"), reason.get("key"), sms_result,
     )
-    fresh_job = await db.jobs.find_one({"id": job_id, "tenant_id": tid}, {"_id": 0})
+    fresh_job = await db.jobs.find_one({"id": job_id, "tenant_id": tid}, {"_id": 0, "photos.data": 0})
     return {
         "status": "could_not_service",
         "job": fresh_job,

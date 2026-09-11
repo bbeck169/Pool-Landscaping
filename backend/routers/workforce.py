@@ -538,7 +538,7 @@ async def crew_map(admin: dict = Depends(require_admin),
 async def job_cost(job_id: str,
                     user: dict = Depends(get_current_user),
                     tenant: dict = Depends(get_current_tenant)):
-    job = await db.jobs.find_one({"id": job_id, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": job_id, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     s = _settings(tenant)
@@ -821,7 +821,7 @@ async def auto_clock_in(body: AutoClockInReq,
         "scheduled_start": {"$gte": day_start, "$lt": day_end},
     }
     from utils import not_deleted_filter as _nd
-    jobs_today = await db.jobs.find({**query, **_nd()}, {"_id": 0}).to_list(50)
+    jobs_today = await db.jobs.find({**query, **_nd()}, {"_id": 0, "photos.data": 0}).to_list(50)
 
     # Split by geofence first.
     in_geofence: list = []

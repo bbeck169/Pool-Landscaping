@@ -157,7 +157,7 @@ async def schedule_today(request: Request,
     # dict-spread ``_nd()`` in again (that's what caused the
     # tech-visibility leak this ship fixed).
     _t_jobs = _t.perf_counter()
-    jobs = await db.jobs.find(job_q, {"_id": 0}).sort(
+    jobs = await db.jobs.find(job_q, {"_id": 0, "photos.data": 0}).sort(
         [("scheduled_date", 1), ("route_index", 1), ("created_at", 1)]
     ).to_list(200)
     _timings.append(f"jobs;dur={(_t.perf_counter()-_t_jobs)*1000:.1f}")

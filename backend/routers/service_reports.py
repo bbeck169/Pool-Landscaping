@@ -423,7 +423,7 @@ async def create_service_report(body: ServiceReportCreateIn,
 async def get_service_report(jid: str,
                              user: dict = Depends(get_current_user),
                              tenant: dict = Depends(get_current_tenant)):
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     tech_id = await _authorize_report(job, user)
@@ -546,7 +546,7 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
         body.dict(exclude_unset=True))
     if cached is not None:
         return cached
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     tech_id = await _authorize_report(job, user)
@@ -686,7 +686,7 @@ async def submit_service_report(
     logger.info(
         f"service_report_submit start job={jid} tenant={tenant['id']}"
     )
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     tech_id = await _authorize_report(job, user)
@@ -2283,7 +2283,7 @@ async def list_my_service_reports(
 
     out = []
     for sr in rows:
-        job = await db.jobs.find_one({"id": sr.get("job_id")}, {"_id": 0}) or {}
+        job = await db.jobs.find_one({"id": sr.get("job_id")}, {"_id": 0, "photos.data": 0}) or {}
         # Feb-2026 · Multi-body Phase 1 — expose a compact body summary
         # so the customer portal history list can render badges without
         # loading each report's full water_bodies payload.

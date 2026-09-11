@@ -180,7 +180,7 @@ async def insert_route_job(body: InsertBody,
                   {"technician_id": tech_id}]}
     existing: List[Dict[str, Any]] = []
     q = {**q, **_nd()}
-    async for j in db.jobs.find(q, {"_id": 0}).sort("route_index", 1):
+    async for j in db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort("route_index", 1):
         existing.append(j)
 
     # Resolve each existing job's coords; drop any that can't geocode
@@ -229,7 +229,7 @@ async def insert_route_job(body: InsertBody,
     # Build response payload — reload the final ordered list.
     final: List[Dict[str, Any]] = []
     q = {**q, **_nd()}
-    async for j in db.jobs.find(q, {"_id": 0}).sort("route_index", 1):
+    async for j in db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort("route_index", 1):
         c = await _job_coords(j)
         final.append({"job_id": j["id"], "address": j.get("address") or "",
                        "lat": c[0] if c else None,
@@ -300,7 +300,7 @@ async def preview_insert_batch(body: PreviewBatchBody,
                     {"technician_id": body.tech_user_id}]}
     existing_pts: List[Tuple[float, float]] = []
     q = {**q, **_nd()}
-    async for j in db.jobs.find(q, {"_id": 0}).sort("route_index", 1):
+    async for j in db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort("route_index", 1):
         c = await _job_coords(j)
         if c:
             existing_pts.append(c)

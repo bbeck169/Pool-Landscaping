@@ -213,7 +213,7 @@ async def on_my_way(
         raise HTTPException(403, "role not permitted")
 
     tid = tenant["id"]
-    job = await db.jobs.find_one({"id": job_id, "tenant_id": tid}, {"_id": 0})
+    job = await db.jobs.find_one({"id": job_id, "tenant_id": tid}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "job not found")
 
