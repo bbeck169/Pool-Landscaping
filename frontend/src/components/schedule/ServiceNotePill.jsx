@@ -81,14 +81,22 @@ export function ServiceNotePill({ note, serviceType, jobId, testid, compact = fa
   if (!note) return null;
 
   const group = classifyServiceType(serviceType);
-  let bg, fg, border, Icon;
-  if (group === "landscape") {
-    bg = "#DCFCE7"; fg = "#166534"; border = "#86EFAC"; Icon = Trees;
-  } else if (group === "pool") {
-    bg = "#DBEAFE"; fg = "#075985"; border = "#7DD3FC"; Icon = Droplets;
-  } else {
-    bg = "#F3F4F6"; fg = "#4B5563"; border = "#D1D5DB"; Icon = Info;
-  }
+  // Feb-2026 · Schedule Notes-pill visibility bump (user request) —
+  // pill bg/text are uniformly yellow-200 + red-700 bold regardless
+  // of service type so the "Note" chip stops competing with the pool
+  // (blue) / landscape (green) group tints and reads as a warning.
+  // The service-type icon (Droplets / Trees / Info) is retained so
+  // tech / dispatcher still gets the group tell at a glance.
+  // Tailwind token equivalents: bg-yellow-200 / text-red-700 /
+  // border-yellow-400. Chosen for WCAG AA on the pill's small
+  // bold text (≈4.6:1 contrast).
+  let Icon;
+  if (group === "landscape") Icon = Trees;
+  else if (group === "pool") Icon = Droplets;
+  else Icon = Info;
+  const bg = "#FEF08A";     // yellow-200
+  const fg = "#B91C1C";     // red-700
+  const border = "#FACC15"; // yellow-400
 
   const safe = String(note);
   const overflow = safe.length > PREVIEW_MAX_CHARS;
@@ -137,7 +145,7 @@ export function ServiceNotePill({ note, serviceType, jobId, testid, compact = fa
             lineHeight: "16px",
             maxWidth: "100%",
             wordBreak: "break-word",
-            fontWeight: 500,
+            fontWeight: 700,
           }}
         >
           <span data-testid={`${pillTid}-preview-text`}>{shownText}</span>
