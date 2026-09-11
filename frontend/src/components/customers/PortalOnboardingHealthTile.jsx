@@ -171,7 +171,7 @@ function TileSkeleton() {
 }
 
 
-export default function PortalOnboardingHealthTile() {
+export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -180,6 +180,13 @@ export default function PortalOnboardingHealthTile() {
   // refetches its cohort counts after the batch resolves. The
   // server has a 60s cache so consecutive bumps within the window
   // return the same numbers, which is intentional.
+  //
+  // Feb-2026 · Bulk-Portal-Invite-from-CustomersList ship — the
+  // ``externalRefetchToken`` prop plumbs the SAME refetch signal
+  // from the parent CustomersList toolbar button (which reuses the
+  // Phase H1 bulk modal that lives on the customers page rather
+  // than inside this tile). Any change to the token triggers the
+  // useEffect; identity-stable initial mount stays a single fetch.
   const [refetchTick, setRefetchTick] = useState(0);
 
   useEffect(() => {
@@ -204,7 +211,7 @@ export default function PortalOnboardingHealthTile() {
       }
     })();
     return () => { cancelled = true; };
-  }, [refetchTick]);
+  }, [refetchTick, externalRefetchToken]);
 
   if (loading) {
     return <TileSkeleton />;

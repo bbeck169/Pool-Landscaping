@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
-import { Plus, Search, Upload, Download, Filter, MoreVertical, Users, Tag, BellRing, UserCheck, UserX, Star, Send } from "lucide-react";
+import { Plus, Search, Upload, Download, Filter, MoreVertical, Users, Tag, BellRing, UserCheck, UserX, Star, Send, Mail } from "lucide-react";
 import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -1167,12 +1167,45 @@ export default function CustomersList() {
             <Button onClick={() => navigate("/customers/new")} testid="customers-new-button">
               <Plus size={16} /> New Customer
             </Button>
+            {/* Feb-2026 · Bulk Portal Invite from customers top-menu.
+                Reuses the pre-existing Phase H1 modal
+                (test-id "h1-modal-portal-invite") rather than
+                extracting a common shell — that modal is a mature
+                superset of the ChaseStalledInvitesModal (adds the
+                already-activated pre-warning, filter-state pill,
+                and failure-details side-panel). See
+                /app/memory/FEATURE_BULK_PORTAL_INVITE_CUSTOMERS_LIST.md.
+                Gate is ``isAdmin`` (admin + super_admin only) —
+                tighter than the read gate on the list. */}
+            {isAdmin ? (
+              <Button
+                variant="ghost"
+                onClick={() => setH1ConfirmOpen(true)}
+                disabled={selected.size === 0}
+                testid="customers-toolbar-portal-invite-btn"
+                title={
+                  selected.size === 0
+                    ? "Select one or more customers to invite"
+                    : `Send portal invite to ${selected.size} selected customer${selected.size === 1 ? "" : "s"}`
+                }
+              >
+                <Mail size={16} /> Portal Invite
+                {selected.size > 0 ? ` (${selected.size})` : ""}
+              </Button>
+            ) : null}
           </>
         }
       />
 
-      {/* Feb-2026 · Portal onboarding health tile — admin-only. */}
-      {isAdmin ? <PortalOnboardingHealthTile /> : null}
+      {/* Feb-2026 · Portal onboarding health tile — admin-only.
+          ``externalRefetchToken={h1Result}`` — Feb-2026
+          Bulk-Portal-Invite-from-CustomersList ship: whenever the
+          Phase H1 bulk-invite modal resolves, its ``h1Result``
+          object identity changes → tile useEffect fires → cohort
+          counts refresh (subject to the 60s server cache). */}
+      {isAdmin ? (
+        <PortalOnboardingHealthTile externalRefetchToken={h1Result} />
+      ) : null}
 
       {/* Phase 56.2 — Active / Inactive segmented tabs. Counts are live. */}
       <div
