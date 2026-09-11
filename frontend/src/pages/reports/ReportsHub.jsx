@@ -18,6 +18,7 @@ import {
   Wrench,
   RefreshCw,
   TrendingUp,
+  Hourglass,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -260,6 +261,29 @@ export default function ReportsHub() {
       kpi: { loading: false, data: { headline: "CLV" } },
       renderKpi: () => "→",
       kpiSubtitle: () => "All-time by default",
+    },
+    // Feb-2026 · Reports Gap Fill Phase 5b.1 — Close Ratio + Time to Close.
+    {
+      key: "close-ratio",
+      icon: Target,
+      title: "Close Ratio",
+      description: "Won / (Won + Lost) for leads created in window.",
+      to: `/reports/close-ratio`,
+      sectionBadge: "Others",
+      kpi: { loading: false, data: { headline: "CR" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "Pipeline",
+    },
+    {
+      key: "time-to-close",
+      icon: Hourglass,
+      title: "Time to Close",
+      description: "Days from lead created to won/lost outcome.",
+      to: `/reports/time-to-close`,
+      sectionBadge: "Others",
+      kpi: { loading: false, data: { headline: "TTC" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "Rolling view",
     },
   ];
 

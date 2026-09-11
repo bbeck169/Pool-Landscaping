@@ -1122,6 +1122,14 @@ api_router.include_router(_p5a2_rbs.router)
 api_router.include_router(_p5a2_rvp.router)
 api_router.include_router(_p5a2_clv.router)
 
+# Feb-2026 · Reports Gap Fill Phase 5b.1 — Close Ratio +
+# Time to Close (shared lead-pipeline data source).
+# See ``/app/memory/FEATURE_REPORTS_GAP_FILL_PHASE5B.md``.
+from routers import reports_close_ratio as _p5b1_cr  # noqa: E402
+from routers import reports_time_to_close as _p5b1_ttc  # noqa: E402
+api_router.include_router(_p5b1_cr.router)
+api_router.include_router(_p5b1_ttc.router)
+
 app.include_router(api_router)
 app.include_router(public_social.router)
 
