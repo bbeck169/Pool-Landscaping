@@ -496,6 +496,30 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
     )
 
     for c in customers:
+        # Feb-2026 · Multi-Contact Phase 2 · mute guardrail (automation).
+        # Mass broadcast is by definition scheduler-triggered marketing —
+        # muted customers must not receive it. NOTE: per-recipient
+        # fan-out for unmuted customers with multiple addresses is
+        # scoped to Phase 2b (deny-list + suppression pre-checks
+        # currently pin to the primary contact). Phase 2 ships the
+        # mute honor; Phase 2b will sweep the render loop to iterate
+        # ``active_email_recipients`` per customer.
+        if c.get("automations_muted"):
+            from services.customer_multi_contact import log_mute_suppressed
+            if "email" in channels:
+                await log_mute_suppressed(
+                    tenant_id=tenant_id, customer_id=c.get("id"),
+                    channel="email", cluster="mass_messaging_broadcast",
+                    context="automation",
+                )
+            if "sms" in channels:
+                await log_mute_suppressed(
+                    tenant_id=tenant_id, customer_id=c.get("id"),
+                    channel="sms", cluster="mass_messaging_broadcast",
+                    context="automation",
+                )
+            stats["suppressed_muted"] = stats.get("suppressed_muted", 0) + 1
+            continue
         ctx = render_context(customer=c, tenant=tenant or {})
         # Backlog #iv · Feb-2026 — Customer-facing deny-list guardrail.
         # Refuse to send this row's payload to any admin-owned /

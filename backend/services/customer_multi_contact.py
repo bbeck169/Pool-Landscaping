@@ -354,3 +354,54 @@ def active_phone_recipients(
         if scalar:
             out.append(scalar)
     return _dedup_preserving_order(out)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Feb-2026 · Multi-Contact Phase 2 · suppressed-by-mute observability
+# ─────────────────────────────────────────────────────────────────
+# Every comms cluster that goes through the fan-out helpers calls
+# ``log_mute_suppressed`` when the helper returns ``[]`` and the
+# customer is muted. This gives ops a single collection to audit
+# "why didn't Jane get her invoice reminder?" without tailing app
+# logs. Fire-and-forget by design — a bad audit row must never
+# block a send loop, so every DB error is swallowed with a warning.
+#
+# Contract:
+#   collection: ``audit_logs``
+#   event:      ``"comms.suppressed_by_mute"``  (stable)
+#   fields:     tenant_id, customer_id, channel ("email"|"sms"),
+#               cluster (e.g. "add_card_link_email"),
+#               context ("automation"|"manual"), created_at (ISO)
+async def log_mute_suppressed(
+    *,
+    tenant_id: Optional[str],
+    customer_id: str,
+    channel: Literal["email", "sms"],
+    cluster: str,
+    context: Literal["automation", "manual"] = "automation",
+) -> None:
+    """Emit a single ``comms.suppressed_by_mute`` audit row.
+
+    Never raises. Callers pass ``tenant_id=None`` when the caller
+    can't cheaply resolve the tenant — the row still lands with
+    ``tenant_id=None`` and can be joined by ``customer_id`` later.
+    """
+    try:
+        from datetime import datetime, timezone
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "event": "comms.suppressed_by_mute",
+            "customer_id": customer_id,
+            "channel": channel,
+            "cluster": cluster,
+            "context": context,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as exc:
+        # Fire-and-forget — never block a send loop on audit-write
+        # trouble. Log at warning so ops still sees the miss.
+        logger.warning(
+            "[multi-contact] log_mute_suppressed insert failed "
+            "customer=%s cluster=%s err=%s", customer_id, cluster, exc,
+        )

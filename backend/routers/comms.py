@@ -1019,72 +1019,111 @@ async def deliver_one_by_ids(*, tenant_id: str, template_code: str,
         tpl = await _find_email_template(tenant_id, template_code)
         if not tpl:
             return None
-        contact = customer.get("email") or ""
-        unsub_token = _sign_unsubscribe(tenant_id, contact, "email") if contact else ""
-        unsub_url = f"{company.get('portal_link','')}/unsubscribe?token={unsub_token}&e={contact}" if contact else ""
-        ctx = sample_tokens_context()
-        ctx.update(build_context_for_customer(
-            customer, extras.get("job") or {}, extras.get("invoice") or {},
-            company, unsub_url, extras=extras,
-        ))
-        subject = resolve_email_subject(tpl.get("subject") or "", ctx)
-        html = render_email_html(tpl.get("blocks_json") or [], ctx)
-        try:
-            deliver = await send_email(tenant_id, contact, subject, html,
-                                         from_name=company.get("name") or None)
-        except Exception as e:
-            deliver = {"status": "failed", "provider_id": None, "error": str(e)[:400]}
-        doc = {
-            "id": new_id(), "tenant_id": tenant_id, "kind": "email",
-            "template_code": template_code, "automation_code": automation_code,
-            "recipient_id": customer.get("id"),
-            "recipient_email": contact, "recipient_phone": None,
-            "subject": subject, "rendered_body": html,
-            "tokens_resolved": {k: v for k, v in ctx.items() if v},
-            "status": deliver.get("status"),
-            "provider_message_id": deliver.get("provider_id"),
-            "error": deliver.get("error"),
-            "queued_at": now_iso(),
-            "sent_at": now_iso() if deliver.get("status") in ("sent", "mocked") else None,
-            "retry_count": 0,
-        }
-        await db.communication_sends.insert_one(doc)
-        return _clean_doc(doc)
+        # Feb-2026 · Multi-Contact Phase 2 · fan-out (automation).
+        # Called by the automation engine — respects mute.
+        from services.customer_multi_contact import (
+            active_email_recipients, log_mute_suppressed,
+        )
+        recipients = active_email_recipients(customer, context="automation")
+        if not recipients:
+            if customer.get("automations_muted"):
+                await log_mute_suppressed(
+                    tenant_id=tenant_id,
+                    customer_id=customer.get("id"),
+                    channel="email",
+                    cluster="comms_deliver_one_by_ids_email",
+                    context="automation",
+                )
+            return None
+        last_clean = None
+        for contact in recipients:
+            unsub_token = _sign_unsubscribe(tenant_id, contact, "email") if contact else ""
+            unsub_url = f"{company.get('portal_link','')}/unsubscribe?token={unsub_token}&e={contact}" if contact else ""
+            ctx = sample_tokens_context()
+            ctx.update(build_context_for_customer(
+                customer, extras.get("job") or {}, extras.get("invoice") or {},
+                company, unsub_url, extras=extras,
+            ))
+            subject = resolve_email_subject(tpl.get("subject") or "", ctx)
+            html = render_email_html(tpl.get("blocks_json") or [], ctx)
+            try:
+                deliver = await send_email(tenant_id, contact, subject, html,
+                                             from_name=company.get("name") or None)
+            except Exception as e:
+                deliver = {"status": "failed", "provider_id": None, "error": str(e)[:400]}
+            doc = {
+                "id": new_id(), "tenant_id": tenant_id, "kind": "email",
+                "template_code": template_code, "automation_code": automation_code,
+                "recipient_id": customer.get("id"),
+                "recipient_email": contact, "recipient_phone": None,
+                "subject": subject, "rendered_body": html,
+                "tokens_resolved": {k: v for k, v in ctx.items() if v},
+                "status": deliver.get("status"),
+                "provider_message_id": deliver.get("provider_id"),
+                "error": deliver.get("error"),
+                "queued_at": now_iso(),
+                "sent_at": now_iso() if deliver.get("status") in ("sent", "mocked") else None,
+                "retry_count": 0,
+                # Feb-2026 · Multi-Contact Phase 2 · per-recipient ledger marker.
+                "fanned_out": True,
+                "fanout_recipient_count": len(recipients),
+            }
+            await db.communication_sends.insert_one(doc)
+            last_clean = _clean_doc(doc)
+        return last_clean
 
     if channel == "sms":
         tpl = await _find_sms_template(tenant_id, template_code)
         if not tpl:
             return None
-        contact = customer.get("phone") or ""
-        ctx = sample_tokens_context()
-        ctx.update(build_context_for_customer(
-            customer, extras.get("job") or {}, extras.get("invoice") or {},
-            company, "", extras=extras,
-        ))
-        rendered = render_sms_text(tpl.get("body") or "", ctx)
-        try:
-            deliver = await send_sms(tenant_id, contact, rendered,
-                                       mms_url=tpl.get("mms_image_url"))
-        except Exception as e:
-            deliver = {"status": "failed", "provider_id": None, "error": str(e)[:400]}
-        doc = {
-            "id": new_id(), "tenant_id": tenant_id, "kind": "sms",
-            "template_code": template_code, "automation_code": automation_code,
-            "recipient_id": customer.get("id"),
-            "recipient_email": None, "recipient_phone": contact,
-            "subject": None, "rendered_body": rendered,
-            "tokens_resolved": {k: v for k, v in ctx.items() if v},
-            "status": deliver.get("status"),
-            "provider_message_id": deliver.get("provider_id"),
-            "error": deliver.get("error"),
-            "character_count": deliver.get("character_count"),
-            "segment_count": deliver.get("segment_count"),
-            "queued_at": now_iso(),
-            "sent_at": now_iso() if deliver.get("status") in ("sent", "mocked") else None,
-            "retry_count": 0,
-        }
-        await db.communication_sends.insert_one(doc)
-        return _clean_doc(doc)
+        from services.customer_multi_contact import (
+            active_phone_recipients, log_mute_suppressed,
+        )
+        recipients = active_phone_recipients(customer, context="automation")
+        if not recipients:
+            if customer.get("automations_muted"):
+                await log_mute_suppressed(
+                    tenant_id=tenant_id,
+                    customer_id=customer.get("id"),
+                    channel="sms",
+                    cluster="comms_deliver_one_by_ids_sms",
+                    context="automation",
+                )
+            return None
+        last_clean = None
+        for contact in recipients:
+            ctx = sample_tokens_context()
+            ctx.update(build_context_for_customer(
+                customer, extras.get("job") or {}, extras.get("invoice") or {},
+                company, "", extras=extras,
+            ))
+            rendered = render_sms_text(tpl.get("body") or "", ctx)
+            try:
+                deliver = await send_sms(tenant_id, contact, rendered,
+                                           mms_url=tpl.get("mms_image_url"))
+            except Exception as e:
+                deliver = {"status": "failed", "provider_id": None, "error": str(e)[:400]}
+            doc = {
+                "id": new_id(), "tenant_id": tenant_id, "kind": "sms",
+                "template_code": template_code, "automation_code": automation_code,
+                "recipient_id": customer.get("id"),
+                "recipient_email": None, "recipient_phone": contact,
+                "subject": None, "rendered_body": rendered,
+                "tokens_resolved": {k: v for k, v in ctx.items() if v},
+                "status": deliver.get("status"),
+                "provider_message_id": deliver.get("provider_id"),
+                "error": deliver.get("error"),
+                "character_count": deliver.get("character_count"),
+                "segment_count": deliver.get("segment_count"),
+                "queued_at": now_iso(),
+                "sent_at": now_iso() if deliver.get("status") in ("sent", "mocked") else None,
+                "retry_count": 0,
+                "fanned_out": True,
+                "fanout_recipient_count": len(recipients),
+            }
+            await db.communication_sends.insert_one(doc)
+            last_clean = _clean_doc(doc)
+        return last_clean
 
     return None
 
@@ -1098,78 +1137,97 @@ async def _deliver_one(*, tenant: dict, user: dict, customer: dict,
         tpl = await _find_email_template(tenant_id, template_code)
         if not tpl:
             raise HTTPException(404, f"email template {template_code!r} not found")
-        contact = customer.get("email") or ""
-        unsub_token = _sign_unsubscribe(tenant_id, contact, "email") if contact else ""
-        unsub_url = f"{company.get('portal_link','')}/unsubscribe?token={unsub_token}&e={contact}"
-        ctx = sample_tokens_context()
-        ctx.update(build_context_for_customer(customer, {}, {}, company, unsub_url))
-        subject = resolve_email_subject(tpl.get("subject") or "", ctx)
-        html = render_email_html(tpl.get("blocks_json") or [], ctx)
-        deliver = await send_email(tenant_id, contact, subject, html,
-                                     from_name=company.get("name") or None)
-        # Phase I1.7.e · chunk 1 · Feb-2026 — transactional cap-exceeded
-        # semantic: persist the audit row THEN 429 the caller. This
-        # endpoint is a synchronous admin-triggered send, so surfacing
-        # the tenant's monthly cap as an HTTP 429 is the correct signal.
-        doc = {
-            "id": new_id(), "tenant_id": tenant_id, "kind": "email",
-            "template_code": template_code, "automation_code": automation_code,
-            "recipient_id": customer.get("id"),
-            "recipient_email": contact, "recipient_phone": None,
-            "subject": subject, "rendered_body": html,
-            "tokens_resolved": {k: v for k, v in ctx.items() if v},
-            "status": deliver["status"],
-            "provider_message_id": deliver.get("provider_id"),
-            "error": deliver.get("error"),
-            "queued_at": now_iso(),
-            "sent_at": now_iso() if deliver["status"] in ("sent", "mocked") else None,
-            "retry_count": 0,
-        }
-        await db.communication_sends.insert_one(doc)
-        from services.messaging.byo_passthrough import raise_if_cap_exceeded
-        raise_if_cap_exceeded(
-            deliver,
-            detail=(f"Monthly messaging cap exceeded for tenant {tenant_id} "
-                    f"(channel=email, template={template_code})"),
-        )
-        return _clean_doc(doc)
+        # Feb-2026 · Multi-Contact Phase 2 · fan-out (manual).
+        # Admin-triggered test-fire — bypasses the customer-level
+        # mute (per-entry opt-outs still respected via the helper).
+        from services.customer_multi_contact import active_email_recipients
+        recipients = active_email_recipients(customer, context="manual")
+        if not recipients:
+            raise HTTPException(422, "customer has no active email recipients")
+        last_clean = None
+        for contact in recipients:
+            unsub_token = _sign_unsubscribe(tenant_id, contact, "email") if contact else ""
+            unsub_url = f"{company.get('portal_link','')}/unsubscribe?token={unsub_token}&e={contact}"
+            ctx = sample_tokens_context()
+            ctx.update(build_context_for_customer(customer, {}, {}, company, unsub_url))
+            subject = resolve_email_subject(tpl.get("subject") or "", ctx)
+            html = render_email_html(tpl.get("blocks_json") or [], ctx)
+            deliver = await send_email(tenant_id, contact, subject, html,
+                                         from_name=company.get("name") or None)
+            # Phase I1.7.e · chunk 1 · Feb-2026 — transactional cap-exceeded
+            # semantic: persist the audit row THEN 429 the caller. This
+            # endpoint is a synchronous admin-triggered send, so surfacing
+            # the tenant's monthly cap as an HTTP 429 is the correct signal.
+            doc = {
+                "id": new_id(), "tenant_id": tenant_id, "kind": "email",
+                "template_code": template_code, "automation_code": automation_code,
+                "recipient_id": customer.get("id"),
+                "recipient_email": contact, "recipient_phone": None,
+                "subject": subject, "rendered_body": html,
+                "tokens_resolved": {k: v for k, v in ctx.items() if v},
+                "status": deliver["status"],
+                "provider_message_id": deliver.get("provider_id"),
+                "error": deliver.get("error"),
+                "queued_at": now_iso(),
+                "sent_at": now_iso() if deliver["status"] in ("sent", "mocked") else None,
+                "retry_count": 0,
+                "fanned_out": True,
+                "fanout_recipient_count": len(recipients),
+            }
+            await db.communication_sends.insert_one(doc)
+            from services.messaging.byo_passthrough import raise_if_cap_exceeded
+            raise_if_cap_exceeded(
+                deliver,
+                detail=(f"Monthly messaging cap exceeded for tenant {tenant_id} "
+                        f"(channel=email, template={template_code})"),
+            )
+            last_clean = _clean_doc(doc)
+        return last_clean
     elif channel == "sms":
         tpl = await _find_sms_template(tenant_id, template_code)
         if not tpl:
             raise HTTPException(404, f"sms template {template_code!r} not found")
-        contact = customer.get("phone") or ""
-        ctx = sample_tokens_context()
-        ctx.update(build_context_for_customer(customer, {}, {}, company, ""))
-        rendered = render_sms_text(tpl.get("body") or "", ctx)
-        deliver = await send_sms(tenant_id, contact, rendered,
-                                   mms_url=tpl.get("mms_image_url"))
-        doc = {
-            "id": new_id(), "tenant_id": tenant_id, "kind": "sms",
-            "template_code": template_code, "automation_code": automation_code,
-            "recipient_id": customer.get("id"),
-            "recipient_email": None, "recipient_phone": contact,
-            "subject": None, "rendered_body": rendered,
-            "tokens_resolved": {k: v for k, v in ctx.items() if v},
-            "status": deliver["status"],
-            "provider_message_id": deliver.get("provider_id"),
-            "error": deliver.get("error"),
-            "character_count": deliver.get("character_count"),
-            "segment_count": deliver.get("segment_count"),
-            "queued_at": now_iso(),
-            "sent_at": now_iso() if deliver["status"] in ("sent", "mocked") else None,
-            "retry_count": 0,
-        }
-        await db.communication_sends.insert_one(doc)
-        # Phase I1.7.e · chunk 1 · Feb-2026 — transactional cap-exceeded
-        # semantic: persist the audit row THEN 429 the caller. Mirrors
-        # the email branch above.
-        from services.messaging.byo_passthrough import raise_if_cap_exceeded
-        raise_if_cap_exceeded(
-            deliver,
-            detail=(f"Monthly messaging cap exceeded for tenant {tenant_id} "
-                    f"(channel=sms, template={template_code})"),
-        )
-        return _clean_doc(doc)
+        from services.customer_multi_contact import active_phone_recipients
+        recipients = active_phone_recipients(customer, context="manual")
+        if not recipients:
+            raise HTTPException(422, "customer has no active phone recipients")
+        last_clean = None
+        for contact in recipients:
+            ctx = sample_tokens_context()
+            ctx.update(build_context_for_customer(customer, {}, {}, company, ""))
+            rendered = render_sms_text(tpl.get("body") or "", ctx)
+            deliver = await send_sms(tenant_id, contact, rendered,
+                                       mms_url=tpl.get("mms_image_url"))
+            doc = {
+                "id": new_id(), "tenant_id": tenant_id, "kind": "sms",
+                "template_code": template_code, "automation_code": automation_code,
+                "recipient_id": customer.get("id"),
+                "recipient_email": None, "recipient_phone": contact,
+                "subject": None, "rendered_body": rendered,
+                "tokens_resolved": {k: v for k, v in ctx.items() if v},
+                "status": deliver["status"],
+                "provider_message_id": deliver.get("provider_id"),
+                "error": deliver.get("error"),
+                "character_count": deliver.get("character_count"),
+                "segment_count": deliver.get("segment_count"),
+                "queued_at": now_iso(),
+                "sent_at": now_iso() if deliver["status"] in ("sent", "mocked") else None,
+                "retry_count": 0,
+                "fanned_out": True,
+                "fanout_recipient_count": len(recipients),
+            }
+            await db.communication_sends.insert_one(doc)
+            # Phase I1.7.e · chunk 1 · Feb-2026 — transactional cap-exceeded
+            # semantic: persist the audit row THEN 429 the caller. Mirrors
+            # the email branch above.
+            from services.messaging.byo_passthrough import raise_if_cap_exceeded
+            raise_if_cap_exceeded(
+                deliver,
+                detail=(f"Monthly messaging cap exceeded for tenant {tenant_id} "
+                        f"(channel=sms, template={template_code})"),
+            )
+            last_clean = _clean_doc(doc)
+        return last_clean
     else:
         raise HTTPException(422, "channel must be 'email' or 'sms'")
 

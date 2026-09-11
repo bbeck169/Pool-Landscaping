@@ -569,7 +569,21 @@ async def reschedule_job(body: RescheduleRequest,
         f"{new_dt_label}. Reply STOP to opt out."
     )
 
-    if customer and customer.get("email"):
+    # Feb-2026 · Multi-Contact Phase 2 · fan-out (automation).
+    # Reschedule notifications are side-effects of admin action but
+    # the customer sees them as automated appointment updates —
+    # muted customers should not receive these.
+    from services.customer_multi_contact import (
+        active_email_recipients, active_phone_recipients, log_mute_suppressed,
+    )
+    _email_recipients = active_email_recipients(customer, context="automation") if customer else []
+    if not _email_recipients and customer and customer.get("automations_muted"):
+        await log_mute_suppressed(
+            tenant_id=tenant["id"], customer_id=cid,
+            channel="email", cluster="schedule_reschedule_email",
+            context="automation",
+        )
+    for _addr in _email_recipients:
         try:
             from services.comms_email_adapter import send_email
             subject = f"Your {service_name} has been rescheduled"
@@ -583,48 +597,65 @@ async def reschedule_job(body: RescheduleRequest,
             )
             import asyncio as _a
             res = await _a.wait_for(send_email(
-                tenant_id=tenant["id"], to_email=customer["email"],
+                tenant_id=tenant["id"], to_email=_addr,
                 subject=subject, html=html, from_name=company_name,
             ), timeout=8.0)
-            sent_email = (res or {}).get("status") in ("sent", "sent_no_provider_id")
+            _sent = (res or {}).get("status") in ("sent", "sent_no_provider_id")
+            if _sent:
+                sent_email = True
         except Exception as exc:
-            logger.warning(f"[reschedule] email failed: {exc}")
+            logger.warning(f"[reschedule] email failed for {_addr}: {exc}")
+            _sent = False
         await db.marketing_deliveries.insert_one({
             "id": new_id(), "tenant_id": tenant["id"],
             "customer_id": cid,
             "channel": "email", "kind": "transactional",
-            "recipient": customer["email"],
+            "recipient": _addr,
             "subject": f"Your {service_name} has been rescheduled",
             "body": None,
             "trigger_entity": {"kind": "job_rescheduled",
                                 "id": job["id"], "job_id": job["id"]},
             "trigger_id": trigger_id,
-            "delivered": sent_email,
+            "delivered": _sent,
             "created_at": now_iso(),
+            "fanned_out": True,
+            "fanout_recipient_count": len(_email_recipients),
         })
 
-    if customer and customer.get("phone"):
+    _phone_recipients = active_phone_recipients(customer, context="automation") if customer else []
+    if not _phone_recipients and customer and customer.get("automations_muted"):
+        await log_mute_suppressed(
+            tenant_id=tenant["id"], customer_id=cid,
+            channel="sms", cluster="schedule_reschedule_sms",
+            context="automation",
+        )
+    for _num in _phone_recipients:
         try:
             from services.comms_sms_adapter import send_sms
             import asyncio as _a
             res = await _a.wait_for(send_sms(
-                tenant_id=tenant["id"], to_phone=customer["phone"],
+                tenant_id=tenant["id"], to_phone=_num,
                 body=sms_body,
             ), timeout=8.0)
-            sent_sms = bool(res and (res.get("status") in ("sent", "queued")))
+            _sent = bool(res and (res.get("status") in ("sent", "queued")))
+            if _sent:
+                sent_sms = True
         except Exception as exc:
-            logger.warning(f"[reschedule] sms failed: {exc}")
+            logger.warning(f"[reschedule] sms failed for {_num}: {exc}")
+            _sent = False
         await db.marketing_deliveries.insert_one({
             "id": new_id(), "tenant_id": tenant["id"],
             "customer_id": cid,
             "channel": "sms", "kind": "transactional",
-            "recipient": customer["phone"],
+            "recipient": _num,
             "subject": None, "body": sms_body,
             "trigger_entity": {"kind": "job_rescheduled",
                                 "id": job["id"], "job_id": job["id"]},
             "trigger_id": trigger_id,
-            "delivered": sent_sms,
+            "delivered": _sent,
             "created_at": now_iso(),
+            "fanned_out": True,
+            "fanout_recipient_count": len(_phone_recipients),
         })
 
     return {"ok": True, "preview": preview,

@@ -1317,34 +1317,56 @@ async def email_work_order(jid: str, body: dict,
     if not job:
         raise HTTPException(404, "Job not found")
     to = (body.get("to") or "").strip().lower()
+    customer = None
     if not to:
         customer = await db.customers.find_one(
             {"id": job["customer_id"], "tenant_id": tenant["id"]}, {"_id": 0}
         ) or {}
-        to = (customer.get("email") or "").strip().lower()
+        # Feb-2026 · Multi-Contact Phase 2 · fan-out (manual).
+        # Admin-triggered work-order email — bypasses the customer
+        # mute (admin action). Reuse the first enabled recipient as
+        # the primary target; extras fan out in the loop below.
+        from services.customer_multi_contact import active_email_recipients
+        _recips = active_email_recipients(customer, context="manual")
+        to = (_recips[0] if _recips else "").strip().lower()
     if not to:
         raise HTTPException(400, "No recipient email available")
     if not RESEND_API_KEY:
         return {"sent": False, "reason": "resend-not-configured", "to": to}
     pdf_bytes = await _build_work_order_pdf(job, tenant)
-    try:
-        import resend
-        from config import EMAIL_FROM
-        resend.api_key = RESEND_API_KEY
-        resend.Emails.send({
-            "from": EMAIL_FROM or "onboarding@resend.dev",
-            "to": [to],
-            "subject": body.get("subject") or f"Work Order · {job.get('title', 'Service')}",
-            "html": body.get("message") or f"<p>Attached is the work order for <strong>{job.get('title', '')}</strong>.</p>",
-            "attachments": [{
-                "filename": f"work-order-{jid[:8]}.pdf",
-                "content": base64.b64encode(pdf_bytes).decode("ascii"),
-            }],
-        })
-        return {"sent": True, "to": to}
-    except Exception as e:
-        logger.warning(f"Work-order email failed: {e}")
-        return {"sent": False, "reason": str(e), "to": to}
+    # If we resolved via the multi-contact helper, fan out to every
+    # enabled address; otherwise fall back to the single ``to`` value
+    # provided by the caller.
+    _targets = [to]
+    if customer is not None:
+        from services.customer_multi_contact import active_email_recipients
+        _extra = [a for a in active_email_recipients(customer, context="manual") if a != to]
+        _targets = [to] + _extra
+    sent_any = False
+    _last_err: str | None = None
+    for _addr in _targets:
+        try:
+            import resend
+            from config import EMAIL_FROM
+            resend.api_key = RESEND_API_KEY
+            resend.Emails.send({
+                "from": EMAIL_FROM or "onboarding@resend.dev",
+                "to": [_addr],
+                "subject": body.get("subject") or f"Work Order · {job.get('title', 'Service')}",
+                "html": body.get("message") or f"<p>Attached is the work order for <strong>{job.get('title', '')}</strong>.</p>",
+                "attachments": [{
+                    "filename": f"work-order-{jid[:8]}.pdf",
+                    "content": base64.b64encode(pdf_bytes).decode("ascii"),
+                }],
+            })
+            sent_any = True
+        except Exception as e:
+            logger.warning(f"Work-order email failed for {_addr}: {e}")
+            _last_err = str(e)
+    if sent_any:
+        return {"sent": True, "to": to, "fanned_out": True,
+                "fanout_recipient_count": len(_targets)}
+    return {"sent": False, "reason": _last_err or "send-failed", "to": to}
 
 
 @router.post("/service-requests")

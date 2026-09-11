@@ -276,6 +276,14 @@ async def _send_via_comms(tenant: dict, request_doc: dict, sent_via: str) -> Lis
     ctx["customer.email"] = cust.get("email") or ctx.get("customer.email") or ""
     ctx["customer.phone"] = cust.get("phone") or ctx.get("customer.phone") or ""
 
+    # Feb-2026 · Multi-Contact Phase 2 · fan-out (manual).
+    # Review requests are always admin/technician-initiated (create,
+    # resend, bulk) — admin intent overrides the customer-level mute.
+    # Per-entry ``notifications_enabled`` opt-outs are still honored.
+    from services.customer_multi_contact import (
+        active_email_recipients, active_phone_recipients,
+    )
+
     send_ids: List[str] = []
     for ch in channels:
         if ch == "email":
@@ -283,88 +291,98 @@ async def _send_via_comms(tenant: dict, request_doc: dict, sent_via: str) -> Lis
             if not tpl:
                 logger.error(f"[reviews] missing template {template_email}")
                 continue
-            recipient = cust.get("email") or ""
-            if not recipient:
+            recipients = active_email_recipients(cust, context="manual")
+            if not recipients:
                 logger.info(f"[reviews] skip email — customer {cust.get('id')} has no email")
                 continue
-            resolved_subject = resolve_tokens(tpl["subject"] or "", ctx)
-            resolved_html = render_email_html(tpl["blocks_json"] or [], ctx)
-            send_doc = {
-                "id": new_id(),
-                "tenant_id": tenant["id"],
-                "kind": "email",
-                "channel": "email",
-                "recipient_id": cust["id"],
-                "recipient_address": recipient,
-                "template_code": template_email,
-                "subject": resolved_subject,
-                "body_html": resolved_html,
-                "status": "queued",
-                "queued_at": now_iso(),
-                "context_meta": {"review_request_id": request_doc["id"]},
-            }
-            await db.communication_sends.insert_one(send_doc)
-            send_ids.append(send_doc["id"])
-            # BUG C fix (Feb-2026) — mirror into marketing_deliveries so
-            # the send is visible via /api/communications-log with the
-            # ``trigger_kind=review_request`` filter.
-            await db.marketing_deliveries.insert_one({
-                "id": new_id(),
-                "tenant_id": tenant["id"],
-                "channel": "email",
-                "customer_id": cust["id"],
-                "recipient_address": recipient,
-                "template_code": template_email,
-                "subject": resolved_subject,
-                "delivery_status": "sent",
-                "provider_status": "sent",
-                "trigger_kind": "review_request",
-                "trigger_entity": {"kind": "review_request",
-                                     "id": request_doc["id"]},
-                "communication_send_id": send_doc["id"],
-                "created_at": now_iso(),
-            })
+            for recipient in recipients:
+                resolved_subject = resolve_tokens(tpl["subject"] or "", ctx)
+                resolved_html = render_email_html(tpl["blocks_json"] or [], ctx)
+                send_doc = {
+                    "id": new_id(),
+                    "tenant_id": tenant["id"],
+                    "kind": "email",
+                    "channel": "email",
+                    "recipient_id": cust["id"],
+                    "recipient_address": recipient,
+                    "template_code": template_email,
+                    "subject": resolved_subject,
+                    "body_html": resolved_html,
+                    "status": "queued",
+                    "queued_at": now_iso(),
+                    "context_meta": {"review_request_id": request_doc["id"]},
+                    "fanned_out": True,
+                    "fanout_recipient_count": len(recipients),
+                }
+                await db.communication_sends.insert_one(send_doc)
+                send_ids.append(send_doc["id"])
+                # BUG C fix (Feb-2026) — mirror into marketing_deliveries so
+                # the send is visible via /api/communications-log with the
+                # ``trigger_kind=review_request`` filter.
+                await db.marketing_deliveries.insert_one({
+                    "id": new_id(),
+                    "tenant_id": tenant["id"],
+                    "channel": "email",
+                    "customer_id": cust["id"],
+                    "recipient_address": recipient,
+                    "template_code": template_email,
+                    "subject": resolved_subject,
+                    "delivery_status": "sent",
+                    "provider_status": "sent",
+                    "trigger_kind": "review_request",
+                    "trigger_entity": {"kind": "review_request",
+                                         "id": request_doc["id"]},
+                    "communication_send_id": send_doc["id"],
+                    "created_at": now_iso(),
+                    "fanned_out": True,
+                    "fanout_recipient_count": len(recipients),
+                })
         else:  # sms
             tpl = await _find_sms_template(tenant["id"], template_sms)
             if not tpl:
                 logger.error(f"[reviews] missing template {template_sms}")
                 continue
-            recipient = cust.get("phone") or ""
-            if not recipient:
+            recipients = active_phone_recipients(cust, context="manual")
+            if not recipients:
                 logger.info(f"[reviews] skip sms — customer {cust.get('id')} has no phone")
                 continue
-            resolved_body = resolve_tokens(tpl["body"] or "", ctx)
-            send_doc = {
-                "id": new_id(),
-                "tenant_id": tenant["id"],
-                "kind": "sms",
-                "channel": "sms",
-                "recipient_id": cust["id"],
-                "recipient_address": recipient,
-                "template_code": template_sms,
-                "body_text": resolved_body,
-                "status": "queued",
-                "queued_at": now_iso(),
-                "context_meta": {"review_request_id": request_doc["id"]},
-            }
-            await db.communication_sends.insert_one(send_doc)
-            send_ids.append(send_doc["id"])
-            await db.marketing_deliveries.insert_one({
-                "id": new_id(),
-                "tenant_id": tenant["id"],
-                "channel": "sms",
-                "customer_id": cust["id"],
-                "recipient_address": recipient,
-                "template_code": template_sms,
-                "body_text": resolved_body,
-                "delivery_status": "sent",
-                "provider_status": "sent",
-                "trigger_kind": "review_request",
-                "trigger_entity": {"kind": "review_request",
-                                     "id": request_doc["id"]},
-                "communication_send_id": send_doc["id"],
-                "created_at": now_iso(),
-            })
+            for recipient in recipients:
+                resolved_body = resolve_tokens(tpl["body"] or "", ctx)
+                send_doc = {
+                    "id": new_id(),
+                    "tenant_id": tenant["id"],
+                    "kind": "sms",
+                    "channel": "sms",
+                    "recipient_id": cust["id"],
+                    "recipient_address": recipient,
+                    "template_code": template_sms,
+                    "body_text": resolved_body,
+                    "status": "queued",
+                    "queued_at": now_iso(),
+                    "context_meta": {"review_request_id": request_doc["id"]},
+                    "fanned_out": True,
+                    "fanout_recipient_count": len(recipients),
+                }
+                await db.communication_sends.insert_one(send_doc)
+                send_ids.append(send_doc["id"])
+                await db.marketing_deliveries.insert_one({
+                    "id": new_id(),
+                    "tenant_id": tenant["id"],
+                    "channel": "sms",
+                    "customer_id": cust["id"],
+                    "recipient_address": recipient,
+                    "template_code": template_sms,
+                    "body_text": resolved_body,
+                    "delivery_status": "sent",
+                    "provider_status": "sent",
+                    "trigger_kind": "review_request",
+                    "trigger_entity": {"kind": "review_request",
+                                         "id": request_doc["id"]},
+                    "communication_send_id": send_doc["id"],
+                    "created_at": now_iso(),
+                    "fanned_out": True,
+                    "fanout_recipient_count": len(recipients),
+                })
 
     return send_ids
 

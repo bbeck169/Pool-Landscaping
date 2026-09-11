@@ -4134,76 +4134,21 @@ async def send_card_add_link(cid: str,
         else:
             email_status = "no_recipients"
             sent_email = False
-
-    if email_tpl and False:  # legacy scalar path — permanently disabled by Multi-Contact Phase 1 fan-out above.
-        subject_r, _ = render_template(email_tpl.get("subject") or "", ctx)
-        body_r, _ = render_template(email_tpl.get("body") or "", ctx)
-        email_provider_id: str | None = None
-        try:
-            from services.comms_email_adapter import send_email
-            import asyncio as _asyncio
-            res = await _asyncio.wait_for(send_email(
-                tenant_id=tenant["id"], to_email=customer["email"],
-                subject=subject_r, html=body_r,
-                from_name=(tenant.get("name") or None),
-            ), timeout=8.0)
-            email_status = (res or {}).get("status")
-            email_provider_id = (res or {}).get("provider_id")
-            sent_email = email_status in ("sent", "sent_no_provider_id")
-            if not sent_email:
-                email_error = (res or {}).get("error") or email_status
-        except Exception as exc:
-            email_status = "exception"
-            email_error = f"{type(exc).__name__}: {exc}"[:200]
-            logger.warning(
-                "[phase12] add-card email send exception cid=%s: %s",
-                cid, email_error,
+        # Feb-2026 · Multi-Contact Phase 2 · suppressed-by-mute audit.
+        # Only stamp when the reason was "muted" (not "no template"
+        # / "no recipient on file") so ops can slice mute suppressions
+        # cleanly from routine misses.
+        if customer.get("automations_muted"):
+            from services.customer_multi_contact import log_mute_suppressed
+            await log_mute_suppressed(
+                tenant_id=tenant["id"], customer_id=cid,
+                channel="email", cluster="add_card_link_email",
+                context="automation",
             )
-        await db.marketing_deliveries.insert_one({
-            "id": new_id(), "tenant_id": tenant["id"],
-            "customer_id": cid,
-            "channel": "email", "kind": "transactional",
-            "recipient": customer["email"],
-            "subject": subject_r, "body": body_r,
-            "trigger_entity": {"kind": "add_card_request", "id": cid},
-            "trigger_id": trigger_id,
-            # Feb-2026 · Follow-up P1 fix — the ``delivered`` flag on
-            # this row means "Resend accepted the payload" (i.e. the
-            # provider API returned 200 with a message id). It does
-            # NOT mean the recipient's mailbox received it. Terminal
-            # delivery status is stamped by the Resend webhook
-            # receiver at ``routers.resend_webhooks`` and lands in
-            # ``provider_status`` + ``delivered_at`` / ``bounced_at``
-            # / ``complained_at``. To make future consumers'
-            # semantics unambiguous we ALSO store
-            # ``accepted_by_provider`` (alias of ``delivered`` at
-            # insert time) and ``terminal_delivered`` (null until
-            # the ``email.delivered`` webhook fires).
-            "delivered": sent_email,
-            "accepted_by_provider": sent_email,
-            "terminal_delivered": None,
-            "provider_status": email_status,
-            # Feb-2026 · Ledger honesty split — ``provider_status``
-            # is a live cursor that the webhook overwrites as
-            # events arrive (delivered / opened / clicked, or
-            # bounced / complained / delivery_delayed). To keep
-            # the "did the mailbox actually accept it?" question
-            # answerable without walking a status history, we
-            # store the **terminal** outcome separately. Null at
-            # insert; flipped by the webhook when a terminal
-            # event (delivered / bounced / complained) fires.
-            # ``delivery_delayed`` is intentionally NOT terminal —
-            # it's a Resend retry state and can transition to
-            # either delivered or bounced.
-            "provider_terminal_status": None,
-            "provider_response_id": email_provider_id,
-            "error": email_error,
-            "created_at": now_iso(),
-        })
-    elif not customer.get("email"):
-        email_status = "no_recipient_on_file"
-    elif not email_tpl:
+    else:
+        # Template missing → status stamp for FE toast + ops slicing.
         email_status = "template_missing"
+        sent_email = False
 
     if sms_tpl and customer.get("phone"):
         body_r, _ = render_template(sms_tpl.get("body") or "", ctx)

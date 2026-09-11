@@ -33,29 +33,54 @@ def _survey_url(token: str) -> str:
     return f"{base}/csat/{token}"
 
 
-async def _send_survey_email(customer: dict, url: str) -> bool:
-    if not RESEND_API_KEY or not customer.get("email"):
+async def _send_survey_email(customer: dict, url: str,
+                              *, context: str = "automation",
+                              tenant_id: Optional[str] = None) -> bool:
+    """Feb-2026 · Multi-Contact Phase 2 · fan-out.
+
+    Sends the CSAT invite to every enabled email on the customer.
+    ``context`` gates the customer-level mute — cron-driven dispatch
+    passes ``automation``; the admin ``/csat/send/{job_id}`` endpoint
+    passes ``manual`` (admin's explicit action overrides mute).
+    Returns True if at least one recipient was attempted; False if
+    the customer had no enabled addresses (muted or empty)."""
+    if not RESEND_API_KEY:
         return False
-    try:
-        import resend
-        resend.api_key = RESEND_API_KEY
-        resend.Emails.send({
-            "from": EMAIL_FROM or "onboarding@resend.dev",
-            "to": [customer["email"]],
-            "subject": "How did we do?",
-            "html": (
-                f"<p>Hi {customer.get('name','')},</p>"
-                f"<p>Thanks for choosing Pool & Landscaping. A quick 30-second survey helps us serve you better.</p>"
-                f"<p><a href='{url}' style='background:#0284C7;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;'>Rate your service</a></p>"
-            ),
-        })
-        return True
-    except Exception as e:
-        logger.warning(f"CSAT email failed: {e}")
+    from services.customer_multi_contact import (
+        active_email_recipients, log_mute_suppressed,
+    )
+    recipients = active_email_recipients(customer, context=context)
+    if not recipients:
+        if context == "automation" and customer.get("automations_muted"):
+            await log_mute_suppressed(
+                tenant_id=tenant_id, customer_id=customer.get("id"),
+                channel="email", cluster="csat_survey_email",
+                context="automation",
+            )
         return False
+    sent_any = False
+    for addr in recipients:
+        try:
+            import resend
+            resend.api_key = RESEND_API_KEY
+            resend.Emails.send({
+                "from": EMAIL_FROM or "onboarding@resend.dev",
+                "to": [addr],
+                "subject": "How did we do?",
+                "html": (
+                    f"<p>Hi {customer.get('name','')},</p>"
+                    f"<p>Thanks for choosing Pool & Landscaping. A quick 30-second survey helps us serve you better.</p>"
+                    f"<p><a href='{url}' style='background:#0284C7;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;'>Rate your service</a></p>"
+                ),
+            })
+            sent_any = True
+        except Exception as e:
+            logger.warning(f"CSAT email failed for {addr}: {e}")
+    return sent_any
 
 
-async def _dispatch_survey(job: dict, channel: str = "email") -> dict:
+async def _dispatch_survey(job: dict, channel: str = "email",
+                             *, context: str = "automation") -> dict:
     """Idempotent per (job_id): if a survey already exists for this job, return it."""
     tid = job.get("tenant_id")
     existing = await db.csat_surveys.find_one({"job_id": job["id"]}, {"_id": 0})
@@ -86,14 +111,27 @@ async def _dispatch_survey(job: dict, channel: str = "email") -> dict:
     url = _survey_url(token)
     emailed = False
     if channel == "email":
-        emailed = await _send_survey_email(cust, url)
-    elif channel == "sms" and cust.get("phone"):
-        # Phase G2 · Feb-2026 (TD-G1-1) — plumb tenant_id so the RC
-        # adapter honours ``tenants.rc_sms_from_number`` for CSAT SMS.
-        send_sms(cust["phone"],
-                    f"Hi {cust.get('name','')}, how did we do? Rate your visit: {url}",
-                    tenant_id=tid)
-        emailed = True
+        emailed = await _send_survey_email(cust, url, context=context, tenant_id=tid)
+    elif channel == "sms":
+        # Feb-2026 · Multi-Contact Phase 2 · SMS fan-out.
+        from services.customer_multi_contact import (
+            active_phone_recipients, log_mute_suppressed,
+        )
+        recipients = active_phone_recipients(cust, context=context)
+        if not recipients:
+            if context == "automation" and cust.get("automations_muted"):
+                await log_mute_suppressed(
+                    tenant_id=tid, customer_id=cust.get("id"),
+                    channel="sms", cluster="csat_survey_sms",
+                    context="automation",
+                )
+        for number in recipients:
+            # Phase G2 · Feb-2026 (TD-G1-1) — plumb tenant_id so the RC
+            # adapter honours ``tenants.rc_sms_from_number`` for CSAT SMS.
+            send_sms(number,
+                        f"Hi {cust.get('name','')}, how did we do? Rate your visit: {url}",
+                        tenant_id=tid)
+            emailed = True
     doc["url"] = url
     doc["emailed"] = emailed
     return doc
@@ -111,7 +149,7 @@ async def send_csat(job_id: str, body: Optional[SendSurveyIn] = None,
     if not job:
         raise HTTPException(404, "Job not found")
     channel = (body.channel if body else "email") or "email"
-    doc = await _dispatch_survey(job, channel=channel)
+    doc = await _dispatch_survey(job, channel=channel, context="manual")
     return {"ok": True, "survey": doc}
 
 

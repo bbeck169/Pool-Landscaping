@@ -60,96 +60,107 @@ async def _record_delivery(*, tenant_id: str, channel: str,
 
 async def _send_welcome_email(*, tenant_id: str, customer: Dict[str, Any],
                                  lead_id: str) -> Optional[str]:
-    email = (customer.get("email") or "").strip()
-    if not email:
+    # Feb-2026 · Multi-Contact Phase 2 · fan-out (manual).
+    # Admin-initiated lead conversion — bypasses customer-level mute
+    # (the customer just expressed intent; admin action confirms).
+    from services.customer_multi_contact import active_email_recipients
+    recipients = active_email_recipients(customer, context="manual")
+    if not recipients:
         return None
     name = customer.get("name") or "there"
-    portal_link = f"{_APP_BASE}/portal/login?email={email}" if _APP_BASE else ""
     subject = "Welcome to Pool & Landscaping of Vistancia — your account is ready"
-    body = (
-        f'<div style="font-family:sans-serif;max-width:560px;margin:auto">'
-        f"<h2>Welcome aboard, {name}!</h2>"
-        f"<p>Thanks for choosing <b>Pool &amp; Landscaping of Vistancia</b>. "
-        f"We've set up your account and one of our team will reach out shortly "
-        f"to schedule your first service.</p>"
-        f"<h3>What happens next</h3>"
-        f"<ul>"
-        f"<li>We'll call or text you within one business day to confirm a start date.</li>"
-        f"<li>You'll receive service reports, invoices, and appointment reminders here.</li>"
-        f"<li>Refer a neighbor and you both save $55 on your next service.</li>"
-        f"</ul>"
-        + (f'<p><a href="{portal_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Open your customer portal</a></p>' if portal_link else "")
-        + f'<p style="color:#666;font-size:12px">You are receiving this because you '
-        f"requested service from us. Reply to this email or call "
-        f"<b>+1 (602) 887-4400</b> anytime.</p>"
-        f"</div>"
-    )
-    try:
-        from services.marketing_email.resend_adapter import send as _send_email
-    except Exception:
+    last_row_id: Optional[str] = None
+    for email in recipients:
+        portal_link = f"{_APP_BASE}/portal/login?email={email}" if _APP_BASE else ""
+        body = (
+            f'<div style="font-family:sans-serif;max-width:560px;margin:auto">'
+            f"<h2>Welcome aboard, {name}!</h2>"
+            f"<p>Thanks for choosing <b>Pool &amp; Landscaping of Vistancia</b>. "
+            f"We've set up your account and one of our team will reach out shortly "
+            f"to schedule your first service.</p>"
+            f"<h3>What happens next</h3>"
+            f"<ul>"
+            f"<li>We'll call or text you within one business day to confirm a start date.</li>"
+            f"<li>You'll receive service reports, invoices, and appointment reminders here.</li>"
+            f"<li>Refer a neighbor and you both save $55 on your next service.</li>"
+            f"</ul>"
+            + (f'<p><a href="{portal_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Open your customer portal</a></p>' if portal_link else "")
+            + f'<p style="color:#666;font-size:12px">You are receiving this because you '
+            f"requested service from us. Reply to this email or call "
+            f"<b>+1 (602) 887-4400</b> anytime.</p>"
+            f"</div>"
+        )
         try:
-            from services.marketing.email_adapter import send as _send_email  # type: ignore
+            from services.marketing_email.resend_adapter import send as _send_email
         except Exception:
-            _send_email = None  # type: ignore
-    if _send_email is None:
-        # Fallback path — use emailer.py if available.
-        try:
-            from emailer import send_transactional_email
-            provider_res = await send_transactional_email(
-                to=email, subject=subject, html=body,
-            )
-        except Exception as exc:
-            provider_res = {"provider": "mock",
-                             "provider_status": "failed",
-                             "provider_response_id": None,
-                             "error": str(exc)}
-    else:
-        try:
-            provider_res = await _send_email(
-                to=email, subject=subject, html=body,
-                category="transactional", tenant_id=tenant_id,
-            )
-        except Exception as exc:
-            provider_res = {"provider": "resend",
-                             "provider_status": "failed",
-                             "provider_response_id": None,
-                             "error": str(exc)}
-    return await _record_delivery(
-        tenant_id=tenant_id, channel="email",
-        recipient=email, subject=subject, body=body,
-        provider_res=provider_res, trigger_lead_id=lead_id,
-        trigger_customer_id=customer["id"],
-    )
+            try:
+                from services.marketing.email_adapter import send as _send_email  # type: ignore
+            except Exception:
+                _send_email = None  # type: ignore
+        if _send_email is None:
+            try:
+                from emailer import send_transactional_email
+                provider_res = await send_transactional_email(
+                    to=email, subject=subject, html=body,
+                )
+            except Exception as exc:
+                provider_res = {"provider": "mock",
+                                 "provider_status": "failed",
+                                 "provider_response_id": None,
+                                 "error": str(exc)}
+        else:
+            try:
+                provider_res = await _send_email(
+                    to=email, subject=subject, html=body,
+                    category="transactional", tenant_id=tenant_id,
+                )
+            except Exception as exc:
+                provider_res = {"provider": "resend",
+                                 "provider_status": "failed",
+                                 "provider_response_id": None,
+                                 "error": str(exc)}
+        last_row_id = await _record_delivery(
+            tenant_id=tenant_id, channel="email",
+            recipient=email, subject=subject, body=body,
+            provider_res=provider_res, trigger_lead_id=lead_id,
+            trigger_customer_id=customer["id"],
+        )
+    return last_row_id
 
 
 async def _send_welcome_sms(*, tenant_id: str, customer: Dict[str, Any],
                                lead_id: str) -> Optional[str]:
-    phone = (customer.get("phone") or "").strip()
-    if not phone:
+    # Feb-2026 · Multi-Contact Phase 2 · fan-out (manual).
+    from services.customer_multi_contact import active_phone_recipients
+    recipients = active_phone_recipients(customer, context="manual")
+    if not recipients:
         return None
     name = (customer.get("name") or "").split(" ", 1)[0] or "there"
     body = (
         f"Hi {name} — thanks for choosing Pool & Landscaping of Vistancia. "
         "We'll be in touch to schedule your first service. Reply STOP to opt out."
     )
-    try:
-        provider_res = await _rc_sms_send(
-            to=phone, body=body,
-            category="transactional",  # bypass marketing suppression
-            tenant_id=tenant_id,
-            idempotency_key=f"lead-conversion:{lead_id}:sms",
+    last_row_id: Optional[str] = None
+    for phone in recipients:
+        try:
+            provider_res = await _rc_sms_send(
+                to=phone, body=body,
+                category="transactional",  # bypass marketing suppression
+                tenant_id=tenant_id,
+                idempotency_key=f"lead-conversion:{lead_id}:sms:{phone}",
+            )
+        except Exception as exc:  # pragma: no cover
+            provider_res = {"provider": "ringcentral",
+                             "provider_status": "failed",
+                             "provider_response_id": None,
+                             "error": str(exc)}
+        last_row_id = await _record_delivery(
+            tenant_id=tenant_id, channel="sms",
+            recipient=phone, subject=None, body=body,
+            provider_res=provider_res, trigger_lead_id=lead_id,
+            trigger_customer_id=customer["id"],
         )
-    except Exception as exc:  # pragma: no cover
-        provider_res = {"provider": "ringcentral",
-                         "provider_status": "failed",
-                         "provider_response_id": None,
-                         "error": str(exc)}
-    return await _record_delivery(
-        tenant_id=tenant_id, channel="sms",
-        recipient=phone, subject=None, body=body,
-        provider_res=provider_res, trigger_lead_id=lead_id,
-        trigger_customer_id=customer["id"],
-    )
+    return last_row_id
 
 
 async def _ensure_m5c_drip(tenant_id: str) -> Optional[str]:

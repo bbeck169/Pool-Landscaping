@@ -254,8 +254,20 @@ async def send_visit_summary_email(tenant: dict, job: dict, sr: dict) -> Optiona
         )
         if not customer:
             return None
-        to_email = (customer.get("email") or "").strip()
-        if not to_email:
+        # Feb-2026 · Multi-Contact Phase 2 · fan-out (automation).
+        # Auto-fires when the tech submits a service report — respects
+        # the customer-level mute.
+        from services.customer_multi_contact import (
+            active_email_recipients, log_mute_suppressed,
+        )
+        recipients = active_email_recipients(customer, context="automation")
+        if not recipients:
+            if customer.get("automations_muted"):
+                await log_mute_suppressed(
+                    tenant_id=tenant["id"], customer_id=customer_id,
+                    channel="email", cluster="auto_visit_email",
+                    context="automation",
+                )
             return None
         sr_id = sr.get("id")
         # Idempotency check.
@@ -272,46 +284,52 @@ async def send_visit_summary_email(tenant: dict, job: dict, sr: dict) -> Optiona
         safe_sr = _redact_report_for_customer(dict(sr))
 
         rendered = render_email(tenant, job, safe_sr, customer)
-        row = {
-            "id": new_id(),
-            "kind": "visit_summary",
-            "tenant_id": tenant["id"],
-            "customer_id": customer_id,
-            "service_report_id": sr_id,
-            "job_id": job.get("id"),
-            "to": to_email,
-            "subject": rendered["subject"],
-            "html": rendered["html"],
-            "text": rendered["text"],
-            "report_kind": rendered["kind"],
-            "created_at": now_iso(),
-            "status": "pending",
-        }
         resend_key = os.environ.get("RESEND_API_KEY")
-        if not resend_key:
-            row["status"] = "not_sent_missing_key"
-            await db.outbound_emails.insert_one(row)
-            return row
-        try:
-            import resend  # type: ignore
-            resend.api_key = resend_key
-            resp = resend.Emails.send({
-                "from": os.environ.get("RESEND_FROM", "onboarding@resend.dev"),
-                "to": [to_email],
+        last_row = None
+        for to_email in recipients:
+            row = {
+                "id": new_id(),
+                "kind": "visit_summary",
+                "tenant_id": tenant["id"],
+                "customer_id": customer_id,
+                "service_report_id": sr_id,
+                "job_id": job.get("id"),
+                "to": to_email,
                 "subject": rendered["subject"],
                 "html": rendered["html"],
                 "text": rendered["text"],
-            })
-            row["status"] = "sent"
-            row["resend_id"] = (resp or {}).get("id") if isinstance(resp, dict) else None
-            await db.outbound_emails.insert_one(row)
-            return row
-        except Exception as e:
-            row["status"] = "failed"
-            row["error"] = str(e)[:200]
-            await db.outbound_emails.insert_one(row)
-            logger.warning(f"visit-summary email send failed: {type(e).__name__}: {str(e)[:120]}")
-            return row
+                "report_kind": rendered["kind"],
+                "created_at": now_iso(),
+                "status": "pending",
+                "fanned_out": True,
+                "fanout_recipient_count": len(recipients),
+            }
+            if not resend_key:
+                row["status"] = "not_sent_missing_key"
+                await db.outbound_emails.insert_one(row)
+                last_row = row
+                continue
+            try:
+                import resend  # type: ignore
+                resend.api_key = resend_key
+                resp = resend.Emails.send({
+                    "from": os.environ.get("RESEND_FROM", "onboarding@resend.dev"),
+                    "to": [to_email],
+                    "subject": rendered["subject"],
+                    "html": rendered["html"],
+                    "text": rendered["text"],
+                })
+                row["status"] = "sent"
+                row["resend_id"] = (resp or {}).get("id") if isinstance(resp, dict) else None
+                await db.outbound_emails.insert_one(row)
+                last_row = row
+            except Exception as e:
+                row["status"] = "failed"
+                row["error"] = str(e)[:200]
+                await db.outbound_emails.insert_one(row)
+                logger.warning(f"visit-summary email send failed for {to_email}: {type(e).__name__}: {str(e)[:120]}")
+                last_row = row
+        return last_row
     except Exception as e:
         logger.warning(f"send_visit_summary_email top-level error: {type(e).__name__}: {str(e)[:120]}")
         return None

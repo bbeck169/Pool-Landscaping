@@ -38,26 +38,38 @@ def _hash_doc(doc: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
-async def _send_sign_email(customer: dict, url: str, doc_title: str, message: str = "") -> bool:
-    if not RESEND_API_KEY or not customer.get("email"):
+async def _send_sign_email(customer: dict, url: str, doc_title: str, message: str = "",
+                             *, tenant_id: Optional[str] = None) -> bool:
+    """Feb-2026 · Multi-Contact Phase 2 · fan-out (manual).
+
+    Admin-triggered signature-request email — bypasses the
+    customer-level mute (admin's explicit action). Per-entry
+    opt-outs still respected via the helper."""
+    if not RESEND_API_KEY:
         return False
-    try:
-        import resend
-        resend.api_key = RESEND_API_KEY
-        resend.Emails.send({
-            "from": EMAIL_FROM or "onboarding@resend.dev",
-            "to": [customer["email"]],
-            "subject": f"Please sign: {doc_title}",
-            "html": (
-                f"<p>Hi {customer.get('name','')},</p>"
-                + (f"<p>{message}</p>" if message else "")
-                + f"<p><a href='{url}' style='background:#0284C7;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;'>Review &amp; sign</a></p>"
-            ),
-        })
-        return True
-    except Exception as e:
-        logger.warning(f"Signature email failed: {e}")
+    from services.customer_multi_contact import active_email_recipients
+    recipients = active_email_recipients(customer, context="manual")
+    if not recipients:
         return False
+    sent_any = False
+    for addr in recipients:
+        try:
+            import resend
+            resend.api_key = RESEND_API_KEY
+            resend.Emails.send({
+                "from": EMAIL_FROM or "onboarding@resend.dev",
+                "to": [addr],
+                "subject": f"Please sign: {doc_title}",
+                "html": (
+                    f"<p>Hi {customer.get('name','')},</p>"
+                    + (f"<p>{message}</p>" if message else "")
+                    + f"<p><a href='{url}' style='background:#0284C7;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;'>Review &amp; sign</a></p>"
+                ),
+            })
+            sent_any = True
+        except Exception as e:
+            logger.warning(f"Signature email failed for {addr}: {e}")
+    return sent_any
 
 
 class RequestSignatureIn(BaseModel):
@@ -101,7 +113,7 @@ async def request_signature(qid: str, body: Optional[RequestSignatureIn] = None,
     await db.signatures.insert_one(sig_req)
     sig_req.pop("_id", None)
     url = _sign_url(token)
-    emailed = await _send_sign_email(cust, url, doc.get("title", "Estimate"), (body.message if body else "") or "")
+    emailed = await _send_sign_email(cust, url, doc.get("title", "Estimate"), (body.message if body else "") or "", tenant_id=tenant["id"])
     await db.quotes.update_one(
         {"id": qid, "tenant_id": tenant["id"]},
         {"$set": {"signature_requested_at": now_iso(), "signature_token": token}},
