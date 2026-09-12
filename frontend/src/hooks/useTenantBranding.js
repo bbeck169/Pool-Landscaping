@@ -105,6 +105,41 @@ export function useTenantBranding(token) {
     } catch (e) {
       // Public endpoint may 401 on bad tokens — fall back silently
       // so the estimate page still renders with default colours.
+      // [DEBUG-MAGIC-LINK-RCA — REMOVE AFTER ROOT CAUSE FOUND]
+      // Console-only. This hook has no UI error surface, so we log
+      // the failure with redacted context to correlate with the
+      // EstimateView error surface. See
+      // /app/memory/DIAG_MAGIC_LINK_401_RCA.md for removal steps.
+      try {
+        const _tok = String(token || "");
+        const _bodyRaw = typeof e?.data === "string"
+          ? e.data : JSON.stringify(e?.data || "");
+        const _body = _bodyRaw
+          .replace(/Bearer\s+\S+/gi, "Bearer <redacted>")
+          .replace(
+            /[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+            "<jwt-redacted>",
+          )
+          .slice(0, 500);
+        const _cookieNames = (typeof document !== "undefined")
+          ? (document.cookie || "").split(";")
+              .map((c) => c.trim().split("=")[0])
+              .filter(Boolean).join("; ")
+          : "";
+        const _sw = (typeof navigator !== "undefined" && navigator.serviceWorker)
+          ? (navigator.serviceWorker.controller ? "sw-controlled" : "no-controller")
+          : "no-sw-api";
+        // eslint-disable-next-line no-console
+        console.error("[magic-link-debug:branding]", {
+          outbound_url: `/api/portal/tenant/branding?token=<jwt:len=${_tok.length},head=${_tok.slice(0,6)},tail=${_tok.slice(-6)}>`,
+          response_status: e?.status == null ? "network" : String(e.status),
+          response_body: _body,
+          error_message: (e?.message || "").slice(0, 200),
+          cookies: _cookieNames,
+          sw_controller: _sw,
+        });
+      } catch { /* diag must never break the silent-fallback path */ }
+      // [/DEBUG-MAGIC-LINK-RCA]
       setState({
         branding: _withDefaults(null),
         loading: false,
