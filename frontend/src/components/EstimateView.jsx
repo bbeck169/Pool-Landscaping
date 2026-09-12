@@ -174,7 +174,34 @@ export default function EstimateView({
       .catch(() => window.open(url, "_blank"));
   };
 
-  if (err) return <div className="p-4 rounded" style={{ background: "#FEE2E2", color: "#991B1B" }}>{err}</div>;
+  if (err) return (
+    <div
+      className="p-4 rounded"
+      style={{ background: "#FEE2E2", color: "#991B1B" }}
+      data-testid="estimate-view-error"
+      data-error-source={
+        // Feb-2026 · Tester diag — distinguish the failure modes
+        // the "Invalid estimate link" branch can surface:
+        //   * ``backend-401``    → server rejected the token
+        //   * ``backend-404``    → estimate not found for that tenant
+        //   * ``backend-other``  → any other non-2xx (500, 503, etc.)
+        //   * ``network``        → fetch itself failed (offline, CORS)
+        //   * ``empty-payload``  → 200 with no body / malformed JSON
+        err.toLowerCase().includes("invalid estimate")
+          || err.toLowerCase().includes("expired")
+          ? "backend-401"
+          : err.toLowerCase().includes("not found")
+          ? "backend-404"
+          : err.toLowerCase().includes("network")
+          ? "network"
+          : err.toLowerCase().includes("request failed")
+          ? "backend-other"
+          : "unknown"
+      }
+    >
+      {err}
+    </div>
+  );
   if (!data) return <div className="p-8 text-center"><Loader2 className="animate-spin inline" size={24}/></div>;
 
   const {
