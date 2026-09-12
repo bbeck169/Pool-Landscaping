@@ -20,6 +20,10 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
+// Feb-2026 · Theme Refresh — brand-driven header band on admin
+// surface so admins see the same visual identity as the customer
+// PDF / magic-link view without paying a second fetch.
+import { useBusinessSettings } from "@/hooks/useTenantBranding";
 // Phase LZ4 (Feb 2026) — StripePayments module retired.
 // PayNowButton + StripeCheckoutReturn are gone; Lumino's hosted
 // payment page + LZ2 dispatcher replaces the Stripe checkout return
@@ -116,6 +120,11 @@ export function shouldShowPaymentLinkButton({
 export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   const { id } = useParams();
   const navigate = useNavigate();
+  // Feb-2026 · Theme Refresh — mount the branding hook up front so
+  // the themed header band renders in the same paint as the rest
+  // of the detail page. Fails soft to the default colours so the
+  // page never blocks on a missing tenant record.
+  const { branding: _adminBranding } = useBusinessSettings();
   const [doc, setDoc] = useState(null);
   const [customer, setCustomer] = useState(null);
   const [pmethod, setPmethod] = useState(null);
@@ -439,6 +448,64 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
         <DeclinedLinesErrorBoundary>
           <AdminDeclinedLinesBanner doc={doc} />
         </DeclinedLinesErrorBoundary>
+      ) : null}
+
+      {/* Feb-2026 · Theme Refresh — brand-driven header band. Mirrors
+          the customer-facing shell + PDF so the admin surface reads
+          the same visual identity. When branding is null (loading
+          or tenant record missing) the block collapses to nothing. */}
+      {_adminBranding ? (
+        <div
+          data-testid="quote-invoice-branded-header"
+          data-primary={_adminBranding.brand_primary_hex}
+          style={{
+            background: _adminBranding.brand_primary_hex || "#0B4A6F",
+            color: "#FFFFFF",
+            padding: "16px 20px",
+            borderRadius: 12,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: 16,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {_adminBranding.logo_url ? (
+              <img
+                src={_adminBranding.logo_url}
+                alt={_adminBranding.company_display_name || ""}
+                style={{ maxHeight: 48, maxWidth: 144,
+                          objectFit: "contain", background: "#FFFFFF",
+                          padding: 4, borderRadius: 4 }}
+                data-testid="quote-invoice-branded-logo"
+              />
+            ) : null}
+            <div>
+              <div style={{ fontSize: 26, fontWeight: 800,
+                              letterSpacing: 1, lineHeight: 1 }}>
+                {(isInvoice ? "INVOICE" : "ESTIMATE")}
+              </div>
+              {_adminBranding.company_display_name ? (
+                <div style={{ fontSize: 12, marginTop: 4, opacity: 0.9 }}>
+                  {_adminBranding.company_display_name}
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div style={{
+            fontSize: 11, lineHeight: 1.35, textAlign: "right",
+            opacity: 0.9, maxWidth: "45%",
+          }}>
+            {(_adminBranding.mailing_address || "")
+              .split("\n").slice(0, 2).map((l, i) => (
+                <div key={i}>{l}</div>
+              ))}
+            {_adminBranding.phone ? (<div>{_adminBranding.phone}</div>) : null}
+            {_adminBranding.email ? (<div>{_adminBranding.email}</div>) : null}
+            {_adminBranding.website ? (<div>{_adminBranding.website}</div>) : null}
+          </div>
+        </div>
       ) : null}
 
       <div

@@ -6,12 +6,14 @@ falls back to a sensible default so downstream consumers (PDFs,
 emails, portal views) never see ``None`` gaps.
 
 The Business Settings phase ships this helper as the single source
-of truth. The next-phase Theme Refresh consumes it verbatim.
+of truth. The Theme Refresh phase consumes it verbatim.
 
-See /app/memory/FEATURE_BUSINESS_SETTINGS.md.
+See /app/memory/FEATURE_BUSINESS_SETTINGS.md
+and /app/memory/FEATURE_THEME_REFRESH_ESTIMATES_INVOICES.md.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Dict, Optional
 
@@ -78,16 +80,68 @@ def build_business_settings_view(tenant: Dict[str, Any]) -> Dict[str, Any]:
     return {"stored": stored, "effective": effective}
 
 
-async def get_effective_business_settings(db, tenant_id: str) -> Dict[str, Any]:
+async def get_effective_business_settings(
+    db, tenant_id: str, *, absolutize: bool = False,
+) -> Dict[str, Any]:
     """Async wrapper — reads the tenant doc and returns the
     ``effective`` view. Downstream callers (PDF renderers, email
     shell, estimate payload builders) go through this so nobody
     duplicates the fallback rules.
+
+    When ``absolutize=True`` any relative ``logo_url`` (e.g.
+    ``/api/objects/…``) is promoted to a full ``https://…`` URL
+    using ``resolve_absolute_url`` — required for surfaces rendered
+    outside the browser origin (ReportLab PDFs, customer emails).
     """
     if not tenant_id:
         return build_business_settings_view({})["effective"]
     t = await db.tenants.find_one({"id": tenant_id}, {"_id": 0}) or {}
-    return build_business_settings_view(t)["effective"]
+    eff = build_business_settings_view(t)["effective"]
+    if absolutize and eff.get("logo_url"):
+        eff["logo_url"] = resolve_absolute_url(eff["logo_url"])
+    return eff
+
+
+def resolve_public_base_url() -> str:
+    """Pick the best public base URL for absolute links in surfaces
+    that render outside the browser origin (PDFs, emails).
+
+    Priority mirrors ``services.service_report_view._resolve_public_base_url``
+    so PDF logos and email photo links agree on the same origin:
+
+      1. ``PUBLIC_APP_BASE_URL`` (explicit override)
+      2. ``FRONTEND_BASE_URL``  (team-invite emails)
+      3. ``APP_BASE_URL``       (legacy)
+      4. Hard-coded fallback to the prod front door.
+
+    Returns a URL with no trailing slash. Never invents a new env.
+    """
+    for k in ("PUBLIC_APP_BASE_URL", "FRONTEND_BASE_URL", "APP_BASE_URL"):
+        v = os.environ.get(k, "").strip()
+        if v:
+            return v.rstrip("/")
+    return "https://app.plofv.com"
+
+
+def resolve_absolute_url(url: Optional[str]) -> Optional[str]:
+    """Promote a same-origin path (``/api/objects/…``) to an
+    absolute ``https://…`` URL. Passthrough for already-absolute
+    URLs and ``data:`` URIs. Returns ``None`` when the input is
+    empty so callers can chain safely.
+    """
+    if not url:
+        return None
+    s = str(url).strip()
+    if not s:
+        return None
+    lower = s.lower()
+    if lower.startswith("http://") or lower.startswith("https://") \
+       or lower.startswith("data:"):
+        return s
+    base = resolve_public_base_url()
+    if s.startswith("/"):
+        return f"{base}{s}"
+    return f"{base}/{s}"
 
 
 CUSTOMER_SAFE_KEYS = (
@@ -120,5 +174,7 @@ __all__ = [
     "HEX_RE",
     "build_business_settings_view",
     "get_effective_business_settings",
+    "resolve_absolute_url",
+    "resolve_public_base_url",
     "to_public_branding",
 ]

@@ -135,5 +135,11 @@
   "tests/test_reports_time_to_get_paid.py::test_ttgp_happy_path_summary_and_rows",
   "tests/test_reports_time_to_get_paid.py::test_ttgp_rejects_tenant_override_for_non_super_admin",
   "tests/test_reports_time_to_get_paid.py::test_ttgp_sent_at_wins_over_created_at_when_present",
-  "tests/test_reports_time_to_get_paid.py::test_ttgp_skips_partials_and_negatives"
+  "tests/test_reports_time_to_get_paid.py::test_ttgp_skips_partials_and_negatives",
+  "tests/test_theme_refresh_pdf.py::test_effective_settings_absolutize_promotes_logo",
+  "tests/test_theme_refresh_pdf.py::test_pdf_footer_repeats_header_does_not",
+  "tests/test_theme_refresh_pdf.py::test_pdf_header_band_fallback_when_hex_missing",
+  "tests/test_theme_refresh_pdf.py::test_pdf_header_band_uses_brand_hex",
+  "tests/test_theme_refresh_pdf.py::test_resolve_absolute_url_passes_through_absolute",
+  "tests/test_theme_refresh_pdf.py::test_resolve_absolute_url_promotes_relative_path"
 ]

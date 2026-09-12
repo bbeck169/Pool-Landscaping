@@ -43,6 +43,11 @@ import DocTermsSection from "@/components/documents/DocTermsSection";
 // Feb-2026 · Desktop-unification — shared shell so invoice /
 // estimate / quote all render the same skeleton at ≥ 768 px.
 import DocDesktopShell from "@/components/documents/DocDesktopShell";
+// Feb-2026 · Theme Refresh — customer surface reads the public
+// branding endpoint via the magic-link token so the header /
+// footer bands paint in the tenant's brand primary. Admin
+// preview mode consumes the admin surface hook instead.
+import { useTenantBranding, useBusinessSettings } from "@/hooks/useTenantBranding";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -78,6 +83,16 @@ export default function EstimateView({
   // the group_key so clicking Decline / Restore on group A doesn't
   // freeze the button on group B while the network round-trips.
   const [busyGroupKey, setBusyGroupKey] = useState(null);
+
+  // Feb-2026 · Theme Refresh — pull the tenant's brand primary +
+  // logo so the shared shell paints the header/footer bands. The
+  // customer magic-link surface (token present) reads from the
+  // public branding endpoint; the admin preview surface reads
+  // from the admin endpoint. Falls back silently on error so the
+  // page still renders with default colours.
+  const { branding: _brandingCust } = useTenantBranding(token || null);
+  const { branding: _brandingAdmin } = useBusinessSettings({ skip: !!token });
+  const _branding = token ? _brandingCust : _brandingAdmin;
 
   const load = useCallback(() => {
     setErr("");
@@ -348,6 +363,20 @@ export default function EstimateView({
         docType="estimate"
         testId="estimate-desktop-shell"
         printable={printable}
+        brandingHeader={printable ? null : {
+          primary: _branding?.brand_primary_hex,
+          secondary: _branding?.brand_secondary_hex,
+          logoUrl: _branding?.logo_url,
+          companyName: _branding?.company_display_name || company?.name,
+          contactLines: [
+            (_branding?.mailing_address || "").split("\n")[0]
+              || company?.address,
+            _branding?.phone || company?.phone,
+            _branding?.email,
+            _branding?.website || company?.website,
+          ].filter(Boolean),
+          footerNote: _branding?.footer_note,
+        }}
         belowToolbar={!printable ? (
           <div
             className="ev-toolbar"
@@ -946,6 +975,59 @@ export default function EstimateView({
             </button>
           </div>
         </ModalScrim>
+      ) : null}
+
+      {/* Feb-2026 · Theme Refresh — sticky mobile action bar.
+          Visible only below 768px (via CSS media query on the wrapper)
+          and only when the quote is actionable + the customer hasn't
+          locked in a decision. Approve + Decline are the primary
+          customer actions on the magic-link surface. */}
+      {token && !printable && actionable && !locked ? (
+        <div
+          className="ev-mobile-action-bar"
+          data-testid="estimate-mobile-action-bar"
+          style={{
+            position: "fixed",
+            left: 0, right: 0, bottom: 0,
+            padding: "10px 12px",
+            paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))",
+            background: "#FFFFFF",
+            borderTop: "1px solid #E5E7EB",
+            boxShadow: "0 -4px 14px rgba(15,23,42,0.06)",
+            display: "flex", gap: 8,
+            zIndex: 45,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setDeclineOpen(true)}
+            className="iv-btn ev-btn-decline"
+            style={{
+              flex: 1, minHeight: 40,
+              border: `1px solid ${_branding?.brand_secondary_hex || "#DC2626"}`,
+              color: _branding?.brand_secondary_hex || "#DC2626",
+              background: "#FFFFFF",
+              fontWeight: 600,
+            }}
+            data-testid="estimate-mobile-decline-btn"
+          >
+            Decline
+          </button>
+          <button
+            type="button"
+            onClick={() => call2(`/quotes/${estimateId || ""}/accept`)}
+            className="iv-btn"
+            style={{
+              flex: 1, minHeight: 40,
+              background: _branding?.brand_primary_hex || "#0B4A6F",
+              color: "#FFFFFF",
+              fontWeight: 700,
+            }}
+            data-testid="estimate-mobile-approve-btn"
+          >
+            Approve
+          </button>
+        </div>
       ) : null}
 
       {toast ? <div className="ev-toast">{toast}</div> : null}

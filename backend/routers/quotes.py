@@ -1508,7 +1508,46 @@ async def quote_or_invoice_pdf(qid: str,
         story.append(Paragraph("<b>Terms &amp; Conditions</b>", styles["Heading3"]))
         story.append(Paragraph(terms_text.replace("\n", "<br/>"), styles["Normal"]))
 
-    pdf_doc.build(story)
+    # Feb-2026 · Theme Refresh — apply branded header/footer bands
+    # to the customer-facing (grouped) branch. Admin surface keeps
+    # the plain layout.
+    _on_first, _on_later = None, None
+    if render_grouped:
+        try:
+            from services.tenants.business_settings import (
+                get_effective_business_settings,
+            )
+            from services.tenants.pdf_theme import (
+                build_header_footer_hooks, HEADER_BAND_HEIGHT,
+                FOOTER_BAND_HEIGHT,
+            )
+            eff = await get_effective_business_settings(
+                db, tenant["id"], absolutize=True,
+            )
+            company_lines = [
+                eff.get("company_display_name"),
+                (eff.get("mailing_address") or "").splitlines()[0]
+                    if eff.get("mailing_address") else None,
+                eff.get("phone"), eff.get("email"),
+                eff.get("website"),
+            ]
+            _on_first, _on_later = build_header_footer_hooks(
+                brand_hex=eff.get("brand_primary_hex"),
+                title=str(label or "QUOTE").upper(),
+                company_display_name=eff.get("company_display_name"),
+                company_lines=[c for c in company_lines if c],
+                logo_absolute_url=eff.get("logo_url"),
+                footer_note=eff.get("footer_note"),
+            )
+            pdf_doc.topMargin = HEADER_BAND_HEIGHT + 0.15 * inch
+            pdf_doc.bottomMargin = FOOTER_BAND_HEIGHT + 0.15 * inch
+        except Exception as exc:  # pragma: no cover
+            logger.warning("quote_pdf_theme_wire_failed: %s", exc)
+            _on_first, _on_later = None, None
+    if _on_first and _on_later:
+        pdf_doc.build(story, onFirstPage=_on_first, onLaterPages=_on_later)
+    else:
+        pdf_doc.build(story)
     pdf = buf.getvalue()
     buf.close()
     filename = f"{label.lower()}-{qid[:8]}.pdf"

@@ -1417,7 +1417,51 @@ async def estimate_pdf(qid: str,
         f"<font size=8 color='#6B7280'>{disclaimer}</font>",
         styles["Normal"],
     ))
-    pdf.build(story)
+    # Feb-2026 · Theme Refresh — apply branded header/footer bands
+    # on customer-facing surfaces only. Admin (?internal=1) PDFs keep
+    # the plain layout so ops screens don't shift. Bands come from
+    # ``get_effective_business_settings(absolutize=True)`` so any
+    # relative logo_url is promoted to a full https URL — ReportLab
+    # can't fetch same-origin ``/api/objects/…`` paths.
+    _on_first, _on_later = None, None
+    if is_customer_pdf:
+        try:
+            from services.tenants.business_settings import (
+                get_effective_business_settings,
+            )
+            from services.tenants.pdf_theme import (
+                build_header_footer_hooks, HEADER_BAND_HEIGHT,
+                FOOTER_BAND_HEIGHT,
+            )
+            eff = await get_effective_business_settings(
+                db, tenant["id"], absolutize=True,
+            )
+            company_lines = [
+                eff.get("company_display_name"),
+                (eff.get("mailing_address") or "").splitlines()[0]
+                    if eff.get("mailing_address") else None,
+                eff.get("phone"), eff.get("email"),
+                eff.get("website"),
+            ]
+            _on_first, _on_later = build_header_footer_hooks(
+                brand_hex=eff.get("brand_primary_hex"),
+                title="ESTIMATE",
+                company_display_name=eff.get("company_display_name"),
+                company_lines=[c for c in company_lines if c],
+                logo_absolute_url=eff.get("logo_url"),
+                footer_note=eff.get("footer_note"),
+            )
+            # Add breathing room so story flows below the header
+            # rectangle on page 1 and above the footer everywhere.
+            pdf.topMargin = HEADER_BAND_HEIGHT + 0.15 * inch
+            pdf.bottomMargin = FOOTER_BAND_HEIGHT + 0.15 * inch
+        except Exception as exc:  # pragma: no cover
+            logger.warning("estimate_pdf_theme_wire_failed: %s", exc)
+            _on_first, _on_later = None, None
+    if _on_first and _on_later:
+        pdf.build(story, onFirstPage=_on_first, onLaterPages=_on_later)
+    else:
+        pdf.build(story)
     data = buf.getvalue()
     buf.close()
     filename = f"estimate-{hdr['estimate_number']}.pdf"
