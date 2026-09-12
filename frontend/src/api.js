@@ -104,7 +104,48 @@ function _reportTimeoutTelemetry(payload) {
   } catch { /* swallow — never break the surfaced timeout */ }
 }
 
-function authHeaders() {
+function authHeaders(outboundPath) {
+  // Feb-2026 · Magic-link staff-header shadowing fix.
+  //
+  // Rule: when the outbound URL IS a portal magic-link path — i.e.
+  // it starts with ``/portal/`` AND the credential is already carried
+  // in the URL (either ``?token=`` in the query or ``/via-token/…``
+  // in the path segment) — NO client-side session header may attach.
+  //
+  // Why: the customer magic-link surface at ``/e/estimate?token=<jwt>``
+  // reads the token from the URL and hands it to endpoints like
+  //   GET  /portal/quotes/via-token?token=<jwt>
+  //   GET  /portal/tenant/branding?token=<jwt>
+  //   POST /portal/quotes/via-token/<jwt>/approve
+  // If a staff user (or any prior session) has a JWT sitting in
+  // ``localStorage.token`` (auth.jsx::persist writes it on every
+  // successful login, staff AND customer), the wrapper previously
+  // attached that JWT as ``Authorization: Bearer <staff-jwt>``. On
+  // the server the magic-link verify path can then latch onto the
+  // Bearer header and reject the (correct) query token, producing
+  // the recurring "Invalid estimate link" 401 that curl (with no
+  // session) never sees. Blanket-stripping on all ``/portal/*``
+  // calls would also strip the AUTHENTICATED customer portal header
+  // (customer logs in with password, JWT is in localStorage.token,
+  // and every ``/portal/*`` call needs that header). The narrower
+  // rule below strips ONLY on magic-link-marker URLs, preserving
+  // the authenticated customer-portal flow that K13 guards.
+  //
+  // Backend hardening follow-up (not in this dispatch): make
+  // ``_verify_estimate_token`` prefer the query token over any
+  // Bearer header when both are present. Tracked in
+  // /app/memory/DIAG_MAGIC_LINK_401_RCA.md.
+  const isPortalCall =
+    typeof outboundPath === "string" && outboundPath.startsWith("/portal/");
+  const isMagicLinkPortalCall = isPortalCall && (
+    /[?&]token=/.test(outboundPath) || /\/via-token(\/|$|\?)/.test(outboundPath)
+  );
+  if (isMagicLinkPortalCall) {
+    // Send only Content-Type — no Authorization, no X-Tenant-Slug.
+    // The magic-link endpoint reads its credential from the URL.
+    return { "Content-Type": "application/json" };
+  }
+
   // Phase K13 · Feb-2026 — when this tab is running an admin
   // impersonation session (opened via ``window.open("/portal/home?
   // impersonation_token=…")``), prefer the per-tab sessionStorage
@@ -144,7 +185,7 @@ async function request(path, options = {}, timeoutMs = 30000) {
   try {
     res = await fetch(_reqUrl, {
       ...options,
-      headers: { ...authHeaders(), ...(options.headers || {}) },
+      headers: { ...authHeaders(path), ...(options.headers || {}) },
       signal: controller.signal,
     });
   } catch (e) {

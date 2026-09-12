@@ -1,8 +1,88 @@
 # DIAG · Magic-link `/e/estimate` 401 RCA scaffolding
 
-**Status:** Temporary diagnostic scaffolding. Preview-only.
+**Status:** Diagnostic scaffolding remains in place. Client-side fix
+(Option A) has now landed alongside the diagnostic — see
+`## Client-side fix landed` below. Preview-only. Keep the sentinel-
+wrapped instrumentation THROUGH the tester run; a separate cleanup
+dispatch will remove it once tester + user confirm green.
 **Owner:** main agent (auto-generated).
 **Ship-date:** Feb-2026.
+
+---
+
+## Client-side fix landed (this dispatch)
+
+**File:** `frontend/src/api.js` — `authHeaders(outboundPath)` is now
+gated on the outbound URL rather than being applied unconditionally.
+
+**Rule (final, narrower than the original dispatch wording):**
+- A `/portal/*` outbound call is a **magic-link call** when the URL
+  carries its own credential — either `?token=` in the query string
+  or `/via-token/…` in the path segment.
+- On magic-link calls, NO client-side session header attaches. Only
+  `Content-Type: application/json` is sent. This kills the
+  staff-JWT-shadowing bug at the root.
+- All OTHER `/portal/*` calls (authenticated customer-portal —
+  customer logged in with password, JWT in `localStorage.token`)
+  preserve the pre-existing behaviour: attach the localStorage token
+  (or the K13 `sessionStorage.portal_token` when on a `/portal` page)
+  and the `X-Tenant-Slug` when present.
+
+**Why narrower than the original wording**
+- The dispatch said "any `/portal/*` outbound call → no Authorization
+  and no X-Tenant-Slug, EXCEPT when sessionStorage.portal_token is
+  set." That rule assumes authenticated customer-portal tokens live in
+  `sessionStorage.portal_token`.
+- Grepping the repo confirmed only ONE writer to
+  `sessionStorage.portal_token`: `index.js:25`, which fires only on
+  URLs carrying `?impersonation_token=` (the admin-as-customer
+  impersonation flow). Regular customer logins go through
+  `auth.jsx::persist()` (line 73), which writes to
+  `localStorage.TOKEN_KEY` — the same key staff logins use.
+- Applying the blunt rule would have broken every real authenticated
+  customer-portal request (customer logs in → JWT in
+  `localStorage.token` → hits `/portal/customers/me` → server sees no
+  `Authorization` header → 401).
+- The K13 contract test
+  `frontend/src/test/k13-impersonation-token-wiring.test.jsx` explicitly
+  guards this behaviour with its third case ("on /portal/* with no
+  sessionStorage still uses localStorage").
+- The narrower magic-link-marker rule (`?token=` or `/via-token/` in
+  the outbound URL) covers exactly the failure mode described in the
+  interceptor audit while leaving the authenticated customer-portal
+  path untouched. All K13 tests remain green.
+
+**Regression tests (new)**
+`frontend/src/test/api-auth-headers-portal-gate.test.jsx` — 5 cases:
+1. `GET /portal/quotes/via-token?token=…` with staff JWT in
+   localStorage → NO Authorization, NO X-Tenant-Slug.
+2. `GET /portal/tenant/branding?token=…` — same.
+3. `GET /quotes/xyz` (staff endpoint) — Authorization AND X-Tenant-Slug
+   attach as before.
+4. Authenticated customer portal (`/portal/customers/me` from
+   `/portal/dashboard`, sessionStorage.portal_token set alongside a
+   stale staff JWT in localStorage) → portal_token wins, staff JWT
+   does NOT shadow, X-Tenant-Slug attaches (K13 contract preserved).
+5. `POST /portal/quotes/via-token/{tok}/approve` — NO Authorization
+   header.
+
+All 5 pass. All 3 K13 tests remain green. All 10 API-401 interceptor
+tests remain green.
+
+**Diagnostic sentinel instrumentation is intentionally kept in place.**
+The tester will re-run the customer magic-link surface. If the fix
+worked, the error surface simply will not render — the diag attributes
+will render as empty strings. If it did not, the diag attributes will
+tell us exactly what is still wrong.
+
+## Backend hardening — deferred to a separate dispatch
+
+Recommended follow-up: in `_verify_estimate_token` (backend), prefer
+the `?token=` query param over any `Bearer` header when both are
+present on a magic-link route. That is the server-authoritative fix
+and stops the whole class of "another client re-attached a session
+header" bugs. Explicitly out-of-scope for this dispatch — no backend
+files were modified.
 
 ---
 
