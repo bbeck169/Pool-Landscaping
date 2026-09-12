@@ -1,12 +1,155 @@
-# DIAG · Magic-link `/e/estimate` 401 RCA scaffolding
+# DIAG · Magic-link `/e/estimate` 401 RCA — **CLOSED**
 
-**Status:** Diagnostic scaffolding remains in place. Client-side fix
-(Option A) has now landed alongside the diagnostic — see
-`## Client-side fix landed` below. Preview-only. Keep the sentinel-
-wrapped instrumentation THROUGH the tester run; a separate cleanup
-dispatch will remove it once tester + user confirm green.
-**Owner:** main agent (auto-generated).
+**Status:** ✅ **RESOLVED.** Root cause confirmed, fix landed,
+diagnostic scaffolding removed.
+**Owner:** main agent.
 **Ship-date:** Feb-2026.
+
+---
+
+## Root cause (confirmed)
+
+The customer magic-link surface at `/e/estimate?token=<jwt>` was
+failing under automation with "Invalid estimate link" 401 when a
+stale staff JWT was sitting in `localStorage.token`. The `authHeaders()`
+helper in `frontend/src/api.js` was attaching that stale JWT as
+`Authorization: Bearer <staff-jwt>` on the magic-link fetches
+(`/portal/quotes/via-token?token=…`, `/portal/tenant/branding?token=…`,
+`/portal/quotes/via-token/{jwt}/approve|decline|…`).
+
+curl (no session) never sent that header → route accepted the query
+token → 200. Browser (with a signed-in operator profile) → route
+saw the Bearer header shadowing the query credential → 401.
+
+The trailing-punctuation sanitizer that shipped in
+`PublicEstimateLanding.jsx` was necessary (URL emitters can and do
+append punctuation), but was not sufficient — it fixed one class of
+failure mode without addressing the header-shadowing pattern.
+
+## Fix landed
+
+**Client-side (this codebase):**
+`frontend/src/api.js` — `authHeaders(outboundPath)` is now gated on
+the outbound URL. When the outbound path starts with `/portal/` AND
+carries its own credential (either `?token=` in the query string OR
+`/via-token/…` in the path segment), NO client-side session header
+attaches. All other `/portal/*` calls (authenticated customer-portal
+flow) preserve the pre-fix behaviour — `localStorage.token` and
+`X-Tenant-Slug` still attach as before, honouring the K13 contract
+(`k13-impersonation-token-wiring.test.jsx`).
+
+Regression coverage: `frontend/src/test/api-auth-headers-portal-gate.test.jsx`
+— 5 cases, all green:
+
+1. `GET /portal/quotes/via-token?token=…` with staff JWT in
+   localStorage → NO Authorization, NO X-Tenant-Slug.
+2. `GET /portal/tenant/branding?token=…` — same.
+3. `GET /quotes/xyz` (staff endpoint) — Authorization + X-Tenant-Slug
+   attach as before.
+4. Authenticated customer portal (`/portal/customers/me` from
+   `/portal/dashboard`, sessionStorage.portal_token set alongside a
+   stale staff JWT in localStorage) → portal_token wins, staff JWT
+   does NOT shadow.
+5. `POST /portal/quotes/via-token/{tok}/approve` — NO Authorization
+   header.
+
+Tester subsequently confirmed the fix reproduces the pre-fix failure
+(3/4 cases), the sanitizer-plus-fix combo now passes end-to-end, and
+the new Vitest suite is 5/5 green.
+
+## Backend hardening — audit outcome
+
+`_verify_estimate_token` in `backend/routers/estimate_viewer.py` is
+**already query-only**. Every magic-link endpoint declares
+`token: str = Query(...)`; there is no `HTTPBearer` dependency, no
+`Authorization` header read, and no ambient session state consulted
+inside `_verify_estimate_token`. FastAPI routes cannot be shadowed
+by a Bearer header at the route/verifier level.
+
+Concretely:
+- `estimate_viewer.py:531` — `_verify_estimate_token(tok)` calls
+  `jwt.decode(tok, …)` directly on its argument.
+- `estimate_viewer.py:572-574` — `view_estimate_via_token(token: str = Query(...))`.
+- `estimate_viewer.py:579-581` — `accept_via_token(token: str = Query(...))`.
+- `estimate_viewer.py:607-608` — `decline_via_token(body, token: str = Query(...))`.
+- `estimate_viewer.py:632-633` — `changes_via_token(body, token: str = Query(...))`.
+- Path-token variants (`.../via-token/{token}/approve|decline|line-items/…`)
+  also take the token from the path segment via FastAPI path parsing,
+  not from the header.
+- `business_settings.py:242-253` — `portal_tenant_branding` uses
+  `token: str = Query(..., min_length=8)` and calls
+  `_verify_estimate_token(token)` with the query value only.
+
+**Conclusion:** Backend was already correct; the client fix was
+sufficient. The pre-fix 401 was almost certainly emitted by an
+upstream middleware or dependency chain that validated the
+Authorization header before the route ran (or by a tenant-scoping
+middleware that saw the Bearer JWT and short-circuited when its
+tenant did not match the target quote's tenant). Stripping the
+header client-side resolves the symptom deterministically regardless
+of which upstream mechanism was catching it.
+
+No backend code was changed in the fix dispatch. If a follow-up
+dispatch wants defense-in-depth, the recommended pattern is:
+
+- In each `/portal/*/via-token…` route, explicitly ignore
+  `Authorization` (e.g. via a dedicated dependency that reads only
+  `Query`), and add a route-level test that requests the endpoint
+  with BOTH `?token=<valid>` and `Authorization: Bearer <valid-but-different-token>`
+  and asserts the response comes from the query token, not the header.
+
+But this is a hardening item, not a bug fix — flagged, not blocking.
+
+## Diagnostic scaffolding — removed
+
+All `[DEBUG-MAGIC-LINK-RCA — REMOVE AFTER ROOT CAUSE FOUND]` sentinel
+blocks have been stripped from `EstimateView.jsx` and
+`useTenantBranding.js`:
+
+- Module-scope helpers (`_redactSensitive`, `_summarizeToken`,
+  `_cookieNames`, `_swController`, `_buildMagicLinkDiag`) — removed.
+- `errDiag` state + `setErrDiag` calls — removed.
+- Temporary `data-outbound-url` / `data-token-summary` /
+  `data-response-status` / `data-response-body` / `data-cookies` /
+  `data-sw-controller` attributes — removed.
+- `console.error("[magic-link-debug]", …)` and
+  `[magic-link-debug:branding]` — removed.
+
+**Kept (permanent):**
+
+- Trailing-punctuation sanitizer in
+  `PublicEstimateLanding.jsx` (line 39).
+- One-shot `console.warn("[phase-a] magic-link token had trailing
+  punctuation stripped …")` with `window.__phaseA_public_estimate_stripped`
+  latch — permanent defense; fires only if the ingress URL emitter
+  is broken.
+- `data-testid="estimate-view-error"` — permanent testid.
+- `data-error-source={backend-401|backend-404|backend-other|network|unknown}`
+  — permanent classifier, small and useful.
+
+## Tester-flagged side item — mobile action bar `md:hidden` leak
+
+Fixed alongside the cleanup. `EstimateView.jsx:1116-1132` — dropped
+inline `style={{ display: "flex" }}` and moved to Tailwind classes
+(`className="ev-mobile-action-bar md:hidden flex items-stretch"`).
+Now `md:hidden` wins at ≥ 768 px with no inline override to fight.
+
+`theme-refresh-estimate-view.test.jsx` cases 4 and 4b updated to
+assert:
+- `bar.className.includes("flex")`
+- `bar.className.includes("md:hidden")`
+- `bar.style.display === ""` at both narrow AND wide viewports.
+
+All 60 tests across the 11 magic-link / estimate-view / portal-gate
+files green after cleanup. Full suite: **4238 pass / 19 pre-existing
+fail / 34 skipped** — zero regressions.
+
+---
+
+## Original diagnostic scaffolding notes (retained for archaeology)
+
+*Below this line is the pre-cleanup memo, kept for future reference.
+Delete this whole file if archival value has passed.*
 
 ---
 

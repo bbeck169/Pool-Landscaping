@@ -216,6 +216,15 @@ describe("EstimateView · theme refresh", () => {
     // apply Tailwind CSS in unit tests, so we assert the class
     // presence directly — the runtime CSS then does the work.
     expect(bar.className).toContain("md:hidden");
+    // Feb-2026 · Follow-up tester fix — the inline ``style.display``
+    // used to be ``"flex"``, which overrode Tailwind's non-
+    // ``!important`` ``md:hidden`` at ≥ 768 px and leaked the bar
+    // to desktop. Contract now:
+    //   * ``flex`` class is present (Tailwind sets display:flex),
+    //   * inline ``style.display`` is empty (no override to fight),
+    //   * ``md:hidden`` wins the cascade at ≥ 768 px.
+    expect(bar.className).toContain("flex");
+    expect(bar.style.display).toBe("");
     // Contract check: bar is NOT rendered outside the actionable
     // window (accepted → hidden).
     cleanup();
@@ -256,16 +265,19 @@ describe("EstimateView · theme refresh", () => {
     );
     const barNarrow = screen.getByTestId("estimate-mobile-action-bar");
     expect(barNarrow.className).toContain("md:hidden");
+    expect(barNarrow.className).toContain("flex");
+    expect(barNarrow.style.display).toBe("");
     // Bar is in the DOM at both viewports (Tailwind hides via CSS,
     // not by unmounting) — assert both the class + the parent JSX
     // gate isn't unmounting it based on JS viewport.
     Object.defineProperty(window, "innerWidth",
       { configurable: true, value: 1920 });
     window.dispatchEvent(new Event("resize"));
-    // Same element reference, same class.
-    expect(
-      screen.getByTestId("estimate-mobile-action-bar").className,
-    ).toContain("md:hidden");
+    // Same element reference, same class, still no inline display.
+    const barWide = screen.getByTestId("estimate-mobile-action-bar");
+    expect(barWide.className).toContain("md:hidden");
+    expect(barWide.className).toContain("flex");
+    expect(barWide.style.display).toBe("");
   });
 
   // Case 5

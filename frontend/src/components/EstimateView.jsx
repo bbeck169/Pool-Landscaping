@@ -55,73 +55,6 @@ function fmt(n) {
   return Number(n || 0).toFixed(2);
 }
 
-// [DEBUG-MAGIC-LINK-RCA — REMOVE AFTER ROOT CAUSE FOUND]
-// Temporary diagnostic scaffolding for the recurring "Invalid estimate
-// link" 401 on the customer magic-link fetch. Fires ONLY on the error
-// branch of the token-mode load; the success path is untouched, so
-// no debug attributes ever ship to a real customer render.
-//
-// See /app/memory/DIAG_MAGIC_LINK_401_RCA.md for context and the exact
-// removal steps once the root cause is confirmed.
-function _redactSensitive(s) {
-  if (typeof s !== "string") return "";
-  return s
-    .replace(/Bearer\s+\S+/gi, "Bearer <redacted>")
-    .replace(
-      /[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-      "<jwt-redacted>",
-    );
-}
-function _summarizeToken(t) {
-  if (!t) return "";
-  const s = String(t);
-  return `<jwt:len=${s.length},head=${s.slice(0, 6)},tail=${s.slice(-6)}>`;
-}
-function _cookieNames() {
-  try {
-    if (typeof document === "undefined") return "";
-    return (document.cookie || "")
-      .split(";")
-      .map((c) => c.trim().split("=")[0])
-      .filter(Boolean)
-      .join("; ");
-  } catch { return "<unavailable>"; }
-}
-function _swController() {
-  try {
-    if (typeof navigator === "undefined" || !navigator.serviceWorker) {
-      return "no-sw-api";
-    }
-    return navigator.serviceWorker.controller
-      ? "sw-controlled"
-      : "no-controller";
-  } catch { return "<unavailable>"; }
-}
-function _buildMagicLinkDiag({ outboundPath, token, status, body, message }) {
-  const redactedPath = outboundPath
-    ? outboundPath.replace(
-        /token=([^&]+)/,
-        (_m, tok) =>
-          `token=${_summarizeToken(decodeURIComponent(tok || ""))}`,
-      )
-    : "";
-  let bodyStr = "";
-  try {
-    bodyStr = typeof body === "string" ? body : JSON.stringify(body || "");
-  } catch { bodyStr = "<unserializable>"; }
-  bodyStr = _redactSensitive(bodyStr).slice(0, 500);
-  return {
-    outbound_url: `${BACKEND || ""}/api${redactedPath}`,
-    token_summary: _summarizeToken(token || ""),
-    response_status: status == null ? "network" : String(status),
-    response_body: bodyStr,
-    error_message: _redactSensitive(message || "").slice(0, 200),
-    cookies: _cookieNames(),
-    sw_controller: _swController(),
-  };
-}
-// [/DEBUG-MAGIC-LINK-RCA]
-
 // The estimate can be loaded via two paths:
 //   { estimateId, isAdmin }        — authenticated fetch of /full
 //   { token }                       — public magic-link
@@ -141,9 +74,6 @@ export default function EstimateView({
   const [declineOpen, setDeclineOpen] = useState(false);
   const [declineMsg, setDeclineMsg] = useState("");
   const [toast, setToast] = useState("");
-  // [DEBUG-MAGIC-LINK-RCA — REMOVE AFTER ROOT CAUSE FOUND]
-  const [errDiag, setErrDiag] = useState(null);
-  // [/DEBUG-MAGIC-LINK-RCA]
   // Feb-2026 · Phase A — per-line decline UX state. Hooks live at
   // the top of the component so they're never conditionally called.
   const [busyLineIdx, setBusyLineIdx] = useState(null);
@@ -166,31 +96,12 @@ export default function EstimateView({
 
   const load = useCallback(() => {
     setErr("");
-    // [DEBUG-MAGIC-LINK-RCA — REMOVE AFTER ROOT CAUSE FOUND]
-    setErrDiag(null);
-    // [/DEBUG-MAGIC-LINK-RCA]
     const outboundPath = token
       ? `/portal/quotes/via-token?token=${encodeURIComponent(token)}`
       : `/quotes/${estimateId}/full`;
     const p = api.get(outboundPath);
     p.then(setData).catch((e) => {
       setErr(e?.message || "Failed to load.");
-      // [DEBUG-MAGIC-LINK-RCA — REMOVE AFTER ROOT CAUSE FOUND]
-      // Only capture diag when this is the magic-link (token) load;
-      // authenticated /full failures are not what we're chasing.
-      if (token) {
-        const diag = _buildMagicLinkDiag({
-          outboundPath,
-          token,
-          status: e?.status,
-          body: e?.data,
-          message: e?.message,
-        });
-        setErrDiag(diag);
-        // eslint-disable-next-line no-console
-        console.error("[magic-link-debug]", diag);
-      }
-      // [/DEBUG-MAGIC-LINK-RCA]
     });
   }, [estimateId, token]);
 
@@ -290,18 +201,6 @@ export default function EstimateView({
           ? "backend-other"
           : "unknown"
       }
-      // [DEBUG-MAGIC-LINK-RCA — REMOVE AFTER ROOT CAUSE FOUND]
-      // Temporary attributes. Only populated when the token-mode
-      // load fails; otherwise `errDiag` is null and these render as
-      // empty strings. Removal steps in
-      // /app/memory/DIAG_MAGIC_LINK_401_RCA.md.
-      data-outbound-url={errDiag?.outbound_url || ""}
-      data-token-summary={errDiag?.token_summary || ""}
-      data-response-status={errDiag?.response_status || ""}
-      data-response-body={errDiag?.response_body || ""}
-      data-cookies={errDiag?.cookies || ""}
-      data-sw-controller={errDiag?.sw_controller || ""}
-      // [/DEBUG-MAGIC-LINK-RCA]
     >
       {err}
     </div>
@@ -1115,7 +1014,7 @@ export default function EstimateView({
           customer actions on the magic-link surface. */}
       {token && !printable && actionable && !locked ? (
         <div
-          className="ev-mobile-action-bar md:hidden"
+          className="ev-mobile-action-bar md:hidden flex items-stretch"
           data-testid="estimate-mobile-action-bar"
           style={{
             position: "fixed",
@@ -1125,7 +1024,14 @@ export default function EstimateView({
             background: "#FFFFFF",
             borderTop: "1px solid #E5E7EB",
             boxShadow: "0 -4px 14px rgba(15,23,42,0.06)",
-            display: "flex", gap: 8,
+            // Feb-2026 · Tester fix — inline ``display: flex`` used to
+            // override Tailwind's non-``!important`` ``md:hidden`` at
+            // ≥ 768 px, leaking the sticky bar to desktop. Display is
+            // now driven entirely by Tailwind utilities on the
+            // className above (``flex`` sets ``display:flex``,
+            // ``md:hidden`` wins at ≥ 768 px). Gap + z-index stay
+            // inline — they don't clash with any responsive class.
+            gap: 8,
             zIndex: 45,
           }}
         >
