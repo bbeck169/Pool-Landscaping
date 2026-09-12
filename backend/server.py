@@ -483,6 +483,12 @@ api_router.include_router(_ltm_phase1_tech_colors_router.router)
 from routers import tos_multi as _tos_multi_router  # noqa: E402
 api_router.include_router(_tos_multi_router.router)
 
+# Feb-2026 · Business Settings — admin GET/PATCH + logo POST/DELETE
+# aliases + public magic-link branding subset. Consumed as-is by the
+# queued Theme Refresh phase.
+from routers import business_settings as _feb2026_business_settings  # noqa: E402
+api_router.include_router(_feb2026_business_settings.router)
+
 # Feb-2026 · mobile-flagged gaps — Auto Clock-In field + user self-PATCH
 # + orphan-customer repair. Registered alongside the ToS router since
 # they share the /users/me + /admin/users/{id} URL space.

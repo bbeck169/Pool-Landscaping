@@ -152,7 +152,10 @@ import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
 // Feb-2026 · TD-08 promoted — admin logo upload UI.
 import BrandLogoSettings from "@/pages/settings/BrandLogoSettings";
 // Phase I1.5.b · Feb-2026 — Tenant theme editor UI + live preview.
-import ThemeSettings from "@/pages/settings/ThemeSettings";// Feb-2026 · Consolidated Settings Hub — shared layout + Social tab.
+import ThemeSettings from "@/pages/settings/ThemeSettings";
+// Feb-2026 · Business Settings — company defaults + brand colours.
+import BusinessSettings from "@/pages/settings/BusinessSettings";
+// Feb-2026 · Consolidated Settings Hub — shared layout + Social tab.
 import SettingsHub, { SettingsGeneral } from "@/layouts/SettingsHub";
 import SettingsSocial from "@/pages/settings/SettingsSocial";
 import MyProfilePage from "@/pages/account/MyProfilePage";
@@ -1317,6 +1320,7 @@ export default function App() {
               <Route index element={<SettingsGeneral />} />
               <Route path="general" element={<SettingsGeneral />} />
               <Route path="branding" element={<BrandLogoSettings />} />
+              <Route path="business" element={<BusinessSettings />} />
               <Route path="theme" element={<ThemeSettings />} />
               <Route path="integrations" element={<IntegrationsHub />} />
               <Route path="social" element={<SettingsSocial />} />

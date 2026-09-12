@@ -23,6 +23,7 @@ import {
   Plug,
   Share2,
   ChevronRight,
+  Building2,
 } from "lucide-react";
 
 // Hub-level sections (headline links). Feb 2026 · Migration / Team
@@ -43,6 +44,13 @@ const SECTIONS = [
     label: "Branding",
     Icon: ImageIcon,
     hint: "Logo upload, brand colours",
+  },
+  {
+    key: "business",
+    to: "/settings/business",
+    label: "Business",
+    Icon: Building2,
+    hint: "Company defaults, brand colours + logo for docs & emails",
   },
   {
     key: "theme",
