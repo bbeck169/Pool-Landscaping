@@ -16,6 +16,7 @@ import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { Header, IconButton } from "@/src/components/widgets";
 import { exportInvoicePdf } from "@/src/utils/exportInvoicePdf";
 import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
+import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 
 export default function QuoteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -23,6 +24,9 @@ export default function QuoteDetail() {
   const { stripeConfigured } = useStripeConfig();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin" || user?.role === "manager";
   const insets = useSafeAreaInsets();
+
+  // Theme refresh — tenant branding
+  const { branding } = useBusinessSettings();
   const [q, setQ] = useState<any>(null);
   const [company, setCompany] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -181,11 +185,22 @@ export default function QuoteDetail() {
   const isCustomer = user?.role === "customer";
   const paid = q.payment_status === "paid";
   const decided = ["accepted", "declined", "scheduled"].includes(q.status);
+  const brandPrimary = branding?.brand_primary_hex || "#0B4A6F";
 
   return (
     <View style={styles.root}>
       <Header title={isInvoice ? "Invoice" : "Quote"} back right={<IconButton icon="share-outline" onPress={exportPdf} testID="quote-share-pdf" />} />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 140 }}>
+        {/* Branded header band (Theme Refresh) */}
+        <View style={[styles.brandBand, { backgroundColor: brandPrimary }]} testID="doc-branded-header-band">
+          <View>
+            <Text style={styles.brandBandLabel}>{isInvoice ? "INVOICE" : "QUOTE"}</Text>
+            <Text style={styles.brandBandCompany}>
+              {branding?.company_display_name || company?.name || q.tenant_name || ""}
+            </Text>
+          </View>
+        </View>
+
         <View style={styles.headerCard}>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>{q.title}</Text>
@@ -209,6 +224,18 @@ export default function QuoteDetail() {
             <TotalRow label="Subtotal" value={money(q.subtotal)} />
             <TotalRow label={`Tax (${q.tax_rate}%)`} value={money(q.tax)} />
             <TotalRow label="Total" value={money(q.total)} bold />
+            {q.has_declined_lines ? (
+              <View style={styles.dualTotalBox} testID="quote-invoice-effective-total">
+                <View style={styles.totalRow}>
+                  <Text style={styles.dualTotalLabel}>Subtotal (incl. declined)</Text>
+                  <Text style={styles.dualTotalValue}>{money(q.original_total ?? q.total)}</Text>
+                </View>
+                <View style={styles.totalRow}>
+                  <Text style={styles.dualTotalEffLabel}>Effective (excl. declined)</Text>
+                  <Text style={styles.dualTotalEffValue} testID="quote-invoice-effective-total-value">{money(q.adjusted_total ?? q.total)}</Text>
+                </View>
+              </View>
+            ) : null}
           </View>
         </View>
 
@@ -300,6 +327,13 @@ export default function QuoteDetail() {
             ))}
           </View>
         ) : null}
+
+        {/* Branded footer band (Theme Refresh) */}
+        {branding?.footer_note ? (
+          <View style={[styles.brandFooter, { backgroundColor: brandPrimary }]} testID="doc-branded-footer-band">
+            <Text style={styles.brandFooterText}>{branding.footer_note}</Text>
+          </View>
+        ) : null}
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}>
@@ -384,6 +418,17 @@ const styles = StyleSheet.create({
   liMeta: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
   liTotal: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
   totalsBox: { marginTop: spacing.md, gap: spacing.xs },
+  dualTotalBox: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: spacing.xs,
+  },
+  dualTotalLabel: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
+  dualTotalValue: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
+  dualTotalEffLabel: { fontFamily: font.bold, fontSize: fontSize.base, color: "#B45309" },
+  dualTotalEffValue: { fontFamily: font.bold, fontSize: fontSize.base, color: "#B45309" },
   totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   totalLabel: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },
   totalValue: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
@@ -455,4 +500,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#78350F",
   },
+  // Theme Refresh — branded header/footer bands
+  brandBand: { borderRadius: radius.md, padding: spacing.lg, marginBottom: spacing.md },
+  brandBandLabel: { fontFamily: font.semibold, fontSize: 11, color: "rgba(255,255,255,0.8)", textTransform: "uppercase" as const, letterSpacing: 0.5 },
+  brandBandCompany: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", marginTop: 4 },
+  brandFooter: { borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.md },
+  brandFooterText: { fontFamily: font.regular, fontSize: fontSize.sm, color: "#fff", textAlign: "center" as const },
 });

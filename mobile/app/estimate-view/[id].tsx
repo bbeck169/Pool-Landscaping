@@ -28,9 +28,12 @@ import {
   getEstimateFull, acceptEstimate, declineEstimate, requestEstimateChanges,
   fetchMagicLinkToken, declineLineItem, undeclineLineItem,
   approveViaToken, declineViaToken,
+  declineGroupViaToken, restoreGroupViaToken,
+  declineGroupAdmin, restoreGroupAdmin,
   type EstimateFull,
 } from "@/src/api/estimatesFull";
 import { InvoiceAttachments } from "@/src/components/files";
+import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
 const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
@@ -56,6 +59,11 @@ export default function EstimateViewScreen() {
   const [lineDeclineReason, setLineDeclineReason] = useState("");
   const [toast, setToast] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Decline-per-group state
+  const [busyGroupKey, setBusyGroupKey] = useState<string | null>(null);
+
+  // Theme refresh — tenant branding for header/footer bands
+  const { branding } = useBusinessSettings();
 
   const showToast = (msg: string, ms = 2500) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -203,6 +211,39 @@ export default function EstimateViewScreen() {
     }
   };
 
+  // ── Group decline/restore (decline-per-group) ────────────────
+  const onDeclineGroup = async (groupKey: string) => {
+    setBusyGroupKey(groupKey);
+    try {
+      const res = magicToken
+        ? await declineGroupViaToken(magicToken, groupKey)
+        : await declineGroupAdmin(id!, groupKey);
+      if (res) setData(res);
+      else await load();
+      showToast("Group declined");
+    } catch (e: any) {
+      showToast(e?.message || "Failed to decline group", 3000);
+    } finally {
+      setBusyGroupKey(null);
+    }
+  };
+
+  const onRestoreGroup = async (groupKey: string) => {
+    setBusyGroupKey(groupKey);
+    try {
+      const res = magicToken
+        ? await restoreGroupViaToken(magicToken, groupKey)
+        : await restoreGroupAdmin(id!, groupKey);
+      if (res) setData(res);
+      else await load();
+      showToast("Group restored");
+    } catch (e: any) {
+      showToast(e?.message || "Failed to restore group", 3000);
+    } finally {
+      setBusyGroupKey(null);
+    }
+  };
+
   // ── Loading / error states ─────────────────────────────────────
   if (loading) {
     return (
@@ -224,8 +265,10 @@ export default function EstimateViewScreen() {
     );
   }
 
-  const { company, bill_to, property_address, header, line_items, totals, notes, title, decision, accepted_at, declined_at, as_customer } = data;
+  const { company, bill_to, property_address, header, line_items, totals, notes, title, decision, accepted_at, declined_at, as_customer, customer_view } = data;
   const canLineDecline = actionable && !locked && !!magicToken;
+  const showGrouped = Boolean(as_customer && customer_view?.groups?.length);
+  const brandPrimary = branding?.brand_primary_hex || "#0B4A6F";
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -257,6 +300,16 @@ export default function EstimateViewScreen() {
             </Text>
           </View>
         )}
+
+        {/* Branded header band (Theme Refresh) */}
+        <View style={[s.brandBand, { backgroundColor: brandPrimary }]} testID="doc-branded-header-band">
+          <View>
+            <Text style={s.brandBandLabel}>ESTIMATE</Text>
+            <Text style={s.brandBandCompany}>
+              {branding?.company_display_name || company.name}
+            </Text>
+          </View>
+        </View>
 
         {/* Header card */}
         <View style={s.card} testID="estimate-header-card">
@@ -329,7 +382,73 @@ export default function EstimateViewScreen() {
           {property_address ? <Text style={[s.muted, { marginTop: 4 }]}><Text style={{ fontFamily: font.semibold }}>Property: </Text>{property_address}</Text> : null}
         </View>
 
-        {/* Line Items */}
+        {/* Line Items — grouped or itemized */}
+        {showGrouped ? (
+          <View style={s.card} testID="estimate-grouped-lines">
+            <Text style={s.sectionLabel}>SERVICES</Text>
+            {(customer_view!.groups || []).length === 0 ? (
+              <Text style={s.muted}>No services on this estimate.</Text>
+            ) : (
+              (customer_view!.groups || []).map((g, i) => {
+                const gKey = g.group_key || g.category_id || `other-${i}`;
+                const isDeclined = Boolean(g.declined);
+                const isBusy = busyGroupKey === gKey;
+                const showAction = (actionable && !locked) || !as_customer;
+                return (
+                  <View
+                    key={gKey}
+                    style={[s.groupRow, isDeclined && { opacity: 0.55 }]}
+                    testID={`estimate-grouped-row-${g.category_id || "other"}`}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.groupLabel, isDeclined && s.lineDeclinedText]}>{g.label}</Text>
+                      {g.description ? (
+                        <Text
+                          style={[s.groupDesc, isDeclined && s.lineDeclinedText]}
+                          testID={`estimate-grouped-desc-${g.category_id || "other"}`}
+                        >
+                          {g.description}
+                        </Text>
+                      ) : null}
+                      {isDeclined && g.declined_at ? (
+                        <Text
+                          style={s.groupDeclinedLabel}
+                          testID={`estimate-grouped-declined-label-${g.category_id || "other"}`}
+                        >
+                          Declined {String(g.declined_at).slice(0, 10)}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <View style={{ alignItems: "flex-end", gap: 6 }}>
+                      <Text style={[s.lineTotal, isDeclined && s.lineDeclinedText]}>{fmt(g.subtotal)}</Text>
+                      {showAction ? (
+                        isDeclined ? (
+                          <TouchableOpacity
+                            onPress={() => onRestoreGroup(gKey)}
+                            disabled={isBusy}
+                            style={s.undeclineBtn}
+                            testID={`estimate-grouped-restore-btn-${g.category_id || "other"}`}
+                          >
+                            <Text style={s.undeclineBtnText}>{isBusy ? "…" : "Restore"}</Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <TouchableOpacity
+                            onPress={() => onDeclineGroup(gKey)}
+                            disabled={isBusy}
+                            style={s.lineDeclineBtn}
+                            testID={`estimate-grouped-decline-btn-${g.category_id || "other"}`}
+                          >
+                            <Text style={s.lineDeclineBtnText}>{isBusy ? "…" : "Decline"}</Text>
+                          </TouchableOpacity>
+                        )
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        ) : (
         <View style={s.card} testID="estimate-line-items">
           <Text style={s.sectionLabel}>LINE ITEMS</Text>
           {line_items.length === 0 ? (
@@ -385,6 +504,7 @@ export default function EstimateViewScreen() {
             })
           )}
         </View>
+        )}
 
         {/* Totals */}
         <View style={s.card} testID="estimate-totals">
@@ -440,6 +560,13 @@ export default function EstimateViewScreen() {
 
         {/* Attachments */}
         <InvoiceAttachments docId={id!} isInvoice={false} user={user} />
+
+        {/* Branded footer band (Theme Refresh) */}
+        {branding?.footer_note ? (
+          <View style={[s.brandFooter, { backgroundColor: brandPrimary }]} testID="doc-branded-footer-band">
+            <Text style={s.brandFooterText}>{branding.footer_note}</Text>
+          </View>
+        ) : null}
 
         {/* Disclaimer */}
         <View style={s.disclaimer}>
@@ -608,4 +735,15 @@ const s = StyleSheet.create({
   modalDeclineBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
   modalSendBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.sm, backgroundColor: colors.brand },
   modalSendBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
+  // Theme Refresh — branded header/footer bands
+  brandBand: { borderRadius: radius.md, padding: spacing.lg, marginBottom: spacing.md },
+  brandBandLabel: { fontFamily: font.semibold, fontSize: 11, color: "rgba(255,255,255,0.8)", textTransform: "uppercase", letterSpacing: 0.5 },
+  brandBandCompany: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", marginTop: 4 },
+  brandFooter: { borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.md },
+  brandFooterText: { fontFamily: font.regular, fontSize: fontSize.sm, color: "#fff", textAlign: "center" },
+  // Decline-per-group — grouped rows
+  groupRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  groupLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  groupDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  groupDeclinedLabel: { fontFamily: font.regular, fontSize: 11, color: "#991B1B", marginTop: 4 },
 });

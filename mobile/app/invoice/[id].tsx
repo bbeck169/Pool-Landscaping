@@ -25,6 +25,7 @@ import { createPaymentIntent } from "@/src/api/payments";
 import { InvoiceAttachments } from "@/src/components/files";
 import InvoiceViewHistory from "@/src/components/invoices/InvoiceViewHistory";
 import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
+import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
 const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
@@ -35,6 +36,9 @@ export default function InvoiceDetail() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const stripe = useStripeConfig();
+
+  // Theme refresh — tenant branding
+  const { branding } = useBusinessSettings();
 
   const [data, setData] = useState<InvoiceFull | null>(null);
   const [loading, setLoading] = useState(true);
@@ -146,6 +150,7 @@ export default function InvoiceDetail() {
 
   const { company, bill_to, property_address, header, line_items, totals, notes, is_due_on_receipt, payment_status } = data;
   const canPay = (payment_status || "").toLowerCase() !== "paid" && (totals?.total_due || 0) > 0;
+  const brandPrimary = branding?.brand_primary_hex || "#0B4A6F";
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -159,6 +164,16 @@ export default function InvoiceDetail() {
       </View>
 
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+        {/* Branded header band (Theme Refresh) */}
+        <View style={[s.brandBand, { backgroundColor: brandPrimary }]} testID="doc-branded-header-band">
+          <View>
+            <Text style={s.brandBandLabel}>INVOICE</Text>
+            <Text style={s.brandBandCompany}>
+              {branding?.company_display_name || company.name}
+            </Text>
+          </View>
+        </View>
+
         {/* Status + amount */}
         <View style={s.card} testID="invoice-header-card">
           <View style={s.statusRow}>
@@ -429,6 +444,13 @@ export default function InvoiceDetail() {
         {/* Phase K47 · Feb-2026 — Invoice view history (admin only,
             self-hides on 403 for customer/technician callers). */}
         <InvoiceViewHistory invoiceId={id!} />
+
+        {/* Branded footer band (Theme Refresh) */}
+        {branding?.footer_note ? (
+          <View style={[s.brandFooter, { backgroundColor: brandPrimary }]} testID="doc-branded-footer-band">
+            <Text style={s.brandFooterText}>{branding.footer_note}</Text>
+          </View>
+        ) : null}
       </ScrollView>
 
       {/* Payment WebView Modal */}
@@ -617,4 +639,10 @@ const s = StyleSheet.create({
   promoAppliedPill: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1, paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.md },
   promoAppliedText: { fontFamily: font.semibold, fontSize: fontSize.sm, flex: 1 },
   promoErrorText: { fontFamily: font.medium, fontSize: fontSize.sm, color: "#DC2626", marginTop: 6 },
+  // Theme Refresh — branded header/footer bands
+  brandBand: { borderRadius: radius.md, padding: spacing.lg, marginBottom: spacing.md },
+  brandBandLabel: { fontFamily: font.semibold, fontSize: 11, color: "rgba(255,255,255,0.8)", textTransform: "uppercase", letterSpacing: 0.5 },
+  brandBandCompany: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", marginTop: 4 },
+  brandFooter: { borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.md },
+  brandFooterText: { fontFamily: font.regular, fontSize: fontSize.sm, color: "#fff", textAlign: "center" },
 });

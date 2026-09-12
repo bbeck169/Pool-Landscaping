@@ -17,6 +17,16 @@ export type EstimateLineItem = {
   decline_reason?: string;
 };
 
+export type EstimateGroup = {
+  group_key: string;
+  category_id?: string;
+  label: string;
+  description?: string;
+  subtotal: number;
+  declined?: boolean;
+  declined_at?: string;
+};
+
 export type EstimateFull = {
   company: { name: string; address?: string; phone?: string; website?: string };
   bill_to: { name: string; address?: string };
@@ -35,6 +45,10 @@ export type EstimateFull = {
   sent_at?: string;
   sent_via?: string;
   as_customer?: boolean;
+  /** Grouped customer view (when tenant uses grouped display). */
+  customer_view?: {
+    groups?: EstimateGroup[];
+  };
   line_items: EstimateLineItem[];
   totals: {
     subtotal: number;
@@ -88,3 +102,34 @@ export const approveViaToken = (token: string) =>
 
 export const declineViaToken = (token: string, reason?: string) =>
   api.post(`/portal/quotes/via-token/${encodeURIComponent(token)}/decline`, { reason: reason || "" });
+
+// ── Group decline/restore (decline-per-group) ────────────────────
+
+/** Customer (magic-link) decline a group. */
+export const declineGroupViaToken = (token: string, groupKey: string) =>
+  api.patch(
+    `/portal/quotes/via-token/${encodeURIComponent(token)}/groups/${encodeURIComponent(groupKey)}/decline`,
+    {},
+  );
+
+/** Customer (magic-link) restore a declined group. */
+export const restoreGroupViaToken = (token: string, groupKey: string) =>
+  api.patch(
+    `/portal/quotes/via-token/${encodeURIComponent(token)}/groups/${encodeURIComponent(groupKey)}/undecline`,
+    {},
+  );
+
+/** Admin decline a group on behalf of the customer. */
+export const declineGroupAdmin = (quoteId: string, groupKey: string) =>
+  api.patch(
+    `/quotes/${quoteId}/groups/${encodeURIComponent(groupKey)}/decline`,
+    {},
+  );
+
+/** Admin restore a declined group. */
+export const restoreGroupAdmin = (quoteId: string, groupKey: string) =>
+  api.patch(
+    `/quotes/${quoteId}/groups/${encodeURIComponent(groupKey)}/undecline`,
+    {},
+  );
+
