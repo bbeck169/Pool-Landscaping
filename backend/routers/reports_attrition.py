@@ -63,27 +63,9 @@ from utils import get_current_user
 router = APIRouter(tags=["reports"])
 
 
-def _iso_day_bounds(start_date: str, end_date: str) -> tuple[str, str]:
-    """Normalize ``YYYY-MM-DD`` inputs into inclusive ISO bounds.
-    ``end_date`` becomes ``23:59:59.999999`` so a row stamped at
-    ``23:30`` on the last day of the window is included."""
-    try:
-        s = datetime.fromisoformat(start_date).replace(
-            hour=0, minute=0, second=0, microsecond=0,
-            tzinfo=timezone.utc,
-        )
-        e = datetime.fromisoformat(end_date).replace(
-            hour=23, minute=59, second=59, microsecond=999999,
-            tzinfo=timezone.utc,
-        )
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="start_date and end_date must be YYYY-MM-DD",
-        )
-    if e < s:
-        raise HTTPException(400, "end_date must be >= start_date")
-    return s.isoformat(), e.isoformat()
+# Feb-2026 · P16B — helper extracted to services/_shared/reports.py.
+# See /app/memory/CLEANUP_DISPATCH_A.md.
+from services._shared.reports import _iso_day_bounds  # noqa: E402
 
 
 def _pick_inactive_at(row: dict) -> Optional[str]:

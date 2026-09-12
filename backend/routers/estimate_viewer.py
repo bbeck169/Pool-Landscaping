@@ -956,7 +956,13 @@ async def _build_customer_view_only(est: dict, tenant: dict) -> Dict[str, Any]:
 # ══════════════════════════════════════════════════════════════════
 # PDF
 # ══════════════════════════════════════════════════════════════════
-@router.get("/quotes/{qid}/pdf")
+# Feb-2026 · Cleanup Dispatch A · Item 2 — the ``/quotes/{qid}/pdf``
+# decorator was previously registered here as well. Route-order made
+# it dead code (``routers/quotes.py::quote_or_invoice_pdf`` wins
+# because ``quotes`` is included in server.py before ``estimate_viewer``).
+# The remaining ``/estimates/{qid}/pdf`` decorator below is the
+# deprecated legacy alias — still reachable and intentional.
+# See /app/memory/CLEANUP_DISPATCH_A.md.
 @router.get("/estimates/{qid}/pdf", deprecated=True)
 async def estimate_pdf(qid: str,
                         internal: bool = False,

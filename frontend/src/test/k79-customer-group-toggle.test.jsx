@@ -1,15 +1,16 @@
 /**
- * Phase K79 · Feb-2026 — K79CustomerViewSection · toggle + descriptions.
- *
- * Coverage:
- *  1. Renders the toggle checkbox reflecting doc.customer_group_display.
- *  2. Toggling OFF PUTs the flag to the server; toggling ON PUTs true.
- *  3. Description editor rows appear when enabled AND line_items carry
- *     service_category_id values.
- *  4. Description editor hides when the toggle is off.
- *  5. Saving a description PUTs the full customer_group_descriptions
+ * Phase K79 · Feb-2026 — K79CustomerViewSection · descriptions +
+ * preview. Grouped-layout toggle retired by Cleanup Dispatch A · Item
+ * 3 (grouped is always ON for customer surfaces). This suite now
+ * covers:
+ *  1. Renders the retired-banner instead of the old toggle checkbox.
+ *  2. Description editor is always shown (no longer gated on toggle).
+ *  3. Description editor rows appear for each unique
+ *     service_category_id in the doc.
+ *  4. Saving a description PUTs the full customer_group_descriptions
  *     dict to the server.
- *  6. Preview modal opens on button click; closes on X.
+ *  5. Preview modal opens/closes on button click.
+ *  6. Empty hint renders when no line item carries a category.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -68,34 +69,28 @@ beforeEach(() => {
 
 
 describe("Phase K79 · K79CustomerViewSection", () => {
-  it("renders the toggle checkbox reflecting doc.customer_group_display",
+  it("renders the retired-toggle banner (grouped locked ON)",
     async () => {
     render(<K79CustomerViewSection doc={baseDoc} onDocRefresh={vi.fn()} />);
-    const box = screen.getByTestId("k79-toggle-checkbox");
-    expect(box.checked).toBe(true);
+    const banner = screen.getByTestId("k79-toggle-retired-banner");
+    expect(banner).toBeTruthy();
+    expect(banner.textContent).toContain("GROUPED LAYOUT (ON)");
+    expect(banner.textContent).toContain("always on");
+    // The old interactive checkbox is gone.
+    expect(screen.queryByTestId("k79-toggle-checkbox")).toBeNull();
   });
 
-  it("PUTs customer_group_display=false when unchecked", async () => {
+  it("never PUTs customer_group_display (toggle retired)", async () => {
     render(<K79CustomerViewSection doc={baseDoc} onDocRefresh={vi.fn()} />);
-    fireEvent.click(screen.getByTestId("k79-toggle-checkbox"));
+    // Wait a tick to let effects flush.
     await waitFor(() => {
-      expect(putSpy).toHaveBeenCalledWith(
-        "/quotes/quote-1",
-        { customer_group_display: false },
-      );
+      expect(screen.getByTestId("k79-toggle-retired-banner")).toBeTruthy();
     });
-  });
-
-  it("PUTs customer_group_display=true when re-checked", async () => {
-    const doc = { ...baseDoc, customer_group_display: false };
-    render(<K79CustomerViewSection doc={doc} onDocRefresh={vi.fn()} />);
-    fireEvent.click(screen.getByTestId("k79-toggle-checkbox"));
-    await waitFor(() => {
-      expect(putSpy).toHaveBeenCalledWith(
-        "/quotes/quote-1",
-        { customer_group_display: true },
-      );
-    });
+    // No PUT for the toggle should have been fired.
+    const flagPuts = putSpy.mock.calls.filter(([_, body]) =>
+      body && "customer_group_display" in (body || {}),
+    );
+    expect(flagPuts).toHaveLength(0);
   });
 
   it("shows description editor rows for each unique service_category_id",
@@ -108,10 +103,16 @@ describe("Phase K79 · K79CustomerViewSection", () => {
     });
   });
 
-  it("hides the description editor when toggle is off", () => {
+  it("descriptions editor is always shown regardless of the "
+        + "(now-retired) customer_group_display value",
+    async () => {
     const doc = { ...baseDoc, customer_group_display: false };
     render(<K79CustomerViewSection doc={doc} onDocRefresh={vi.fn()} />);
-    expect(screen.queryByTestId("k79-descriptions-editor")).toBeNull();
+    // Editor is present even though customer_group_display=false —
+    // proves the toggle no longer gates the editor.
+    await waitFor(() => {
+      expect(screen.getByTestId("k79-descriptions-editor")).toBeTruthy();
+    });
   });
 
   it("saves a description via PUT with the full descriptions dict",

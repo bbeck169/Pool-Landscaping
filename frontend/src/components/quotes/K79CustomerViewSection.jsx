@@ -43,23 +43,23 @@ function _uniqueServiceCategories(lines, allCats) {
 
 
 export default function K79CustomerViewSection({ doc, onDocRefresh }) {
-  const [enabled, setEnabled] = useState(
-    doc.customer_group_display !== false,
-  );
+  // Feb-2026 · Cleanup Dispatch A · Item 3 — the grouped-layout
+  // toggle was retired (grouped is always ON for customer surfaces
+  // post-grouped-lock ship). The ``customer_group_display`` field is
+  // preserved on the backend doc but the toggle UI + local state are
+  // removed. See /app/memory/CLEANUP_DISPATCH_A.md.
   const [descriptions, setDescriptions] = useState(
     doc.customer_group_descriptions || {},
   );
   const [savingKey, setSavingKey] = useState(null);
-  const [savingToggle, setSavingToggle] = useState(false);
   const [error, setError] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [serviceCats, setServiceCats] = useState([]);
 
   // Sync local state when parent reloads doc after a save.
   useEffect(() => {
-    setEnabled(doc.customer_group_display !== false);
     setDescriptions(doc.customer_group_descriptions || {});
-  }, [doc.customer_group_display, doc.customer_group_descriptions]);
+  }, [doc.customer_group_descriptions]);
 
   useEffect(() => {
     let alive = true;
@@ -74,24 +74,6 @@ export default function K79CustomerViewSection({ doc, onDocRefresh }) {
     () => _uniqueServiceCategories(doc.line_items, serviceCats),
     [doc.line_items, serviceCats],
   );
-
-  const persistToggle = async (next) => {
-    setSavingToggle(true);
-    setError("");
-    try {
-      await api.put(`/quotes/${doc.id}`, {
-        customer_group_display: next,
-      });
-      setEnabled(next);
-      onDocRefresh?.();
-    } catch (e) {
-      setError(e?.message || "Failed to save");
-      // Roll back optimistic toggle on error.
-      setEnabled(!next);
-    } finally {
-      setSavingToggle(false);
-    }
-  };
 
   const persistDescription = async (catId) => {
     setSavingKey(catId);
@@ -146,24 +128,26 @@ export default function K79CustomerViewSection({ doc, onDocRefresh }) {
       <label
         className="flex items-center gap-2 mb-3 text-sm"
         style={{ color: colors.onSurface }}
+        data-testid="k79-toggle-retired-banner"
       >
-        <input
-          type="checkbox"
-          checked={enabled}
-          disabled={savingToggle}
-          onChange={(e) => persistToggle(e.target.checked)}
-          data-testid="k79-toggle-checkbox"
-        />
-        <span>
-          Show <b>grouped</b> totals to customer
-          <span className="ml-2 text-xs" style={{ color: colors.muted }}>
-            (off = customer sees the full itemized table)
-          </span>
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold"
+          style={{
+            background: colors.surfaceSecondary,
+            border: `1px solid ${colors.border}`,
+            color: colors.muted,
+          }}
+        >
+          GROUPED LAYOUT (ON)
+        </span>
+        <span style={{ color: colors.muted }}>
+          Grouped layout is always on for customer-facing surfaces.
         </span>
       </label>
 
-      {enabled ? (
-        <div
+      {/* Group descriptions editor — always rendered since grouped
+          layout is now locked on for customer surfaces. */}
+      <div
           className="rounded-xl p-3 mt-2"
           style={{ background: colors.surfaceSecondary,
                     border: `1px solid ${colors.divider}` }}
@@ -227,7 +211,6 @@ export default function K79CustomerViewSection({ doc, onDocRefresh }) {
             </div>
           )}
         </div>
-      ) : null}
 
       {error ? (
         <div className="mt-3 text-xs" style={{ color: "#B91C1C" }}

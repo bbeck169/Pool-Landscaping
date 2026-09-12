@@ -52,33 +52,11 @@ from utils import get_current_user
 router = APIRouter(tags=["reports"])
 
 
-def _iso_day_bounds(start_date: str, end_date: str) -> tuple[str, str]:
-    try:
-        s = datetime.fromisoformat(start_date).replace(
-            hour=0, minute=0, second=0, microsecond=0,
-            tzinfo=timezone.utc,
-        )
-        e = datetime.fromisoformat(end_date).replace(
-            hour=23, minute=59, second=59, microsecond=999999,
-            tzinfo=timezone.utc,
-        )
-    except Exception:
-        raise HTTPException(
-            400, "start_date and end_date must be YYYY-MM-DD")
-    if e < s:
-        raise HTTPException(400, "end_date must be >= start_date")
-    return s.isoformat(), e.isoformat()
-
-
-def _norm_status(s: Any) -> str:
-    """Canonicalize the lead status. Mirror of the read-side of
-    ``routers.leads.migrate_lead_statuses`` — lower-case + collapse
-    whitespace + swap space for underscore. Values not on the
-    canonical list flow through unchanged."""
-    if not s:
-        return ""
-    v = str(s).strip().lower().replace(" ", "_")
-    return v
+# Feb-2026 · P16B — helpers extracted to services/_shared/reports.py.
+from services._shared.reports import (  # noqa: E402
+    _iso_day_bounds,
+    _norm_status,
+)
 
 
 @router.get(

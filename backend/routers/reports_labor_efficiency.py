@@ -52,36 +52,14 @@ from utils import get_current_user
 router = APIRouter(tags=["reports"])
 
 
-def _iso_day_bounds(start_date: str, end_date: str) -> tuple[str, str]:
-    try:
-        s = datetime.fromisoformat(start_date).replace(
-            hour=0, minute=0, second=0, microsecond=0,
-            tzinfo=timezone.utc,
-        )
-        e = datetime.fromisoformat(end_date).replace(
-            hour=23, minute=59, second=59, microsecond=999999,
-            tzinfo=timezone.utc,
-        )
-    except Exception:
-        raise HTTPException(
-            400, "start_date and end_date must be YYYY-MM-DD")
-    if e < s:
-        raise HTTPException(400, "end_date must be >= start_date")
-    return s.isoformat(), e.isoformat()
-
-
-def _first_float(row: dict, *keys: str) -> Optional[float]:
-    for k in keys:
-        v = row.get(k)
-        if v is None:
-            continue
-        try:
-            fv = float(v)
-        except (TypeError, ValueError):
-            continue
-        if fv > 0:
-            return fv
-    return None
+# Feb-2026 · P16B — helpers extracted to services/_shared/reports.py.
+# ``_first_float`` is re-exported here so
+# ``reports_booked_out_capacity`` — which historically imported it
+# from this module — keeps its existing import path working.
+from services._shared.reports import (  # noqa: E402
+    _iso_day_bounds,
+    _first_float,
+)
 
 
 def _short_date(v: Any) -> Optional[str]:
