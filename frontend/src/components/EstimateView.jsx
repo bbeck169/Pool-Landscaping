@@ -248,21 +248,16 @@ export default function EstimateView({
   // ``customer_group_display`` is on. Admin/printable views keep the
   // fully-itemized surface unchanged.
   //
-  // Feb-2026 · Batch #4 · Item 1 fix — on the magic-link surface
-  // (``token`` present) the grouped rollup HIDES the per-line
-  // decline buttons because it collapses individual ``line_items``
-  // into category-level rows. Phase A's whole point is customer
-  // per-line action, so force itemized rendering whenever the doc
-  // is actionable via a magic link. Once the doc is locked
-  // (accepted/declined) we fall back to the grouped rollup so the
-  // customer's post-decision view stays consistent with the rest
-  // of the portal.
-  const showGrouped = Boolean(
-    as_customer
-    && customer_view
-    && customer_view.customer_group_display
-    && !(token && actionable && !locked),
-  );
+  // Feb-2026 · Grouped-layout LOCK-ON ship — grouped layout is now
+  // the SOLE customer-facing render mode. The historical toggle
+  // ``customer_group_display`` and the magic-link "force-itemized
+  // to allow per-line decline" carve-out are BOTH retired. Customer
+  // still gets a doc-level Decline (top toolbar + a fresh
+  // bottom-of-view "Decline Quote" button) — per-line decline is
+  // no longer part of the customer surface. Admin itemized view is
+  // untouched (``as_customer`` is false there).
+  // See /app/memory/FEATURE_QUOTE_CUSTOMER_VIEW_GROUPED.md.
+  const showGrouped = Boolean(as_customer && customer_view);
   const showAdminToolbar = isAdmin && !printable;
   const showCustomerToolbar = !isAdmin && !printable;
 
@@ -712,6 +707,32 @@ export default function EstimateView({
           </div>
         )}
       />
+
+      {/* Feb-2026 · Grouped-layout LOCK-ON ship — single bottom-of-
+          view Decline button for customer-facing surfaces. Replaces
+          the per-line decline buttons (which are now dead code on
+          the customer view since grouped layout is always on).
+          Admin + printable + locked + non-actionable states hide it. */}
+      {as_customer && actionable && !locked && !isAdmin && !printable ? (
+        <div
+          className="ev-bottom-actions"
+          style={{
+            marginTop: 16,
+            display: "flex",
+            justifyContent: "flex-end",
+          }}
+          data-testid="estimate-bottom-actions"
+        >
+          <button
+            className="iv-btn ev-btn-decline"
+            onClick={() => setDeclineOpen(true)}
+            disabled={busy}
+            data-testid="estimate-bottom-decline-quote-btn"
+          >
+            <XIcon size={14}/> Decline Quote
+          </button>
+        </div>
+      ) : null}
 
       {/* Modals for decline/request-changes */}
       {/* Feb-2026 · Phase A — per-line decline confirm dialog. */}

@@ -1343,6 +1343,33 @@ async def quote_or_invoice_pdf(qid: str,
 
     is_invoice = doc.get("doc_type") == "invoice"
     label = "Invoice" if is_invoice else "Estimate"
+
+    # Feb-2026 · Quote customer-view grouped-lock ship — customers
+    # see the grouped-by-service-category layout on their PDF, not
+    # the itemized 4-column table. Invoices are unaffected (grouped
+    # layout is quote/estimate-only). Admin PDFs stay itemized so
+    # ops can review the raw line items unchanged.
+    # See /app/memory/FEATURE_QUOTE_CUSTOMER_VIEW_GROUPED.md.
+    render_grouped = (
+        (user.get("role") or "").lower() == "customer"
+        and not is_invoice
+    )
+    grouped_data: dict = {}
+    if render_grouped:
+        try:
+            from services.quotes.customer_view import (
+                build_customer_view_payload,
+            )
+            svc_cats = await db.service_categories.find(
+                {"tenant_id": tenant["id"]}, {"_id": 0},
+            ).to_list(length=None)
+            grouped_data = build_customer_view_payload(doc, svc_cats)
+        except Exception:
+            # Any failure → fall back to the itemized render below so
+            # a bad service-categories fetch never blocks the PDF.
+            render_grouped = False
+            grouped_data = {}
+
     buf = BytesIO()
     pdf_doc = SimpleDocTemplate(buf, pagesize=letter, title=f"{label} {qid[:8]}")
     styles = getSampleStyleSheet()
@@ -1377,10 +1404,28 @@ async def quote_or_invoice_pdf(qid: str,
     story.append(Spacer(1, 16))
 
     line_rows = [["Description", "Qty", "Unit", "Total"]]
-    for li in (doc.get("line_items") or []):
-        qty = float(li.get("quantity") or 0)
-        unit = float(li.get("unit_price") or 0)
-        line_rows.append([li.get("description", ""), f"{qty:g}", f"${unit:,.2f}", f"${qty * unit:,.2f}"])
+    if render_grouped:
+        # Feb-2026 · grouped-lock — replace the itemized rows with
+        # per-service-category subtotals. The 4-column shape stays
+        # (Description / Qty / Unit / Total) so the existing
+        # styling doesn't have to shift: "Description" holds the
+        # category label + description, Qty / Unit render as em-
+        # dashes, Total holds the group subtotal.
+        line_rows = [["Service", "", "", "Subtotal"]]
+        for g in grouped_data.get("groups") or []:
+            desc_label = g.get("label") or "—"
+            desc_body = (g.get("description") or "").strip()
+            desc_cell = (f"{desc_label}\n{desc_body}"
+                          if desc_body else desc_label)
+            line_rows.append([
+                desc_cell, "—", "—",
+                f"${float(g.get('subtotal') or 0):,.2f}",
+            ])
+    else:
+        for li in (doc.get("line_items") or []):
+            qty = float(li.get("quantity") or 0)
+            unit = float(li.get("unit_price") or 0)
+            line_rows.append([li.get("description", ""), f"{qty:g}", f"${unit:,.2f}", f"${qty * unit:,.2f}"])
     lt = Table(line_rows, colWidths=[3.6 * inch, 0.8 * inch, 1.1 * inch, 1.1 * inch])
     lt.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, -1), "Helvetica", 9),

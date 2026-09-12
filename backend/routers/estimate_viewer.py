@@ -1051,15 +1051,16 @@ async def estimate_pdf(qid: str,
         story.append(Paragraph(f"<b>{payload['title']}</b>", styles["Heading3"]))
     story.append(Spacer(1, 12))
 
-    # Line items — Phase K79 · Feb-2026 — three modes:
+    # Line items — Phase K79 · Feb-2026, updated Feb-2026 grouped-lock:
     #   1. Admin internal PDF (?internal=1)     → all columns, itemized
-    #   2. Customer PDF, grouped view enabled   → grouped rows
-    #   3. Customer PDF, grouped view disabled  → itemized 4-column
+    #   2. Customer PDF (any customer_group_display value) → grouped rows
+    #
+    # The historical "customer_group_display=False" itemized customer
+    # PDF fallback is retired — customer surfaces (web / portal / PDF)
+    # always render the grouped layout. Admins keep the internal
+    # itemized PDF via the ``?internal=1`` escape hatch.
     is_customer_pdf = payload["as_customer"]
-    grouped_mode = (
-        is_customer_pdf
-        and bool(est.get("customer_group_display"))
-    )
+    grouped_mode = is_customer_pdf
     if grouped_mode:
         cv = payload.get("customer_view") or {}
         headers = ["Service", "Description", "Subtotal"]

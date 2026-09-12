@@ -79,7 +79,8 @@ describe("Batch #4 · Item 1 · magic-link EstimateView", () => {
     api.get.mockResolvedValue(VIA_TOKEN_PAYLOAD);
   });
 
-  it("renders approve + per-line decline for a valid actionable token", async () => {
+  it("renders grouped layout + top approve/decline + bottom Decline "
+        + "Quote button on a valid actionable token", async () => {
     render(
       <MemoryRouter>
         <EstimateView token="tok-abc" isAdmin={false} />
@@ -94,12 +95,15 @@ describe("Batch #4 · Item 1 · magic-link EstimateView", () => {
     expect(screen.getByTestId("estimate-toolbar-customer-decline"))
       .toBeTruthy();
 
-    // Per-line decline buttons render for BOTH line items even
-    // though ``customer_group_display`` is on — the magic-link
-    // surface must fall back to the itemized table so the
-    // decline actions are reachable.
-    expect(screen.getByTestId("estimate-line-item-decline-0")).toBeTruthy();
-    expect(screen.getByTestId("estimate-line-item-decline-1")).toBeTruthy();
+    // Feb-2026 · grouped-lock — customer view always renders the
+    // grouped table (no more per-line decline UX on the customer
+    // surface). The single "Decline Quote" button lives at the
+    // bottom of the doc.
+    expect(screen.getByTestId("estimate-grouped-row-other")).toBeTruthy();
+    expect(screen.queryByTestId("estimate-line-item-decline-0")).toBeNull();
+    expect(screen.queryByTestId("estimate-line-item-decline-1")).toBeNull();
+    expect(screen.getByTestId("estimate-bottom-decline-quote-btn"))
+      .toBeTruthy();
 
     // Regression: no "Invalid estimate link" banner.
     expect(screen.queryByText(/Invalid estimate link/i)).toBeNull();
