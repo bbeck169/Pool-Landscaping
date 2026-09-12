@@ -144,12 +144,95 @@ All 60 tests across the 11 magic-link / estimate-view / portal-gate
 files green after cleanup. Full suite: **4238 pass / 19 pre-existing
 fail / 34 skipped** — zero regressions.
 
+## Post-close cleanups
+
+### Babel-loader cache purge (final bundle verification)
+
+After the sentinel removal, the served dev bundle still had 2 stale
+hits for `magic-link-debug` (traced to
+`/app/frontend/node_modules/.cache/babel-loader/` retaining pre-cleanup
+transformed output — zero runtime impact but bundle no longer matched
+source).
+
+Resolution:
+- `rm -rf /app/frontend/node_modules/.cache` (967 MB purged).
+- `sudo supervisorctl restart frontend` — cache-cold rebuild took
+  ~10:57 to first `200` on `/static/js/bundle.js` at ~3.7 GB RSS
+  (well under the 4 GB `NODE_OPTIONS=--max-old-space-size=4096` cap
+  installed earlier in this fork).
+- Post-restart bundle grep on the served `/static/js/bundle.js`
+  (~39.9 MB):
+
+  | Diagnostic pattern         | count |
+  | -------------------------- | ----- |
+  | `magic-link-debug`         | 0     |
+  | `_buildMagicLinkDiag`      | 0     |
+  | `DEBUG-MAGIC-LINK-RCA`     | 0     |
+  | `_summarizeToken`          | 0     |
+  | `_swController`            | 0     |
+  | `_cookieNames`             | 0     |
+  | `errDiag`                  | 0     |
+  | `data-outbound-url`        | 0     |
+  | `data-response-body`       | 0     |
+
+  Permanent defenses still present in the bundle:
+
+  | Permanent pattern                    | count |
+  | ------------------------------------ | ----- |
+  | `trailing punctuation stripped`      | 1     |
+  | `__phaseA_public_estimate_stripped`  | 2     |
+  | `data-error-source`                  | 1     |
+  | `estimate-view-error`                | 1     |
+
+- Edge health: `/` → HTTP 200, `/api/openapi.json` → HTTP 200
+  (1.89 MB).
+
+### Draft-quote guard — INTENTIONAL, now locked into tests
+
+`EstimateView.jsx:222` computes:
+
+```js
+const actionable = _statusLc === "sent" || _statusLc === "viewed";
+```
+
+Consequence: a quote with `status="draft"` (still being edited by
+the operator, not yet dispatched to the customer) falls outside the
+actionable window. The magic-link surface therefore hides:
+
+- Every `token && !printable && actionable && !locked` gate — which
+  covers the sticky mobile action bar, the desktop Approve /
+  Decline / Request Changes toolbar, the per-line decline column,
+  and the per-group decline controls.
+
+This is by design: the magic-link URL is only ever emitted after
+`issue_magic_link` (`estimate_viewer.py:544-554`), which is called
+in the "send to customer" server flow — a draft that has been sent
+transitions to `sent` before the URL is generated. If a draft URL
+does surface (e.g. an operator hand-crafts one for QA), the customer
+view still renders (payload loads, tenant branding paints), but the
+mutation surface is suppressed. This is the correct fail-safe
+posture: a draft quote is not a contract until the operator has
+explicitly staged it.
+
+Test coverage added:
+`theme-refresh-estimate-view.test.jsx` — new case 4c
+`"mobile action bar is NOT rendered on a DRAFT-status magic-link view"`:
+
+- Mocks `_estimatePayload({ status: "draft", decision: null, sent_at: null })`.
+- Asserts `queryByTestId("estimate-mobile-action-bar")` → null.
+- Asserts `queryByTestId("estimate-mobile-approve-btn")` → null.
+- Asserts `queryByTestId("estimate-mobile-decline-btn")` → null.
+
+Existing case 4 (accepted → hidden) already covered the terminal-
+state end of the actionable window; case 4c now covers the
+pre-send end. Together they lock the entire `actionable ∈ {sent, viewed}`
+contract.
+
+Full suite: **4239 pass / 19 pre-existing fail / 34 skipped (4292 total)**
+— **+1 new pass** for the draft-guard case, zero new regressions.
+
 ---
 
-## Original diagnostic scaffolding notes (retained for archaeology)
-
-*Below this line is the pre-cleanup memo, kept for future reference.
-Delete this whole file if archival value has passed.*
 
 ---
 

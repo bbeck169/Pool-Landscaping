@@ -241,6 +241,34 @@ describe("EstimateView · theme refresh", () => {
     ).toBeNull();
   });
 
+  // Case 4c — DRAFT status must also hide the mobile action bar.
+  // ``actionable = status ∈ {sent, viewed}`` — a draft has not been
+  // sent to the customer yet, so the magic-link surface must NOT
+  // offer Approve / Decline buttons on it.  Tester spotted this
+  // guard incidentally when re-running the viewport differential
+  // and asked to lock it into the suite.
+  it("mobile action bar is NOT rendered on a DRAFT-status magic-link view",
+      async () => {
+    _setupRouting(
+      _estimatePayload({ status: "draft", decision: null, sent_at: null }),
+      _brandingResponse(),
+    );
+    render(<EstimateView token="tok" isAdmin={false} />);
+    await waitFor(() =>
+      expect(screen.queryByTestId("estimate-desktop-shell")).toBeTruthy(),
+    );
+    expect(
+      screen.queryByTestId("estimate-mobile-action-bar"),
+    ).toBeNull();
+    // Approve / decline buttons must also not be in the tree.
+    expect(
+      screen.queryByTestId("estimate-mobile-approve-btn"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("estimate-mobile-decline-btn"),
+    ).toBeNull();
+  });
+
   // Case 4b — viewport-aware check. jsdom does not evaluate CSS
   // media queries or ``!important`` overrides of inline styles the
   // way a real browser does, so the Playwright-based verification
