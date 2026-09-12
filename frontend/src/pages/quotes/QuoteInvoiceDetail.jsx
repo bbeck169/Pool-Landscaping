@@ -750,12 +750,38 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                                                         || "Save failed") })}
         />
         <div className="mt-4 flex justify-end">
-          <div className="w-64 space-y-1 text-sm">
+          <div className="w-64 space-y-1 text-sm"
+                data-testid="quote-invoice-totals-block">
             <div className="flex justify-between"><span style={{ color: colors.muted }}>Subtotal</span><span>{money(doc.subtotal)}</span></div>
             <div className="flex justify-between"><span style={{ color: colors.muted }}>Tax ({doc.tax_rate}%)</span><span>{money(doc.tax)}</span></div>
             <div className="flex justify-between font-bold" style={{ color: colors.brand }}>
               <span>Total</span><span>{money(doc.total)}</span>
             </div>
+            {/* Feb-2026 · Decline-per-group ship — admin dual-total
+                display. Only rendered when the customer has struck
+                at least one line item so ordinary quotes retain the
+                single-total footprint. See
+                /app/memory/FEATURE_QUOTE_DECLINE_PER_GROUP.md. */}
+            {doc.has_declined_lines ? (
+              <div
+                className="pt-2 mt-2 border-t"
+                style={{ borderColor: colors.border }}
+                data-testid="quote-invoice-effective-total"
+              >
+                <div className="flex justify-between text-xs"
+                      style={{ color: colors.muted }}>
+                  <span>Subtotal (incl. declined)</span>
+                  <span>{money(doc.original_total ?? doc.total)}</span>
+                </div>
+                <div className="flex justify-between font-bold"
+                      style={{ color: "#B45309" }}>
+                  <span>Effective (excl. declined)</span>
+                  <span data-testid="quote-invoice-effective-total-value">
+                    {money(doc.adjusted_total ?? doc.total)}
+                  </span>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 

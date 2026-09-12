@@ -74,6 +74,10 @@ export default function EstimateView({
   const [busyLineIdx, setBusyLineIdx] = useState(null);
   const [lineDeclineOpen, setLineDeclineOpen] = useState(null);
   const [lineDeclineReason, setLineDeclineReason] = useState("");
+  // Feb-2026 · Decline-per-group ship — one busy indicator keyed by
+  // the group_key so clicking Decline / Restore on group A doesn't
+  // freeze the button on group B while the network round-trips.
+  const [busyGroupKey, setBusyGroupKey] = useState(null);
 
   const load = useCallback(() => {
     setErr("");
@@ -238,6 +242,51 @@ export default function EstimateView({
       setTimeout(() => setToast(""), 3000);
     } finally {
       setBusyLineIdx(null);
+    }
+  };
+
+  // Feb-2026 · Customer decline-per-group ship — magic-link + admin
+  // group decline/restore. Server is authoritative — we render from
+  // the returned payload rather than optimistically flipping local
+  // state. Actor path chooses the correct route family:
+  //   * ``token`` present → magic-link PATCH under /portal/... /groups/
+  //   * ``token`` absent  → admin PATCH under /quotes/{qid}/groups/
+  const declineGroup = async (groupKey) => {
+    if (!groupKey) return;
+    setBusyGroupKey(groupKey);
+    try {
+      const path = token
+        ? `/portal/quotes/via-token/${encodeURIComponent(token)}` +
+          `/groups/${encodeURIComponent(groupKey)}/decline`
+        : `/quotes/${estimateId}/groups/${encodeURIComponent(groupKey)}/decline`;
+      const r = await api.patch(path, {});
+      setData(r);
+      setToast("Group declined");
+      setTimeout(() => setToast(""), 2000);
+    } catch (e) {
+      setToast(e?.message || "Failed to decline group");
+      setTimeout(() => setToast(""), 3000);
+    } finally {
+      setBusyGroupKey(null);
+    }
+  };
+  const restoreGroup = async (groupKey) => {
+    if (!groupKey) return;
+    setBusyGroupKey(groupKey);
+    try {
+      const path = token
+        ? `/portal/quotes/via-token/${encodeURIComponent(token)}` +
+          `/groups/${encodeURIComponent(groupKey)}/undecline`
+        : `/quotes/${estimateId}/groups/${encodeURIComponent(groupKey)}/undecline`;
+      const r = await api.patch(path, {});
+      setData(r);
+      setToast("Group restored");
+      setTimeout(() => setToast(""), 2000);
+    } catch (e) {
+      setToast(e?.message || "Failed to restore group");
+      setTimeout(() => setToast(""), 3000);
+    } finally {
+      setBusyGroupKey(null);
     }
   };
 
@@ -526,19 +575,39 @@ export default function EstimateView({
                   <tr>
                     <th>Service</th>
                     <th className="iv-num">Subtotal</th>
+                    {/* Feb-2026 · Decline-per-group ship — action
+                        column rendered when the quote is actionable
+                        (customer surface) OR when an admin is
+                        viewing and can decline on behalf. Header
+                        stays hidden otherwise so the print layout
+                        matches the current PDF (2 columns). */}
+                    {(actionable && !locked) || (!as_customer && !printable)
+                      ? <th className="iv-num" style={{ width: 140 }}></th>
+                      : null}
                   </tr>
                 </thead>
                 <tbody>
                   {(customer_view.groups || []).length === 0 ? (
-                    <tr><td colSpan={2} className="iv-empty">
+                    <tr><td colSpan={3} className="iv-empty">
                       No services on this estimate.
                     </td></tr>
-                  ) : (customer_view.groups || []).map((g, i) => (
-                    <tr key={g.category_id || `other-${i}`}
+                  ) : (customer_view.groups || []).map((g, i) => {
+                    const gKey = g.group_key || g.category_id || `other-${i}`;
+                    const isDeclined = Boolean(g.declined);
+                    const rowStyle = isDeclined
+                      ? { textDecoration: "line-through", opacity: 0.55 }
+                      : undefined;
+                    const showActionCol =
+                      (actionable && !locked)
+                      || (!as_customer && !printable);
+                    const isBusy = busyGroupKey === gKey;
+                    return (
+                    <tr key={gKey}
                         data-testid={
                           `estimate-grouped-row-${g.category_id || "other"}`
-                        }>
-                      <td>
+                        }
+                        data-group-declined={isDeclined ? "true" : "false"}>
+                      <td style={rowStyle}>
                         <div><b>{g.label}</b></div>
                         {g.description ? (
                           <div className="ev-group-desc"
@@ -548,10 +617,74 @@ export default function EstimateView({
                             {g.description}
                           </div>
                         ) : null}
+                        {isDeclined && g.declined_at ? (
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: "#7F1D1D",
+                              marginTop: 2,
+                              textDecoration: "none",
+                            }}
+                            data-testid={
+                              `estimate-grouped-declined-label-${g.category_id || "other"}`
+                            }
+                          >
+                            Declined {String(g.declined_at).slice(0, 10)}
+                          </div>
+                        ) : null}
                       </td>
-                      <td className="iv-num">{fmt(g.subtotal)}</td>
+                      <td className="iv-num" style={rowStyle}>
+                        {fmt(g.subtotal)}
+                      </td>
+                      {showActionCol ? (
+                        <td className="iv-num">
+                          {isDeclined ? (
+                            <button
+                              type="button"
+                              onClick={() => restoreGroup(gKey)}
+                              disabled={isBusy}
+                              className="ev-group-btn"
+                              style={{
+                                padding: "4px 10px",
+                                fontSize: 12,
+                                borderRadius: 6,
+                                border: "1px solid #D4D4D8",
+                                background: "#FFFFFF",
+                                cursor: isBusy ? "wait" : "pointer",
+                              }}
+                              data-testid={
+                                `estimate-grouped-restore-btn-${g.category_id || "other"}`
+                              }
+                            >
+                              Restore
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => declineGroup(gKey)}
+                              disabled={isBusy}
+                              className="ev-group-btn"
+                              style={{
+                                padding: "4px 10px",
+                                fontSize: 12,
+                                borderRadius: 6,
+                                border: "1px solid #DC2626",
+                                background: "#FFFFFF",
+                                color: "#DC2626",
+                                cursor: isBusy ? "wait" : "pointer",
+                              }}
+                              data-testid={
+                                `estimate-grouped-decline-btn-${g.category_id || "other"}`
+                              }
+                            >
+                              Decline
+                            </button>
+                          )}
+                        </td>
+                      ) : null}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             ) : (

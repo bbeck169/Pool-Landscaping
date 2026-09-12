@@ -1411,16 +1411,36 @@ async def quote_or_invoice_pdf(qid: str,
         # styling doesn't have to shift: "Description" holds the
         # category label + description, Qty / Unit render as em-
         # dashes, Total holds the group subtotal.
+        # Feb-2026 · Decline-per-group ship — struck groups wrap
+        # every cell in <strike> so ReportLab paints the line-through
+        # over the group row. See FEATURE_QUOTE_DECLINE_PER_GROUP.md.
         line_rows = [["Service", "", "", "Subtotal"]]
         for g in grouped_data.get("groups") or []:
             desc_label = g.get("label") or "—"
             desc_body = (g.get("description") or "").strip()
-            desc_cell = (f"{desc_label}\n{desc_body}"
-                          if desc_body else desc_label)
-            line_rows.append([
-                desc_cell, "—", "—",
-                f"${float(g.get('subtotal') or 0):,.2f}",
-            ])
+            desc_cell_text = (f"{desc_label}\n{desc_body}"
+                                if desc_body else desc_label)
+            total_cell = f"${float(g.get('subtotal') or 0):,.2f}"
+            if g.get("declined"):
+                # Rendered as Paragraph so <strike> resolves; the
+                # header row + non-declined rows stay plain strings
+                # to keep the existing styling contract.
+                line_rows.append([
+                    Paragraph(
+                        f"<strike>{desc_cell_text}</strike>",
+                        styles["Normal"],
+                    ),
+                    Paragraph("<strike>—</strike>", styles["Normal"]),
+                    Paragraph("<strike>—</strike>", styles["Normal"]),
+                    Paragraph(
+                        f"<strike>{total_cell}</strike>",
+                        styles["Normal"],
+                    ),
+                ])
+            else:
+                line_rows.append([
+                    desc_cell_text, "—", "—", total_cell,
+                ])
     else:
         for li in (doc.get("line_items") or []):
             qty = float(li.get("quantity") or 0)
@@ -1444,6 +1464,14 @@ async def quote_or_invoice_pdf(qid: str,
     subtotal = float(doc.get("subtotal") or 0)
     tax_amt = float(doc.get("tax") or 0)
     total = float(doc.get("total") or 0)
+    # Feb-2026 · Decline-per-group ship — customer grouped PDF shows
+    # the EFFECTIVE (post-decline) totals so the signed number
+    # matches the struck-out visual. Admin surface stays on original
+    # numbers because ``render_grouped`` is customer-only.
+    if render_grouped and doc.get("has_declined_lines"):
+        subtotal = float(doc.get("adjusted_subtotal") or subtotal)
+        tax_amt = float(doc.get("adjusted_tax") or tax_amt)
+        total = float(doc.get("adjusted_total") or total)
     tot_rows = [
         ["Subtotal", f"${subtotal:,.2f}"],
         [f"Tax ({doc.get('tax_rate', 0)}%)", f"${tax_amt:,.2f}"],

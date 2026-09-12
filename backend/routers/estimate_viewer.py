@@ -706,7 +706,15 @@ import time as _time_mod
 from hashlib import sha256 as _sha256
 
 _PHASE_A_RATE_BUCKETS: Dict[str, List[float]] = {}
-_PHASE_A_RATE_LIMITS = {"line": (30, 300.0), "decision": (5, 300.0)}
+_PHASE_A_RATE_LIMITS = {
+    "line": (30, 300.0),
+    "decision": (5, 300.0),
+    # Feb-2026 · Decline-per-group ship — magic-link group decline /
+    # restore. Slightly tighter than the per-line bucket because a
+    # single group action can touch many lines. Admin routes are
+    # JWT-gated and don't share this limiter.
+    "group": (10, 300.0),
+}
 
 
 def _phase_a_rate_gate(token: str, bucket: str) -> None:
@@ -892,6 +900,218 @@ async def phase_a_decline_via_token(
     return await _build_payload(est_fresh, ctx["tenant"], as_customer=True)
 
 
+# ══════════════════════════════════════════════════════════════════
+# Feb-2026 · Customer decline-per-group on Quotes
+#
+# Ships four PATCH routes that let the customer (magic-link) or an
+# admin (JWT) toggle the ``customer_status`` on every line item that
+# belongs to a specific service-category group in one call:
+#
+#   PATCH /api/portal/quotes/via-token/{token}/groups/{group_key}/decline
+#   PATCH /api/portal/quotes/via-token/{token}/groups/{group_key}/undecline
+#   PATCH /api/quotes/{qid}/groups/{group_key}/decline
+#   PATCH /api/quotes/{qid}/groups/{group_key}/undecline
+#
+# The group is ephemeral (see ``services/quotes/customer_view.py``);
+# ``group_key`` == ``service_category_id`` for real categories, or the
+# ``"__other__"`` sentinel for lines without a category. The mutation
+# lives on the underlying line items — no new schema on the group.
+#
+# See /app/memory/FEATURE_QUOTE_DECLINE_PER_GROUP.md.
+# ══════════════════════════════════════════════════════════════════
+_GROUP_OTHER_KEY = "__other__"
+
+
+class _GroupDeclineIn(BaseModel):
+    reason: Optional[str] = None
+
+
+def _resolve_group_line_indices(line_items: List[dict],
+                                  group_key: str) -> List[int]:
+    """Return the indices of ``line_items`` whose service-category id
+    matches ``group_key``. The ``__other__`` sentinel captures rows
+    with a missing/blank ``service_category_id``.
+    """
+    out: List[int] = []
+    for i, li in enumerate(line_items):
+        raw = li.get("service_category_id")
+        cat = raw if isinstance(raw, str) and raw.strip() else _GROUP_OTHER_KEY
+        if cat == group_key:
+            out.append(i)
+    return out
+
+
+async def _write_group_decline_audit(*, event: str, tenant_id: str,
+                                        quote_id: str, group_key: str,
+                                        actor_id: str, source: str,
+                                        line_count: int,
+                                        reason: Optional[str]) -> None:
+    """Best-effort audit row. Never breaks the mutation on failure."""
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "event": event,
+            "tenant_id": tenant_id,
+            "quote_id": quote_id,
+            "group_key": group_key,
+            "actor_id": actor_id,
+            "source": source,
+            "at": now_iso(),
+            "line_count": line_count,
+            "reason": reason,
+        })
+    except Exception as exc:  # pragma: no cover
+        logger.warning("group_decline_audit_write_failed: %s", exc)
+
+
+async def _apply_group_decline(*, est: dict, tenant_id: str,
+                                 group_key: str, actor_id: str,
+                                 decline: bool,
+                                 reason: Optional[str]) -> int:
+    """Flip ``customer_status`` on every line in ``group_key``.
+
+    Returns the affected line count. Raises 404 when no line in the
+    quote belongs to ``group_key`` — protects against typos and stale
+    frontend keys after a category was renamed / removed.
+    """
+    line_items = list(est.get("line_items") or [])
+    indices = _resolve_group_line_indices(line_items, group_key)
+    if not indices:
+        raise HTTPException(
+            status_code=404,
+            detail={"error_code": "group_not_found",
+                     "group_key": group_key,
+                     "message": "No line items belong to this group."},
+        )
+    stamped_at = now_iso()
+    clean_reason = (reason or "").strip()[:200] if decline else None
+    for i in indices:
+        row = line_items[i]
+        if decline:
+            row["customer_status"] = "declined"
+            row["customer_declined_at"] = stamped_at
+            row["customer_declined_by"] = actor_id
+            if clean_reason:
+                row["customer_decline_reason"] = clean_reason
+        else:
+            row["customer_status"] = "pending"
+            row["customer_declined_at"] = None
+            row["customer_declined_by"] = None
+            row["customer_decline_reason"] = None
+        line_items[i] = row
+    est["line_items"] = line_items
+    await db.quotes.update_one(
+        {"id": est["id"], "tenant_id": tenant_id},
+        {"$set": {"line_items": line_items}},
+    )
+    await _phase_a_recompute_and_persist(est, tenant_id)
+    return len(indices)
+
+
+@router.patch("/portal/quotes/via-token/{token}/groups/{group_key}/decline")
+async def customer_group_decline_via_token(
+    token: str, group_key: str,
+    body: Optional[_GroupDeclineIn] = None,
+):
+    _phase_a_rate_gate(token, "group")
+    ctx = await _load_est_from_token(token)
+    est = ctx["est"]
+    _phase_a_assert_actionable(est)
+    actor_id = f"token:{ctx['cid']}"
+    reason = getattr(body, "reason", None) if body else None
+    count = await _apply_group_decline(
+        est=est, tenant_id=ctx["tenant"]["id"], group_key=group_key,
+        actor_id=actor_id, decline=True, reason=reason,
+    )
+    await _write_group_decline_audit(
+        event="quote.group_declined", tenant_id=ctx["tenant"]["id"],
+        quote_id=est["id"], group_key=group_key,
+        actor_id=actor_id, source="portal_token",
+        line_count=count,
+        reason=(reason or "").strip()[:200] if reason else None,
+    )
+    return await _build_payload(est, ctx["tenant"], as_customer=True)
+
+
+@router.patch("/portal/quotes/via-token/{token}/groups/{group_key}/undecline")
+async def customer_group_undecline_via_token(token: str, group_key: str):
+    _phase_a_rate_gate(token, "group")
+    ctx = await _load_est_from_token(token)
+    est = ctx["est"]
+    _phase_a_assert_actionable(est)
+    actor_id = f"token:{ctx['cid']}"
+    count = await _apply_group_decline(
+        est=est, tenant_id=ctx["tenant"]["id"], group_key=group_key,
+        actor_id=actor_id, decline=False, reason=None,
+    )
+    await _write_group_decline_audit(
+        event="quote.group_restored", tenant_id=ctx["tenant"]["id"],
+        quote_id=est["id"], group_key=group_key,
+        actor_id=actor_id, source="portal_token",
+        line_count=count, reason=None,
+    )
+    return await _build_payload(est, ctx["tenant"], as_customer=True)
+
+
+@router.patch("/quotes/{qid}/groups/{group_key}/decline")
+async def admin_group_decline(
+    qid: str, group_key: str,
+    body: Optional[_GroupDeclineIn] = None,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    role = user.get("role") or ""
+    if role == "technician":
+        raise HTTPException(403, "Not allowed")
+    est = await _load_estimate(qid, tenant["id"])
+    if not est:
+        raise HTTPException(404, "Quote not found")
+    _phase_a_assert_actionable(est)
+    actor_id = user.get("id") or ""
+    reason = getattr(body, "reason", None) if body else None
+    count = await _apply_group_decline(
+        est=est, tenant_id=tenant["id"], group_key=group_key,
+        actor_id=actor_id, decline=True, reason=reason,
+    )
+    await _write_group_decline_audit(
+        event="quote.group_declined", tenant_id=tenant["id"],
+        quote_id=est["id"], group_key=group_key,
+        actor_id=actor_id, source="admin_ui",
+        line_count=count,
+        reason=(reason or "").strip()[:200] if reason else None,
+    )
+    return await _build_payload(est, tenant, as_customer=False)
+
+
+@router.patch("/quotes/{qid}/groups/{group_key}/undecline")
+async def admin_group_undecline(
+    qid: str, group_key: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    role = user.get("role") or ""
+    if role == "technician":
+        raise HTTPException(403, "Not allowed")
+    est = await _load_estimate(qid, tenant["id"])
+    if not est:
+        raise HTTPException(404, "Quote not found")
+    _phase_a_assert_actionable(est)
+    actor_id = user.get("id") or ""
+    count = await _apply_group_decline(
+        est=est, tenant_id=tenant["id"], group_key=group_key,
+        actor_id=actor_id, decline=False, reason=None,
+    )
+    await _write_group_decline_audit(
+        event="quote.group_restored", tenant_id=tenant["id"],
+        quote_id=est["id"], group_key=group_key,
+        actor_id=actor_id, source="admin_ui",
+        line_count=count, reason=None,
+    )
+    return await _build_payload(est, tenant, as_customer=False)
+
+
+
+
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1073,12 +1293,27 @@ async def estimate_pdf(qid: str,
         colw = [2.0 * inch, 3.5 * inch, 1.5 * inch]
         rows = [headers]
         for g in cv.get("groups") or []:
-            rows.append([
-                Paragraph(f"<b>{g.get('label') or '—'}</b>",
-                            styles["Normal"]),
-                Paragraph(g.get("description") or "", styles["Normal"]),
-                f"{float(g.get('subtotal') or 0):.2f}",
-            ])
+            # Feb-2026 · Decline-per-group ship — struck groups render
+            # with an inline <strike> tag on every cell so ReportLab's
+            # Paragraph renderer applies the line-through visual.
+            label_str = g.get("label") or "—"
+            desc_str = g.get("description") or ""
+            subtotal_str = f"{float(g.get('subtotal') or 0):.2f}"
+            if g.get("declined"):
+                rows.append([
+                    Paragraph(f"<strike><b>{label_str}</b></strike>",
+                              styles["Normal"]),
+                    Paragraph(f"<strike>{desc_str}</strike>",
+                              styles["Normal"]),
+                    Paragraph(f"<strike>{subtotal_str}</strike>",
+                              styles["Normal"]),
+                ])
+            else:
+                rows.append([
+                    Paragraph(f"<b>{label_str}</b>", styles["Normal"]),
+                    Paragraph(desc_str, styles["Normal"]),
+                    subtotal_str,
+                ])
         if len(rows) == 1:
             rows.append([Paragraph("No services", styles["Normal"]),
                           "", "0.00"])
@@ -1125,11 +1360,24 @@ async def estimate_pdf(qid: str,
 
     # Totals (right-aligned).
     tot = payload["totals"]
+    # Feb-2026 · Decline-per-group ship — customer PDF renders the
+    # EFFECTIVE (post-decline) totals so the number the customer signs
+    # against matches what they see struck-out. Admin ``?internal=1``
+    # PDF keeps the original numbers (grouped_mode is only ON for
+    # customer surfaces so this branch is safe).
+    if is_customer_pdf and tot.get("has_declined_lines"):
+        _tot_subtotal = tot.get("adjusted_subtotal", tot.get("subtotal", 0))
+        _tot_tax = tot.get("adjusted_tax", tot.get("taxes", 0))
+        _tot_total = tot.get("adjusted_total", tot.get("total_estimated_cost", 0))
+    else:
+        _tot_subtotal = tot.get("subtotal", 0)
+        _tot_tax = tot.get("taxes", 0)
+        _tot_total = tot.get("total_estimated_cost", 0)
     tot_rows = [
-        ["Subtotal", f"{tot.get('subtotal', 0):.2f}"],
-        ["Taxes", f"{tot.get('taxes', 0):.2f}"],
+        ["Subtotal", f"{_tot_subtotal:.2f}"],
+        ["Taxes", f"{_tot_tax:.2f}"],
         ["Amount Paid", f"{tot.get('amount_paid', 0):.2f}"],
-        ["Total Estimated Cost", f"{tot.get('total_estimated_cost', 0):.2f}"],
+        ["Total Estimated Cost", f"{_tot_total:.2f}"],
     ]
     if not is_customer_pdf:
         tot_rows.extend([

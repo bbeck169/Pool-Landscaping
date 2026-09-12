@@ -19,12 +19,28 @@ Design rules:
       ``quote.customer_group_descriptions[service_category_id]``.
       Missing keys yield no description (empty string is fine).
 
+Feb-2026 · Decline-per-group ship — the payload now also exposes per
+group decline state derived from the underlying line items:
+    * ``group_key`` — stable url-safe identifier (== category_id or
+      the ``"__other__"`` sentinel for the un-categorised bucket).
+    * ``declined`` — ``True`` iff every line in the group has
+      ``customer_status == "declined"`` (and the group is non-empty).
+    * ``declined_at`` — max ``customer_declined_at`` across declined
+      lines when the group is fully declined; otherwise ``None``.
+    * ``declined_by`` — actor id from the most-recent decline stamp
+      when the group is fully declined; otherwise ``None``.
+    * ``active_subtotal`` — sum of ``quantity × unit_price`` for the
+      NON-declined lines in the group (i.e. what the customer will
+      actually be charged for). Equals ``subtotal`` when nothing is
+      declined and 0 when the whole group is declined.
+See /app/memory/FEATURE_QUOTE_DECLINE_PER_GROUP.md.
+
 The helper is a pure function so it can be unit-tested without a DB
 round-trip. Consumers pass in the pre-loaded service-category list.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 _OTHER_KEY = "__other__"
@@ -57,9 +73,10 @@ def group_lines_for_customer(
             for label resolution. If None, labels fall back to the id.
 
     Returns:
-        List of ``{category_id, label, description, subtotal, currency}``
-        dicts, ordered by first appearance in ``line_items[]``. The
-        "Other" bucket, if any, is appended last.
+        List of ``{category_id, group_key, label, description,
+        subtotal, active_subtotal, currency, declined, declined_at,
+        declined_by}`` dicts, ordered by first appearance in
+        ``line_items[]``. The "Other" bucket, if any, is appended last.
     """
     lines: List[Dict[str, Any]] = quote.get("line_items") or []
     descriptions: Dict[str, str] = (
@@ -79,24 +96,60 @@ def group_lines_for_customer(
         unit_price = float(li.get("unit_price") or 0)
         line_subtotal = qty * unit_price
 
+        status = str(li.get("customer_status") or "pending")
+        is_declined = status == "declined"
+        declined_at = li.get("customer_declined_at")
+        declined_by = li.get("customer_declined_by")
+
         if cat_id not in buckets:
             label = (_OTHER_LABEL if cat_id == _OTHER_KEY
                      else _resolve_label(cat_id, cats))
             desc = descriptions.get(cat_id, "") if cat_id != _OTHER_KEY else ""
             buckets[cat_id] = {
                 "category_id": None if cat_id == _OTHER_KEY else cat_id,
+                "group_key": cat_id,
                 "label": label,
                 "description": (desc or "").strip(),
                 "subtotal": 0.0,
+                "active_subtotal": 0.0,
                 "currency": currency,
+                # Internal aggregation trackers — stripped before return.
+                "_line_count": 0,
+                "_declined_count": 0,
+                "_max_declined_at": None,
+                "_last_declined_by": None,
             }
-        buckets[cat_id]["subtotal"] += line_subtotal
+        b = buckets[cat_id]
+        b["subtotal"] += line_subtotal
+        b["_line_count"] += 1
+        if is_declined:
+            b["_declined_count"] += 1
+            # Track the most-recent stamp for the group so ``declined_at``
+            # / ``declined_by`` reflect the last decline action.
+            if declined_at and (
+                b["_max_declined_at"] is None
+                or str(declined_at) > str(b["_max_declined_at"])
+            ):
+                b["_max_declined_at"] = declined_at
+                b["_last_declined_by"] = declined_by
+        else:
+            b["active_subtotal"] += line_subtotal
 
-    # Round subtotals + push the "Other" bucket to the tail.
+    # Round subtotals + finalise decline aggregation + push the
+    # "Other" bucket to the tail.
     result: List[Dict[str, Any]] = []
     other: Optional[Dict[str, Any]] = None
     for key, row in buckets.items():
         row["subtotal"] = round(row["subtotal"], 2)
+        row["active_subtotal"] = round(row["active_subtotal"], 2)
+        line_count = row.pop("_line_count")
+        declined_count = row.pop("_declined_count")
+        max_at = row.pop("_max_declined_at")
+        last_by = row.pop("_last_declined_by")
+        fully_declined = line_count > 0 and declined_count == line_count
+        row["declined"] = fully_declined
+        row["declined_at"] = max_at if fully_declined else None
+        row["declined_by"] = last_by if fully_declined else None
         if key == _OTHER_KEY:
             other = row
         else:
@@ -126,10 +179,14 @@ def build_customer_view_payload(
     total = float(quote.get("total") or 0)
     amount_paid = float(quote.get("amount_paid") or 0)
     grouped_sum = round(sum(g["subtotal"] for g in groups), 2)
+    grouped_active_sum = round(sum(g["active_subtotal"] for g in groups), 2)
+    has_declined_groups = any(g.get("declined") for g in groups)
     return {
         "customer_group_display": bool(quote.get("customer_group_display")),
         "groups": groups,
         "grouped_subtotal": grouped_sum,
+        "grouped_active_subtotal": grouped_active_sum,
+        "has_declined_groups": has_declined_groups,
         "subtotal": round(subtotal, 2),
         "tax": round(tax, 2),
         "discount": round(discount, 2),
