@@ -141,5 +141,9 @@
   "tests/test_theme_refresh_pdf.py::test_pdf_header_band_fallback_when_hex_missing",
   "tests/test_theme_refresh_pdf.py::test_pdf_header_band_uses_brand_hex",
   "tests/test_theme_refresh_pdf.py::test_resolve_absolute_url_passes_through_absolute",
-  "tests/test_theme_refresh_pdf.py::test_resolve_absolute_url_promotes_relative_path"
+  "tests/test_theme_refresh_pdf.py::test_resolve_absolute_url_promotes_relative_path",
+  "tests/test_theme_refresh_quote_pdf_routing.py::test_admin_estimates_alias_default_is_themed",
+  "tests/test_theme_refresh_quote_pdf_routing.py::test_admin_estimates_alias_internal_opts_out",
+  "tests/test_theme_refresh_quote_pdf_routing.py::test_admin_quotes_pdf_internal_query_is_noop",
+  "tests/test_theme_refresh_quote_pdf_routing.py::test_admin_quotes_pdf_returns_plain_itemized"
 ]

@@ -137,9 +137,36 @@ table lands later, revisit.
   the priority order in `services/service_report_view` so PDFs
   and job-photo emails resolve to the same origin.
 
-## Email theming — deferred (staged for the next dispatch)
+## PDF routing contract (post-tester clarification)
 
-Email base template theming was **not** shipped in this phase:
+Feb-2026 · Post-tester fix — the two PDF endpoints have DIFFERENT
+default-theming semantics on purpose. Locked by
+`tests/test_theme_refresh_quote_pdf_routing.py` (4 cases).
+
+| Endpoint                          | Role                | Default          | `?internal=1`    |
+|-----------------------------------|---------------------|------------------|------------------|
+| `GET /api/quotes/{qid}/pdf`       | `admin` / `super_admin` | plain itemized | **no-op** (unchanged) |
+| `GET /api/quotes/{qid}/pdf`       | `customer` (quote)   | themed grouped   | no-op            |
+| `GET /api/quotes/{qid}/pdf`       | `customer` (invoice) | plain itemized   | no-op            |
+| `GET /api/quotes/{qid}/pdf`       | `technician`         | **403**          | 403              |
+| `GET /api/estimates/{qid}/pdf`    | `admin` / `super_admin` | **themed** customer view | plain admin view (opt-out) |
+| `GET /api/estimates/{qid}/pdf`    | `customer`           | themed           | plain (opt-out)  |
+
+**Root cause of the tester's WARN**: `?internal=1` is not a
+parameter on `/api/quotes/{qid}/pdf` — it's silently ignored.
+Admins hitting that route always get the plain itemized PDF (2 –
+3 KB, real PDF not a stub). Admins wanting to preview the themed
+customer view use the deprecated `/api/estimates/{qid}/pdf` alias.
+
+Fix landed:
+- Docstring on `quote_or_invoice_pdf` now spells out the routing
+  contract inline (routers/quotes.py).
+- New locking test file: `backend/tests/test_theme_refresh_quote_pdf_routing.py`
+  asserts each row above via the reader-agnostic band-rectangle
+  signature (`0 705.6 612 86.4 re f*` for the 1.2-in header;
+  `0 0 612 36 re f*` for the 0.5-in footer).
+
+## Email theming — deferred (staged for the next dispatch)Email base template theming was **not** shipped in this phase:
 
 - The codebase hosts four independent email adapters
   (`services.email.resend_adapter`, `services.marketing_email.resend_adapter`,

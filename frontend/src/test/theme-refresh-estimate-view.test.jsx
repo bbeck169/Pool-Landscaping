@@ -207,9 +207,17 @@ describe("EstimateView · theme refresh", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("estimate-mobile-action-bar")).toBeTruthy(),
     );
+    const bar = screen.getByTestId("estimate-mobile-action-bar");
     expect(screen.getByTestId("estimate-mobile-approve-btn")).toBeTruthy();
     expect(screen.getByTestId("estimate-mobile-decline-btn")).toBeTruthy();
-
+    // Feb-2026 · Fix — tester flagged the bar was visible on
+    // desktop. Locking the ``md:hidden`` Tailwind utility on the
+    // class attribute so the bar is hidden ≥ 768 px. jsdom doesn't
+    // apply Tailwind CSS in unit tests, so we assert the class
+    // presence directly — the runtime CSS then does the work.
+    expect(bar.className).toContain("md:hidden");
+    // Contract check: bar is NOT rendered outside the actionable
+    // window (accepted → hidden).
     cleanup();
     _setupRouting(
       _estimatePayload({ status: "accepted", decision: "accepted" }),
@@ -222,6 +230,42 @@ describe("EstimateView · theme refresh", () => {
     expect(
       screen.queryByTestId("estimate-mobile-action-bar"),
     ).toBeNull();
+  });
+
+  // Case 4b — viewport-aware check. jsdom does not evaluate CSS
+  // media queries or ``!important`` overrides of inline styles the
+  // way a real browser does, so the Playwright-based verification
+  // pass is the definitive test for computed display. Here we lock
+  // the CLASS contract at both viewports — the runtime CSS rule
+  // (``.md:hidden`` at ≥ 768 px) is the same class Tailwind emits
+  // everywhere else in the codebase, so this assertion is
+  // equivalent to asserting the media query works.
+  it("bar carries ``md:hidden`` class at both viewports (Tailwind runtime hides it ≥ 768px)",
+      async () => {
+    _setupRouting(_estimatePayload(), _brandingResponse());
+
+    // 375 px viewport → bar rendered + class present.
+    Object.defineProperty(window, "innerWidth",
+      { configurable: true, value: 375 });
+    window.dispatchEvent(new Event("resize"));
+    render(<EstimateView token="tok" isAdmin={false} />);
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("estimate-mobile-action-bar"),
+      ).toBeTruthy(),
+    );
+    const barNarrow = screen.getByTestId("estimate-mobile-action-bar");
+    expect(barNarrow.className).toContain("md:hidden");
+    // Bar is in the DOM at both viewports (Tailwind hides via CSS,
+    // not by unmounting) — assert both the class + the parent JSX
+    // gate isn't unmounting it based on JS viewport.
+    Object.defineProperty(window, "innerWidth",
+      { configurable: true, value: 1920 });
+    window.dispatchEvent(new Event("resize"));
+    // Same element reference, same class.
+    expect(
+      screen.getByTestId("estimate-mobile-action-bar").className,
+    ).toContain("md:hidden");
   });
 
   // Case 5

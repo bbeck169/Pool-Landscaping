@@ -1325,7 +1325,29 @@ async def pay_quote(qid: str,
 async def quote_or_invoice_pdf(qid: str,
                                user: dict = Depends(get_current_user),
                                tenant: dict = Depends(get_current_tenant)):
-    """Streams a printable PDF for a quote or invoice, including the terms section."""
+    """Streams a printable PDF for a quote or invoice, including the terms section.
+
+    Feb-2026 · Theme Refresh — routing contract:
+
+      * ``role == "customer"`` + ``doc_type == "quote"``  → themed
+        grouped customer PDF (header/footer bands + <strike> on
+        declined groups + adjusted totals). See
+        ``FEATURE_THEME_REFRESH_ESTIMATES_INVOICES.md``.
+      * ``role == "customer"`` + ``doc_type == "invoice"`` → plain
+        itemized PDF (grouped-lock is quote-only).
+      * ``role in {"admin", "super_admin"}`` → plain itemized PDF
+        **for both** doc_types. No branded bands. This is
+        intentional: the admin surface is ops-facing and needs the
+        raw line-item table without the customer visual chrome.
+        Admins who want to PREVIEW the themed customer PDF hit
+        ``/api/estimates/{qid}/pdf`` (deprecated alias — defaults to
+        the themed customer view, ``?internal=1`` opts out).
+      * ``role == "technician"`` → 403.
+
+    The 2 – 3 KB response size on admin fetches is expected — it's
+    a real PDF, not a stub. Content is: header table (5 rows) +
+    items table + optional terms section.
+    """
     doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Not found")

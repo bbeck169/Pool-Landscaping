@@ -984,7 +984,7 @@ export default function EstimateView({
           customer actions on the magic-link surface. */}
       {token && !printable && actionable && !locked ? (
         <div
-          className="ev-mobile-action-bar"
+          className="ev-mobile-action-bar md:hidden"
           data-testid="estimate-mobile-action-bar"
           style={{
             position: "fixed",
