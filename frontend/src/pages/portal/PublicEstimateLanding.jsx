@@ -25,7 +25,29 @@ import EstimateView from "@/components/EstimateView";
 
 export default function PublicEstimateLanding() {
   const [params] = useSearchParams();
-  const token = params.get("token") || "";
+  // Feb-2026 · Trailing-period defense — a valid JWT is always
+  // ``header.payload.signature`` with all three parts non-empty,
+  // so a magic-link token can never validly end with a period,
+  // comma, or sentence-ending punctuation. Tester surfaced a case
+  // where the URL reaching the client had ``token=<jwt>.`` —
+  // grammatical punctuation from an email/report body most likely.
+  // Strip trailing punctuation at the read boundary so downstream
+  // consumers (EstimateView primary load, useTenantBranding) never
+  // see a corrupted token. Log a warning on strip so future
+  // recurrences are traceable.
+  const rawToken = params.get("token") || "";
+  const token = rawToken.replace(/[.,;:!?)\]}"'\s]+$/, "");
+  if (rawToken && rawToken !== token
+      && typeof window !== "undefined"
+      && !window.__phaseA_public_estimate_stripped) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[phase-a] magic-link token had trailing punctuation stripped "
+      + `(raw len=${rawToken.length}, clean len=${token.length}). `
+      + "If this fires often, the ingress URL emitter is broken.",
+    );
+    window.__phaseA_public_estimate_stripped = true;
+  }
   if (typeof window !== "undefined"
       && !window.__phaseA_public_estimate_warned) {
     // eslint-disable-next-line no-console
