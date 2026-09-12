@@ -1,5 +1,0 @@
-{
-  "tests/test_quote_pdf_grouped_lock.py::test_customer_pdf_uses_grouped_layout_even_when_toggle_off": true,
-  "tests/test_quote_pdf_grouped_lock.py::test_customer_pdf_uses_grouped_layout_when_toggle_on": true,
-  "tests/test_quote_pdf_grouped_lock.py::test_internal_pdf_still_renders_itemized_admin_view": true
-}

@@ -1949,3 +1949,133 @@ async def delete_payment(qid: str,
         deletion_reason=deletion_reason,
         allow_stripe_override=True,
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Feb-2026 · Quote hard-delete (admin + super_admin)
+# ═════════════════════════════════════════════════════════════════════════
+# Two-phase delete route on the quote surface:
+#   * ``DELETE /api/quotes/{qid}``            → soft-delete (legacy path)
+#   * ``DELETE /api/quotes/{qid}?hard=true``  → hard-delete
+#
+# Hard-delete semantics per user's Feb-2026 dispatch:
+#   1a — RBAC: admin OR super_admin
+#   2b — Cascade quote-owned inline subdocs; PRESERVE audit/ledger rows
+#         (communication_sends, outbound_emails, marketing_deliveries,
+#         audit_logs — those retain their ``quote_id`` string field
+#         even though the referenced doc is gone).
+#   3a — Refuse ONLY when a downstream invoice traces back to this
+#         quote's business chain (would orphan the invoice).
+#         Detection: the invoice ``job_id`` matches this quote's
+#         ``scheduled_job_id``. This is the indirect link the
+#         auto-invoice pipeline creates
+#         (quote → schedule_from_estimate → job → auto_invoice).
+#   4b — UX: dedicated red button + confirmation modal in admin UI.
+#   5  — NO ``audit_logs`` row emitted. Accepted compliance trade-off.
+#
+# See /app/memory/FEATURE_QUOTE_HARD_DELETE.md.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+async def _quote_converted_invoice_id(
+    quote_doc: dict, tenant_id: str,
+) -> Optional[str]:
+    """Return the invoice id that traces back to this quote's
+    business chain, or ``None`` if there isn't one.
+
+    Detection uses the indirect link the auto-invoice pipeline
+    stamps: an invoice's ``job_id`` (or ``scheduled_job_id``)
+    equals the origin quote's ``scheduled_job_id``. This is the
+    only field the schema exposes today that ties an invoice back
+    to its origin quote.
+    """
+    sched_job_id = quote_doc.get("scheduled_job_id")
+    if not sched_job_id:
+        return None
+    inv = await db.quotes.find_one(
+        {
+            "tenant_id": tenant_id,
+            "doc_type": "invoice",
+            "$or": [
+                {"job_id": sched_job_id},
+                {"scheduled_job_id": sched_job_id},
+            ],
+            "$and": [
+                {"$or": [{"deleted_at": None},
+                          {"deleted_at": {"$exists": False}}]},
+            ],
+        },
+        {"_id": 0, "id": 1},
+    )
+    return (inv or {}).get("id")
+
+
+@router.delete("/quotes/{qid}", operation_id="quotes.delete")
+async def delete_quote(
+    qid: str,
+    hard: bool = Query(False),
+    deletion_reason: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Delete a quote. Defaults to soft-delete (legacy).
+
+    Pass ``?hard=true`` for a hard-delete that removes the doc from
+    ``db.quotes`` entirely. Hard-delete refuses (409) if the quote
+    has already been converted to an invoice (would orphan the
+    invoice). Ledger rows (``communication_sends`` /
+    ``outbound_emails`` / ``marketing_deliveries`` / ``audit_logs``)
+    keep their ``quote_id`` field pointing at the now-gone doc —
+    this is the accepted compliance trade-off.
+
+    Hard-delete emits NO ``audit_logs`` row. The quote disappears
+    with zero trace.
+    """
+    _require_admin_or_super(user)
+
+    if not hard:
+        # Legacy soft-delete surface (mirrors DELETE /invoices/{qid}).
+        return await _perform_soft_delete_quote(
+            qid, user, tenant, deletion_reason=deletion_reason,
+        )
+
+    doc = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "quote_not_found")
+
+    # Hard-delete is quote-only. Invoices go through
+    # ``DELETE /api/invoices/{qid}`` (soft) — hard-deleting an
+    # invoice would silently drop payment ledger integrity.
+    if (doc.get("doc_type") or "").lower() == "invoice":
+        raise HTTPException(
+            400,
+            "hard_delete_not_supported_for_invoices — use "
+            "DELETE /api/invoices/{qid} for the soft-delete surface",
+        )
+
+    invoiced_id = await _quote_converted_invoice_id(doc, tenant["id"])
+    if invoiced_id:
+        raise HTTPException(
+            409,
+            "Quote has been converted to an invoice and cannot be "
+            "hard-deleted. Delete the invoice first or void the quote.",
+        )
+
+    # Cascade — all quote-owned data is inline on the doc
+    # (line_items, signatures, terms, drafts, version snapshots).
+    # No separate subcollections exist per Feb-2026 schema. So a
+    # single ``delete_one`` removes the entire quote-owned graph.
+    result = await db.quotes.delete_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+    )
+    if result.deleted_count == 0:
+        # Raced with another delete — treat as 404 for idempotency.
+        raise HTTPException(404, "quote_not_found")
+
+    # No audit_logs row. No communication_sends / outbound_emails /
+    # marketing_deliveries mutations. Ledger rows retain their
+    # ``quote_id`` field verbatim — user-locked trade-off #5.
+    return {"ok": True, "hard_deleted": True, "quote_id": qid}

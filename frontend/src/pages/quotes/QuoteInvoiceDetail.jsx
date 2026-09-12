@@ -30,6 +30,8 @@ import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
 import EditLockConfirmDialog from "@/components/documents/EditLockConfirmDialog";
 import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
+// Feb-2026 · Hard-delete quotes — admin+super only surface.
+import HardDeleteQuoteModal from "@/components/quotes/HardDeleteQuoteModal";
 // Phase K79 · Feb-2026 — Customer-facing grouped view controls
 // (checkbox + per-category description editor + preview modal).
 // Rendered on QUOTES only; invoices keep the itemized view.
@@ -160,6 +162,9 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   //     payment id short-hash).
   const [deleteInvoiceOpen, setDeleteInvoiceOpen] = useState(false);
   const [deletePaymentOpen, setDeletePaymentOpen] = useState(false);
+  // Feb-2026 · Hard-delete quote — admin+super only. Separate state
+  // from the soft-delete surfaces above.
+  const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
   // Feb 2026 · Type-to-confirm removed — the ``deleteConfirmText``
   // state that gated Delete buttons on the invoice / payment
   // modals has been retired. Kept the two boolean modal opens +
@@ -643,6 +648,20 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               ) : null}
             </>
           ) : null}
+          {/* Feb-2026 · Hard-delete quote — admin+super only, QUOTE-only
+              (invoices go through the soft-delete surface above; hard-
+              deleting an invoice would silently drop the payment
+              ledger integrity). Placed next to the soft-delete cluster
+              so it's obviously destructive AND obviously separate. */}
+          {!isInvoice && isStaff ? (
+            <Button
+              variant="danger"
+              onClick={() => setHardDeleteOpen(true)}
+              testid="hard-delete-quote-btn"
+            >
+              <Trash2 size={14} /> Hard Delete Quote
+            </Button>
+          ) : null}
           {/* Phase K80.a · Feb-2026 — On DRAFT invoices the K71 inline
               editor now covers add/edit/delete, so this modal button is
               redundant. Keep it visible only on statuses where the
@@ -1044,6 +1063,31 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           Feb 2026 · Type-to-confirm friction removed app-wide: the
           modals now use a single-click Delete inside the modal; the
           two-click safety (open modal → click Delete) is preserved. */}
+      {/* Feb-2026 · Hard-delete quote modal — QUOTE-only surface.
+          Fires DELETE /api/quotes/{qid}?hard=true, refuses (409) if
+          the quote has been converted to an invoice. NO audit trail
+          per user-locked directive #5. */}
+      <HardDeleteQuoteModal
+        open={hardDeleteOpen}
+        quoteId={doc?.id}
+        quoteNumber={
+          (doc?.estimate_number || doc?.invoice_number ||
+             doc?.number || doc?.id || "")
+            .toString()
+            .toUpperCase()
+        }
+        customerName={customer?.name}
+        totalAmount={Number(doc?.total || 0)}
+        onClose={() => setHardDeleteOpen(false)}
+        onDeleted={() => {
+          setHardDeleteOpen(false);
+          setToast({ tone: "success", message: "Quote hard-deleted" });
+          setTimeout(() => navigate("/quotes"), 400);
+        }}
+        onError={(detail) => {
+          setToast({ tone: "error", message: String(detail) });
+        }}
+      />
       <Modal
         open={deleteInvoiceOpen}
         onClose={() => setDeleteInvoiceOpen(false)}
