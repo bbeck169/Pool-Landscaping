@@ -29,6 +29,7 @@ import CustomerDeleteModal from "@/src/components/customers/CustomerDeleteModal"
 import SubscriptionsSection from "@/src/components/subscriptions/SubscriptionsSection";
 import PortalAccessPanel from "@/src/components/customers/PortalAccessPanel";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -64,6 +65,9 @@ export default function CustomerDetail() {
   // Ship 2 · Customer Delete UX
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusyMode, setDeleteBusyMode] = useState<"soft" | "hard" | null>(null);
+  // Route-entry classifier — classify 403 / network errors properly.
+  const [loadError, setLoadError] = useState("");
+  const [rawLoadError, setRawLoadError] = useState<unknown>(null);
 
   const loadCredits = useCallback(async () => {
     try {
@@ -73,6 +77,8 @@ export default function CustomerDetail() {
   }, [id]);
 
   const load = useCallback(async () => {
+    setLoadError("");
+    setRawLoadError(null);
     try {
       const data = await api.get(`/customers/${id}`);
       setC(data);
@@ -83,10 +89,17 @@ export default function CustomerDetail() {
         .catch(() => setProperties([]));
       loadCredits();
       writeCache(`customer:${id}`, data).catch(() => {});
-    } catch {
+    } catch (e) {
       // Phase O5 · Offline fallback for customer detail.
       const cached = await readCache<any>(`customer:${id}`);
-      if (cached) { setC(cached); setLoginEmail(cached.email || ""); }
+      if (cached) {
+        setC(cached);
+        setLoginEmail(cached.email || "");
+      } else {
+        setC(null);
+        setRawLoadError(e);
+        setLoadError("Couldn't load customer.");
+      }
     } finally {
       setLoading(false);
     }
@@ -120,6 +133,33 @@ export default function CustomerDetail() {
   };
 
   if (loading) return <Loading testID="customer-detail-loading" />;
+  if (!c && loadError) {
+    const mapped = rawLoadError ? mapApiError(rawLoadError) : null;
+    const icon = mapped ? errorKindIcon(mapped.kind) : "alert-circle-outline";
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.background }} testID="customer-detail-error">
+        <Header title="Customer" back />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
+          <Ionicons name={icon as any} size={48} color={colors.muted} />
+          <Text style={{ fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface, marginTop: spacing.md, textAlign: "center" }} testID="customer-detail-error-title">
+            {mapped?.title || loadError}
+          </Text>
+          {mapped && mapped.message !== mapped.title && (
+            <Text style={{ fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: spacing.sm, textAlign: "center" }} testID="customer-detail-error-message">
+              {mapped.message}
+            </Text>
+          )}
+          <Pressable
+            style={{ marginTop: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: colors.brand, borderRadius: radius.md }}
+            onPress={load}
+            testID="customer-detail-retry-btn"
+          >
+            <Text style={{ fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" }}>Retry</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
   if (!c) return null;
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";

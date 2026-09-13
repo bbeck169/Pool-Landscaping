@@ -22,7 +22,7 @@ import { exportInvoicePdf } from "@/src/utils/exportInvoicePdf";
 import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import SendToCustomerSheet from "@/src/components/quotes/SendToCustomerSheet";
-import { mapApiError } from "@/src/utils/mapApiError";
+import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 
 export default function QuoteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -40,6 +40,8 @@ export default function QuoteDetail() {
   const [company, setCompany] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [rawLoadError, setRawLoadError] = useState<unknown>(null);
   const pollRef = useRef<any>(null);
 
   // ── Duplicate Quote state ──────────────────────────────────
@@ -59,14 +61,22 @@ export default function QuoteDetail() {
   const [dupPickingCustomer, setDupPickingCustomer] = useState(false);
 
   const load = useCallback(async () => {
+    setLoadError("");
+    setRawLoadError(null);
     try {
       const data = await api.get(`/quotes/${id}`);
       setQ(data);
       writeCache(`quote:${id}`, data).catch(() => {});
       if (!company) api.get("/card").then((r) => setCompany(r.company)).catch(() => {});
-    } catch {
+    } catch (e) {
       const cached = await readCache<any>(`quote:${id}`);
-      if (cached) setQ(cached);
+      if (cached) {
+        setQ(cached);
+      } else {
+        setQ(null);
+        setRawLoadError(e);
+        setLoadError("Couldn't load quote.");
+      }
     } finally {
       setLoading(false);
     }
@@ -288,6 +298,33 @@ export default function QuoteDetail() {
   };
 
   if (loading) return <Loading testID="quote-detail-loading" />;
+  if (!q && loadError) {
+    const mapped = rawLoadError ? mapApiError(rawLoadError) : null;
+    const icon = mapped ? errorKindIcon(mapped.kind) : "alert-circle-outline";
+    return (
+      <View style={styles.root} testID="quote-detail-error">
+        <Header title="Quote" back />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
+          <Ionicons name={icon as any} size={48} color={colors.muted} />
+          <Text style={{ fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface, marginTop: spacing.md, textAlign: "center" }} testID="quote-detail-error-title">
+            {mapped?.title || loadError}
+          </Text>
+          {mapped && mapped.message !== mapped.title && (
+            <Text style={{ fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: spacing.sm, textAlign: "center" }} testID="quote-detail-error-message">
+              {mapped.message}
+            </Text>
+          )}
+          <Pressable
+            style={{ marginTop: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: colors.brand, borderRadius: radius.md }}
+            onPress={load}
+            testID="quote-detail-retry-btn"
+          >
+            <Text style={{ fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" }}>Retry</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
   if (!q) return null;
 
   const isInvoice = q.doc_type === "invoice";

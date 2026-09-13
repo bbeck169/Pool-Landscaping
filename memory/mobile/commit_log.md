@@ -1791,3 +1791,19 @@
 - **Web files referenced**: `frontend/src/components/quotes/SendToCustomerModal.jsx`, `frontend/src/pages/quotes/QuoteInvoiceDetail.jsx`
 - **Memo**: `/app/memory/FEATURE_SEND_TO_CUSTOMER_MOBILE.md`
 
+
+## Iteration 91 — Route-entry classifier gap fix
+- **Commit**: 94bc9fdb
+- **Date**: 2026-09-13
+- **Changes**:
+  - Audited all `[id].tsx` detail screens for route-entry classifier gap. Found 3 affected: quote, customer, invoice. Job was already fixed (reference pattern).
+  - **quote/[id].tsx**: Added `loadError`/`rawLoadError` state, classified error render block with `mapApiError` + `errorKindIcon` + retry button. 403 now shows "Not authorized" instead of blank screen.
+  - **customer/[id].tsx**: Same pattern applied. 403 now shows "Not authorized" instead of blank screen.
+  - **invoice/[id].tsx**: Added `rawLoadError` to existing error handling, upgraded existing error block to use `mapApiError` classification. 403 now shows "Not authorized" instead of generic "Failed to load invoice".
+  - Created `__tests__/route-entry-classifier.test.tsx` (6 tests): 403 → "Not authorized" + network → "You're offline" for all 3 screens.
+  - **6/6 new tests passing**, **31 prior tests still green** = 37 total.
+  - ~82 LOC total (under 100 LOC cap).
+- **Files modified**: `app/quote/[id].tsx`, `app/customer/[id].tsx`, `app/invoice/[id].tsx`
+- **Files created**: `__tests__/route-entry-classifier.test.tsx`
+- **Memo**: `/app/memory/FEATURE_MOBILE_ROUTE_ENTRY_CLASSIFIER.md`
+

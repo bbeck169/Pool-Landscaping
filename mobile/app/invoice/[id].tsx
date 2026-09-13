@@ -27,6 +27,7 @@ import InvoiceViewHistory from "@/src/components/invoices/InvoiceViewHistory";
 import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 
 const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
 
@@ -43,6 +44,7 @@ export default function InvoiceDetail() {
   const [data, setData] = useState<InvoiceFull | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [rawLoadError, setRawLoadError] = useState<unknown>(null);
   const [payOpen, setPayOpen] = useState(false);
   const [payHtml, setPayHtml] = useState("");
   const [payLoading, setPayLoading] = useState(false);
@@ -57,10 +59,12 @@ export default function InvoiceDetail() {
     if (!id) return;
     setLoading(true);
     setError("");
+    setRawLoadError(null);
     try {
       const inv = await getInvoiceFull(id);
       setData(inv);
     } catch (e: any) {
+      setRawLoadError(e);
       setError(e?.message || "Failed to load invoice");
     } finally {
       setLoading(false);
@@ -137,10 +141,17 @@ export default function InvoiceDetail() {
   }
 
   if (error || !data) {
+    const mapped = rawLoadError ? mapApiError(rawLoadError) : null;
+    const icon = mapped ? errorKindIcon(mapped.kind) : "alert-circle";
     return (
-      <View style={[s.center, { paddingTop: insets.top + 60 }]}>
-        <Ionicons name="alert-circle" size={32} color={colors.error} />
-        <Text style={s.errorText}>{error || "Invoice not found"}</Text>
+      <View style={[s.center, { paddingTop: insets.top + 60 }]} testID="invoice-detail-error">
+        <Ionicons name={icon as any} size={32} color={colors.error} />
+        <Text style={s.errorText} testID="invoice-detail-error-title">{mapped?.title || error || "Invoice not found"}</Text>
+        {mapped && mapped.message !== mapped.title && (
+          <Text style={[s.errorText, { fontSize: fontSize.sm, color: colors.muted, marginTop: spacing.xs }]} testID="invoice-detail-error-message">
+            {mapped.message}
+          </Text>
+        )}
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <Text style={s.backBtnText}>Go Back</Text>
         </TouchableOpacity>
