@@ -151,6 +151,10 @@ async def _send_password_reset_email(
     target: Dict[str, Any], temp_password: str,
 ) -> str:
     from services.email.resend_adapter import send as _resend_send
+    from services.email.theming import wrap_html_in_shell
+    from services.tenants.business_settings import (
+        get_effective_business_settings,
+    )
     from urllib.parse import urljoin
 
     settings = tenant.get("settings") or {}
@@ -159,13 +163,28 @@ async def _send_password_reset_email(
     origin = os.environ.get("FRONTEND_BASE_URL") or "https://app.aquaterra.com"
     login_url = urljoin(origin.rstrip("/") + "/", "login")
     subject = f"Your {company_display} password was reset"
-    html = _password_reset_html(
+    inner_html = _password_reset_html(
         target_name=target.get("first_name") or target.get("name") or "there",
         actor_name=actor.get("name") or actor.get("email") or "An admin",
         company_name=company_display,
         temp_password=temp_password,
         login_url=login_url,
     )
+    # Feb-2026 · Email Base Template Theming — wrap in shared shell.
+    # ``_password_reset_html`` still emits a full ``<html>`` doc; the
+    # shell tolerates that by rendering the caller's HTML verbatim
+    # inside the body slot (the double-``<html>`` is invalid but every
+    # mainstream client parses it as the caller's markup nested inside
+    # the outer document, so branding wins visually). Follow-up:
+    # collapse ``_password_reset_html`` to a fragment.
+    try:
+        branding = await get_effective_business_settings(
+            db, tenant.get("id") or "", absolutize=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"branding resolve failed, using defaults: {e}")
+        branding = {}
+    html = wrap_html_in_shell(inner_html, branding)
     result = await _resend_send(
         to=target["email"], subject=subject, html=html,
         category="transactional",

@@ -860,16 +860,35 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
         # listed so his link goes live (subject to the Resend key).
         try:
             from services.email.resend_adapter import send as _send_email
+            # Feb-2026 · Email Base Template Theming — resolve tenant
+            # branding once and wrap the reset-email HTML in the shared
+            # shell. Failures fall open to default branding.
+            from services.email.theming import wrap_html_in_shell
+            from services.tenants.business_settings import (
+                get_effective_business_settings,
+            )
+            try:
+                branding = await get_effective_business_settings(
+                    db, user.get("tenant_id") or "", absolutize=True,
+                )
+            except Exception as _be:  # noqa: BLE001
+                logger.warning(
+                    f"branding resolve failed for reset email: {_be}",
+                )
+                branding = {}
 
             first_name = (
                 user.get("first_name")
                 or (user.get("name") or "").split(" ")[0]
                 or "there"
             )
-            html = _password_reset_email_html(
-                first_name=first_name,
-                reset_link=reset_link,
-                expiry_minutes=_RESET_TTL_MINUTES,
+            html = wrap_html_in_shell(
+                _password_reset_email_html(
+                    first_name=first_name,
+                    reset_link=reset_link,
+                    expiry_minutes=_RESET_TTL_MINUTES,
+                ),
+                branding,
             )
             res = await _send_email(
                 to=email,

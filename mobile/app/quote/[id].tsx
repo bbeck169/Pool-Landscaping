@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Alert, Share, Platform } from "react-native";
+import {
+  View, Text, StyleSheet, ScrollView, Alert, Share, Platform,
+  Modal, TextInput, Pressable, FlatList, ActivityIndicator,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
 
@@ -22,7 +25,9 @@ export default function QuoteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
   const { stripeConfigured } = useStripeConfig();
+  const router = useRouter();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin" || user?.role === "manager";
+  const canDuplicate = user?.role === "admin" || user?.role === "super_admin";
   const insets = useSafeAreaInsets();
 
   // Theme refresh — tenant branding
@@ -32,6 +37,19 @@ export default function QuoteDetail() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<any>(null);
+
+  // ── Duplicate Quote state ──────────────────────────────────
+  const [dupOpen, setDupOpen] = useState(false);
+  const [dupCustomers, setDupCustomers] = useState<any[]>([]);
+  const [dupCustomer, setDupCustomer] = useState<any>(null);
+  const [dupProperties, setDupProperties] = useState<any[]>([]);
+  const [dupProperty, setDupProperty] = useState<any>(null);
+  const [dupSearch, setDupSearch] = useState("");
+  const [dupBusy, setDupBusy] = useState(false);
+  const [dupError, setDupError] = useState("");
+  const [dupCustLoading, setDupCustLoading] = useState(false);
+  const [dupPropLoading, setDupPropLoading] = useState(false);
+  const [dupPickingCustomer, setDupPickingCustomer] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -178,6 +196,88 @@ export default function QuoteDetail() {
     }
   };
 
+  // ── Duplicate Quote logic ──────────────────────────────────
+  const openDuplicate = async () => {
+    setDupOpen(true);
+    setDupError("");
+    setDupSearch("");
+    setDupPickingCustomer(false);
+    // Pre-select source customer
+    const srcCust = q.customer_id
+      ? { id: q.customer_id, name: formatCustomerName(q) }
+      : null;
+    setDupCustomer(srcCust);
+    setDupProperty(null);
+    setDupProperties([]);
+    // Fetch customers
+    setDupCustLoading(true);
+    try {
+      const custs = await api.get("/customers");
+      setDupCustomers(Array.isArray(custs) ? custs : custs?.items || []);
+    } catch {
+      setDupCustomers([]);
+    } finally {
+      setDupCustLoading(false);
+    }
+    // Fetch properties for source customer
+    if (srcCust?.id) loadDupProperties(srcCust.id);
+  };
+
+  const loadDupProperties = async (cid: string) => {
+    setDupPropLoading(true);
+    setDupProperty(null);
+    setDupProperties([]);
+    try {
+      const props = await api.get(`/customers/${cid}/properties`);
+      const active = (Array.isArray(props) ? props : props?.items || []).filter(
+        (p: any) => p.active !== false,
+      );
+      setDupProperties(active);
+      if (active.length > 0) setDupProperty(active[0]);
+    } catch {
+      setDupProperties([]);
+    } finally {
+      setDupPropLoading(false);
+    }
+  };
+
+  const selectDupCustomer = (c: any) => {
+    setDupCustomer(c);
+    setDupPickingCustomer(false);
+    setDupSearch("");
+    setDupError("");
+    loadDupProperties(c.id);
+  };
+
+  const submitDuplicate = async () => {
+    if (!dupCustomer?.id) {
+      setDupError("Select a customer.");
+      return;
+    }
+    setDupBusy(true);
+    setDupError("");
+    try {
+      const body: any = { customer_id: dupCustomer.id };
+      if (dupProperty?.id) body.property_id = dupProperty.id;
+      const res = await api.post(`/quotes/${id}/duplicate`, body);
+      setDupOpen(false);
+      Alert.alert(
+        "Quote duplicated",
+        `Quote duplicated as draft #${res.quote_number || res.quote_id?.slice(0, 8) || "new"}.`,
+        [{ text: "View", onPress: () => router.push(`/quote/${res.quote_id}`) }, { text: "OK" }],
+      );
+    } catch (e: any) {
+      setDupError(e?.message || "Duplicate failed.");
+    } finally {
+      setDupBusy(false);
+    }
+  };
+
+  const closeDuplicate = () => {
+    setDupOpen(false);
+    setDupError("");
+  };
+
   if (loading) return <Loading testID="quote-detail-loading" />;
   if (!q) return null;
 
@@ -189,7 +289,18 @@ export default function QuoteDetail() {
 
   return (
     <View style={styles.root}>
-      <Header title={isInvoice ? "Invoice" : "Quote"} back right={<IconButton icon="share-outline" onPress={exportPdf} testID="quote-share-pdf" />} />
+      <Header
+        title={isInvoice ? "Invoice" : "Quote"}
+        back
+        right={
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {canDuplicate && !isInvoice ? (
+              <IconButton icon="copy-outline" onPress={openDuplicate} testID="duplicate-quote-btn" />
+            ) : null}
+            <IconButton icon="share-outline" onPress={exportPdf} testID="quote-share-pdf" />
+          </View>
+        }
+      />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 140 }}>
         {/* Branded header band (Theme Refresh) */}
         <View style={[styles.brandBand, { backgroundColor: brandPrimary }]} testID="doc-branded-header-band">
@@ -383,6 +494,140 @@ export default function QuoteDetail() {
           </View>
         )}
       </View>
+
+      {/* ── Duplicate Quote Modal ────────────────────────── */}
+      <Modal visible={dupOpen} transparent animationType="fade" onRequestClose={closeDuplicate} testID="duplicate-quote-modal">
+        <Pressable style={styles.dupOverlay} onPress={closeDuplicate} />
+        <View style={styles.dupSheet} testID="duplicate-quote-sheet">
+          <View style={styles.dupHeader}>
+            <Text style={styles.dupTitle}>Duplicate Quote</Text>
+            <Pressable onPress={closeDuplicate} hitSlop={10} testID="duplicate-quote-close">
+              <Ionicons name="close" size={24} color={colors.onSurfaceSecondary} />
+            </Pressable>
+          </View>
+
+          {/* Customer picker */}
+          {dupPickingCustomer ? (
+            <View style={styles.dupPickerArea} testID="duplicate-customer-picker">
+              <TextInput
+                style={styles.dupSearchInput}
+                value={dupSearch}
+                onChangeText={setDupSearch}
+                placeholder="Search customers…"
+                placeholderTextColor={colors.muted}
+                autoFocus
+                testID="duplicate-customer-search"
+              />
+              {dupCustLoading ? (
+                <ActivityIndicator size="small" color={colors.brand} style={{ marginTop: 16 }} />
+              ) : (
+                <FlatList
+                  data={dupCustomers.filter((c: any) =>
+                    !dupSearch || (c.name || "").toLowerCase().includes(dupSearch.toLowerCase()),
+                  )}
+                  keyExtractor={(c: any) => c.id}
+                  style={{ maxHeight: 220 }}
+                  keyboardShouldPersistTaps="handled"
+                  renderItem={({ item: c }) => (
+                    <Pressable
+                      style={styles.dupCustRow}
+                      onPress={() => selectDupCustomer(c)}
+                      testID={`duplicate-pick-customer-${c.id}`}
+                    >
+                      <Text style={styles.dupCustRowText}>{c.name}</Text>
+                      {dupCustomer?.id === c.id ? (
+                        <Ionicons name="checkmark" size={18} color={colors.brand} />
+                      ) : null}
+                    </Pressable>
+                  )}
+                  ListEmptyComponent={
+                    <Text style={styles.dupEmptyText}>No customers found.</Text>
+                  }
+                />
+              )}
+            </View>
+          ) : (
+            <>
+              {/* Selected customer display */}
+              <Text style={styles.dupLabel}>Customer</Text>
+              <Pressable
+                style={styles.dupSelector}
+                onPress={() => setDupPickingCustomer(true)}
+                testID="duplicate-customer-selector"
+              >
+                <Text style={[styles.dupSelectorText, !dupCustomer && { color: colors.muted }]}>
+                  {dupCustomer?.name || "Select customer"}
+                </Text>
+                <Ionicons name="chevron-down" size={18} color={colors.muted} />
+              </Pressable>
+
+              {/* Property picker */}
+              <Text style={styles.dupLabel}>Property</Text>
+              {dupPropLoading ? (
+                <ActivityIndicator size="small" color={colors.brand} style={{ marginVertical: 8 }} testID="duplicate-property-loading" />
+              ) : dupProperties.length === 0 ? (
+                <Text style={styles.dupHint} testID="duplicate-no-properties">
+                  {dupCustomer ? "This customer has no active properties." : "Select a customer first."}
+                </Text>
+              ) : (
+                <View>
+                  {dupProperties.map((p: any) => (
+                    <Pressable
+                      key={p.id}
+                      style={[
+                        styles.dupPropRow,
+                        dupProperty?.id === p.id && styles.dupPropRowActive,
+                      ]}
+                      onPress={() => setDupProperty(p)}
+                      testID={`duplicate-pick-property-${p.id}`}
+                    >
+                      <Ionicons
+                        name={dupProperty?.id === p.id ? "radio-button-on" : "radio-button-off"}
+                        size={18}
+                        color={dupProperty?.id === p.id ? colors.brand : colors.muted}
+                      />
+                      <Text style={styles.dupPropRowText}>
+                        {typeof p.address === "string"
+                          ? p.address
+                          : p.address?.line1
+                            ? [p.address.line1, p.address.city, p.address.state].filter(Boolean).join(", ")
+                            : p.name || p.id?.slice(0, 8)}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+
+              {/* Error */}
+              {dupError ? (
+                <Text style={styles.dupError} testID="duplicate-quote-error">{dupError}</Text>
+              ) : null}
+
+              {/* Actions */}
+              <View style={styles.dupActions}>
+                <Pressable style={styles.dupCancelBtn} onPress={closeDuplicate} testID="duplicate-quote-cancel">
+                  <Text style={styles.dupCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.dupSubmitBtn, dupBusy && { opacity: 0.6 }]}
+                  onPress={submitDuplicate}
+                  disabled={dupBusy}
+                  testID="duplicate-quote-submit"
+                >
+                  {dupBusy ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="copy-outline" size={16} color="#fff" />
+                      <Text style={styles.dupSubmitText}>Duplicate</Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
+            </>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -506,4 +751,73 @@ const styles = StyleSheet.create({
   brandBandCompany: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", marginTop: 4 },
   brandFooter: { borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.md },
   brandFooterText: { fontFamily: font.regular, fontSize: fontSize.sm, color: "#fff", textAlign: "center" as const },
+  // ── Duplicate Quote modal styles ───────────────────────────
+  dupOverlay: {
+    position: "absolute" as const, top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: "rgba(15,23,42,0.45)",
+  },
+  dupSheet: {
+    position: "absolute" as const, bottom: 0, left: 0, right: 0,
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: 40,
+    maxHeight: "80%" as any,
+  },
+  dupHeader: {
+    flexDirection: "row" as const, alignItems: "center" as const,
+    justifyContent: "space-between" as const, marginBottom: spacing.lg,
+  },
+  dupTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface },
+  dupLabel: {
+    fontFamily: font.medium, fontSize: fontSize.sm, color: colors.onSurfaceSecondary,
+    marginBottom: spacing.xs, marginTop: spacing.md,
+    textTransform: "uppercase" as const, letterSpacing: 0.5,
+  },
+  dupSelector: {
+    flexDirection: "row" as const, alignItems: "center" as const,
+    justifyContent: "space-between" as const,
+    backgroundColor: colors.surfaceSecondary, borderWidth: 1.5, borderColor: colors.border,
+    borderRadius: radius.md, paddingHorizontal: spacing.md, height: 48,
+  },
+  dupSelectorText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface },
+  dupPickerArea: { marginBottom: spacing.md },
+  dupSearchInput: {
+    backgroundColor: colors.surfaceSecondary, borderWidth: 1.5, borderColor: colors.border,
+    borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44,
+    fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface,
+  },
+  dupCustRow: {
+    flexDirection: "row" as const, alignItems: "center" as const,
+    justifyContent: "space-between" as const,
+    paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.divider,
+  },
+  dupCustRowText: { fontFamily: font.medium, fontSize: fontSize.base, color: colors.onSurface },
+  dupEmptyText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, textAlign: "center" as const, marginTop: spacing.lg },
+  dupPropRow: {
+    flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.sm,
+    paddingVertical: 10, paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm, marginVertical: 2,
+  },
+  dupPropRowActive: { backgroundColor: "#EFF6FF" },
+  dupPropRowText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, flex: 1 },
+  dupHint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginVertical: spacing.sm, fontStyle: "italic" as const },
+  dupError: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.error, marginTop: spacing.sm },
+  dupActions: {
+    flexDirection: "row" as const, justifyContent: "flex-end" as const,
+    gap: spacing.sm, marginTop: spacing.xl,
+  },
+  dupCancelBtn: {
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  dupCancelText: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurfaceSecondary },
+  dupSubmitBtn: {
+    flexDirection: "row" as const, alignItems: "center" as const, gap: 6,
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: radius.md,
+    backgroundColor: colors.brand,
+  },
+  dupSubmitText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
 });

@@ -1,6 +1,15 @@
 import resend
 
 from config import db, logger, RESEND_API_KEY, EMAIL_FROM, APP_PUBLIC_URL
+# Feb-2026 · Email Base Template Theming — shared brand shell.
+# ``wrap_html_in_shell`` is a PURE function; callers must resolve
+# ``branding`` via ``get_effective_business_settings(...)`` in their
+# already-async context and reuse the dict across a fan-out loop
+# so a multi-recipient send doesn't re-fetch the tenant N times.
+from services.email.theming import wrap_html_in_shell
+from services.tenants.business_settings import (
+    get_effective_business_settings,
+)
 
 
 def _thumbs_html(job: dict) -> str:
@@ -294,13 +303,30 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
         # Feb-2026 · P0 subject fix — no more "Payment reminder —
         # Estimate" chimera. Use the invoice's display number.
         subject_num = _invoice_display_number(inv)
+        # Feb-2026 · Email Base Template Theming — wrap the caller's
+        # HTML in the branded shell. Branding is resolved ONCE per
+        # send (this function is single-recipient; multi-contact
+        # fan-out resolves branding once in its outer loop and
+        # threads the dict — this call is a single email so the
+        # in-line resolve is safe).
+        try:
+            branding = await get_effective_business_settings(
+                db, inv.get("tenant_id") or "", absolutize=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"branding resolve failed, using defaults: {e}")
+            branding = {}
+        themed_html = wrap_html_in_shell(
+            _reminder_html(inv, cust.get("name", "there"),
+                             attachment_count=attachment_count,
+                             portal_cta_url=portal_cta_url),
+            branding,
+        )
         resend.Emails.send({
             "from": EMAIL_FROM,
             "to": to_email,
             "subject": f"Payment reminder — invoice {subject_num}",
-            "html": _reminder_html(inv, cust.get("name", "there"),
-                                    attachment_count=attachment_count,
-                                    portal_cta_url=portal_cta_url),
+            "html": themed_html,
         })
         return True
     except Exception as e:
@@ -360,15 +386,28 @@ async def send_estimate_reminder_email(inv: dict, tenant: dict,
     company = (tenant or {}).get("company_name") or "your service provider"
     try:
         resend.api_key = RESEND_API_KEY
-        resend.Emails.send({
-            "from": EMAIL_FROM,
-            "to": to_email,
-            "subject": f"Reminder: your {doc_type_label} from {company}",
-            "html": _estimate_reminder_html(
+        # Feb-2026 · Email Base Template Theming — wrap in shared shell.
+        try:
+            branding = await get_effective_business_settings(
+                db, (tenant or {}).get("id") or inv.get("tenant_id") or "",
+                absolutize=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"branding resolve failed, using defaults: {e}")
+            branding = {}
+        themed_html = wrap_html_in_shell(
+            _estimate_reminder_html(
                 inv, cust.get("name", "there"),
                 tenant or {}, review_url,
                 attachment_count=attachment_count,
             ),
+            branding,
+        )
+        resend.Emails.send({
+            "from": EMAIL_FROM,
+            "to": to_email,
+            "subject": f"Reminder: your {doc_type_label} from {company}",
+            "html": themed_html,
         })
         return True
     except Exception as e:
