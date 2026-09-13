@@ -383,12 +383,22 @@ export default function AdminTopBar() {
         <>
           {/* Narrow (<768px) — hamburger + right cluster. CSS-gated so */}
           {/* mobile browsers that don't fire resize still see it. */}
+          {/* Feb-2026 · Mobile Nav Overflow Fix — ``overflow-x-auto`` */}
+          {/* contains the right-cluster's ~592px content within the */}
+          {/* 44px bar on <400px viewports rather than blowing out the */}
+          {/* document. Users can swipe the nav to reach the bell / */}
+          {/* signout at the far right when the cluster exceeds width. */}
+          {/* Children get ``flex-shrink-0`` so no icon gets squished. */}
           <div
-            className="md:hidden px-4 h-11 flex items-center justify-between"
+            className="md:hidden px-4 h-11 flex items-center justify-between overflow-x-auto"
+            style={{ WebkitOverflowScrolling: "touch",
+                     scrollbarWidth: "none" }}
             data-testid="admin-topbar-narrow-wrap"
           >
-            <MobileMenu visible={visible} fixedItems={fixedItems} />
-            <div className="flex items-center gap-2">
+            <div className="flex-shrink-0">
+              <MobileMenu visible={visible} fixedItems={fixedItems} />
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
               <AddCustomerButton />
               <CreditsBudgetChip />
               {/* Feb-2026 · Mobile Nav Duplicate Fix — the legacy
@@ -399,8 +409,10 @@ export default function AdminTopBar() {
                   the impersonation surface is re-mounted here in
                   the narrow-branch right-cluster to preserve
                   one-tap access.  The component self-gates via
-                  ``canPreview`` (super_admin only) so it's a no-op
-                  mount for admin / manager / technician. */}
+                  ``canPreview`` (admin + super_admin per the
+                  long-standing product decision in
+                  ``hooks/usePermissions.jsx``) so it's a no-op
+                  mount for manager / technician. */}
               <RolePreviewSwitcher />
               <SettingsSprocket />
               <SignOutButton />

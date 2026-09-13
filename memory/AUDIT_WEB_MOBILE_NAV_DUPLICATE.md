@@ -136,7 +136,7 @@ Row 1's flex layout at L509 is `flex items-center justify-between` with no `flex
 ### 6.1 · Changes
 
 - **`frontend/src/layouts/AppLayout.jsx`** — wrapped Row 1's `<header>` (L508-586) in a role-scoped ternary. The IIFE just above the header derives `_mountsAdminTopBar = ["admin","super_admin","manager","technician"].includes(_effRole)` and the header block is rendered only when that boolean is `false`. Header content, styling, testids, and children (`RolePreviewSwitcher` still nested here for the customer / customer_portal / unknown branch) are byte-identical to the pre-fix code — only the outer conditional is new.
-- **`frontend/src/layouts/AdminTopBar.jsx`** — new import `import RolePreviewSwitcher from "@/components/RolePreviewSwitcher"` and a single JSX mount inside the narrow-branch right-cluster (between `<CreditsBudgetChip />` and `<SettingsSprocket />`). Component self-gates via `canPreview` so it's a no-op mount for admin / manager / technician.
+- **`frontend/src/layouts/AdminTopBar.jsx`** — new import `import RolePreviewSwitcher from "@/components/RolePreviewSwitcher"` and a single JSX mount inside the narrow-branch right-cluster (between `<CreditsBudgetChip />` and `<SettingsSprocket />`). Component self-gates via `canPreview` (see `hooks/usePermissions.jsx:170` — `role === "admin" || role === "super_admin"`, admin + super_admin both retain impersonation access per the long-standing product decision), so it's a no-op mount for manager / technician.
 
 **LOC diff:**
 
