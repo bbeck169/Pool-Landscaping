@@ -52,7 +52,16 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  // Feb-2026 · Housekeeping Batch A tightening — use ``clearAllMocks``
+  // (call-history only) instead of ``restoreAllMocks`` (which wipes
+  // ``.mockResolvedValue(...)`` implementations set at module hoist
+  // time). ``restoreAllMocks`` was causing a race: React's passive-
+  // effects flush fired ``api.get(...).catch(...)`` in
+  // ``CustomersList.jsx:679`` AFTER the afterEach hook cleared the
+  // resolved value, turning the mock into a bare ``vi.fn()`` that
+  // returned ``undefined`` — so ``.catch`` threw an unhandled
+  // rejection and vitest exited 1 despite zero test failures.
+  vi.clearAllMocks();
 });
 
 

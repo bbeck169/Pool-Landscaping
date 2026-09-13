@@ -19,15 +19,23 @@ AND that the file itself was deleted.
 **Fix landed (Feb-2026 · Housekeeping Batch A):** Completed the
 stalled production cleanup end-to-end:
 
-1. Removed the `PortalPaymentMethods` import from `App.js` (line 369).
+1. Removed the `PortalPaymentMethods` import from `App.js`.
 2. Removed the stranded `Route path="portal/profile/payment-methods"`
-   from `App.js` (was line 1350). Grep confirmed no `Link` / `navigate`
+   from `App.js`. Grep confirmed no `Link` / `navigate`
    references outside the file itself.
 3. Deleted `frontend/src/pages/portal/PortalPaymentMethods.jsx`.
 4. Deleted `frontend/src/test/task5-save-card-on-file.test.jsx` — it
    exercised the deleted component; equivalent coverage lives on
    the singular `<PortalPaymentMethod>` component tested through
    `portal-identity-and-add-card.test.jsx` itself.
+
+**Feb-2026 · Batch A tightening:** two documentation comments in
+`App.js` that referenced the removed component (one at the old
+import site near line 51, one at the deleted route site near line
+367) were also stripped so the deployed bundle no longer carries
+the string `PortalPaymentMethods`. The historical context is
+preserved in this memo — future readers should look here rather
+than expect a code-level comment.
 
 **Straggler grep results (all treated as archival — untouched):**
 

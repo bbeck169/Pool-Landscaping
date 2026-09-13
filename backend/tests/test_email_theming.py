@@ -290,6 +290,38 @@ def test_portal_invite_shell_yields_single_html_tag():
     )
 
 
+def test_self_serve_password_reset_shell_yields_single_html_tag():
+    """Mirror the admin-driven builder invariant for the self-serve
+    ``forgot-password`` flow. The self-serve builder in
+    ``routers.auth._password_reset_email_html`` currently returns a
+    body fragment (a styled ``<div>``) — this test locks that shape
+    so a future refactor that re-introduces a ``<!doctype html>``
+    /``<html>`` prefix trips exactly the same
+    ``count == 1`` regex assertion as the admin builder.
+    """
+    from routers.auth import _password_reset_email_html
+
+    inner = _password_reset_email_html(
+        first_name="Jamie",
+        reset_link="https://app.example.com/reset?token=abc",
+        expiry_minutes=15,
+    )
+    # Reject inner self-wrap — mirrors the admin-builder guard.
+    assert not _HTML_TAG_RE.search(inner), (
+        "regression: _password_reset_email_html re-introduced its own "
+        "<html> wrapper"
+    )
+    html = wrap_html_in_shell(inner, _FULL_BRANDING)
+    matches = _HTML_TAG_RE.findall(html)
+    assert len(matches) == 1, (
+        f"expected exactly one <html> tag, found {len(matches)}: "
+        f"double-wrap regression?"
+    )
+    # Fragment content survives verbatim through the shell.
+    assert "Reset your password" in html
+    assert "Jamie" in html
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Case 7 — Absolutized logo URL survives verbatim.
 # ═════════════════════════════════════════════════════════════════════

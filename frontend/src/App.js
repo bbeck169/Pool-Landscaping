@@ -49,10 +49,6 @@ import SoshieModerationQueuePage from "@/pages/admin/SoshieModerationQueue";
 import AiPersonasScopePage from "@/pages/admin/AiPersonasScopePage";
 import AiToolAuditPage from "@/pages/admin/AiToolAuditPage";
 import PortalPaymentReturn from "@/pages/portal/PortalPaymentReturn";
-// Feb-2026 P0 fix (Bug 2 · Item A) — legacy ``PortalPaymentMethods``
-// (plural) removed. The one true portal card management surface is
-// ``<PortalPaymentMethod>`` (singular) from ``PortalPages.jsx``, on
-// route ``/portal/payment-method``.
 import QuickBooksIntegrationPage from "@/pages/admin/integrations/QuickBooksIntegrationPage";
 import {
   BulkChargeRunsList as _P14bRunsList,
@@ -365,11 +361,6 @@ import {
   PortalServiceReports, PortalServiceReportDetail,
 } from "@/pages/portal/PortalServiceReports";
 import PortalSignPage from "@/pages/portal/PortalSign";
-// Feb-2026 · Housekeeping Batch A — legacy plural PortalPaymentMethods
-// component + its stranded ``portal/profile/payment-methods`` route
-// removed. All portal payment-method flows now go through the
-// singular <PortalPaymentMethod> in PortalPages.jsx mounted at
-// ``portal/payment-method``. See FLAKE_STABILIZATION_BACKLOG §1.
 import { CsatDashboard, CsatDetail, PublicCsat } from "@/pages/csat/CsatPages";
 import { RealtimeProvider } from "@/realtime/NotificationSocket";
 import AnalyticsPage from "@/pages/analytics/AnalyticsPage";
