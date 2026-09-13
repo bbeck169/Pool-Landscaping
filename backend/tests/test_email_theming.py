@@ -244,3 +244,71 @@ def test_case7_absolutized_logo_url_survives_verbatim():
     # No relative path leak — the raw ``/api/objects/xyz`` alone
     # (without the origin) must NOT appear as an ``src`` value.
     assert not re.search(r'src="/api/objects/xyz"', html)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Item 2 · P3 flip — Admin notification wrapping.
+# ═════════════════════════════════════════════════════════════════════
+#
+# ``services/quote_notifications.render_email`` emits the admin-facing
+# body for the "customer accepted / declined your quote" flow. The
+# retrofit in ``notify_quote_decision`` wraps its output through the
+# shared shell — the two smokes below assert that ``wrap_html_in_shell``
+# handles the exact body shape ``render_email`` returns, both for the
+# ``quote_accepted`` and ``quote_declined`` events, without clobbering
+# the caller's headline copy.
+
+def _admin_render(event: str):
+    """Local helper — invoke ``quote_notifications.render_email`` on
+    a synthetic doc so we get the real body verbatim.
+    """
+    from services.quote_notifications import render_email
+    doc = {
+        "id": "q-admin-probe-1234abcd",
+        "customer_name": "Alex Sample",
+        "total": 1250.75,
+        "decline_reason": ("Timing doesn't work for us right now."
+                            if event == "quote_declined" else None),
+    }
+    subject, html, _text = render_email(
+        event=event, doc_type="quote", doc=doc,
+        frontend_origin="https://admin.example.com",
+    )
+    return subject, html
+
+
+def test_admin_notification_accepted_wraps_through_shell():
+    _subject, admin_html = _admin_render("quote_accepted")
+    themed = wrap_html_in_shell(admin_html, _FULL_BRANDING)
+    # Header band renders the brand primary hex.
+    assert 'bgcolor="#1F5A6F"' in themed
+    # Caller's headline copy survives verbatim (the exact string
+    # ``quote_notifications.render_email`` emits — locked so a
+    # subject/copy refactor in that module trips a loud failure
+    # here rather than silently changing admin-facing wording).
+    assert "Alex Sample accepted quote" in themed
+    assert "Total:" in themed
+    # Footer note from the branding dict makes it through.
+    assert "We're proud of every service call." in themed \
+        or "We&#x27;re proud of every service call." in themed
+    # ``tax_id`` MUST NOT leak — same guarantee as customer footers.
+    b = dict(_FULL_BRANDING); b["tax_id"] = "EIN 99-9999999 admin only"
+    themed_with_taxid = wrap_html_in_shell(admin_html, b)
+    assert "EIN 99-9999999" not in themed_with_taxid
+    assert "admin only" not in themed_with_taxid
+
+
+def test_admin_notification_declined_wraps_through_shell():
+    _subject, admin_html = _admin_render("quote_declined")
+    themed = wrap_html_in_shell(admin_html, _FULL_BRANDING)
+    assert 'bgcolor="#1F5A6F"' in themed
+    # Declined-branch headline + reason preserved.
+    assert "Alex Sample declined quote" in themed
+    assert "Timing doesn&#x27;t work for us right now." in themed \
+        or "Timing doesn't work for us right now." in themed
+    # ``notify_quote_decision`` wraps ONCE per notification and reuses
+    # the wrapped html across recipients — sanity check that calling
+    # the pure ``wrap_html_in_shell`` twice with the same inputs
+    # yields the same output (fan-out safety).
+    themed2 = wrap_html_in_shell(admin_html, _FULL_BRANDING)
+    assert themed == themed2

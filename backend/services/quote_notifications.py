@@ -294,6 +294,25 @@ async def notify_quote_decision(
         event=event, doc_type=doc_type, doc=doc,
         frontend_origin=frontend_origin,
     )
+    # Feb-2026 · Email Base Template Theming — P3 flip.
+    # Admin-facing notification also carries brand identity now.
+    # Resolve branding ONCE per notification (multi-recipient fan-out
+    # below reuses the wrapped html — do NOT re-fetch per recipient).
+    try:
+        from services.email.theming import wrap_html_in_shell
+        from services.tenants.business_settings import (
+            get_effective_business_settings,
+        )
+        _branding = await get_effective_business_settings(
+            db, tenant_id, absolutize=True,
+        )
+        html = wrap_html_in_shell(html, _branding)
+    except Exception as _be:  # noqa: BLE001
+        logger.warning(
+            "notify_quote_decision: branding wrap failed, using "
+            "raw html (tenant=%s doc=%s): %s",
+            tenant_id, doc_id, _be,
+        )
     sms_body = render_sms(
         event=event, doc_type=doc_type, doc=doc,
         frontend_origin=frontend_origin,

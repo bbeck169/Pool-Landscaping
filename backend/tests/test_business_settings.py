@@ -58,11 +58,11 @@ def admin_sess():
 def tech_sess():
     r = requests.post(
         f"{BASE_URL}/api/auth/login",
-        json={"email": "tech@aquaterra.com", "password": "password123"},
+        json={"email": "mike@aquaterra.com", "password": "password123"},
         timeout=REQ_TIMEOUT,
     )
     if r.status_code != 200:
-        pytest.skip("no tech@aquaterra.com demo user")
+        pytest.skip("no mike@aquaterra.com technician demo user")
     tok = r.json().get("access_token") or r.json().get("token")
     s = requests.Session()
     s.headers.update({"Authorization": f"Bearer {tok}",

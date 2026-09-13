@@ -80,6 +80,8 @@ def wrap_html_in_shell(
 | Payment reminder    | *(same code path as Invoice sent — shared helper)*           | `emailer.py` · 230 | same |
 | Password reset      | `routers/auth.py` forgot-password flow → `_password_reset_email_html` | `routers/auth.py` · 869 | same |
 | Portal invite       | `routers/admin_users.py::_send_password_reset_email` → `_password_reset_html` | `routers/admin_users.py` · 149 | same |
+| Admin: customer accepted your quote | `services/quote_notifications.py::notify_quote_decision` → `render_email` | `services/quote_notifications.py` · 293 | same |
+| Admin: customer declined your quote | *(same code path — event branch inside `render_email`)* | same | same |
 
 **Not touched** (explicitly out-of-scope per dispatch):
 
