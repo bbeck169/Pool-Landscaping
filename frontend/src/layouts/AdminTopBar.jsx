@@ -45,6 +45,12 @@ import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { colors, gradients } from "@/theme";
 import UniversalMenu from "@/layouts/UniversalMenu";
 import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
+// Feb-2026 · Mobile Nav Duplicate Fix — mount RolePreviewSwitcher in
+// the narrow-branch right-cluster so super_admin keep one-tap "Test
+// as" access on mobile after Row 1 (the legacy AppLayout mobile
+// <header>) was gated off for AdminTopBar-mounting roles. Component
+// self-gates via ``canPreview`` so it's a no-op for non-super_admin.
+import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import { Settings as SettingsIcon } from "lucide-react";
 import {
   DropdownMenu,
@@ -385,6 +391,17 @@ export default function AdminTopBar() {
             <div className="flex items-center gap-2">
               <AddCustomerButton />
               <CreditsBudgetChip />
+              {/* Feb-2026 · Mobile Nav Duplicate Fix — the legacy
+                  Row 1 mobile <header> in AppLayout used to host the
+                  ``<RolePreviewSwitcher>`` picker.  Row 1 no longer
+                  paints for admin/super_admin/manager/technician (to
+                  end the double-nav-bar regression on mobile), so
+                  the impersonation surface is re-mounted here in
+                  the narrow-branch right-cluster to preserve
+                  one-tap access.  The component self-gates via
+                  ``canPreview`` (super_admin only) so it's a no-op
+                  mount for admin / manager / technician. */}
+              <RolePreviewSwitcher />
               <SettingsSprocket />
               <SignOutButton />
               <UniversalMenu variant="inline" />

@@ -498,13 +498,23 @@ function AppLayout() {
         className="flex-1 min-w-0 min-h-0 pb-20 md:pb-0"
         data-testid="app-main"
       >
-        {/* Mobile top bar (<md). Phase K50 extension · Feb-2026 —
-            this bar is the CUSTOMER PORTAL top nav on mobile
-            viewports (customers never mount ``<AdminTopBar>``); on
-            admin it's the mobile-viewport chrome for a role that
-            otherwise runs the navy desktop chrome.  Painted with
-            the ``colors.nav`` navy token so every web nav surface
-            resolves through the same single source of truth. */}
+        {/* Feb-2026 · Mobile Nav Duplicate Fix — Row 1 (this legacy
+            mobile <header>) is now painted ONLY for roles that do
+            NOT mount ``<AdminTopBar>``.  Roles that DO mount
+            AdminTopBar get its narrow-branch mobile chrome and
+            would otherwise see two stacked nav bars on <768px
+            viewports (see AUDIT_WEB_MOBILE_NAV_DUPLICATE.md).
+            The role list here MUST stay in lockstep with the
+            AdminTopBar mount gate below (L~660) — invert the same
+            set.  Customer / customer_portal / unknown / null roles
+            still render this header because they never had a
+            desktop TopBar surface. */}
+        {(() => {
+          const _effRole = effectiveRole || user.role || "";
+          const _mountsAdminTopBar = ["admin", "super_admin", "manager", "technician"]
+            .includes(_effRole);
+          return !_mountsAdminTopBar;
+        })() ? (
         <header
           className="md:hidden px-4 py-3 flex items-center justify-between sticky top-0 z-30"
           style={{
@@ -584,6 +594,7 @@ function AppLayout() {
           {/* Phase 29C · role preview picker (mobile top-bar; admin only). */}
           <div className="ml-2"><RolePreviewSwitcher /></div>
         </header>
+        ) : null}
 
         {/* Mobile slide-out drawer (admin only) */}
         {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") && drawerOpen && (

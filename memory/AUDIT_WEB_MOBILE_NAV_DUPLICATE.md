@@ -129,6 +129,66 @@ Row 1's flex layout at L509 is `flex items-center justify-between` with no `flex
 
 ---
 
-## 6 · Standing by for GO
+## 6 · Fix landed — Feb-2026 · Batch B tightening
 
-Audit only — no code changes made. Awaiting confirmation to ship the two-file surgical fix.
+**Status:** shipped in Preview.
+
+### 6.1 · Changes
+
+- **`frontend/src/layouts/AppLayout.jsx`** — wrapped Row 1's `<header>` (L508-586) in a role-scoped ternary. The IIFE just above the header derives `_mountsAdminTopBar = ["admin","super_admin","manager","technician"].includes(_effRole)` and the header block is rendered only when that boolean is `false`. Header content, styling, testids, and children (`RolePreviewSwitcher` still nested here for the customer / customer_portal / unknown branch) are byte-identical to the pre-fix code — only the outer conditional is new.
+- **`frontend/src/layouts/AdminTopBar.jsx`** — new import `import RolePreviewSwitcher from "@/components/RolePreviewSwitcher"` and a single JSX mount inside the narrow-branch right-cluster (between `<CreditsBudgetChip />` and `<SettingsSprocket />`). Component self-gates via `canPreview` so it's a no-op mount for admin / manager / technician.
+
+**LOC diff:**
+
+```
+frontend/src/layouts/AppLayout.jsx   | +14 / -6   (net +8)
+frontend/src/layouts/AdminTopBar.jsx | +10 / -0
+```
+
+Total: **18 LOC (net +18)** — well under the 100 LOC cap.
+
+### 6.2 · Tests added
+
+- **`frontend/src/test/app-layout-mobile-nav-role-gate.test.jsx`** — 3 static-source cases:
+  1. Row 1 `<header>` is wrapped in a role-scoped ternary (`) : null}` closer after `</header>`).
+  2. Row 1 role tuple matches the AdminTopBar mount tuple byte-for-byte (audit § 5 requirement: "mirror the exact role-gate AdminTopBar uses, inverted").
+  3. K50 theming preserved — Row 1 header still uses `colors.nav.bg`.
+- **`frontend/src/test/admin-top-bar-mobile-role-preview-switcher.test.jsx`** — 3 static-source cases:
+  1. `RolePreviewSwitcher` import present at the expected path.
+  2. Mount site is inside the `admin-topbar-narrow-wrap` block, ordered between `AddCustomerButton` and `SignOutButton`.
+  3. Exactly ONE mount in the file — the wide-branch does NOT double-mount the switcher.
+
+All 6 new tests pass on first run.
+
+### 6.3 · Pre-existing tests — no assertion flips required
+
+Grep of every reference to `shell-logout-button-mobile`, `app-logo-mobile-white`, `mobile-nav-open`, and `mobile-nav-drawer` in `frontend/src/test/` was reviewed:
+
+| Test | Why it stays green |
+| ---- | ------------------ |
+| `k50-theming.test.js` | String-based assertions on the raw AppLayout source — the header still exists in the file, only the outer render conditional changed. **All 23 cases still pass.** |
+| `k54-destructive-buttons.test.js` | Same string-based pattern — locates `data-testid="shell-logout-button-mobile"` in source and validates the K54 red-token styling on the surrounding `<button>`. **All 21 cases still pass.** |
+| `brand-logo-single-instance.test.jsx` | Renders `<AppLayout>` at test-viewport width (default jsdom ≈ 1024 px, i.e. `md:`+ desktop range), where Row 1 was always CSS-hidden. **No change in behaviour.** |
+| `rail-nav.test.jsx`, `portal-maps-guard.test.jsx` | Import AppLayout for unrelated concerns (rail nav / portal guard); do not inspect the mobile header at all. |
+
+**Zero flips required — no pre-existing test was asserting the old buggy "Row 1 also renders for admin/super_admin/manager/technician on mobile" contract.** This is a happy accident: the tests were all either source-string (unaffected by the ternary), desktop-viewport (Row 1 hidden by `md:hidden` anyway), or unrelated to the mobile header.
+
+### 6.4 · Live verification
+
+Screenshot captured at 390×844 (iPhone 12 Pro portrait) after login → workspace select → dashboard:
+
+- Row 1 `<header>` count (`data-testid="shell-logout-button-mobile"`): **0** ✅
+- Row 2 `<AdminTopBar>` narrow-branch count (`admin-topbar-narrow-wrap`): **1** ✅
+- `RolePreviewSwitcher` mount count (`role-preview-switcher`): **1** ✅ (visible in Row 2 as the "Test as" chip with eye icon between CreditsBudgetChip and SettingsSprocket)
+
+Cut-off "Test as" toggle bug from § 4 is auto-resolved — the picker now sits inside the 44 px AdminTopBar cluster which handles narrow overflow correctly via `<main class="min-w-0">`.
+
+### 6.5 · Regression sweep
+
+- Full frontend suite: **565 test files passed, 1 skipped, 4284/4284 tests pass, 34 skipped, exit 0.** Net gain +6 from the two new suites.
+- OpenAPI count: **1734** (unchanged — audit was frontend-only).
+- Root URL: **200**.
+
+### 6.6 · Standing next-steps
+
+None. The audit is closed.
