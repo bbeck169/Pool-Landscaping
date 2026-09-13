@@ -1245,6 +1245,19 @@ async def get_quote(qid: str,
         raise HTTPException(404, "Quote not found")
     if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):
         raise HTTPException(403, "Not allowed")
+    # Feb-2026 · UX Polish Batch B tightening — surface the linked
+    # customer's primary email so the Send-to-Customer modal shows
+    # the same recipient the backend handler resolves. Only fills
+    # ``customer_email`` when missing from the quote doc; historical
+    # writes that already carry an override are preserved.
+    if not doc.get("customer_email") and doc.get("customer_id"):
+        _cust = await db.customers.find_one(
+            {"id": doc["customer_id"], "tenant_id": tenant["id"]},
+            {"_id": 0, "email": 1},
+        ) or {}
+        _email = (_cust.get("email") or "").strip()
+        if _email:
+            doc["customer_email"] = _email
     return doc
 
 

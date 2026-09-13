@@ -179,4 +179,42 @@ describe("SendToCustomerModal · Batch B", () => {
     // Modal stays open — onClose NOT triggered by the failure path.
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("still shows the fallback copy when the primary email is truly missing", () => {
+    render(
+      <SendToCustomerModal
+        open
+        quoteId="q-1"
+        primaryEmail=""
+        onClose={() => {}}
+        onSent={() => {}}
+        onError={() => {}}
+      />,
+    );
+    expect(
+      screen.getByTestId("send-to-customer-recipient-preview").textContent,
+    ).toContain("no primary email on file");
+  });
+
+  it("renders the customer's primary email — regression guard for Batch B tightening", () => {
+    // Batch B tester surfaced: the modal showed the fallback copy
+    // "(no primary email on file)" even when the backend resolved
+    // the customer's email. Root cause: ``GET /quotes/{qid}`` didn't
+    // include ``customer_email``. Fixed by joining the customer's
+    // ``email`` into the response serializer. This test locks the
+    // front-end display invariant for any non-empty prop.
+    render(
+      <SendToCustomerModal
+        open
+        quoteId="q-1"
+        primaryEmail="k14tester@aquaterra.com"
+        onClose={() => {}}
+        onSent={() => {}}
+        onError={() => {}}
+      />,
+    );
+    const preview = screen.getByTestId("send-to-customer-recipient-preview");
+    expect(preview.textContent).toContain("k14tester@aquaterra.com");
+    expect(preview.textContent).not.toContain("no primary email on file");
+  });
 });

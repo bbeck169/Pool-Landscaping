@@ -74,6 +74,20 @@ The frontend modal's helper text now reads *"Admin note (audit only — not show
 - `frontend/src/pages/quotes/QuoteInvoiceDetail.jsx` — added a Send button next to the existing Duplicate button in the toolbar, gated on `isStaff && !isInvoice && !accepted/declined`.
 - On success: toast + `load()` refetch so the toolbar reflects the new `status`/`sent_at`. On failure: toast surfaces the server `detail`; modal stays open so the admin can adjust the input.
 
+**Feb-2026 · Batch B tightening — recipient-preview mismatch fix:**
+Tester surfaced that the modal showed the `"(no primary email on
+file)"` fallback copy even for customers whose email the backend
+handler resolved successfully. Root cause: the `GET /quotes/{qid}`
+response returned the raw quote doc with no `customer_email` field,
+so the modal's `primaryEmail` prop was always empty. Path chosen:
+**(a) — join the customer's email into the quote GET serializer**
+(≤10 LOC, single targeted enrichment in `routers/quotes.py::get_quote`,
+only fills when missing so historical writes with an explicit
+override are preserved). Zero new endpoint, zero OpenAPI change.
+Locked by a new regression case
+`renders the customer's primary email — regression guard for Batch B tightening`
+in `quote-send-to-customer-modal.test.jsx`.
+
 ### 1.7 · Frontend tests
 
 - `frontend/src/test/quote-send-to-customer-modal.test.jsx` — 5 cases (renders with primary; override toggle disables Send until non-empty; submit fires POST with override + note; submit without override sends empty body; server error surfaces via `onError` and modal stays open).
