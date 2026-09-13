@@ -329,6 +329,67 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
     }
   };
 
+  // ─── Feb-2026 · UX Polish Batch B follow-up ────────────────────────
+  // "Send + Copy Payment Link" — composed invoice-only admin gesture.
+  // Chains: (1) send-reminder (flips draft→sent + fires invoice
+  // reminder email), (2) request-payment-link (mints or reuses a
+  // Stripe Checkout Session URL), (3) copies the URL to clipboard.
+  //
+  // INVOICE-ONLY: the backend ``request-payment-link`` endpoint
+  // explicitly refuses ``doc_type=quote|estimate`` with a 400. The
+  // dispatch's "quote just accepted, invoice out the door" narrative
+  // refers to the state AFTER conversion, so this button is gated on
+  // ``isInvoice`` — opposite of the standalone Send button which is
+  // quote-only. Deviation logged in memo § 1.1.
+  const handleSendAndCopyPaymentLink = async () => {
+    if (sending) return;
+    const wasDraft = String(doc?.status || "").toLowerCase() === "draft";
+    setSending(true);
+    let sendOk = false;
+    let paymentUrl = null;
+    try {
+      if (wasDraft) {
+        await api.put(`/quotes/${id}/status?status=sent`);
+      }
+      await api.post(`/quotes/${id}/send-reminder`);
+      sendOk = true;
+      try {
+        const linkResp = await api.post(
+          `/invoices/${id}/request-payment-link`, {},
+        );
+        paymentUrl = linkResp?.payment_url || linkResp?.payment_link || null;
+      } catch (linkErr) {
+        // Send succeeded but link mint failed — warn, keep the send
+        // side considered successful.
+        setToast({
+          tone: "warning",
+          message: "Sent. Payment link unavailable — copy manually.",
+        });
+      }
+      if (paymentUrl) {
+        try {
+          await navigator.clipboard.writeText(paymentUrl);
+          setToast({
+            tone: "success",
+            message: `Sent to customer. Payment link copied.`,
+          });
+        } catch {
+          setToast({
+            tone: "success",
+            message: `Sent. Copy this link manually: ${paymentUrl}`,
+          });
+        }
+      }
+      await load();
+    } catch (e) {
+      if (!sendOk) {
+        setToast({ tone: "error", message: e?.message || "Send failed." });
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
   const decision = async (d) => {
     try {
       await api.post(`/quotes/${id}/decision?decision=${d}`);
@@ -769,6 +830,22 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               testid="send-to-customer-btn"
             >
               <Send size={14} /> Send
+            </Button>
+          ) : null}
+          {/* Feb-2026 · UX Polish Batch B follow-up — Send + Copy
+              Payment Link (invoice-only composed action). Gated
+              opposite of Send because payment links only exist on
+              invoices (backend refuses quotes with 400). */}
+          {isInvoice && isStaff
+            && !["void", "cancelled", "paid"]
+                .includes(String(doc.status || "").toLowerCase()) ? (
+            <Button
+              variant="secondary"
+              onClick={handleSendAndCopyPaymentLink}
+              disabled={sending}
+              testid="send-and-copy-payment-link-btn"
+            >
+              <Send size={14} /> Send &amp; Copy Payment Link
             </Button>
           ) : null}
           {/* Phase K80.a · Feb-2026 — On DRAFT invoices the K71 inline

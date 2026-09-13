@@ -1,0 +1,162 @@
+"""Feb-2026 · UX Polish Batch B follow-up — Email preview endpoint.
+
+Serves a "rendered-email preview" of the branded email shell for
+the Business Settings page. Admin-only. NO PII: all templates use
+synthetic placeholder text so the endpoint can be linked or shared
+without leaking real customer/quote data.
+
+Route:
+    GET /api/tenants/me/email-preview?template=<name>
+
+Where ``<name>`` ∈ {"quote_sent", "invoice_reminder", "password_reset",
+"portal_invite"}. Any other value → 400.
+
+Response::
+    { "template": "<name>", "html": "<full wrapped HTML string>" }
+
+Fully-wrapped HTML is produced by
+:func:`services.email.theming.wrap_html_in_shell` — same helper the
+production send paths call. Truthful to the actual pipeline.
+
+See /app/memory/FEATURE_SEND_COPY_LINK_AND_EMAIL_PREVIEW.md § 2.
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from config import db, logger
+from utils import require_admin
+from routers.tenants import get_current_tenant
+from services.email.theming import wrap_html_in_shell
+from services.tenants.business_settings import (
+    get_effective_business_settings,
+)
+
+
+router = APIRouter()
+
+
+# ─── Stub email bodies ──────────────────────────────────────────────
+# Mirror the shape of the real production builders but with fully
+# synthetic placeholder text. Each returns a body FRAGMENT (no
+# ``<html>``) — the shell wraps them. Kept intentionally small so
+# admins get an immediate feel for the branding, not the exact
+# transactional copy.
+
+def _stub_quote_sent() -> str:
+    return (
+        '<div style="max-width:560px;margin:0 auto;padding:24px;'
+        'font-family:-apple-system,\'Inter\',sans-serif;color:#0F172A;">'
+        '<h2 style="margin:0 0 12px;">Your quote is ready</h2>'
+        '<p style="margin:0 0 12px;font-size:15px;line-height:1.55;">'
+        'Hi Sample Customer,</p>'
+        '<p style="margin:0 0 16px;font-size:15px;line-height:1.55;">'
+        'Your quote is ready to review. Click below to see the details, '
+        'ask questions, or approve.</p>'
+        '<p style="margin:24px 0;">'
+        '<a href="#" style="display:inline-block;background:#0284C7;'
+        'color:#fff;padding:12px 22px;border-radius:10px;'
+        'text-decoration:none;font-weight:600;">Review quote</a></p>'
+        '</div>'
+    )
+
+
+def _stub_invoice_reminder() -> str:
+    return (
+        '<div style="max-width:560px;margin:0 auto;padding:24px;'
+        'font-family:-apple-system,\'Inter\',sans-serif;color:#0F172A;">'
+        '<h2 style="margin:0 0 12px;">Invoice reminder</h2>'
+        '<p style="margin:0 0 12px;font-size:15px;line-height:1.55;">'
+        'Hi Sample Customer,</p>'
+        '<p style="margin:0 0 16px;font-size:15px;line-height:1.55;">'
+        'This is a friendly reminder that invoice #INV-PREVIEW '
+        'has an outstanding balance of $250.00.</p>'
+        '<p style="margin:24px 0;">'
+        '<a href="#" style="display:inline-block;background:#0284C7;'
+        'color:#fff;padding:12px 22px;border-radius:10px;'
+        'text-decoration:none;font-weight:600;">Pay now</a></p>'
+        '</div>'
+    )
+
+
+def _stub_password_reset() -> str:
+    return (
+        '<div style="max-width:560px;margin:0 auto;padding:24px;'
+        'font-family:-apple-system,\'Inter\',sans-serif;color:#0F172A;">'
+        '<h2 style="margin:0 0 12px;">Reset your password</h2>'
+        '<p style="margin:0 0 12px;font-size:15px;line-height:1.55;">'
+        'Hi Sample User,</p>'
+        '<p style="margin:0 0 16px;font-size:15px;line-height:1.55;">'
+        'We received a request to reset your portal password.</p>'
+        '<p style="margin:24px 0;">'
+        '<a href="#" style="display:inline-block;background:#0284C7;'
+        'color:#fff;padding:12px 22px;border-radius:10px;'
+        'text-decoration:none;font-weight:600;">Reset password</a></p>'
+        '<p style="margin:0;font-size:13px;color:#475569;">'
+        'This link expires in 15 minutes.</p>'
+        '</div>'
+    )
+
+
+def _stub_portal_invite() -> str:
+    return (
+        '<div style="max-width:520px;margin:0 auto;background:#ffffff;'
+        'border-radius:12px;padding:28px 30px;'
+        'box-shadow:0 1px 3px rgba(0,0,0,.06);color:#111827;'
+        'font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">'
+        '<h1 style="margin:0 0 12px 0;font-size:20px">Password reset by admin</h1>'
+        '<p style="margin:0 0 16px 0;line-height:1.55">'
+        'Hi Sample User, an admin reset your password. '
+        'Sign in with the temporary password below.</p>'
+        '<div style="background:#f9fafb;border:1px solid #e5e7eb;'
+        'border-radius:8px;padding:14px 16px;margin:0 0 20px 0">'
+        '<div style="font-size:12px;color:#6b7280;text-transform:uppercase;'
+        'letter-spacing:.4px;margin-bottom:4px">Temporary password</div>'
+        '<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;'
+        'font-size:15px;font-weight:600">Preview!23</div></div>'
+        '<p style="text-align:center;margin:0 0 22px 0">'
+        '<a href="#" style="background:#0f766e;color:#ffffff;'
+        'padding:11px 22px;border-radius:8px;text-decoration:none;'
+        'font-weight:600;display:inline-block">Sign in</a></p></div>'
+    )
+
+
+_STUBS = {
+    "quote_sent":       _stub_quote_sent,
+    "invoice_reminder": _stub_invoice_reminder,
+    "password_reset":   _stub_password_reset,
+    "portal_invite":    _stub_portal_invite,
+}
+
+
+@router.get("/tenants/me/email-preview")
+async def preview_email(
+    template: str = Query(...,
+                          description="One of: quote_sent, invoice_reminder, "
+                                      "password_reset, portal_invite"),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Render the caller's branded email shell wrapping a stub body.
+
+    Zero PII — placeholder names, invoice numbers, and passwords
+    only. Truthful to production: uses the same
+    ``wrap_html_in_shell`` helper the real send path calls.
+    """
+    if template not in _STUBS:
+        raise HTTPException(
+            400,
+            f"Unknown template: {template!r}. Expected one of "
+            f"{sorted(_STUBS.keys())}.",
+        )
+    if not tenant.get("id"):
+        raise HTTPException(400, "Tenant context is required.")
+    try:
+        branding = await get_effective_business_settings(
+            db, tenant["id"], absolutize=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[email-preview] branding resolve failed: {e}")
+        branding = {}
+    html = wrap_html_in_shell(_STUBS[template](), branding)
+    return {"template": template, "html": html}

@@ -1776,3 +1776,18 @@
 - **Web files referenced**: `frontend/src/pages/customers/CustomerDetail.jsx` (PortalAccessPanel, PortalResetModal, event labels)
 - **Memo**: `/app/memory/FEATURE_MOBILE_PARITY_DISPATCH_B.md`
 
+
+## Iteration 90 — Send Quote to Customer action mirror
+- **Commit**: 68472567
+- **Date**: 2026-09-13
+- **Changes**:
+  - Created `src/components/quotes/SendToCustomerSheet.tsx` (328 LOC): Bottom-sheet modal with recipient preview from `quote.customer_email`, override toggle + email input, note textarea (≤500 chars), Cancel/Send buttons. Uses `mapApiError` for errors, `showToast` for success. Sheet stays open on error.
+  - Created `__tests__/send-to-customer-sheet.test.tsx` (6 tests): visibility, recipient pre-fill, override POST body, char cap, success toast + callbacks, error mapApiError.
+  - Modified `app/quote/[id].tsx`: Added SendToCustomerSheet import + state, send icon button in header (admin + non-invoice gated), render sheet with quote data.
+  - **6/6 new tests passing**, **31 prior parity tests still green** = 37 total.
+  - Decision: Toast-only (no Alert) — modal is the confirmation.
+- **Files created**: `src/components/quotes/SendToCustomerSheet.tsx`, `__tests__/send-to-customer-sheet.test.tsx`
+- **Files modified**: `app/quote/[id].tsx`
+- **Web files referenced**: `frontend/src/components/quotes/SendToCustomerModal.jsx`, `frontend/src/pages/quotes/QuoteInvoiceDetail.jsx`
+- **Memo**: `/app/memory/FEATURE_SEND_TO_CUSTOMER_MOBILE.md`
+

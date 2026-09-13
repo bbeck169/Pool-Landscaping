@@ -72,6 +72,29 @@ export default function BusinessSettings() {
     // paths pick it up without a second reducer.
     routing_traffic_aware: false,
   });
+
+  // Feb-2026 · UX Polish Batch B follow-up — Email preview panel state.
+  // Fetches ``GET /api/tenants/me/email-preview?template=<n>`` and
+  // renders the returned HTML inside an <iframe srcDoc>. Zero PII —
+  // the backend uses synthetic stub payloads.
+  const [previewTemplate, setPreviewTemplate] = React.useState("");
+  const [previewHtml, setPreviewHtml] = React.useState("");
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!previewTemplate) {
+      setPreviewHtml("");
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    setPreviewHtml("");
+    api.get(`/tenants/me/email-preview?template=${previewTemplate}`)
+      .then((r) => { if (!cancelled) setPreviewHtml(r?.html || ""); })
+      .catch(() => { if (!cancelled) setPreviewHtml(""); })
+      .finally(() => { if (!cancelled) setPreviewLoading(false); });
+    return () => { cancelled = true; };
+  }, [previewTemplate]);
   const [effective, setEffective] = React.useState({});
   const [logoUrl, setLogoUrl] = React.useState(null);
 
@@ -431,6 +454,64 @@ export default function BusinessSettings() {
                 </div>
               </div>
             </label>
+          </section>
+
+          {/* ── Email preview ─────────────────────────────────
+              Feb-2026 · UX Polish Batch B follow-up — Rendered email
+              preview panel. Hits ``GET /api/tenants/me/email-preview``
+              which wraps a synthetic stub body in the real
+              ``wrap_html_in_shell(...)`` — so admins see the branding
+              exactly as customers will, without triggering a real
+              send. NO PII in the stub payloads.
+           */}
+          <section className="lg:col-span-3 bg-white rounded-lg border p-5"
+                    style={{ borderColor: colors.border }}
+                    data-testid="business-settings-email-preview-section">
+            <h2 className="text-lg font-semibold mb-3">Preview email</h2>
+            <div className="flex items-center gap-2 mb-3">
+              <label htmlFor="bs-email-preview-select" className="text-sm"
+                        style={{ color: colors.muted }}>
+                Preview email as
+              </label>
+              <select
+                id="bs-email-preview-select"
+                data-testid="bs-email-preview-select"
+                className="text-sm border rounded px-2 py-1"
+                value={previewTemplate}
+                onChange={(e) => setPreviewTemplate(e.target.value)}
+              >
+                <option value="">(choose a template)</option>
+                <option value="quote_sent">Quote sent</option>
+                <option value="invoice_reminder">Invoice reminder</option>
+                <option value="password_reset">Password reset</option>
+                <option value="portal_invite">Portal invite</option>
+              </select>
+            </div>
+            {!previewTemplate ? (
+              <div className="text-sm" style={{ color: colors.muted }}
+                    data-testid="bs-email-preview-empty">
+                Choose a template to preview.
+              </div>
+            ) : previewLoading ? (
+              <div className="text-sm" style={{ color: colors.muted }}
+                    data-testid="bs-email-preview-loading">
+                Loading preview…
+              </div>
+            ) : previewHtml ? (
+              <iframe
+                title="Email preview"
+                data-testid="bs-email-preview-iframe"
+                srcDoc={previewHtml}
+                style={{ width: "640px", maxWidth: "100%",
+                         minHeight: "500px", border: "1px solid " + colors.border,
+                         borderRadius: 6 }}
+              />
+            ) : (
+              <div className="text-sm text-red-600"
+                    data-testid="bs-email-preview-error">
+                Preview unavailable.
+              </div>
+            )}
           </section>
 
           {/* ── Save bar ────────────────────────────────────── */}

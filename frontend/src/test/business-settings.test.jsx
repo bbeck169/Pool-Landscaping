@@ -256,16 +256,65 @@ describe("BusinessSettings page", () => {
     expect(toggle.checked).toBe(false);
 
     fireEvent.click(toggle);
-    // Save enabled — this dirties the fields state.
     const btn = screen.getByTestId("bs-save-button");
     await waitFor(() => expect(btn.hasAttribute("disabled")).toBe(false));
 
     fireEvent.click(btn);
     await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(1));
-    // Verify the outbound PATCH body carries the boolean field.
     const patchBody = patchSpy.mock.calls[0][1];
     expect(patchBody.routing_traffic_aware).toBe(true);
-    // Toast fires on success.
     await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
+
+  // ── Feb-2026 · UX Polish Batch B follow-up — Email preview panel.
+  it("renders the email-preview section with dropdown + empty state", async () => {
+    render(<BusinessSettings />);
+    await waitFor(() =>
+      expect(screen.queryByTestId("business-settings-email-preview-section"))
+        .toBeTruthy(),
+    );
+    expect(screen.getByTestId("bs-email-preview-select")).toBeTruthy();
+    // No template selected on first render → empty state renders.
+    expect(screen.getByTestId("bs-email-preview-empty").textContent)
+      .toMatch(/choose a template/i);
+    // iframe not yet mounted.
+    expect(screen.queryByTestId("bs-email-preview-iframe")).toBeNull();
+  });
+
+  it("selecting a template fires the correct GET and renders the iframe", async () => {
+    getSpy.mockImplementation((path) => {
+      if (path.includes("email-preview")) {
+        return Promise.resolve({
+          template: "quote_sent",
+          html: "<!doctype html><html><body>PREVIEW</body></html>",
+        });
+      }
+      return Promise.resolve({
+        tenant_id: "t-1", stored: {}, effective: {
+          brand_primary_hex: "#0B4A6F", brand_secondary_hex: "#F97316",
+          routing_traffic_aware: false,
+        },
+      });
+    });
+    render(<BusinessSettings />);
+    await waitFor(() =>
+      expect(screen.queryByTestId("bs-email-preview-select")).toBeTruthy(),
+    );
+    fireEvent.change(screen.getByTestId("bs-email-preview-select"), {
+      target: { value: "quote_sent" },
+    });
+    await waitFor(() => {
+      const call = getSpy.mock.calls.find(
+        (c) => (c[0] || "").includes("email-preview"),
+      );
+      expect(call).toBeTruthy();
+      expect(call[0]).toContain("template=quote_sent");
+    });
+    await waitFor(() =>
+      expect(screen.queryByTestId("bs-email-preview-iframe")).toBeTruthy(),
+    );
+    const iframe = screen.getByTestId("bs-email-preview-iframe");
+    // srcDoc carries the returned HTML — ``<html`` presence proves it.
+    expect(iframe.getAttribute("srcdoc") || "").toContain("<html");
   });
 });

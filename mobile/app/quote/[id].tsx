@@ -21,6 +21,8 @@ import { Header, IconButton } from "@/src/components/widgets";
 import { exportInvoicePdf } from "@/src/utils/exportInvoicePdf";
 import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
+import SendToCustomerSheet from "@/src/components/quotes/SendToCustomerSheet";
+import { mapApiError } from "@/src/utils/mapApiError";
 
 export default function QuoteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -42,6 +44,9 @@ export default function QuoteDetail() {
 
   // ── Duplicate Quote state ──────────────────────────────────
   const [dupOpen, setDupOpen] = useState(false);
+
+  // ── Send to Customer state ─────────────────────────────────
+  const [sendOpen, setSendOpen] = useState(false);
   const [dupCustomers, setDupCustomers] = useState<any[]>([]);
   const [dupCustomer, setDupCustomer] = useState<any>(null);
   const [dupProperties, setDupProperties] = useState<any[]>([]);
@@ -301,6 +306,9 @@ export default function QuoteDetail() {
             {canDuplicate && !isInvoice ? (
               <IconButton icon="copy-outline" onPress={openDuplicate} testID="duplicate-quote-btn" />
             ) : null}
+            {isAdmin && !isInvoice ? (
+              <IconButton icon="send-outline" onPress={() => setSendOpen(true)} testID="send-to-customer-btn" />
+            ) : null}
             <IconButton icon="share-outline" onPress={exportPdf} testID="quote-share-pdf" />
           </View>
         }
@@ -498,6 +506,15 @@ export default function QuoteDetail() {
           </View>
         )}
       </View>
+
+      {/* ── Send to Customer Sheet ──────────────────── */}
+      <SendToCustomerSheet
+        visible={sendOpen}
+        quoteId={id as string}
+        primaryEmail={q?.customer_email || q?.customer?.email}
+        onClose={() => setSendOpen(false)}
+        onSent={load}
+      />
 
       {/* ── Duplicate Quote Modal ────────────────────────── */}
       <Modal visible={dupOpen} transparent animationType="fade" onRequestClose={closeDuplicate} testID="duplicate-quote-modal">
