@@ -1,4 +1,5 @@
 import resend
+from typing import Optional
 
 from config import db, logger, RESEND_API_KEY, EMAIL_FROM, APP_PUBLIC_URL
 # Feb-2026 · Email Base Template Theming — shared brand shell.
@@ -335,11 +336,18 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
 
 
 async def send_estimate_reminder_email(inv: dict, tenant: dict,
-                                          review_url: str) -> bool:
+                                          review_url: str,
+                                          *, override_to: Optional[str] = None) -> bool:
     """Feb-2026 · P0 — Email the customer a review reminder for a
     pending estimate/quote. Distinct from ``send_invoice_reminder_email``
     in template, subject, and CTA URL. Never mentions "balance",
-    "amount due", or "Pay Now"."""
+    "amount due", or "Pay Now".
+
+    Feb-2026 · UX Polish Batch B — accepts an optional ``override_to``
+    kwarg used by the composed ``send-to-customer`` endpoint when an
+    admin explicitly targets a non-primary email (e.g. spouse /
+    property manager). Falls through to the customer lookup below
+    when ``override_to`` is missing/blank."""
     doc_type = str(inv.get("doc_type") or "estimate").lower()
     if doc_type not in ("estimate", "quote"):
         logger.warning(
@@ -356,7 +364,8 @@ async def send_estimate_reminder_email(inv: dict, tenant: dict,
     if not cid:
         return False
     cust = await db.customers.find_one({"id": cid}, {"_id": 0}) or {}
-    to_email = cust.get("email")
+    # Admin-supplied override wins over the customer's primary email.
+    to_email = (override_to or "").strip() or cust.get("email")
     if not to_email:
         user = await db.users.find_one(
             {"customer_id": cid, "role": "customer"}, {"_id": 0},

@@ -43,6 +43,8 @@ import BulkOpsAuditTile from "@/components/admin/BulkOpsAuditTile";
 import SoshiePublishingTile from "@/components/admin/SoshiePublishingTile";
 // Phase H5 · Feb-2026 — Crew Productivity tile (weekly revenue-per-crew).
 import CrewProductivityTile from "@/components/admin/CrewProductivityTile";
+// Feb-2026 · UX Polish Batch B — Routing Cost telemetry tile.
+import RoutingCostTile from "@/components/admin/RoutingCostTile";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -627,6 +629,14 @@ export default function AdminDashboard() {
       {["super_admin", "admin", "owner"].includes(user?.role) ? (
         <div className="mb-6">
           <CrewProductivityTile />
+        </div>
+      ) : null}
+      {/* Feb-2026 · UX Polish Batch B — Routing Cost telemetry tile
+          (admin-visible only). Reads the in-memory ring buffer
+          maintained by the traffic-aware routing feature. */}
+      {["super_admin", "admin", "owner"].includes(user?.role) ? (
+        <div className="mb-6">
+          <RoutingCostTile />
         </div>
       ) : null}
 

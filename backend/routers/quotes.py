@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, Response
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
+from pydantic import BaseModel
 import re
 
 from config import db, logger, EMERGENT_LLM_KEY
@@ -1001,6 +1002,33 @@ async def duplicate_quote(qid: str, body: _QuoteDuplicateIn,
 #   * Writes an ``audit_logs`` row ``event="quote.mark_sent"``.
 #
 # Response::  { quote_id, status, sent_at }
+async def _perform_mark_sent(*, qid: str, doc: dict, tenant: dict,
+                              user: dict) -> Dict[str, Any]:
+    """Feb-2026 · UX Polish Batch B — extracted mark-sent core so
+    both :func:`mark_quote_sent` and the composed
+    :func:`send_quote_to_customer` share exactly one status-flip
+    implementation. Mutates the DB and writes the audit row; returns
+    ``{"status": "sent", "sent_at": <iso>}``. Caller is responsible
+    for the doc_type / status-precondition guards.
+    """
+    ts = now_iso()
+    await db.quotes.update_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"$set": {"status": "sent", "sent_at": ts}},
+    )
+    try:
+        await db.audit_logs.insert_one({
+            "event": "quote.mark_sent",
+            "quote_id": qid,
+            "actor_id": user.get("id"),
+            "tenant_id": tenant["id"],
+            "at": ts,
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"quote.mark_sent audit_logs insert failed: {e}")
+    return {"status": "sent", "sent_at": ts}
+
+
 @router.post("/quotes/{qid}/mark-sent")
 async def mark_quote_sent(qid: str,
                           user: dict = Depends(require_admin),
@@ -1008,8 +1036,9 @@ async def mark_quote_sent(qid: str,
     """Flip a draft quote to ``status=sent`` and stamp ``sent_at``.
 
     Narrow admin-only status transition. Does not send email/SMS —
-    see ``POST /quotes/{qid}/send-reminder`` for the notification
-    surface. Idempotency is intentionally NOT implied; a second
+    see ``POST /quotes/{qid}/send-reminder`` and
+    ``POST /quotes/{qid}/send-to-customer`` for the notification
+    surfaces. Idempotency is intentionally NOT implied; a second
     call on an already-sent doc returns 400 so the operator gets a
     clear signal instead of a silent no-op.
     """
@@ -1027,22 +1056,166 @@ async def mark_quote_sent(qid: str,
             f"Only draft quotes can be marked sent (current status: "
             f"{current_status})",
         )
-    ts = now_iso()
-    await db.quotes.update_one(
-        {"id": qid, "tenant_id": tenant["id"]},
-        {"$set": {"status": "sent", "sent_at": ts}},
+    result = await _perform_mark_sent(
+        qid=qid, doc=doc, tenant=tenant, user=user,
     )
+    return {"quote_id": qid, **result}
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · UX Polish Batch B — Send Quote composed endpoint
+# ═════════════════════════════════════════════════════════════════════
+# ``POST /api/quotes/{qid}/send-to-customer`` — admin/super_admin/owner.
+# Pairs mark-sent + customer email in ONE admin action.
+#
+# Contract:
+#   * ``doc_type == "quote"`` required (invoices 400).
+#   * status ``accepted`` / ``declined`` → 400 (already past send stage).
+#   * status ``draft`` → performs mark-sent transition first.
+#   * status ``sent`` / ``viewed`` → keeps status, becomes a re-send.
+#   * Recipient resolution: body override → customer.email → 400.
+#   * Email transport failures return 200 with ``email_sent: false``
+#     so the durable mark-sent write is not lost.
+#
+# Audit:  ``event = "quote.send_to_customer"`` in ``db.audit_logs``.
+#         Also emits the standard ``quote.mark_sent`` row for the
+#         draft-flip case (via ``_perform_mark_sent``).
+class _SendToCustomerIn(BaseModel):
+    recipient_email: Optional[str] = None
+    note: Optional[str] = None  # admin-audit-only for MVP; not in email body
+
+
+def _mask_email(e: str) -> str:
+    if not e or "@" not in e:
+        return "***"
+    local, _, domain = e.partition("@")
+    if len(local) <= 2:
+        return f"*@{domain}"
+    return f"{local[0]}***{local[-1]}@{domain}"
+
+
+@router.post("/quotes/{qid}/send-to-customer")
+async def send_quote_to_customer(
+    qid: str,
+    body: _SendToCustomerIn,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Composed admin action: mark-sent (if draft) + fire customer email.
+
+    Recipient resolution order:
+      1. ``body.recipient_email`` if non-empty AND contains ``@``.
+      2. ``customers.email`` for the quote's linked customer.
+      3. 400 with a clear error otherwise.
+
+    Email transport failures do NOT roll back the status flip — the
+    mark-sent write is durable so the admin can retry the send from
+    the same UI without duplicating the audit trail.
+    """
+    doc = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "Quote not found")
+    if doc.get("doc_type") != "quote":
+        raise HTTPException(400, "Only quotes can be sent to a customer")
+    status_before = (doc.get("status") or "draft").lower()
+    if status_before in ("accepted", "declined"):
+        raise HTTPException(
+            400,
+            f"This quote is already {status_before} — cannot re-send.",
+        )
+    if not doc.get("customer_id"):
+        raise HTTPException(400, "This quote has no linked customer.")
+
+    # ── Recipient resolution ──────────────────────────────────
+    override = (body.recipient_email or "").strip()
+    if override and "@" not in override:
+        raise HTTPException(400, "Recipient override is not a valid email.")
+    if override:
+        recipient = override
+    else:
+        cust = await db.customers.find_one(
+            {"id": doc["customer_id"], "tenant_id": tenant["id"]},
+            {"_id": 0, "email": 1},
+        ) or {}
+        recipient = (cust.get("email") or "").strip()
+    if not recipient:
+        raise HTTPException(
+            400,
+            "No recipient email available — supply ``recipient_email`` "
+            "or set an email on the customer record.",
+        )
+
+    # ── Status flip (draft → sent) ────────────────────────────
+    if status_before == "draft":
+        flip = await _perform_mark_sent(
+            qid=qid, doc=doc, tenant=tenant, user=user,
+        )
+        status_after = flip["status"]
+        sent_at = flip["sent_at"]
+        # Refresh the in-memory doc so the email builder reads the
+        # post-flip state (some templates gate copy on status).
+        doc["status"] = status_after
+        doc["sent_at"] = sent_at
+    else:
+        status_after = status_before
+        sent_at = doc.get("sent_at") or now_iso()
+
+    # ── Mint review magic-link (mirrors send-reminder path) ────
+    from routers.estimate_viewer import _sign_estimate_token
+    import os as _os
+    tok = _sign_estimate_token(qid, doc["customer_id"], tenant["id"])
+    base = (_os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+    review_url = f"{base}/e/estimate?token={tok}" if base else ""
+
+    # ── Fire customer email — transport failure is non-fatal ──
+    email_sent = False
+    try:
+        email_sent = await send_estimate_reminder_email(
+            doc, tenant, review_url, override_to=recipient,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f"[send-to-customer] transport failed qid={qid} "
+            f"recipient={_mask_email(recipient)} err={e}",
+        )
+    if email_sent:
+        logger.info(
+            f"[send-to-customer] tenant={tenant['id']} qid={qid} "
+            f"recipient={_mask_email(recipient)} ok=true",
+        )
+
+    # ── Audit ─────────────────────────────────────────────────
+    at = now_iso()
     try:
         await db.audit_logs.insert_one({
-            "event": "quote.mark_sent",
+            "event": "quote.send_to_customer",
             "quote_id": qid,
             "actor_id": user.get("id"),
             "tenant_id": tenant["id"],
-            "at": ts,
+            "at": at,
+            "status_before": status_before,
+            "status_after": status_after,
+            "email_sent": bool(email_sent),
+            "recipient_masked": _mask_email(recipient),
+            # Note is recorded server-side only (not injected into
+            # email body in this MVP — future dispatch can extend
+            # the email builder to render it). Truncate for safety.
+            "admin_note": (body.note or "")[:500] or None,
         })
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"quote.mark_sent audit_logs insert failed: {e}")
-    return {"quote_id": qid, "status": "sent", "sent_at": ts}
+        logger.warning(
+            f"quote.send_to_customer audit_logs insert failed: {e}",
+        )
+
+    return {
+        "quote_id": qid,
+        "status": status_after,
+        "sent_at": sent_at,
+        "email_sent": bool(email_sent),
+        "recipient": recipient,
+    }
 
 
 @router.get("/quotes/{qid}")

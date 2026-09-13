@@ -269,6 +269,19 @@ async def optimize_route(
         routing_pref == "TRAFFIC_AWARE",
         len(waypoints or []),
     )
+    # Feb-2026 · UX Polish Batch B — record for the cost-telemetry
+    # dashboard tile. Best-effort; a raise here must not break the
+    # optimize path.
+    try:
+        from services.routing.telemetry import record_routing_call
+        record_routing_call(
+            tenant_id,
+            traffic_aware=(routing_pref == "TRAFFIC_AWARE"),
+            waypoint_count=len(waypoints or []),
+            op="optimize",
+        )
+    except Exception:  # noqa: BLE001
+        pass
     dispatched = await _maybe_dispatch_route(
         tenant_id=tenant_id, origin=origin, waypoints=waypoints,
         destination=destination, db_conn=db_conn,
@@ -312,6 +325,17 @@ async def compute_route_no_optimize(
         routing_pref == "TRAFFIC_AWARE",
         len(waypoints or []),
     )
+    # Feb-2026 · UX Polish Batch B — telemetry record (baseline op).
+    try:
+        from services.routing.telemetry import record_routing_call
+        record_routing_call(
+            tenant_id,
+            traffic_aware=(routing_pref == "TRAFFIC_AWARE"),
+            waypoint_count=len(waypoints or []),
+            op="baseline",
+        )
+    except Exception:  # noqa: BLE001
+        pass
     dispatched = await _maybe_dispatch_route(
         tenant_id=tenant_id, origin=origin, waypoints=waypoints,
         destination=destination, db_conn=db_conn,

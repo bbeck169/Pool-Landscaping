@@ -441,6 +441,9 @@ api_router.include_router(_feb2026_mc_migrate.router)
 # ``services/reporting/metrics/`` without touching server.py.
 from routers import reports_kpi as _r0_reports_kpi  # noqa: E402
 api_router.include_router(_r0_reports_kpi.router)
+# Feb-2026 · UX Polish Batch B — routing cost telemetry (admin tile).
+from routers import routing_cost_telemetry as _batch_b_routing_telemetry  # noqa: E402
+api_router.include_router(_batch_b_routing_telemetry.router)
 
 # Feb-2026 · Diag-Timeout Task 2 — client-side 30s-timeout telemetry.
 from routers import client_telemetry as _feb2026_client_telemetry  # noqa: E402

@@ -39,6 +39,9 @@ import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
 import HardDeleteQuoteModal from "@/components/quotes/HardDeleteQuoteModal";
 // Feb-2026 · P0 — Duplicate quote (admin/super_admin only).
 import DuplicateQuoteModal from "@/components/quotes/DuplicateQuoteModal";
+// Feb-2026 · UX Polish Batch B — Send quote to customer (composed
+// mark-sent + email fire).
+import SendToCustomerModal from "@/components/quotes/SendToCustomerModal";
 // Phase K79 · Feb-2026 — Customer-facing grouped view controls
 // (checkbox + per-category description editor + preview modal).
 // Rendered on QUOTES only; invoices keep the itemized view.
@@ -179,6 +182,9 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
   // Feb-2026 · P0 — Duplicate quote modal (admin/super_admin only).
   const [duplicateOpen, setDuplicateOpen] = useState(false);
+  // Feb-2026 · UX Polish Batch B — Send quote to customer modal
+  // (admin/super_admin only). Composed mark-sent + customer email.
+  const [sendToCustomerOpen, setSendToCustomerOpen] = useState(false);
   // Feb 2026 · Type-to-confirm removed — the ``deleteConfirmText``
   // state that gated Delete buttons on the invoice / payment
   // modals has been retired. Kept the two boolean modal opens +
@@ -750,6 +756,21 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               <Copy size={14} /> Duplicate
             </Button>
           ) : null}
+          {/* Feb-2026 · UX Polish Batch B — Send quote to customer.
+              Pairs with Duplicate above; both are admin/super_admin
+              gestures scoped to quotes (not invoices). Skipped on
+              terminal statuses so the button doesn't mislead. */}
+          {!isInvoice && isStaff
+            && !["accepted", "declined"]
+                .includes(String(doc.status || "").toLowerCase()) ? (
+            <Button
+              variant="secondary"
+              onClick={() => setSendToCustomerOpen(true)}
+              testid="send-to-customer-btn"
+            >
+              <Send size={14} /> Send
+            </Button>
+          ) : null}
           {/* Phase K80.a · Feb-2026 — On DRAFT invoices the K71 inline
               editor now covers add/edit/delete, so this modal button is
               redundant. Keep it visible only on statuses where the
@@ -1220,6 +1241,25 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           if (r?.quote_id) {
             setTimeout(() => navigate(`/quotes/${r.quote_id}`), 400);
           }
+        }}
+        onError={(detail) => {
+          setToast({ tone: "error", message: String(detail) });
+        }}
+      />
+      {/* Feb-2026 · UX Polish Batch B — Send quote to customer. */}
+      <SendToCustomerModal
+        open={sendToCustomerOpen}
+        quoteId={doc?.id}
+        primaryEmail={doc?.customer_email || doc?.customer?.email || ""}
+        onClose={() => setSendToCustomerOpen(false)}
+        onSent={(r) => {
+          setSendToCustomerOpen(false);
+          setToast({
+            tone: "success",
+            message: `Quote sent to ${r?.recipient || "customer"}.`,
+          });
+          // Refetch so status / sent_at reflect the flip.
+          load && load();
         }}
         onError={(detail) => {
           setToast({ tone: "error", message: String(detail) });
