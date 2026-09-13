@@ -3,6 +3,10 @@ import { ChevronLeft, ChevronRight, Save, Check } from "lucide-react";
 
 import PoolChecklistForm from "./PoolChecklistForm";
 import PhotoUploader from "./PhotoUploader";
+// Feb-2026 · Hide-web-chem-readings — when the section is gated off,
+// the wizard MUST NOT block Close Job on unfilled readings and MUST
+// NOT surface the "enter values or Not Tested" hint on step 1.
+import { FEATURE_FLAGS } from "@/config/featureFlags";
 
 /**
  * Phase 56.6 — Pool Job Wizard shell.
@@ -86,6 +90,9 @@ export default function PoolChecklistWizard({
   // gate silently disabled Next on step 1 because default readings
   // arrive with `value: null` — techs saw no hint about why.
   const readingsAllAnswered = useMemo(() => {
+    // Feb-2026 · Hide-web-chem-readings — when the section is hidden
+    // there is nothing to answer, so Close Job must never be gated.
+    if (!FEATURE_FLAGS.SHOW_CHECKLIST_CHEMICAL_READINGS) return true;
     const rows = report?.chemical_readings || [];
     if (!rows.length) return true;
     return rows.every(

@@ -20,9 +20,15 @@
  */
 
 // K56.1: flip on when Unsplash/remove.bg backends are wired.
+// Feb-2026 · Hide-web-chem-readings — client-side gate for the
+// "Chemical Readings" section on the Job Checklist. Backend
+// schema + endpoints are UNCHANGED — reversible UI-only hide.
+// Flip to `true` to re-enable rendering (heading, reading rows,
+// visible-algae toggle, service-type-reclassify picker).
 export const FEATURE_FLAGS = Object.freeze({
   FEATURE_STOCK_SEARCH: false,
   FEATURE_REMOVE_BG: false,
+  SHOW_CHECKLIST_CHEMICAL_READINGS: false,
 });
 
 export function isFeatureEnabled(flagName) {

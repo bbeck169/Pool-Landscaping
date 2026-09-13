@@ -29,6 +29,8 @@ import { expandChemistryLabel } from "../../lib/expandChemistryLabel";
 // backend ``services/chemistry_gate.CORE_READINGS`` so any tenant
 // customization can't drift the visual marker out of the gate.
 import { CORE_KEYS as _CORE_READING_KEYS } from "@/utils/chemistryGate";
+// Feb-2026 · Hide-web-chem-readings — see `config/featureFlags.js`.
+import { FEATURE_FLAGS } from "@/config/featureFlags";
 
 // Phase 48 — per-key validation rules for the manual-entry reading rows.
 // Keys are normalized snake_case; aliases share the same rule.
@@ -692,7 +694,11 @@ export default function PoolChecklistForm({
   return (
     <div data-testid="checklist-modal-pool" className="space-y-4">
       {/* Chemical Readings — Phase 48 manual text entry — Wizard step 1 */}
-      {inStep(1) ? (
+      {/* Feb-2026 · Hide-web-chem-readings — gated behind
+          FEATURE_FLAGS.SHOW_CHECKLIST_CHEMICAL_READINGS. Flip the flag
+          in `config/featureFlags.js` to re-enable. Backend schema +
+          endpoints untouched. */}
+      {inStep(1) && FEATURE_FLAGS.SHOW_CHECKLIST_CHEMICAL_READINGS ? (
       <div data-wizard-section="readings">
         <div className="text-sm font-bold mb-3" style={{ color: colors.onSurface }}>
           Chemical Readings
