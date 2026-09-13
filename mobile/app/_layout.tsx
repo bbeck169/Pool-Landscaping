@@ -23,6 +23,7 @@ import { RootErrorBoundary } from "@/src/components/RootErrorBoundary";
 // builds — root cause of the Phase 30.3 portal sign-out P0).
 import { ConfirmModalHost } from "@/src/components/ConfirmModal";
 import { StripeConfigProvider } from "@/src/config/stripe";
+import { ToastProvider } from "@/src/components/ToastProvider";
 import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTemplateDrafts";
 import { SyncManagerProvider } from "@/src/services/SyncManager";
 // OTA auto-update listener — background check + subtle "update ready" toast.
@@ -156,6 +157,7 @@ export default function RootLayout() {
             <AuthProvider>
               <SyncManagerProvider>
                 <StripeConfigProvider>
+                  <ToastProvider>
                   <OfflineBanner />
                   <StoragePressureBanner />
                   <ImpersonationBanner />
@@ -164,6 +166,7 @@ export default function RootLayout() {
                   <ConfirmModalHost />
                   <ConflictSheet />
                   <SyncToast />
+                  </ToastProvider>
                 </StripeConfigProvider>
               </SyncManagerProvider>
             </AuthProvider>

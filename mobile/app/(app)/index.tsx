@@ -8,6 +8,7 @@ import { useFocusEffect, useRouter, Redirect } from "expo-router";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useOfflineQuery } from "@/src/hooks/useOfflineQuery";
+import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import { colors, spacing, radius, font, fontSize, money, IMAGES } from "@/src/theme";
 import { Loading, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
@@ -33,7 +34,6 @@ export default function Dashboard() {
   const dashQ = useOfflineQuery("dashboard", fetchDashboard);
   const data = dashQ.data;
   const loading = dashQ.isLoading;
-  const error = dashQ.error?.message || null;
 
   // `refetch` is stable (deps = [execute], execute deps = [key, enabled, staleTime]).
   const refetch = dashQ.refetch;
@@ -79,9 +79,16 @@ export default function Dashboard() {
           }
         >
           <View style={styles.emptyState} testID="dashboard-empty">
-            <Ionicons name="cloud-offline-outline" size={36} color={colors.muted} />
+            <Ionicons
+              name={dashQ.error ? errorKindIcon(mapApiError(dashQ.error).kind) as any : "cloud-offline-outline"}
+              size={36}
+              color={colors.muted}
+            />
+            <Text style={styles.emptyTitle} testID="dashboard-error-title">
+              {dashQ.error ? mapApiError(dashQ.error).title : "Dashboard unavailable"}
+            </Text>
             <Text style={styles.emptyText}>
-              {error || "Dashboard unavailable — pull down to retry."}
+              {dashQ.error ? mapApiError(dashQ.error).message : "Pull down to retry."}
             </Text>
           </View>
         </ScrollView>
@@ -722,6 +729,12 @@ const styles = StyleSheet.create({
     color: colors.muted,
     textAlign: "center",
     maxWidth: 320,
+  },
+  emptyTitle: {
+    fontFamily: font.bold,
+    fontSize: fontSize.lg,
+    color: colors.onSurface,
+    textAlign: "center",
   },
   revenueTiles: { gap: spacing.sm, marginBottom: spacing.lg },
   revenueTile: {

@@ -12,6 +12,7 @@ import * as Linking from "expo-linking";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useStripeConfig } from "@/src/config/stripe";
+import { useToast } from "@/src/components/ToastProvider";
 import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, StatusChip, PrimaryButton } from "@/src/components/ui";
@@ -29,6 +30,7 @@ export default function QuoteDetail() {
   const isAdmin = user?.role === "admin" || user?.role === "super_admin" || user?.role === "manager";
   const canDuplicate = user?.role === "admin" || user?.role === "super_admin";
   const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
 
   // Theme refresh — tenant branding
   const { branding } = useBusinessSettings();
@@ -91,7 +93,7 @@ export default function QuoteDetail() {
             pollRef.current = null;
             if (Platform.OS !== "web") WebBrowser.dismissBrowser();
             await load();
-            Alert.alert("Payment received", "Thank you! Your invoice is now paid.");
+            showToast("Payment received — thank you!");
           }
         } catch {}
       }, 3000);
@@ -157,7 +159,7 @@ export default function QuoteDetail() {
     try {
       await api.post(`/quotes/${id}/remind`);
       await load();
-      Alert.alert("Reminder sent", "The customer was notified about this invoice.");
+      showToast("Reminder sent — the customer was notified.");
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Could not send reminder.");
     } finally {
@@ -179,8 +181,12 @@ export default function QuoteDetail() {
     setBusy(true);
     try {
       setQ(await api.post(`/quotes/${id}/decision?decision=${decision}`));
-      Alert.alert(decision === "approve" ? "Estimate approved ✅" : "Estimate declined",
-        decision === "approve" ? "Thanks! Our team will schedule your service shortly." : "No problem — we've let the team know.");
+      showToast(
+        decision === "approve"
+          ? "Estimate approved — our team will schedule your service shortly."
+          : "Estimate declined — we've let the team know.",
+        "success",
+      );
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Could not submit your decision.");
     } finally {
@@ -261,11 +267,9 @@ export default function QuoteDetail() {
       if (dupProperty?.id) body.property_id = dupProperty.id;
       const res = await api.post(`/quotes/${id}/duplicate`, body);
       setDupOpen(false);
-      Alert.alert(
-        "Quote duplicated",
-        `Quote duplicated as draft #${res.quote_number || res.quote_id?.slice(0, 8) || "new"}.`,
-        [{ text: "View", onPress: () => router.push(`/quote/${res.quote_id}`) }, { text: "OK" }],
-      );
+      const num = res.quote_number || res.quote_id?.slice(0, 8) || "new";
+      showToast(`Quote duplicated as draft #${num}.`);
+      router.push(`/quote/${res.quote_id}` as any);
     } catch (e: any) {
       setDupError(e?.message || "Duplicate failed.");
     } finally {
