@@ -1711,3 +1711,14 @@
 - **Files modified**: src/auth.tsx, app/login.tsx, app/(app)/customers.tsx
 - **Test results**: 78/78 total (10 new + 68 existing), all passing
 - **Screenshot**: /tmp/mobile-temp-password-reset.png
+
+## Iteration 86 — Mobile parity: Business Settings + Decline-per-group + Theme Refresh
+- **Commit**: 89edabbbebfae003d5ed916753a8f9be7f135e72
+- **Date**: 2026-09-12
+- **Changes**:
+  - New Business Settings screen with company fields, logo upload/remove, brand colour pickers, live preview
+  - Dual-total renderer on admin quote detail (Subtotal incl. declined / Effective excl. declined)
+  - Grouped-view with Decline/Restore buttons on estimate customer view
+  - Branded header/footer bands (dark-blue / brand_primary_hex) on estimates, invoices, and quotes
+- **Files modified**: businessSettings.ts (new), useBusinessSettings.ts (new), settings/business.tsx (new), settings/index.tsx, estimatesFull.ts, quote/[id].tsx, estimate-view/[id].tsx, invoice/[id].tsx
+- **Web files referenced**: BusinessSettings.jsx, BrandLogoSettings.jsx, EstimateView.jsx, DocDesktopShell.jsx, useTenantBranding.js, QuoteInvoiceDetail.jsx

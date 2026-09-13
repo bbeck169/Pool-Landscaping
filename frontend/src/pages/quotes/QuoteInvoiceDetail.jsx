@@ -17,6 +17,7 @@ import {
   History,
   ChevronDown,
   ChevronUp,
+  Copy,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -36,6 +37,8 @@ import EditLockConfirmDialog from "@/components/documents/EditLockConfirmDialog"
 import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
 // Feb-2026 · Hard-delete quotes — admin+super only surface.
 import HardDeleteQuoteModal from "@/components/quotes/HardDeleteQuoteModal";
+// Feb-2026 · P0 — Duplicate quote (admin/super_admin only).
+import DuplicateQuoteModal from "@/components/quotes/DuplicateQuoteModal";
 // Phase K79 · Feb-2026 — Customer-facing grouped view controls
 // (checkbox + per-category description editor + preview modal).
 // Rendered on QUOTES only; invoices keep the itemized view.
@@ -174,6 +177,8 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   // Feb-2026 · Hard-delete quote — admin+super only. Separate state
   // from the soft-delete surfaces above.
   const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
+  // Feb-2026 · P0 — Duplicate quote modal (admin/super_admin only).
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
   // Feb 2026 · Type-to-confirm removed — the ``deleteConfirmText``
   // state that gated Delete buttons on the invoice / payment
   // modals has been retired. Kept the two boolean modal opens +
@@ -729,6 +734,22 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               <Trash2 size={14} /> Hard Delete Quote
             </Button>
           ) : null}
+          {/* Feb-2026 · P0 — Duplicate quote.  Admin+super only,
+              QUOTE-only (invoices carry a numbering sequence + payment
+              ledger that isn't safe to clone through this surface).
+              Placed next to the Hard Delete cluster because the two
+              are the "reset a quote" + "copy a quote" pair — same
+              destructive vs constructive symmetry, both live behind
+              the same isStaff gate. */}
+          {!isInvoice && isStaff ? (
+            <Button
+              variant="secondary"
+              onClick={() => setDuplicateOpen(true)}
+              testid="duplicate-quote-btn"
+            >
+              <Copy size={14} /> Duplicate
+            </Button>
+          ) : null}
           {/* Phase K80.a · Feb-2026 — On DRAFT invoices the K71 inline
               editor now covers add/edit/delete, so this modal button is
               redundant. Keep it visible only on statuses where the
@@ -1176,6 +1197,29 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           setHardDeleteOpen(false);
           setToast({ tone: "success", message: "Quote hard-deleted" });
           setTimeout(() => navigate("/quotes"), 400);
+        }}
+        onError={(detail) => {
+          setToast({ tone: "error", message: String(detail) });
+        }}
+      />
+      {/* Feb-2026 · P0 — Duplicate quote modal.  Navigates to the
+          fresh draft on success; keeps the modal open + surfaces the
+          server detail on 422 / 404 / 403 so the admin can fix. */}
+      <DuplicateQuoteModal
+        open={duplicateOpen}
+        quoteId={doc?.id}
+        sourceCustomerId={doc?.customer_id}
+        onClose={() => setDuplicateOpen(false)}
+        onDuplicated={(r) => {
+          setDuplicateOpen(false);
+          const num = r?.quote_number || (r?.quote_id || "").slice(0, 8);
+          setToast({
+            tone: "success",
+            message: `Quote duplicated as draft #${num}.`,
+          });
+          if (r?.quote_id) {
+            setTimeout(() => navigate(`/quotes/${r.quote_id}`), 400);
+          }
         }}
         onError={(detail) => {
           setToast({ tone: "error", message: String(detail) });

@@ -1,0 +1,29 @@
+## Iteration 86 — Mobile parity: Business Settings + Decline-per-group + Theme Refresh
+
+- **Commit**: 89edabbbebfae003d5ed916753a8f9be7f135e72
+- **Date**: 2026-09-12
+- **Changes**:
+  - Added `src/api/businessSettings.ts` — GET/PATCH business-settings, POST/DELETE logo API helpers
+  - Added `src/hooks/useBusinessSettings.ts` — fetches tenant branding with defaults (#0B4A6F / #F97316)
+  - Added `app/settings/business.tsx` — full Business Settings admin screen (company fields, logo upload/remove via `expo-image-picker`, brand colour hex inputs with swatch previews, live preview card, RBAC gate)
+  - Updated `app/settings/index.tsx` — added "Business settings" link at top of GENERAL_LINKS
+  - Updated `src/api/estimatesFull.ts` — added `EstimateGroup` type, `customer_view.groups` on `EstimateFull`, group decline/restore API helpers (token + admin)
+  - Updated `app/quote/[id].tsx` — added dual-total renderer (Subtotal incl. declined / Effective excl. declined) when `has_declined_lines` is true + branded header/footer bands
+  - Updated `app/estimate-view/[id].tsx` — added grouped-view rendering with Decline/Restore buttons, branded header band (ESTIMATE + company name in brand_primary_hex), branded footer band with footer_note
+  - Updated `app/invoice/[id].tsx` — added branded header band (INVOICE + company name) and footer band with footer_note
+- **Files modified**:
+  - `mobile/src/api/businessSettings.ts` (new)
+  - `mobile/src/hooks/useBusinessSettings.ts` (new)
+  - `mobile/app/settings/business.tsx` (new)
+  - `mobile/app/settings/index.tsx`
+  - `mobile/src/api/estimatesFull.ts`
+  - `mobile/app/quote/[id].tsx`
+  - `mobile/app/estimate-view/[id].tsx`
+  - `mobile/app/invoice/[id].tsx`
+- **Web files referenced**:
+  - `frontend/src/pages/settings/BusinessSettings.jsx`
+  - `frontend/src/pages/settings/BrandLogoSettings.jsx`
+  - `frontend/src/components/EstimateView.jsx`
+  - `frontend/src/components/documents/DocDesktopShell.jsx`
+  - `frontend/src/hooks/useTenantBranding.js`
+  - `frontend/src/pages/quotes/QuoteInvoiceDetail.jsx`

@@ -814,6 +814,176 @@ async def ready_to_schedule(admin: dict = Depends(require_admin),
     } for d in docs]
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · P0 — Duplicate Quote
+# ═════════════════════════════════════════════════════════════════════
+# ``POST /api/quotes/{qid}/duplicate`` — admin + super_admin only.
+# Duplicates a quote (doc_type="quote") into a new DRAFT quote.
+# Carries: line_items (with fresh line ids), tax_rate, notes, terms,
+# customer_group_display, customer_group_descriptions, title (verbatim).
+# Resets: status → draft; payment_status → unpaid; every lifecycle
+# timestamp; per-line customer_status → pending; totals recomputed.
+# Drops: photos, signatures (both live in adjacent collections, not
+# on the quote doc, so they naturally don't follow a fresh uuid);
+# scheduled_job_id (new quote is standalone).
+#
+# Body::  { customer_id: str, property_id: Optional[str] }
+# Response::  { quote_id: str, quote_number: str }   # 8-char id prefix
+#
+# See /app/memory/FEATURE_QUOTE_DUPLICATE.md for the full field
+# manifest.
+from pydantic import BaseModel as _PdBaseModel
+
+
+class _QuoteDuplicateIn(_PdBaseModel):
+    customer_id: str
+    property_id: Optional[str] = None
+
+
+@router.post("/quotes/{qid}/duplicate")
+async def duplicate_quote(qid: str, body: _QuoteDuplicateIn,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    """Duplicate an existing quote into a new draft.  See the memo
+    at ``/app/memory/FEATURE_QUOTE_DUPLICATE.md`` for the carry-over
+    / reset manifest and the RBAC + property-resolution rules.
+    """
+    # 1. Load source in the caller's tenant.
+    src = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not src:
+        raise HTTPException(404, "Source quote not found")
+    # Only quotes can be duplicated — invoices are excluded (they
+    # carry a numbering sequence + payment state that would be
+    # unsafe to clone through this surface).
+    if src.get("doc_type") != "quote":
+        raise HTTPException(400, "Only quotes can be duplicated")
+
+    # 2. Load destination customer in the caller's tenant.
+    dest_cust = await db.customers.find_one(
+        {"id": body.customer_id, "tenant_id": tenant["id"]},
+        {"_id": 0},
+    )
+    if not dest_cust:
+        raise HTTPException(404, "Destination customer not found")
+
+    # 3. Resolve ``property_id`` — either explicit and validated,
+    #    or auto-assigned when the destination customer has exactly
+    #    1 active property (same rule ``create_quote`` uses today).
+    property_id: Optional[str] = body.property_id
+    if property_id:
+        prop = await db.properties.find_one(
+            {"id": property_id, "tenant_id": tenant["id"],
+             "customer_id": body.customer_id},
+            {"_id": 0, "id": 1, "active": 1},
+        )
+        if not prop:
+            raise HTTPException(
+                422,
+                "property_id does not belong to the destination customer",
+            )
+        if prop.get("active") is False:
+            raise HTTPException(
+                422, "property_id refers to an inactive property",
+            )
+    else:
+        _active = await db.properties.find(
+            {"tenant_id": tenant["id"], "customer_id": body.customer_id,
+             "active": {"$ne": False}},
+            {"_id": 0, "id": 1},
+        ).to_list(10)
+        if len(_active) == 1:
+            property_id = _active[0]["id"]
+        # If 0 or >1 active properties, leave ``property_id=None`` —
+        # matches ``create_quote``'s consolidated-billing fallback.
+
+    # 4. Rebuild line items — fresh line ids, decline state stripped.
+    new_lines: List[dict] = []
+    for src_li in (src.get("line_items") or []):
+        new_li = dict(src_li)
+        new_li["id"] = new_id()
+        new_li["customer_status"] = "pending"
+        for _reset in (
+            "customer_declined_at",
+            "customer_declined_by",
+            "customer_decline_reason",
+            "customer_accepted_at",
+            "customer_accepted_by",
+        ):
+            new_li[_reset] = None
+        new_lines.append(new_li)
+
+    # 5. Recompute totals from the (identical shape) new line array.
+    tax_rate = float(src.get("tax_rate") or 0)
+    subtotal, tax, total = compute_totals(new_lines, tax_rate)
+
+    # 6. Compose the new draft quote.
+    new_qid = new_id()
+    now = now_iso()
+    doc: Dict[str, Any] = {
+        "id": new_qid,
+        "tenant_id": tenant["id"],
+        "customer_id": body.customer_id,
+        "customer_name": dest_cust.get("name") or "",
+        "property_id": property_id,
+        # Title carries verbatim — admin renames in the draft.
+        # See the memo for the alternative (" (copy)" suffix) that
+        # was considered and declined.
+        "title": src.get("title") or "",
+        "doc_type": "quote",
+        "line_items": new_lines,
+        "tax_rate": tax_rate,
+        "subtotal": subtotal,
+        "tax": tax,
+        "total": total,
+        "amount_paid": 0.0,
+        "status": "draft",
+        "payment_status": "unpaid",
+        "notes": src.get("notes"),
+        "terms": src.get("terms"),
+        "internal_notes": src.get("internal_notes"),
+        "customer_group_display": src.get("customer_group_display", True),
+        "customer_group_descriptions":
+            src.get("customer_group_descriptions") or {},
+        "created_at": now,
+        # Lifecycle / decision / reminder state — all reset.
+        "accepted_at": None,
+        "declined_at": None,
+        "sent_at": None,
+        "first_viewed_at": None,
+        "last_viewed_at": None,
+        "viewed_at": None,
+        "paid_at": None,
+        "last_reminder_at": None,
+        "reminder_count": 0,
+        "scheduled_job_id": None,
+        "deleted_at": None,
+        "has_declined_lines": False,
+    }
+    await db.quotes.insert_one(doc)
+
+    # 7. Audit — one row per successful duplication.
+    try:
+        await db.audit_logs.insert_one({
+            "event": "quote.duplicated",
+            "source_quote_id": qid,
+            "new_quote_id": new_qid,
+            "source_customer_id": src.get("customer_id"),
+            "destination_customer_id": body.customer_id,
+            "actor_id": user.get("id"),
+            "tenant_id": tenant["id"],
+            "at": now,
+            "source": "admin_ui",
+        })
+    except Exception as e:  # noqa: BLE001
+        # Audit write is best-effort — a failed audit row must not
+        # roll back a successfully-inserted duplicate quote.
+        logger.warning(f"quote.duplicated audit_logs insert failed: {e}")
+
+    return {"quote_id": new_qid, "quote_number": new_qid[:8]}
+
+
 @router.get("/quotes/{qid}")
 async def get_quote(qid: str,
                     user: dict = Depends(get_current_user),
