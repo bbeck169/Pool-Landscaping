@@ -27,6 +27,7 @@ import DemoAccountToggle from "@/src/components/comms/DemoAccountToggle";
 import MuteControlSheet from "@/src/components/customers/MuteControlSheet";
 import CustomerDeleteModal from "@/src/components/customers/CustomerDeleteModal";
 import SubscriptionsSection from "@/src/components/subscriptions/SubscriptionsSection";
+import PortalAccessPanel from "@/src/components/customers/PortalAccessPanel";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function CustomerDetail() {
@@ -640,6 +641,18 @@ export default function CustomerDetail() {
               <Text style={styles.createLoginText}>Create customer login</Text>
             </Pressable>
           )
+        ) : null}
+
+        {/* Dispatch B · Portal Access Panel — admin-only */}
+        {isAdmin ? (
+          <PortalAccessPanel
+            customerId={id as string}
+            customerEmail={c?.email}
+            customerName={c?.name}
+            hasLogin={c?.has_login}
+            userRole={user?.role}
+            onRefresh={load}
+          />
         ) : null}
 
         {c.notes ? (

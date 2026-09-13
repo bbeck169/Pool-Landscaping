@@ -365,8 +365,11 @@ import {
   PortalServiceReports, PortalServiceReportDetail,
 } from "@/pages/portal/PortalServiceReports";
 import PortalSignPage from "@/pages/portal/PortalSign";
-// Feb-2026 · Task 5 · Save card on file — portal management page.
-import PortalPaymentMethods from "@/pages/portal/PortalPaymentMethods";
+// Feb-2026 · Housekeeping Batch A — legacy plural PortalPaymentMethods
+// component + its stranded ``portal/profile/payment-methods`` route
+// removed. All portal payment-method flows now go through the
+// singular <PortalPaymentMethod> in PortalPages.jsx mounted at
+// ``portal/payment-method``. See FLAKE_STABILIZATION_BACKLOG §1.
 import { CsatDashboard, CsatDetail, PublicCsat } from "@/pages/csat/CsatPages";
 import { RealtimeProvider } from "@/realtime/NotificationSocket";
 import AnalyticsPage from "@/pages/analytics/AnalyticsPage";

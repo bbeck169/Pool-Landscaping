@@ -16,7 +16,7 @@ import { Header, IconButton } from "@/src/components/widgets";
 import { ImportExport } from "@/src/components/ImportExport";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
 import RestoreCustomerButton from "@/src/components/customers/RestoreCustomerButton";
-import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import PortalOnboardingHealthTile from "@/src/components/customers/PortalOnboardingHealthTile";
 
 export default function Customers() {
   const router = useRouter();
@@ -86,6 +86,9 @@ export default function Customers() {
   const [neverLoggedInFilter, setNeverLoggedInFilter] = useState(false);
   const [neverLoggedInCount, setNeverLoggedInCount] = useState<number | null>(null);
 
+  // Dispatch A — Portal Onboarding Tile: "portal_invited=any" filter for chase-invites.
+  const [portalInvitedFilter, setPortalInvitedFilter] = useState(false);
+
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
   const bulk = useBulkSelect(visibleIds);
 
@@ -116,6 +119,8 @@ export default function Customers() {
       if (pendingMergeCandidates) qp.set("pending_merge_candidates", "true");
       // Temp-password parity — "Never logged in" filter.
       if (neverLoggedInFilter) qp.set("first_access", "never");
+      // Dispatch A — Portal Onboarding Tile: chase-invite audience filter.
+      if (portalInvitedFilter) qp.set("portal_invited", "any");
       const res: any = await api.get(`/customers?${qp.toString()}`);
       const rows = Array.isArray(res) ? res : (res?.items || []);
       const tp = Number.isFinite(res?.total_pages)
@@ -139,7 +144,7 @@ export default function Customers() {
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter, missingEmailFilter, missingPhoneFilter, includeMerged, pendingMergeCandidates, neverLoggedInFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter, missingEmailFilter, missingPhoneFilter, includeMerged, pendingMergeCandidates, neverLoggedInFilter, portalInvitedFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMore = useCallback(() => {
     if (loadingMore) return;
@@ -264,8 +269,9 @@ export default function Customers() {
     if (includeMerged) labels.push("Merged");
     if (pendingMergeCandidates) labels.push("Pending merge");
     if (neverLoggedInFilter) labels.push("Never logged in");
+    if (portalInvitedFilter) labels.push("Invited (portal)");
     return labels;
-  }, [missingEmailFilter, missingPhoneFilter, missingAddressFilter, noPaymentFilter, portalFilter, includeDeleted, includeMerged, pendingMergeCandidates, neverLoggedInFilter]);
+  }, [missingEmailFilter, missingPhoneFilter, missingAddressFilter, noPaymentFilter, portalFilter, includeDeleted, includeMerged, pendingMergeCandidates, neverLoggedInFilter, portalInvitedFilter]);
 
   const moreFiltersSummary = activeFilterLabels.length === 0
     ? "All"
@@ -283,6 +289,7 @@ export default function Customers() {
     setIncludeMerged(false);
     setPendingMergeCandidates(false);
     setNeverLoggedInFilter(false);
+    setPortalInvitedFilter(false);
     setPage(1);
   };
 
@@ -323,6 +330,15 @@ export default function Customers() {
           </Pressable>
         ))}
       </View>
+      {/* Dispatch A — Portal Onboarding Health Tile (admin-only) */}
+      {isAdmin ? (
+        <PortalOnboardingHealthTile
+          onFilterInvited={() => { setPortalInvitedFilter(true); setPortalFilter(""); setNeverLoggedInFilter(false); }}
+          onFilterActivated={() => { setPortalFilter("activated"); setPortalInvitedFilter(false); setNeverLoggedInFilter(false); }}
+          onFilterSignedIn={() => { setPortalFilter("activated"); setPortalInvitedFilter(false); setNeverLoggedInFilter(false); }}
+          onFilterNever={() => { setNeverLoggedInFilter(true); setPortalFilter("not_activated"); setPortalInvitedFilter(false); }}
+        />
+      ) : null}
       {/* P45 — Single "More filters" trigger replacing individual chip rows. */}
       <Pressable
         onPress={() => setMoreFiltersOpen(true)}

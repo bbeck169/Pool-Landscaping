@@ -1745,3 +1745,34 @@
   - **Phase 3 — Tests**: 27 tests passing (mapApiError unit + toast conversion patterns + screen integration)
   - Fixed syntax errors in aeo/publish-config.tsx and aeo/response-draft.tsx
 - **Files modified**: 25+ app screens, 5 components, 3 test files (2 new)
+
+
+
+## Iteration 88 — Dispatch A Test Fix: Jest API mock hoisting + cleanup
+- **Commit**: c792e05a
+- **Date**: 2026-09-13
+- **Changes**:
+  - Fixed `TypeError: _api.api.get is not a function` in both Dispatch A test files. Root cause: `const mockGet = jest.fn()` was in the temporal dead zone when `jest.mock()` factory evaluated `api: { get: mockGet }` (babel hoists `jest.mock` above `const` initializers). Fix: use inline `jest.fn()` in factory, then cast `api.get as jest.Mock` after import.
+  - Fixed ChaseStalledInvitesSheet mock in onboarding tile test to respond to `visible` prop (was returning null always, breaking the "opens sheet" test).
+  - Removed 2 stray `console.log` statements from `PortalOnboardingHealthTile.tsx` (lines 180, 191).
+  - Removed unused `formatCustomerName` import from `customers.tsx`.
+  - Deleted debug sandbox file `__tests__/debug-tile.test.tsx`.
+  - Updated `/app/memory/AUDIT_MOBILE_PARITY_TRIO.md` with Dispatch A final deliverable checklist.
+  - **14/14 tests passing** (8 onboarding tile + 6 chase sheet).
+- **Files modified**: `__tests__/onboarding-health-tile.test.tsx`, `__tests__/chase-stalled-invites.test.tsx`, `src/components/customers/PortalOnboardingHealthTile.tsx`, `app/(app)/customers.tsx`
+- **Files deleted**: `__tests__/debug-tile.test.tsx`
+
+## Iteration 89 — Dispatch B: Portal Access Panel (Feature 3)
+- **Commit**: c792e05a
+- **Date**: 2026-09-13
+- **Changes**:
+  - Created `src/components/customers/PortalAccessPanel.tsx` (515 LOC): admin-only portal management panel with status row, 5 action buttons (send invite, send reset link, copy reset link, reset password, revoke access), temp password card with clipboard copy, and activity feed.
+  - Created `__tests__/portal-access-panel.test.tsx` (11 tests): full coverage of all actions, RBAC gating (super_admin copy link), Alert confirmations, clipboard, error handling via mapApiError.
+  - Integrated into `app/customer/[id].tsx`: admin-gated render below login badge section.
+  - Used inline `jest.fn()` in mock factory pattern (learned from Dispatch A TDZ fix) for expo-clipboard mock.
+  - **11/11 Dispatch B tests passing**, **14/14 Dispatch A tests still green** = 25 total parity tests green.
+- **Files created**: `src/components/customers/PortalAccessPanel.tsx`, `__tests__/portal-access-panel.test.tsx`
+- **Files modified**: `app/customer/[id].tsx`
+- **Web files referenced**: `frontend/src/pages/customers/CustomerDetail.jsx` (PortalAccessPanel, PortalResetModal, event labels)
+- **Memo**: `/app/memory/FEATURE_MOBILE_PARITY_DISPATCH_B.md`
+
