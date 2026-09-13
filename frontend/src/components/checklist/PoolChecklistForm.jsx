@@ -29,8 +29,6 @@ import { expandChemistryLabel } from "../../lib/expandChemistryLabel";
 // backend ``services/chemistry_gate.CORE_READINGS`` so any tenant
 // customization can't drift the visual marker out of the gate.
 import { CORE_KEYS as _CORE_READING_KEYS } from "@/utils/chemistryGate";
-// Feb-2026 · Hide-web-chem-readings — see `config/featureFlags.js`.
-import { FEATURE_FLAGS } from "@/config/featureFlags";
 
 // Phase 48 — per-key validation rules for the manual-entry reading rows.
 // Keys are normalized snake_case; aliases share the same rule.
@@ -462,8 +460,21 @@ export default function PoolChecklistForm({
 
   // Phase 49.0 — Merge backend `chemical_reading_fields` (canonical field
   // list) with saved values so all default rows always render.
+  //
+  // Feb-2026 · Remove-combined-chlorine — the "Combined Chlorine"
+  // input is retired on web (see AUDIT memo). We strip any incoming
+  // ``combined_chlorine`` entry from BOTH the readingFields (so the
+  // row never renders) AND from the merged output (so the submit
+  // payload does not include it — option (a), per the dispatch).
+  // Historic values on other records still surface via
+  // ``lastReadings`` (loaded from ``/service-reports/last-readings``)
+  // and unchanged portal / service-report renderers — this only
+  // removes the INPUT surface on the Job Checklist.
   const mergedReadings = React.useMemo(() => {
-    if (!readingFields || readingFields.length === 0) return readings;
+    const _isCombined = (r) => canonicalReadingKey(r) === "combined_chlorine";
+    if (!readingFields || readingFields.length === 0) {
+      return (readings || []).filter((r) => !_isCombined(r));
+    }
     const byKey = {};
     for (const r of readings || []) {
       const k = String(r.key || r.name || "").toLowerCase();
@@ -485,7 +496,7 @@ export default function PoolChecklistForm({
       if (found) delete byKey[k];
     }
     for (const remaining of Object.values(byKey)) out.push(remaining);
-    return out;
+    return out.filter((r) => !_isCombined(r));
   }, [readingFields, readings]);
 
   const updReading = (idx, val) => {
@@ -694,11 +705,7 @@ export default function PoolChecklistForm({
   return (
     <div data-testid="checklist-modal-pool" className="space-y-4">
       {/* Chemical Readings — Phase 48 manual text entry — Wizard step 1 */}
-      {/* Feb-2026 · Hide-web-chem-readings — gated behind
-          FEATURE_FLAGS.SHOW_CHECKLIST_CHEMICAL_READINGS. Flip the flag
-          in `config/featureFlags.js` to re-enable. Backend schema +
-          endpoints untouched. */}
-      {inStep(1) && FEATURE_FLAGS.SHOW_CHECKLIST_CHEMICAL_READINGS ? (
+      {inStep(1) ? (
       <div data-wizard-section="readings">
         <div className="text-sm font-bold mb-3" style={{ color: colors.onSurface }}>
           Chemical Readings

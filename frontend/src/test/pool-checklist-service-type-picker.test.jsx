@@ -20,21 +20,6 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-// Feb-2026 · Hide-web-chem-readings — the Chemical Readings section is
-// gated OFF by default. These tests specifically cover the reclassify
-// picker that lives INSIDE the section, so we force the flag ON here
-// to keep coverage green until the section is re-enabled globally.
-vi.mock("@/config/featureFlags", async (importOriginal) => {
-  const mod = await importOriginal();
-  return {
-    ...mod,
-    FEATURE_FLAGS: Object.freeze({
-      ...mod.FEATURE_FLAGS,
-      SHOW_CHECKLIST_CHEMICAL_READINGS: true,
-    }),
-  };
-});
-
 // The component internally hits /service-reports/last-readings on
 // mount; stub the api layer so the test doesn't need a network.
 vi.mock("@/api", () => ({

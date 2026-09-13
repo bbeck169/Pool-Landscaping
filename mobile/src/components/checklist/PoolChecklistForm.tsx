@@ -113,6 +113,8 @@ type CatalogEntry = {
 };
 type ChecklistItem = { id: string; label: string; checked: boolean; notes?: string };
 
+import { FEATURE_FLAGS } from "@/src/config/featureFlags";
+
 export type PoolChecklistFormProps = {
   jobId: string;
   customerId?: string | null;
@@ -407,6 +409,11 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 
   return (
     <View testID="pool-checklist-form">
+      {/* Chemical Readings — gated by feature flag. When OFF, the entire
+          section (heading, reading inputs, reclassify picker, analysis card,
+          algae toggle) is hidden. Components are preserved for re-enable. */}
+      {FEATURE_FLAGS.SHOW_CHECKLIST_CHEMICAL_READINGS ? (
+        <>
       {/* Chemical Readings — Wizard step 1 (mobile renders as a
           single scroll; the caller does not wire `wizardStep`).
           Heading hidden on Expo Web per product trim. */}
@@ -585,6 +592,8 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
           Light or Heavy.
         </Text>
       </View>
+        </>
+      ) : null}
 
       {/* Phase 34e — Recommended Chemicals card */}
       <View style={styles.recCard} testID="pool-recommendations-card">

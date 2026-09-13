@@ -1807,3 +1807,17 @@
 - **Files created**: `__tests__/route-entry-classifier.test.tsx`
 - **Memo**: `/app/memory/FEATURE_MOBILE_ROUTE_ENTRY_CLASSIFIER.md`
 
+
+## Iteration 92 — Hide Checklist Chemical Readings (mobile mirror)
+- **Commit**: e908e475
+- **Date**: 2026-09-13
+- **Changes**:
+  - Created `src/config/featureFlags.ts` (9 LOC) — new feature flags module mirroring web pattern. `SHOW_CHECKLIST_CHEMICAL_READINGS: false`.
+  - Gated the entire Chemical Readings section in `src/components/checklist/PoolChecklistForm.tsx` behind the flag (+8 LOC): heading, reclassify picker, reading inputs, analysis card, visible algae toggle.
+  - Created `__tests__/hide-checklist-chemical-readings.test.tsx` (4 tests): flag OFF hides heading/inputs/algae; flag ON renders them (contract lock).
+  - **4/4 new tests passing**, **37 prior tests still green** = 41 total.
+  - 17 LOC change (well under 50 cap).
+- **Files created**: `src/config/featureFlags.ts`, `__tests__/hide-checklist-chemical-readings.test.tsx`
+- **Files modified**: `src/components/checklist/PoolChecklistForm.tsx`
+- **Memo**: `/app/memory/FEATURE_HIDE_CHECKLIST_CHEMICAL_READINGS_MOBILE.md`
+
