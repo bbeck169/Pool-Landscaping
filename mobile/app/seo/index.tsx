@@ -5,6 +5,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { Header } from "@/src/components/widgets";
 import { Card, PrimaryButton, StatusChip, EmptyState, Sheet } from '@/src/components/ui';
 
@@ -12,6 +13,7 @@ type Tab = "articles" | "keywords" | "queue" | "settings";
 
 export default function SeoStudio() {
   const router = useRouter();
+  const { showToast } = useToast();
   const [tab, setTab] = useState<Tab>("articles");
   const [refreshing, setRefreshing] = useState(false);
 
@@ -116,7 +118,7 @@ export default function SeoStudio() {
       });
       setWp({ connected: s.connected, url: s.url, username: s.username });
       setWpPass("");
-      Alert.alert("Saved", "WordPress connection saved.");
+      showToast("WordPress connection saved.");
     } catch (e: any) {
       Alert.alert("Save failed", e.message);
     } finally {
@@ -128,7 +130,7 @@ export default function SeoStudio() {
     setWpTesting(true);
     try {
       const r = await api.post("/seo/wp-settings/test");
-      Alert.alert("Connected ✅", `Authenticated as ${r.name}.`);
+      showToast(`Authenticated as ${r.name}.`);
     } catch (e: any) {
       Alert.alert("Connection failed", e.message);
     } finally {

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
+import { useToast } from "@/src/components/ToastProvider";
 import { Sheet } from "@/src/components/ui";
 import { IconButton } from "@/src/components/widgets";
 import { colors, spacing, font, fontSize } from "@/src/theme";
@@ -25,6 +26,7 @@ export function ImportExport({
   importPath: string;
   onDone?: () => void;
 }) {
+  const { showToast } = useToast();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<"export" | "import" | null>(null);
 
@@ -33,9 +35,9 @@ export function ImportExport({
     try {
       const r = await exportCsv(exportPath);
       setOpen(false);
-      Alert.alert("Exported", `${r.count} ${label} exported to CSV.`);
+      showToast(`${r.count} ${label} exported to CSV.`);
     } catch (e: any) {
-      Alert.alert("Export failed", e?.message || "Please try again.");
+      showToast(e?.message || "Export failed.", "error");
     } finally {
       setBusy(null);
     }

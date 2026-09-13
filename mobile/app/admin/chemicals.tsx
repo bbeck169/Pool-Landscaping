@@ -104,10 +104,10 @@ export default function ChemicalProductsScreen() {
     try {
       if (editing.slug) {
         await api.patch(`/chemical-products/${editing.slug}`, payload);
-        Alert.alert("Saved", "Product updated.");
+        showToast("Product updated.");
       } else {
         await api.post("/chemical-products", payload);
-        Alert.alert("Saved", "Product created.");
+        showToast("Product created.");
       }
       closeEdit();
       await load();

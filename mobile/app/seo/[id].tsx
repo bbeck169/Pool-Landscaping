@@ -7,6 +7,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { Header } from "@/src/components/widgets";
 import { Card, PrimaryButton, Loading, StatusChip, Sheet } from "@/src/components/ui";
 
@@ -15,6 +16,7 @@ const fmtDate = (iso?: string) =>
 
 export default function SeoArticleDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { showToast } = useToast();
   const router = useRouter();
   const [art, setArt] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -66,7 +68,7 @@ export default function SeoArticleDetail() {
             try {
               const r = await api.post(`/seo/articles/${id}/publish`, { status });
               await load();
-              Alert.alert("Success ✅", `Post ${r.status} on WordPress.`);
+              showToast(`Post ${r.status} on WordPress.`);
             } catch (e: any) {
               Alert.alert("Publish failed", e.message);
             } finally {
@@ -80,7 +82,7 @@ export default function SeoArticleDetail() {
 
   const copyMarkdown = async () => {
     await Clipboard.setStringAsync(art?.body_markdown || "");
-    Alert.alert("Copied", "Article markdown copied to clipboard.");
+    showToast("Article markdown copied to clipboard.");
   };
 
   const scheduleAuto = async () => {
@@ -89,7 +91,7 @@ export default function SeoArticleDetail() {
       const r = await api.post(`/seo/articles/${id}/schedule`, { mode: "auto" });
       setSchedOpen(false);
       await load();
-      Alert.alert("Added to weekly queue ✅", `Will publish ${fmtDate(r.scheduled_for)}.`);
+      showToast(`Added to weekly queue — will publish ${fmtDate(r.scheduled_for)}.`);
     } catch (e: any) {
       Alert.alert("Failed", e.message);
     } finally {
@@ -103,7 +105,7 @@ export default function SeoArticleDetail() {
       const r = await api.post(`/seo/articles/${id}/schedule`, { mode: "manual", scheduled_for: when.toISOString() });
       setSchedOpen(false);
       await load();
-      Alert.alert("Scheduled ✅", `Will publish ${fmtDate(r.scheduled_for)}.`);
+      showToast(`Scheduled — will publish ${fmtDate(r.scheduled_for)}.`);
     } catch (e: any) {
       Alert.alert("Failed", e.message);
     } finally {

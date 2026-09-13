@@ -263,7 +263,7 @@ export default function More() {
                       onPress: async () => {
                         try {
                           await Clipboard.setStringAsync(text);
-                          Alert.alert("Copied", "Paste into an email or chat to support.");
+                          showToast("Paste into an email or chat to support.");
                         } catch {
                           Alert.alert("Copy failed", "Try Share instead.");
                         }
@@ -284,7 +284,7 @@ export default function More() {
                       style: "destructive",
                       onPress: async () => {
                         await clearDiagnostics();
-                        Alert.alert("Cleared", "Diagnostic breadcrumbs reset.");
+                        showToast("Diagnostic breadcrumbs reset.");
                       },
                     },
                     { text: "Cancel", style: "cancel" },

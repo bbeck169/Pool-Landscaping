@@ -27,6 +27,7 @@ import * as Sharing from "expo-sharing";
 import { api, api_base, getAuthToken } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { AuthedImage } from "@/src/components/files/AuthedImage";
 import { humanBytes, buildAuthedDownloadUrl } from "@/src/api/files";
 
@@ -80,6 +81,7 @@ function attUrl(a: HydratedAtt): string {
 
 export default function ChatThread() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { showToast } = useToast();
   const router = useRouter();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
@@ -343,7 +345,7 @@ export default function ChatThread() {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(dl.uri);
       } else {
-        Alert.alert("Downloaded", `File saved to cache.`);
+        showToast("File saved to cache.");
       }
     } catch (e: any) {
       Alert.alert("Download failed", e?.message || "");

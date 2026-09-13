@@ -14,6 +14,8 @@ import { useOnline, queuePhoto, pendingForJob, flushPendingPhotos, getCachedJobs
 import { enqueueJobArrive } from "@/src/services/sync/jobArrive";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, money, IMAGES , colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
+import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 // Phase 1 Offline Read — route hydrator cache + write-through.
 import {
   getCachedJobDetail, CK,
@@ -66,6 +68,7 @@ const openReportBtnText = {
 
 export default function JobDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { showToast } = useToast();
   const { user } = useAuth();
   const router = useRouter();
   const attendance = useAttendance();
@@ -96,6 +99,7 @@ export default function JobDetail() {
   const [editError, setEditError] = useState("");
   // P0 fix — user-visible error when load times out or fails completely.
   const [loadError, setLoadError] = useState("");
+  const [rawLoadError, setRawLoadError] = useState<unknown>(null);
 
   // Phase 47 follow-up — removed the "tech must be clocked in" redirect
   // that used to send technicians to `/(app)/schedule` here. Techs now
@@ -107,6 +111,7 @@ export default function JobDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError("");
+    setRawLoadError(null);
     try {
       // P0 fix: fire-and-forget — don't block the fetch on offline flushes.
       flushPendingMutations().catch(() => {});
@@ -164,6 +169,7 @@ export default function JobDetail() {
         // P0 fix: set user-visible error instead of blank screen.
         setJob(null);
         setOfflineRead(true);
+        setRawLoadError(e);
         setLoadError(
           e?.message === "__LOAD_TIMEOUT__"
             ? "Loading timed out. Check your connection and try again."
@@ -326,7 +332,7 @@ export default function JobDetail() {
         const optimistic = { ...job, status };
         setJob(optimistic);
         cacheJob(optimistic);
-        Alert.alert("Saved — will sync when online");
+        showToast("Saved — will sync when online", "info");
       }
     } catch {
       // Last resort — optimistic update + legacy queue.
@@ -334,7 +340,7 @@ export default function JobDetail() {
       setJob(optimistic);
       cacheJob(optimistic);
       await queueMutation(`/jobs/${id}`, { status });
-      Alert.alert("Saved — will sync when online");
+      showToast("Saved — will sync when online", "info");
     } finally {
       setBusy(false);
     }
@@ -368,16 +374,23 @@ export default function JobDetail() {
   if (loading) return <Loading testID="job-detail-loading" />;
   // P0 fix — timeout / network error with no cache → show retry UI.
   if (!job && !loading && loadError) {
+    const mapped = rawLoadError ? mapApiError(rawLoadError) : null;
+    const icon = mapped ? errorKindIcon(mapped.kind) : "warning-outline";
     return (
       <View style={styles.root} testID="job-detail-error">
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
           <Pressable style={[styles.backBtn, { top: insets.top + 8, left: 12, position: "absolute" }]} onPress={() => router.back()} testID="job-back-error">
             <Ionicons name="chevron-back" size={24} color={themeColors.onSurface} />
           </Pressable>
-          <Ionicons name="warning-outline" size={48} color={themeColors.muted} />
+          <Ionicons name={icon as any} size={48} color={themeColors.muted} />
           <Text style={{ fontFamily: themeFont.bold, fontSize: 18, color: themeColors.onSurface, marginTop: spacing.md, textAlign: "center" }} testID="job-detail-error-message">
-            {loadError}
+            {mapped?.title || loadError}
           </Text>
+          {mapped && mapped.message !== mapped.title && (
+            <Text style={{ fontFamily: themeFont.regular, fontSize: 14, color: themeColors.muted, marginTop: spacing.sm, textAlign: "center" }}>
+              {mapped.message}
+            </Text>
+          )}
           <Pressable
             style={{ marginTop: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: themeColors.brand, borderRadius: themeRadius.md }}
             onPress={load}
@@ -397,7 +410,7 @@ export default function JobDetail() {
           <Pressable style={[styles.backBtn, { top: insets.top + 8, left: 12, position: "absolute" }]} onPress={() => router.back()} testID="job-back-empty">
             <Ionicons name="chevron-back" size={24} color={themeColors.onSurface} />
           </Pressable>
-          <Ionicons name="cloud-offline-outline" size={48} color={themeColors.muted} />
+          <Ionicons name={online ? "help-circle-outline" : "cloud-offline-outline"} size={48} color={themeColors.muted} />
           <Text style={{ fontFamily: themeFont.bold, fontSize: 18, color: themeColors.onSurface, marginTop: spacing.md, textAlign: "center" }}>
             {online ? "Job not found" : "Not cached for offline"}
           </Text>

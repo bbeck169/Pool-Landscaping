@@ -82,7 +82,7 @@ export default function CustomerForm() {
           onlineFn: () => editing ? api.put(`/customers/${id}`, payload) : api.post("/customers", payload),
         });
         if (queued) {
-          Alert.alert("Saved offline", "Customer will sync when you're back online.");
+          showToast("Customer will sync when you're back online.", "info");
         }
         if (flippingOff && saved) {
           Alert.alert(

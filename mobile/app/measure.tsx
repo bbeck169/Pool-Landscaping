@@ -19,6 +19,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { AdminOnly } from "@/src/components/AdminOnly";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
 // Resolved by Metro via .native.tsx / .web.tsx platform extensions.
 // eslint-disable-next-line import/no-unresolved
@@ -74,6 +75,7 @@ export default function Measure() {
 
 function MeasureScreen() {
   const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
   const router = useRouter();
   const mapRef = useRef<any>(null);
 
@@ -187,7 +189,7 @@ function MeasureScreen() {
         ...computePayloadMetrics(),
       });
       setSaveOpen(false);
-      Alert.alert("Saved", attachLabel ? `Measurement saved to ${attachLabel.replace(/^.*?: /, "")}.` : "Measurement saved.");
+      showToast(attachLabel ? `Measurement saved to ${attachLabel.replace(/^.*?: /, "")}.` : "Measurement saved.");
     } catch (e: any) {
       Alert.alert("Save failed", e?.message || "Please try again.");
     } finally {

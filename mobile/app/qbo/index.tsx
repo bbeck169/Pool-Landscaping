@@ -4,12 +4,14 @@ import { View, Text, StyleSheet, ScrollView, RefreshControl, Alert } from "react
 import { router, useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Card, EmptyState, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
 
 export default function QboIndex() {
+  const { showToast } = useToast();
   const [conns, setConns] = useState<any[]>([]);
   const [configured, setConfigured] = useState(false);
   const [lastRun, setLastRun] = useState<any>(null);
@@ -38,7 +40,7 @@ export default function QboIndex() {
     setSyncing(true);
     try {
       await api.post("/qbo/sync/run-now", { qbo_connection_id: active.qbo_connection_id, force_full: false });
-      Alert.alert("Sync started", "Pulling latest from QuickBooks…");
+      showToast("Sync started — pulling latest from QuickBooks…", "info");
       await load();
     } catch (err: any) {
       Alert.alert("Failed", String(err?.message || err));

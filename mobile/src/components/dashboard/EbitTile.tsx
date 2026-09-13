@@ -22,6 +22,7 @@ import { useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 
 // Phase 53f · Feb-2026 — drill-down helpers. Convert a "YYYY-MM"
 // bucket into a ``{from, to}`` ISO range that the mobile
@@ -59,14 +60,14 @@ function pctDelta(cur: number, prev: number | undefined | null): number | null {
 export default function EbitTile() {
   const router = useRouter();
   const [data, setData] = useState<TrendResponse | null>(null);
-  const [error, setError] = useState<string>("");
+  const [error, setError] = useState<unknown>(null);
 
   const load = useCallback(() => {
-    setError("");
+    setError(null);
     setData(null);
     api.get("/ebit/trend?months=6&revenue_basis=cash")
       .then((body: TrendResponse) => setData(body))
-      .catch((e: any) => setError(e?.message || "EBIT unavailable"));
+      .catch((e: any) => setError(e));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -106,12 +107,14 @@ export default function EbitTile() {
         </Pressable>
       </View>
 
-      {error ? (
+      {error ? (() => {
+        const mapped = mapApiError(error);
+        return (
         <View style={styles.row}>
           <View style={styles.errorRow}>
-            <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+            <Ionicons name={errorKindIcon(mapped.kind) as any} size={16} color={colors.error} />
             <Text style={styles.errorText} testID="dashboard-ebit-tile-error">
-              EBIT unavailable
+              {mapped.title}
             </Text>
           </View>
           <Pressable
@@ -122,7 +125,8 @@ export default function EbitTile() {
             <Text style={styles.retry}>Retry</Text>
           </Pressable>
         </View>
-      ) : !data ? (
+        );
+      })() : !data ? (
         <Text style={styles.loading} testID="dashboard-ebit-tile-loading">
           Loading current-month EBIT…
         </Text>

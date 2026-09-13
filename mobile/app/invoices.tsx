@@ -6,6 +6,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize, money, statusMeta } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { Loading, EmptyState, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header, FilterRow } from "@/src/components/widgets";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
@@ -31,6 +32,7 @@ const FILTERS = [
 
 export default function Invoices() {
   const router = useRouter();
+  const { showToast } = useToast();
   const [data, setData] = useState<any>({ summary: null, invoices: [] });
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
@@ -73,7 +75,7 @@ export default function Invoices() {
       { text: "Confirm", onPress: async () => {
         try {
           await api.post("/invoices/bulk-mark-paid", { ids: [...bulk.selected] });
-          Alert.alert("Done", `${bulk.count} invoice${bulk.count !== 1 ? "s" : ""} marked as paid.`);
+          showToast(`${bulk.count} invoice${bulk.count !== 1 ? "s" : ""} marked as paid.`);
           exitSelectMode(); load();
         } catch (e: any) { Alert.alert("Error", e?.message || "Failed"); }
       }},
@@ -138,7 +140,7 @@ export default function Invoices() {
       await api.post(`/quotes/${payFor.id}/record-payment`, { amount: amt });
       setPayFor(null);
       await load();
-      Alert.alert("Payment recorded ✅");
+      showToast("Payment recorded");
     } catch (e: any) {
       Alert.alert("Failed", e.message);
     } finally {
@@ -160,7 +162,7 @@ export default function Invoices() {
             try {
               const r = await api.post(`/payments/charge-on-file/${inv.id}`, {});
               await load();
-              if (r.status === "succeeded") Alert.alert("Charged ✅", `${inv.pm_label} charged ${money(r.amount)}.`);
+              if (r.status === "succeeded") showToast(`${inv.pm_label} charged ${money(r.amount)}.`);
               else if (r.status === "processing") Alert.alert("ACH processing ⏳", "The bank payment is processing and will settle in a few days.");
               else if (r.status === "requires_action") Alert.alert("Action needed", "The customer must authenticate this payment in their portal.");
               else Alert.alert("Status", r.status);
@@ -178,7 +180,7 @@ export default function Invoices() {
   const requestMethod = async (inv: any) => {
     try {
       await api.post(`/payments/request-method/${inv.customer_id}`, {});
-      Alert.alert("Request sent ✅", `${formatCustomerName(inv)} was asked to add a card/bank on file.`);
+      showToast(`${formatCustomerName(inv)} was asked to add a card/bank on file.`);
     } catch (e: any) {
       Alert.alert("Failed", e.message);
     }

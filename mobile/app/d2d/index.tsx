@@ -7,6 +7,8 @@ import { useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
 import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
+import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import { Header } from "@/src/components/widgets";
 import { Loading, Sheet, PrimaryButton, EmptyState } from "@/src/components/ui";
 import MapCanvas from "@/src/components/d2d/MapCanvas";
@@ -38,6 +40,7 @@ function optimizeRoute(points: any[], start: { lat: number; lng: number }) {
 
 export default function D2DCanvass() {
   const [knocks, setKnocks] = useState<any[]>([]);
+  const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [region, setRegion] = useState<any>({ latitude: 33.7, longitude: -112.3, latitudeDelta: 0.05, longitudeDelta: 0.05 });
   const [sheet, setSheet] = useState(false);
@@ -55,7 +58,7 @@ export default function D2DCanvass() {
   const [soldSheet, setSoldSheet] = useState(false);
   const [route, setRoute] = useState<any[] | null>(null);
   const [routeMiles, setRouteMiles] = useState(0);
-  const [soldError, setSoldError] = useState<string | null>(null);
+  const [soldError, setSoldError] = useState<unknown>(null);
   const [soldProp, setSoldProp] = useState<any>(null);
   const [hideWalked, setHideWalked] = useState(false);
   const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
@@ -135,7 +138,7 @@ export default function D2DCanvass() {
       const cust = await api.post(`/leads/${l.id}/convert`, {});
       setLeadSheet(false);
       setOpenLeads((prev) => prev.filter((x) => x.id !== l.id));
-      Alert.alert("Converted 🎉", `${cust.name} is now a customer.`);
+      showToast(`Converted 🎉 — ${cust.name} is now a customer.`);
     } catch (e: any) {
       Alert.alert("Error", e.message || "Could not convert this lead.");
     } finally {
@@ -227,7 +230,7 @@ export default function D2DCanvass() {
         Alert.alert("Leads refreshed", added > 0 ? `Added ${added} new lead${added === 1 ? "" : "s"}.` : "No new leads — your list is up to date.");
       }
     } catch (e: any) {
-      setSoldError(e.message || "Zillow data is unavailable right now.");
+      setSoldError(e);
       setTab("sold");
       if (!silent) Alert.alert("Couldn't load", e.message || "Zillow data is unavailable right now.");
     } finally {
@@ -375,7 +378,7 @@ export default function D2DCanvass() {
       const cust = await api.post(`/d2d/knocks/${form.id}/convert`, {});
       setSheet(false);
       await load();
-      Alert.alert("Converted 🎉", `${cust.name} is now a customer.`);
+      showToast(`Converted 🎉 — ${cust.name} is now a customer.`);
     } catch (e: any) {
       Alert.alert("Error", e.message || "Could not convert.");
     } finally {
@@ -570,8 +573,8 @@ export default function D2DCanvass() {
             </View>
           ) : soldError && soldLeads.length === 0 ? (
             <View style={styles.errorBox} testID="d2d-sold-error">
-              <Ionicons name="cloud-offline-outline" size={26} color={colors.error} />
-              <Text style={styles.errorText}>{soldError}</Text>
+              <Ionicons name={errorKindIcon(mapApiError(soldError).kind) as any} size={26} color={colors.error} />
+              <Text style={styles.errorText}>{mapApiError(soldError).message}</Text>
               <Pressable style={styles.retryBtn} onPress={() => loadSold()} testID="d2d-sold-retry">
                 <Ionicons name="refresh" size={15} color="#fff" />
                 <Text style={styles.retryText}>Try again</Text>

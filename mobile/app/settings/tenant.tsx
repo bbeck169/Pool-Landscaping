@@ -15,6 +15,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 
 const TIMEZONES = [
@@ -39,6 +40,7 @@ function relativeTime(iso: string) {
 
 export default function TenantSettingsScreen() {
   const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
   const router = useRouter();
   const { user } = useAuth();
   const role = String((user as any)?.role || "");
@@ -64,7 +66,7 @@ export default function TenantSettingsScreen() {
     try {
       const updated = await api.patch("/tenants/mine/settings", patch);
       setData(updated);
-      Alert.alert("Saved ✅");
+      showToast("Saved");
     } catch (e: any) {
       Alert.alert("Failed", e.message || "Update failed");
     } finally {

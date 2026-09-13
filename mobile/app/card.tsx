@@ -10,6 +10,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, brandGradient } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
@@ -28,6 +29,7 @@ const FALLBACK_COMPANY = {
 };
 
 export default function BusinessCard() {
+  const { showToast } = useToast();
   const { user } = useAuth();
   // Phase 56.3.C follow-up — technicians see Company card only. No
   // toggle, no "My card" surface, regardless of department.
@@ -75,7 +77,7 @@ export default function BusinessCard() {
     try {
       if (Platform.OS === "web" || !(await Sharing.isAvailableAsync())) {
         await Clipboard.setStringAsync(vcard);
-        Alert.alert("Contact copied", "The contact details were copied to your clipboard.");
+        showToast("Contact details copied to clipboard.");
         return;
       }
       const uri = `${FileSystem.cacheDirectory}${title.replace(/\s+/g, "_")}.vcf`;

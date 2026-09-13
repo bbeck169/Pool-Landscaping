@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading, Sheet, PrimaryButton, EmptyState } from "@/src/components/ui";
@@ -23,6 +24,7 @@ function weekDays(): { iso: string; label: string }[] {
 }
 
 export default function RouteCoverage() {
+  const { showToast } = useToast();
   const [techs, setTechs] = useState<any[]>([]);
   const [active, setActive] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,7 +62,7 @@ export default function RouteCoverage() {
       const res = await api.post("/coverage", { source_technician_id: source, target_technician_id: target, scope, date });
       setSheet(false);
       await load();
-      Alert.alert("Route covered ✓", `${res.job_count} stop(s) moved to ${res.target_technician_name} for ${res.label}. Reverts after Saturday.`);
+      showToast(`${res.job_count} stop(s) moved to ${res.target_technician_name} for ${res.label}. Reverts after Saturday.`);
     } catch (e: any) {
       Alert.alert("Couldn't move route", e.message || "Try a different day or technician.");
     } finally {

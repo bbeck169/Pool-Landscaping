@@ -167,7 +167,7 @@ export default function SendServiceRecordsLinkModal({
   const handleCopyLink = useCallback(async () => {
     if (!portalUrl) return;
     await Clipboard.setStringAsync(portalUrl);
-    Alert.alert("Copied", "Portal link copied to clipboard");
+    showToast("Portal link copied to clipboard");
   }, [portalUrl]);
 
   const canSend = sendsRemaining === null || sendsRemaining > 0;

@@ -8,6 +8,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { Loading, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, JobCard } from "@/src/components/widgets";
 import CustomerEquipmentLibrary from "@/src/components/customers/CustomerEquipmentLibrary";
@@ -30,6 +31,7 @@ import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { showToast } = useToast();
   const { user, startImpersonation } = useAuth();
   const router = useRouter();
   const [c, setC] = useState<any>(null);
@@ -218,7 +220,7 @@ export default function CustomerDetail() {
     setRequesting(true);
     try {
       await api.post(`/customers/${id}/send-card-add-link`, {});
-      Alert.alert("Link sent ✅", `${c.name} will receive an email + SMS to add a card.`);
+      showToast(`${c.name} will receive an email + SMS to add a card.`);
     } catch (e: any) {
       Alert.alert("Failed", e.message || "Please try again.");
     } finally {
@@ -236,7 +238,7 @@ export default function CustomerDetail() {
       setAdjustOpen(false);
       setAdjAmount("");
       setAdjReason("");
-      Alert.alert("Adjusted ✅", `Credit balance updated.`);
+      showToast("Credit balance updated.");
       loadCredits();
       load();
     } catch (e: any) {

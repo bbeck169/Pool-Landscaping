@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
@@ -58,6 +59,7 @@ function resolveAvatarSrc(avatarUrl?: string, fileId?: string | null): string | 
 }
 
 export default function AIEmployees() {
+  const { showToast } = useToast();
   const router = useRouter();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,7 +90,7 @@ export default function AIEmployees() {
       setItems((prev) =>
         prev.map((r) => (r.id === eid ? { ...r, avatar_url } : r)),
       );
-      Alert.alert("Success", "Avatar updated.");
+      showToast("Avatar updated.");
       setAvatarTarget(null);
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Failed to update avatar.");

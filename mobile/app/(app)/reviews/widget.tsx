@@ -7,8 +7,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Header } from "@/src/components/widgets";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 
 export default function ReviewsWidgetScreen() {
+  const { showToast } = useToast();
   const insets = useSafeAreaInsets();
   const [slug, setSlug] = useState("");
 
@@ -24,7 +26,7 @@ export default function ReviewsWidgetScreen() {
   const copy = async (t: string, label: string) => {
     if (!t) return;
     await Clipboard.setStringAsync(t);
-    Alert.alert("Copied", `${label} copied to clipboard`);
+    showToast(`${label} copied to clipboard.`);
   };
 
   return (

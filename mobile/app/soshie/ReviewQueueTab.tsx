@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { Card, PrimaryButton, Sheet, EmptyState } from "@/src/components/ui";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
@@ -139,6 +140,7 @@ function ActionRow({
 }: {
   action: any; onDone: () => void; disabled?: boolean;
 }) {
+  const { showToast } = useToast();
   const [busy, setBusy] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const flags: any[] = action.moderation_flags || [];
@@ -156,11 +158,11 @@ function ActionRow({
         `/ai-employees/actions/${action.id}/approve?confirm_flags=1`,
       );
       if (r?.status === "published") {
-        Alert.alert("Published", "Action published successfully.");
+        showToast("Action published successfully.");
       } else if (r?.status === "failed") {
         Alert.alert("Failed", r?.result?.error || "Publisher returned failure.");
       } else {
-        Alert.alert("Approved", `Status: ${r?.status}`);
+        showToast(`Approved — Status: ${r?.status}`);
       }
       onDone();
     } catch (e: any) {

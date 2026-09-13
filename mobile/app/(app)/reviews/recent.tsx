@@ -41,7 +41,7 @@ export default function ReviewsRecentScreen() {
     setSaving(true);
     try {
       await updateReview(selected.id, { admin_response: response, visible_on_widget: visible });
-      Alert.alert("Saved", "Review updated");
+      showToast("Review updated");
       setSelected(null);
       reload();
     } catch (e: any) { Alert.alert("Error", e.message); }

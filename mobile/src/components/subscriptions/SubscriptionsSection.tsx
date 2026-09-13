@@ -19,6 +19,7 @@ import type { SubRow, SubPrice } from "@/src/api/subscriptions";
 import { listPaymentMethods } from "@/src/api/stripe";
 import type { PaymentMethodRow as PMRow } from "@/src/api/stripe";
 import { useOnline } from "@/src/offline";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
 /* ═══════════ Helpers ═══════════ */
@@ -497,6 +498,7 @@ function CancelModal({
 type Props = { customerId: string; canWrite?: boolean };
 
 export default function SubscriptionsSection({ customerId, canWrite = true }: Props) {
+  const { showToast } = useToast();
   const online = useOnline();
   const [rows, setRows] = useState<SubRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -522,7 +524,7 @@ export default function SubscriptionsSection({ customerId, canWrite = true }: Pr
     setCreateOpen(false);
     setEditRow(null);
     setCancelRow(null);
-    Alert.alert("Done", msg);
+    showToast(msg);
     await load();
   };
 

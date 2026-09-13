@@ -79,7 +79,7 @@ export default function RingCentralSettings() {
       const fresh = await api.put("/settings/ringcentral", patch);
       setDraft(fresh || {});
       setApiKeyInput("");
-      Alert.alert("Saved", "RingCentral settings updated.");
+      showToast("RingCentral settings updated.");
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Save failed");
     } finally {

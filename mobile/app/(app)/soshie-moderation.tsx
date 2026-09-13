@@ -28,6 +28,7 @@ import {
   markModerationPosted,
   type ModerationPost,
 } from "@/src/api/soshieModeration";
+import { useToast } from "@/src/components/ToastProvider";
 
 /* ═══════════ Status Tabs ═══════════ */
 
@@ -98,16 +99,17 @@ function ModerationRow({
   tab: string;
   onAction: () => void;
 }) {
+  const { showToast } = useToast();
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   const handleApprove = async () => {
     setBusyAction("approve");
     try {
       await approveModerationPost(post.id);
-      Alert.alert("Done", `Approved · queued for publish (${post.platform || "unknown"})`);
+      showToast(`Approved · queued for publish (${post.platform || "unknown"})`);
       onAction();
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Approve failed");
+      showToast(e?.message || "Approve failed.", "error");
     } finally {
       setBusyAction(null);
     }
@@ -123,7 +125,7 @@ function ModerationRow({
           setBusyAction("reject");
           try {
             await rejectModerationPost(post.id);
-            Alert.alert("Done", "Post rejected");
+            showToast("Post rejected");
             onAction();
           } catch (e: any) {
             Alert.alert("Error", e?.message || "Reject failed");
@@ -143,7 +145,7 @@ function ModerationRow({
       const mediaUrl = post.media_url || post.draft?.media_url || "";
       const payload = mediaUrl ? `${text}\n\n${mediaUrl}` : text;
       await Clipboard.setStringAsync(payload);
-      Alert.alert("Copied", "Post content copied to clipboard");
+      showToast("Post content copied to clipboard");
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Copy failed");
     } finally {
@@ -155,7 +157,7 @@ function ModerationRow({
     setBusyAction("posted");
     try {
       await markModerationPosted(post.id);
-      Alert.alert("Done", "Marked as posted");
+      showToast("Marked as posted");
       onAction();
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Mark posted failed");

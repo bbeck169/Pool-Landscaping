@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { Header } from "@/src/components/widgets";
 import { Loading, Sheet, PrimaryButton, EmptyState } from "@/src/components/ui";
 import { computeEstimate, CATEGORIES, CATEGORY_META, EstimateLine } from "@/src/utils/estimate";
@@ -16,6 +17,7 @@ const emptyLine = (): EstimateLine => ({ category: "Material", description: "", 
 
 export default function EstimateBuilder() {
   const router = useRouter();
+  const { showToast } = useToast();
   const params = useLocalSearchParams<{
     id: string; customerId?: string; customerName?: string; title?: string;
     lineDesc?: string; lineQty?: string; lineCost?: string; category?: string;
@@ -130,7 +132,7 @@ export default function EstimateBuilder() {
     try {
       await api.post("/estimate-templates", { name: tplName.trim(), line_items: lines, overhead_pct: parseFloat(overhead) || 0, margin_pct: parseFloat(margin) || 0 });
       setSaveTplSheet(false); setTplName("");
-      Alert.alert("Saved", "Template saved for reuse.");
+      showToast("Template saved for reuse.");
     } catch (e: any) { Alert.alert("Error", e.message || "Could not save template."); }
   };
 
@@ -155,7 +157,7 @@ export default function EstimateBuilder() {
     setSaving(true);
     try {
       if (isNew) { const e = await api.post("/estimates", buildBody()); router.replace(`/estimator/${e.id}`); }
-      else { await api.put(`/estimates/${id}`, buildBody()); Alert.alert("Saved", "Estimate updated."); }
+      else { await api.put(`/estimates/${id}`, buildBody()); showToast("Estimate updated."); }
     } catch (e: any) { Alert.alert("Error", e.message || "Could not save."); }
     finally { setSaving(false); }
   };

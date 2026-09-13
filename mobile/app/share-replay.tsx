@@ -11,6 +11,7 @@ import * as Clipboard from "expo-clipboard";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
@@ -31,6 +32,7 @@ function _publicUrl(shareId: string): string {
 }
 
 export default function ShareReplay() {
+  const { showToast } = useToast();
   const params = useLocalSearchParams<{ userId?: string; date?: string }>();
   const [techId, setTechId] = useState<string>(params.userId || "");
   const [date, setDate] = useState<string>(params.date ||
@@ -90,9 +92,9 @@ export default function ShareReplay() {
     const url = _publicUrl(active.share_id);
     try {
       await Clipboard.setStringAsync(url);
-      Alert.alert("Link copied", url);
+      showToast("Link copied to clipboard.");
     } catch {
-      Alert.alert("Copy failed", url);
+      showToast("Copy failed — URL not available.", "error");
     }
   };
 

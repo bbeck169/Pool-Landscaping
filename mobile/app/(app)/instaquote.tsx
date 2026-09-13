@@ -13,6 +13,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, fontSize, font } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { useAuth } from "@/src/auth";
@@ -29,6 +30,7 @@ const STATUS_COLOURS: Record<string, string> = {
 };
 
 export default function InstaQuoteMobile() {
+  const { showToast } = useToast();
   const router = useRouter();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin" || (user?.role as any) === "super_admin";
@@ -67,11 +69,11 @@ export default function InstaQuoteMobile() {
     setBusy(true);
     try {
       const r = await api.post(`/instaquote/submissions/${id}/convert`);
-      Alert.alert("Converted", `Deal #${r.deal_id?.slice(0, 6)}…`);
+      showToast(`Converted — Deal #${r.deal_id?.slice(0, 6)}…`);
       setSelected(null);
       load();
     } catch (e: any) {
-      Alert.alert("Convert failed", e?.message || "");
+      showToast(e?.message || "Convert failed.", "error");
     } finally {
       setBusy(false);
     }
@@ -81,7 +83,7 @@ export default function InstaQuoteMobile() {
     setBusy(true);
     try {
       await api.post(`/instaquote/submissions/${id}/dismiss`, { note: "" });
-      Alert.alert("Dismissed");
+      showToast("Dismissed");
       setSelected(null);
       load();
     } catch (e: any) {

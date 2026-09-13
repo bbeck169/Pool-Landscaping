@@ -17,6 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { FileUpload } from "@/src/components/files/FileUpload";
@@ -45,6 +46,7 @@ function InitialBadge({ name, size = 96 }: { name?: string; size?: number }) {
 }
 
 export default function ProfileScreen() {
+  const { showToast } = useToast();
   const { user: ctxUser } = useAuth();
   const [me, setMe] = useState<any>(null);
   const [saving, setSaving] = useState(false);
@@ -62,9 +64,9 @@ export default function ProfileScreen() {
     try {
       const res = await api.patch("/users/me", fields);
       setMe(res.user || { ...me, ...fields });
-      Alert.alert("Success", "Profile updated.");
+      showToast("Profile updated.");
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Update failed.");
+      showToast(e?.message || "Update failed.", "error");
     } finally {
       setSaving(false);
     }

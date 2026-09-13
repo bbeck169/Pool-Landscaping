@@ -144,7 +144,7 @@ export default function ProfitReport() {
         if (await SharingModule.isAvailableAsync()) {
           await SharingModule.shareAsync(dl.uri);
         } else {
-          Alert.alert("Downloaded", "CSV saved to cache.");
+          showToast("CSV saved to cache.");
         }
       }
     } catch (e: any) {

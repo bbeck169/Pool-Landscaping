@@ -22,6 +22,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Header } from "@/src/components/widgets";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, fontSize, radius, spacing } from "@/src/theme";
 import {
   getDeal, getDealEvents, listPipelines, moveDeal, wonDeal, lostDeal,
@@ -34,6 +35,7 @@ const centsToUsd = (c: number) =>
   })}`;
 
 export default function DealDetail() {
+  const { showToast } = useToast();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -99,7 +101,7 @@ export default function DealDetail() {
     try {
       const r = await convertDeal(id!);
       if (r.job_id) {
-        Alert.alert("Converted", `Job ${r.job_id.slice(0, 8)}… created`);
+        showToast(`Converted — Job ${r.job_id.slice(0, 8)}… created`);
       } else {
         Alert.alert("Marked won", r.reason || "No customer to attach.");
       }

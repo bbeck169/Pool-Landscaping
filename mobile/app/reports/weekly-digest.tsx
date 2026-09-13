@@ -61,7 +61,7 @@ export default function WeeklyDigest() {
         recipients: recipients.split(",").map((s) => s.trim()).filter(Boolean),
       };
       await api.post("/admin/weekly-digest/settings", body);
-      Alert.alert("Saved", "Weekly digest settings saved.");
+      showToast("Weekly digest settings saved.");
     } catch (err: any) {
       Alert.alert("Save failed", String(err?.message || err));
     } finally {

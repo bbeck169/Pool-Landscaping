@@ -20,6 +20,7 @@ import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 
 import { useAuth } from "@/src/auth";
+import { useToast } from "@/src/components/ToastProvider";
 import { api_base } from "@/src/api";
 import {
   getBusinessSettings,
@@ -44,6 +45,7 @@ function toAbsolute(url: string | null | undefined): string | null {
 
 export default function BusinessSettingsScreen() {
   const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
   const router = useRouter();
   const { user } = useAuth();
   const role = String((user as any)?.role || "");
@@ -120,7 +122,7 @@ export default function BusinessSettingsScreen() {
       const r = await patchBusinessSettings(patch);
       setEffective(r?.effective || {});
       setDirty(false);
-      Alert.alert("Saved ✅", "Business Settings saved.");
+      showToast("Business Settings saved.");
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Save failed");
     } finally {
@@ -153,7 +155,7 @@ export default function BusinessSettingsScreen() {
       const mimeType = asset.mimeType || "image/png";
       const body = await uploadLogo(asset.uri, fileName, mimeType);
       setLogoUrl(body.logo_url);
-      Alert.alert("Logo uploaded ✅");
+      showToast("Logo uploaded");
     } catch (e: any) {
       Alert.alert("Upload failed", e?.message || "Could not upload logo.");
     } finally {
@@ -172,7 +174,7 @@ export default function BusinessSettingsScreen() {
           try {
             await deleteLogo();
             setLogoUrl(null);
-            Alert.alert("Logo removed ✅");
+            showToast("Logo removed");
           } catch (e: any) {
             Alert.alert("Error", e?.message || "Remove failed.");
           } finally {

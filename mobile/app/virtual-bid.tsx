@@ -17,6 +17,7 @@ import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { ZillowAccess } from "@/src/components/ZillowAccess";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
@@ -35,6 +36,7 @@ export default function VirtualBid() {
 }
 
 function VirtualBidScreen() {
+  const { showToast } = useToast();
   const router = useRouter();
   const [address, setAddress] = useState("");
   const [loading, setLoading] = useState(false);
@@ -99,13 +101,11 @@ function VirtualBidScreen() {
     try {
       const res = await api.post("/property/save", savePayload({ create_lead: true }));
       setSaveOpen(false);
-      Alert.alert("Saved as lead", `${prop.address} was saved as a new lead with its photos.`, [
-        { text: "OK" },
-        { text: "View leads", onPress: () => router.push("/leads") },
-      ]);
+      showToast("Saved as lead — " + `${prop.address} saved with photos.`);
+      router.push("/leads");
       return res;
     } catch (e: any) {
-      Alert.alert("Save failed", e?.message || "Please try again.");
+      showToast(e?.message || "Save failed.", "error");
     } finally {
       setSaving(false);
     }
@@ -117,7 +117,7 @@ function VirtualBidScreen() {
     try {
       await api.post("/property/save", savePayload(kind === "customer" ? { customer_id: id } : { lead_id: id }));
       setSaveOpen(false);
-      Alert.alert("Saved", `Property & photos attached to ${label}.`);
+      showToast(`Property & photos attached to ${label}.`);
     } catch (e: any) {
       Alert.alert("Save failed", e?.message || "Please try again.");
     } finally {

@@ -14,6 +14,7 @@ import { router, useLocalSearchParams } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { Card, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
@@ -32,6 +33,7 @@ const PLATFORM_HINTS: Record<string, number> = {
 };
 
 export default function ResponseDraft() {
+  const { showToast } = useToast();
   const { mentionId, platform: platformParam } = useLocalSearchParams<{
     mentionId?: string; platform?: string;
   }>();
@@ -72,7 +74,7 @@ export default function ResponseDraft() {
       setBody(draft?.body || draft?.text || "");
       if (draft?.id) setDraftId(draft.id);
     } catch (err: any) {
-      Alert.alert("Draft failed", String(err?.message || err));
+      showToast(String(err?.message || err), "error");
     } finally {
       setGenerating(false);
     }
@@ -80,7 +82,7 @@ export default function ResponseDraft() {
 
   const copyBody = async () => {
     await Clipboard.setStringAsync(body);
-    Alert.alert("Copied", "The draft is on your clipboard.");
+    showToast("The draft is on your clipboard.");
   };
 
   const markPosted = async () => {
@@ -93,9 +95,9 @@ export default function ResponseDraft() {
       await api.post(`/aeo/response/drafts/${encodeURIComponent(draftId)}`, {
         action: "mark_posted",
       });
-      Alert.alert("Marked", "The draft is now marked as posted.");
+      showToast("The draft is now marked as posted.");
     } catch (err: any) {
-      Alert.alert("Failed", String(err?.message || err));
+      showToast(String(err?.message || err), "error");
     } finally {
       setPosting(false);
     }

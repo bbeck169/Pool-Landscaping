@@ -15,6 +15,7 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 
@@ -35,6 +36,7 @@ const NETWORKS: { key: NetKey; label: string; icon: any; limit: number }[] = [
 ];
 
 export default function SocialComposerMobile() {
+  const { showToast } = useToast();
   const { user } = useAuth();
   const router = useRouter();
 
@@ -117,15 +119,14 @@ export default function SocialComposerMobile() {
         scheduled_at: status === "scheduled" && scheduledAt ? scheduledAt.toISOString() : null,
         status,
       });
-      Alert.alert(
-        status === "scheduled" ? "Scheduled" : "Draft saved",
+      showToast(
         status === "scheduled"
-          ? "Post queued. Publishing wires up in Phase 18B."
+          ? "Post scheduled. Publishing wires up in Phase 18B."
           : "Draft saved. Publishing wires up in Phase 18B.",
-        [{ text: "OK", onPress: () => router.back() }],
       );
+      router.back();
     } catch (e: any) {
-      Alert.alert("Save failed", e?.message || "Could not save the post.");
+      showToast(e?.message || "Save failed.", "error");
     } finally {
       setSaving(false);
     }
@@ -150,13 +151,10 @@ export default function SocialComposerMobile() {
         status: "draft",
       });
       await api.post(`/social/posts/${post.id}/submit-for-approval`, {});
-      Alert.alert(
-        "Submitted for approval",
-        "An admin will review this post before it schedules.",
-        [{ text: "OK", onPress: () => router.back() }],
-      );
+      showToast("Submitted for approval — an admin will review before scheduling.");
+      router.back();
     } catch (e: any) {
-      Alert.alert("Submit failed", e?.message || "Could not submit the post.");
+      showToast(e?.message || "Submit failed.", "error");
     } finally {
       setSaving(false);
     }

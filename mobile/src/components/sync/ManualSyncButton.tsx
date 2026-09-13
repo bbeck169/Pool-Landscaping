@@ -35,7 +35,7 @@ export function ManualSyncButton() {
       } else if (queueResult.succeeded > 0) {
         Alert.alert("Sync complete", `${queueResult.succeeded} change${queueResult.succeeded > 1 ? "s" : ""} synced.`);
       } else {
-        Alert.alert("All synced", "No pending changes.");
+        showToast("No pending changes.");
       }
     } catch (e: any) {
       Alert.alert("Sync error", e?.message || "Unknown error");

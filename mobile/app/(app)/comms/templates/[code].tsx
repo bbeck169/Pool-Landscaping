@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Header } from "@/src/components/widgets";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import {
   getEmailTemplate,
   getSmsTemplate,
@@ -38,7 +39,7 @@ export default function CommsTemplateDetailScreen() {
 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const [previewData, setPreviewData] = useState<any>(null);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -52,7 +53,7 @@ export default function CommsTemplateDetailScreen() {
         : getSmsTemplate(code!);
       fetcher
         .then((d) => setData(d))
-        .catch((e: any) => setError(e.message || "Failed to load"))
+        .catch((e: any) => setError(e))
         .finally(() => setLoading(false));
     }, [code, isEmail])
   );
@@ -66,7 +67,7 @@ export default function CommsTemplateDetailScreen() {
       setPreviewData(d);
       setPreviewVisible(true);
     } catch (e: any) {
-      setError(e.message || "Preview failed");
+      setError(e);
     } finally {
       setPreviewLoading(false);
     }
@@ -86,12 +87,13 @@ export default function CommsTemplateDetailScreen() {
   }
 
   if (error || !data) {
+    const mapped = error ? mapApiError(error) : null;
     return (
       <View style={styles.root}>
         <Header title="Template" back />
         <View style={styles.errorWrap}>
-          <Ionicons name="alert-circle-outline" size={28} color={colors.error} />
-          <Text style={styles.errorText}>{error || "Template not found"}</Text>
+          <Ionicons name={(mapped ? errorKindIcon(mapped.kind) : "alert-circle-outline") as any} size={28} color={colors.error} />
+          <Text style={styles.errorText}>{mapped?.message || "Template not found"}</Text>
         </View>
       </View>
     );

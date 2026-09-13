@@ -24,6 +24,7 @@ import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useToast } from "@/src/components/ToastProvider";
 import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton } from "@/src/components/ui";
@@ -57,6 +58,7 @@ const LEGACY_DEPT_MAP: Record<string, string> = {
 
 export default function Team() {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -315,7 +317,7 @@ export default function Team() {
       <ResetPasswordModal
         target={resetTarget}
         onClose={() => setResetTarget(null)}
-        onDone={(msg) => { setResetTarget(null); Alert.alert("Done", msg); load(); }}
+        onDone={(msg) => { setResetTarget(null); showToast(msg); load(); }}
       />
 
       {/* Delete Confirm Modal */}
@@ -324,7 +326,7 @@ export default function Team() {
         onClose={() => setDeleteTarget(null)}
         onDone={(name) => {
           setDeleteTarget(null);
-          Alert.alert("Deleted", `${name} has been removed from the team.`);
+          showToast(`${name} has been removed from the team.`);
           load();
         }}
       />

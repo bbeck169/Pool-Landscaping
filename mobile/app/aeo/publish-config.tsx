@@ -12,6 +12,7 @@ import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { Card, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
@@ -64,6 +65,7 @@ type ProviderState = {
 };
 
 export default function PublishConfig() {
+  const { showToast } = useToast();
   const [statuses, setStatuses] = useState<Record<Provider, ProviderState>>({
     netlify: {}, vercel: {}, cloudflare_pages: {},
   });
@@ -108,10 +110,10 @@ export default function PublishConfig() {
     setSaving(p);
     try {
       await api.post("/aeo/llms-txt/publish/config", { provider: p, ...drafts[p] });
-      Alert.alert("Saved", `${PROVIDER_META[p].title} config saved.`);
+      showToast(`${PROVIDER_META[p].title} config saved.`);
       await load();
     } catch (err: any) {
-      Alert.alert("Save failed", String(err?.message || err));
+      showToast(String(err?.message || err), "error");
     } finally {
       setSaving(null);
     }
@@ -121,10 +123,12 @@ export default function PublishConfig() {
     setTesting(p);
     try {
       const j: any = await api.post(`/aeo/llms-txt/publish/test/${p}`, {});
-      Alert.alert("Test result",
-        j?.ok ? "Connection successful." : (j?.error || "Test failed."));
+      showToast(
+        j?.ok ? "Connection successful." : (j?.error || "Test failed."),
+        j?.ok ? "success" : "error",
+      );
     } catch (err: any) {
-      Alert.alert("Test failed", String(err?.message || err));
+      showToast(String(err?.message || err), "error");
     } finally {
       setTesting(null);
     }
@@ -134,11 +138,13 @@ export default function PublishConfig() {
     setPublishing(p);
     try {
       const j: any = await api.post(`/aeo/llms-txt/publish/${p}`, {});
-      Alert.alert("Published",
-        j?.ok ? "llms.txt published successfully." : (j?.error || "Publish failed."));
+      showToast(
+        j?.ok ? "llms.txt published successfully." : (j?.error || "Publish failed."),
+        j?.ok ? "success" : "error",
+      );
       await load();
     } catch (err: any) {
-      Alert.alert("Publish failed", String(err?.message || err));
+      showToast(String(err?.message || err), "error");
     } finally {
       setPublishing(null);
     }

@@ -54,6 +54,7 @@ import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import RainFlag from "@/src/components/weather/RainFlag";
 import WeekStrip from "@/src/components/schedule/WeekStrip";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import { useToast } from "@/src/components/ToastProvider";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
 import ScheduleJobEditSheet from "@/src/components/schedule/ScheduleJobEditSheet";
@@ -170,6 +171,7 @@ const isRecurring = (j: Job): boolean =>
 const LOADING_WATCHDOG_MS = 20_000;
 
 function ScheduleCalendarInner() {
+  const { showToast } = useToast();
   const router = useRouter();
   const { user } = useAuth();
   const role = (user?.role as string) || "";
@@ -486,11 +488,11 @@ function ScheduleCalendarInner() {
         setBusy(true);
         try {
           await api.post("/jobs/bulk-soft-delete", { job_ids: [...checked] });
-          Alert.alert("Deleted", `${checked.size} job${checked.size === 1 ? "" : "s"} removed.`);
+          showToast(`${checked.size} job${checked.size === 1 ? "" : "s"} removed.`);
           setChecked(new Set());
           await load(true);
         } catch (e: any) {
-          Alert.alert("Delete failed", e.message || "Unknown error");
+          showToast(e?.message || "Delete failed.", "error");
         } finally { setBusy(false); }
       },
     });

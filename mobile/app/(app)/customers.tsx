@@ -10,6 +10,7 @@ import { writeCache, readCache } from "@/src/services/readCache";
 // K40 removed the AsyncStorage persistence for status + portal filters.
 // (Import stripped by K40.)
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
 import { ImportExport } from "@/src/components/ImportExport";
@@ -19,6 +20,7 @@ import { formatCustomerName } from "@/src/utils/formatCustomerName";
 
 export default function Customers() {
   const router = useRouter();
+  const { showToast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   // Feb-2026 · Bulk-mark-inactive — manager is included per the dispatch
@@ -157,7 +159,7 @@ export default function Customers() {
         text: "Delete", style: "destructive", onPress: async () => {
           try {
             await api.post("/customers/bulk-delete", { ids: [...bulk.selected] });
-            Alert.alert("Deleted", `${bulk.count} customer${bulk.count !== 1 ? "s" : ""} removed.`);
+            showToast(`${bulk.count} customer${bulk.count !== 1 ? "s" : ""} removed.`);
             exitSelectMode();
             load(search, 1, includeDeleted);
           } catch (e: any) { Alert.alert("Error", e?.message || "Delete failed"); }
@@ -189,10 +191,7 @@ export default function Customers() {
         customer_ids: ids, target_status: "inactive",
       });
       const n = res?.modified ?? res?.matched ?? 0;
-      Alert.alert(
-        "Marked inactive",
-        `${n} customer${n === 1 ? "" : "s"} marked inactive.`,
-      );
+      showToast(`${n} customer${n === 1 ? "" : "s"} marked inactive.`);
       setInactiveModalOpen(false);
       exitSelectMode();
       load(search, 1, includeDeleted);
@@ -241,7 +240,7 @@ export default function Customers() {
     try {
       const res: any = await api.post(`/customers/${cust.id}/send-card-add-link`, {});
       const to = [res?.email_recipient, res?.sms_recipient].filter(Boolean).join(" and ");
-      Alert.alert("Success", to ? `Add-card link sent to ${to}` : "Add-card link sent");
+      showToast(to ? `Add-card link sent to ${to}` : "Add-card link sent");
     } catch (e: any) {
       const msg = e?.detail?.code === "RATE_LIMITED"
         ? "Please wait a few minutes before sending another link."

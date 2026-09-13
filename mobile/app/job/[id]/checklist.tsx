@@ -32,6 +32,8 @@ import * as Clipboard from "expo-clipboard";
 import { api, ApiError } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
+import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import { Header } from "@/src/components/widgets";
 // Feb-2026 · Phase 1 offline foundation — cache customer on the
 // close-out lookup + surface the offline pill in the header.
@@ -101,6 +103,7 @@ async function _mobileComputeOutlierNames(report: any, job: any): Promise<string
 
 export default function JobChecklistScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { showToast } = useToast();
   const router = useRouter();
   const { user } = useAuth();
 
@@ -122,6 +125,7 @@ export default function JobChecklistScreen() {
   // P0 429 fix — unified pill state + retry tracking.
   const [pillState, setPillState] = useState<SavePillState>({ kind: "synced" });
   const [closeJobError, setCloseJobError] = useState<string | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<unknown>(null);
   const closeJobPayloadRef = useRef<any>(null);
   // P0 Close-Job silent no-op fix — in-tree Modals replace Alert.alert
   // which silently no-ops on iOS 17 + Hermes (detached UIScene bug).
@@ -249,6 +253,7 @@ export default function JobChecklistScreen() {
       setReport(reportResp);
       reportRef.current = reportResp;
       setOfflineMode(false);
+      setBootstrapError(null);
       // Cache the bootstrap for later offline access (both stores).
       await cacheJobBootstrap(String(id), { job: jobResp, report: reportResp });
       await writeCache(CK.jobBootstrap(String(id)), { job: jobResp, report: reportResp }).catch(() => {});
@@ -258,6 +263,7 @@ export default function JobChecklistScreen() {
       const isApiErr = e instanceof ApiError;
       const status: number | null = isApiErr ? e.status : null;
       const msg = e?.message || "Unknown error";
+      setBootstrapError(e);
 
       // Log to telemetry (best-effort)
       _logBootstrapFailure(`/jobs/${id}+service-report`, status, msg);
@@ -565,7 +571,7 @@ export default function JobChecklistScreen() {
           "You're offline — the draft is queued and will sync when your device reconnects.",
         );
       } else {
-        Alert.alert("Saved", "Draft saved.");
+        showToast("Draft saved.");
       }
     } else {
       Alert.alert("Save failed", result.error || "Try again.");
@@ -764,14 +770,18 @@ export default function JobChecklistScreen() {
   }
 
   if (!report || !job) {
+    const mapped = bootstrapError ? mapApiError(bootstrapError) : null;
+    const icon = mapped ? errorKindIcon(mapped.kind) : "cloud-offline-outline";
+    const title = mapped ? mapped.title : (!online ? "Not cached for offline" : "Unable to load checklist.");
+    const body = mapped ? mapped.message : (!online ? "Connect to Wi-Fi or cellular once to enable offline access for this job." : "Check your connection and try again.");
     return (
       <View style={styles.centered} testID="checklist-error">
-        <Ionicons name="cloud-offline-outline" size={48} color={colors.muted} />
+        <Ionicons name={icon as any} size={48} color={colors.muted} />
         <Text style={[styles.forbiddenText, { marginTop: spacing.md }]}>
-          {!online ? "Not cached for offline" : "Unable to load checklist."}
+          {title}
         </Text>
         <Text style={{ fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, textAlign: "center", marginTop: spacing.sm, paddingHorizontal: spacing.lg }} testID="checklist-not-cached-msg">
-          {!online ? "Connect to Wi-Fi or cellular once to enable offline access for this job." : "Check your connection and try again."}
+          {body}
         </Text>
         <Pressable style={{ marginTop: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: colors.brand, borderRadius: radius.md }} onPress={() => router.back()} testID="checklist-go-back-btn">
           <Text style={{ fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" }}>Go back</Text>

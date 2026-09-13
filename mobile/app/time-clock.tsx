@@ -22,6 +22,7 @@ import { useAuth } from "@/src/auth";
 import { api, getAuthToken } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 import * as GpsTracker from "@/src/services/gpsTracker";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
@@ -31,6 +32,7 @@ const PING_MS = 30_000;
 
 export default function TimeClockScreen() {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const router = useRouter();
 
   const [jobs, setJobs] = useState<any[]>([]);
@@ -197,7 +199,7 @@ export default function TimeClockScreen() {
         setEntry(r);
         setInGeofence(!r.out_of_geofence);
       }
-      if (queued) Alert.alert("Queued", "Clock-in will sync when online.");
+      if (queued) showToast("Clock-in queued — will sync when online.", "info");
       // G1: Start GPS batch tracker
       const token = await getAuthToken();
       GpsTracker.startTracking(token).then((ok) => setGpsActive(ok)).catch(() => {});

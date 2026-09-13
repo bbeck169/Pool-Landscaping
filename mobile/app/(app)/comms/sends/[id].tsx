@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Header } from "@/src/components/widgets";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import { getSend } from "@/src/api/comms";
 import SendStatusPill from "@/src/components/comms/SendStatusPill";
 import ChannelIcon from "@/src/components/comms/ChannelIcon";
@@ -28,7 +29,7 @@ export default function CommsSendDetailScreen() {
 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -36,7 +37,7 @@ export default function CommsSendDetailScreen() {
       setError("");
       getSend(id!)
         .then((d) => setData(d))
-        .catch((e: any) => setError(e.message || "Failed to load"))
+        .catch((e: any) => setError(e))
         .finally(() => setLoading(false));
     }, [id])
   );
@@ -55,12 +56,13 @@ export default function CommsSendDetailScreen() {
   }
 
   if (error || !data) {
+    const mapped = error ? mapApiError(error) : null;
     return (
       <View style={styles.root}>
         <Header title="Send Detail" back />
         <View style={styles.errorWrap}>
-          <Ionicons name="alert-circle-outline" size={28} color={colors.error} />
-          <Text style={styles.errorText}>{error || "Send not found"}</Text>
+          <Ionicons name={(mapped ? errorKindIcon(mapped.kind) : "alert-circle-outline") as any} size={28} color={colors.error} />
+          <Text style={styles.errorText}>{mapped?.message || "Send not found"}</Text>
         </View>
       </View>
     );

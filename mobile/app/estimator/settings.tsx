@@ -28,7 +28,7 @@ export default function EstimateSettings() {
     setSaving(true);
     try {
       await api.put("/estimates/settings", { overhead_pct: parseFloat(overhead) || 0, margin_pct: parseFloat(margin) || 0 });
-      Alert.alert("Saved", "Default overhead and margin updated.");
+      showToast("Default overhead and margin updated.");
     } catch (e: any) { Alert.alert("Error", e.message || "Could not save."); }
     finally { setSaving(false); }
   };

@@ -90,7 +90,7 @@ export default function ClientErrorsDiagnosticsScreen() {
     if (!selected?.stack) return;
     try {
       await Clipboard.setStringAsync(selected.stack);
-      Alert.alert("Copied", "Stack trace copied to clipboard.");
+      showToast("Stack trace copied to clipboard.");
     } catch {
       Alert.alert("Error", "Copy failed.");
     }

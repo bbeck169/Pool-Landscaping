@@ -18,6 +18,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
   // Phase 34 · Task CC: 5 canonical snake_case statuses
@@ -84,6 +85,7 @@ function TimelineEntry({ ev }: { ev: any }) {
 
 export default function LeadDetailScreen() {
   const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
@@ -117,7 +119,7 @@ export default function LeadDetailScreen() {
     try {
       const updated = await api.patch(`/leads/${id}`, { status });
       setLead(updated);
-      Alert.alert("Updated", `Marked ${status}`);
+      showToast(`Marked ${status}`);
     } catch (e: any) { Alert.alert("Failed", e.message); }
     finally { setBusy(false); }
   };
@@ -142,7 +144,7 @@ export default function LeadDetailScreen() {
         try {
           const res = await api.post(`/leads/${id}/close-won`);
           setConversion(res);
-          Alert.alert("Converted ✅", res.was_merged ? "Merged into existing customer" : "New customer created");
+          showToast(res.was_merged ? "Merged into existing customer" : "New customer created");
           load();
         } catch (e: any) { Alert.alert("Failed", e.message); }
         finally { setBusy(false); }
@@ -161,7 +163,7 @@ export default function LeadDetailScreen() {
       setLead(updated);
       setLostOpen(false);
       setLostReason("");
-      Alert.alert("Closed", "Lead marked as lost.");
+      showToast("Lead marked as lost.");
     } catch (e: any) { Alert.alert("Failed", e.message); }
     finally { setBusy(false); }
   };

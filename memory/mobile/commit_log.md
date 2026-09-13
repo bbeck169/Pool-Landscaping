@@ -1722,3 +1722,15 @@
   - Branded header/footer bands (dark-blue / brand_primary_hex) on estimates, invoices, and quotes
 - **Files modified**: businessSettings.ts (new), useBusinessSettings.ts (new), settings/business.tsx (new), settings/index.tsx, estimatesFull.ts, quote/[id].tsx, estimate-view/[id].tsx, invoice/[id].tsx
 - **Web files referenced**: BusinessSettings.jsx, BrandLogoSettings.jsx, EstimateView.jsx, DocDesktopShell.jsx, useTenantBranding.js, QuoteInvoiceDetail.jsx
+
+## Iteration 87 — Duplicate Quote (P0) + UX polish: 403 vs offline label + Toast
+- **Commit**: 09c5705f97224828950ed5e1d049e7825ab43c7d
+- **Date**: 2026-09-13
+- **Changes**:
+  - Duplicate Quote: copy-outline button in quote header (admin/super_admin only), bottom-sheet modal with searchable customer picker + property picker, POST /api/quotes/{qid}/duplicate, success toast + navigate to new quote
+  - mapApiError classifier: 403→forbidden (lock icon), 401→auth, 404→not_found, 500→server, network→offline (cloud icon). Fixed dashboard showing "You're offline" for 403 errors
+  - ToastProvider: lightweight Animated toast context provider, 3 variants (success/error/info), globally available via useToast()
+  - Swapped 4 quote success Alert.alert calls to showToast: payment received, reminder sent, estimate decision, quote duplicated
+  - 10/10 mapApiError unit tests passing
+- **Files created**: mapApiError.ts, ToastProvider.tsx, mapApiError.test.ts, duplicate-quote.test.tsx
+- **Files modified**: quote/[id].tsx, _layout.tsx, (app)/index.tsx

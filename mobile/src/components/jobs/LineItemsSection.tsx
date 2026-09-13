@@ -22,6 +22,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/auth";
 import { useOnline } from "@/src/offline";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import {
   getLineItems,
@@ -542,6 +543,7 @@ function AddEditSheet({
 type Props = { jobId: string; jobStatus?: string };
 
 export default function LineItemsSection({ jobId, jobStatus }: Props) {
+  const { showToast } = useToast();
   const { user } = useAuth();
   const online = useOnline();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
@@ -578,7 +580,7 @@ export default function LineItemsSection({ jobId, jobStatus }: Props) {
   const handleDone = async (msg: string) => {
     setAddOpen(false);
     setEditItem(null);
-    Alert.alert("Done", msg);
+    showToast(msg);
     await load();
   };
 
@@ -599,7 +601,7 @@ export default function LineItemsSection({ jobId, jobStatus }: Props) {
             setBusyDel(li.id);
             try {
               await deleteLineItem(jobId, li.id);
-              Alert.alert("Done", "Line item removed");
+              showToast("Line item removed");
               await load();
             } catch (e: any) {
               Alert.alert("Error", e?.message || "Delete failed");

@@ -24,6 +24,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, font, fontSize, radius, spacing } from "@/src/theme";
 import { FileUpload } from "@/src/components/files/FileUpload";
@@ -61,6 +62,7 @@ type ModalProps = {
 
 
 export function CouldNotServiceModal({ visible, jobId, onClose, onDone }: ModalProps) {
+  const { showToast } = useToast();
   const [reasons, setReasons] = useState<Reason[]>([]);
   const [reasonId, setReasonId] = useState("");
   const [notes, setNotes] = useState("");
@@ -106,7 +108,7 @@ export function CouldNotServiceModal({ visible, jobId, onClose, onDone }: ModalP
         onlineFn: () => api.post(`/jobs/${jobId}/could-not-service`, body),
       });
       if (queued) {
-        Alert.alert("Queued", "Will sync when you're back online.");
+        showToast("Queued — will sync when you're back online.", "info");
         onClose();
         return;
       }
@@ -115,7 +117,7 @@ export function CouldNotServiceModal({ visible, jobId, onClose, onDone }: ModalP
       const alertBody = secondary
         ? `Job marked 'Could Not Service'\n\n${secondary}`
         : "Job marked 'Could Not Service'";
-      Alert.alert("Marked", alertBody);
+      showToast(alertBody);
       onDone?.(resp);
       onClose();
     } catch (e: any) {

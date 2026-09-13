@@ -70,7 +70,7 @@ export default function OfflineDiagnosticsScreen() {
     await hydrateToday(user.id);
     await refresh();
     setRefreshing(false);
-    Alert.alert("Done", "Cache rebuilt from server.");
+    showToast("Cache rebuilt from server.");
   };
 
   const handlePurge = () => {

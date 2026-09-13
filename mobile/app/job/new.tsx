@@ -7,6 +7,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 import { Header } from "@/src/components/widgets";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
 import { Field } from "@/app/customer/new";
@@ -15,6 +16,7 @@ const SERVICE_TYPES = ["Pool Cleaning", "Repair", "Landscaping", "Inspection", "
 
 export default function JobForm() {
   const router = useRouter();
+  const { showToast } = useToast();
   // Feb-2026 · JobDetail "+ New Scheduled Job" hook — the parent
   // screen pushes /job/new with pre-fill params derived from the
   // current job (customer/technician/service/date). We hydrate the
@@ -94,7 +96,7 @@ export default function JobForm() {
         onlineFn: () => api.post("/jobs", body),
       });
       if (queued) {
-        Alert.alert("Saved offline", "Job will be created when you're back online.");
+        showToast("Job will be created when you're back online.", "info");
       }
       router.back();
     } catch (e: any) {

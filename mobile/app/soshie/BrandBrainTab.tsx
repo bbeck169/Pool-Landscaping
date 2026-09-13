@@ -61,7 +61,7 @@ function IngestModal({
       await api.post("/soshie/ingest-website", {
         website_url: url.trim(),
       });
-      Alert.alert("Done", "Website ingested — brand memory refreshed.");
+      showToast("Website ingested — brand memory refreshed.");
       onDone();
       onClose();
     } catch (e: any) {

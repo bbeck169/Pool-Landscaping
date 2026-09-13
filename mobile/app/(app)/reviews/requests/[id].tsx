@@ -27,7 +27,7 @@ export default function ReviewsRequestDetailScreen() {
     setBusy(true);
     try {
       await resendRequest(id!);
-      Alert.alert("Sent", "Request resent to the customer.");
+      showToast("Request resent to the customer.");
       getRequest(id!).then(setData);
     } catch (e: any) {
       Alert.alert("Blocked", e.message || "Rate-limit or duplicate — cannot resend this week.");

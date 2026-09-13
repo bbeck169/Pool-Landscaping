@@ -48,7 +48,7 @@ export default function AeoDigest() {
         recipients: recipients.split(",").map((s) => s.trim()).filter(Boolean),
         include_negative_snippets: includeNeg,
       });
-      Alert.alert("Saved", "AEO digest settings saved.");
+      showToast("AEO digest settings saved.");
     } catch (err: any) {
       Alert.alert("Save failed", String(err?.message || err));
     } finally {

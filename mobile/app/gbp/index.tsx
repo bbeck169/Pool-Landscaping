@@ -6,6 +6,7 @@ import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, font, fontSize, radius } from '@/src/theme';
+import { useToast } from "@/src/components/ToastProvider";
 import { Header } from "@/src/components/widgets";
 import { Card, PrimaryButton, EmptyState, Loading, Sheet } from '@/src/components/ui';
 
@@ -15,6 +16,7 @@ const DAY_LABEL = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export default function Gbp() {
   const [tab, setTab] = useState<Tab>("posts");
+  const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -103,7 +105,7 @@ export default function Gbp() {
       await api.put("/gbp/settings", { client_id: cid.trim(), client_secret: secret.trim(), redirect_uri: redirect.trim() });
       setSecret("");
       await loadSettings();
-      Alert.alert("Saved", "Now tap “Connect Google Business”.");
+      showToast("Now tap “Connect Google Business”.");
     } catch (e: any) {
       Alert.alert("Save failed", e.message);
     } finally {
@@ -158,7 +160,7 @@ export default function Gbp() {
       await api.post("/gbp/posts", { location: selected.name, summary: summary.trim(), cta_url: ctaUrl.trim() || undefined });
       setSummary("");
       setCtaUrl("");
-      Alert.alert("Posted ✅", "Your update is live on Google Business Profile.");
+      showToast("Your update is live on Google Business Profile.");
     } catch (e: any) {
       Alert.alert("Publish failed", e.message);
     } finally {
@@ -184,7 +186,7 @@ export default function Gbp() {
     try {
       await api.post(`/gbp/calendar/${pid}/publish`, {});
       await loadSettings();
-      Alert.alert("Published ✅", "Posted to Google Business Profile.");
+      showToast("Posted to Google Business Profile.");
     } catch (e: any) {
       Alert.alert("Publish failed", e.message);
     }
@@ -264,7 +266,7 @@ export default function Gbp() {
       setReplyFor(null);
       setReplyText("");
       await loadReviews();
-      Alert.alert("Reply sent ✅");
+      showToast("Reply sent");
     } catch (e: any) {
       Alert.alert("Reply failed", e.message);
     } finally {
@@ -286,7 +288,7 @@ export default function Gbp() {
         payload.regular_hours = { periods };
       }
       await api.patch("/gbp/business", payload);
-      Alert.alert("Saved ✅", "Business info updated on Google.");
+      showToast("Business info updated on Google.");
     } catch (e: any) {
       Alert.alert("Update failed", e.message);
     } finally {

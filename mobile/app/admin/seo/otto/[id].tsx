@@ -48,7 +48,7 @@ function Inner() {
   const copy = async () => {
     if (!fix?.patch_snippet) return;
     await Clipboard.setStringAsync(fix.patch_snippet);
-    Alert.alert("Copied", "Patch snippet copied to clipboard.");
+    showToast("Patch snippet copied to clipboard.");
   };
 
   const action = async (verb: "mark-applied" | "dismiss") => {

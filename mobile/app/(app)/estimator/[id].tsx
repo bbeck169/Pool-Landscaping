@@ -11,6 +11,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 
 import { api, TOKEN_KEY } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
@@ -18,6 +19,7 @@ import { Header } from "@/src/components/widgets";
 const BACKEND = process.env.EXPO_PUBLIC_BACKEND_URL || "";
 
 export default function EstimatorDetailMobile() {
+  const { showToast } = useToast();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [e, setE] = useState<any>(null);
@@ -41,11 +43,10 @@ export default function EstimatorDetailMobile() {
     try {
       const r = await api.post(
         `/estimator/estimates/${id}/convert-to-quote`);
-      Alert.alert("Converted",
-                   `Quote #${(r.quote_id || "").slice(0, 8)} created.`);
+      showToast(`Quote #${(r.quote_id || "").slice(0, 8)} created.`);
       await load();
     } catch (err: any) {
-      Alert.alert("Convert failed", err?.message || "Error");
+      showToast(err?.message || "Convert failed.", "error");
     } finally { setBusy(""); }
   };
 

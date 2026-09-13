@@ -82,7 +82,7 @@ export default function CustomerMultiContactEditor({
     try {
       await api.patch(`/customers/${customerId}/emails`, { emails });
       await api.patch(`/customers/${customerId}/mobiles`, { mobiles });
-      Alert.alert("Saved", "Contacts updated.");
+      showToast("Contacts updated.");
       onSaved?.();
     } catch (e: any) {
       Alert.alert("Save failed", e?.message || "Please try again.");

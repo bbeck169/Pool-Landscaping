@@ -9,6 +9,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
 
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { AdminOnlyGate, BrandPill, DesktopHint, CenterLoader } from "./_shared";
@@ -24,6 +25,7 @@ export default function StudioMobile() {
 }
 
 function Inner() {
+  const { showToast } = useToast();
   const router = useRouter();
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,9 +52,9 @@ function Inner() {
       await api.post(`/seo/studio/pages/${p.id}/publish`);
       await load();
       if (preview?.id === p.id) await openPreview(p);
-      Alert.alert("Published", `${p.title} is now live.`);
+      showToast(`${p.title} is now live.`);
     } catch (e: any) {
-      Alert.alert("Publish failed", e?.message || "Error");
+      showToast(e?.message || "Publish failed.", "error");
     } finally { setBusy(false); }
   };
 

@@ -21,6 +21,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useStripeConfig } from "@/src/config/stripe";
 import { StripeUnconfiguredBanner } from "@/src/lib/stripeConfig";
@@ -280,6 +281,7 @@ export default function PaymentMethodTiles({
   variant?: "admin" | "portal";
   onChange?: () => void;
 }) {
+  const { showToast } = useToast();
   const router = useRouter();
   const { stripeConfigured } = useStripeConfig();
   const [loading, setLoading] = useState(true);
@@ -329,7 +331,7 @@ export default function PaymentMethodTiles({
         { typed_last4: pending.last4 || "" },
       );
       const kind = pending.type === "us_bank_account" ? "Bank account" : "Card";
-      Alert.alert("Removed", `${kind} ending in ${pending.last4} removed.`);
+      showToast(`${kind} ending in ${pending.last4} removed.`);
       setPending(null);
       await load();
       onChange?.();
@@ -346,7 +348,7 @@ export default function PaymentMethodTiles({
     try {
       await api.post(`/payments/stripe/payment-methods/${row.provider_payment_method_id}/set-default`, {});
       const kind = row.type === "us_bank_account" ? "Bank account" : "Card";
-      Alert.alert("Done", `${kind} ending in ${row.last4} set as default.`);
+      showToast(`${kind} ending in ${row.last4} set as default.`);
       await load();
       onChange?.();
     } catch (e: any) {

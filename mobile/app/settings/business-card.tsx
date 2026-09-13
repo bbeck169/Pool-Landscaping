@@ -50,7 +50,7 @@ export default function BusinessCardSettings() {
       for (const f of FIELDS) patch[f.key] = draft[f.key] ?? null;
       const fresh = await api.patch("/tenants/business-card", patch);
       setDraft(fresh);
-      Alert.alert("Saved", "Business card updated.");
+      showToast("Business card updated.");
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Save failed");
     } finally {

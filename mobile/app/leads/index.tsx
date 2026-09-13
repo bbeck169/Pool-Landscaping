@@ -67,7 +67,7 @@ export default function Leads() {
     if (!bulk.count) return;
     try {
       await api.post("/leads/bulk-status", { ids: [...bulk.selected], status });
-      Alert.alert("Updated", `${bulk.count} lead${bulk.count !== 1 ? "s" : ""} set to ${status.replace("_", " ")}.`);
+      showToast(`${bulk.count} lead${bulk.count !== 1 ? "s" : ""} set to ${status.replace("_", " ")}.`);
       exitSelectMode();
       load(filter);
     } catch (e: any) {

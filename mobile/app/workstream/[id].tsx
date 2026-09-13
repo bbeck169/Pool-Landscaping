@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { useAuth } from "@/src/auth";
+import { useToast } from "@/src/components/ToastProvider";
 import { getServiceLog, emailDoorHanger, type ServiceLogData } from "@/src/api/serviceLog";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
@@ -36,6 +37,7 @@ function fmtAddr(prop: ServiceLogData["property"]): string {
 // Phase K22 — fmtDate replaced by formatCompletedAt from @/src/lib/dateTimeFormat.
 
 export default function ServiceLogScreen() {
+  const { showToast } = useToast();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -72,13 +74,13 @@ export default function ServiceLogScreen() {
     setDoorBusy(true);
     try {
       await emailDoorHanger(id);
-      Alert.alert("Sent", `Door hanger emailed to ${data?.log_details?.customer_email || "customer"}.`);
+      showToast(`Door hanger emailed to ${data?.log_details?.customer_email || "customer"}.`);
     } catch (e: any) {
       const status = e?.response?.status || e?.status;
       if (status === 429) {
-        Alert.alert("Cooldown", "Just sent — try again in a moment.");
+        showToast("Just sent — try again in a moment.", "error");
       } else {
-        Alert.alert("Error", e?.message || "Failed to send door hanger.");
+        showToast(e?.message || "Failed to send door hanger.", "error");
       }
     } finally {
       setDoorBusy(false);
