@@ -33,6 +33,13 @@ vi.mock("@vis.gl/react-google-maps", () => ({
       {children}
     </div>
   ),
+  // Feb-2026 · Round 2 flake fix — production `_ClusteredMarkers`
+  // calls `useMap()` from `@vis.gl/react-google-maps`. Returning
+  // `null` is safe: both `useEffect` hooks in `ScheduleMap.jsx`
+  // early-return when `map` is falsy (verified against the current
+  // source), so cluster wiring is a no-op in test and the DOM
+  // assertions still fire.
+  useMap: () => null,
 }));
 
 

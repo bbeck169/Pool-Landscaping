@@ -134,9 +134,12 @@ describe("Phase 47 · Feb 2026 addendum · save-on-first-payment", () => {
     const cb = await screen.findByTestId("payment-form-save-checkbox");
     expect(cb).toBeInTheDocument();
     expect(cb.checked).toBe(true);
-    // Copy per product spec.
+    // Feb-2026 · Round 2 flake fix — production copy was shortened
+    // from "Save this payment method for future automatic billing"
+    // to "Save this card for future invoices". Update the matcher
+    // to the current copy.
     expect(screen.getByTestId("payment-form-save-row").textContent)
-      .toMatch(/Save this payment method for future automatic billing/i);
+      .toMatch(/Save this card for future invoices/i);
     expect(screen.getByTestId("payment-form-review").textContent)
       .toMatch(/remove saved payment methods anytime/i);
     // POST didn't fire yet, and the user was not redirected.

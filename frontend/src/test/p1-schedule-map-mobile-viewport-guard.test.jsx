@@ -38,6 +38,11 @@ vi.mock("../lib/maps", () => ({
   InfoWindow: ({ children }) => (
     <div data-testid="mock-infowindow">{children}</div>
   ),
+  // Feb-2026 · Round 2 flake fix — production `_ClusteredMarkers`
+  // pulls `useMap` through the `../lib/maps` adapter. Return null
+  // so the cluster attach / fitBounds effects early-return, keeping
+  // the mobile-viewport guard test focused on DOM assertions.
+  useMap: () => null,
 }));
 
 import ScheduleMap from "../pages/schedule/ScheduleMap";

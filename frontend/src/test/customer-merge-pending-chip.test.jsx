@@ -132,9 +132,12 @@ describe("CustomersList · pending-merge-candidates chip (Phase 3)", () => {
       "customers-filter-pending-merge-candidates",
     );
     expect(chip).toBeInTheDocument();
-    // Content includes "View 1 pending merge candidate".
+    // Feb-2026 · Round 2 flake fix — production chip copy was
+    // shortened from "View 1 pending merge candidate" to
+    // "Pending merge candidates(1)". Update the matchers to the
+    // current copy.
     expect(chip.textContent || "").toMatch(/pending merge candidate/i);
-    expect(chip.textContent || "").toMatch(/View 1 /);
+    expect(chip.textContent || "").toMatch(/\(1\)/);
   });
 
   it("clicking the chip filters the row list to the candidate ids", async () => {

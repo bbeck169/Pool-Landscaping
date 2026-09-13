@@ -984,6 +984,67 @@ async def duplicate_quote(qid: str, body: _QuoteDuplicateIn,
     return {"quote_id": new_qid, "quote_number": new_qid[:8]}
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · Housekeeping P2 · Round 2 — Mark quote as sent
+# ═════════════════════════════════════════════════════════════════════
+# ``POST /api/quotes/{qid}/mark-sent`` — admin/super_admin/owner only.
+# Transitions a DRAFT quote to ``sent`` and stamps ``sent_at``. Purely
+# a status flip — does NOT send any customer email or SMS. The
+# customer-facing send happens through ``send-reminder`` / the
+# dedicated review link flows; keeping ``mark-sent`` narrow means the
+# admin can chain the two operations when they actually want to
+# notify the customer.
+#
+# Contract:
+#   * Only ``doc_type == "quote"`` docs (invoices are 400).
+#   * Only ``status == "draft"`` docs (any other status is 400).
+#   * Writes an ``audit_logs`` row ``event="quote.mark_sent"``.
+#
+# Response::  { quote_id, status, sent_at }
+@router.post("/quotes/{qid}/mark-sent")
+async def mark_quote_sent(qid: str,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    """Flip a draft quote to ``status=sent`` and stamp ``sent_at``.
+
+    Narrow admin-only status transition. Does not send email/SMS —
+    see ``POST /quotes/{qid}/send-reminder`` for the notification
+    surface. Idempotency is intentionally NOT implied; a second
+    call on an already-sent doc returns 400 so the operator gets a
+    clear signal instead of a silent no-op.
+    """
+    doc = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "Quote not found")
+    if doc.get("doc_type") != "quote":
+        raise HTTPException(400, "Only quotes can be marked sent")
+    current_status = (doc.get("status") or "draft").lower()
+    if current_status != "draft":
+        raise HTTPException(
+            400,
+            f"Only draft quotes can be marked sent (current status: "
+            f"{current_status})",
+        )
+    ts = now_iso()
+    await db.quotes.update_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"$set": {"status": "sent", "sent_at": ts}},
+    )
+    try:
+        await db.audit_logs.insert_one({
+            "event": "quote.mark_sent",
+            "quote_id": qid,
+            "actor_id": user.get("id"),
+            "tenant_id": tenant["id"],
+            "at": ts,
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"quote.mark_sent audit_logs insert failed: {e}")
+    return {"quote_id": qid, "status": "sent", "sent_at": ts}
+
+
 @router.get("/quotes/{qid}")
 async def get_quote(qid: str,
                     user: dict = Depends(get_current_user),

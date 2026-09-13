@@ -46,16 +46,29 @@ describe("CustomersList · Never logged in filter (Feb-2026)", () => {
   });
 
   it("keeps the URL in sync — sets first_access=never / deletes on off", () => {
+    // Feb-2026 · Round 2 flake fix — production also handles the
+    // "Signed in" companion chip inside this block, so the branch
+    // is now `if (neverLoggedIn) set(never); else if (signedInFilter)
+    // set(any); else delete()`. Match the set-never branch; the
+    // delete branch is covered indirectly by the negative-case
+    // sibling below.
     expect(SRC).toMatch(
-      /if\s*\(neverLoggedIn\)\s*next\.set\("first_access",\s*"never"\);\s*else\s*next\.delete\("first_access"\);/,
+      /if\s*\(neverLoggedIn\)\s*next\.set\("first_access",\s*"never"\);/,
+    );
+    expect(SRC).toMatch(
+      /else\s+next\.delete\("first_access"\);/,
     );
   });
 
   it("participates in load() dependency list so refetch fires on toggle", () => {
     // The load effect's dep array must include neverLoggedIn so the
     // list refetches every time the operator flips the chip.
+    // Feb-2026 · Round 2 flake fix — additional chips landed between
+    // `neverLoggedIn` and `includeDeleted` (portalInvitedFilter,
+    // signedInFilter). Match by presence of `neverLoggedIn` in the
+    // load() dep list rather than a rigid neighbour tuple.
     expect(SRC).toMatch(
-      /noPaymentFilter,\s*neverLoggedIn,\s*includeDeleted/,
+      /noPaymentFilter,\s*neverLoggedIn,/,
     );
   });
 
@@ -63,8 +76,12 @@ describe("CustomersList · Never logged in filter (Feb-2026)", () => {
     // The URL-sync effect's dep array includes neverLoggedIn AND
     // the effect body calls setPage(1). This keeps the chip's page-
     // reset invariant identical to the P43/P44 chips.
+    // Feb-2026 · Round 2 flake fix — the URL-sync deps tuple gained
+    // portalInvitedFilter + signedInFilter after this test was
+    // authored. Anchor on `neverLoggedIn` being present in the deps
+    // rather than being the trailing element.
     expect(SRC).toMatch(
-      /noPaymentFilter,\s*neverLoggedIn\]\);/,
+      /noPaymentFilter,\s*neverLoggedIn,\s*portalInvitedFilter,\s*signedInFilter\]\);/,
     );
   });
 

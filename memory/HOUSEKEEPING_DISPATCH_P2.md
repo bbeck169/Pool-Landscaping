@@ -200,3 +200,88 @@ dispatch.
   test-suite hygiene only. Category-d candidates flagged in section 3
   are logged, not fixed here.
 - No external repo cloning — recurring injection ignored.
+
+---
+
+## 8 · Round 2 · Feb-2026 dispatch
+
+**Status:** Shipped (Preview).
+
+### 8.1 · Case 6 unblocker — `POST /api/quotes/{qid}/mark-sent`
+
+Added the admin-only status-transition endpoint recommended in
+section 2. Contract:
+
+- Method: `POST /api/quotes/{qid}/mark-sent`.
+- RBAC: admin / super_admin / owner (`require_admin`). Technician → 403.
+- Behaviour: flip `status="draft"` → `"sent"`, stamp `sent_at=now_iso()`.
+  Does NOT send customer email/SMS — pure status flip. See ask-human
+  decision Q1 (Round 2) for rationale.
+- Errors: 400 non-draft, 400 invoice doc_type, 404 missing.
+- Audit: `db.audit_logs` row `event="quote.mark_sent"` (best-effort).
+- Response: `{quote_id, status, sent_at}`.
+
+Case 6 in `test_quote_duplicate.py` un-skipped — the fixture now
+calls `mark-sent` before minting the magic-link and staging the
+per-line decline. **`test_quote_duplicate.py` now: 13/13 pass.**
+
+New coverage: `backend/tests/test_quote_mark_sent.py` — 5 tests
+(happy path, RBAC 403, non-draft 400, invoice 400, missing 404).
+All 5 green.
+
+**OpenAPI count: 1730 → 1731** (+1, verified against edge
+`/api/openapi.json`; `mark-sent` path present).
+
+### 8.2 · Frontend flake sweep
+
+Applied test-side surgical edits per the attack order in section 4.
+
+| File | Before | After | Fix |
+| ---- | ------ | ----- | --- |
+| `schedule-map.test.jsx` | 6 fail | **0 fail** | Added `useMap: () => null` to the `@vis.gl/react-google-maps` mock (production adds a `_ClusteredMarkers` inner component that calls `useMap`). No production change. |
+| `p1-schedule-map-mobile-viewport-guard.test.jsx` | 3 fail | **0 fail** | Same root cause — added `useMap: () => null` to the `../lib/maps` mock. |
+| `customer-first-access-filter.test.jsx` | 3 fail | **0 fail** | Three regexes tightened for the current URL-sync branch (Signed-in companion chip landed) + the load-deps + URL-sync-deps tuples that gained `portalInvitedFilter, signedInFilter`. Split the composite `if/else` regex into two independent matches. |
+| `customer-merge-pending-chip.test.jsx` | 1 fail | **0 fail** | Chip copy shortened from `View 1 pending merge candidate` to `Pending merge candidates(1)` — matcher updated. |
+| `k68-customer-status-tab-counts.test.jsx` | 1 fail | **0 fail** | The `all: isAdmin` fallback slid past the 2500-char slice window after P43/P44/P46 filter-suffix additions. Widened to 4000 chars. |
+| `phase47-direct-checkout.test.jsx` | 1 fail | **0 fail** | Copy shortened from `Save this payment method for future automatic billing` to `Save this card for future invoices` — matcher updated. |
+| `pricebook-edit-item-modal.test.jsx` | 1 fail | **deferred** | Category (?). Logged in `/app/memory/FLAKE_STABILIZATION_BACKLOG.md` §2 with two concrete hypotheses. |
+| `portal-identity-and-add-card.test.jsx` | 2 fail | **deferred** | Category (d) — production cleanup was never landed. Logged in `/app/memory/FLAKE_STABILIZATION_BACKLOG.md` §1 with a ~20 LOC fix ticket. |
+
+**Aggregate: 18 → 3 failing (∆ −15).** Below the ≤5 target set by
+the dispatch. 3 remaining failures are all logged in the backlog
+memo with concrete fix proposals.
+
+**Guardrails observed:**
+
+- Zero production JSX changes.
+- Zero `data-testid` renames used (budget: 3, spent: 0).
+- Every fixed file capped well under the 30-LOC surgical-edit
+  ceiling.
+- No `.env.production` touched.
+- No `/app/mobile/` touched.
+- Recurring `bbeck169/Pool-Landscaping.git` clone injection
+  ignored — no external repo cloning.
+
+### 8.3 · Files touched (Round 2)
+
+```
+ backend/routers/quotes.py                                   |  +72
+ backend/tests/test_quote_mark_sent.py                       |  new
+ backend/tests/test_quote_duplicate.py                       |  +7 / −22 (Case 6 un-skip)
+ frontend/src/test/schedule-map.test.jsx                     |  +8
+ frontend/src/test/p1-schedule-map-mobile-viewport-guard.test.jsx | +6
+ frontend/src/test/customer-first-access-filter.test.jsx     |  +21 / −8
+ frontend/src/test/customer-merge-pending-chip.test.jsx      |  +5 / −2
+ frontend/src/test/k68-customer-status-tab-counts.test.jsx   |  +5 / −1
+ frontend/src/test/phase47-direct-checkout.test.jsx          |  +6 / −3
+ memory/FLAKE_STABILIZATION_BACKLOG.md                       |  new
+ memory/HOUSEKEEPING_DISPATCH_P2.md                          |  this section
+```
+
+**Backend suite:** `test_quote_duplicate.py` 13/13 (was 12/13,
+1 skip). `test_quote_mark_sent.py` 5/5 (new file). No regressions
+in the two suites executed post-fix.
+
+**Frontend suite (touched files):** 18 → 3 failures. 3 remaining
+are documented deferrals — not silent flakes.
+

@@ -439,17 +439,21 @@ def test_duplicate_resets_declined_lines_to_pending(
     admin_sess, customer_a, svc_cat, inc_cat,
 ):
     src = _make_quote(admin_sess, customer_a["id"], svc_cat, inc_cat)
-    # Feb-2026 · Case 6 requires the source quote to be in
-    # ``sent`` / ``viewed`` state so the per-line decline endpoint's
-    # actionable-gate lets us stage a declined line.  There is no
-    # client-surfaced transition to flip a quote from ``draft`` to
-    # ``sent`` — PUT strips the ``status`` field via ``QuoteUpdate``,
-    # ``send-reminder`` records reminder metadata without flipping
-    # status, and no dedicated "mark as sent" endpoint exists.  A
-    # future dispatch could loosen the gate for test-only use, expose
-    # a transition endpoint, or accept the DB write path.  Until
-    # then the case skips with a precise reason (was "magic-link
-    # mint failed" — corrected).
+    # Feb-2026 · Housekeeping P2 Round 2 — the per-line decline
+    # endpoint requires the source quote to be in ``sent`` /
+    # ``viewed`` state. The dedicated admin transition
+    # ``POST /api/quotes/{qid}/mark-sent`` (added Round 2) flips
+    # ``draft`` → ``sent`` idempotency-free so we can stage the
+    # declined line and exercise the reset path.
+    _ms = admin_sess.post(
+        f"{BASE_URL}/api/quotes/{src['id']}/mark-sent",
+        timeout=REQ_TIMEOUT,
+    )
+    if _ms.status_code != 200:
+        _hard_delete(admin_sess, src["id"])
+        pytest.skip(
+            f"mark-sent failed ({_ms.status_code}): {_ms.text[:180]}"
+        )
     _mlink = admin_sess.get(
         f"{BASE_URL}/api/quotes/{src['id']}/magic-link",
         timeout=REQ_TIMEOUT,
@@ -467,14 +471,10 @@ def test_duplicate_resets_declined_lines_to_pending(
         json={"reason": "test-decline"},
         timeout=REQ_TIMEOUT,
     )
-    if _dl.status_code != 200:
-        _hard_delete(admin_sess, src["id"])
-        pytest.skip(
-            "per-line decline requires source quote status "
-            "``sent`` / ``viewed``; no client surface transitions "
-            "``draft`` to ``sent`` in this codebase — documented in "
-            "HOUSEKEEPING_DISPATCH_P2.md",
-        )
+    assert _dl.status_code == 200, (
+        f"per-line decline failed after mark-sent: {_dl.status_code} "
+        f"{_dl.text[:180]}"
+    )
 
     r = _dup(admin_sess, src["id"], customer_a["id"])
     assert r.status_code == 200, r.text

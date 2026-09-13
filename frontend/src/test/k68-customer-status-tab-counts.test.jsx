@@ -66,11 +66,15 @@ describe("Phase K68 · CustomersList counts_by_status wiring", () => {
   it("loadCounts() fallback still computes an all bucket", () => {
     // The fallback branch should now assign ``all: isAdmin ? ...``
     // so the tab isn't stuck on null when the envelope is missing.
+    // Feb-2026 · Round 2 flake fix — the P43/P44/P46/K68 filter
+    // suffix additions pushed the fallback slightly past the
+    // original 2500-char slice; widen to 4000 to keep the assertion
+    // stable.
     const loadCountsFn = LIST.split(
       "const loadCounts = async () =>",
     )[1];
     expect(loadCountsFn).toBeDefined();
-    const fnBody = loadCountsFn.slice(0, 2500);
+    const fnBody = loadCountsFn.slice(0, 4000);
     expect(fnBody).toMatch(/all:\s*isAdmin/);
   });
 });
