@@ -1734,3 +1734,14 @@
   - 10/10 mapApiError unit tests passing
 - **Files created**: mapApiError.ts, ToastProvider.tsx, mapApiError.test.ts, duplicate-quote.test.tsx
 - **Files modified**: quote/[id].tsx, _layout.tsx, (app)/index.tsx
+
+
+## Iteration 87 — UX Polish: Broader Alert→Toast rollout + mapApiError expansion + Tests
+- **Commit**: 4a8d044294a26b197150835840416b1856849018
+- **Date**: 2026-09-13
+- **Changes**:
+  - **Phase 1 — Alert.alert → showToast**: Converted 40+ success/info/non-blocking-error Alert.alert calls to showToast across 25+ files
+  - **Phase 2 — mapApiError expansion**: Retrofitted into 7 error surfaces (job detail, checklist, d2d, EbitTile, comms templates/sends/automations)
+  - **Phase 3 — Tests**: 27 tests passing (mapApiError unit + toast conversion patterns + screen integration)
+  - Fixed syntax errors in aeo/publish-config.tsx and aeo/response-draft.tsx
+- **Files modified**: 25+ app screens, 5 components, 3 test files (2 new)

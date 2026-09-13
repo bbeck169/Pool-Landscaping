@@ -199,6 +199,44 @@ def _active_properties(sess, customer_id):
     ]
 
 
+def _ensure_active_property(sess, customer_id, label="Fixture Probe"):
+    """Return an active property for the given customer, creating a
+    fresh one when the customer has none. Returns ``(prop_dict,
+    created_bool)`` so the test can clean up any provisioned rows.
+    """
+    existing = _active_properties(sess, customer_id)
+    if existing:
+        return existing[0], False
+    body = {
+        "label": label,
+        "address": {
+            "street": "1 Fixture Ln",
+            "city": "Peoria",
+            "state": "AZ",
+            "postal_code": "85383",
+        },
+    }
+    r = sess.post(
+        f"{BASE_URL}/api/customers/{customer_id}/properties",
+        json=body, timeout=REQ_TIMEOUT,
+    )
+    if r.status_code not in (200, 201):
+        pytest.skip(
+            f"could not provision fixture property "
+            f"({r.status_code}): {r.text[:180]}"
+        )
+    return r.json(), True
+
+
+def _delete_property(sess, pid):
+    try:
+        sess.delete(
+            f"{BASE_URL}/api/properties/{pid}", timeout=REQ_TIMEOUT,
+        )
+    except Exception:
+        pass
+
+
 def _dup(sess, qid, customer_id, property_id: Optional[str] = None):
     body = {"customer_id": customer_id}
     if property_id is not None:
@@ -288,21 +326,23 @@ def test_admin_duplicate_same_customer_creates_fresh_draft(
 def test_duplicate_with_explicit_property_id_binds_to_it(
     admin_sess, customer_a, customer_b, svc_cat, inc_cat,
 ):
-    props_b = _active_properties(admin_sess, customer_b["id"])
-    if not props_b:
-        pytest.skip("customer_b has no active properties")
-    prop = props_b[0]
+    prop, provisioned = _ensure_active_property(
+        admin_sess, customer_b["id"], "Case-2 probe",
+    )
     src = _make_quote(admin_sess, customer_a["id"], svc_cat, inc_cat)
-    r = _dup(admin_sess, src["id"], customer_b["id"],
-              property_id=prop["id"])
-    assert r.status_code == 200, r.text
-    new_qid = r.json()["quote_id"]
-    new_doc = _get_quote(admin_sess, new_qid)
-    assert new_doc["customer_id"] == customer_b["id"]
-    assert new_doc["property_id"] == prop["id"]
-
-    _hard_delete(admin_sess, src["id"])
-    _hard_delete(admin_sess, new_qid)
+    try:
+        r = _dup(admin_sess, src["id"], customer_b["id"],
+                  property_id=prop["id"])
+        assert r.status_code == 200, r.text
+        new_qid = r.json()["quote_id"]
+        new_doc = _get_quote(admin_sess, new_qid)
+        assert new_doc["customer_id"] == customer_b["id"]
+        assert new_doc["property_id"] == prop["id"]
+        _hard_delete(admin_sess, new_qid)
+    finally:
+        _hard_delete(admin_sess, src["id"])
+        if provisioned:
+            _delete_property(admin_sess, prop["id"])
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -312,21 +352,33 @@ def test_duplicate_with_explicit_property_id_binds_to_it(
 def test_duplicate_no_property_id_auto_assigns_when_single_active(
     admin_sess, customer_a, customer_b, svc_cat, inc_cat,
 ):
-    props_b = _active_properties(admin_sess, customer_b["id"])
-    if len(props_b) != 1:
+    # Case 3 needs the destination customer to have EXACTLY 1 active
+    # property. Ensure at least one exists and skip if the fixture
+    # already has more than one (deleting properties would disturb
+    # unrelated tenant state — bounded risk).
+    prop, provisioned = _ensure_active_property(
+        admin_sess, customer_b["id"], "Case-3 probe",
+    )
+    props_after = _active_properties(admin_sess, customer_b["id"])
+    if len(props_after) != 1:
+        if provisioned:
+            _delete_property(admin_sess, prop["id"])
         pytest.skip(
-            f"customer_b has {len(props_b)} active properties — case "
-            f"needs exactly 1 for the auto-assign contract",
+            f"customer_b has {len(props_after)} active properties "
+            f"after provision — auto-assign case needs exactly 1"
         )
     src = _make_quote(admin_sess, customer_a["id"], svc_cat, inc_cat)
-    r = _dup(admin_sess, src["id"], customer_b["id"])
-    assert r.status_code == 200, r.text
-    new_qid = r.json()["quote_id"]
-    new_doc = _get_quote(admin_sess, new_qid)
-    assert new_doc["property_id"] == props_b[0]["id"]
-
-    _hard_delete(admin_sess, src["id"])
-    _hard_delete(admin_sess, new_qid)
+    try:
+        r = _dup(admin_sess, src["id"], customer_b["id"])
+        assert r.status_code == 200, r.text
+        new_qid = r.json()["quote_id"]
+        new_doc = _get_quote(admin_sess, new_qid)
+        assert new_doc["property_id"] == prop["id"]
+        _hard_delete(admin_sess, new_qid)
+    finally:
+        _hard_delete(admin_sess, src["id"])
+        if provisioned:
+            _delete_property(admin_sess, prop["id"])
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -362,18 +414,21 @@ def test_duplicate_no_property_id_leaves_null_when_not_exactly_one(
 def test_duplicate_rejects_property_id_of_wrong_customer(
     admin_sess, customer_a, customer_b, svc_cat, inc_cat,
 ):
-    props_a = _active_properties(admin_sess, customer_a["id"])
-    if not props_a:
-        pytest.skip("customer_a has no active properties")
-    # Pick a property that belongs to customer_a and try to send it
-    # for a destination = customer_b duplicate → 422.
+    prop_a, provisioned = _ensure_active_property(
+        admin_sess, customer_a["id"], "Case-4 probe",
+    )
     src = _make_quote(admin_sess, customer_a["id"], svc_cat, inc_cat)
-    r = _dup(admin_sess, src["id"], customer_b["id"],
-              property_id=props_a[0]["id"])
-    assert r.status_code == 422, r.text
-    assert "property_id" in r.text.lower()
-
-    _hard_delete(admin_sess, src["id"])
+    try:
+        # Try to bind customer_a's property while duplicating to
+        # customer_b → 422.
+        r = _dup(admin_sess, src["id"], customer_b["id"],
+                  property_id=prop_a["id"])
+        assert r.status_code == 422, r.text
+        assert "property_id" in r.text.lower()
+    finally:
+        _hard_delete(admin_sess, src["id"])
+        if provisioned:
+            _delete_property(admin_sess, prop_a["id"])
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -384,10 +439,17 @@ def test_duplicate_resets_declined_lines_to_pending(
     admin_sess, customer_a, svc_cat, inc_cat,
 ):
     src = _make_quote(admin_sess, customer_a["id"], svc_cat, inc_cat)
-    # PUT /quotes strips customer_* fields on the way in (they're not
-    # in the QuoteUpdate schema), so decline the first line via the
-    # magic-link surface — that's the shape the customer decline flow
-    # actually persists into ``line_items[i].customer_status``.
+    # Feb-2026 · Case 6 requires the source quote to be in
+    # ``sent`` / ``viewed`` state so the per-line decline endpoint's
+    # actionable-gate lets us stage a declined line.  There is no
+    # client-surfaced transition to flip a quote from ``draft`` to
+    # ``sent`` — PUT strips the ``status`` field via ``QuoteUpdate``,
+    # ``send-reminder`` records reminder metadata without flipping
+    # status, and no dedicated "mark as sent" endpoint exists.  A
+    # future dispatch could loosen the gate for test-only use, expose
+    # a transition endpoint, or accept the DB write path.  Until
+    # then the case skips with a precise reason (was "magic-link
+    # mint failed" — corrected).
     _mlink = admin_sess.get(
         f"{BASE_URL}/api/quotes/{src['id']}/magic-link",
         timeout=REQ_TIMEOUT,
@@ -408,8 +470,10 @@ def test_duplicate_resets_declined_lines_to_pending(
     if _dl.status_code != 200:
         _hard_delete(admin_sess, src["id"])
         pytest.skip(
-            f"per-line decline failed ({_dl.status_code}) — cannot "
-            f"stage a declined line",
+            "per-line decline requires source quote status "
+            "``sent`` / ``viewed``; no client surface transitions "
+            "``draft`` to ``sent`` in this codebase — documented in "
+            "HOUSEKEEPING_DISPATCH_P2.md",
         )
 
     r = _dup(admin_sess, src["id"], customer_a["id"])
@@ -437,30 +501,53 @@ def test_duplicate_accepted_quote_resets_decision_state(
     admin_sess, customer_a, svc_cat, inc_cat,
 ):
     src = _make_quote(admin_sess, customer_a["id"], svc_cat, inc_cat)
-    # Force accepted state via the admin decision endpoint.
-    admin_sess.post(
-        f"{BASE_URL}/api/quotes/{src['id']}/customer-decision",
-        json={"decision": "approve"},
+    # Feb-2026 · flip source status to ``accepted`` via the
+    # magic-link accept surface. The older ``customer-decision``
+    # endpoint referenced by the pre-fix version of this test does
+    # NOT exist in this codebase — the customer accept path IS
+    # ``POST /api/portal/quotes/via-token/accept?token=<jwt>``.
+    _mlink = admin_sess.get(
+        f"{BASE_URL}/api/quotes/{src['id']}/magic-link",
         timeout=REQ_TIMEOUT,
     )
-    src_after = _get_quote(admin_sess, src["id"])
-    if src_after.get("status") != "accepted":
+    if _mlink.status_code != 200:
         _hard_delete(admin_sess, src["id"])
-        pytest.skip("customer-decision endpoint did not flip status")
+        pytest.skip(
+            f"magic-link mint failed ({_mlink.status_code}) — cannot "
+            f"stage an accepted source"
+        )
+    _tok = _mlink.json().get("token")
+    _acc = requests.post(
+        f"{BASE_URL}/api/portal/quotes/via-token/accept",
+        params={"token": _tok}, timeout=REQ_TIMEOUT,
+    )
+    if _acc.status_code != 200:
+        _hard_delete(admin_sess, src["id"])
+        pytest.skip(
+            f"magic-link accept failed ({_acc.status_code}): "
+            f"{_acc.text[:180]}"
+        )
+    src_after = _get_quote(admin_sess, src["id"])
+    if src_after.get("status") not in ("accepted", "approved"):
+        _hard_delete(admin_sess, src["id"])
+        pytest.skip(
+            f"accept did not flip status: {src_after.get('status')}"
+        )
 
-    r = _dup(admin_sess, src["id"], customer_a["id"])
-    assert r.status_code == 200, r.text
-    new_qid = r.json()["quote_id"]
-    new_doc = _get_quote(admin_sess, new_qid)
-    assert new_doc["status"] == "draft"
-    assert new_doc.get("accepted_at") in (None, "")
+    try:
+        r = _dup(admin_sess, src["id"], customer_a["id"])
+        assert r.status_code == 200, r.text
+        new_qid = r.json()["quote_id"]
+        new_doc = _get_quote(admin_sess, new_qid)
+        assert new_doc["status"] == "draft"
+        assert new_doc.get("accepted_at") in (None, "")
 
-    # Source unchanged.
-    src_final = _get_quote(admin_sess, src["id"])
-    assert src_final["status"] == "accepted"
-
-    _hard_delete(admin_sess, src["id"])
-    _hard_delete(admin_sess, new_qid)
+        # Source unchanged.
+        src_final = _get_quote(admin_sess, src["id"])
+        assert src_final["status"] in ("accepted", "approved")
+        _hard_delete(admin_sess, new_qid)
+    finally:
+        _hard_delete(admin_sess, src["id"])
 
 
 # ═════════════════════════════════════════════════════════════════════
