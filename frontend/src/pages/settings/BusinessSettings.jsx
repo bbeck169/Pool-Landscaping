@@ -67,6 +67,10 @@ export default function BusinessSettings() {
     brand_secondary_hex: "",
     footer_note: "",
     tax_id: "",
+    // Feb-2026 · Routing Traffic-Aware phase — bool toggle. Kept in
+    // the same fields state so the dirty-tracking + Save gating
+    // paths pick it up without a second reducer.
+    routing_traffic_aware: false,
   });
   const [effective, setEffective] = React.useState({});
   const [logoUrl, setLogoUrl] = React.useState(null);
@@ -86,6 +90,14 @@ export default function BusinessSettings() {
         brand_secondary_hex: stored.brand_secondary_hex || "",
         footer_note: stored.footer_note || "",
         tax_id: stored.tax_id || "",
+        // Feb-2026 · Routing Traffic-Aware phase — coerce the stored
+        // bool to a real ``false`` when unset so the toggle isn't
+        // ``undefined``.
+        routing_traffic_aware: !!(
+          stored.routing_traffic_aware ??
+          r?.effective?.routing_traffic_aware ??
+          false
+        ),
       });
       setEffective(r?.effective || {});
       setLogoUrl(stored.logo_url || r?.effective?.logo_url || null);
@@ -113,7 +125,14 @@ export default function BusinessSettings() {
     try {
       const patch = {};
       for (const [k, v] of Object.entries(fields)) {
-        patch[k] = v.trim() === "" ? null : v;
+        if (typeof v === "boolean") {
+          // Feb-2026 · Routing Traffic-Aware phase — bools ship
+          // through as-is; the trim-empty-to-null rule below is
+          // string-only.
+          patch[k] = v;
+        } else {
+          patch[k] = v.trim() === "" ? null : v;
+        }
       }
       const r = await api.patch("/tenants/me/business-settings", patch);
       setEffective(r?.effective || {});
@@ -372,6 +391,46 @@ export default function BusinessSettings() {
                 placeholder="#F97316"
               />
             </div>
+          </section>
+
+          {/* ── Routing ─────────────────────────────────────
+              Feb-2026 · Routing Traffic-Aware phase — per-tenant
+              opt-in. Default OFF; admin must explicitly enable to
+              hit the higher-tier ``TRAFFIC_AWARE`` Google Routes
+              API SKU. See /app/memory/FEATURE_ROUTING_TRAFFIC_AWARE.md.
+           */}
+          <section className="lg:col-span-3 bg-white rounded-lg border p-5"
+                    style={{ borderColor: colors.border }}
+                    data-testid="business-settings-routing-section">
+            <h2 className="text-lg font-semibold mb-4">Routing</h2>
+            <label className="flex items-start gap-3 cursor-pointer"
+                    data-testid="bs-routing-traffic-aware-row">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4"
+                checked={!!fields.routing_traffic_aware}
+                onChange={(e) => {
+                  setFields((f) => ({
+                    ...f,
+                    routing_traffic_aware: !!e.target.checked,
+                  }));
+                  setDirty(true);
+                }}
+                data-testid="bs-routing-traffic-aware-toggle"
+              />
+              <div>
+                <div className="text-sm font-medium"
+                      style={{ color: colors.onSurface }}>
+                  Traffic-aware route optimization
+                </div>
+                <div className="text-xs mt-1"
+                      style={{ color: colors.muted }}
+                      data-testid="bs-routing-traffic-aware-helper">
+                  Uses Google&rsquo;s live traffic data to sequence stops.
+                  May incur additional API cost.
+                </div>
+              </div>
+            </label>
           </section>
 
           {/* ── Save bar ────────────────────────────────────── */}

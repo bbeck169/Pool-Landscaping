@@ -98,6 +98,39 @@ def _parse_route(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+async def _resolve_routing_preference(
+    tenant_id: Optional[str], db_conn: Any = None,
+) -> str:
+    """Read the per-tenant ``routing_traffic_aware`` Business Settings
+    flag and map it onto the Google Routes API v2 ``routingPreference``.
+
+    Defaults to ``TRAFFIC_UNAWARE`` when:
+      * ``tenant_id`` is missing (untenanted call),
+      * the settings lookup raises (network hiccup / import error),
+      * the tenant has never toggled the setting on.
+
+    Keeps byte-for-byte back-compat for opted-out tenants — every
+    existing call site that omits ``tenant_id`` continues to hit the
+    ``TRAFFIC_UNAWARE`` SKU.
+    """
+    if not tenant_id:
+        return "TRAFFIC_UNAWARE"
+    try:
+        if db_conn is None:
+            from config import db as _default_db
+            db_conn = _default_db
+        from services.tenants.business_settings import (
+            get_effective_business_settings,
+        )
+        eff = await get_effective_business_settings(db_conn, tenant_id)
+        return "TRAFFIC_AWARE" if eff.get("routing_traffic_aware") else "TRAFFIC_UNAWARE"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[routing] preference lookup failed tenant=%s err=%s", tenant_id, exc,
+        )
+        return "TRAFFIC_UNAWARE"
+
+
 # ═════════════════════════════════════════════════════════════════
 # Phase I1.7.e · Chunk 3 · Feb-2026 — Platform raw-httpx impls.
 # Extracted so :mod:`services.maps.dispatcher` can call them for the
@@ -108,6 +141,8 @@ async def _platform_optimize_route_http(
     origin: Tuple[float, float],
     waypoints: List[Tuple[float, float]],
     destination: Optional[Tuple[float, float]] = None,
+    *,
+    routing_preference: str = "TRAFFIC_UNAWARE",
 ) -> Optional[Dict[str, Any]]:
     """Raw Routes v2 optimize call — no BYO / no cap enforcement."""
     if not waypoints:
@@ -118,7 +153,7 @@ async def _platform_optimize_route_http(
         "destination": _pt(*dest),
         "intermediates": [_pt(lat, lng) for lat, lng in waypoints],
         "travelMode": "DRIVE",
-        "routingPreference": "TRAFFIC_UNAWARE",
+        "routingPreference": routing_preference,
         "optimizeWaypointOrder": True,
     }
     data = await _post(body)
@@ -134,6 +169,8 @@ async def _platform_compute_route_no_optimize_http(
     origin: Tuple[float, float],
     waypoints: List[Tuple[float, float]],
     destination: Optional[Tuple[float, float]] = None,
+    *,
+    routing_preference: str = "TRAFFIC_UNAWARE",
 ) -> Optional[Dict[str, Any]]:
     """Raw Routes v2 pinned-order call — no BYO / no cap enforcement."""
     if not waypoints:
@@ -144,7 +181,7 @@ async def _platform_compute_route_no_optimize_http(
         "destination": _pt(*dest),
         "intermediates": [_pt(lat, lng) for lat, lng in waypoints],
         "travelMode": "DRIVE",
-        "routingPreference": "TRAFFIC_UNAWARE",
+        "routingPreference": routing_preference,
         "optimizeWaypointOrder": False,
     }
     data = await _post(body)
@@ -218,7 +255,20 @@ async def optimize_route(
 
     Phase I1.7.e Chunk 3: when ``MAPS_BYO_ENABLED`` + ``tenant_id``,
     routes through the BYO Maps dispatcher. Otherwise raw platform.
+
+    Feb-2026 · Routing Traffic-Aware phase — resolves the per-tenant
+    ``routing_traffic_aware`` Business Settings flag and threads it
+    through the platform HTTP call as ``routingPreference``. Default
+    remains ``TRAFFIC_UNAWARE`` when tenant is opted out, unknown, or
+    setting lookup fails — byte-for-byte back-compat.
     """
+    routing_pref = await _resolve_routing_preference(tenant_id, db_conn)
+    logger.info(
+        "[routing] tenant=%s traffic_aware=%s waypoint_count=%d op=optimize",
+        tenant_id or "-",
+        routing_pref == "TRAFFIC_AWARE",
+        len(waypoints or []),
+    )
     dispatched = await _maybe_dispatch_route(
         tenant_id=tenant_id, origin=origin, waypoints=waypoints,
         destination=destination, db_conn=db_conn,
@@ -230,7 +280,10 @@ async def optimize_route(
         # so we fall back to raw impl for the reorder-specific
         # ``ordered_indices`` payload. This matches Chunk 3 sizing —
         # the dispatcher's ``route`` op is pinned-order.
-    return await _platform_optimize_route_http(origin, waypoints, destination)
+    return await _platform_optimize_route_http(
+        origin, waypoints, destination,
+        routing_preference=routing_pref,
+    )
 
 
 async def compute_route_no_optimize(
@@ -245,7 +298,20 @@ async def compute_route_no_optimize(
 
     Phase I1.7.e Chunk 3: when ``MAPS_BYO_ENABLED`` + ``tenant_id``,
     routes through the BYO Maps dispatcher. Otherwise raw platform.
+
+    Feb-2026 · Routing Traffic-Aware phase — same tenant-scoped
+    preference resolution as :func:`optimize_route`. The BYO
+    dispatcher branch is not touched: BYO providers can't honour
+    this Google-specific flag, so we only apply the preference on
+    the platform-HTTP branch.
     """
+    routing_pref = await _resolve_routing_preference(tenant_id, db_conn)
+    logger.info(
+        "[routing] tenant=%s traffic_aware=%s waypoint_count=%d op=baseline",
+        tenant_id or "-",
+        routing_pref == "TRAFFIC_AWARE",
+        len(waypoints or []),
+    )
     dispatched = await _maybe_dispatch_route(
         tenant_id=tenant_id, origin=origin, waypoints=waypoints,
         destination=destination, db_conn=db_conn,
@@ -256,4 +322,5 @@ async def compute_route_no_optimize(
         return dispatched
     return await _platform_compute_route_no_optimize_http(
         origin, waypoints, destination,
+        routing_preference=routing_pref,
     )

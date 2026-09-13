@@ -35,6 +35,14 @@ BUSINESS_SETTINGS_KEYS = (
     "logo_url",
     "footer_note",
     "tax_id",
+    # Feb-2026 · Routing Traffic-Aware phase — per-tenant opt-in for
+    # the Google Routes API v2 ``TRAFFIC_AWARE`` routing preference.
+    # Default: OFF for every tenant (existing + new) — the higher-tier
+    # SKU only flips on when the admin explicitly enables it under
+    # Business Settings → Routing. Admin-only surface; excluded from
+    # ``CUSTOMER_SAFE_KEYS`` so the public branding endpoint cannot
+    # leak the internal cost-posture flag.
+    "routing_traffic_aware",
 )
 
 # ``brand_primary_hex`` / ``brand_secondary_hex`` regex — used by the
@@ -76,6 +84,11 @@ def build_business_settings_view(tenant: Dict[str, Any]) -> Dict[str, Any]:
         "company_display_name": company_fallback,
         "brand_primary_hex": stored["brand_primary_hex"] or DEFAULT_PRIMARY_HEX,
         "brand_secondary_hex": stored["brand_secondary_hex"] or DEFAULT_SECONDARY_HEX,
+        # Feb-2026 · Routing Traffic-Aware phase — coerce the stored
+        # bool to an explicit ``False`` when the tenant never PATCHed
+        # the field. Downstream (routing optimizer + settings page)
+        # relies on the value being present, never ``None``.
+        "routing_traffic_aware": bool(stored.get("routing_traffic_aware") or False),
     }
     return {"stored": stored, "effective": effective}
 

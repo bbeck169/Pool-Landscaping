@@ -20,6 +20,15 @@ export type BusinessSettingsStored = {
   footer_note?: string | null;
   tax_id?: string | null;
   logo_url?: string | null;
+  /**
+   * Feb-2026 · Routing Traffic-Aware phase — per-tenant opt-in for
+   * the Google Routes API v2 ``TRAFFIC_AWARE`` routing preference.
+   * Default OFF. Admin-only field; NOT exposed on the public branding
+   * endpoint. No mobile edit UI exists today (mobile is technician-
+   * facing); the type is mirrored so a future admin-mobile surface
+   * can consume it without further backend work.
+   */
+  routing_traffic_aware?: boolean | null;
 };
 
 export type BusinessSettingsEffective = BusinessSettingsStored & {

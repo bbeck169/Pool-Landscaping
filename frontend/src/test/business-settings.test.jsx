@@ -64,19 +64,22 @@ beforeEach(() => {
       logo_url: null,
       footer_note: "",
       tax_id: "",
+      routing_traffic_aware: false,
     },
     effective: {
       company_display_name: "Aquaterra",
       brand_primary_hex: "#0B4A6F",
       brand_secondary_hex: "#F97316",
       logo_url: null,
+      routing_traffic_aware: false,
     },
   });
   patchSpy.mockResolvedValue({
     tenant_id: "t-1",
     stored: {},
     effective: { brand_primary_hex: "#0B4A6F",
-                 brand_secondary_hex: "#F97316" },
+                 brand_secondary_hex: "#F97316",
+                 routing_traffic_aware: false },
   });
 });
 afterEach(() => {
@@ -208,5 +211,61 @@ describe("BusinessSettings page", () => {
       .toContain("/api/objects/tenant/logo.png");
     // Remove button now available.
     expect(screen.getByTestId("bs-logo-remove-button")).toBeTruthy();
+  });
+
+  // Feb-2026 · Routing Traffic-Aware phase — toggle contract.
+  it("renders the Routing section with the traffic-aware toggle off", async () => {
+    render(<BusinessSettings />);
+    await waitFor(() =>
+      expect(screen.queryByTestId("business-settings-routing-section")).toBeTruthy(),
+    );
+    const toggle = screen.getByTestId("bs-routing-traffic-aware-toggle");
+    expect(toggle).toBeTruthy();
+    // Default (stored=false) → checkbox unchecked.
+    expect(toggle.checked).toBe(false);
+    // Helper copy present.
+    expect(
+      screen.getByTestId("bs-routing-traffic-aware-helper").textContent,
+    ).toMatch(/live traffic data/i);
+  });
+
+  it("toggling traffic-aware round-trips through PATCH → refetch", async () => {
+    // Second GET (after PATCH) returns stored=true so the refetch
+    // path reflects the new value.
+    getSpy
+      .mockResolvedValueOnce({
+        tenant_id: "t-1",
+        stored: {
+          company_display_name: "Aquaterra",
+          routing_traffic_aware: false,
+        },
+        effective: {
+          company_display_name: "Aquaterra",
+          brand_primary_hex: "#0B4A6F",
+          brand_secondary_hex: "#F97316",
+          logo_url: null,
+          routing_traffic_aware: false,
+        },
+      });
+
+    render(<BusinessSettings />);
+    await waitFor(() =>
+      expect(screen.queryByTestId("bs-routing-traffic-aware-toggle")).toBeTruthy(),
+    );
+    const toggle = screen.getByTestId("bs-routing-traffic-aware-toggle");
+    expect(toggle.checked).toBe(false);
+
+    fireEvent.click(toggle);
+    // Save enabled — this dirties the fields state.
+    const btn = screen.getByTestId("bs-save-button");
+    await waitFor(() => expect(btn.hasAttribute("disabled")).toBe(false));
+
+    fireEvent.click(btn);
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(1));
+    // Verify the outbound PATCH body carries the boolean field.
+    const patchBody = patchSpy.mock.calls[0][1];
+    expect(patchBody.routing_traffic_aware).toBe(true);
+    // Toast fires on success.
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
   });
 });
