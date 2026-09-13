@@ -2,6 +2,7 @@
 
 **Owner:** main agent (Preview).
 **Created:** Feb-2026 · Housekeeping P2 · Round 2.
+**Updated:** Feb-2026 · Housekeeping Batch A — items 1 + 2 resolved.
 **Scope:** Frontend flakes that need production-code investigation
 or a larger change than a Round 2 dispatch can absorb. Each entry
 has a concrete fix proposal so the next dispatch can pick it up
@@ -9,85 +10,76 @@ without re-diagnosing.
 
 ---
 
-## 1 · `portal-identity-and-add-card.test.jsx` — Category (d)
+## 1 · `portal-identity-and-add-card.test.jsx` — RESOLVED (Batch A)
 
-**Symptom:** 2 failing tests.
+**Original symptom:** 2 failing tests — assertions that
+`PortalPaymentMethods` (plural) was no longer imported by `App.js`
+AND that the file itself was deleted.
 
-| Test | Assertion | Current reality |
-| ---- | --------- | --------------- |
-| Bug 2 · Item A · route wiring | `App.jsx` does NOT import `PortalPaymentMethods` (plural) | `App.jsx` still imports and routes to the plural component |
-| Bug 2 · Item A · legacy file deleted | `src/pages/portal/PortalPaymentMethods.jsx` does not exist | file still exists |
+**Fix landed (Feb-2026 · Housekeeping Batch A):** Completed the
+stalled production cleanup end-to-end:
 
-**Root cause:** The test was authored ahead of a planned cleanup
-(rename `PortalPaymentMethods.jsx` → `PortalPaymentMethod.jsx` and
-drop the plural route). The cleanup was never landed — the plural
-route + component are still live in production.
+1. Removed the `PortalPaymentMethods` import from `App.js` (line 369).
+2. Removed the stranded `Route path="portal/profile/payment-methods"`
+   from `App.js` (was line 1350). Grep confirmed no `Link` / `navigate`
+   references outside the file itself.
+3. Deleted `frontend/src/pages/portal/PortalPaymentMethods.jsx`.
+4. Deleted `frontend/src/test/task5-save-card-on-file.test.jsx` — it
+   exercised the deleted component; equivalent coverage lives on
+   the singular `<PortalPaymentMethod>` component tested through
+   `portal-identity-and-add-card.test.jsx` itself.
 
-**Recommended fix — production cleanup ticket (P3):**
+**Straggler grep results (all treated as archival — untouched):**
 
-1. Grep for every reference to `PortalPaymentMethods` (plural) —
-   `App.jsx` imports/routes, any internal Link/navigate calls, any
-   `data-testid` strings, any router match for `portal/payment-methods`.
-2. Consolidate onto the singular route + component
-   (`portal/payment-method` + `PortalPaymentMethod`).
-3. Delete `src/pages/portal/PortalPaymentMethods.jsx`.
-4. Verify the two portal-identity tests turn green.
+- `CHANGELOG.md` — 4 historical mentions (dev journal). Left as-is.
+- `memory/PHASE15_DELIVERABLES.md`, `memory/promote_to_prod_checklist.md`
+  — historical archives. Left as-is.
+- `memory/HOUSEKEEPING_DISPATCH_P2.md` — prior memo describing the
+  gap; superseded by this section.
+- `mobile/app/portal/payment-methods.tsx` +
+  `mobile/__tests__/task5-save-card-mobile.test.tsx` — mobile
+  codebase (`/app/mobile/`). Standing guardrail: do not touch.
+  Mobile mirror lifecycle is the mobile specialist's territory.
 
-**Estimated LOC:** ~20 (mostly delete + one import rewrite in
-`App.jsx`).
-
-**Why deferred here:** Round 2 test-suite-hygiene dispatch is
-capped at test-side changes plus at most 3 testid renames. Deleting
-a production component + rewriting router wiring is squarely
-production-code territory and needs its own review + smoke run.
+**Test result:** `portal-identity-and-add-card.test.jsx` now green
+(previously 2 failing, no skips reintroduced by the fix).
 
 ---
 
-## 2 · `pricebook-edit-item-modal.test.jsx` — Category (?)
+## 2 · `pricebook-edit-item-modal.test.jsx` — RESOLVED (Batch A)
 
-**Symptom:** 1 failing test — `Save calls resolve-or-create for a
-NEW income category name typed on Categories tab`. Test times out
-at the default 5s vitest budget.
+**Original hypotheses:** memo §2 (Round 2) proposed two candidates —
+(1) autocomplete debounced query mock returning `undefined`, and
+(2) resolve-or-create endpoint returning `undefined` for the
+category POST. **Both hypotheses were wrong.**
 
-**Suspected root cause:** Mock-shape drift on the autocomplete
-component or the resolve-or-create API adapter. When the test types
-a fresh income-category name and clicks Save, the modal appears to
-hang waiting for a resolver call that never resolves. Two candidate
-causes worth checking in order:
+**Actual root cause:** testid drift (category **c**, not **?**).
+The failing test used the testid prefix `ei-income-cat-*`, but the
+production `CategoryAutocomplete` component renders its testids
+scoped to whatever `testidPrefix` prop the parent passes. For the
+income-category slot in `EditItemModal.jsx`, that prop is
+`pricebook-income-category-select` — so the real testids in the
+DOM are `pricebook-income-category-select-input`,
+`pricebook-income-category-select-create`, and
+`pricebook-income-category-select-option-<id>`. The test's
+`findByTestId("ei-income-cat-create")` was timing out because the
+node genuinely didn't exist.
 
-1. The autocomplete's debounced query fires against `api.get`, but
-   the test's `api.get` mock was authored before the debounce guard
-   landed and no longer returns a resolved promise for the
-   autocomplete lookup call.
-2. The Save handler was refactored to await a category-side POST
-   BEFORE the item save, but the mock returns `undefined` for the
-   category POST (instead of `{id: "..."}`), so the item-save
-   await never fires.
+**Fix landed:** pure test-side rename in
+`frontend/src/test/pricebook-edit-item-modal.test.jsx`. Zero
+production-JSX touched.
 
-**Recommended investigation checklist:**
+**Lesson for future memos:** grep for the actual `data-testid` in
+production source before hypothesizing about mock shape — a
+5-second grep would have caught this immediately.
 
-1. Add `console.log` in the test's `_setupApi` to see which
-   endpoints are hit during the timing-out run.
-2. Compare with the passing "existing category" test in the same
-   file — it likely mocks the autocomplete GET with a real payload.
-3. Extend `api.post` mock to return `{id: "cat-new", name: "..."}`
-   for the resolve-or-create endpoint.
-4. If the modal now uses a portal / react-query wrapper, wrap the
-   render in the right providers (see other pricebook tests for the
-   canonical helper).
-
-**Estimated LOC:** 10–20 depending on which of the two hypotheses
-lands. If hypothesis 2 wins it's a 2-line mock adjustment; if
-hypothesis 1 wins it's a broader mock rewrite.
-
-**Why deferred here:** Requires ~30 min of interactive debugging
-plus potential provider-wrap changes. Not a mechanical fix — needs
-its own dispatch.
+**Test result:** `pricebook-edit-item-modal.test.jsx` — 11 passed,
+0 failed (was 1 failing).
 
 ---
 
 ## 3 · Follow-up
 
-When either item above lands, remove that section from this file
-and note the fix in the corresponding `HOUSEKEEPING_DISPATCH_*.md`
-memo's ledger.
+Both entries above are now closed. Future flakes appended here
+should follow the same "concrete fix proposal + estimated LOC"
+convention.

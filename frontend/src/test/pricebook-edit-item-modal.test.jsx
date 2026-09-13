@@ -274,13 +274,22 @@ describe("Backlog #iii · Categories tab · autocomplete + resolve-or-create on 
       render(<EditItemModal open item={_sampleItem} initialTab="categories"
                               onOpenChange={() => {}} onSaved={() => {}} />);
     });
-    await screen.findByTestId("ei-income-cat-input");
-    const inp = screen.getByTestId("ei-income-cat-input");
+    // Feb-2026 · Housekeeping Batch A — the memo's original mock-
+    // shape hypotheses were both wrong. The real root cause is a
+    // testid-drift: the test called ``ei-income-cat-*`` but the
+    // production ``CategoryAutocomplete`` component renders testids
+    // scoped to its ``testidPrefix`` prop, which is
+    // ``pricebook-income-category-select`` for the income-category
+    // slot. Renaming to match — no production-side change.
+    await screen.findByTestId("pricebook-income-category-select-input");
+    const inp = screen.getByTestId("pricebook-income-category-select-input");
     await user.click(inp);
     await user.type(inp, "Brand New Cat");
     // Radix Popover portal renders the CommandItem outside the modal —
     // findByTestId still resolves it once mounted.
-    const createBtn = await screen.findByTestId("ei-income-cat-create", {}, { timeout: 3000 });
+    const createBtn = await screen.findByTestId(
+      "pricebook-income-category-select-create", {}, { timeout: 3000 },
+    );
     await user.click(createBtn);
     await user.click(screen.getByTestId("ei-save"));
     await waitFor(() => {

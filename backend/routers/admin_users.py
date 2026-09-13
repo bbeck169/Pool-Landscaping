@@ -123,9 +123,17 @@ def _password_reset_html(
     *, target_name: str, actor_name: str, company_name: str,
     temp_password: str, login_url: str,
 ) -> str:
-    return f"""<!doctype html>
-<html><body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f4f6f8;padding:24px 0;margin:0;color:#111827">
-<div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;padding:28px 30px;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+    """Body-fragment HTML for the admin-driven password reset email.
+
+    Feb-2026 · Housekeeping Batch A — collapsed to a body fragment
+    (was previously a full ``<!doctype html><html>...`` document).
+    Callers route the output through
+    :func:`services.email.theming.wrap_html_in_shell`, which provides
+    the doctype / html / head / body scaffolding. Returning a full
+    document here produced a double-``<html>`` structural defect —
+    clients tolerated it but the markup was invalid.
+    """
+    return f"""<div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;padding:28px 30px;box-shadow:0 1px 3px rgba(0,0,0,.06);color:#111827;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
   <h1 style="margin:0 0 12px 0;font-size:20px">Password reset by admin</h1>
   <p style="margin:0 0 16px 0;line-height:1.55">
     Hi {target_name}, {actor_name} reset your {company_name} password.
@@ -142,8 +150,7 @@ def _password_reset_html(
   <p style="font-size:12px;color:#6b7280;margin:0">
     If this wasn't you, contact your administrator immediately.
   </p>
-</div>
-</body></html>"""
+</div>"""
 
 
 async def _send_password_reset_email(
@@ -170,13 +177,14 @@ async def _send_password_reset_email(
         temp_password=temp_password,
         login_url=login_url,
     )
-    # Feb-2026 · Email Base Template Theming — wrap in shared shell.
-    # ``_password_reset_html`` still emits a full ``<html>`` doc; the
-    # shell tolerates that by rendering the caller's HTML verbatim
-    # inside the body slot (the double-``<html>`` is invalid but every
-    # mainstream client parses it as the caller's markup nested inside
-    # the outer document, so branding wins visually). Follow-up:
-    # collapse ``_password_reset_html`` to a fragment.
+    # Feb-2026 · Email Base Template Theming + Housekeeping Batch A —
+    # ``_password_reset_html`` now returns a body fragment; the shell
+    # is the sole source of ``<!doctype html>`` / ``<html>`` /
+    # ``<head>`` / ``<body>`` scaffolding. See tests
+    # ``test_password_reset_shell_yields_single_html_tag`` +
+    # ``test_portal_invite_shell_yields_single_html_tag`` in
+    # ``test_email_theming.py`` — both assert exactly one ``<html``
+    # occurrence in the rendered output.
     try:
         branding = await get_effective_business_settings(
             db, tenant.get("id") or "", absolutize=True,

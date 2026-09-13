@@ -1345,9 +1345,12 @@ export default function App() {
             <Route path="ai-estimator" element={<AdminOnly><AIEstimatorPage /></AdminOnly>} />
             <Route path="customers/:id/chemistry-history" element={<AdminOnly><CustomerChemistryHistory /></AdminOnly>} />
             <Route path="portal/profile" element={<PortalProfile />} />
-            {/* Feb-2026 · Task 5 · Save Card on File — customer-owned
-                payment-method management (list / set-default / remove). */}
-            <Route path="portal/profile/payment-methods" element={<PortalPaymentMethods />} />
+            {/* Feb-2026 · Housekeeping Batch A — the stranded
+                ``portal/profile/payment-methods`` route + its
+                plural component were removed. All portal
+                payment-method flows now go through the singular
+                ``portal/payment-method`` route above. See
+                FLAKE_STABILIZATION_BACKLOG §1 (resolved). */}
             <Route path="portal/request-service" element={<PortalRequestService />} />
             <Route path="portal/reviews" element={<PortalReviews />} />
             <Route path="portal/payment-complete" element={<PortalPaymentComplete />} />

@@ -45,8 +45,22 @@ def wrap_html_in_shell(
   doc, the shell will nest it inside its own body slot; every
   mainstream client parses that as the caller's markup nested inside
   the outer document (double `<html>` is invalid HTML but tolerated
-  in practice). Follow-up work should collapse those builders to
-  fragments.
+  in practice).
+  - **Feb-2026 · Housekeeping Batch A — collapse landed.**
+    `routers/admin_users.py::_password_reset_html` now returns a
+    body fragment (was previously a full `<!doctype html><html>`
+    document). Locked by two new `test_email_theming.py` cases —
+    `test_password_reset_shell_yields_single_html_tag` and
+    `test_portal_invite_shell_yields_single_html_tag` — both use
+    an exact `count == 1` regex assertion on `<html\b` so future
+    double-wrap regressions trip immediately (a `>=1` check would
+    silently pass).
+  - **Scope-reduction finding:** the sibling builder
+    `routers/auth.py::_password_reset_email_html` was audited
+    during Batch A and was **already** emitting a body fragment
+    (a styled `<div>`, no `<html>` wrapper). Future dispatches
+    should NOT chase the auth.py builder — the double-wrap
+    defect only ever lived in the admin_users.py builder.
 
 ### Fallback resolution table
 
@@ -155,7 +169,7 @@ the smoke script in the memo checklist below).
 
 | Item                                                       | Priority | Reason for deferral                                                                                   |
 | ---------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
-| Collapse `_password_reset_html` (admin_users) + `_password_reset_email_html` (auth) to body fragments | P2 | Both currently emit full `<html>` docs. The shell nests them today — functionally fine, structurally ugly. |
+| Collapse `_password_reset_html` (admin_users) + `_password_reset_email_html` (auth) to body fragments | ~~P2~~ **DONE (Batch A)** — scope-reduced: only admin_users builder needed the collapse; auth builder already emitted a fragment. Locked by 2 new tests asserting `<html` count == 1. |
 | Theme the customer-facing `send_completion_email` in `emailer.py` | P2 | Customer-facing but dispatch explicitly listed 5 templates. This one would fit the pattern trivially. |
 | Additional MSO tuning (rounded-corner buttons, dark-mode media queries) | P3 | Current shell renders correctly across Gmail / Apple Mail / Outlook. Advanced polish is a separate phase. |
 | Theming the "quote accepted/declined" admin notification    | P3 | Admin-facing — explicitly out-of-scope. Only worth doing if brand identity should propagate to admin comms too. |

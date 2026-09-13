@@ -226,6 +226,71 @@ def test_case6_five_template_smoke_matrix(label, inner_fn):
 
 
 # ═════════════════════════════════════════════════════════════════════
+# Case 8 · Feb-2026 · Housekeeping Batch A — the collapsed
+# ``_password_reset_html`` builder in ``routers/admin_users.py`` used
+# to return a full ``<!doctype html><html>...`` document that was
+# then wrapped again by the shell, producing a double-``<html>``
+# structural defect. Assert exactly one ``<html`` occurrence in the
+# rendered output — a ``>=1`` assertion would silently pass future
+# double-wrap regressions. Also assert the same invariant for the
+# portal-invite/password-reset caller-fragment shape end-to-end.
+# ═════════════════════════════════════════════════════════════════════
+
+_HTML_TAG_RE = re.compile(r"<html\b", re.IGNORECASE)
+
+
+def test_password_reset_shell_yields_single_html_tag():
+    """The admin-driven password-reset email must render exactly one
+    ``<html>`` document after passing through :func:`wrap_html_in_shell`.
+
+    Uses the real production builder from ``routers/admin_users`` so
+    a regression that reintroduces the ``<!doctype html><html>``
+    prefix trips the assertion immediately.
+    """
+    from routers.admin_users import _password_reset_html
+
+    inner = _password_reset_html(
+        target_name="Jamie",
+        actor_name="Alex the admin",
+        company_name="AquaTerra",
+        temp_password="TempPass!23",
+        login_url="https://app.example.com/login",
+    )
+    # Sanity — builder is now a fragment; must NOT self-wrap.
+    assert not _HTML_TAG_RE.search(inner), (
+        "regression: _password_reset_html re-introduced its own <html> wrapper"
+    )
+    html = wrap_html_in_shell(inner, _FULL_BRANDING)
+    matches = _HTML_TAG_RE.findall(html)
+    assert len(matches) == 1, (
+        f"expected exactly one <html> tag, found {len(matches)}: "
+        f"double-wrap regression?"
+    )
+    # Fragment content must survive verbatim.
+    assert "Password reset by admin" in html
+    assert "TempPass!23" in html
+
+
+def test_portal_invite_shell_yields_single_html_tag():
+    """Portal-invite / password-reset-portal templates share the same
+    single-``<html>`` invariant. Exercises the mini-template used in
+    the case-6 smoke matrix so we lock the shape on every caller
+    shape the theming pipeline supports.
+    """
+    inner = _mini_portal_invite_html()
+    assert not _HTML_TAG_RE.search(inner), (
+        "test fixture regressed — mini portal-invite fragment must not "
+        "carry its own <html>"
+    )
+    html = wrap_html_in_shell(inner, _FULL_BRANDING)
+    matches = _HTML_TAG_RE.findall(html)
+    assert len(matches) == 1, (
+        f"expected exactly one <html> tag, found {len(matches)}: "
+        f"double-wrap regression?"
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════
 # Case 7 — Absolutized logo URL survives verbatim.
 # ═════════════════════════════════════════════════════════════════════
 
