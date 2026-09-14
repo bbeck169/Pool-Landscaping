@@ -72,13 +72,47 @@ describe("LeadsDashboardPage · list row polish", () => {
     // EXACT class list appears once per header + once per row —
     // which locks the column layout and catches accidental drift.
     //
-    // Header layout (Feb-2026): 1 · 2 · 2 · 2 · 2 · 1 · 2 = 12.
-    expect(SRC).toMatch(/<div className="col-span-2">Date<\/div>/);
+    // Header layout (Feb-2026 · Phase P0.5): 1 · 1 · 2 · 2 · 2 · 1 · 1 · 2 = 12.
+    // Date trimmed from col-span-2 → col-span-1 to make room for
+    // the new Service column between Address and Source.
+    expect(SRC).toMatch(/<div className="col-span-1">Date<\/div>/);
     expect(SRC).toMatch(/<div className="col-span-2">Name<\/div>/);
     expect(SRC).toMatch(/<div className="col-span-2">Contact<\/div>/);
     expect(SRC).toMatch(/<div className="col-span-2">Address<\/div>/);
+    expect(SRC).toMatch(/<div className="col-span-1">Service<\/div>/);
     expect(SRC).toMatch(/<div className="col-span-1">Source<\/div>/);
     expect(SRC).toMatch(/<div className="col-span-2">Status<\/div>/);
+  });
+});
+
+
+describe("LeadsDashboardPage · Phase P0.5 polish", () => {
+  it("Service column header sits between Address and Source", () => {
+    const iAddress = SRC.indexOf(">Address<");
+    const iService = SRC.indexOf(">Service<");
+    const iSource  = SRC.indexOf(">Source<");
+    expect(iAddress).toBeGreaterThan(0);
+    expect(iService).toBeGreaterThan(iAddress);
+    expect(iSource).toBeGreaterThan(iService);
+  });
+
+  it("Service cell renders l.service_interest with an em-dash fallback", () => {
+    // Anchor on the ``lead-service-`` testid then confirm both
+    // branches of the ternary (service_interest present + em-dash
+    // fallback) exist within the same cell block.
+    const cell = SRC.match(
+      /data-testid=\{`lead-service-\$\{l\.id\}`\}[\s\S]{0,600}/,
+    );
+    expect(cell, "lead-service cell block not found").toBeTruthy();
+    expect(cell[0]).toMatch(/l\.service_interest/);
+    expect(cell[0]).toMatch(/—/);
+  });
+
+  it("Address cell renders explicit 'No address provided' empty-state", () => {
+    // The empty-state branch fires when ``!line1 && !cszZip``.
+    expect(SRC).toMatch(/No address provided/);
+    // Testid for the empty-state span so the tester can grep it.
+    expect(SRC).toMatch(/data-testid=\{`lead-address-empty-\$\{l\.id\}`\}/);
   });
 });
 

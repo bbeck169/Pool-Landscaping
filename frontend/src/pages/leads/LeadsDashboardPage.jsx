@@ -260,10 +260,11 @@ export default function LeadsDashboardPage() {
               className="cursor-pointer"
             />
           </div>
-          <div className="col-span-2">Date</div>
+          <div className="col-span-1">Date</div>
           <div className="col-span-2">Name</div>
           <div className="col-span-2">Contact</div>
           <div className="col-span-2">Address</div>
+          <div className="col-span-1">Service</div>
           <div className="col-span-1">Source</div>
           <div className="col-span-2">Status</div>
         </div>
@@ -293,7 +294,7 @@ export default function LeadsDashboardPage() {
                 className="cursor-pointer"
               />
             </div>
-            <div className="col-span-2 text-xs" style={{ color: colors.muted }}>
+            <div className="col-span-1 text-xs" style={{ color: colors.muted }}>
               {(l.created_at || "").slice(0, 10)}
             </div>
             <div className="col-span-2 font-semibold" style={{ color: colors.onSurface }}>
@@ -317,7 +318,13 @@ export default function LeadsDashboardPage() {
             {/* Feb-2026 · Address column — added between Contact and
                 Source per user request.  Truncates to a single line
                 with the full string on ``title=`` hover for cases
-                where the address exceeds the column width. */}
+                where the address exceeds the column width.
+                Phase P0.5 · Feb-2026 — when the row has NO address
+                data at all (no street blob AND no discrete city /
+                state / zip) render an explicit muted
+                "No address provided" line instead of an em-dash so
+                ops can tell the visitor left the field blank vs the
+                UI dropping data. */}
             <div
               className="col-span-2 text-xs truncate"
               style={{ color: colors.muted }}
@@ -331,7 +338,14 @@ export default function LeadsDashboardPage() {
                 const csz = [l.city, l.state].filter(Boolean).join(", ");
                 const cszZip = [csz, l.zip].filter(Boolean).join(" ");
                 if (!line1 && !cszZip) {
-                  return <span style={{ opacity: 0.5 }}>—</span>;
+                  return (
+                    <span
+                      style={{ opacity: 0.6, fontStyle: "italic" }}
+                      data-testid={`lead-address-empty-${l.id}`}
+                    >
+                      No address provided
+                    </span>
+                  );
                 }
                 return (
                   <>
@@ -344,6 +358,22 @@ export default function LeadsDashboardPage() {
                   </>
                 );
               })()}
+            </div>
+            {/* Phase P0.5 · Feb-2026 — Service column surfaces
+                ``service_interest`` (previously only visible in the
+                detail card).  When empty, render a muted em-dash so
+                the column is never blank. */}
+            <div
+              className="col-span-1 text-xs truncate"
+              style={{ color: colors.muted }}
+              title={l.service_interest || ""}
+              data-testid={`lead-service-${l.id}`}
+            >
+              {l.service_interest ? (
+                <span style={{ color: colors.onSurface }}>{l.service_interest}</span>
+              ) : (
+                <span style={{ opacity: 0.5 }}>—</span>
+              )}
             </div>
             <div className="col-span-1">
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"

@@ -374,24 +374,60 @@ export default function LeadDetail() {
                      data-testid="lead-email">{lead.email}</a>
                 </div>
               )}
-              {(lead.service_address || lead.address) && (
-                <div className="flex items-start gap-2">
-                  <MapPin size={14} className="mt-0.5 text-slate-500" />
-                  <div data-testid="lead-address">{lead.service_address || lead.address}</div>
-                </div>
-              )}
-              {/* K63 · Feb-2026 — Data-parity fill-in.  Widget forms
-                  already persist ``city``, ``state``, ``zip``,
-                  ``company_name`` onto ``leads`` but the pre-K63
-                  detail view never surfaced them, so the ops team
-                  had to open the raw lead record to see the full
-                  intake. These four lines fix that. */}
-              {(lead.city || lead.state || lead.zip) ? (
-                <div className="flex items-start gap-2 text-xs text-slate-500 ml-6"
-                      data-testid="lead-city-state-zip">
-                  {[lead.city, lead.state, lead.zip].filter(Boolean).join(", ")}
-                </div>
-              ) : null}
+              {(() => {
+                const line1 = lead.service_address || lead.address;
+                const hasCSZ = !!(lead.city || lead.state || lead.zip);
+                const hasAnyAddress = !!(line1 || hasCSZ);
+                const _lat = lead.latitude;
+                const _lng = lead.longitude;
+                const hasLatLng = _lat !== undefined && _lat !== null
+                                    && _lng !== undefined && _lng !== null;
+                if (!hasAnyAddress) {
+                  // Phase P0.5 · Feb-2026 — explicit empty-state so
+                  // ops can tell "visitor skipped this field" apart
+                  // from "the UI is dropping data".
+                  return (
+                    <div className="flex items-start gap-2"
+                          data-testid="lead-address-empty">
+                      <MapPin size={14} className="mt-0.5 text-slate-500" />
+                      <div className="text-slate-500 italic">No address provided</div>
+                    </div>
+                  );
+                }
+                return (
+                  <>
+                    {line1 ? (
+                      <div className="flex items-start gap-2">
+                        <MapPin size={14} className="mt-0.5 text-slate-500" />
+                        <div data-testid="lead-address">{line1}</div>
+                      </div>
+                    ) : null}
+                    {/* K63 · Feb-2026 — Data-parity fill-in.  Widget
+                        forms already persist ``city``, ``state``,
+                        ``zip``, ``company_name`` onto ``leads`` but
+                        the pre-K63 detail view never surfaced them.
+                        Kept hidden when all three are empty (per
+                        Phase P0.5 direction — the outer empty-state
+                        line covers that case instead). */}
+                    {hasCSZ ? (
+                      <div className="flex items-start gap-2 text-xs text-slate-500 ml-6"
+                            data-testid="lead-city-state-zip">
+                        {[lead.city, lead.state, lead.zip].filter(Boolean).join(", ")}
+                      </div>
+                    ) : null}
+                    {/* Phase P0.5 · Feb-2026 — lat/lng hint next to
+                        address for pin-drop verification. Rendered
+                        ONLY when both coordinates are present. */}
+                    {hasLatLng ? (
+                      <div className="flex items-start gap-2 text-xs text-slate-500 ml-6"
+                            data-testid="lead-latlng">
+                        <span aria-hidden="true">📍</span>
+                        <span>{Number(_lat).toFixed(4)}, {Number(_lng).toFixed(4)}</span>
+                      </div>
+                    ) : null}
+                  </>
+                );
+              })()}
               {lead.company_name ? (
                 <div className="flex items-center gap-2 text-xs text-slate-500"
                       data-testid="lead-company-name">

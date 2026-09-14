@@ -1,3 +1,16 @@
+## Iteration 91 — Lead Intake Address Autofill (Google Places)
+- **Commit**: 23baaa27
+- **Date**: 2026-09-14
+- **Changes**:
+  - Created `src/components/common/AddressAutocomplete.tsx` — debounced (250ms) input with ≤5 Places suggestions via `GET /api/public/places/autocomplete`, selection fetches details via `GET /api/public/places/details`, returns `{street, city, state, zip, latitude, longitude}` to parent
+  - Modified `src/components/NewLeadForm.tsx` — replaced plain address TextInput with AddressAutocomplete; auto-sets `geo` state (lat/lng) on suggestion selection; added `latitude`/`longitude` to POST body
+  - GPS "Attach my current location" button preserved as secondary option
+  - No Google API key in mobile app — backend proxy handles it
+- **Files created**: `src/components/common/AddressAutocomplete.tsx`
+- **Files modified**: `src/components/NewLeadForm.tsx`
+- **Web files referenced**: `frontend/src/components/common/AddressAutocomplete.jsx`, `frontend/src/pages/public/PublicLeadIntake.jsx`
+
+
 ## Iteration 90 — CRITICAL: Remove Legacy "Chemical Readings" from Pool Checklist
 - **Commit**: a332720c
 - **Date**: 2026-09-14
