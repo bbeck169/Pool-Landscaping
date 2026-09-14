@@ -53,6 +53,12 @@ export default function RecurringJobs() {
   const [priceErr, setPriceErr] = useState("");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null);
+  // Feb-2026 · Recurring Jobs · hard-delete confirmation modal.
+  // Kept OUT of the row's own state so the modal survives a row
+  // re-render (busy flag flips as soon as the confirm click
+  // fires) — the confirmation is a distinct destructive action
+  // gated behind its own explicit confirm button.
+  const [hardDeleteTarget, setHardDeleteTarget] = useState(null);
   // Feb-2026 P0 · Orphan-backfill state. Populated lazily on mount
   // so operators see a "Missing N template(s)" banner without
   // running the mutating backfill first.
@@ -115,7 +121,7 @@ export default function RecurringJobs() {
   useEffect(() => { load(); }, []);
 
   const openCreate = () => {
-    setEditing({ frequency: "weekly", day_of_week: 0, start_date: todayIso(), price_cents: 12000, active: true, notes: "", recurrence_never_ends: true, end_date: null });
+    setEditing({ frequency: "weekly", day_of_week: 0, start_date: todayIso(), price_cents: 12000, active: true, is_active: false, notes: "", recurrence_never_ends: true, end_date: null });
     setPriceStr("120.00");
     setPriceErr("");
     setModalOpen(true);
@@ -187,6 +193,18 @@ export default function RecurringJobs() {
     setBusy(row.id);
     try { await api.del(`/recurring-jobs/${row.id}`); await load(); }
     finally { setBusy(null); }
+  };
+
+  const hardDelete = async (row) => {
+    // Feb-2026 · Recurring Jobs · HARD delete. Backend removes the
+    // template row + cancels every future-scheduled child job.
+    // Completed / in-progress children are preserved.
+    setBusy(row.id);
+    try {
+      await api.del(`/recurring-jobs/${row.id}?hard=true`);
+      setHardDeleteTarget(null);
+      await load();
+    } finally { setBusy(null); }
   };
 
   const stopRecurrence = async (row) => {
@@ -336,6 +354,19 @@ export default function RecurringJobs() {
                             : { background: "#FEE2E2", color: "#991B1B" }}>
                       {r.active ? "Active" : "Paused"}
                     </span>
+                    {/* Feb-2026 · Recurring Jobs · is_active badge.
+                        Rendered when the new gate is explicitly off,
+                        distinct from the legacy "Paused" (which
+                        derives from ``active``). A row can be
+                        "Paused + Inactive" simultaneously — both
+                        chips render side-by-side. */}
+                    {r.is_active === false ? (
+                      <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                            style={{ background: "#FEF3C7", color: "#92400E" }}
+                            data-testid={`recurring-job-inactive-badge-${r.id}`}>
+                        Inactive
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
                     <button type="button" onClick={() => generateNow(r)} disabled={busy === r.id || !r.active}
@@ -365,10 +396,23 @@ export default function RecurringJobs() {
                       </button>
                     ) : null}
                     <button type="button" onClick={() => softDelete(r)}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold mr-1"
                             style={{ border: `1px solid #FECACA`, background: colors.surface, color: "#B91C1C" }}
-                            data-testid={`recurring-job-delete-${r.id}`}>
+                            data-testid={`recurring-job-soft-delete-btn-${r.id}`}>
                       <Trash2 size={11} /> Delete
+                    </button>
+                    {/* Feb-2026 · Recurring Jobs · HARD delete.
+                        Visually distinct (solid red) so it can't be
+                        confused with the soft-delete button above.
+                        Gated behind its own dedicated confirmation
+                        modal — never a browser ``confirm()`` — so
+                        the destructive action is a two-tap flow. */}
+                    <button type="button"
+                            onClick={() => setHardDeleteTarget(r)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold"
+                            style={{ border: `1px solid #B91C1C`, background: "#B91C1C", color: "#FFFFFF" }}
+                            data-testid={`recurring-job-hard-delete-btn-${r.id}`}>
+                      <Trash2 size={11} /> Delete permanently
                     </button>
                   </td>
                 </tr>
@@ -454,7 +498,40 @@ export default function RecurringJobs() {
                          onChange={(e) => setEditing((x) => ({ ...x, start_date: e.target.value }))}
                          className="w-full mt-1 px-2 py-1.5 rounded text-sm"
                          style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-                         data-testid="recurring-jobs-start" />
+                         data-testid="recurring-job-start-date-input" />
+                </label>
+              </div>
+
+              {/* Feb-2026 · Recurring Jobs — Active switch + is_active.
+                  New records default off so the operator can save
+                  a draft and flip the switch later. Backend rejects
+                  ``is_active=true`` without a ``start_date`` with a
+                  422 ``start_date_required_for_active`` — the
+                  ``disabled`` guard here surfaces that as a client-
+                  side hint before the request even fires. */}
+              <div className="rounded-lg p-3 flex items-start justify-between gap-3"
+                    style={{ border: `1px solid ${colors.border}` }}>
+                <div className="flex-1">
+                  <div className="text-xs font-semibold uppercase tracking-wide"
+                        style={{ color: colors.muted }}>
+                    Active
+                  </div>
+                  <p className="text-xs mt-1" style={{ color: colors.muted }}>
+                    {(editing.start_date || "").trim()
+                      ? "Nightly generator materializes occurrences when active."
+                      : "Requires start date"}
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-xs font-semibold shrink-0"
+                        style={{ color: colors.onSurface }}>
+                  <input type="checkbox"
+                          checked={!!editing.is_active}
+                          disabled={!(editing.start_date || "").trim()}
+                          onChange={(e) => setEditing((x) => ({
+                            ...x, is_active: e.target.checked,
+                          }))}
+                          data-testid="recurring-job-active-toggle" />
+                  {editing.is_active ? "On" : "Off"}
                 </label>
               </div>
               {/* Feb-2026 · Ends mode · explicit radio group. Two mutually-
@@ -626,6 +703,70 @@ export default function RecurringJobs() {
                       style={{ background: colors.brand, color: "#fff", border: 0, opacity: (!editing.customer_id || !editing.service_type || !!priceErr) ? 0.5 : 1 }}
                       data-testid="recurring-jobs-save">
                 {editing.id ? "Save changes" : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Feb-2026 · Recurring Jobs · HARD-delete confirmation modal.
+          Distinct from the soft-delete row action so the operator
+          has to explicitly opt in to the destructive path. Backend
+          removes the template + cancels every future-scheduled
+          child job (completed / in-progress children are
+          preserved) + writes an audit_logs entry. */}
+      {hardDeleteTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              data-testid="recurring-job-hard-delete-confirm-modal">
+          <div className="w-full max-w-md rounded-2xl"
+                style={{ background: colors.surface,
+                          border: `1px solid ${colors.border}` }}>
+            <div className="flex items-center justify-between px-5 py-3"
+                  style={{ borderBottom: `1px solid ${colors.border}` }}>
+              <h2 className="text-lg font-bold" style={{ color: "#B91C1C" }}>
+                Permanently delete this recurring job?
+              </h2>
+              <button type="button"
+                       onClick={() => setHardDeleteTarget(null)}
+                       aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 text-sm" style={{ color: colors.onSurface }}>
+              <p>
+                This removes the recurring template AND cancels any
+                future scheduled jobs derived from it. Completed jobs
+                will not be affected. This cannot be undone.
+              </p>
+              {(hardDeleteTarget.customer_name || hardDeleteTarget.service_type) ? (
+                <p className="mt-3 text-xs" style={{ color: colors.muted }}>
+                  Target: <span className="font-semibold" style={{ color: colors.onSurface }}>
+                    {hardDeleteTarget.customer_name || "—"} · {hardDeleteTarget.service_type || "—"}
+                  </span>
+                </p>
+              ) : null}
+            </div>
+            <div className="px-5 py-3 flex items-center justify-end gap-2"
+                  style={{ borderTop: `1px solid ${colors.border}` }}>
+              <button type="button"
+                       onClick={() => setHardDeleteTarget(null)}
+                       className="text-sm font-semibold px-3 py-1.5 rounded"
+                       style={{ border: `1px solid ${colors.border}`,
+                                 background: colors.surface,
+                                 color: colors.onSurface }}
+                       data-testid="recurring-job-hard-delete-cancel-btn">
+                Cancel
+              </button>
+              <button type="button"
+                       onClick={() => hardDelete(hardDeleteTarget)}
+                       disabled={busy === hardDeleteTarget.id}
+                       className="text-sm font-bold px-4 py-1.5 rounded"
+                       style={{ background: "#B91C1C", color: "#FFFFFF",
+                                 border: 0,
+                                 opacity: busy === hardDeleteTarget.id ? 0.6 : 1 }}
+                       data-testid="recurring-job-hard-delete-confirm-btn">
+                Delete permanently
               </button>
             </div>
           </div>

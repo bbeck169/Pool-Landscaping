@@ -1719,6 +1719,21 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"[migration:k43-ach-sync] crashed: {e}")
 
+    # Feb-2026 · Recurring Jobs — idempotent backfill for the new
+    # ``is_active`` gate. Preserves current business behavior for
+    # every pre-existing template (legacy ``active`` → ``is_active``)
+    # and seeds ``start_date`` from ``created_at`` when both are
+    # missing. Safe to re-run on every boot; subsequent passes find
+    # zero candidates and no-op.
+    try:
+        from services.migrations.recurring_templates_is_active_backfill import (
+            backfill_recurring_is_active as _recurring_is_active_backfill,
+        )
+        await step("recurring_is_active_backfill",
+                     _recurring_is_active_backfill())
+    except Exception as e:
+        logger.warning(f"[migration:recurring_is_active_backfill] crashed: {e}")
+
     # Feb-2026 · D2 — the following demo tech users + demo-only
     # data seeds skip in production (APP_ENV=production or
     # SEED_DEMO_DATA=false).  Each ``seed_*_user`` also individually

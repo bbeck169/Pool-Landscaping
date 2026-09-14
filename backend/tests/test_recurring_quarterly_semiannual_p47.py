@@ -67,6 +67,10 @@ def _mk_template(admin_h, seed_customer, **overrides):
         "start_date": "2026-01-15",
         "frequency": "quarterly",
         "day_of_month": 15,
+        # Feb-2026 · Recurring Jobs — new API records default
+        # ``is_active=false``. Opt in here so the generator gate
+        # picks these templates up (mirrors the UI toggle).
+        "is_active": True,
         **overrides,
     }
     return requests.post(f"{API}/recurring-jobs",

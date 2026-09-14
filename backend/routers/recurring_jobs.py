@@ -60,6 +60,16 @@ class RecurringJobIn(BaseModel):
     notes: str = ""
     allow_sunday: bool = False
     active: bool = True
+    # Feb-2026 · Recurring Jobs — is_active + generator gate.
+    # Distinct from the legacy ``active`` flag (which stays True
+    # by default for backwards compat with existing callers). The
+    # nightly generator now gates on ``is_active`` AND
+    # ``start_date <= today`` so a template can be created in a
+    # draft state without immediately materializing jobs. New API
+    # records default to ``False`` — legacy DB rows are backfilled
+    # to ``True`` by ``services/migrations/recurring_templates_
+    # is_active_backfill.py``.
+    is_active: bool = False
     # Feb-2026 · Never-end recurrence. When True, `end_date` is forced
     # to None on save so `_next_occurrences` walks unbounded (capped
     # only by the nightly 14-day generator horizon → rolling forever).
@@ -110,6 +120,8 @@ class RecurringJobPatch(BaseModel):
     notes: Optional[str] = None
     allow_sunday: Optional[bool] = None
     active: Optional[bool] = None
+    # Feb-2026 · Recurring Jobs — is_active on patch.
+    is_active: Optional[bool] = None
     recurrence_never_ends: Optional[bool] = None
     monthly_pattern: Optional[str] = None
     monthly_nth_week: Optional[str] = None
@@ -427,6 +439,12 @@ async def create_recurring(body: RecurringJobIn,
                              user: dict = Depends(require_admin_or_manager),
                              tenant: dict = Depends(get_current_tenant)):
     _validate(body)
+    # Feb-2026 · Recurring Jobs · is_active gate. On create,
+    # ``start_date`` is already required by ``RecurringJobIn`` so
+    # this is only a defense-in-depth pair-check for callers that
+    # somehow smuggle an empty ``start_date`` past Pydantic.
+    if body.is_active and not (body.start_date or "").strip():
+        raise HTTPException(422, {"detail": "start_date_required_for_active"})
     _reject_double_assignment(
         assigned_tech_id=body.assigned_tech_id, crew_id=body.crew_id,
     )
@@ -506,6 +524,21 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
                             tenant: dict = Depends(get_current_tenant)):
     _validate(body)
     raw = body.dict(exclude_unset=True)
+    # Feb-2026 · Recurring Jobs · is_active gate. Rejects
+    # ``is_active=true`` when neither the incoming patch nor the
+    # existing doc carries a ``start_date``. Look up the current
+    # doc lazily so the ok-path stays a single write.
+    if raw.get("is_active") is True:
+        _incoming_start = (raw.get("start_date") or "").strip()
+        if not _incoming_start:
+            _existing = await db.recurring_job_templates.find_one(
+                {"id": tpl_id, "tenant_id": tenant["id"]},
+                {"_id": 0, "start_date": 1},
+            )
+            if not (_existing or {}).get("start_date"):
+                raise HTTPException(
+                    422, {"detail": "start_date_required_for_active"},
+                )
     # Phase H9 · Feb-2026 — assignment fields (``assigned_tech_id``,
     # ``crew_id``) must survive as explicit ``None`` in the ``$set``
     # so a "flip from crew to tech" wipes the opposite side. The
@@ -514,7 +547,7 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
     _ASSIGN_KEYS = {"assigned_tech_id", "crew_id"}
     updates: Dict[str, Any] = {
         k: v for k, v in raw.items()
-        if v is not None or k == "active" or k in _ASSIGN_KEYS
+        if v is not None or k == "active" or k == "is_active" or k in _ASSIGN_KEYS
     }
     # If the caller supplied both assignment fields with non-None
     # values, reject before writing.
@@ -547,15 +580,87 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
 
 @router.delete("/recurring-jobs/{tpl_id}")
 async def delete_recurring(tpl_id: str,
+                             hard: bool = Query(False),
                              user: dict = Depends(require_admin_or_manager),
                              tenant: dict = Depends(get_current_tenant)):
+    """Delete a recurring-job template.
+
+    * ``hard=false`` (default) — SOFT delete: flip ``active`` (and
+      the new ``is_active`` gate) to False. Existing behavior; the
+      template stays in the collection so historical children keep
+      resolving via ``recurring_template_id`` denorm.
+    * ``hard=true`` — HARD delete:
+        - Physically remove the template row from
+          ``db.recurring_job_templates``.
+        - Cancel every future-scheduled child job derived from it
+          (``status == 'scheduled'`` AND ``scheduled_date > today``)
+          — completed / in-progress children are preserved.
+        - Emit an ``audit_logs`` entry so the delete is traceable.
+    Both branches are admin-only (same auth as create/patch).
+    """
+    if hard:
+        # Fetch the doc first so the audit entry carries a snapshot
+        # + we can 404 cleanly when the id is unknown.
+        tpl = await db.recurring_job_templates.find_one(
+            {"id": tpl_id, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if not tpl:
+            raise HTTPException(404, "template not found")
+        # Cancel future-scheduled children (leave completed/in-
+        # progress rows alone).
+        today_iso = date.today().isoformat()
+        cancel_res = await db.jobs.update_many(
+            {
+                "tenant_id": tenant["id"],
+                "recurring_template_id": tpl_id,
+                "status": "scheduled",
+                "scheduled_date": {"$gt": today_iso},
+            },
+            {"$set": {"status": "cancelled",
+                       "cancelled_at": now_iso(),
+                       "cancelled_reason": "recurring_template_hard_deleted",
+                       "updated_at": now_iso()}},
+        )
+        # Remove the template row.
+        await db.recurring_job_templates.delete_one(
+            {"id": tpl_id, "tenant_id": tenant["id"]},
+        )
+        # Audit trail — same collection every other admin action
+        # writes to (best-effort, never blocks the delete).
+        try:
+            await db.audit_logs.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "actor_user_id": user.get("id"),
+                "actor_email": user.get("email"),
+                "action": "recurring_job.hard_delete",
+                "target_type": "recurring_job_template",
+                "target_id": tpl_id,
+                "target_snapshot": {
+                    k: tpl.get(k) for k in
+                    ("id", "customer_id", "service_type", "frequency",
+                     "start_date", "end_date", "is_active", "active")
+                },
+                "future_jobs_cancelled": cancel_res.modified_count,
+                "created_at": now_iso(),
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[recurring hard-delete] audit log write failed: {e}")
+        return {
+            "id": tpl_id,
+            "hard_deleted": True,
+            "future_jobs_cancelled": cancel_res.modified_count,
+        }
+
+    # ── Soft delete branch (existing behavior) ──
     res = await db.recurring_job_templates.update_one(
         {"id": tpl_id, "tenant_id": tenant["id"]},
-        {"$set": {"active": False, "updated_at": now_iso()}},
+        {"$set": {"active": False, "is_active": False,
+                   "updated_at": now_iso()}},
     )
     if res.matched_count == 0:
         raise HTTPException(404, "template not found")
-    return {"id": tpl_id, "active": False}
+    return {"id": tpl_id, "active": False, "is_active": False}
 
 
 async def _stop_template_and_prune_future(tpl_id: str, tenant_id: str) -> Dict[str, Any]:
@@ -717,11 +822,28 @@ async def generate_now(tpl_id: str,
                          user: dict = Depends(require_admin_or_manager),
                          tenant: dict = Depends(get_current_tenant)):
     await _ensure_indexes()
+    # Feb-2026 · Recurring Jobs · is_active gate. The manual "Gen
+    # 14d" button obeys the same gate the nightly cron uses so
+    # dispatchers can't accidentally materialize occurrences for a
+    # draft template. The tolerant filter accepts either the new
+    # ``is_active: True`` field OR the legacy ``active: True`` for
+    # docs that haven't been touched by the backfill migration yet.
     tpl = await db.recurring_job_templates.find_one(
-        {"id": tpl_id, "tenant_id": tenant["id"], "active": True}, {"_id": 0}
+        {"id": tpl_id, "tenant_id": tenant["id"],
+         "$or": [{"is_active": True}, {"active": True, "is_active": {"$exists": False}}]},
+        {"_id": 0},
     )
     if not tpl:
         raise HTTPException(404, "template not found or inactive")
+    # Also gate on ``start_date`` being set. Unlike the nightly
+    # cron (which enforces ``start_date <= today``), the manual
+    # ``/generate`` endpoint is a pre-materialization tool, so a
+    # start_date in the future is a legitimate use case (the
+    # caller supplies ``through`` explicitly). We only reject the
+    # missing-start-date case here — same coded detail string.
+    _start = _parse_date(tpl.get("start_date"))
+    if not _start:
+        raise HTTPException(422, {"detail": "start_date_required_for_active"})
     horizon = _parse_date(through) or (date.today() + timedelta(days=14))
     return await _generate_from_template(tpl, horizon)
 
@@ -729,14 +851,34 @@ async def generate_now(tpl_id: str,
 # ─── APScheduler nightly cron ────────────────────────────────────────
 async def run_recurring_job_generator() -> Dict[str, Any]:
     """Iterate every active template across every tenant and generate
-    the rolling 2-week horizon."""
+    the rolling 2-week horizon.
+
+    Feb-2026 · Recurring Jobs — the ``is_active`` + ``start_date <=
+    today`` gate replaces the legacy ``active: True`` filter. Legacy
+    docs untouched by the backfill migration (no ``is_active`` field)
+    are still picked up when their ``active`` flag is True, so cron
+    behavior stays continuous through the migration window.
+    """
     await _ensure_indexes()
     today = date.today()
+    today_iso = today.isoformat()
     horizon = today + timedelta(days=14)
     total_inserted = 0
     total_skipped = 0
     templates_processed = 0
-    async for tpl in db.recurring_job_templates.find({"active": True}, {"_id": 0}):
+    _filter = {
+        "$and": [
+            # New is_active OR legacy active (tolerant of pre-
+            # migration docs).
+            {"$or": [
+                {"is_active": True},
+                {"active": True, "is_active": {"$exists": False}},
+            ]},
+            # Start-date gate — must exist AND be <= today.
+            {"start_date": {"$ne": None, "$lte": today_iso}},
+        ],
+    }
+    async for tpl in db.recurring_job_templates.find(_filter, {"_id": 0}):
         try:
             result = await _generate_from_template(tpl, horizon)
             total_inserted += result["inserted"]
