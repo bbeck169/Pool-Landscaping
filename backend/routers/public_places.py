@@ -80,6 +80,31 @@ def _reset_rate_limit_for_tests() -> None:  # pragma: no cover
 
 
 def _client_ip(request: Request) -> str:
+    """Resolve the real client IP behind our ingress.
+
+    Preview + production run behind an ingress (Cloudflare Worker →
+    K8s ingress → FastAPI) that terminates the browser TCP connection
+    on one of ≥ 2 round-robin peers, so ``request.client.host`` is the
+    peer IP — not the visitor's. A single abusive client can therefore
+    push ~ ``30 × N_peers`` req/min before hitting the limiter unless
+    we read the standard forwarded headers first.
+
+    Precedence:
+      1. ``X-Forwarded-For`` — leftmost entry (RFC 7239 / X-F-F
+         convention: original client is first in the list).
+      2. ``X-Real-IP`` — set by nginx-style ingresses.
+      3. ``request.client.host`` — direct-peer fallback (unit tests
+         and localhost curl land here).
+    """
+    xff = (request.headers.get("x-forwarded-for") or "").strip()
+    if xff:
+        # Left-most token, stripped, non-empty.
+        head = xff.split(",", 1)[0].strip()
+        if head:
+            return head
+    real = (request.headers.get("x-real-ip") or "").strip()
+    if real:
+        return real
     try:
         return (request.client.host if request.client else "") or ""
     except Exception:

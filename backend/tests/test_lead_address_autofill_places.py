@@ -183,3 +183,79 @@ def test_places_autocomplete_rate_limit_returns_429_on_31st(client, monkeypatch)
     assert r_last.status_code == 429
     body = r_last.json()
     assert "Rate limit" in (body.get("detail") or "")
+
+
+# ─── Rate limit follow-up · X-Forwarded-For real-client resolution ────
+def test_places_autocomplete_rate_limit_uses_xff_leftmost(client, monkeypatch):
+    """Two visitors sharing a TCP peer (behind our ingress) but with
+    different ``X-Forwarded-For`` leftmost tokens are counted in
+    SEPARATE buckets — both can burn their full 30 req/min quota."""
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "test-key-xyz")
+
+    class _StubClient:
+        def __init__(self, *_a, **_kw): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_a): return False
+        async def post(self, *_a, **_kw):
+            return _FakeResp(200, {"suggestions": []})
+
+    monkeypatch.setattr(_pp.httpx, "AsyncClient", _StubClient)
+    # Visitor A — 30 hits succeed.
+    for i in range(30):
+        r = client.get(
+            "/api/public/places/autocomplete?input=123 Main",
+            headers={"X-Forwarded-For": "1.1.1.1"},
+        )
+        assert r.status_code == 200, (
+            f"visitor A call #{i + 1} unexpectedly {r.status_code}")
+    # Visitor B (same TCP peer, different browser) — also 30 hits
+    # succeed.  If the limiter were still keyed off
+    # ``request.client.host`` visitor B's very first request would 429.
+    for i in range(30):
+        r = client.get(
+            "/api/public/places/autocomplete?input=123 Main",
+            headers={"X-Forwarded-For": "2.2.2.2"},
+        )
+        assert r.status_code == 200, (
+            f"visitor B call #{i + 1} unexpectedly {r.status_code}")
+    # Visitor A's 31st hit — bucket for 1.1.1.1 is now full → 429.
+    r_last = client.get(
+        "/api/public/places/autocomplete?input=123 Main",
+        headers={"X-Forwarded-For": "1.1.1.1"},
+    )
+    assert r_last.status_code == 429
+
+
+def test_places_autocomplete_rate_limit_xff_persists_across_client_host(client, monkeypatch):
+    """30 requests with the same ``X-Forwarded-For`` head succeed; the
+    31st returns 429 EVEN IF the TCP peer / ``request.client.host``
+    is rotating underneath. Same real client, same bucket."""
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "test-key-xyz")
+
+    class _StubClient:
+        def __init__(self, *_a, **_kw): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_a): return False
+        async def post(self, *_a, **_kw):
+            return _FakeResp(200, {"suggestions": []})
+
+    monkeypatch.setattr(_pp.httpx, "AsyncClient", _StubClient)
+    xff = "3.3.3.3"
+    # Alternate the trailing ingress-peer hop each call to mimic
+    # round-robin. Only the leftmost XFF token is what the limiter
+    # must key off.
+    peers = ("10.0.0.1", "10.0.0.2")
+    for i in range(30):
+        r = client.get(
+            "/api/public/places/autocomplete?input=123 Main",
+            headers={"X-Forwarded-For": f"{xff}, {peers[i % 2]}"},
+        )
+        assert r.status_code == 200, (
+            f"call #{i + 1} unexpectedly {r.status_code}")
+    r_last = client.get(
+        "/api/public/places/autocomplete?input=123 Main",
+        headers={"X-Forwarded-For": f"{xff}, {peers[0]}"},
+    )
+    assert r_last.status_code == 429
+    body = r_last.json()
+    assert "Rate limit" in (body.get("detail") or "")
