@@ -48,10 +48,25 @@ router = APIRouter(tags=["admin"])
 
 _ALLOWED_CHANNELS = {"email", "sms"}
 _ALLOWED_STATUSES = {"sent", "failed"}
-_STATUS_TO_EVENT = {
-    "sent": "lead_notification_sent",
-    "failed": "lead_notification_failed",
+# Feb-2026 · Fan-out coverage — the log endpoint originally only
+# surfaced the K63 dispatcher's ``lead_notification_*`` events.
+# The newer admin safety-net fan-out (see
+# ``services.lead_admin_notifications``) emits its own event pair
+# so ops can distinguish the two channels. Both event families are
+# surfaced under the same log so a tester can see all recipients
+# for a given lead_id in one place.
+_STATUS_TO_EVENTS = {
+    "sent": [
+        "lead_notification_sent",
+        "lead_admin_notification_sent",
+    ],
+    "failed": [
+        "lead_notification_failed",
+        "lead_admin_notification_failed",
+    ],
 }
+_ALL_EVENTS = [e for pair in _STATUS_TO_EVENTS.values() for e in pair]
+_SENT_EVENTS = set(_STATUS_TO_EVENTS["sent"])
 _MAX_LIMIT = 200
 _DEFAULT_LIMIT = 50
 
@@ -96,10 +111,10 @@ async def list_notification_dispatch_log(
 
     query: dict = {
         "tenant_id": tenant["id"],
-        "event": {"$in": list(_STATUS_TO_EVENT.values())},
+        "event": {"$in": list(_ALL_EVENTS)},
     }
     if status is not None:
-        query["event"] = _STATUS_TO_EVENT[status]
+        query["event"] = {"$in": list(_STATUS_TO_EVENTS[status])}
     if channel is not None:
         query["channel"] = channel
     if lead_id is not None:
@@ -130,7 +145,15 @@ async def list_notification_dispatch_log(
             "lead_id": r.get("lead_id"),
             "recipient": r.get("target"),
             "channel": r.get("channel"),
-            "status": "sent" if event == "lead_notification_sent" else "failed",
+            "status": "sent" if event in _SENT_EVENTS else "failed",
+            # Feb-2026 · Distinguish the two dispatcher families so
+            # the UI can badge admin-fanout rows separately from the
+            # K63 explicit-recipient rows.
+            "source": (
+                "admin_fanout"
+                if event.startswith("lead_admin_notification")
+                else "k63_recipients"
+            ),
             "provider_message_id": r.get("message_id"),
             "error": r.get("error"),
             "created_at": r.get("created_at"),

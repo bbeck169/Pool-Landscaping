@@ -226,7 +226,12 @@ import WidgetAnalyticsPage from "@/pages/admin/WidgetAnalyticsPage";
 import AdminSharedReplayPage from "@/pages/admin/AdminSharedReplayPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
-import WarrantyPlans, { WarrantyContracts, WarrantyClaims, PortalWarranties } from "@/pages/warranties/WarrantyPages";
+// Feb-2026 · Import collision fix — the OLD PortalWarranties export
+// inside WarrantyPages.jsx has been superseded by the read-only
+// customer portal implementation at ``@/pages/portal/PortalWarranties``.
+// Drop it from this named-import list so it doesn't clash with the
+// default import from the portal module (see line ~361).
+import WarrantyPlans, { WarrantyContracts, WarrantyClaims } from "@/pages/warranties/WarrantyPages";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 // Feb-2026 · Slice 2B — Multi-ToS admin editor (Pool + Landscaping).

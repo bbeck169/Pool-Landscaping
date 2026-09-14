@@ -181,6 +181,160 @@ tested against its own inline replica, unaffected by the rename).
 **No new endpoints**. OpenAPI paths stable at 1749 (unchanged
 from the previous Polish Bundle).
 
+## Feb-2026 · Follow-up hotfix (2 blockers)
+
+### Blocker 1 — `App.js` duplicate identifier crash
+
+**Root cause**: `PortalWarranties` was declared twice at the
+top-level import scope in `src/App.js`:
+
+```
+// line 229  (LEGACY — embedded portal component in the warranty
+             page module)
+import WarrantyPlans,
+  { WarrantyContracts, WarrantyClaims, PortalWarranties }
+  from "@/pages/warranties/WarrantyPages";
+
+// line 361  (NEW — read-only customer portal implementation)
+import PortalWarranties from "@/pages/portal/PortalWarranties";
+```
+
+Babel throws `SyntaxError: Identifier 'PortalWarranties' has
+already been declared. (361:7)` at parse time. Every route
+renders blank because the whole module fails compilation.
+
+**Fix**: drop `PortalWarranties` from the line-229 named-import
+destructuring. The new `@/pages/portal/PortalWarranties` is the
+canonical portal component going forward; the legacy export
+inside `WarrantyPages.jsx` remains for now (untouched) but is
+no longer wired into any route.
+
+**Regression guard**: `test/app-compiles-smoke.test.jsx` — reads
+`App.js` verbatim from disk and:
+1. Asserts the file exists.
+2. Rejects any duplicate identifier in the top-level import
+   scope (fail-fast on the exact class of bug that took the
+   preview down).
+3. Asserts exactly ONE import statement mentions
+   `PortalWarranties` and there is at least one JSX site
+   referencing it.
+
+Vite's `.js` importer refuses JSX in a `.js` file, so a raw
+`import("@/App")` inside the test throws unrelated parser
+errors — the static-analysis approach dodges that quirk while
+still catching the specific bug.
+
+### Blocker 2 — Admin fan-out invisible in the dispatch-log UI
+
+**Investigation**: direct Mongo query showed that the fan-out
+IS running — every admin (`admin@aquaterra.com`,
+`super@aquaterra.com`, `manager@aquaterra.com`,
+`brian@plofv.com`) has both `lead_admin_notification_sent`
+audit rows and `:admin-fanout` idempotency rows on every recent
+lead. The tester's report was therefore based on the
+`/api/admin/notification-dispatch-log` endpoint, NOT the
+underlying data.
+
+**True root cause**: the observability endpoint at
+`routers/admin_notification_dispatch_log.py` hard-coded the
+event names it filters on:
+
+```
+_STATUS_TO_EVENT = {
+    "sent":   "lead_notification_sent",
+    "failed": "lead_notification_failed",
+}
+query["event"] = {"$in": list(_STATUS_TO_EVENT.values())}
+```
+
+The new admin fan-out emits `lead_admin_notification_sent` /
+`lead_admin_notification_failed` — those events matched no
+filter and never surfaced. The tester saw only the 2 K63 seed
+rows because the log endpoint's WHERE clause excluded every
+admin-fanout row.
+
+**Fix**:
+
+- Widen `_STATUS_TO_EVENT` → `_STATUS_TO_EVENTS` to accept both
+  event families.
+- Add a `source` column to each row of the response payload —
+  `"admin_fanout"` for the new fan-out, `"k63_recipients"` for
+  the pre-existing K63 dispatcher — so the UI can badge and
+  filter each channel.
+- Response shape (additive, non-breaking):
+
+  ```json
+  {
+    "items": [
+      { "recipient": "admin@aquaterra.com",
+        "channel": "email",
+        "status": "sent",
+        "source": "admin_fanout",
+        "provider_message_id": "…",
+        "created_at": "…" }
+    ]
+  }
+  ```
+
+**Secondary bug fixed at the same time**: the fan-out was
+mailing deactivated placeholder users. The aquaterra seed
+marks retired accounts with `active: False` (not
+`deactivated_at`), so my original filter missed them. The
+recipient resolver now guards on BOTH conventions plus the
+per-user opt-out `notify_new_leads`:
+
+```
+{ "$or": [{"deactivated_at": {"$exists": false}},
+           {"deactivated_at": null}] }
+AND
+{ "$or": [{"active": {"$exists": false}},
+           {"active": true}] }
+AND
+{ "$or": [{"notify_new_leads": {"$exists": false}},
+           {"notify_new_leads": {"$ne": false}}] }
+```
+
+Verified in production data — `deact_c15528e8@aquaterra.com`
+(role `admin`, `active: False`) no longer receives fan-out
+emails.
+
+**New tests**:
+
+- `test_endpoint_returns_admin_fanout_rows` (backend) — POSTs
+  `/api/public/leads`, then GETs
+  `/api/admin/notification-dispatch-log?lead_id=…` and asserts
+  `admin@aquaterra.com` appears in the response with
+  `source == "admin_fanout"`.
+- Recipient resolver test was expanded to seed a user with
+  `active: False` and assert they're excluded.
+
+### Audit endpoint clarification
+
+There is **no `/api/audit-logs` endpoint**. The rows the
+fan-out writes to the `audit_logs` collection are surfaced
+through **`/api/admin/notification-dispatch-log`**, which now
+returns both event families (`k63_recipients` and
+`admin_fanout`) tagged via the new `source` column.
+
+If a future phase needs a generic audit-log admin surface, it
+should be a new router — the existing dispatch-log endpoint is
+scoped to notification events only.
+
+### Amended acceptance
+
+1. ✅ Frontend compiles cleanly (`app-compiles-smoke.test.jsx`
+   locks it in place).
+2. ✅ `POST /api/public/leads` produces a dispatch log entry
+   for every admin/manager/super_admin user + business
+   notification email.
+3. ✅ Deactivated users (`active: False` OR `deactivated_at`
+   set) are excluded from the fan-out.
+4. ✅ `/api/admin/notification-dispatch-log` surfaces admin-fanout
+   rows with `source: "admin_fanout"` badge.
+5. ✅ All 8 backend tests + 3 new frontend tests green;
+   no regressions.
+
+
 ## Out of scope
 
 - Mobile parity (admin desktop only).
@@ -189,3 +343,5 @@ from the previous Polish Bundle).
   change tenant config semantics — deferred).
 - SMS variant of the admin fan-out (existing K63 SMS path
   already covers this need; broadening it can happen later).
+- Generic `/api/audit-logs` endpoint — not needed; the
+  dispatch-log endpoint now covers the observability need.

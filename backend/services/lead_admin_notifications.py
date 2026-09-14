@@ -204,12 +204,21 @@ async def _resolve_admin_recipients(tenant: Dict[str, Any]) -> List[str]:
     emails: List[str] = []
     tid = tenant.get("id") or ""
     if tid:
+        # Feb-2026 · Bug fix — the aquaterra seed marks retired
+        # accounts with ``active: False`` (not ``deactivated_at``).
+        # The original filter missed that flag and kept mailing
+        # deactivated placeholder rows. Guard on BOTH conventions:
+        #   * ``deactivated_at`` unset / null (Phase-13 convention)
+        #   * ``active`` unset or explicitly True (seed convention)
+        # PLUS the per-user opt-out ``notify_new_leads``.
         cursor = db.users.find(
             {"tenant_id": tid,
               "role": {"$in": list(_ADMIN_ROLES)},
               "$and": [
                   {"$or": [{"deactivated_at": {"$exists": False}},
                              {"deactivated_at": None}]},
+                  {"$or": [{"active": {"$exists": False}},
+                             {"active": True}]},
                   {"$or": [{"notify_new_leads": {"$exists": False}},
                              {"notify_new_leads": {"$ne": False}}]},
               ]},

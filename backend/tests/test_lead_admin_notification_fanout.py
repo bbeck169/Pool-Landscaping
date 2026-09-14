@@ -56,8 +56,9 @@ class TestAdminRecipientResolution:
                 "notification_email": "OWNER@example.com",
             },
         }
-        # Seed 3 users: admin, manager, tech (tech must be filtered out),
-        # and one deactivated admin (must be filtered out).
+        # Seed 6 users: admin, manager, tech (excluded by role),
+        # deactivated_at (excluded), active=False (excluded, seed
+        # convention), and notify_new_leads=False (opt-out, excluded).
         ids = []
         try:
             for row in [
@@ -76,22 +77,25 @@ class TestAdminRecipientResolution:
                  "deactivated_at": "2026-01-01T00:00:00Z"},
                 {"id": f"TEST_ln-u-{uuid.uuid4().hex[:6]}",
                  "tenant_id": "TEST_ln-t-1",
+                 "email": "inactive1@example.com", "role": "admin",
+                 "active": False},
+                {"id": f"TEST_ln-u-{uuid.uuid4().hex[:6]}",
+                 "tenant_id": "TEST_ln-t-1",
                  "email": "optout1@example.com", "role": "admin",
                  "notify_new_leads": False},
             ]:
                 _sync.users.insert_one(row)
                 ids.append(row["id"])
             out = _run(_resolve_admin_recipients(tenant))
-            # admin1 + manager1 + biz_email  → 3 total
-            assert len(out) == 3
+            # admin1 + manager1 + biz_email → 3 total
+            assert len(out) == 3, f"got {out}"
             assert "admin1@example.com" in out
             assert "manager1@example.com" in out
-            # Business email preserved (case-insensitive dedupe only —
-            # first-seen casing wins, but here it's the sole entry).
             assert any(e.lower() == "owner@example.com" for e in out)
-            # Tech, deactivated, and opt-out users are NOT included
+            # Every filtered flavour is excluded
             assert "tech1@example.com" not in out
             assert "deactivated1@example.com" not in out
+            assert "inactive1@example.com" not in out
             assert "optout1@example.com" not in out
         finally:
             _sync.users.delete_many({"id": {"$in": ids}})
@@ -227,26 +231,87 @@ class TestPublicLeadHookFiresAdminFanout:
             f"— check aquaterra tenant has admin users seeded"
         )
         targets = {r["target"].lower() for r in rows}
-        # aquaterra's seed has 4 non-deactivated admin/super/manager
-        # users. We only assert that the fanout reached AT LEAST one
-        # non-brian admin (the pre-fix behaviour was brian-only).
-        assert any("aquaterra.com" in t or "admin" in t
-                   for t in targets), (
-            f"fanout should include admin@ users, got {targets}"
+        # aquaterra seed has admin@aquaterra.com, super@aquaterra.com,
+        # brian@plofv.com, manager@aquaterra.com as ACTIVE admin users.
+        # ``deact_c15528e8@aquaterra.com`` has ``active: False`` and
+        # MUST NOT appear.
+        assert "admin@aquaterra.com" in targets, (
+            f"admin@aquaterra.com missing from fanout targets: {targets}"
         )
+        assert "super@aquaterra.com" in targets
+        assert "manager@aquaterra.com" in targets
+        assert not any(
+            t.startswith("deact_") for t in targets
+        ), f"deactivated user leaked into fanout: {targets}"
         # Idempotency table has a row per (lead, target, :admin-fanout).
         idem = list(_sync.lead_notification_dispatches.find(
             {"lead_id": lid, "channel": "email",
              "target": {"$regex": ":admin-fanout$"}},
             {"_id": 0, "target": 1},
         ))
-        assert len(idem) >= 1
+        idem_targets = {i["target"].split(":")[0] for i in idem}
+        assert "admin@aquaterra.com" in idem_targets
         # Cleanup
         _sync.leads.delete_one({"id": lid})
         _sync.audit_logs.delete_many({"lead_id": lid})
         _sync.lead_notification_dispatches.delete_many({"lead_id": lid})
         _sync.marketing_deliveries.delete_many(
             {"trigger_entity.id": lid})
+
+
+class TestDispatchLogSurfacesAdminFanout:
+    """The ``/api/admin/notification-dispatch-log`` endpoint used to
+    hardcode the K63 event names, hiding every admin-fanout row
+    from ops. This test locks the fix in place — after a public
+    lead POST, the endpoint must return BOTH the K63 seed rows
+    and the admin-fanout rows for that ``lead_id``."""
+
+    def test_endpoint_returns_admin_fanout_rows(self, h_super):
+        os.environ["ALLOW_TEST_HOOKS"] = "1"
+        payload = {
+            "name": f"TEST_ln LogEndpoint {uuid.uuid4().hex[:6]}",
+            "email": "logendpoint@example.com",
+            "phone": "+15551237890",
+            "service_address": "999 W Log St, Peoria AZ 85383",
+            "service_interest": "Landscape",
+        }
+        r = requests.post(
+            f"{API}/public/leads",
+            json=payload,
+            headers={"Origin": "https://test.local"},
+            timeout=20,
+        )
+        assert r.status_code == 200, r.text
+        lid = r.json()["lead_id"]
+        import time; time.sleep(1.5)
+        try:
+            log = requests.get(
+                f"{API}/admin/notification-dispatch-log?lead_id={lid}",
+                headers=h_super, timeout=15,
+            )
+            assert log.status_code == 200, log.text
+            items = log.json().get("items") or []
+            recipients = {(i.get("recipient") or "").lower()
+                          for i in items}
+            assert "admin@aquaterra.com" in recipients, (
+                f"dispatch-log missed admin@aquaterra.com — "
+                f"got {sorted(recipients)}"
+            )
+            # ``source`` column badges each row so the UI can
+            # distinguish the two fan-out families.
+            sources = {i.get("source") for i in items
+                       if (i.get("recipient") or "").lower()
+                           == "admin@aquaterra.com"}
+            assert sources == {"admin_fanout"}, (
+                f"expected admin_fanout source badge, got {sources}"
+            )
+        finally:
+            _sync.leads.delete_one({"id": lid})
+            _sync.audit_logs.delete_many({"lead_id": lid})
+            _sync.lead_notification_dispatches.delete_many(
+                {"lead_id": lid})
+            _sync.marketing_deliveries.delete_many(
+                {"trigger_entity.id": lid})
 
 
 class TestNoRecipientsWarning:
