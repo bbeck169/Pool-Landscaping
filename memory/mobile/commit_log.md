@@ -1836,3 +1836,17 @@
 - **Files created**: `__tests__/remove-combined-chlorine.test.tsx`
 - **Memo**: `/app/memory/FEATURE_REMOVE_COMBINED_CHLORINE_MOBILE.md`
 
+
+## Iteration 94 — Responsive Quote/Estimate Stacked Card Layout
+- **Commit**: 71545ea3
+- **Date**: 2026-09-14
+- **Changes**:
+  - Converted line items from horizontal row layout to vertically stacked cards across 4 screens: `estimate-view/[id].tsx`, `quote/[id].tsx`, `invoice/[id].tsx`, `i/[token].tsx`.
+  - Each line item card: Description → qty detail → subtotal separator row → action button.
+  - Decline/Undo Decline buttons now full-width with `minHeight: 44px` tap targets.
+  - Wrapped Internal Margin table (admin only) in `<ScrollView horizontal>` in both `quote/[id].tsx` and `invoice/[id].tsx` with `minWidth: 480`.
+  - Removed old `lineRow`/`groupRow` row-based styles; introduced `lineCard`, `lineCardSubtotalRow`, `lineCardSubtotalLabel`, `lineCardDeclined`, `lineCardLateFee`, `lineCardHeader`.
+  - No new dependencies. No backend changes.
+- **Files modified**: `app/estimate-view/[id].tsx`, `app/quote/[id].tsx`, `app/invoice/[id].tsx`, `app/i/[token].tsx`
+- **Files created**: `memory/FEATURE_RESPONSIVE_QUOTE_ESTIMATE_MOBILE_PARITY.md`
+- **Web files referenced**: None (mobile-only layout refactor)

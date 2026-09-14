@@ -39,6 +39,58 @@ import CategoryPicker from "@/components/income/CategoryPicker";
 const MAX_LONG_DESC = 500;
 const UNDO_WINDOW_MS = 5000;
 
+// Feb-2026 · Stable-id keys + duplicate-row guard.
+//
+// Line items acquire their canonical id (``li.id``) from the server on
+// first PUT.  Locally-drafted lines (fresh Add-line click, pre-save)
+// have no id yet, so we mint a client-only ``_uid`` when the row
+// enters state and reuse it across renders — never per-render, never
+// falling back to the array index (React key anti-pattern).
+//
+// ``_normalize(list)`` runs at every state-boundary and:
+//   1. Attaches a ``_uid`` to any incoming line that still has no
+//      stable key.
+//   2. Filters out any subsequent occurrence of the same stable key,
+//      guaranteeing the render pipeline never emits two rows with
+//      matching ``key=`` — even during an optimistic add/delete/undo
+//      cycle where the reducer/effect could momentarily hold both an
+//      optimistic and a server-confirmed copy.
+function _lineKey(li) {
+  return li?.id ?? li?._id ?? li?._uid ?? li?.uid ?? null;
+}
+
+function _mintUid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `_uid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function _ensureUid(li) {
+  if (_lineKey(li)) return li;
+  return { ...li, _uid: _mintUid() };
+}
+
+function _normalize(list) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of list || []) {
+    if (!raw) continue;
+    const li = _ensureUid(raw);
+    const k = _lineKey(li);
+    // Dedup by stable id. Rows without any id are extremely rare (a
+    // hypothetical caller could bypass ``_ensureUid``), but we keep
+    // them to avoid silently swallowing user data — they simply
+    // aren't dedup-comparable.
+    if (k != null) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+    }
+    out.push(li);
+  }
+  return out;
+}
+
 function LegacyBadge({ testid = "k71-uncategorized-badge" }) {
   return (
     <span
@@ -596,7 +648,9 @@ function UndoToast({ onUndo, testid }) {
 export default function K71LineItemsEditor({
   doc, canEdit, onLinesUpdated, onError,
 }) {
-  const [localItems, setLocalItems] = useState(doc.line_items || []);
+  const [localItems, setLocalItems] = useState(() =>
+    _normalize(doc.line_items || []),
+  );
   const [editIndex, setEditIndex] = useState(null);
   // Track the index of a locally-added-but-not-yet-saved line so
   // Cancel discards it entirely (vs reverting an existing row).
@@ -612,10 +666,13 @@ export default function K71LineItemsEditor({
 
   // Sync when parent doc changes (after a save or full reload).
   // Only re-sync when nothing is in flight locally — otherwise we'd
-  // wipe an unsaved add or an active undo window.
+  // wipe an unsaved add or an active undo window. Every set-state
+  // boundary funnels through ``_normalize`` so client-generated
+  // ``_uid`` values are attached (for new lines) and any duplicate
+  // stable-id rows the server briefly returns are collapsed.
   useEffect(() => {
     if (editIndex === null && pendingDelete === null && newLineIndex === null) {
-      setLocalItems(doc.line_items || []);
+      setLocalItems(_normalize(doc.line_items || []));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.line_items]);
@@ -635,8 +692,12 @@ export default function K71LineItemsEditor({
   const canAdd = canEdit && editIndex === null && pendingDelete === null;
 
   const saveLine = async (idx, updatedLine) => {
-    const next = items.slice();
-    next[idx] = updatedLine;
+    // Preserve the row's existing stable id (``id`` or ``_uid``) on
+    // the mutated copy — the edit form spreads ``...line`` inside
+    // ``EditableRow.commit`` so this is already true in the common
+    // path, but we defensively re-normalize here so a caller that
+    // reshapes the object never breaks the dedup invariant.
+    const next = _normalize(items.map((li, i) => (i === idx ? updatedLine : li)));
     try {
       // Optimistic: reflect in local state immediately so the
       // "Cancel" of a subsequent add doesn't wipe the fresh save.
@@ -658,7 +719,7 @@ export default function K71LineItemsEditor({
   const cancelLine = (idx) => {
     if (newLineIndex === idx) {
       // Discard the never-saved draft entirely.
-      setLocalItems((prev) => prev.filter((_, i) => i !== idx));
+      setLocalItems((prev) => _normalize(prev.filter((_, i) => i !== idx)));
       setNewLineIndex(null);
     }
     setEditIndex(null);
@@ -666,6 +727,9 @@ export default function K71LineItemsEditor({
 
   const handleAddLine = () => {
     if (!canAdd) return;
+    // Mint the client-only ``_uid`` at insertion time so React's
+    // ``key=`` prop stays STABLE across every subsequent render of
+    // this row, including the pending-save round-trip.
     const empty = {
       description: "",
       quantity: 1,
@@ -673,9 +737,10 @@ export default function K71LineItemsEditor({
       service_category_id: "",
       income_category_id: "",
       long_description: "",
+      _uid: _mintUid(),
     };
     setLocalItems((prev) => {
-      const next = [...prev, empty];
+      const next = _normalize([...prev, empty]);
       const newIdx = next.length - 1;
       setNewLineIndex(newIdx);
       setEditIndex(newIdx);
@@ -686,7 +751,7 @@ export default function K71LineItemsEditor({
   const handleDelete = (idx) => {
     if (!canEdit || pendingDelete !== null) return;
     const line = items[idx];
-    const nextLocal = items.filter((_, i) => i !== idx);
+    const nextLocal = _normalize(items.filter((_, i) => i !== idx));
     setLocalItems(nextLocal);
     const timeoutId = setTimeout(async () => {
       setPendingDelete(null);
@@ -708,7 +773,10 @@ export default function K71LineItemsEditor({
       const restored = prev.slice();
       const at = Math.min(pendingDelete.originalIndex, restored.length);
       restored.splice(at, 0, pendingDelete.line);
-      return restored;
+      // ``_normalize`` also filters — if the parent has already
+      // reloaded and the server row snuck back in during the undo
+      // window, we won't emit two rows with the same key.
+      return _normalize(restored);
     });
     setPendingDelete(null);
   };
@@ -770,7 +838,7 @@ export default function K71LineItemsEditor({
           {items.map((li, i) => (
             editIndex === i ? (
               <EditableRow
-                key={i}
+                key={_lineKey(li)}
                 line={li}
                 index={i}
                 onSave={(updated) => saveLine(i, updated)}
@@ -778,7 +846,7 @@ export default function K71LineItemsEditor({
               />
             ) : (
               <ReadRow
-                key={i}
+                key={_lineKey(li)}
                 line={li}
                 index={i}
                 canEdit={canEdit && editIndex === null}
@@ -805,7 +873,7 @@ export default function K71LineItemsEditor({
         >
           {items.map((li, i) => (
             <MobileCard
-              key={i}
+              key={_lineKey(li)}
               line={li}
               index={i}
               canEdit={canEdit}
