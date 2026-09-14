@@ -56,6 +56,13 @@ export default function CheckinComposer() {
   // Submit
   const [submitting, setSubmitting] = useState(false);
 
+  // ── AI Write state ──────────────────────────────────────────────
+  // Pattern A: create a draft check-in on first AI Write press,
+  // then reuse it for the final submit-public step.
+  const [draftCheckinId, setDraftCheckinId] = useState<string | null>(null);
+  const [aiState, setAiState] = useState<"write" | "busy" | "undo">("write");
+  const [preAiValue, setPreAiValue] = useState<string | null>(null);
+
   // ── GPS capture on mount ────────────────────────────────────────
   const captureGps = useCallback(async () => {
     setGpsLoading(true);
@@ -156,6 +163,75 @@ export default function CheckinComposer() {
     }
   };
 
+  // ── AI Write: ensure draft exists ────────────────────────────────
+  const ensureDraft = async (): Promise<string | null> => {
+    if (draftCheckinId) return draftCheckinId;
+    if (!gps?.lat || !gps?.lng) {
+      showToast("GPS required before AI Write", "error");
+      return null;
+    }
+    if (photos.length === 0 || !photos.every((p) => p.fileId && !p.uploading && !p.error)) {
+      showToast("Upload at least 1 photo before AI Write", "error");
+      return null;
+    }
+    try {
+      const body = {
+        job_id: jobId,
+        latitude: gps.lat,
+        longitude: gps.lng,
+        note: note.trim() || "(pending AI description)",
+        photo_file_ids: photos.map((p) => p.fileId).filter(Boolean),
+      };
+      const checkin: any = await api.post("/checkins", body);
+      const id = checkin?.id;
+      if (!id) throw new Error("No checkin_id in response");
+      setDraftCheckinId(id);
+      return id;
+    } catch (e: any) {
+      showToast(e?.message || "Failed to create draft check-in", "error");
+      return null;
+    }
+  };
+
+  // ── AI Write handler ────────────────────────────────────────────
+  const handleAiWrite = async () => {
+    if (aiState === "busy") return;
+    if (aiState === "undo") {
+      // Undo: restore pre-AI text
+      setNote(preAiValue ?? "");
+      setPreAiValue(null);
+      setAiState("write");
+      return;
+    }
+    // Write mode: create draft if needed, then call AI endpoint
+    setAiState("busy");
+    try {
+      const checkinId = await ensureDraft();
+      if (!checkinId) { setAiState("write"); return; }
+
+      const res: any = await api.post(`/checkins/${checkinId}/ai-description`, {});
+      const text = res?.description;
+      if (!text) {
+        showToast("AI Write failed. Please write manually.", "error");
+        setAiState("write");
+        return;
+      }
+      setPreAiValue(note); // stash current text for undo
+      setNote(text);
+      setAiState("undo");
+    } catch (e: any) {
+      const detail = e?.detail || e?.body?.detail;
+      if (e?.status === 429 || detail?.code === "rate_limit_exceeded") {
+        const retryAfter = detail?.retry_after_seconds;
+        const mins = retryAfter ? Math.ceil(retryAfter / 60) : 60;
+        showToast(`AI Write rate limit reached. Try again in ${mins} minutes.`, "error");
+      } else {
+        showToast("AI Write failed. Please write manually.", "error");
+      }
+      setAiState("write");
+    }
+  };
+
   // ── Submit validation ───────────────────────────────────────────
   const allPhotosUploaded = photos.length > 0 && photos.every((p) => p.fileId && !p.uploading && !p.error);
   const noteValid = note.trim().length >= 1 && note.trim().length <= NOTE_MAX;
@@ -166,17 +242,29 @@ export default function CheckinComposer() {
     if (!canSubmit || !gps?.lat || !gps?.lng) return;
     setSubmitting(true);
     try {
-      // Step 1: Create the check-in
-      const body = {
-        job_id: jobId,
-        latitude: gps.lat,
-        longitude: gps.lng,
-        note: note.trim(),
-        photo_file_ids: photos.map((p) => p.fileId).filter(Boolean),
-      };
-      const checkin: any = await api.post("/checkins", body);
-      const checkinId = checkin?.id;
-      if (!checkinId) throw new Error("No checkin_id in response");
+      let checkinId = draftCheckinId;
+
+      if (checkinId) {
+        // Draft already exists (AI Write created it) — update with final note + photos.
+        await api.patch(`/checkins/${checkinId}`, {
+          note: note.trim(),
+          photo_file_ids: photos.map((p) => p.fileId).filter(Boolean),
+          latitude: gps.lat,
+          longitude: gps.lng,
+        });
+      } else {
+        // No draft yet — create the check-in from scratch.
+        const body = {
+          job_id: jobId,
+          latitude: gps.lat,
+          longitude: gps.lng,
+          note: note.trim(),
+          photo_file_ids: photos.map((p) => p.fileId).filter(Boolean),
+        };
+        const checkin: any = await api.post("/checkins", body);
+        checkinId = checkin?.id;
+        if (!checkinId) throw new Error("No checkin_id in response");
+      }
 
       // Step 2: Submit for public review
       try {
@@ -252,6 +340,28 @@ export default function CheckinComposer() {
           <View style={s.sectionHeader}>
             <Ionicons name="document-text-outline" size={18} color={colors.muted} />
             <Text style={s.sectionLabel}>Note</Text>
+            <Pressable
+              style={[
+                s.aiWriteBtn,
+                aiState === "undo" && s.aiWriteBtnUndo,
+                aiState === "busy" && { opacity: 0.6 },
+              ]}
+              onPress={handleAiWrite}
+              disabled={aiState === "busy" || submitting}
+              accessibilityState={{ selected: aiState === "undo" }}
+              testID="checkin-ai-write-btn"
+            >
+              {aiState === "busy" ? (
+                <ActivityIndicator size={12} color="#7C3AED" testID="checkin-ai-write-btn-icon" />
+              ) : aiState === "undo" ? (
+                <Ionicons name="arrow-undo" size={14} color="#7C3AED" testID="checkin-ai-write-btn-icon" />
+              ) : (
+                <Text style={s.aiWriteSparkle} testID="checkin-ai-write-btn-icon">✨</Text>
+              )}
+              <Text style={s.aiWriteBtnText}>
+                {aiState === "undo" ? "Undo AI" : "AI Write"}
+              </Text>
+            </Pressable>
             <Text style={s.charCount}>{note.length}/{NOTE_MAX}</Text>
           </View>
           <TextInput
@@ -395,6 +505,23 @@ const s = StyleSheet.create({
   },
   sectionLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, flex: 1 },
   charCount: { fontFamily: font.regular, fontSize: fontSize.xs, color: colors.muted },
+  aiWriteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    backgroundColor: "#F3EAFF",
+    borderWidth: 1,
+    borderColor: "#D8B4FE",
+  },
+  aiWriteBtnUndo: {
+    backgroundColor: "#EDE9FE",
+    borderColor: "#C4B5FD",
+  },
+  aiWriteSparkle: { fontSize: 12 },
+  aiWriteBtnText: { fontFamily: font.bold, fontSize: 11, color: "#7C3AED", letterSpacing: 0.3 },
   gpsRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   gpsText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurface },
   recaptureBtn: {
