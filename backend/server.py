@@ -468,6 +468,12 @@ from routers import admin_notification_dispatch_log as _k63p_dispatch_log_router
 api_router.include_router(_k63p_dispatch_log_router.router)
 from routers import admin_resend_lead_notifications as _k63f_resend_router  # noqa: E402
 api_router.include_router(_k63f_resend_router.router)
+# Feb-2026 · P0 · Lead form address autofill — public Google Places
+# proxy consumed by the embedded lead widget + admin marketing-form
+# builder preview. See ``routers/public_places.py`` for the two
+# rate-limited routes (autocomplete + details).
+from routers import public_places as _feb2026_public_places  # noqa: E402
+api_router.include_router(_feb2026_public_places.router)
 # K65 · Feb-2026 — super-admin perf-explain diagnostic endpoint.
 # Gated by ``FEATURE_PERF_EXPLAIN=1`` env flag; 404 when off so the
 # route is invisible on prod by default.

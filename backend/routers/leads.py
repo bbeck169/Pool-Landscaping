@@ -321,6 +321,11 @@ async def create_lead(body: LeadIn,
     # Feb-2026 · widened acceptance — see ``_normalize_interest``.
     interest = _normalize_interest(body.service_interest)
     doc = body.dict()
+    # Feb-2026 · P0 — accept autocomplete-supplied lat/lng under the
+    # canonical ``latitude``/``longitude`` keys. Legacy ``lat``/``lng``
+    # is folded in as a fallback so older clients keep working.
+    _lat_in = body.latitude if body.latitude is not None else body.lat
+    _lng_in = body.longitude if body.longitude is not None else body.lng
     doc.update({
         "id": new_id(),
         "tenant_id": tenant["id"],
@@ -331,6 +336,8 @@ async def create_lead(body: LeadIn,
         "status": _normalize_status(body.status),
         "service_interest": interest,
         "service_address": body.service_address or body.address or "",
+        "latitude": _lat_in,
+        "longitude": _lng_in,
         "archived_at": None,
         "loss_reason": None,
         "converted_customer_id": None,
@@ -340,6 +347,10 @@ async def create_lead(body: LeadIn,
         ],
     })
     await db.leads.insert_one(doc)
+    # Feb-2026 · P0 · on-save geocode backfill — only fires when the
+    # client didn't supply lat/lng (autocomplete already resolved
+    # coordinates, so a second round-trip is wasted).
+    _maybe_backfill_lead_geocode(background_tasks, doc)
     # Feb-2026 · Fire the ``new_lead`` marketing-sequence trigger.
     # Real-time via ``BackgroundTasks`` so this manual admin POST
     # never waits on enrolment latency.
@@ -406,7 +417,7 @@ async def _apply_lead_update(lid: str, tenant_id: str, upd: Dict[str, Any],
                 **{"from": current.get("status"), "to": new_status},
             ))
     for k in ("service_interest", "service_address", "phone",
-                "email", "notes"):
+                "email", "notes", "latitude", "longitude"):
         if k in upd and upd[k] is not None:
             fields[k] = upd[k]
     if fields:
@@ -1266,6 +1277,9 @@ async def public_lead_intake(body: PublicLeadIn,
         "service_address": (body.service_address or "").strip(),
         "service_interest": interest,
         "notes": (body.notes or "").strip(),
+        # Feb-2026 · P0 · lat/lng from widget's Places autocomplete.
+        "latitude": body.latitude,
+        "longitude": body.longitude,
         "source": (
             f"referral_from_customer:{referred_by_customer_id}"
             if referred_by_customer_id else "website_form"
@@ -1287,6 +1301,10 @@ async def public_lead_intake(body: PublicLeadIn,
         ],
     }
     await db.leads.insert_one(lead_doc)
+    # Feb-2026 · P0 · on-save geocode backfill — skipped when both
+    # ``latitude`` and ``longitude`` came in from the widget's
+    # autocomplete selection.
+    _maybe_backfill_lead_geocode(background_tasks, lead_doc)
     # Feb-2026 · Fire the ``new_lead`` marketing-sequence trigger for
     # public form / referral inbound. Real-time via ``BackgroundTasks``.
     try:
@@ -1379,6 +1397,42 @@ _PUBLIC_LEADS_RATE = 10
 _PUBLIC_LEADS_WINDOW_S = 60.0
 _public_hits: Dict[str, List[float]] = {}
 _public_lock = asyncio.Lock()
+
+
+# ─── Feb-2026 · P0 · Lead form address autofill (Google Places) ──────
+# On-save geocode fan-out. Skipped when the client already supplied
+# ``latitude`` + ``longitude`` (widget autocomplete resolved them),
+# so the server never spends a second Places round-trip on a lead
+# whose coordinates are already known.
+async def _run_lead_geocode(lid: str, tenant_id: str, addr: str) -> None:
+    try:
+        from services.google_maps.geocoding import geocode_address
+        hit = await geocode_address(addr, tenant_id=tenant_id)
+        if hit and hit.get("latitude") and hit.get("longitude"):
+            await db.leads.update_one(
+                {"id": lid, "tenant_id": tenant_id},
+                {"$set": {"latitude": hit["latitude"],
+                           "longitude": hit["longitude"],
+                           "updated_at": now_iso()}},
+            )
+    except Exception as _e:  # pragma: no cover
+        logger.warning(f"[leads] geocode backfill failed for lid={lid}: {_e}")
+
+
+def _maybe_backfill_lead_geocode(background_tasks: BackgroundTasks,
+                                    lead: Dict[str, Any]) -> None:
+    """Fire a background geocode ONLY when the lead is missing
+    coordinates. Autocomplete-supplied lat/lng short-circuit the call
+    so we don't waste a Google Places round-trip we've already done
+    client-side."""
+    if lead.get("latitude") is not None and lead.get("longitude") is not None:
+        return
+    addr = (lead.get("service_address") or lead.get("address") or "").strip()
+    if not addr:
+        return
+    background_tasks.add_task(
+        _run_lead_geocode, lead["id"], lead["tenant_id"], addr,
+    )
 
 
 async def _rate_limit_public_leads(ip: str) -> None:

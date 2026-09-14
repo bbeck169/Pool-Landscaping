@@ -504,6 +504,12 @@ class LeadIn(BaseModel):
     service_interest: Optional[str] = None  # Pool | Landscape | Both
     lat: Optional[float] = None
     lng: Optional[float] = None
+    # Feb-2026 · P0 · Lead form address autofill (Google Places).
+    # Autocomplete-supplied coordinates skip the on-save geocode
+    # background call. Persisted alongside the legacy ``lat``/``lng``
+    # keys so downstream consumers can read either name.
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class LeadUpdate(BaseModel):
@@ -513,6 +519,9 @@ class LeadUpdate(BaseModel):
     service_address: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    # Feb-2026 · P0 — lat/lng from autocomplete on edit.
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 # Phase 8 · Feb 2026 — request models for the leads overhaul.
@@ -536,6 +545,11 @@ class PublicLeadIn(BaseModel):
     # are silently ignored (do NOT 400 — spammy invalid codes must
     # never block a real inquiry).
     referral_code: Optional[str] = None
+    # Feb-2026 · P0 · Lead form address autofill (Google Places) —
+    # when both are supplied by the embedded widget's autocomplete
+    # the server skips its on-save geocode call.
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class ItemIn(BaseModel):

@@ -15,6 +15,18 @@
 - **customer** · `customer@aquaterra.com` · `password123`
 - **customer (secondary)** · `customer2@aquaterra.com` · `password123` — Feb-2026 seeded via `seed_demo_second_customer()` (idempotent, boot-time). Anchored to the Robert Blake customer record so it is a distinct `customer_id` from `customer@aquaterra.com`. Use this account to verify wrong-customer 403 branches (e.g. `GET /api/customers/me/jobs/{jid}/photos/{photo_id}`).
 
+## Feb-2026 · P0 · Lead form address autofill (Google Places)
+- Use `admin@aquaterra.com` / `password123` to drive the admin
+  Marketing Forms builder (`/admin/marketing/forms`) — the
+  `address_google` field type renders a live `AddressAutocomplete`
+  preview so admins can validate the visitor experience.
+- Public widget flow needs NO credentials — hit
+  `GET /api/public/places/autocomplete?input=…` and
+  `GET /api/public/places/details?place_id=…` anonymously. Both
+  routes are rate-limited to **30 req/min/IP**.
+- The two routes are visible on `/api/openapi.json` (total paths
+  now **1751**, up from 1749).
+
 ## Notes
 - Landscape techs carry `role: "technician"` + `department: "landscaping"` and are required to
   finalize their onboarding checklist before route assignment.

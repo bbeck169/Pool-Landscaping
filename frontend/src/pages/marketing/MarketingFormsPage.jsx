@@ -14,6 +14,7 @@ import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { Card } from "@/components/ui/card";
 import { Trash2, Plus, Copy, RefreshCw, Save, ArrowUp, ArrowDown } from "lucide-react";
 import ThemePanel from "@/components/formBuilder/ThemePanel";
+import AddressAutocomplete from "@/components/common/AddressAutocomplete";
 
 const colors = {
   brand: "#0EA5E9",
@@ -561,6 +562,23 @@ function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete }) {
                    className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
                    style={{ border: `1px solid ${colors.border}` }}
                    data-testid={`form-field-options-${idx}`} />
+          </div>
+        )}
+        {/* Feb-2026 · P0 · Lead form address autofill — live preview
+             of the ``address_google`` field. Backed by the same
+             ``AddressAutocomplete`` component the public widget
+             uses, so admins can validate the visitor experience
+             end-to-end before shipping the form. */}
+        {f.type === "address_google" && (
+          <div className="col-span-12">
+            <label className="block text-[10px] font-bold uppercase mb-1"
+                   style={{ color: colors.muted }}>Preview (Google Places)</label>
+            <AddressAutocomplete
+              value=""
+              onChange={() => {}}
+              placeholder={f.placeholder || "Start typing your address…"}
+              testId={`form-field-address-preview-${idx}`}
+            />
           </div>
         )}
       </div>

@@ -7,6 +7,7 @@
 import React, { useState, useEffect } from "react";
 import { toast, Toaster } from "sonner";
 import ThemedFormShell from "../../components/formBuilder/ThemedFormShell";
+import AddressAutocomplete from "../../components/common/AddressAutocomplete";
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -15,6 +16,11 @@ export default function PublicLeadIntake() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
+  // Feb-2026 · P0 · Lead form address autofill — coords captured
+  // via Google Places autocomplete are attached to the POST payload
+  // so the backend skips its on-save geocode call.
+  const [latitude, setLatitude] = useState(null);
+  const [longitude, setLongitude] = useState(null);
   const [interest, setInterest] = useState("Pool");
   const [notes, setNotes] = useState("");
   // Feb-2026 · Street-address capture — inline error string
@@ -68,6 +74,10 @@ export default function PublicLeadIntake() {
           service_address: _addrRaw,
           service_interest: interest,
           notes: notes.trim(),
+          // Feb-2026 · P0 — attach autocomplete-resolved coordinates
+          // when present so the backend skips its on-save geocode.
+          latitude,
+          longitude,
         }),
       });
       if (!res.ok) {
@@ -79,6 +89,7 @@ export default function PublicLeadIntake() {
       // Clear the form.
       setName(""); setEmail(""); setPhone("");
       setAddress(""); setNotes(""); setInterest("Pool");
+      setLatitude(null); setLongitude(null);
     } catch (err) {
       toast.error("Sorry, that didn't go through", { description: err?.message || "" });
     } finally {
@@ -151,26 +162,29 @@ export default function PublicLeadIntake() {
                        className="text-xs font-medium text-slate-600">
                 Street Address <span aria-hidden="true" style={{ color: "#B91C1C" }}>*</span>
               </label>
-              <input
-                id="address"
-                name="address"
-                type="text"
-                value={address}
-                onChange={(e) => {
-                  setAddress(e.target.value);
-                  if (addressErr) setAddressErr("");
-                }}
-                required
-                minLength={3}
-                autoComplete="street-address"
-                aria-label="Street Address"
-                aria-required="true"
-                aria-invalid={addressErr ? "true" : "false"}
-                aria-describedby={addressErr ? "address-error" : undefined}
-                className="mt-1 w-full border border-slate-300 rounded px-3 py-2 text-sm"
-                placeholder="123 Sunny Ln, Peoria AZ"
-                data-testid="lead-form-address-input"
-              />
+              <div className="mt-1" data-testid="lead-form-address-autocomplete-wrapper">
+                <AddressAutocomplete
+                  value={address}
+                  onChange={(sel) => {
+                    // Free-form typing arrives with lat/lng = null.
+                    // A picked suggestion carries the resolved
+                    // coordinates + parsed components.
+                    setAddress(sel?.formatted || sel?.street || "");
+                    setLatitude(sel?.latitude ?? null);
+                    setLongitude(sel?.longitude ?? null);
+                    if (addressErr) setAddressErr("");
+                  }}
+                  placeholder="123 Sunny Ln, Peoria AZ"
+                  error={addressErr}
+                  id="address"
+                  name="address"
+                  required
+                  minLength={3}
+                  ariaLabel="Street Address"
+                  ariaDescribedBy={addressErr ? "address-error" : undefined}
+                  testId="lead-form-address-input"
+                />
+              </div>
               {addressErr ? (
                 <div
                   id="address-error"

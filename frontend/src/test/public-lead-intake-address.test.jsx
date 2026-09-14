@@ -82,7 +82,16 @@ describe("PublicLeadIntake · Street Address capture", () => {
   });
 
   it("POSTs both ``address`` + ``service_interest`` verbatim on a valid submit", async () => {
-    global.fetch.mockResolvedValue({ ok: true, text: async () => "" });
+    // Feb-2026 · P0 · Address autofill — the component also calls
+    // /api/public/places/autocomplete on debounced keystrokes.
+    // Mock ANY fetch call cheap-and-truthy and pluck the /public/leads
+    // POST out of the full call list at the end.
+    global.fetch.mockImplementation((url) => {
+      if (String(url).includes("/api/public/places/autocomplete")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      return Promise.resolve({ ok: true, text: async () => "" });
+    });
     render(_wrap(<PublicLeadIntake />));
     fireEvent.change(screen.getByTestId("public-lead-name"),
                        { target: { value: "Jane Doe" } });
@@ -97,7 +106,10 @@ describe("PublicLeadIntake · Street Address capture", () => {
     const form = document.querySelector("form[data-testid=\"public-lead-form\"]");
     await act(async () => { fireEvent.submit(form); });
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());
-    const [, opts] = global.fetch.mock.calls[0];
+    const leadsCall = global.fetch.mock.calls.find(([u]) =>
+      String(u).includes("/api/public/leads"));
+    expect(leadsCall).toBeTruthy();
+    const [, opts] = leadsCall;
     const body = JSON.parse(opts.body);
     expect(body.address).toBe("123 Main St, Peoria AZ");
     // Backwards-compat: legacy alias emitted alongside the modern key.
