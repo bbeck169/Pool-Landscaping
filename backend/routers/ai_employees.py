@@ -790,6 +790,23 @@ async def send_message(eid: str, cid: str, body: MessageIn,
         f"— Shared brand brain —\n{_brand_brain_summary(bb)}"
     )
 
+    # 3.a) Phase Feb-2026 · KB RAG — retrieve top-5 relevant
+    # ai_knowledge_base docs and prepend them to the system prompt.
+    # Skipped for action-drafts (their own path already has structured
+    # context) and when the tenant has no matching docs.
+    from services.ai_kb_retrieval import (
+        format_kb_context, retrieve_kb_sources,
+    )
+    kb_sources: List[Dict[str, Any]] = []
+    if not body.action:
+        try:
+            kb_sources = await retrieve_kb_sources(tenant["id"], body.text)
+        except Exception as exc:                                         # noqa: BLE001
+            logger.warning("[kb-rag] retrieval failed: %s", exc)
+            kb_sources = []
+    if kb_sources:
+        system_prompt = f"{format_kb_context(kb_sources)}\n\n{system_prompt}"
+
     # 4) Route: action handler OR plain chat.
     action_doc: Optional[Dict[str, Any]] = None
     # Phase S1 · Feb-2026 — Soshie intent detector.  When the caller
@@ -830,6 +847,10 @@ async def send_message(eid: str, cid: str, body: MessageIn,
         "conversation_id": cid, "employee_id": eid,
         "role": "assistant", "text": assistant_text,
         "action_id": (action_doc or {}).get("id"),
+        # Phase Feb-2026 · KB RAG — attach the retrieved sources so
+        # the frontend can render a "Sources referenced" section and
+        # so history replays keep the citation trail intact.
+        "sources": kb_sources,
         "created_at": now_iso(),
     }
     await db.ai_employee_messages.insert_one(assistant_msg)
@@ -845,6 +866,11 @@ async def send_message(eid: str, cid: str, body: MessageIn,
         "user_message": _strip(user_msg),
         "assistant_message": _strip(assistant_msg),
         "action": action_doc,
+        # Phase Feb-2026 · KB RAG — top-level ``sources`` mirrors the
+        # value baked into ``assistant_message.sources`` so callers can
+        # pick whichever surface fits their UI.  Empty list means the
+        # tenant has no matching KB docs (or an empty KB entirely).
+        "sources": kb_sources,
     }
 
 

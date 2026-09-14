@@ -8,7 +8,7 @@
  * new backend surface.
  */
 import React from "react";
-import { Bot, X, Send, Sparkles, Check, Copy, AlertTriangle } from "lucide-react";
+import { Bot, X, Send, Sparkles, Check, Copy, AlertTriangle, BookOpen, ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "@/api";
 // Feb-2026 · AI Dock avatar parity — share the same <AIAvatar>
 // component the /ai-employees page uses so each persona shows the
@@ -29,6 +29,76 @@ function saveLatestConv(eid, cid) {
   const map = getLatestConvs();
   map[eid] = cid;
   localStorage.setItem(LATEST_CONV_KEY, JSON.stringify(map));
+}
+
+// Phase Feb-2026 · KB RAG — inline "Sources referenced" block that
+// hangs off an assistant message when the backend returned matched
+// knowledge base docs.  Collapsed by default so long chats stay
+// scannable; each source expands its snippet inline on click.
+function SourcesBlock({ sources, messageId }) {
+  const [open, setOpen] = React.useState(false);
+  const [expanded, setExpanded] = React.useState({});
+  if (!Array.isArray(sources) || sources.length === 0) return null;
+  const toggle = (i) => setExpanded((s) => ({ ...s, [i]: !s[i] }));
+  return (
+    <div
+      className="mt-2 pt-2"
+      style={{ borderTop: `1px solid ${colors.border}` }}
+      data-testid="ai-response-sources"
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-xs flex items-center gap-1 font-semibold opacity-80 hover:opacity-100"
+        style={{ color: colors.onSurface, background: "transparent", border: 0, cursor: "pointer", padding: 0 }}
+        data-testid={`ai-response-sources-toggle-${messageId}`}
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <BookOpen size={12} />
+        Sources referenced ({sources.length})
+      </button>
+      {open ? (
+        <ul className="mt-1 space-y-1">
+          {sources.map((s, i) => (
+            <li
+              key={s.doc_id || i}
+              className="text-xs rounded p-1.5"
+              style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+              data-testid={`ai-source-${i}`}
+            >
+              <button
+                type="button"
+                onClick={() => toggle(i)}
+                className="w-full text-left flex items-center gap-1 font-semibold"
+                style={{ color: colors.onSurface, background: "transparent", border: 0, cursor: "pointer", padding: 0 }}
+                data-testid={`ai-source-${i}-toggle`}
+              >
+                {expanded[i] ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                <span className="truncate">{s.title || "(untitled)"}</span>
+                {s.kind ? (
+                  <span
+                    className="ml-auto text-[10px] uppercase px-1 py-0.5 rounded"
+                    style={{ backgroundColor: colors.surfaceMuted, color: colors.onSurfaceSecondary }}
+                  >
+                    {s.kind}
+                  </span>
+                ) : null}
+              </button>
+              {expanded[i] && s.snippet ? (
+                <div
+                  className="mt-1 text-[11px] whitespace-pre-wrap"
+                  style={{ color: colors.onSurfaceSecondary }}
+                  data-testid={`ai-source-${i}-snippet`}
+                >
+                  {s.snippet}
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 export default function AIDock({ user }) {
@@ -429,6 +499,9 @@ function ChatPane({ employee, onBack, onBalanceChange, balance }) {
                 >
                   <Copy size={12} /> Copy
                 </button>
+              ) : null}
+              {m.role === "assistant" && Array.isArray(m.sources) && m.sources.length > 0 ? (
+                <SourcesBlock sources={m.sources} messageId={m.id} />
               ) : null}
             </div>
           ))
