@@ -147,4 +147,37 @@ describe("JobTimersPage · dashboard phase", () => {
       expect(avg.getAttribute("aria-current")).toBe("true");
     });
   });
+
+  it("?t=avgtime view exposes BOTH filter testid schemes + always-mounted pagination", async () => {
+    // Feb-2026 · Dashboard-phase fixup — the AvgTime sub-panel had
+    // testid drift (``avg-filter-*``) that broke the shared
+    // dashboard contract testers depend on. The dual-testid
+    // convention keeps the old handle for Phase-1 tests AND adds
+    // the spec's ``job-timers-filter-*`` name for the new suite.
+    // Pagination footer is always-mounted-but-disabled (aggregated
+    // view has nothing to page through).
+    render(<MemoryRouter initialEntries={["/job-timers?t=avgtime"]}>
+      <JobTimersPage />
+    </MemoryRouter>);
+
+    // AvgTime sub-panel is mounted (marker present).
+    await screen.findByTestId("avgtime-tab");
+
+    // Legacy testids still work.
+    expect(screen.getByTestId("avg-filter-from")).toBeTruthy();
+    expect(screen.getByTestId("avg-filter-to")).toBeTruthy();
+    expect(screen.getByTestId("avg-filter-tech")).toBeTruthy();
+
+    // Spec testids resolve on the same view.
+    expect(screen.getByTestId("job-timers-filter-from")).toBeTruthy();
+    expect(screen.getByTestId("job-timers-filter-to")).toBeTruthy();
+    expect(screen.getByTestId("job-timers-filter-technician")).toBeTruthy();
+
+    // Pagination testids are always mounted, both disabled here.
+    const prev = screen.getByTestId("job-timers-pagination-prev");
+    const next = screen.getByTestId("job-timers-pagination-next");
+    expect(prev.disabled).toBe(true);
+    expect(next.disabled).toBe(true);
+    expect(screen.getByTestId("job-timers-page-indicator")).toBeTruthy();
+  });
 });

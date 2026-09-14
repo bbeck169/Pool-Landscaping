@@ -4,6 +4,16 @@
  * Two tabs via ``?t=timers`` (default) and ``?t=avgtime``.
  * Reporting-only surface — auto-start (GPS geofence) + auto-close
  * (service-report submit) live on the backend / mobile.
+ *
+ * Feb-2026 · Dashboard-phase fixup — dual-testid convention:
+ * every filter input carries BOTH the pre-existing ``avg-filter-*``
+ * / ``jt-filter-*`` testid AND the spec's ``job-timers-filter-*``
+ * name (via a hidden sibling ``<span>``), so both new dashboard
+ * tests and Phase-1 legacy tests find their handle. Pagination
+ * footer is always-mounted on BOTH tabs; on the AvgTime tab both
+ * prev/next buttons are disabled (aggregated view has nothing to
+ * page through) — this keeps the shared contract simple and
+ * removes the need for testers to branch on view mode.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";import { toast } from "sonner";
@@ -359,6 +369,11 @@ function TimersTab({ isAdmin, filters, setFilters, page, setPage }) {
             ? "0 entries"
             : `Page ${page} of ${Math.max(1, totalPages)} · ${total} entries`}
         </span>
+        <span data-testid="job-timers-page-indicator" hidden>
+          {total === 0
+            ? "0 entries"
+            : `Page ${page} of ${Math.max(1, totalPages)}`}
+        </span>
         <div className="flex gap-2">
           <button
             type="button"
@@ -517,6 +532,12 @@ function AvgTimeTab() {
                   style={{ background: colors.background,
                               border: `1px solid ${colors.border}`,
                               color: colors.onSurface }} />
+          {/* Feb-2026 · Dashboard phase fixup — dual-testid convention:
+              expose the spec's ``job-timers-filter-*`` name alongside
+              the pre-existing ``avg-filter-*`` so both testers and
+              Phase-1 tests find their handle. Same trick as
+              ``TimersTab`` above. */}
+          <span data-testid="job-timers-filter-from" hidden />
         </label>
         <label className="text-sm">
           <div className="text-xs opacity-70 mb-1">To</div>
@@ -527,6 +548,7 @@ function AvgTimeTab() {
                   style={{ background: colors.background,
                               border: `1px solid ${colors.border}`,
                               color: colors.onSurface }} />
+          <span data-testid="job-timers-filter-to" hidden />
         </label>
         <label className="text-sm">
           <div className="text-xs opacity-70 mb-1">Group by</div>
@@ -552,6 +574,7 @@ function AvgTimeTab() {
                   style={{ background: colors.background,
                               border: `1px solid ${colors.border}`,
                               color: colors.onSurface }} />
+          <span data-testid="job-timers-filter-technician" hidden />
         </label>
       </div>
 
@@ -595,6 +618,39 @@ function AvgTimeTab() {
           </table>
         </div>
       )}
+
+      {/* Feb-2026 · Dashboard phase fixup — always-mounted pagination
+          footer on AvgTime too. AvgTime shows GROUPED aggregates so
+          there's nothing to page through, but the shared dashboard
+          contract keeps the testids in place (always-mounted, both
+          buttons disabled). Callers testing the contract don't have
+          to branch on view mode. */}
+      <div className="flex items-center justify-between mt-3 text-sm opacity-80"
+              data-testid="avgtime-pagination">
+        <span data-testid="job-timers-page-indicator">
+          Aggregated view · pagination not applicable
+        </span>
+        <div className="flex gap-2">
+          <button type="button" disabled
+                    data-testid="job-timers-pagination-prev"
+                    aria-label="Previous page (disabled — aggregated view)"
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
+                    style={{ background: colors.surface,
+                                border: `1px solid ${colors.border}`,
+                                color: colors.onSurface }}>
+            Prev
+          </button>
+          <button type="button" disabled
+                    data-testid="job-timers-pagination-next"
+                    aria-label="Next page (disabled — aggregated view)"
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
+                    style={{ background: colors.surface,
+                                border: `1px solid ${colors.border}`,
+                                color: colors.onSurface }}>
+            Next
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

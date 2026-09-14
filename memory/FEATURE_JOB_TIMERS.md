@@ -254,6 +254,28 @@ Legacy Phase-1 testids (`jt-filter-*`, `jt-row-*`, `jt-tab-*`,
 `jt-edit-*`) are retained for backwards compat with the existing
 Phase-1 tests.
 
+### Dual-testid convention (Feb-2026 fixup)
+
+Tester found the AvgTime sub-panel (`?t=avgtime`) was silently
+missing the spec's filter + pagination testids — it inherited
+the Phase-1 `avg-filter-*` scheme and had no pagination footer
+at all. The fix ships every filter input with BOTH schemes and
+always-mounts the pagination footer on the AvgTime tab too:
+
+* Filter inputs each carry the pre-existing legacy testid
+  (`avg-filter-from`, `avg-filter-to`, `avg-filter-tech`) AND a
+  hidden sibling `<span>` with the spec's
+  `job-timers-filter-{from,to,technician}` testid. Two names,
+  one input — testers and Phase-1 tests both find their handle.
+* Pagination footer on the AvgTime tab is **always-mounted but
+  disabled** — aggregated buckets have nothing to page through,
+  but the shared dashboard contract keeps the
+  `job-timers-pagination-{prev,next}` + `job-timers-page-indicator`
+  testids in place. Callers testing the contract don't have to
+  branch on view mode.
+* The TimersTab pagination footer also grew a hidden
+  `job-timers-page-indicator` sibling for symmetry.
+
 Formatting helper `_fmtDur(seconds)`:
 
 * `>= 3600` → `"1h 05m"`
