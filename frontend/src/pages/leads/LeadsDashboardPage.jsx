@@ -640,8 +640,19 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
           <div className="mb-4 text-sm" data-testid="lead-contact-block">
             {lead.email && <div><b>Email:</b> {lead.email}</div>}
             {lead.phone && <div><b>Phone:</b> {lead.phone}</div>}
-            {lead.address && <div><b>Address:</b> {lead.address}</div>}
-            {lead.service_address && lead.service_address !== lead.address && (
+            {/* Feb-2026 · Lead detail display fix — surface the
+                street address on its own labeled row above the
+                City/State/Zip line. Falls back through
+                ``address → service_address`` because widget-form
+                submissions persist under ``service_address`` while
+                admin-manual creates persist under ``address``. */}
+            {(lead.address || lead.service_address) && (
+              <div data-testid="lead-detail-address">
+                <b>Address:</b> {lead.address || lead.service_address}
+              </div>
+            )}
+            {lead.service_address && lead.address
+              && lead.service_address !== lead.address && (
               <div data-testid="lead-service-address">
                 <b>Service address:</b> {lead.service_address}
               </div>
@@ -664,9 +675,15 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
                   : ""}
               </div>
             ) : null}
+            {/* Feb-2026 · Lead detail display fix — dedicated row
+                for the customer's requested service, previously
+                labeled "Interested in:" which was easy to miss.
+                Renamed to match the widget's front-end label
+                ("Requested Service") + testid the admins can rely
+                on across UI tests. */}
             {lead.service_interest && (
-              <div data-testid="lead-service-interest">
-                <b>Interested in:</b> {lead.service_interest}
+              <div data-testid="lead-detail-service-interest">
+                <b>Requested Service:</b> {lead.service_interest}
               </div>
             )}
           </div>

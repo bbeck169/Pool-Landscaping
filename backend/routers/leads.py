@@ -1330,6 +1330,28 @@ async def public_lead_intake(body: PublicLeadIn,
         )
     except Exception as _e:  # pragma: no cover
         logger.warning(f"[k63] public-leads dispatch failed: {_e}")
+    # Feb-2026 · Admin lead-notification fan-out — see
+    # ``services.lead_admin_notifications``. Broadens the recipient
+    # set beyond the tenant's explicit K63 rich list to include every
+    # admin/manager user + ``business_settings.notification_email`` so
+    # a mis-configured K63 list doesn't silently drop inbounds. Dedupe
+    # against the K63 fan-out is handled via a distinct ``:admin-fanout``
+    # target suffix on the shared idempotency table.
+    try:
+        from services.lead_admin_notifications import (
+            dispatch_admin_lead_email,
+        )
+        await dispatch_admin_lead_email(
+            lead=lead_doc,
+            tenant=full_tenant if 'full_tenant' in locals() else (
+                await db.tenants.find_one({"id": tenant["id"]},
+                                              {"_id": 0}) or {}),
+            background_tasks=background_tasks,
+        )
+    except Exception as _e:  # pragma: no cover
+        logger.warning(
+            f"[lead-admin-fanout] public-leads dispatch failed: {_e}"
+        )
     # If we captured a referrer, ALSO insert a referrals row in
     # ``pending_conversion`` so the admin dashboard reflects the
     # inbound pipeline. The paid-window transition happens on

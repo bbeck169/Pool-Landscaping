@@ -526,6 +526,23 @@ async def submit_widget_form(fid: str, body: FormSubmit,
                 )
             except Exception as _e:  # noqa: BLE001
                 logger.warning(f"[p18] lead alert dispatch failed: {_e}")
+            # Feb-2026 · Admin lead-notification fan-out (widget-form
+            # ingress). Same rationale as the ``/api/public/leads``
+            # hook — reach every admin/manager user +
+            # business_settings.notification_email regardless of
+            # whether the tenant has configured the K63 rich list.
+            try:
+                from services.lead_admin_notifications import (
+                    dispatch_admin_lead_email,
+                )
+                await dispatch_admin_lead_email(
+                    lead=_created["lead"], tenant=tenant,
+                    background_tasks=background_tasks,
+                )
+            except Exception as _e:  # noqa: BLE001
+                logger.warning(
+                    f"[lead-admin-fanout] widget-form dispatch failed: {_e}"
+                )
             # Reset so a duplicate call in the same request doesn't re-fire.
             _upsert_lead_from_submission._last_created = None      # type: ignore[attr-defined]
     if creates in ("customer", "both") and (email or phone):
