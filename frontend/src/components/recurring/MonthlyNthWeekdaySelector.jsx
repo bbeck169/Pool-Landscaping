@@ -89,7 +89,7 @@ export function MonthlyNthWeekdaySelector({ value, onChange, testidPrefix = "mon
           })}
           data-testid={`${testidPrefix}pattern-nth_weekday`}
         >
-          Nth weekday
+          Custom Weekdays
         </button>
       </div>
 

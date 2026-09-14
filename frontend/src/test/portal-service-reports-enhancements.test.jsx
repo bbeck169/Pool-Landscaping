@@ -79,8 +79,15 @@ describe("PortalServiceReports · list enhancements", () => {
     // Rows expose the new stable testid.
     expect(await screen.findByTestId("sr-list-row-0")).toBeTruthy();
     expect(screen.getByTestId("sr-list-row-1")).toBeTruthy();
-    // Single-page result → NO pagination bar.
-    expect(screen.queryByTestId("sr-list-pagination")).toBeNull();
+    // Feb-2026 post-tester fix — pagination row is ALWAYS mounted
+    // (even for single-page results) so mobile + Vitest can locate
+    // the testids regardless of ``total_pages``. Buttons carry
+    // their own disabled logic.
+    expect(screen.getByTestId("sr-list-pagination")).toBeTruthy();
+    expect(screen.getByTestId("sr-list-pagination-prev").disabled).toBe(true);
+    expect(screen.getByTestId("sr-list-pagination-next").disabled).toBe(true);
+    expect(screen.getByTestId("sr-list-page-indicator").textContent)
+      .toMatch(/Page 1 of 1.*2 total/);
   });
 
   it("renders pagination bar when total > page_size with correct indicator", async () => {

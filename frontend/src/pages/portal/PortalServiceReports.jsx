@@ -390,40 +390,41 @@ export function PortalServiceReports() {
           );
         })()
       )}
-      {/* Feb-2026 · Enhancements — pagination controls. Rendered
-          whenever total > page_size so single-page results stay
-          visually clean. */}
-      {total > pageSize ? (
-        <div className="mt-4 flex items-center justify-between gap-2"
-              data-testid="sr-list-pagination">
-          <button
-            type="button"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-            className="rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ border: `1px solid ${colors.border}`,
-                      background: colors.surface, minHeight: 40 }}
-            data-testid="sr-list-pagination-prev"
-          >
-            ← Prev
-          </button>
-          <div className="text-sm" style={{ color: colors.muted }}
-                data-testid="sr-list-page-indicator">
-            Page {page} of {totalPages} ({total} total)
-          </div>
-          <button
-            type="button"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-            className="rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ border: `1px solid ${colors.border}`,
-                      background: colors.surface, minHeight: 40 }}
-            data-testid="sr-list-pagination-next"
-          >
-            Next →
-          </button>
+      {/* Feb-2026 · Enhancements — pagination controls. Always
+          mounted (post-tester fix) so mobile + Vitest can locate
+          the testids regardless of whether ``total_pages > 1``.
+          The buttons carry their own disabled logic so a single-
+          page result set still renders the row with both buttons
+          greyed out and a truthful ``Page 1 of 1`` indicator. */}
+      <div className="mt-4 flex items-center justify-between gap-2"
+            data-testid="sr-list-pagination">
+        <button
+          type="button"
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+          disabled={page <= 1}
+          className="rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ border: `1px solid ${colors.border}`,
+                    background: colors.surface, minHeight: 40 }}
+          data-testid="sr-list-pagination-prev"
+        >
+          ← Prev
+        </button>
+        <div className="text-sm" style={{ color: colors.muted }}
+              data-testid="sr-list-page-indicator">
+          Page {page} of {Math.max(totalPages, 1)} ({total} total)
         </div>
-      ) : null}
+        <button
+          type="button"
+          onClick={() => setPage((p) => Math.min(Math.max(totalPages, 1), p + 1))}
+          disabled={page >= Math.max(totalPages, 1)}
+          className="rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ border: `1px solid ${colors.border}`,
+                    background: colors.surface, minHeight: 40 }}
+          data-testid="sr-list-pagination-next"
+        >
+          Next →
+        </button>
+      </div>
     </div>
   );
 }
