@@ -210,8 +210,16 @@ describe("CommunicationTimeline · admin placement in CustomerDetail",
   );
 
   it("imports the shared component", () => {
+    // Feb-2026 · Full-history timeline rewire. The admin detail
+    // still imports the legacy ``CommunicationTimeline`` at file-
+    // scope (backwards-compat, other consumers), and additionally
+    // imports the new ``CustomerFullTimeline``. The visible
+    // section renders the new component.
     expect(SRC).toMatch(
       /import\s+CommunicationTimeline\s+from\s+"@\/components\/customers\/CommunicationTimeline"/,
+    );
+    expect(SRC).toMatch(
+      /import\s+CustomerFullTimeline\s+from\s+"@\/components\/customers\/CustomerFullTimeline"/,
     );
   });
 
@@ -221,37 +229,34 @@ describe("CommunicationTimeline · admin placement in CustomerDetail",
     expect(SRC).not.toMatch(/\{\s*k:\s*"timeline",\s*label:\s*"Timeline"/);
   });
 
-  it("mounts CommunicationTimeline OUTSIDE the tab-panel switch (always visible)", () => {
+  it("mounts CustomerFullTimeline OUTSIDE the tab-panel switch (always visible)", () => {
     // The mount must NOT be gated by a ``tab === "..."`` ternary.
-    // Contract: the ``<CommunicationTimeline`` occurrence in the
-    // file must be preceded by the timeline SECTION wrapper testid
-    // (``customer-detail-comm-timeline-section``), not by a tab
-    // conditional.
-    const idx = SRC.indexOf("<CommunicationTimeline");
+    const idx = SRC.indexOf("<CustomerFullTimeline");
     expect(idx).toBeGreaterThan(-1);
-    const preamble = SRC.slice(Math.max(0, idx - 600), idx);
+    const preamble = SRC.slice(Math.max(0, idx - 800), idx);
     expect(preamble).toMatch(
       /data-testid="customer-detail-comm-timeline-section"/,
     );
-    // Guard against a future regression that re-adds a tab gate.
     const scan = SRC.slice(Math.max(0, idx - 200), idx);
     expect(scan).not.toMatch(/tab\s*===\s*"timeline"/);
   });
 
   it("renders inside the shared wrapper (section header + Clock icon)", () => {
-    // The section carries the H2 heading + Clock icon.
     const secIdx = SRC.indexOf(
       'data-testid="customer-detail-comm-timeline-section"');
     expect(secIdx).toBeGreaterThan(-1);
-    const slice = SRC.slice(secIdx, secIdx + 600);
+    const slice = SRC.slice(secIdx, secIdx + 800);
     expect(slice).toMatch(/Communication Timeline/);
     expect(slice).toMatch(/<Clock\s+size=\{16\}/);
-    expect(slice).toMatch(/variant="admin"/);
+    // Feb-2026 · rewire — new component uses ``scope="admin"``
+    // and passes ``customerId={id}``.
+    expect(slice).toMatch(/<CustomerFullTimeline/);
+    expect(slice).toMatch(/scope="admin"/);
     expect(slice).toMatch(/customerId=\{id\}/);
   });
 
-  it("has exactly one CommunicationTimeline mount in the file", () => {
-    const occurrences = SRC.match(/<CommunicationTimeline/g) || [];
+  it("has exactly one CustomerFullTimeline mount in the file", () => {
+    const occurrences = SRC.match(/<CustomerFullTimeline/g) || [];
     expect(occurrences.length).toBe(1);
   });
 });

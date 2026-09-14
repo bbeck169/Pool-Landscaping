@@ -24,6 +24,7 @@ import PaymentForm from "@/components/PaymentForm";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 // Phase I7 · Wave B · Feb-2026 — shared per-customer comms timeline.
 import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
+import CustomerFullTimeline from "@/components/customers/CustomerFullTimeline";
 // Phase 30 · Feb-2026 — shared TechAvatar for tech identity chips.
 import TechAvatar from "@/components/common/TechAvatar";
 import { PageHeader, Button, Skeleton, Chip, StatusPill, TextInput, EmptyState, Toast } from "@/components/ui-kit";
@@ -586,12 +587,12 @@ export function PortalMessages() {
           className="text-base font-bold mb-3 flex items-center gap-2"
           style={{ color: colors.onSurface }}
         >
-          Recent SMS &amp; Email Communications
+          Communication History
         </h2>
-        <CommunicationTimeline
-          customerId={user?.customer_id}
-          variant="portal"
-        />
+        {/* Feb-2026 · Full-history timeline (marketing deliveries +
+            invoices + estimates). Replaces the legacy
+            ``CommunicationTimeline`` in the portal chat surface. */}
+        <CustomerFullTimeline scope="portal" />
       </section>
 
       <Toast toast={toast} onClose={() => setToast(null)} />

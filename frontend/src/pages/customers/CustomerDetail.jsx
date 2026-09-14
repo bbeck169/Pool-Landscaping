@@ -19,6 +19,7 @@ import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel"
 import CustomerMultiContactEditor from "@/components/customers/CustomerMultiContactEditor";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
+import CustomerFullTimeline from "@/components/customers/CustomerFullTimeline";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
 import CustomerGeocodeInfo from "@/components/customers/CustomerGeocodeInfo";
 import { useSetDynamicCrumb }
@@ -975,7 +976,12 @@ export default function CustomerDetail() {
           >
             <Clock size={16} /> Communication Timeline
           </h2>
-          <CommunicationTimeline customerId={id} variant="admin" />
+          {/* Feb-2026 · Full-history timeline — merges marketing
+              deliveries + invoices + estimates on top of the legacy
+              SMS/email dispatch feed. Old ``CommunicationTimeline``
+              stays available (backwards-compat + other consumers)
+              but is no longer mounted here. */}
+          <CustomerFullTimeline scope="admin" customerId={id} />
         </section>
       </div>
 

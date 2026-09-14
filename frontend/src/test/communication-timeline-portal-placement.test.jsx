@@ -63,13 +63,13 @@ describe("PortalMessages · I7 Wave B source contract", () => {
     "utf-8",
   );
 
-  it("imports the shared CommunicationTimeline component", () => {
+  it("imports the shared CustomerFullTimeline component (Feb-2026)", () => {
     expect(SRC).toMatch(
-      /import\s+CommunicationTimeline\s+from\s+"@\/components\/customers\/CommunicationTimeline"/,
+      /import\s+CustomerFullTimeline\s+from\s+"@\/components\/customers\/CustomerFullTimeline"/,
     );
   });
 
-  it("mounts CommunicationTimeline inside PortalMessages", () => {
+  it("mounts CustomerFullTimeline inside PortalMessages", () => {
     const fnIdx = SRC.indexOf("export function PortalMessages(");
     expect(fnIdx).toBeGreaterThan(-1);
     // Find the end of PortalMessages — the next ``export`` after
@@ -77,11 +77,14 @@ describe("PortalMessages · I7 Wave B source contract", () => {
     const nextExport = SRC.indexOf("\nexport function ", fnIdx + 1);
     const body = SRC.slice(fnIdx, nextExport === -1
                                       ? undefined : nextExport);
-    expect(body).toMatch(/<CommunicationTimeline/);
-    const tileIdx = body.indexOf("<CommunicationTimeline");
-    const propSlice = body.slice(tileIdx, tileIdx + 400);
-    expect(propSlice).toMatch(/variant="portal"/);
-    expect(propSlice).toMatch(/customerId=\{user\?\.customer_id\}/);
+    // Feb-2026 — the timeline was rewired to the full-history
+    // component (merges marketing_deliveries + invoices +
+    // estimates). Portal scope resolves ``customer_id`` from the
+    // JWT server-side, so no ``customerId`` prop is required.
+    expect(body).toMatch(/<CustomerFullTimeline/);
+    const tileIdx = body.indexOf("<CustomerFullTimeline");
+    const propSlice = body.slice(tileIdx, tileIdx + 200);
+    expect(propSlice).toMatch(/scope="portal"/);
   });
 
   it("mounts BELOW the chat compose row (after msg-send)", () => {
@@ -90,7 +93,7 @@ describe("PortalMessages · I7 Wave B source contract", () => {
     const body = SRC.slice(fnIdx, nextExport === -1
                                       ? undefined : nextExport);
     const sendIdx = body.indexOf('testid="msg-send"');
-    const tileIdx = body.indexOf("<CommunicationTimeline");
+    const tileIdx = body.indexOf("<CustomerFullTimeline");
     expect(sendIdx).toBeGreaterThan(-1);
     expect(tileIdx).toBeGreaterThan(-1);
     expect(sendIdx).toBeLessThan(tileIdx);

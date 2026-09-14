@@ -1875,3 +1875,19 @@
   - Added 3 Jest tests locking all three constants to 75m.
 - **Files modified**: `src/components/job/JobTimerCard.tsx`, `src/geofence.ts`
 - **Files created**: `__tests__/arrival-radius-sync.test.ts`, `memory/FEATURE_MOBILE_ARRIVAL_RADIUS_SYNC.md`
+
+## Iteration 97 — Recurring Jobs: is_active toggle + hard-delete + inactive badge
+- **Commit**: bfe012a1fb
+- **Date**: 2026-09-14
+- **Changes**:
+  - Added `is_active` field to RecurringJob type + Active toggle (Switch) in create/edit form.
+  - Active toggle disabled when start_date is empty; client-side validation blocks save if is_active=true without start_date.
+  - Backend 422 `start_date_required_for_active` surfaced gracefully.
+  - Added orange "INACTIVE" badge per row when `is_active === false`.
+  - Added per-row Soft Delete button (DELETE /recurring-jobs/{id}).
+  - Added per-row Hard Delete button → confirmation modal with destructive copy → DELETE ?hard=true → toast with future_jobs_cancelled count.
+  - Renamed testID `recurring-start-date` → `recurring-job-start-date-input` (spec compliance).
+  - 19 new Jest tests, 0 regressions.
+- **Files modified**: `app/finance/recurring-jobs.tsx`, `__tests__/recurring-jobs-mobile-form.test.tsx`
+- **Files created**: `__tests__/recurring-jobs-is-active-hard-delete.test.ts`, `memory/FEATURE_RECURRING_JOBS_MOBILE_PARITY.md`
+- **Web files referenced**: `frontend/src/pages/admin/RecurringJobs.jsx`, `memory/FEATURE_RECURRING_JOBS_ACTIVE_AND_DELETE.md`
