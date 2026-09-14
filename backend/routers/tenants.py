@@ -215,6 +215,10 @@ async def current_tenant(request: Request,
         # values return null so the FE can trigger the hint.
         "admin_sms_notify_to": tenant.get("admin_sms_notify_to") or None,
         "rc_sms_from_number": tenant.get("rc_sms_from_number") or None,
+        # Feb-2026 · Multi-industry Phase A — the set of verticals
+        # this tenant serves. Populated by boot migration; unset
+        # tenants surface an empty list until the migration runs.
+        "industries": list(tenant.get("industries") or []),
     }
 
 
@@ -858,6 +862,12 @@ class TenantSettingsUpdate(BaseModel):
     # tenants preserve legacy behaviour where Approve does not
     # require a signature.
     require_signature_before_approve: Optional[bool] = None
+    # Feb-2026 · Multi-industry Phase A — the set of verticals this
+    # tenant serves. Each entry must appear in
+    # ``services.industries.INDUSTRIES``. Empty list keeps the
+    # tenant on the default single-industry pipeline; the Phase A
+    # migration seeds ``["pools"]`` on any tenant missing the field.
+    industries: Optional[List[str]] = None
 
 
 @router.get(
@@ -917,6 +927,10 @@ async def get_own_settings(user: dict = Depends(get_current_user),
         "settings_updated_by": tenant.get("settings_updated_by"),
         "settings_updated_by_name": await _resolve_actor_name(
             tenant.get("settings_updated_by")),
+        # Feb-2026 · Multi-industry Phase A — mirror the array on the
+        # canonical settings READ so the admin surface (Phase B) can
+        # render its multi-select in a single round-trip.
+        "industries": list(tenant.get("industries") or []),
     }
 
 
@@ -940,6 +954,24 @@ async def patch_own_settings(body: TenantSettingsUpdate,
                 "code": "INVALID_TIMEZONE",
                 "value": upd["timezone"],
             })
+    # Feb-2026 · Multi-industry Phase A — validate the industries
+    # array before persisting. First invalid slug wins the error
+    # message so clients can highlight the offending checkbox.
+    if "industries" in upd:
+        from services.industries import normalize_industries
+        raw = upd["industries"]
+        if not isinstance(raw, list):
+            raise HTTPException(422, detail={
+                "code": "invalid_industries_shape",
+                "message": "industries must be a list of strings",
+            })
+        valid, invalid = normalize_industries(raw)
+        if invalid:
+            raise HTTPException(422, detail={
+                "code": f"invalid_industry: {invalid[0]}",
+                "invalid": invalid,
+            })
+        upd["industries"] = valid
     upd["settings_updated_at"] = now_iso()
     upd["settings_updated_by"] = user.get("id")
     await db.tenants.update_one({"id": tid}, {"$set": upd})

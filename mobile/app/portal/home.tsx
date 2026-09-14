@@ -56,6 +56,7 @@ const QA_SECTIONS: { key: string; label: string; icon: any; route: string }[] = 
   { key: "paymethod", label: "Payment Method", icon: "wallet-outline", route: "/portal/payment-method" },
   { key: "messages", label: "Messages (AI)", icon: "chatbubble-outline", route: "/portal/messages" },
   { key: "documents", label: "Documents", icon: "folder-open-outline", route: "/portal/documents" },
+  { key: "warranties", label: "Warranties", icon: "shield-checkmark-outline", route: "/portal/warranties" },
   { key: "profile", label: "My Profile", icon: "person-outline", route: "/portal/profile" },
 ];
 

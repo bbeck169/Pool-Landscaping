@@ -13,6 +13,7 @@ import { Loading, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, JobCard } from "@/src/components/widgets";
 import CustomerEquipmentLibrary from "@/src/components/customers/CustomerEquipmentLibrary";
 import CustomerEquipmentUnits from "@/src/components/customers/CustomerEquipmentUnits";
+import CustomerWarrantiesSection from "@/src/components/warranties/CustomerWarrantiesSection";
 import MultiContact from "@/src/components/customers/MultiContact";
 import CustomerMultiContactEditor from "@/src/components/customers/CustomerMultiContactEditor";
 import AutomationsMuteSection from "@/src/components/customers/AutomationsMuteSection";
@@ -795,6 +796,14 @@ export default function CustomerDetail() {
           <>
             <Text style={styles.sectionTitle}>Equipment Library</Text>
             <CustomerEquipmentUnits customerId={id as string} />
+          </>
+        ) : null}
+
+        {/* Warranty Contracts — read-only list (v1, no add/edit on mobile). */}
+        {isAdminOrTech ? (
+          <>
+            <Text style={styles.sectionTitle}>Warranties</Text>
+            <CustomerWarrantiesSection customerId={id as string} />
           </>
         ) : null}
 

@@ -1745,6 +1745,19 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"[migration:recurring_is_active_backfill] crashed: {e}")
 
+    # Feb-2026 · Multi-industry Phase A — idempotent seed of
+    # ``tenants.industries`` for every tenant that predates the
+    # new field. Legacy single-industry hints (if any) win over
+    # the ``pools`` default. Subsequent boots find zero candidates.
+    try:
+        from services.migrations.tenant_industries_backfill import (
+            backfill_tenant_industries as _tenant_industries_backfill,
+        )
+        await step("tenant_industries_backfill",
+                     _tenant_industries_backfill())
+    except Exception as e:
+        logger.warning(f"[migration:tenant_industries_backfill] crashed: {e}")
+
     # Feb-2026 · D2 — the following demo tech users + demo-only
     # data seeds skip in production (APP_ENV=production or
     # SEED_DEMO_DATA=false).  Each ``seed_*_user`` also individually

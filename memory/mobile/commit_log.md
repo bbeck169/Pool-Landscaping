@@ -1,3 +1,18 @@
+## Iteration 87 — Warranty Contracts (Mobile Parity, Read-Only v1)
+- **Commit**: a345eefc
+- **Date**: 2026-09-14
+- **Changes**:
+  - Created `src/components/warranties/WarrantyCard.tsx` — shared card (contract name, provider, coverage window, linked_summary chip, EXPIRED badge, notes)
+  - Created `app/portal/warranties.tsx` — portal screen with FlatList, pull-to-refresh, empty state (`GET /api/customers/me/warranties`)
+  - Created `src/components/warranties/CustomerWarrantiesSection.tsx` — inline section for admin/tech customer detail (`GET /api/customers/{customer_id}/warranties`)
+  - Modified `app/portal/home.tsx` — added "Warranties" to QA_SECTIONS nav
+  - Modified `app/customer/[id].tsx` — imported + mounted CustomerWarrantiesSection with isAdminOrTech gating
+  - Created `__tests__/warranty-contracts-mobile.test.tsx` — 5 passing Jest tests
+  - Written `/app/memory/FEATURE_WARRANTY_CONTRACTS_MOBILE.md`
+- **Files modified**: `WarrantyCard.tsx`, `CustomerWarrantiesSection.tsx`, `portal/warranties.tsx`, `portal/home.tsx`, `customer/[id].tsx`
+- **Web files referenced**: `/app/memory/FEATURE_WARRANTY_CONTRACTS.md`
+
+
 ## Iteration 85 — Per-endpoint timeouts + Retry wall-clock cap + Retry-After UI
 - **Commit**: 3ad46a32
 - **Date**: 2026-09-11
