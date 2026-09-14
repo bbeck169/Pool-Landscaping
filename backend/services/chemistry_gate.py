@@ -196,7 +196,17 @@ def gather_readings_for_job(job: Dict[str, Any],
     """Compose the flat readings dict from BOTH the service_report
     (preferred) and the job doc (legacy fallback).  Used by the
     admin PUT and mobile-sync paths where the caller may not have
-    the service_report in hand."""
+    the service_report in hand.
+
+    Feb-2026 · Multi-body chemistry-gate fallback — when NEITHER
+    the flat ``chemical_readings`` mirror nor the legacy
+    ``jobs.chemical_readings`` dict produced any core values, dig
+    into the structured ``water_bodies[]`` array on the service
+    report and flatten its FIRST pool body's readings (via
+    ``services.water_bodies.iter_water_bodies +
+    flatten_pool_readings``). Only fires as a fallback so existing
+    single-body reports keep hitting the fast path unmodified.
+    """
     combined: Dict[str, Any] = {}
     if service_report:
         combined.update(normalize_readings(service_report.get("chemical_readings")))
@@ -204,6 +214,21 @@ def gather_readings_for_job(job: Dict[str, Any],
         legacy = normalize_readings(job.get("chemical_readings"))
         for k, v in legacy.items():
             combined.setdefault(k, v)
+    if service_report and not combined:
+        try:
+            # Lazy import — avoids a startup circular between
+            # ``chemistry_gate`` and ``water_bodies``.
+            from services.water_bodies import (
+                flatten_pool_readings, iter_water_bodies,
+            )
+            flat_rows = flatten_pool_readings(
+                iter_water_bodies(service_report),
+            )
+            combined.update(normalize_readings(flat_rows))
+        except Exception:  # noqa: BLE001
+            # Best-effort fallback — never crash the gate because
+            # the multi-body layer had a shape it couldn't digest.
+            pass
     return combined
 
 

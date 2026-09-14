@@ -257,12 +257,29 @@ async def _handle_job_edit(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
 
 
 async def _handle_service_report_upsert(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
+    # Feb-2026 · Chemistry-gate ship — route both write branches
+    # (update + insert) through the shared
+    # ``apply_water_bodies_payload`` pipeline so structured
+    # ``water_bodies`` patches rebuild the flat
+    # ``chemical_readings`` mirror and legacy top-level patches
+    # sync back into ``water_bodies[0]``. Presence-check semantics:
+    # keys ABSENT from the mobile payload land as a Mongo $set only
+    # on the keys present — Mongo natively preserves every un-touched
+    # persisted key.
+    from services.water_bodies import (
+        WaterBodyValidationError,
+        apply_water_bodies_payload,
+    )
     existing = await db.service_reports.find_one(
         {"id": op.entity_id, "tenant_id": tenant_id}, {"_id": 0})
     if existing:
         await _log_conflict(op, tenant_id, existing)
         payload = {k: v for k, v in (op.payload or {}).items()
                     if k not in ("id", "tenant_id", "created_at")}
+        try:
+            apply_water_bodies_payload(payload, existing)
+        except WaterBodyValidationError as exc:
+            raise ValueError(f"water_bodies invalid: {exc.detail}") from exc
         payload.update({"updated_at": now_iso(),
                          "last_synced_at": now_iso(),
                          "client_op_id": op.client_op_id})
@@ -273,6 +290,15 @@ async def _handle_service_report_upsert(op: _SyncOp, tenant_id: str, user_id: st
     else:
         # Insert fresh — mobile-generated id becomes canonical.
         doc = dict(op.payload or {})
+        # Same pipeline for the insert branch — the mirror rebuild
+        # runs from an EMPTY existing rep, so an incoming
+        # ``water_bodies`` payload gets validated + gets its flat
+        # mirror stamped, and a legacy-only payload spawns
+        # ``water_bodies[0]`` from the incoming top-level fields.
+        try:
+            apply_water_bodies_payload(doc, {})
+        except WaterBodyValidationError as exc:
+            raise ValueError(f"water_bodies invalid: {exc.detail}") from exc
         doc.update({"id": op.entity_id, "tenant_id": tenant_id,
                      "created_at": now_iso(), "updated_at": now_iso(),
                      "last_synced_at": now_iso(),

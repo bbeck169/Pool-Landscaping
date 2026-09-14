@@ -446,3 +446,92 @@ def summarize_body(b: Dict[str, Any]) -> Dict[str, Any]:
         "media_count":     len(b.get("media") or []),
         "has_notes":       bool((b.get("notes") or "").strip()),
     }
+
+
+# ─── Write-side pipeline (Feb-2026 · shared validate/flatten step) ───
+_LEGACY_MIRROR_KEYS: Tuple[str, ...] = (
+    "chemical_readings", "chemicals_added", "notes",
+)
+
+
+def apply_water_bodies_payload(upd: Dict[str, Any],
+                                 rep: Dict[str, Any],
+                                 ) -> Dict[str, Any]:
+    """Presence-aware validate + flatten pipeline shared by every write
+    path that persists a partial service_report patch (the web
+    ``PATCH /api/service-reports/{jid}`` handler AND the mobile-sync
+    ``service_report.upsert`` handler).
+
+    Semantics (approved Feb-2026 chemistry-gate ship):
+
+      * ``"water_bodies" in upd`` (any value, INCLUDING an explicit
+        ``[]`` which is a deliberate clear) → validate via
+        :func:`validate_water_bodies`, coerce ``upd["water_bodies"]``
+        to the validated list, AND rebuild the top-level
+        ``chemical_readings`` mirror via :func:`flatten_pool_readings`
+        so the required-readings chemistry gate keeps working
+        unchanged on downstream consumers.
+
+      * ``"water_bodies"`` NOT in upd, but any of the legacy top-level
+        keys ``chemical_readings`` / ``chemicals_added`` / ``notes``
+        IS in upd → merge those into the existing report's
+        ``water_bodies[0]`` (spawning one from
+        :func:`build_default_body_from_report` when the array is
+        empty) so the multi-body surface stays in sync with legacy
+        writes.
+
+      * ``"water_bodies"`` NOT in upd AND no legacy mirror keys either
+        → no-op. Every key ABSENT from ``upd`` is left untouched by
+        this pipeline; the caller must $set only ``upd`` so Mongo's
+        native ``$set`` semantics preserve every persisted key not
+        present in the incoming patch.
+
+    Never uses ``upd.get("water_bodies")`` — the presence check is
+    ``in`` because ``[]`` is a legitimate clear signal and ``None``
+    is a legacy-shape mistake we ignore. Returns the SAME ``upd``
+    dict (mutated in place) for chaining convenience.
+    """
+    if "water_bodies" in upd:
+        raw = upd["water_bodies"]
+        # Feb-2026 · Deliberate-clear semantics — an explicit
+        # ``water_bodies: []`` (or ``None``) is a customer/tech
+        # opt-in wipe, NOT a validation failure. ``validate_water_bodies``
+        # rejects empty arrays for structured writes, so we short-
+        # circuit here and clear the flat mirror in lockstep.
+        if raw is None or (isinstance(raw, list) and len(raw) == 0):
+            upd["water_bodies"] = []
+            upd["chemical_readings"] = []
+            return upd
+        # Non-empty array — hits the validator + flatten path.
+        # ``validate_water_bodies`` raises :class:`WaterBodyValidationError`
+        # (a ``ValueError`` subclass carrying an ``exc.detail`` dict).
+        # We let it propagate as-is so callers can re-raise the
+        # structured 422 detail without loss.
+        bodies = validate_water_bodies(raw)
+        upd["water_bodies"] = bodies
+        # Rebuild the flat mirror unconditionally when
+        # ``water_bodies`` is present in the patch — even when the
+        # array is empty (an explicit clear). ``flatten_pool_readings``
+        # returns ``[]`` for empty inputs which correctly clears the
+        # top-level ``chemical_readings`` too. ``chemicals_added``
+        # rebuild covers every downstream consumer (auto-invoice,
+        # chemical usage snapshot, per-tech spend rollups).
+        upd["chemical_readings"] = flatten_pool_readings(bodies)
+        upd["chemicals_added"] = flatten_chemicals_used(bodies)
+        return upd
+
+    if any(k in upd for k in _LEGACY_MIRROR_KEYS):
+        existing_bodies = list(rep.get("water_bodies") or [])
+        if not existing_bodies:
+            existing_bodies = [build_default_body_from_report(rep)]
+        body0 = dict(existing_bodies[0])
+        if "chemical_readings" in upd:
+            body0["readings"] = list(upd["chemical_readings"] or [])
+        if "chemicals_added" in upd:
+            body0["chemicals_used"] = list(upd["chemicals_added"] or [])
+        if "notes" in upd:
+            body0["notes"] = str(upd["notes"] or "")
+        existing_bodies[0] = body0
+        upd["water_bodies"] = existing_bodies
+
+    return upd

@@ -25,6 +25,7 @@ from services.chemistry import classify_reading, classify_readings
 from services.water_bodies import (
     BODY_TYPE_LABELS,
     WaterBodyValidationError,
+    apply_water_bodies_payload,
     build_default_body_from_report,
     flatten_chemicals_used,
     flatten_pool_readings,
@@ -587,48 +588,19 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
             upd["work_class"] = normalize_work_class(upd["work_class"])
         except ValueError as exc:
             raise HTTPException(400, str(exc))
-    # Feb-2026 · Multi-body Phase 1 — validate + mirror when the
-    # client sends a ``water_bodies`` array. Legacy top-level
-    # ``chemical_readings`` / ``chemicals_added`` writes still work
-    # unmodified (they land on the report doc directly and continue
-    # to be the canonical source until a body-aware PATCH lands).
-    # When BOTH ``water_bodies`` and top-level ``chemical_readings`` /
-    # ``chemicals_added`` are in the same PATCH, water_bodies wins
-    # and the top-level fields are overwritten with the flattened
-    # mirror so downstream consumers see one source of truth.
-    if "water_bodies" in upd:
-        try:
-            bodies = validate_water_bodies(upd["water_bodies"])
-        except WaterBodyValidationError as exc:
-            raise HTTPException(status_code=422, detail=exc.detail)
-        upd["water_bodies"] = bodies
-        # Rebuild the legacy mirrors from the validated bodies so a
-        # single PATCH keeps both surfaces in sync.
-        upd["chemical_readings"] = flatten_pool_readings(bodies)
-        upd["chemicals_added"] = flatten_chemicals_used(bodies)
-    else:
-        # Legacy-only PATCH (no ``water_bodies`` in payload) — mirror
-        # the incoming top-level ``chemical_readings`` / ``chemicals_added``
-        # / ``notes`` writes back into ``water_bodies[0]`` so the multi-
-        # body surface never desyncs when older clients touch the legacy
-        # fields. Bodies past index 0 are left untouched.
-        _touched_legacy = any(
-            k in upd for k in ("chemical_readings", "chemicals_added", "notes")
-        )
-        if _touched_legacy:
-            existing_bodies = list(rep.get("water_bodies") or [])
-            if not existing_bodies:
-                existing_bodies = [build_default_body_from_report(rep)]
-            body0 = dict(existing_bodies[0])
-            if "chemical_readings" in upd:
-                body0["readings"] = list(upd["chemical_readings"] or [])
-            if "chemicals_added" in upd:
-                body0["chemicals_used"] = list(upd["chemicals_added"] or [])
-            if "notes" in upd:
-                body0["notes"] = str(upd["notes"] or "")
-            body0["sequence"] = 0
-            existing_bodies[0] = body0
-            upd["water_bodies"] = existing_bodies
+    # Feb-2026 · Multi-body Phase 1 + Chemistry-gate ship — route
+    # through the shared ``apply_water_bodies_payload`` helper so
+    # the mobile-sync ``service_report.upsert`` handler picks up
+    # the exact same semantics. Presence check is ``in upd``
+    # (not ``upd.get(...)``) so ``water_bodies: []`` is a
+    # deliberate clear, a missing key preserves the persisted
+    # value, and legacy top-level ``chemical_readings`` /
+    # ``chemicals_added`` / ``notes`` writes sync back into
+    # ``water_bodies[0]`` to keep the multi-body surface aligned.
+    try:
+        apply_water_bodies_payload(upd, rep)
+    except WaterBodyValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail)
     upd["updated_at"] = now_iso()
     await db.service_reports.update_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},

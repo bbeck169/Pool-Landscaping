@@ -1850,3 +1850,16 @@
 - **Files modified**: `app/estimate-view/[id].tsx`, `app/quote/[id].tsx`, `app/invoice/[id].tsx`, `app/i/[token].tsx`
 - **Files created**: `memory/FEATURE_RESPONSIVE_QUOTE_ESTIMATE_MOBILE_PARITY.md`
 - **Web files referenced**: None (mobile-only layout refactor)
+
+## Iteration 95 — Chemistry Gate Mobile Fix: ref→report mirror + payload consistency
+- **Commit**: 52e394cc
+- **Date**: 2026-09-14
+- **Changes**:
+  - Added `flattenPoolReadings()` helper to `src/lib/waterBodies.ts` — rebuilds flat `chemical_readings` mirror from structured `water_bodies[]`.
+  - Fixed `handleBodiesChange` in `checklist.tsx` to mirror `waterBodiesRef.current` back into `report.water_bodies` and `report.chemical_readings` via `patchReport()` on every edit.
+  - Fixed `flushSave` PATCH payload: when bodies exist, `chemical_readings` is rebuilt from the authoritative ref at build time (no longer stale from `reportRef.current`).
+  - Fixed `doCloseJob` offline path: enriches report with fresh water-body data from ref before passing to `submitOffline`.
+  - Added 8 Jest test cases in `chemistry-gate-mobile.test.ts`.
+- **Files modified**: `app/job/[id]/checklist.tsx`, `src/lib/waterBodies.ts`
+- **Files created**: `__tests__/chemistry-gate-mobile.test.ts`, `memory/FEATURE_CHEMISTRY_GATE_MOBILE.md`
+- **Web files referenced**: None (mobile-only behavior fix)
