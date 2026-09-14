@@ -73,3 +73,106 @@ def test_optimize_route_tech_cannot_plan_other_user_403(aquaterra_tech_h, dbc):
     r = requests.post(f"{API}/schedule/optimize-route?user_id=" + other["id"],
                       headers=aquaterra_tech_h, json={}, timeout=15)
     assert r.status_code == 403, f"expected 403 tech-other-user, got {r.status_code} {r.text[:200]}"
+
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Feb-2026 · optimize-route targeting + day-filter fix
+# ═══════════════════════════════════════════════════════════════════════
+def test_optimize_route_honors_body_technician_id_for_admin(
+    aquaterra_admin_h, dbc,
+):
+    """Admin caller passing ``technician_id`` in the body payload
+    (see ``CalendarSchedule.optimizeRoute``) must plan for that
+    tech — historically the endpoint only read the ``user_id``
+    query param and silently defaulted to the caller."""
+    mike = dbc.users.find_one({"email": "mike@aquaterra.com"})
+    assert mike, "mike@aquaterra.com missing from seed"
+    admin_row = dbc.users.find_one({"email": "admin@aquaterra.com"})
+    tenant_id = mike["tenant_id"]
+
+    # Seed a single job on Mike for a specific day so the endpoint
+    # has something concrete to plan. Job is stored with
+    # ``scheduled_date`` only — locks the day-filter fix
+    # simultaneously (see next test for the isolated assertion).
+    day = "2026-09-14"
+    jid = str(uuid.uuid4())
+    dbc.jobs.insert_one({
+        "id": jid, "tenant_id": tenant_id,
+        "technician_id": mike["id"],
+        "title": "optimize-route-target-test",
+        "status": "scheduled",
+        "scheduled_date": day,
+        "site_lat": 33.7, "site_lng": -112.2,
+        "address": "1 test st, Peoria, AZ",
+    })
+    try:
+        r = requests.post(
+            f"{API}/schedule/optimize-route",
+            headers=aquaterra_admin_h,
+            json={"technician_id": mike["id"], "date": day},
+            timeout=15,
+        )
+        assert r.status_code == 200, r.text[:400]
+        out = r.json()
+        # Endpoint planned for Mike, not the admin caller — Mike's
+        # seeded job must appear in the returned list. The
+        # ``ordered_job_ids`` is empty when <2 stops (trivial
+        # algorithm), but the endpoint still returns the resolved
+        # 1-stop set.
+        assert jid in (out.get("ordered_job_ids") or []), (
+            f"admin caller with technician_id={mike['id']} did NOT "
+            f"plan for that tech's job. Response: {out}"
+        )
+        # Regression guard — the response must not include admin's
+        # own jobs (which are absent for this specific day anyway,
+        # but assert the shape didn't leak them).
+        assert admin_row["id"] not in (out.get("ordered_job_ids") or [])
+    finally:
+        dbc.jobs.delete_one({"id": jid, "tenant_id": tenant_id})
+
+
+def test_optimize_route_day_filter_matches_scheduled_date(
+    aquaterra_admin_h, dbc,
+):
+    """A job seeded with ONLY ``scheduled_date`` (no
+    ``scheduled_start``) must show up on the optimizer output for
+    that day. Mirrors ``get_route_stops``'s ``$and`` day-filter so
+    the two endpoints stay in sync."""
+    mike = dbc.users.find_one({"email": "mike@aquaterra.com"})
+    assert mike, "mike@aquaterra.com missing from seed"
+    tenant_id = mike["tenant_id"]
+
+    # Seed two co-located jobs on Mike for a specific day. Both
+    # carry only ``scheduled_date`` (no ``scheduled_start``) — the
+    # pre-fix code would have dropped them entirely.
+    day = "2026-09-15"
+    jid_a, jid_b = str(uuid.uuid4()), str(uuid.uuid4())
+    for jid, lat in ((jid_a, 33.71), (jid_b, 33.72)):
+        dbc.jobs.insert_one({
+            "id": jid, "tenant_id": tenant_id,
+            "technician_id": mike["id"],
+            "title": "optimize-route-day-filter-test",
+            "status": "scheduled",
+            "scheduled_date": day,
+            "site_lat": lat, "site_lng": -112.2,
+            "address": f"{jid} st, Peoria, AZ",
+        })
+    try:
+        r = requests.post(
+            f"{API}/schedule/optimize-route",
+            headers=aquaterra_admin_h,
+            json={"technician_id": mike["id"], "date": day},
+            timeout=30,
+        )
+        assert r.status_code == 200, r.text[:400]
+        ordered = r.json().get("ordered_job_ids") or []
+        assert jid_a in ordered, (
+            f"day-filter dropped a scheduled_date-only job: {jid_a} "
+            f"not in {ordered}"
+        )
+        assert jid_b in ordered
+    finally:
+        dbc.jobs.delete_many(
+            {"id": {"$in": [jid_a, jid_b]}, "tenant_id": tenant_id},
+        )

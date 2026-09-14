@@ -37,6 +37,14 @@ class OptimizeIn(BaseModel):
     date: Optional[str] = None      # YYYY-MM-DD (defaults today)
     start_lat: Optional[float] = None
     start_lng: Optional[float] = None
+    # Feb-2026 · Schedule optimize-route targeting fix.
+    # CalendarSchedule sends the target tech in the body payload as
+    # ``technician_id``. Historically the endpoint only accepted a
+    # ``user_id`` query param, so an explicit body-side selection
+    # was silently dropped and the endpoint always ran against the
+    # caller. Accepting it here fixes the "always my own route"
+    # bug without changing the query-param fallback.
+    technician_id: Optional[str] = None
 
 
 def _waypoints_hash(job_ids: List[str], start_lat, start_lng) -> str:
@@ -117,19 +125,37 @@ async def optimize_route(
             "invoke it. Ask your dispatcher to reorder the day.",
         )
     # Only admins can override which user to optimize for.
+    # Feb-2026 · Schedule optimize-route targeting fix — accept the
+    # explicit ``technician_id`` from the body payload FIRST (see
+    # ``CalendarSchedule.optimizeRoute``), then the historical
+    # ``user_id`` query param, then default to the caller.
+    requested_tid = body.technician_id or user_id
     target_uid = user["id"]
-    if user_id and user.get("role") in ("admin", "super_admin"):
-        target_uid = user_id
-    elif user_id and user_id != user["id"]:
+    if requested_tid and user.get("role") in ("admin", "super_admin"):
+        target_uid = requested_tid
+    elif requested_tid and requested_tid != user["id"]:
         raise HTTPException(403, "Cannot optimize another user's route")
 
     # Hard cross-tenant guard: if the caller is planning for someone else,
     # that user must exist and belong to the caller's current tenant.
+    # Feb-2026 · Accept either a ``users.id`` OR a ``technicians.id``
+    # (frontend may send either) — mirrors the resolution cascade
+    # in ``get_route_stops`` so both endpoints stay in sync.
     if target_uid != user["id"]:
         other = await db.users.find_one({"id": target_uid},
                                         {"_id": 0, "id": 1, "tenant_id": 1})
         if not other:
-            raise HTTPException(404, "user_id not found")
+            tech_row = await db.technicians.find_one(
+                {"id": target_uid},
+                {"_id": 0, "id": 1, "tenant_id": 1, "user_id": 1},
+            )
+            if tech_row and tech_row.get("tenant_id") == tenant["id"]:
+                # Rebase onto the users-row id when the seed carries
+                # one so the ``target_user`` lookup below resolves.
+                target_uid = tech_row.get("user_id") or target_uid
+                other = {"id": target_uid, "tenant_id": tenant["id"]}
+            else:
+                raise HTTPException(404, "user_id not found")
         if other.get("tenant_id") != tenant["id"]:
             raise HTTPException(403, "user_id not in current tenant")
 
@@ -149,7 +175,20 @@ async def optimize_route(
             {"assigned_technician_id": target_uid},
         ],
         "status": {"$nin": ["completed", "cancelled"]},
-        "scheduled_start": {"$gte": day_start, "$lte": day_end},
+        # Feb-2026 · Schedule optimize-route day-filter fix — match
+        # jobs stored with EITHER a ``scheduled_start`` datetime
+        # (post-optimizer / drag-drop writes) OR the flat
+        # ``scheduled_date`` ISO string (legacy seeds + recurring-
+        # generator writes). Mirrors ``get_route_stops`` verbatim so
+        # both endpoints stay in sync — without this, jobs never
+        # touched by the optimizer were silently dropped, which is
+        # most of them.
+        "$and": [{
+            "$or": [
+                {"scheduled_start": {"$gte": day_start, "$lte": day_end}},
+                {"scheduled_date": date_str},
+            ],
+        }],
     }
     query = {**query, **_nd()}
     jobs = await db.jobs.find(query, {"_id": 0, "photos.data": 0}).to_list(100)
