@@ -17,6 +17,10 @@ export default function PublicLeadIntake() {
   const [address, setAddress] = useState("");
   const [interest, setInterest] = useState("Pool");
   const [notes, setNotes] = useState("");
+  // Feb-2026 · Street-address capture — inline error string
+  // surfaced via ``lead-form-address-error`` so browser tests can
+  // assert the validation failure without waiting on toast copy.
+  const [addressErr, setAddressErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [ok, setOk] = useState(false);
   // K34 · Feb-2026 — pick up an optional ``theme`` object exposed
@@ -32,7 +36,17 @@ export default function PublicLeadIntake() {
 
   const submit = async (e) => {
     e.preventDefault();
+    // Feb-2026 · Street-address capture — mirror the server-side
+    // required-field enum. Client blocks the submit + surfaces the
+    // ``lead-form-address-error`` testid so downstream marketing
+    // dashboards + lead extraction never see empty addresses.
+    const _addrRaw = address.trim();
     if (!name.trim()) return toast.error("Please enter your name.");
+    if (_addrRaw.length < 3) {
+      setAddressErr("Street address is required.");
+      return toast.error("Please enter your street address.");
+    }
+    setAddressErr("");
     if (!email.trim() && !phone.trim())
       return toast.error("Please provide an email or a phone number.");
     setBusy(true);
@@ -44,7 +58,14 @@ export default function PublicLeadIntake() {
           name: name.trim(),
           email: email.trim(),
           phone: phone.trim(),
-          service_address: address.trim(),
+          // Feb-2026 · lead extraction — send BOTH the modern
+          // ``address`` key + the legacy ``service_address`` key
+          // for backwards-compat with older extractors that only
+          // look at ``service_address``. Backend
+          // ``lead_extraction._ADDRESS_ALIASES`` already resolves
+          // either to the same lead-record field.
+          address: _addrRaw,
+          service_address: _addrRaw,
           service_interest: interest,
           notes: notes.trim(),
         }),
@@ -123,14 +144,51 @@ export default function PublicLeadIntake() {
               Email OR phone required — we'll use whichever you prefer.
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Service address</label>
-              <input value={address} onChange={(e) => setAddress(e.target.value)}
-                       className="mt-1 w-full border border-slate-300 rounded px-3 py-2 text-sm"
-                       placeholder="123 Sunny Ln, Peoria AZ" data-testid="public-lead-address" />
+              <label htmlFor="address"
+                       className="text-xs font-medium text-slate-600">
+                Street Address <span aria-hidden="true" style={{ color: "#B91C1C" }}>*</span>
+              </label>
+              <input
+                id="address"
+                name="address"
+                type="text"
+                value={address}
+                onChange={(e) => {
+                  setAddress(e.target.value);
+                  if (addressErr) setAddressErr("");
+                }}
+                required
+                minLength={3}
+                autoComplete="street-address"
+                aria-label="Street Address"
+                aria-required="true"
+                aria-invalid={addressErr ? "true" : "false"}
+                aria-describedby={addressErr ? "address-error" : undefined}
+                className="mt-1 w-full border border-slate-300 rounded px-3 py-2 text-sm"
+                placeholder="123 Sunny Ln, Peoria AZ"
+                data-testid="lead-form-address-input"
+              />
+              {addressErr ? (
+                <div
+                  id="address-error"
+                  className="mt-1 text-xs"
+                  style={{ color: "#B91C1C" }}
+                  role="alert"
+                  data-testid="lead-form-address-error"
+                >
+                  {addressErr}
+                </div>
+              ) : null}
             </div>
             <div>
               <label className="text-xs font-medium text-slate-600">Service interest</label>
-              <div className="mt-1 flex gap-2" data-testid="public-lead-interest">
+              <div className="mt-1 flex gap-2"
+                    data-testid="public-lead-interest">
+                {/* Feb-2026 · Lead form — stable ``service_interest``
+                    submission key + testid for downstream automation. */}
+                <input type="hidden" name="service_interest"
+                        value={interest}
+                        data-testid="lead-form-service-interest" />
                 {["Pool", "Landscape", "Both"].map((s) => (
                   <label key={s}
                             className={`flex-1 border rounded px-3 py-2 text-sm text-center cursor-pointer ${
