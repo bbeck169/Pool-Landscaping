@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
+import AddressAutocomplete, { type AddressSelection } from "@/src/components/common/AddressAutocomplete";
 
 const SOURCES = ["Door-to-door", "Referral", "Website", "Google", "Facebook", "Walk-in", "Phone", "Other"];
 const blank = { name: "", phone: "", email: "", source: "Door-to-door", est_value: "", notes: "", address: "" };
@@ -69,6 +70,8 @@ export default function NewLeadForm({ onDone }: { onDone?: () => void }) {
         address: form.address.trim(),
         lat: geo?.lat ?? null,
         lng: geo?.lng ?? null,
+        latitude: geo?.lat ?? null,
+        longitude: geo?.lng ?? null,
       };
       const { queued } = await offlineWrite({
         op_type: "lead.create",
@@ -117,12 +120,15 @@ export default function NewLeadForm({ onDone }: { onDone?: () => void }) {
       ))}
 
       <Text style={styles.label}>Address</Text>
-      <TextInput
-        style={styles.input}
+      <AddressAutocomplete
         value={form.address}
-        onChangeText={(v) => set("address", v)}
+        onChange={(sel: AddressSelection) => {
+          setForm((f) => ({ ...f, address: sel.formatted || sel.street || "" }));
+          if (sel.latitude != null && sel.longitude != null) {
+            setGeo({ lat: sel.latitude, lng: sel.longitude });
+          }
+        }}
         placeholder="123 Palm St, Surprise, AZ"
-        placeholderTextColor={colors.muted}
         testID="newlead-address"
       />
       <Pressable style={[styles.locBtn, geo && styles.locBtnDone]} onPress={attachLocation} disabled={locating} testID="newlead-attach-location">
