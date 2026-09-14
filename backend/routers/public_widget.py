@@ -41,6 +41,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from config import db
+from services.public_checkins_jsonld import build_feed_jsonld
 from utils import get_current_user, now_iso
 
 router = APIRouter()
@@ -99,6 +100,25 @@ def _tenant_logo_url(tenant: Dict[str, Any]) -> Optional[str]:
     return bc.get("logo_url")
 
 
+async def _resolve_business_card(tenant: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the tenant's business-card fields merged with the seeded
+    defaults (mirrors ``routers/tenants._read_business_card`` but is
+    imported lazily here to avoid a router-import cycle).
+
+    The card carries: ``company_name``, ``phone``, ``website_url``,
+    ``service_area``, ``email``, ``logo_url``. Missing keys silently
+    fall through so the JSON-LD builder can no-op cleanly.
+    """
+    try:
+        # Local import — avoids a top-level cycle between tenants.py
+        # and this router (tenants.py imports this router elsewhere).
+        from routers.tenants import _read_business_card  # noqa: WPS433
+        return await _read_business_card(tenant)
+    except Exception:                                                    # noqa: BLE001
+        settings = (tenant.get("settings") or {})
+        return dict(settings.get("business_card") or {})
+
+
 def _sanitize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """Return the caller-safe subset of a ``public_checkins`` row.
 
@@ -146,19 +166,7 @@ async def public_feed(
         raise HTTPException(429, {"error": "rate_limited"})
 
     tenant = await _tenant_by_slug(tenant_slug)
-    limit = max(1, min(50, int(limit)))
-
-    q: Dict[str, Any] = {"tenant_id": tenant["id"], "state": "approved"}
-    if service_category:
-        q["service_category"] = str(service_category).strip().lower()
-
-    checkins: List[Dict[str, Any]] = []
-    async for row in db.public_checkins.find(q, {"_id": 0}) \
-                                          .sort("approved_at", -1) \
-                                          .limit(limit):
-        if not row.get("masked_address"):
-            continue  # safety: never surface un-masked rows
-        checkins.append(_sanitize_row(row))
+    feed = await _load_feed_ld(tenant, limit=limit, service_category=service_category)
 
     # Cache-Control: 5 min shared cache is safe; embed sites can also
     # rely on the 7-day (soft) TTL declared inside the payload.
@@ -172,11 +180,12 @@ async def public_feed(
             "brand_primary": tenant.get("brand_primary"),
             "brand_secondary": tenant.get("brand_secondary"),
         },
-        "checkins": checkins,
-        "count": len(checkins),
+        "checkins": feed["checkins"],
+        "count": len(feed["checkins"]),
         "as_of": now_iso(),
         # Advisory client-cache lifetime for photo URLs (7 days).
         "cache_ttl_s": 7 * 24 * 60 * 60,
+        "jsonld": feed["jsonld"],
     }
 
 
@@ -457,6 +466,204 @@ async def widget_js(response: Response):
     )
 
 
+async def _load_feed_ld(
+    tenant: Dict[str, Any],
+    limit: int = 12,
+    service_category: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Shared loader used by the JSON feed endpoint, the server-
+    rendered HTML feed, and the widget preview page — returns the
+    same JSON-LD payload each surface can embed verbatim so crawlers
+    see identical structured data regardless of which endpoint they
+    landed on.
+
+    Returns::
+
+        {
+          "checkins":       [<sanitized>...],  # for optional visible HTML
+          "checkins_for_ld":[<coords+masked>...],
+          "jsonld":         {"local_business": {...}, "item_list": {...}},
+          "business_card":  {...},
+        }
+    """
+    q: Dict[str, Any] = {"tenant_id": tenant["id"], "state": "approved"}
+    if service_category:
+        q["service_category"] = str(service_category).strip().lower()
+    limit = max(1, min(50, int(limit)))
+
+    checkins: List[Dict[str, Any]] = []
+    checkins_for_ld: List[Dict[str, Any]] = []
+    async for row in db.public_checkins.find(q, {"_id": 0}) \
+                                          .sort("approved_at", -1) \
+                                          .limit(limit):
+        if not row.get("masked_address"):
+            continue
+        checkins.append(_sanitize_row(row))
+        checkins_for_ld.append({
+            "service_name": row.get("service_name"),
+            "service_category": row.get("service_category"),
+            "masked_address": row.get("masked_address") or {},
+            "lat_public": row.get("lat_public"),
+            "lng_public": row.get("lng_public"),
+        })
+
+    try:
+        business_card = await _resolve_business_card(tenant)
+    except Exception:                                                    # noqa: BLE001
+        business_card = {}
+    jsonld = build_feed_jsonld(tenant, business_card, checkins_for_ld)
+    return {
+        "checkins": checkins,
+        "checkins_for_ld": checkins_for_ld,
+        "jsonld": jsonld,
+        "business_card": business_card,
+    }
+
+
+def _render_jsonld_scripts(jsonld: Dict[str, Any]) -> str:
+    """Emit two ``<script type="application/ld+json">`` tags — one for
+    LocalBusiness, one for ItemList. Two blocks keeps the schemas
+    independent for validators that want @context per top-level type."""
+    lb = json.dumps(jsonld.get("local_business") or {}, separators=(",", ":"))
+    il = json.dumps(jsonld.get("item_list") or {}, separators=(",", ":"))
+    # ``</`` is escaped so an unlucky payload can't close the <script>.
+    lb = lb.replace("</", "<\\/")
+    il = il.replace("</", "<\\/")
+    return (
+        '<script type="application/ld+json" '
+        'data-emergent-jsonld="local-business">'
+        f"{lb}</script>\n"
+        '<script type="application/ld+json" '
+        'data-emergent-jsonld="item-list">'
+        f"{il}</script>"
+    )
+
+
+# ═══════════════════════ 4) feed.html (server-rendered) ═══════════════
+_FEED_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Recent Jobs — {name}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="description" content="{meta_desc}"/>
+<meta name="robots" content="index,follow"/>
+{ld_scripts}
+<style>
+  html,body{{margin:0;padding:0;background:#F8FAFC;color:#0F172A;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;}}
+  .wrap{{max-width:1100px;margin:0 auto;padding:24px;}}
+  h1{{font-size:22px;margin:0 0 4px;}}
+  .sub{{color:#64748B;font-size:13px;margin-bottom:20px;}}
+  .grid{{display:grid;grid-template-columns:1fr;gap:16px;}}
+  @media(min-width:520px){{.grid{{grid-template-columns:1fr 1fr;}}}}
+  @media(min-width:900px){{.grid{{grid-template-columns:1fr 1fr 1fr;}}}}
+  .card{{background:#FFFFFF;border:1px solid #E2E8F0;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.06);}}
+  .photo{{aspect-ratio:16/9;background:#E2E8F0;background-size:cover;background-position:center;}}
+  .body{{padding:12px;}}
+  .svc{{font-size:15px;font-weight:600;margin:0 0 4px;}}
+  .loc{{font-size:12px;color:#64748B;margin:0 0 8px;}}
+  .desc{{font-size:13px;margin:0;}}
+  .empty{{padding:24px;text-align:center;color:#64748B;}}
+</style>
+</head>
+<body>
+<div class="wrap" data-testid="public-feed-root">
+  <h1>{heading}</h1>
+  <div class="sub">Recent completed jobs</div>
+  {items_html}
+</div>
+</body>
+</html>
+"""
+
+
+def _render_items_html(checkins: List[Dict[str, Any]]) -> str:
+    if not checkins:
+        return '<div class="empty">No recent check-ins yet.</div>'
+    from html import escape as _esc
+    cards: List[str] = []
+    for c in checkins:
+        loc = c.get("location") or {}
+        if not isinstance(loc, dict):
+            loc = {}
+        parts = [str(loc.get("city") or "").strip(),
+                 str(loc.get("state") or "").strip()]
+        loc_str = ", ".join([p for p in parts if p])
+        photo_url = ""
+        photos = c.get("photos") or []
+        if photos and isinstance(photos[0], dict):
+            photo_url = photos[0].get("url") or ""
+        photo_html = (
+            f'<div class="photo" style="background-image:url({_esc(photo_url, quote=True)})"></div>'
+            if photo_url else '<div class="photo"></div>'
+        )
+        cards.append(
+            '<div class="card">'
+            f"{photo_html}"
+            '<div class="body">'
+            f'<div class="svc">{_esc(c.get("service_name") or "")}</div>'
+            + (f'<div class="loc">{_esc(loc_str)}</div>' if loc_str else "")
+            + (
+                f'<div class="desc">{_esc(c.get("description") or "")}</div>'
+                if c.get("description") else ""
+              )
+            + "</div></div>"
+        )
+    return '<div class="grid">' + "".join(cards) + "</div>"
+
+
+@router.options("/public/checkins/{tenant_slug}/feed.html",
+                 include_in_schema=False)
+async def feed_html_options(tenant_slug: str):
+    return _cors(Response(status_code=204))
+
+
+@router.get("/public/checkins/{tenant_slug}/feed.html",
+             operation_id="publicWidget.feedHtml")
+async def public_feed_html(
+    tenant_slug: str,
+    request: Request,
+    response: Response,
+    limit: int = 12,
+    service_category: Optional[str] = None,
+):
+    """Server-rendered HTML surface for crawlers — SPA route is JSON-
+    only, so search engines need this HTML companion to see the
+    JSON-LD in the raw payload.  Visible UI is intentionally minimal:
+    the primary consumers of this URL are crawlers, share cards, and
+    admin previews.
+    """
+    _cors(response)
+    ip = _client_ip(request)
+    if not _rate_ok(ip):
+        raise HTTPException(429, {"error": "rate_limited"})
+
+    tenant = await _tenant_by_slug(tenant_slug)
+    feed = await _load_feed_ld(tenant, limit=limit, service_category=service_category)
+
+    ld_scripts = _render_jsonld_scripts(feed["jsonld"])
+    items_html = _render_items_html(feed["checkins"])
+    from html import escape as _esc
+    heading = _esc((feed["business_card"].get("company_name")
+                    or tenant.get("name") or "Recent Jobs"))
+    meta_desc = _esc(
+        f"Recent completed jobs by {heading}.",
+        quote=True,
+    )
+    body = _FEED_HTML.format(
+        name=_esc(tenant.get("name") or ""),
+        heading=heading,
+        meta_desc=meta_desc,
+        ld_scripts=ld_scripts,
+        items_html=items_html,
+    )
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return HTMLResponse(body, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=300",
+    })
+
+
 # ═══════════════════════ 3) widget/preview/{slug} ═══════════════════
 _PREVIEW_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -464,6 +671,7 @@ _PREVIEW_HTML = """<!DOCTYPE html>
 <meta charset="utf-8"/>
 <title>Widget Preview — {name}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+{ld_scripts}
 <style>
   html,body{{margin:0;padding:0;background:{bg};color:{fg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;}}
   .frame{{padding:24px;}}
@@ -497,7 +705,13 @@ async def widget_preview(
     """Preview page — renders the SAME public widget an external site
     would embed. Intentionally public: it doesn't expose anything the
     widget itself doesn't. ``X-Frame-Options: SAMEORIGIN`` prevents
-    third-party sites from iframing this admin-styled preview."""
+    third-party sites from iframing this admin-styled preview.
+
+    Feb-2026 · SEO — the LocalBusiness + ItemList JSON-LD blocks are
+    now server-rendered into ``<head>`` so crawlers see the same
+    structured data whether they hit the JSON feed, the HTML feed
+    page, or this preview URL.
+    """
     tenant = await _tenant_by_slug(tenant_slug)
 
     theme = "dark" if str(theme).lower() == "dark" else "light"
@@ -505,6 +719,10 @@ async def widget_preview(
     bg, fg = ("#0F172A", "#F8FAFC") if theme == "dark" else ("#F8FAFC", "#0F172A")
     banner_bg, banner_fg = ("#1E293B", "#94A3B8") if theme == "dark" else ("#E2E8F0", "#475569")
     cat_attr = (f'data-category="{category}"' if category else "")
+
+    feed = await _load_feed_ld(tenant, limit=count, service_category=category)
+    ld_scripts = _render_jsonld_scripts(feed["jsonld"])
+
     body = _PREVIEW_HTML.format(
         name=tenant.get("name") or "Preview",
         origin="",  # use relative URLs so the browser hits whatever host it's on
@@ -514,6 +732,7 @@ async def widget_preview(
         category_attr=cat_attr,
         bg=bg, fg=fg,
         banner_bg=banner_bg, banner_fg=banner_fg,
+        ld_scripts=ld_scripts,
     )
     return HTMLResponse(body, headers={"X-Frame-Options": "SAMEORIGIN"})
 

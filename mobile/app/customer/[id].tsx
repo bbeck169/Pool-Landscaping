@@ -12,6 +12,7 @@ import { useToast } from "@/src/components/ToastProvider";
 import { Loading, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, JobCard } from "@/src/components/widgets";
 import CustomerEquipmentLibrary from "@/src/components/customers/CustomerEquipmentLibrary";
+import CustomerEquipmentUnits from "@/src/components/customers/CustomerEquipmentUnits";
 import MultiContact from "@/src/components/customers/MultiContact";
 import CustomerMultiContactEditor from "@/src/components/customers/CustomerMultiContactEditor";
 import AutomationsMuteSection from "@/src/components/customers/AutomationsMuteSection";
@@ -163,6 +164,7 @@ export default function CustomerDetail() {
   if (!c) return null;
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+  const isAdminOrTech = isAdmin || user?.role === "technician";
   const isActive = c.is_active !== false;
 
   // Multi-contact · prefer primary entry from arrays, fall back to scalar.
@@ -784,9 +786,17 @@ export default function CustomerDetail() {
           ))
         )}
 
-        {/* Phase 56.11-mobile — Equipment photo library section. */}
-        <Text style={styles.sectionTitle}>Equipment</Text>
+        {/* Phase 56.11-mobile — Equipment photo library section (legacy). */}
+        <Text style={styles.sectionTitle}>Equipment Photos</Text>
         <CustomerEquipmentLibrary customerId={id as string} />
+
+        {/* Equipment Units — structured equipment library (brand/model/serial + S3 photos). */}
+        {isAdminOrTech ? (
+          <>
+            <Text style={styles.sectionTitle}>Equipment Library</Text>
+            <CustomerEquipmentUnits customerId={id as string} />
+          </>
+        ) : null}
 
         {/* Task 1 · Feb-2026 — Customer Tags section. Chip render +
             tap-to-add bottom sheet + inline "Create new: <query>". */}
