@@ -273,12 +273,11 @@ export default function MagicInvoiceScreen() {
             <Text style={s.muted}>No line items</Text>
           ) : (
             line_items.map((li, i) => (
-              <View key={i} style={s.lineRow} testID={`magic-invoice-line-item-${i}`}>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.lineDesc}>{li.description}</Text>
-                </View>
-                <View style={s.lineRight}>
-                  <Text style={s.lineQty}>{li.qty_hr || 1} × {fmt(li.cost_rate)}</Text>
+              <View key={i} style={s.lineCard} testID={`magic-invoice-line-item-${i}`}>
+                <Text style={s.lineDesc}>{li.description}</Text>
+                <Text style={s.lineQty}>{li.qty_hr || 1} × {fmt(li.cost_rate)}</Text>
+                <View style={s.lineCardSubtotalRow}>
+                  <Text style={s.lineCardSubtotalLabel}>Subtotal</Text>
                   <Text style={s.lineTotal}>{fmt(li.total)}</Text>
                 </View>
               </View>
@@ -373,11 +372,12 @@ const s = StyleSheet.create({
   companyName: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
   billName: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   muted: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
-  lineRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
-  lineDesc: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, flex: 1 },
-  lineRight: { alignItems: "flex-end", marginLeft: 12 },
-  lineQty: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
-  lineTotal: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 2 },
+  lineCard: { backgroundColor: "#F8FAFC", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm },
+  lineCardSubtotalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
+  lineCardSubtotalLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
+  lineDesc: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface },
+  lineQty: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  lineTotal: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   notesText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, lineHeight: 22 },
   stubRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border },
   stubLabel: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },

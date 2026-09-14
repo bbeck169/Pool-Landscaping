@@ -372,12 +372,13 @@ export default function QuoteDetail() {
         <View style={styles.card}>
           <Text style={styles.cardLabel}>Line Items</Text>
           {q.line_items?.map((li: any, idx: number) => (
-            <View key={idx} style={styles.lineItem}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.liDesc}>{li.description}</Text>
-                <Text style={styles.liMeta}>{li.quantity} × {money(li.unit_price)}</Text>
+            <View key={idx} style={styles.lineCard} testID={`quote-line-item-${idx}`}>
+              <Text style={styles.liDesc}>{li.description}</Text>
+              <Text style={styles.liMeta}>{li.quantity} × {money(li.unit_price)}</Text>
+              <View style={styles.lineCardSubtotalRow}>
+                <Text style={styles.lineCardSubtotalLabel}>Subtotal</Text>
+                <Text style={styles.liTotal}>{money(li.quantity * li.unit_price)}</Text>
               </View>
-              <Text style={styles.liTotal}>{money(li.quantity * li.unit_price)}</Text>
             </View>
           ))}
           <View style={styles.totalsBox}>
@@ -434,6 +435,8 @@ export default function QuoteDetail() {
               <Text style={styles.marginTitle}>
                 Internal margin — not shown to customer
               </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={true} style={{ marginHorizontal: -spacing.md }} contentContainerStyle={{ paddingHorizontal: spacing.md, minWidth: 480 }}>
+                <View style={{ flex: 1 }}>
               <View style={styles.marginHdrRow}>
                 <Text style={[styles.marginHdrCell, { flex: 2 }]}>Line</Text>
                 <Text style={[styles.marginHdrCell, styles.marginRt]}>W/u</Text>
@@ -470,6 +473,8 @@ export default function QuoteDetail() {
                   {money(totProfit)} ({margin}%)
                 </Text>
               </View>
+                </View>
+              </ScrollView>
             </View>
           );
         })() : null}
@@ -716,10 +721,12 @@ const styles = StyleSheet.create({
   customer: { fontFamily: font.regular, fontSize: fontSize.lg, color: colors.muted, marginTop: 2 },
   card: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
   cardLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.muted, marginBottom: spacing.md, textTransform: "uppercase", letterSpacing: 0.5 },
-  lineItem: { flexDirection: "row", alignItems: "center", paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.divider },
+  lineCard: { backgroundColor: "#F8FAFC", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm },
   liDesc: { fontFamily: font.medium, fontSize: fontSize.lg, color: colors.onSurface },
   liMeta: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
   liTotal: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
+  lineCardSubtotalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
+  lineCardSubtotalLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
   totalsBox: { marginTop: spacing.md, gap: spacing.xs },
   dualTotalBox: {
     marginTop: spacing.sm,

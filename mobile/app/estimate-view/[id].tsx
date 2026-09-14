@@ -397,52 +397,51 @@ export default function EstimateViewScreen() {
                 return (
                   <View
                     key={gKey}
-                    style={[s.groupRow, isDeclined && { opacity: 0.55 }]}
+                    style={[s.lineCard, isDeclined && s.lineCardDeclined]}
                     testID={`estimate-grouped-row-${g.category_id || "other"}`}
                   >
-                    <View style={{ flex: 1 }}>
-                      <Text style={[s.groupLabel, isDeclined && s.lineDeclinedText]}>{g.label}</Text>
-                      {g.description ? (
-                        <Text
-                          style={[s.groupDesc, isDeclined && s.lineDeclinedText]}
-                          testID={`estimate-grouped-desc-${g.category_id || "other"}`}
-                        >
-                          {g.description}
-                        </Text>
-                      ) : null}
-                      {isDeclined && g.declined_at ? (
-                        <Text
-                          style={s.groupDeclinedLabel}
-                          testID={`estimate-grouped-declined-label-${g.category_id || "other"}`}
-                        >
-                          Declined {String(g.declined_at).slice(0, 10)}
-                        </Text>
-                      ) : null}
-                    </View>
-                    <View style={{ alignItems: "flex-end", gap: 6 }}>
+                    <Text style={[s.groupLabel, isDeclined && s.lineDeclinedText]}>{g.label}</Text>
+                    {g.description ? (
+                      <Text
+                        style={[s.groupDesc, isDeclined && s.lineDeclinedText]}
+                        testID={`estimate-grouped-desc-${g.category_id || "other"}`}
+                      >
+                        {g.description}
+                      </Text>
+                    ) : null}
+                    {isDeclined && g.declined_at ? (
+                      <Text
+                        style={s.groupDeclinedLabel}
+                        testID={`estimate-grouped-declined-label-${g.category_id || "other"}`}
+                      >
+                        Declined {String(g.declined_at).slice(0, 10)}
+                      </Text>
+                    ) : null}
+                    <View style={s.lineCardSubtotalRow}>
+                      <Text style={s.lineCardSubtotalLabel}>Subtotal</Text>
                       <Text style={[s.lineTotal, isDeclined && s.lineDeclinedText]}>{fmt(g.subtotal)}</Text>
-                      {showAction ? (
-                        isDeclined ? (
-                          <TouchableOpacity
-                            onPress={() => onRestoreGroup(gKey)}
-                            disabled={isBusy}
-                            style={s.undeclineBtn}
-                            testID={`estimate-grouped-restore-btn-${g.category_id || "other"}`}
-                          >
-                            <Text style={s.undeclineBtnText}>{isBusy ? "…" : "Restore"}</Text>
-                          </TouchableOpacity>
-                        ) : (
-                          <TouchableOpacity
-                            onPress={() => onDeclineGroup(gKey)}
-                            disabled={isBusy}
-                            style={s.lineDeclineBtn}
-                            testID={`estimate-grouped-decline-btn-${g.category_id || "other"}`}
-                          >
-                            <Text style={s.lineDeclineBtnText}>{isBusy ? "…" : "Decline"}</Text>
-                          </TouchableOpacity>
-                        )
-                      ) : null}
                     </View>
+                    {showAction ? (
+                      isDeclined ? (
+                        <TouchableOpacity
+                          onPress={() => onRestoreGroup(gKey)}
+                          disabled={isBusy}
+                          style={s.undeclineBtn}
+                          testID={`estimate-grouped-restore-btn-${g.category_id || "other"}`}
+                        >
+                          <Text style={s.undeclineBtnText}>{isBusy ? "…" : "Restore"}</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity
+                          onPress={() => onDeclineGroup(gKey)}
+                          disabled={isBusy}
+                          style={s.lineDeclineBtn}
+                          testID={`estimate-grouped-decline-btn-${g.category_id || "other"}`}
+                        >
+                          <Text style={s.lineDeclineBtnText}>{isBusy ? "…" : "Decline"}</Text>
+                        </TouchableOpacity>
+                      )
+                    ) : null}
                   </View>
                 );
               })
@@ -457,48 +456,47 @@ export default function EstimateViewScreen() {
             line_items.map((li, i) => {
               const isDeclined = (li.customer_status || "pending") === "declined";
               return (
-                <View key={i} style={[s.lineRow, isDeclined && s.lineRowDeclined]} testID={`estimate-line-item-${i}`}>
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <Text style={[s.lineDesc, isDeclined && s.lineDeclinedText]}>{li.description}</Text>
-                      {isDeclined && (
-                        <View style={s.declinedChip} testID={`estimate-line-item-declined-chip-${i}`}>
-                          <Text style={s.declinedChipText}>Declined</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text style={[s.lineDetail, isDeclined && s.lineDeclinedText]}>
-                      {li.qty_hr || li.quantity || 0} qty × {li.visits || 1} visit{(li.visits || 1) > 1 ? "s" : ""}
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: "flex-end", gap: 6 }}>
-                    <Text style={[s.lineTotal, isDeclined && s.lineDeclinedText]}>{fmt(li.total)}</Text>
-                    {canLineDecline && (
-                      isDeclined ? (
-                        <TouchableOpacity
-                          onPress={() => onUndeclineLine(i)}
-                          disabled={busyLineIdx === i}
-                          style={s.undeclineBtn}
-                          testID={`estimate-line-item-undecline-${i}`}
-                        >
-                          <Text style={s.undeclineBtnText}>
-                            {busyLineIdx === i ? "…" : "Undo"}
-                          </Text>
-                        </TouchableOpacity>
-                      ) : (
-                        <TouchableOpacity
-                          onPress={() => setLineDeclineOpen(i)}
-                          disabled={busyLineIdx === i}
-                          style={s.lineDeclineBtn}
-                          testID={`estimate-line-item-decline-${i}`}
-                        >
-                          <Text style={s.lineDeclineBtnText}>
-                            {busyLineIdx === i ? "…" : "Decline"}
-                          </Text>
-                        </TouchableOpacity>
-                      )
+                <View key={i} style={[s.lineCard, isDeclined && s.lineCardDeclined]} testID={`estimate-line-item-${i}`}>
+                  <View style={s.lineCardHeader}>
+                    <Text style={[s.lineDesc, isDeclined && s.lineDeclinedText]}>{li.description}</Text>
+                    {isDeclined && (
+                      <View style={s.declinedChip} testID={`estimate-line-item-declined-chip-${i}`}>
+                        <Text style={s.declinedChipText}>Declined</Text>
+                      </View>
                     )}
                   </View>
+                  <Text style={[s.lineDetail, isDeclined && s.lineDeclinedText]}>
+                    {li.qty_hr || li.quantity || 0} qty × {li.visits || 1} visit{(li.visits || 1) > 1 ? "s" : ""}
+                  </Text>
+                  <View style={s.lineCardSubtotalRow}>
+                    <Text style={s.lineCardSubtotalLabel}>Subtotal</Text>
+                    <Text style={[s.lineTotal, isDeclined && s.lineDeclinedText]}>{fmt(li.total)}</Text>
+                  </View>
+                  {canLineDecline && (
+                    isDeclined ? (
+                      <TouchableOpacity
+                        onPress={() => onUndeclineLine(i)}
+                        disabled={busyLineIdx === i}
+                        style={s.undeclineBtn}
+                        testID={`estimate-line-item-undecline-${i}`}
+                      >
+                        <Text style={s.undeclineBtnText}>
+                          {busyLineIdx === i ? "…" : "Undo Decline"}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={() => setLineDeclineOpen(i)}
+                        disabled={busyLineIdx === i}
+                        style={s.lineDeclineBtn}
+                        testID={`estimate-line-item-decline-${i}`}
+                      >
+                        <Text style={s.lineDeclineBtnText}>
+                          {busyLineIdx === i ? "…" : "Decline"}
+                        </Text>
+                      </TouchableOpacity>
+                    )
+                  )}
                 </View>
               );
             })
@@ -692,19 +690,22 @@ const s = StyleSheet.create({
   companyName: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
   billName: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   muted: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
-  // Line items — Phase A
-  lineRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
-  lineRowDeclined: { opacity: 0.55 },
+  // Line items — Phase A (stacked cards)
+  lineCard: { backgroundColor: "#F8FAFC", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm },
+  lineCardDeclined: { opacity: 0.55 },
+  lineCardHeader: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 },
+  lineCardSubtotalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
+  lineCardSubtotalLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
   lineDesc: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface },
   lineDeclinedText: { textDecorationLine: "line-through", color: colors.muted },
   lineDetail: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
-  lineTotal: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginLeft: 12 },
+  lineTotal: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   declinedChip: { backgroundColor: "#FEE2E2", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   declinedChipText: { fontFamily: font.bold, fontSize: 11, color: "#7F1D1D" },
-  lineDeclineBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.error },
-  lineDeclineBtnText: { fontFamily: font.semibold, fontSize: 12, color: colors.error },
-  undeclineBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.brand },
-  undeclineBtnText: { fontFamily: font.semibold, fontSize: 12, color: colors.brand },
+  lineDeclineBtn: { minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.error, marginTop: spacing.sm },
+  lineDeclineBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.error },
+  undeclineBtn: { minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.brand, marginTop: spacing.sm },
+  undeclineBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.brand },
   // Totals — Phase A adjusted block
   totalsRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6 },
   totalsLabel: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },
@@ -741,8 +742,7 @@ const s = StyleSheet.create({
   brandBandCompany: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", marginTop: 4 },
   brandFooter: { borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.md },
   brandFooterText: { fontFamily: font.regular, fontSize: fontSize.sm, color: "#fff", textAlign: "center" },
-  // Decline-per-group — grouped rows
-  groupRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  // Decline-per-group — grouped rows (stacked cards)
   groupLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   groupDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
   groupDeclinedLabel: { fontFamily: font.regular, fontSize: 11, color: "#991B1B", marginTop: 4 },

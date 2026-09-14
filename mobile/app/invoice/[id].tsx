@@ -348,19 +348,18 @@ export default function InvoiceDetail() {
             line_items.map((li, i) => (
               <View
                 key={i}
-                style={[s.lineRow, li.is_late_fee && s.lineRowLateFee]}
+                style={[s.lineCard, li.is_late_fee && s.lineCardLateFee]}
                 testID={`invoice-line-item-${i}`}
               >
-                <View style={{ flex: 1 }}>
-                  <Text style={s.lineDesc}>{li.description}</Text>
-                  {li.is_late_fee && (
-                    <View style={s.lateFeePill}>
-                      <Text style={s.lateFeeText}>LATE FEE</Text>
-                    </View>
-                  )}
-                </View>
-                <View style={s.lineRight}>
-                  <Text style={s.lineQty}>{li.qty_hr || 1} × {fmt(li.cost_rate)}</Text>
+                <Text style={s.lineDesc}>{li.description}</Text>
+                {li.is_late_fee && (
+                  <View style={s.lateFeePill}>
+                    <Text style={s.lateFeeText}>LATE FEE</Text>
+                  </View>
+                )}
+                <Text style={s.lineQty}>{li.qty_hr || 1} × {fmt(li.cost_rate)}</Text>
+                <View style={s.lineCardSubtotalRow}>
+                  <Text style={s.lineCardSubtotalLabel}>Subtotal</Text>
                   <Text style={s.lineTotal}>{fmt(li.total)}</Text>
                 </View>
               </View>
@@ -408,6 +407,8 @@ export default function InvoiceDetail() {
                 <Text style={s.marginTitle}>
                   Internal margin — not shown to customer
                 </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={true} style={{ marginHorizontal: -spacing.md }} contentContainerStyle={{ paddingHorizontal: spacing.md, minWidth: 480 }}>
+                  <View style={{ flex: 1 }}>
                 {/* Header */}
                 <View style={s.marginHeaderRow}>
                   <Text style={[s.marginHdr, { flex: 2 }]}>Line</Text>
@@ -445,6 +446,8 @@ export default function InvoiceDetail() {
                     {fmt(totProfit)} ({margin}%)
                   </Text>
                 </View>
+                  </View>
+                </ScrollView>
               </View>
             );
           })() : null}
@@ -568,14 +571,15 @@ const s = StyleSheet.create({
   muted: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
   creditCard: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#DCFCE7", borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md },
   creditText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#166534" },
-  lineRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
-  lineRowLateFee: { backgroundColor: "#FFF7ED" },
-  lineDesc: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, flex: 1 },
+  lineCard: { backgroundColor: "#F8FAFC", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm },
+  lineCardLateFee: { backgroundColor: "#FFF7ED" },
+  lineCardSubtotalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
+  lineCardSubtotalLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
+  lineDesc: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface },
   lateFeePill: { backgroundColor: "#FEE2E2", paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, marginTop: 4, alignSelf: "flex-start" },
   lateFeeText: { fontFamily: font.bold, fontSize: 9, color: "#B91C1C", letterSpacing: 0.5 },
-  lineRight: { alignItems: "flex-end", marginLeft: 12 },
-  lineQty: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
-  lineTotal: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 2 },
+  lineQty: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  lineTotal: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   notesText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, lineHeight: 22 },
   // PB1 · Internal Margin styles
   marginSection: {
