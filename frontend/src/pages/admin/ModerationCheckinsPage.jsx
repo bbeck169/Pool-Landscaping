@@ -4,6 +4,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import AIDescriptionRewriteButton from "@/components/ai/AIDescriptionRewriteButton";
+import AIWriteButton from "@/components/ai/AIWriteButton";
 import { RefreshCw, Check, X, MapPin, ShieldCheck, ShieldAlert, Ban } from "lucide-react";
 
 /**
@@ -783,16 +784,25 @@ function LabelledTextareaWithAI({ label, value, onChange, disabled,
                                     testId, canRewrite, selected }) {
   return (
     <label className="flex flex-col gap-1 text-xs font-semibold" style={{ color: colors.muted }}>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <span>{label}</span>
         {canRewrite ? (
-          <AIDescriptionRewriteButton
-            draft={value}
-            onRewritten={(text) => { onChange(text); }}
-            context={{ service_category: selected?.service_category || undefined }}
-            size="xs"
-            testid="moderation-field-description-ai"
-          />
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <AIWriteButton
+              checkinId={selected?.id}
+              currentValue={value}
+              onGenerated={(text) => onChange(text)}
+              size="xs"
+              testid="checkin-ai-write-btn"
+            />
+            <AIDescriptionRewriteButton
+              draft={value}
+              onRewritten={(text) => { onChange(text); }}
+              context={{ service_category: selected?.service_category || undefined }}
+              size="xs"
+              testid="moderation-field-description-ai"
+            />
+          </div>
         ) : null}
       </div>
       <textarea

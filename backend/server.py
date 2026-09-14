@@ -702,6 +702,8 @@ from routers import admin_checkins as _admin_checkins  # noqa: E402
 api_router.include_router(_admin_checkins.router)
 from routers import checkin_rewrite as _checkin_rewrite  # noqa: E402
 api_router.include_router(_checkin_rewrite.router)
+from routers import checkin_ai_description as _checkin_ai_desc  # noqa: E402
+api_router.include_router(_checkin_ai_desc.router)
 from routers import lumino_backfill as _lumino_backfill  # noqa: E402
 api_router.include_router(_lumino_backfill.router)
 from routers import profit_report as _profit_report  # noqa: E402
