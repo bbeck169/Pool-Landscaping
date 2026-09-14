@@ -487,7 +487,7 @@ export default function ServiceReport() {
       </Section>
 
       {isPool && !isRepair && (
-        <Section title="Chemical Readings" icon={<FlaskConical size={16}/>}
+        <Section title="Chemistry Readings" icon={<FlaskConical size={16}/>}
                  testId="svc-report-readings">
           <button
             type="button"

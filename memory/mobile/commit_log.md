@@ -1,3 +1,16 @@
+## Iteration 90 — CRITICAL: Remove Legacy "Chemical Readings" from Pool Checklist
+- **Commit**: a332720c
+- **Date**: 2026-09-14
+- **Changes**:
+  - Removed legacy "Chemical Readings" header, mergedReadings.map() rendering, updReading, lastReadings/recentReadings state+fetch, REQUIRED_READING_KEYS, readingFields memo from PoolChecklistForm.tsx
+  - Removed imports: ReadingChipRow, expandChemistryLabel
+  - Updated handleBodiesChange in checklist.tsx to mirror pool body readings into report.chemical_readings (keeps readingsDict + Recommended Chemicals working)
+  - Created `__tests__/remove-legacy-chemical-readings.test.tsx` — 4 passing tests
+  - Written `/app/memory/FIX_REMOVE_LEGACY_CHEMICAL_READINGS_MOBILE.md`
+- **Files modified**: `src/components/checklist/PoolChecklistForm.tsx` (major removal), `app/job/[id]/checklist.tsx` (handleBodiesChange mirror)
+- **Impact**: Techs can now complete pool jobs — only structured Chemistry Readings renders; close-gate validates same section
+
+
 ## Iteration 89 — Mobile Polish: Equipment Library Jest + Warranty CRUD v1.5
 - **Commit**: 6727f4e4
 - **Date**: 2026-09-14

@@ -523,12 +523,28 @@ export default function JobChecklistScreen() {
   }, [scheduleAutosave]);
 
   // Phase v · Water bodies change handler — keeps ref in sync + triggers autosave.
+  // Sep-2026 · Also mirrors the first pool body's readings into the flat
+  // `chemical_readings` array so the Recommended Chemicals card
+  // (readingsDict in PoolChecklistForm) stays responsive.
   const handleBodiesChange = useCallback((next: WaterBody[]) => {
     setWaterBodies(next);
     waterBodiesRef.current = next;
     setHighlightBodies({});
-    scheduleAutosave();
-  }, [scheduleAutosave]);
+    // Mirror structured pool readings → flat chemical_readings for
+    // recommendation engine + autosave payload.
+    const poolBody = next.find((b) => b.type === "pool");
+    if (poolBody) {
+      const flat = (poolBody.readings || []).map((r) => ({
+        key: r.key,
+        name: r.name || r.key,
+        value: r.value,
+        unit: r.unit,
+      }));
+      patchReport({ chemical_readings: flat });
+    } else {
+      scheduleAutosave();
+    }
+  }, [scheduleAutosave, patchReport]);
 
   // Feb-2026 · Checklist reclassifier (mobile parity with web
   // ChecklistModal.handleReclassify) — writes `service_type` on the

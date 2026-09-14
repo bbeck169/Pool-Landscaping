@@ -117,9 +117,13 @@ export function ReadingInputRow({ testKey, reading, previous, recent, locked, on
       style={{ borderColor: colors.border, background: colors.surface, opacity: notTested ? 0.7 : 1 }}
     >
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] font-bold uppercase tracking-wider inline-flex items-center gap-2" style={{ color: colors.onSurface }}>
+        <span className="text-sm font-semibold inline-flex items-center gap-2" style={{ color: colors.onSurface }}>
           <span>
-            {expandChemistryLabel(reading.name)}{reading.unit ? ` (${reading.unit})` : ""}
+            {/* Feb-2026 · Chemistry label unification — title-case,
+                no CSS uppercase transform. Matches the structured
+                WaterBodyPanel Chemistry rows so the primary body and
+                any extra bodies share one consistent look. */}
+            {expandChemistryLabel(reading.name)}{reading.unit ? ` ${reading.unit}` : ""}
             {required ? (
               <span
                 data-testid={`pool-reading-${testKey}-required`}
@@ -704,11 +708,18 @@ export default function PoolChecklistForm({
 
   return (
     <div data-testid="checklist-modal-pool" className="space-y-4">
-      {/* Chemical Readings — Phase 48 manual text entry — Wizard step 1 */}
+      {/* Chemistry Readings — Feb-2026 · legacy "Chemical Readings"
+          uppercase block renamed and re-styled to match the
+          structured WaterBodyPanel Chemistry section. The writeback
+          path is unchanged: ``updReading`` still emits
+          ``onChange({chemical_readings: [...]})`` and
+          ``WaterBodyManager.onPrimaryChange`` mirrors the write to
+          ``water_bodies[0].readings`` so the chemistry close-gate
+          sees the same array either way. */}
       {inStep(1) ? (
-      <div data-wizard-section="readings">
+      <div data-wizard-section="readings" data-testid="pool-chemistry-readings">
         <div className="text-sm font-bold mb-3" style={{ color: colors.onSurface }}>
-          Chemical Readings
+          Chemistry Readings
         </div>
         {/* Feb-2026 · Checklist reclassifier — inline "Service Type"
             picker shown ONLY when the report's backend template is

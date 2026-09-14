@@ -175,7 +175,10 @@ export default function AddressAutocomplete({
         // ``no-key`` is a soft-degrade signal — the CustomerForm
         // wrapper still renders the plain input.
         if (exc?.message === "no-key") setKeyAvailable(false);
-        else setError("Google Places load failed");
+        // Feb-2026 · Customer profile bugfix — soften the copy so
+        // a script-load hiccup doesn't look like a broken save. The
+        // underlying input keeps accepting manual entry regardless.
+        else setError("Autocomplete unavailable — you can still type the address manually.");
       });
     return () => { cancelled = true; };
   }, [ready]);
@@ -245,7 +248,7 @@ export default function AddressAutocomplete({
       try { await loadGoogleMaps(); setReady(true); }
       catch (exc) {
         if (exc?.message === "no-key") setKeyAvailable(false);
-        else setError("Google Places load failed");
+        else setError("Autocomplete unavailable — you can still type the address manually.");
         return;
       }
     }

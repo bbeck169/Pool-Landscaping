@@ -25,10 +25,8 @@ import * as ImagePicker from "expo-image-picker";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
-import ReadingChipRow from "./ReadingChipRow";
 // K60 · Feb-2026 — expand short-form chemistry labels (FC, TA, CYA, …)
 // to full names on the display surface.  Data keys unchanged.
-import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
 import ChemicalPickerSheet from "./ChemicalPickerSheet";
 // Phase 44 · Fix 5 — `react-native-draggable-flatlist` uses
@@ -85,20 +83,6 @@ export function canonicalReadingKey(r: { key?: string; name?: string }): string 
 // Feb-2026 · Unification — Re-export ReadingChipRow as ReadingInputRow
 // so callers can import the canonical component name used by the web.
 export { default as ReadingInputRow } from "./ReadingChipRow";
-
-// Feb-2026 · Required-reading keys — covers all canonical/alias forms of
-// the 5 core readings (free_chlorine, total_chlorine, alkalinity/
-// total_alkalinity, ph, cyanuric_acid/cya). Both the PoolChecklistForm
-// canonical keys and the chemistryGate keys match at least one entry.
-const REQUIRED_READING_KEYS = new Set<string>([
-  "free_chlorine",
-  "total_chlorine",
-  "alkalinity",
-  "total_alkalinity",
-  "ph",
-  "cyanuric_acid",
-  "cya",
-]);
 
 type Reading = {
   key?: string; name: string; unit?: string; value: number | string | null;
@@ -162,45 +146,6 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
   // on step `n` or when wizard mode is off. Keeps section guards to a
   // single readable check downstream.
   const inStep = (n: number) => wizardStep === null || wizardStep === n;
-  const readingFields = useMemo(
-    () => ((props as any).readingFields || []).filter(
-      (f: any) => canonicalReadingKey(f) !== "combined_chlorine",
-    ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [(props as any).readingFields],
-  );
-
-  // Phase 49.0 — Merge the backend template's `chemical_reading_fields`
-  // (canonical field list) with any saved `chemical_readings` values so
-  // ALL default rows (Free Cl, Total Cl, PH, Alkalinity, CYA, etc.) are
-  // always rendered, even when the persisted report only carries a
-  // subset (e.g. legacy jobs that only wrote PH).
-  const mergedReadings = React.useMemo<Reading[]>(() => {
-    if (!readingFields || readingFields.length === 0) return readings;
-    const byKey: Record<string, Reading> = {};
-    for (const r of readings || []) {
-      const k = String((r as any).key || (r as any).name || "").toLowerCase();
-      if (k) byKey[k] = r;
-    }
-    const out: Reading[] = [];
-    for (const f of readingFields) {
-      const k = String((f as any).key || (f as any).name || "").toLowerCase();
-      const found = byKey[k];
-      out.push({
-        key: (f as any).key || k,
-        name: (f as any).name || (f as any).label || k,
-        unit: (f as any).unit,
-        step: (f as any).step,
-        min: (f as any).min,
-        max: (f as any).max,
-        ...(found || { value: null }),
-      } as Reading);
-      if (found) delete byKey[k];
-    }
-    // Append any saved reading not present in the template (defensive).
-    for (const remaining of Object.values(byKey)) out.push(remaining);
-    return out;
-  }, [readingFields, readings]);
 
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<null | {
@@ -211,33 +156,6 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
     recommendations?: string[];
     overall_assessment?: string | null;
   }>(null);
-
-  const updReading = (idx: number, val: number | null) => {
-    // Phase 49.0 — update against `mergedReadings` (source of truth for the
-    // rendered rows) so techs can persist values even for keys that were
-    // absent from the saved report array.
-    const next = mergedReadings.map((r, i) =>
-      i === idx ? { ...r, value: val } : r
-    );
-    onChange({ chemical_readings: next });
-  };
-
-  // Phase 36b — previously-tested values per customer (parity with web).
-  const [lastReadings, setLastReadings] = useState<Record<string, { value: number | null; at?: string | null }>>({});
-  // Phase 49.6 — recent 4 values per reading key for the outlier hint.
-  const [recentReadings, setRecentReadings] = useState<Record<string, number[]>>({});
-  useEffect(() => {
-    if (!customerId) return;
-    let alive = true;
-    api.get(`/service-reports/last-readings?customer_id=${customerId}`)
-      .then((r: any) => {
-        if (!alive) return;
-        setLastReadings(r?.readings || {});
-        setRecentReadings(r?.recent_readings || {});
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [customerId]);
 
   const addChem = () => {
     const next = [
@@ -409,17 +327,11 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 
   return (
     <View testID="pool-checklist-form">
-      {/* Chemical Readings — Wizard step 1 (mobile renders as a
-          single scroll; the caller does not wire `wizardStep`).
-          Heading hidden on Expo Web per product trim. */}
-      {Platform.OS !== "web" && (
-        <Text style={styles.sectionTitle}>Chemical Readings</Text>
-      )}
       {/* Feb-2026 · Checklist reclassifier — inline picker mirrors the
           web empty-state block. Trigger conditions match web: the
           backend template must be "generic" AND readingFields must be
           empty. */}
-      {(readingFields || []).length === 0 && props.template === "generic" ? (
+      {(props.readingFields as any || []).length === 0 && props.template === "generic" ? (
         <View style={styles.reclassifyCard} testID="pool-service-type-picker-block">
           <Text style={styles.reclassifyTitle}>
             This job isn&apos;t classified as Pool or Landscape
@@ -465,36 +377,6 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
           )}
         </View>
       ) : null}
-      <View>
-        {mergedReadings.map((r, i) => {
-          // Phase 37 — canonical snake_case key for testid parity with web.
-          const key = canonicalReadingKey(r);
-          const prev = lastReadings[key]
-            || lastReadings[(r.key as string) || ""]
-            || lastReadings[r.name];
-          const recent = recentReadings[key]
-            || recentReadings[(r.key as string) || ""]
-            || recentReadings[r.name]
-            || [];
-          return (
-            <ReadingChipRow
-              key={key}
-              readingKey={key}
-              label={expandChemistryLabel(r.name)}
-              unit={r.unit}
-              value={r.value}
-              step={r.step}
-              min={r.min}
-              max={r.max}
-              locked={locked}
-              previous={prev || null}
-              recent={recent}
-              required={REQUIRED_READING_KEYS.has(key)}
-              onChange={(v) => updReading(i, v)}
-            />
-          );
-        })}
-      </View>
 
       {/* Phase 34d-follow-b — "Analyze water photo" button removed per user
           request. Backend endpoint retained for other flows. */}

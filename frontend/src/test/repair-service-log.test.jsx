@@ -42,7 +42,10 @@ describe("Repair-mode service log — tech form (ServiceReport.jsx)", () => {
   });
 
   it("hides chemistry / chemicals sections under !isRepair", () => {
-    expect(techSrc).toMatch(/isPool\s*&&\s*!isRepair\s*&&\s*\(\s*[\s\S]{0,400}Chemical Readings/);
+    // Feb-2026 · Section header renamed "Chemical Readings" →
+    // "Chemistry Readings" to align with the structured
+    // WaterBodyPanel taxonomy. Regex updated in lockstep.
+    expect(techSrc).toMatch(/isPool\s*&&\s*!isRepair\s*&&\s*\(\s*[\s\S]{0,400}Chemistry Readings/);
     expect(techSrc).toMatch(/isPool\s*&&\s*!isRepair\s*&&\s*\(\s*[\s\S]{0,400}Chemicals Added/);
   });
 

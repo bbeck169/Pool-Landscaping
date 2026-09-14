@@ -63,9 +63,14 @@ const baseProps = {
 describe("Job Checklist · Combined Chlorine removed (web)", () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it("renders the 'Chemical Readings' heading (post-revert regression)", () => {
+  it("renders the 'Chemistry Readings' heading (post-Feb-2026 rename)", () => {
+    // Feb-2026 · Legacy "Chemical Readings" header was renamed to
+    // "Chemistry Readings" to match the structured WaterBodyPanel
+    // section. Regression guard: the LEGACY uppercase header must
+    // NOT appear anywhere on the primary body render.
     render(<PoolChecklistForm {...baseProps} onChange={() => {}} />);
-    expect(screen.getByText("Chemical Readings")).toBeTruthy();
+    expect(screen.getByText("Chemistry Readings")).toBeTruthy();
+    expect(screen.queryByText("Chemical Readings")).toBeNull();
   });
 
   it("renders the five remaining chem inputs", () => {

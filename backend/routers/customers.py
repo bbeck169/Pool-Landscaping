@@ -2443,6 +2443,141 @@ async def _apply_activation_cascade(cid: str, tenant_id: str, user: dict,
     return cancelled_job_count, deactivated_recurring_count
 
 
+async def _mirror_address_to_primary_property(
+    cid: str, tenant_id: str, customer_merged: Dict[str, Any],
+) -> None:
+    """Feb-2026 · Customer profile display bugfix.
+
+    The customer detail page reads the primary address from
+    ``db.properties`` (via ``getPrimaryPropertyAddress`` in
+    ``CustomerDetail.jsx``), NOT from the customer doc directly. When
+    an admin edits the customer's address, the customer PUT handler
+    persists to ``db.customers`` but leaves the property row stale —
+    causing "save appears to not persist" reports.
+
+    This helper is called AFTER the customer $set has landed, from
+    the same PUT handler. It resolves the customer's primary
+    property (``is_primary`` OR ``sort_order == 0`` OR
+    ``label == 'Main'``) and mirrors the freshly-normalised address
+    fields onto it. Idempotent + non-blocking (caller wraps in a
+    try/except).
+
+    Resolution priority for the property's address fields:
+    1. Structured customer fields (``address_line1``, ``city``,
+       ``state``, ``postal_code``) when present.
+    2. ``service_address`` object shape when it's a dict.
+    3. Fallback to parsing the free-form ``address`` string via the
+       same rules the FE ``_parseAddress`` helper uses.
+
+    Zero-property customers are skipped — the lazy backfill in
+    ``list_customer_properties`` will seed a fresh property from the
+    updated customer doc on the next GET.
+    """
+    line1 = ""
+    city = ""
+    state = ""
+    postal = ""
+
+    # Feb-2026 · Parse the free-form ``address`` string FIRST — the
+    # ``CustomerIn`` API model exposes only the flat ``address``
+    # field, so the structured legacy fields on the merged doc
+    # (``address_line1`` etc.) may be stale relative to what the
+    # caller just PUT. Match the frontend ``_parseAddress`` rules:
+    # split on commas, first chunk is street, last chunk is
+    # "STATE ZIP", middle chunks join as the city.
+    raw = customer_merged.get("address")
+    if isinstance(raw, str) and raw.strip():
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if parts:
+            line1 = parts[0]
+            if len(parts) >= 2:
+                import re as _re
+                m = _re.match(
+                    r"^([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$",
+                    parts[-1],
+                )
+                if m:
+                    state = m.group(1).upper()
+                    postal = m.group(2)
+                    if len(parts) >= 3:
+                        city = ", ".join(parts[1:-1])
+                else:
+                    # Support 4-part shape ``street, city, STATE, ZIP``
+                    # where state + zip live in separate comma
+                    # segments (a variation the frontend produced in
+                    # earlier phases).
+                    zip_m = _re.match(r"^\d{5}(?:-\d{4})?$", parts[-1])
+                    state_m = (
+                        _re.match(r"^[A-Za-z]{2}$", parts[-2])
+                        if len(parts) >= 2 else None
+                    )
+                    if zip_m and state_m and len(parts) >= 3:
+                        postal = parts[-1]
+                        state = parts[-2].upper()
+                        city = ", ".join(parts[1:-2])
+                    else:
+                        # No trailing state/zip chunk — treat
+                        # everything after the street as the city.
+                        city = ", ".join(parts[1:])
+
+    # Structured fields fill in gaps left by the parser (e.g. the
+    # caller sent a bare street with no comma).
+    line1 = line1 or (customer_merged.get("address_line1") or "").strip()
+    city = city or (customer_merged.get("city") or "").strip()
+    state = state or (customer_merged.get("state") or "").strip()
+    postal = postal or (customer_merged.get("postal_code")
+                          or customer_merged.get("zip") or "").strip()
+
+    # Nested service_address object — third-tier fallback.
+    sa = customer_merged.get("service_address")
+    if isinstance(sa, dict):
+        line1 = line1 or (sa.get("street")
+                          or sa.get("line1")
+                          or sa.get("address_line1") or "").strip()
+        city = city or (sa.get("city") or "").strip()
+        state = state or (sa.get("state") or "").strip()
+        postal = postal or (sa.get("postal_code")
+                            or sa.get("zip") or "").strip()
+
+    if not any([line1, city, state, postal]):
+        return  # nothing to mirror
+
+    # Find the primary property. Prefer explicit ``is_primary``,
+    # fall back to lowest ``sort_order``. Case-insensitive
+    # ``label='Main'`` is a third-tier fallback for legacy tenants.
+    prop = await db.properties.find_one(
+        {"tenant_id": tenant_id, "customer_id": cid,
+         "is_primary": True},
+        {"_id": 0, "id": 1, "address": 1},
+    )
+    if not prop:
+        prop = await db.properties.find_one(
+            {"tenant_id": tenant_id, "customer_id": cid,
+             "active": {"$ne": False}},
+            {"_id": 0, "id": 1, "address": 1},
+            sort=[("sort_order", 1)],
+        )
+    if not prop:
+        return  # zero-property customer — lazy backfill will seed
+
+    updates: Dict[str, Any] = {}
+    if line1:
+        updates["address.line1"] = line1
+    if city:
+        updates["address.city"] = city
+    if state:
+        updates["address.state"] = state
+    if postal:
+        updates["address.postal_code"] = postal
+    if not updates:
+        return
+    updates["updated_at"] = now_iso()
+    await db.properties.update_one(
+        {"id": prop["id"], "tenant_id": tenant_id},
+        {"$set": updates},
+    )
+
+
 @router.put("/customers/{cid}")
 async def update_customer(cid: str, body: CustomerIn,
                           user: dict = Depends(require_admin),
@@ -2528,6 +2663,32 @@ async def update_customer(cid: str, body: CustomerIn,
             _a17.create_task(_gp17(cid, tenant["id"]))
         except Exception:
             pass
+
+    # Feb-2026 · Customer profile detail bugfix — the customer detail
+    # page renders its primary address from ``db.properties`` (see
+    # ``getPrimaryPropertyAddress`` in the FE). When an admin edits
+    # the customer address, we MUST mirror the write to the primary
+    # property row too — otherwise the save appears to no-op on the
+    # detail card even though the customer doc updated cleanly.
+    #
+    # We independently check the flat ``address`` string change too
+    # because ``CustomerIn`` strips ``service_address`` / ``address_line1``
+    # (see models.py) — that means ``resolve_customer_address`` may
+    # still pick the stale nested value on the merged doc, making
+    # ``_addr_changed`` falsely False when the ONLY thing the caller
+    # sent was a new flat ``address`` string.
+    _flat_before = (existing.get("address") or "").strip()
+    _flat_after = (payload.get("address") or "").strip()
+    _mirror_trigger = _addr_changed or _flat_before != _flat_after
+    if _mirror_trigger:
+        try:
+            await _mirror_address_to_primary_property(cid, tenant["id"],
+                                                        _merged_after)
+        except Exception as _pm_exc:
+            logger.warning(
+                "[customer.update] primary property address mirror "
+                f"failed cid={cid}: {_pm_exc}"
+            )
 
     cancelled_job_count, deactivated_recurring_count = await _apply_activation_cascade(
         cid, tenant["id"], user, was_active, now_active, existing.get("name")
