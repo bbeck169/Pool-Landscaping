@@ -25,6 +25,7 @@ import {
   ChevronRight,
   Building2,
 } from "lucide-react";
+import TenantIndustryBadges from "@/components/tenant/TenantIndustryBadges";
 
 // Hub-level sections (headline links). Feb 2026 · Migration / Team
 // were dropped per user feedback — no dead sidebar entries. If a
@@ -51,6 +52,13 @@ const SECTIONS = [
     label: "Business",
     Icon: Building2,
     hint: "Company defaults, brand colours + logo for docs & emails",
+  },
+  {
+    key: "industries",
+    to: "/settings/industries",
+    label: "Industries",
+    Icon: Building2,
+    hint: "Verticals your business serves — feature-gating source of truth",
   },
   {
     key: "theme",
@@ -80,13 +88,16 @@ export default function SettingsHub() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
           data-testid="settings-hub">
-      <div className="mb-4 flex items-center gap-2">
-        <SettingsIcon size={20} style={{ color: colors.brand }} />
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight"
-             style={{ color: colors.onSurface }}
-             data-testid="settings-hub-title">
-          Settings
-        </h1>
+      <div className="mb-4 flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <SettingsIcon size={20} style={{ color: colors.brand }} />
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight"
+               style={{ color: colors.onSurface }}
+               data-testid="settings-hub-title">
+            Settings
+          </h1>
+        </div>
+        <TenantIndustryBadges />
       </div>
 
       <div className="grid grid-cols-12 gap-4">

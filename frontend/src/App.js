@@ -151,6 +151,7 @@ import BrandLogoSettings from "@/pages/settings/BrandLogoSettings";
 import ThemeSettings from "@/pages/settings/ThemeSettings";
 // Feb-2026 · Business Settings — company defaults + brand colours.
 import BusinessSettings from "@/pages/settings/BusinessSettings";
+import IndustriesSettings from "@/pages/settings/IndustriesSettings";
 // Feb-2026 · Consolidated Settings Hub — shared layout + Social tab.
 import SettingsHub, { SettingsGeneral } from "@/layouts/SettingsHub";
 import SettingsSocial from "@/pages/settings/SettingsSocial";
@@ -1317,6 +1318,7 @@ export default function App() {
               <Route path="general" element={<SettingsGeneral />} />
               <Route path="branding" element={<BrandLogoSettings />} />
               <Route path="business" element={<BusinessSettings />} />
+              <Route path="industries" element={<IndustriesSettings />} />
               <Route path="theme" element={<ThemeSettings />} />
               <Route path="integrations" element={<IntegrationsHub />} />
               <Route path="social" element={<SettingsSocial />} />

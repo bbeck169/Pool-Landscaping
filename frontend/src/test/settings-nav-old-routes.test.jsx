@@ -83,13 +83,16 @@ describe("App.js · Settings hub route wiring", () => {
 });
 
 describe("SettingsHub · sidebar entries stay in sync with the router", () => {
-  it("SECTIONS array contains exactly the 6 canonical keys", () => {
+  it("SECTIONS array contains exactly the 7 canonical keys", () => {
     // Extract the SECTIONS declaration and count `key:` entries.
     // Phase I1.5.b · Feb-2026 — added ``theme`` (tenant palette
     // editor + live preview). Bumped from 4 → 5 canonical keys.
     // Feb-2026 · Business Settings feature — added ``business``
     // (brand identity, logo upload, primary/secondary hex).
     // Bumped from 5 → 6 canonical keys.
+    // Feb-2026 · Multi-industry Phase B — added ``industries``
+    // (25-checkbox multi-select tenant vertical picker).
+    // Bumped from 6 → 7 canonical keys.
     const start = HUB_SRC.indexOf("const SECTIONS = [");
     const end = HUB_SRC.indexOf("];", start);
     expect(start).toBeGreaterThan(-1);
@@ -99,7 +102,7 @@ describe("SettingsHub · sidebar entries stay in sync with the router", () => {
       .map((s) => s.match(/"([^"]+)"/)[1]);
     expect(keys.sort()).toEqual(
       ["branding", "business", "general",
-        "integrations", "social", "theme"],
+        "industries", "integrations", "social", "theme"],
     );
   });
 
