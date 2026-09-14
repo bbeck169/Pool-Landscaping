@@ -1790,6 +1790,13 @@ async def _background_seed():
     # helper is a no-op when the anchor customer row is missing.
     from seed import seed_demo_second_customer as _seed_second_customer
     await step("seed_demo_second_customer", _seed_second_customer())
+    # Feb-2026 · Bundled-tester unblock — ensures the fixed preview
+    # job ``c40ea98d-…`` renders the water_bodies-backed Chemistry
+    # Readings section instead of the ``generic`` reclassify empty
+    # state. Idempotent — no-op when the job is already reclassified
+    # or missing.
+    from seed import seed_preview_pool_checklist_job as _seed_preview_pool_job
+    await step("seed_preview_pool_checklist_job", _seed_preview_pool_job())
     # ``auto_heal_demo_passwords`` already self-gates on APP_ENV=production
     # inside seed.py — left unconditional here so the log line still
     # prints (helps ops confirm the safe-in-prod posture).

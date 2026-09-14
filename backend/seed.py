@@ -505,6 +505,59 @@ async def seed_demo_second_customer():
     return {"created": True, "email": email, "customer_id": cust_id}
 
 
+# Feb-2026 · Bundled-tester unblock — preview pool checklist fixture.
+_PREVIEW_POOL_JOB_ID = "c40ea98d-d42b-4f91-890e-04fe398b0ee9"
+_PREVIEW_POOL_READING_KEYS = [
+    ("free_chlorine",  "Free Chlorine",   "ppm"),
+    ("total_chlorine", "Total Chlorine",  "ppm"),
+    ("alkalinity",     "Total Alkalinity","ppm"),
+    ("ph",             "pH",              ""),
+    ("cyanuric_acid",  "Cyanuric Acid",   "ppm"),
+]
+
+
+async def seed_preview_pool_checklist_job():
+    """Reclassify the fixed preview job ``c40ea98d-...`` so the tester
+    lands on the water_bodies-backed Chemistry Readings section instead
+    of the ``generic`` empty-state reclassify picker. Idempotent."""
+    job = await db.jobs.find_one({"id": _PREVIEW_POOL_JOB_ID}, {"_id": 0})
+    if not job:
+        logger.info(f"[seed_preview_pool_checklist_job] job {_PREVIEW_POOL_JOB_ID} not present — skipped")
+        return {"created": False, "reason": "job_missing"}
+    sr = await db.service_reports.find_one({"job_id": _PREVIEW_POOL_JOB_ID}, {"_id": 0})
+    body0 = ((sr or {}).get("water_bodies") or [{}])[0]
+    already_ok = (
+        job.get("service_type") == "Pool Cleaning"
+        and (sr or {}).get("template") == "pool"
+        and (body0 or {}).get("type") == "pool"
+    )
+    if already_ok:
+        return {"created": False, "already_ok": True, "job_id": _PREVIEW_POOL_JOB_ID}
+    job_updates = {"service_type": "Pool Cleaning"}
+    if job.get("status") != "in_progress":
+        job_updates["status"] = "in_progress"
+    await db.jobs.update_one({"id": _PREVIEW_POOL_JOB_ID}, {"$set": job_updates})
+    empty_readings = [{"key": k, "name": n, "value": None, "unit": u}
+                       for k, n, u in _PREVIEW_POOL_READING_KEYS]
+    pool_body = {
+        "id": (body0 or {}).get("id") or new_id(),
+        "type": "pool", "label": (body0 or {}).get("label") or "Main Pool",
+        "sequence": 0, "readings": empty_readings,
+        "chemicals_used": (body0 or {}).get("chemicals_used") or [],
+        "media": (body0 or {}).get("media") or [], "notes": (body0 or {}).get("notes") or "",
+    }
+    await db.service_reports.update_one(
+        {"job_id": _PREVIEW_POOL_JOB_ID},
+        {"$set": {"template": "pool", "water_bodies": [pool_body],
+                   "chemical_readings": empty_readings}},
+    )
+    logger.info(f"[seed_preview_pool_checklist_job] reclassified job={_PREVIEW_POOL_JOB_ID} → service_type=Pool Cleaning, template=pool")
+    return {"created": True, "job_id": _PREVIEW_POOL_JOB_ID}
+
+
+
+
+
 
 
 
