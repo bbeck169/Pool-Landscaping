@@ -1994,6 +1994,22 @@ async def update_job(jid: str, body: JobUpdate,
                     "correlation_id": f"{jid}:completed",
                 },
             )
+            # Feb-2026 · Job Timers dashboard phase — close any
+            # open ``job_timers`` row for this job when the status
+            # flips to ``completed``. Non-fatal — the helper
+            # swallows exceptions and logs a warning.
+            try:
+                from routers.job_timers import close_open_timers_for_job
+                await close_open_timers_for_job(
+                    job_id=jid, tenant_id=tenant["id"],
+                    actor_user_id=user.get("id"),
+                    reason="job_completed",
+                )
+            except Exception as _jt_exc:                        # noqa: BLE001
+                logger.warning(
+                    "[job-timers] job_completed close failed: %s",
+                    _jt_exc,
+                )
             # Feb-2026 · Widget-Embed Extension — auto-enqueue a
             # public_checkins moderation row so the map surface
             # picks up completed jobs without a tech having to
@@ -3210,6 +3226,23 @@ async def job_arrive(jid: str, body: JobArriveIn,
 
     # P37a — audit log breadcrumb (P37d — extended to log outcome=started).
     await _log("started", distance_m=distance_m, radius_m=radius_m)
+
+    # Feb-2026 · Job Timers dashboard phase — upsert an open
+    # ``job_timers`` row so the /job-timers report picks up the
+    # arrival. Idempotent: replaying ``/arrive`` (mobile queue
+    # replay, retries) never spawns duplicates. Non-fatal — a
+    # bookkeeping error MUST NOT break the arrival flow.
+    try:
+        from routers.job_timers import auto_start_timer_on_arrival
+        await auto_start_timer_on_arrival(
+            job_id=jid, tenant_id=tenant["id"],
+            tech_id=job.get("technician_id"),
+            customer_id=job.get("customer_id"),
+            started_at=started,
+        )
+    except Exception as _jt_exc:                                # noqa: BLE001
+        logger.warning("[job-timers] arrival auto-start failed: %s",
+                        _jt_exc)
 
     return await _sar({"started": True, "already_running": False,
               "timer_started_at": started,

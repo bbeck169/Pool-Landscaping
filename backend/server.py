@@ -2695,6 +2695,9 @@ async def startup():
             raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
         from routers.public_checkins import ensure_public_checkins_indexes
         await ensure_public_checkins_indexes()
+        # Feb-2026 · Job Timers dashboard phase — collection indexes.
+        from routers.job_timers import ensure_job_timers_indexes
+        await ensure_job_timers_indexes()
     except Exception as e:
         logger.warning(f"ensure_public_checkins_indexes crashed: {e}")
 

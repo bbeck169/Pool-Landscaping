@@ -78,13 +78,13 @@ class StartTimerIn(BaseModel):
     crew_id: Optional[str] = None
     started_at: Optional[str] = None
     source: str = Field(default="manual_admin",
-                          pattern="^(geofence|manual_admin)$")
+                          pattern="^(geofence|manual_admin|gps_arrival|manual)$")
 
 
 class CloseTimerIn(BaseModel):
     ended_at: Optional[str] = None
     source: str = Field(default="manual_admin",
-                          pattern="^(service_report_submit|manual_admin)$")
+                          pattern="^(service_report_submit|manual_admin|job_completed|manual)$")
 
 
 class PatchTimerIn(BaseModel):
@@ -100,10 +100,19 @@ class PatchTimerIn(BaseModel):
 async def close_open_timers_for_job(
     *, job_id: str, tenant_id: str,
     actor_user_id: Optional[str] = None,
+    reason: str = "service_report_submit",
 ) -> int:
     """Close every open ``job_timers`` row for the given job.
     Returns the count of rows closed. Never raises — the caller
-    (service-report submit) must not fail on a timer close error."""
+    (service-report submit OR job-completed transition) must not
+    fail on a timer close error.
+
+    ``reason`` populates the ``end_source`` field. Callers pass
+    ``"service_report_submit"`` (default, from
+    ``service_reports.py::submit_report``) or ``"job_completed"``
+    (from the job status → completed transition in
+    ``routers/jobs.py``).
+    """
     now = _now_iso()
     closed = 0
     try:
@@ -120,7 +129,7 @@ async def close_open_timers_for_job(
                 {"$set": {
                     "ended_at": now,
                     "duration_seconds": dur,
-                    "end_source": "service_report_submit",
+                    "end_source": reason,
                     "updated_at": now,
                 }},
             )
@@ -131,13 +140,92 @@ async def close_open_timers_for_job(
                 "event": "auto_close",
                 "actor_user_id": actor_user_id,
                 "at": now,
-                "payload": {"reason": "service_report_submit"},
+                "payload": {"reason": reason},
             })
             closed += 1
     except Exception as exc:                                     # noqa: BLE001
         logger.warning("[job-timers] auto-close failed job=%s: %s",
                         job_id, exc)
     return closed
+
+
+# Feb-2026 · Job Timers dashboard phase — GPS-arrival auto-start.
+# Called from ``routers/jobs.py::job_arrive`` after a successful
+# arrival gate flip. Idempotent: an open row for the same
+# ``(tenant_id, job_id, tech_id)`` triple is left untouched so
+# multiple ``/arrive`` events (mobile queue replay, out-of-band
+# retries) never spawn duplicate timers.
+async def auto_start_timer_on_arrival(
+    *, job_id: str, tenant_id: str,
+    tech_id: Optional[str] = None,
+    started_at: Optional[str] = None,
+    customer_id: Optional[str] = None,
+) -> Optional[str]:
+    """Upsert an open timer row keyed on
+    ``(tenant_id, job_id, tech_id or "-")``. Returns the row id
+    (existing or freshly-inserted). Never raises — the caller is
+    the GPS-arrival hot-path which MUST NOT fail on a bookkeeping
+    error."""
+    try:
+        # Idempotency probe: any open row for this (job, tech)?
+        existing = await db.job_timers.find_one(
+            {"tenant_id": tenant_id, "job_id": job_id,
+              "tech_id": tech_id, "ended_at": None},
+            {"_id": 0, "id": 1},
+        )
+        if existing:
+            return existing["id"]
+        now = _now_iso()
+        starts = started_at or now
+        doc = {
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "job_id": job_id,
+            "customer_id": customer_id,
+            "entity_type": "tech",
+            "tech_id": tech_id,
+            "crew_id": None,
+            "started_at": starts,
+            "ended_at": None,
+            "duration_seconds": None,
+            "start_source": "gps_arrival",
+            "end_source": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.job_timers.insert_one(doc)
+        await db.job_timer_audit.insert_one({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "timer_id": doc["id"],
+            "event": "start",
+            "actor_user_id": None,
+            "at": now,
+            "payload": {"source": "gps_arrival",
+                          "entity_type": "tech",
+                          "tech_id": tech_id},
+        })
+        return doc["id"]
+    except Exception as exc:                                     # noqa: BLE001
+        logger.warning("[job-timers] arrival auto-start failed job=%s: %s",
+                        job_id, exc)
+        return None
+
+
+async def ensure_job_timers_indexes() -> None:
+    """Boot-time idempotent index creation. Registered from
+    ``server.py`` alongside the other feature-router index hooks."""
+    try:
+        await db.job_timers.create_index(
+            [("tenant_id", 1), ("tech_id", 1), ("started_at", -1)],
+            name="idx_job_timers_tenant_tech_started",
+        )
+        await db.job_timers.create_index(
+            [("tenant_id", 1), ("job_id", 1)],
+            name="idx_job_timers_tenant_job",
+        )
+    except Exception as exc:                                     # noqa: BLE001
+        logger.warning("[job-timers] index create skipped: %s", exc)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -301,21 +389,38 @@ async def edit_timer(
 async def list_timers(
     job_id: Optional[str] = Query(None),
     tech_id: Optional[str] = Query(None),
+    technician_id: Optional[str] = Query(None),
     crew_id: Optional[str] = Query(None),
     customer_id: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    # Feb-2026 · Dashboard phase — spec aliases for the filters +
+    # cursor pagination envelope. Existing callers continue to use
+    # ``date_from``/``date_to``/``tech_id`` and ignore pagination
+    # keys → they hit the legacy ``limit`` branch.
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=200),
     open_only: bool = Query(False),
     limit: int = Query(500, ge=1, le=2000),
     user: Dict[str, Any] = Depends(get_current_user),
     tenant: Dict[str, Any] = Depends(get_current_tenant),
 ):
     _require_role(user, _REPORT_ROLES)
+
+    # Aliases — dashboard spec uses ``technician_id`` / ``from`` /
+    # ``to``; legacy admin edit UI uses ``tech_id`` / ``date_from`` /
+    # ``date_to``. Whichever is present wins; both is a wash.
+    effective_tech = technician_id or tech_id
+    effective_from = from_ or date_from
+    effective_to = to or date_to
+
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
     if job_id:
         q["job_id"] = job_id
-    if tech_id:
-        q["tech_id"] = tech_id
+    if effective_tech:
+        q["tech_id"] = effective_tech
     if crew_id:
         q["crew_id"] = crew_id
     if customer_id:
@@ -323,18 +428,31 @@ async def list_timers(
     if open_only:
         q["ended_at"] = None
     range_gate: Dict[str, Any] = {}
-    if date_from:
-        range_gate["$gte"] = date_from
-    if date_to:
-        range_gate["$lte"] = date_to + ("T23:59:59+00:00" if len(date_to) == 10 else "")
+    if effective_from:
+        range_gate["$gte"] = effective_from
+    if effective_to:
+        range_gate["$lte"] = effective_to + (
+            "T23:59:59+00:00" if len(effective_to) == 10 else "")
     if range_gate:
         q["started_at"] = range_gate
 
-    rows: List[Dict[str, Any]] = []
-    async for r in db.job_timers.find(q, {"_id": 0}).sort([("started_at", -1)]).limit(limit):
-        rows.append(r)
+    # Paginated envelope path — only fires when the caller passed
+    # BOTH ``page`` and ``page_size``. Legacy consumers omit them
+    # and hit the ``limit``-only branch (bit-for-bit compat).
+    paginated = page is not None and page_size is not None
+    total = None
+    if paginated:
+        total = await db.job_timers.count_documents(q)
+        skip = (page - 1) * page_size
+        cursor = (db.job_timers.find(q, {"_id": 0})
+                    .sort([("started_at", -1)])
+                    .skip(skip).limit(page_size))
+    else:
+        cursor = (db.job_timers.find(q, {"_id": 0})
+                    .sort([("started_at", -1)]).limit(limit))
+    rows: List[Dict[str, Any]] = [r async for r in cursor]
 
-    # Enrich with job title + tech name + crew name for the table.
+    # Enrich with job title + tech name + crew name + customer.
     job_ids = list({r.get("job_id") for r in rows if r.get("job_id")})
     tech_ids = list({r.get("tech_id") for r in rows if r.get("tech_id")})
     crew_ids = list({r.get("crew_id") for r in rows if r.get("crew_id")})
@@ -374,9 +492,103 @@ async def list_timers(
         r["job_title"] = (jobs_map.get(r.get("job_id")) or {}).get("title")
         r["service_type"] = (jobs_map.get(r.get("job_id")) or {}).get("service_type")
         r["tech_name"] = (techs_map.get(r.get("tech_id")) or {}).get("name")
+        r["technician_name"] = r["tech_name"]                # spec alias
         r["crew_name"] = (crews_map.get(r.get("crew_id")) or {}).get("name")
         r["customer_name"] = (customers_map.get(r.get("customer_id")) or {}).get("name")
-    return {"items": rows, "count": len(rows)}
+        # Feb-2026 · Dashboard phase — normalise the two-field
+        # start_source/end_source model down to the spec's single
+        # ``source`` field for the dashboard row-render code.
+        start_src = (r.get("start_source") or "").lower()
+        r["source"] = ("gps_arrival"
+                          if start_src in ("gps_arrival", "geofence")
+                          else "manual")
+        # Alias ``ended_at`` → ``completed_at`` per spec vocabulary.
+        r["completed_at"] = r.get("ended_at")
+        r["technician_id"] = r.get("tech_id")
+
+    envelope: Dict[str, Any] = {"items": rows, "count": len(rows)}
+    if paginated:
+        envelope.update({
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": (total + page_size - 1) // page_size if page_size else 0,
+        })
+    return envelope
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# GET /job-timers/summary
+# ═══════════════════════════════════════════════════════════════════════
+@router.get("/job-timers/summary")
+async def timer_summary(
+    technician_id: Optional[str] = Query(None),
+    tech_id: Optional[str] = Query(None),                       # spec alias
+    job_id: Optional[str] = Query(None),
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),                     # legacy alias
+    date_to: Optional[str] = Query(None),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Feb-2026 · Job Timers dashboard phase — summary metrics for
+    the filter window. Only closed timers with ``duration_seconds
+    > 0`` participate; open timers are excluded so a still-running
+    job doesn't skew the avg/median toward zero.
+
+    Returns::
+
+        {avg_seconds, median_seconds, min_seconds,
+         max_seconds, count}
+
+    All values are integers. ``count == 0`` → every metric is 0
+    (never null) so the dashboard can render without null-guards.
+    """
+    _require_role(user, _REPORT_ROLES)
+    effective_tech = technician_id or tech_id
+    effective_from = from_ or date_from
+    effective_to = to or date_to
+
+    q: Dict[str, Any] = {
+        "tenant_id": tenant["id"],
+        "duration_seconds": {"$gt": 0},
+        "ended_at": {"$ne": None},
+    }
+    if effective_tech:
+        q["tech_id"] = effective_tech
+    if job_id:
+        q["job_id"] = job_id
+    range_gate: Dict[str, Any] = {}
+    if effective_from:
+        range_gate["$gte"] = effective_from
+    if effective_to:
+        range_gate["$lte"] = effective_to + (
+            "T23:59:59+00:00" if len(effective_to) == 10 else "")
+    if range_gate:
+        q["started_at"] = range_gate
+
+    durations: List[int] = []
+    async for r in db.job_timers.find(q, {"_id": 0, "duration_seconds": 1}):
+        v = int(r.get("duration_seconds") or 0)
+        if v > 0:
+            durations.append(v)
+    if not durations:
+        return {"avg_seconds": 0, "median_seconds": 0,
+                 "min_seconds": 0, "max_seconds": 0, "count": 0}
+
+    durations.sort()
+    n = len(durations)
+    mid = n // 2
+    median = (durations[mid] if n % 2 else
+                (durations[mid - 1] + durations[mid]) // 2)
+    return {
+        "avg_seconds": sum(durations) // n,
+        "median_seconds": int(median),
+        "min_seconds": durations[0],
+        "max_seconds": durations[-1],
+        "count": n,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════

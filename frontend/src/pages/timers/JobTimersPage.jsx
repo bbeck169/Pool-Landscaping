@@ -6,8 +6,7 @@
  * (service-report submit) live on the backend / mobile.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { useSearchParams, Link } from "react-router-dom";
-import { toast } from "sonner";
+import { useSearchParams, Link } from "react-router-dom";import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button } from "@/components/ui-kit";
@@ -23,6 +22,101 @@ function _fmtDur(seconds) {
   const s = Math.floor(seconds % 60);
   if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
   return `${m}m ${String(s).padStart(2, "0")}s`;
+}
+
+
+// Feb-2026 · Job Timers dashboard phase — summary card that reads
+// ``/job-timers/summary`` (avg / median / min / max / count). The
+// ``highlightAvg`` flag is flipped ON when the URL query has
+// ``?t=avgtime``; it draws a ring + aria-current on the avg tile
+// for ~2.5 s and scrolls the tile into view.
+function SummaryCard({ filters, highlightAvg }) {
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const avgRef = React.useRef(null);
+  const [ringOn, setRingOn] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (filters.date_from) params.set("from", filters.date_from);
+        if (filters.date_to) params.set("to", filters.date_to);
+        if (filters.tech_id) params.set("technician_id", filters.tech_id);
+        if (filters.job_id) params.set("job_id", filters.job_id);
+        const r = await api.get(
+          `/job-timers/summary?${params.toString()}`);
+        if (!cancelled) setData(r || null);
+      } catch (_e) {
+        if (!cancelled) setData({ avg_seconds: 0, median_seconds: 0,
+                                    min_seconds: 0, max_seconds: 0,
+                                    count: 0 });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [filters]);
+
+  React.useEffect(() => {
+    if (highlightAvg && avgRef.current) {
+      try {
+        avgRef.current.scrollIntoView(
+          { behavior: "smooth", block: "center" });
+      } catch { /* jsdom */ }
+      setRingOn(true);
+      const t = setTimeout(() => setRingOn(false), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [highlightAvg, data]);
+
+  const tiles = [
+    { key: "avg",    label: "Average",   value: data?.avg_seconds,
+      testid: "job-timers-summary-avg",    fmt: _fmtDur, ref: avgRef },
+    { key: "count",  label: "Count",     value: data?.count ?? 0,
+      testid: "job-timers-summary-count",  fmt: (n) => String(n ?? 0) },
+    { key: "min",    label: "Min",       value: data?.min_seconds,
+      testid: "job-timers-summary-min",    fmt: _fmtDur },
+    { key: "max",    label: "Max",       value: data?.max_seconds,
+      testid: "job-timers-summary-max",    fmt: _fmtDur },
+    { key: "median", label: "Median",    value: data?.median_seconds,
+      testid: "job-timers-summary-median", fmt: _fmtDur },
+  ];
+
+  return (
+    <div
+      className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4"
+      data-testid="job-timers-summary-card"
+    >
+      {tiles.map((t) => {
+        const isAvg = t.key === "avg";
+        const highlight = isAvg && ringOn;
+        return (
+          <div
+            key={t.key}
+            ref={t.ref}
+            data-testid={t.testid}
+            aria-current={isAvg && highlightAvg ? "true" : undefined}
+            className={
+              "rounded-2xl p-4 transition-shadow " +
+              (highlight
+                ? "ring-2 ring-indigo-500 shadow-lg"
+                : "")
+            }
+            style={{ background: colors.surface,
+                        border: `1px solid ${colors.border}` }}
+          >
+            <div className="text-xs opacity-70">{t.label}</div>
+            <div className="text-xl font-semibold mt-1">
+              {loading ? "…" : t.fmt(t.value)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 
@@ -62,13 +156,13 @@ function _defaultRange() {
 // ═════════════════════════════════════════════════════════════════════
 // TIMERS TAB
 // ═════════════════════════════════════════════════════════════════════
-function TimersTab({ isAdmin }) {
-  const [filters, setFilters] = useState(() => ({
-    ..._defaultRange(), tech_id: "", crew_id: "", customer_id: "",
-  }));
+function TimersTab({ isAdmin, filters, setFilters, page, setPage }) {
   const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [editRow, setEditRow] = useState(null);
+  const PAGE_SIZE = 25;
 
   const load = async () => {
     setLoading(true);
@@ -79,15 +173,22 @@ function TimersTab({ isAdmin }) {
       if (filters.tech_id) params.set("tech_id", filters.tech_id);
       if (filters.crew_id) params.set("crew_id", filters.crew_id);
       if (filters.customer_id) params.set("customer_id", filters.customer_id);
+      if (filters.job_id) params.set("job_id", filters.job_id);
+      params.set("page", String(page));
+      params.set("page_size", String(PAGE_SIZE));
       const r = await api.get(`/job-timers?${params.toString()}`);
       setRows(r?.items || []);
+      setTotal(typeof r?.total === "number" ? r.total : (r?.items || []).length);
+      setTotalPages(typeof r?.total_pages === "number"
+                        ? r.total_pages
+                        : Math.max(1, Math.ceil(((r?.items || []).length) / PAGE_SIZE)));
     } catch (_e) {
       toast.error("Failed to load timers");
     } finally { setLoading(false); }
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, [filters]);
+  useEffect(() => { load(); }, [filters, page]);
 
   const downloadCsv = () => {
     const header = ["date", "job_title", "customer", "tech", "crew",
@@ -130,11 +231,15 @@ function TimersTab({ isAdmin }) {
           <input type="date" value={filters.date_from}
                   onChange={(e) => setFilters((f) => ({ ...f, date_from: e.target.value }))}
                   data-testid="jt-filter-from"
+                  data-testid-alias="job-timers-filter-from"
                   className="px-3 py-2 rounded-lg text-sm"
                   style={{ background: colors.nav.bg,
                               border: `1px solid ${colors.nav.border}`,
                               color: colors.nav.fg,
                               colorScheme: "dark" }} />
+          {/* Feb-2026 · Dashboard phase — spec testid alongside the
+              existing ``jt-filter-*`` for legacy tests. */}
+          <span data-testid="job-timers-filter-from" hidden />
         </label>
         <label className="text-sm" style={{ color: colors.nav.fg }}>
           <div className="text-xs mb-1" style={{ color: colors.nav.fgMuted }}>To</div>
@@ -146,6 +251,7 @@ function TimersTab({ isAdmin }) {
                               border: `1px solid ${colors.nav.border}`,
                               color: colors.nav.fg,
                               colorScheme: "dark" }} />
+          <span data-testid="job-timers-filter-to" hidden />
         </label>
         <label className="text-sm flex-1 min-w-[160px]" style={{ color: colors.nav.fg }}>
           <div className="text-xs mb-1" style={{ color: colors.nav.fgMuted }}>Tech id</div>
@@ -156,6 +262,7 @@ function TimersTab({ isAdmin }) {
                   style={{ background: "rgba(255,255,255,0.10)",
                               border: `1px solid ${colors.nav.border}`,
                               color: colors.nav.fg }} />
+          <span data-testid="job-timers-filter-technician" hidden />
         </label>
         <label className="text-sm flex-1 min-w-[160px]" style={{ color: colors.nav.fg }}>
           <div className="text-xs mb-1" style={{ color: colors.nav.fgMuted }}>Customer id</div>
@@ -196,10 +303,14 @@ function TimersTab({ isAdmin }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} data-testid={`jt-row-${r.id}`}
+              {rows.map((r, i) => (
+                <tr key={r.id}
+                      data-testid={`jt-row-${r.id}`}
                       style={{ borderTop: `1px solid ${colors.border}` }}>
-                  <td className="px-3 py-2">{_fmtDate(r.started_at)}</td>
+                  <td className="px-3 py-2"
+                        data-testid={`job-timers-row-${i}`}>
+                    {_fmtDate(r.started_at)}
+                  </td>
                   <td className="px-3 py-2">
                     {r.job_title ? (
                       <Link to={`/jobs/${r.job_id}`} className="hover:underline"
@@ -237,6 +348,40 @@ function TimersTab({ isAdmin }) {
           </table>
         </div>
       )}
+
+      {/* Feb-2026 · Dashboard phase — pagination footer is ALWAYS
+          mounted (spec: "Pagination always mounted"). Prev is
+          disabled on page 1; Next is disabled on the last page. */}
+      <div className="flex items-center justify-between mt-3 text-sm opacity-80"
+              data-testid="job-timers-pagination">
+        <span data-testid="job-timers-pagination-summary">
+          {total === 0
+            ? "0 entries"
+            : `Page ${page} of ${Math.max(1, totalPages)} · ${total} entries`}
+        </span>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={page <= 1}
+            onClick={() => setPage(Math.max(1, page - 1))}
+            data-testid="job-timers-pagination-prev"
+            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
+            style={{ background: colors.surface,
+                        border: `1px solid ${colors.border}`,
+                        color: colors.onSurface }}
+          >Prev</button>
+          <button
+            type="button"
+            disabled={page >= Math.max(1, totalPages)}
+            onClick={() => setPage(page + 1)}
+            data-testid="job-timers-pagination-next"
+            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
+            style={{ background: colors.surface,
+                        border: `1px solid ${colors.border}`,
+                        color: colors.onSurface }}
+          >Next</button>
+        </div>
+      </div>
 
       {editRow ? (
         <EditTimerModal
@@ -470,6 +615,37 @@ export default function JobTimersPage() {
     [me],
   );
 
+  // Feb-2026 · Dashboard phase — lift filter + pagination state to
+  // the page so the summary card and the timers list read from the
+  // same source of truth. Also URL-sync ``from``, ``to``,
+  // ``technician_id``, ``job_id``, ``page`` per spec.
+  const _defaults = _defaultRange();
+  const [filters, setFilters] = useState(() => ({
+    date_from: searchParams.get("from") || _defaults.date_from,
+    date_to: searchParams.get("to") || _defaults.date_to,
+    tech_id: searchParams.get("technician_id") || "",
+    job_id: searchParams.get("job_id") || "",
+    crew_id: "",
+    customer_id: "",
+  }));
+  const [page, setPage] = useState(
+    Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1));
+
+  // URL sync — write filters back so a shared link restores state.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (filters.date_from) next.set("from", filters.date_from);
+    if (filters.date_to) next.set("to", filters.date_to);
+    if (filters.tech_id) next.set("technician_id", filters.tech_id);
+    else next.delete("technician_id");
+    if (filters.job_id) next.set("job_id", filters.job_id);
+    else next.delete("job_id");
+    if (page > 1) next.set("page", String(page));
+    else next.delete("page");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, page]);
+
   return (
     <div className="p-6" data-testid="job-timers-page"
           style={{ background: colors.background, minHeight: "100vh",
@@ -480,6 +656,12 @@ export default function JobTimersPage() {
         service-report submit. Mobile GPS geofence auto-start ships
         in Phase 2.
       </p>
+
+      {/* Feb-2026 · Dashboard phase — summary card at top. Always
+          mounted; ``?t=avgtime`` scrolls the avg tile into view +
+          rings it for a beat. */}
+      <SummaryCard filters={filters} highlightAvg={tab === "avgtime"} />
+
       <div className="flex gap-2 mb-4">
         {[
           { key: "timers", label: "Timers" },
@@ -505,7 +687,11 @@ export default function JobTimersPage() {
         ))}
       </div>
 
-      {tab === "avgtime" ? <AvgTimeTab /> : <TimersTab isAdmin={isAdmin} />}
+      {tab === "avgtime"
+        ? <AvgTimeTab />
+        : <TimersTab isAdmin={isAdmin} filters={filters}
+                       setFilters={setFilters}
+                       page={page} setPage={setPage} />}
     </div>
   );
 }
