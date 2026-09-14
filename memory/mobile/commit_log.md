@@ -1821,3 +1821,18 @@
 - **Files modified**: `src/components/checklist/PoolChecklistForm.tsx`
 - **Memo**: `/app/memory/FEATURE_HIDE_CHECKLIST_CHEMICAL_READINGS_MOBILE.md`
 
+
+## Iteration 93 — Revert hide-all Chemical Readings + Remove Combined Chlorine
+- **Commit**: d8109d22
+- **Date**: 2026-09-13
+- **Changes**:
+  - **Step 1 (revert)**: Deleted `src/config/featureFlags.ts` + `__tests__/hide-checklist-chemical-readings.test.tsx`. Removed flag import + JSX gate from `PoolChecklistForm.tsx`. Section always renders again.
+  - **Step 2 (legacy fix)**: Confirmed 10 previously-broken legacy tests (`chemistry-ui-trim` 6 + `checklist-service-type-picker` 4) all pass after revert with zero test-file changes.
+  - **Step 3 (surgical CC removal)**: Filtered `combined_chlorine` from `readingFields` useMemo in `PoolChecklistForm.tsx`. Removed from `READING_ALLOWLIST.pool` and `READING_ALLOWLIST.other` in `waterBodies.ts`. Preserved canonical key mapping + labels for historic reads.
+  - Created `__tests__/remove-combined-chlorine.test.tsx` (4 tests): section renders, CC absent, core 5 present, filter verified.
+  - **51 tests all green** (37 parity + 10 recovered legacy + 4 new CC).
+- **Files deleted**: `src/config/featureFlags.ts`, `__tests__/hide-checklist-chemical-readings.test.tsx`
+- **Files modified**: `src/components/checklist/PoolChecklistForm.tsx`, `src/lib/waterBodies.ts`
+- **Files created**: `__tests__/remove-combined-chlorine.test.tsx`
+- **Memo**: `/app/memory/FEATURE_REMOVE_COMBINED_CHLORINE_MOBILE.md`
+

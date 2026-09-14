@@ -47,11 +47,11 @@ export const BODY_TYPE_TINTS: Record<string, { bg: string; fg: string; border: s
 /* ── Reading allow-list per body type ───────────────────────────────── */
 
 export const READING_ALLOWLIST: Record<string, string[]> = {
-  pool: ["free_chlorine", "total_chlorine", "combined_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
+  pool: ["free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
   spa: ["free_chlorine", "ph", "alkalinity", "calcium_hardness", "water_temp"],
   water_feature: ["free_chlorine", "ph", "water_temp"],
   fountain: ["free_chlorine", "ph", "water_temp"],
-  other: ["free_chlorine", "total_chlorine", "combined_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
+  other: ["free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
 };
 
 /* ── Required readings (only pool blocks submit) ───────────────────── */

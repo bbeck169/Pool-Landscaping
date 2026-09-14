@@ -628,7 +628,8 @@ export default function EstimateView({
         lines={(
           <div className="ev-lines-wrap">
             {showGrouped ? (
-              <table className="iv-lines"
+              <>
+              <table className="iv-lines hidden sm:table"
                       data-testid="estimate-grouped-lines-table">
                 <thead>
                   <tr>
@@ -746,8 +747,114 @@ export default function EstimateView({
                   })}
                 </tbody>
               </table>
+              {/* Feb-2026 · Responsive quote/estimate ship — stacked
+                  card layout for < sm (640px). Same server-truth data
+                  as the grouped table above, distinct testids
+                  (``-mobile`` suffix) so per-suite duplicates don't
+                  break existing table-based assertions. */}
+              <ul className="ev-lines-cards sm:hidden"
+                  data-testid="estimate-grouped-lines-cards">
+                {(customer_view.groups || []).length === 0 ? (
+                  <li className="ev-line-card ev-line-card-empty">
+                    No services on this estimate.
+                  </li>
+                ) : (customer_view.groups || []).map((g, i) => {
+                  const gKey = g.group_key || g.category_id || `other-${i}`;
+                  const isDeclined = Boolean(g.declined);
+                  const cardStyle = isDeclined
+                    ? { textDecoration: "line-through", opacity: 0.55 }
+                    : undefined;
+                  const showActionCol =
+                    (actionable && !locked)
+                    || (!as_customer && !printable);
+                  const isBusy = busyGroupKey === gKey;
+                  return (
+                    <li key={gKey}
+                        className="ev-line-card"
+                        data-testid={
+                          `estimate-grouped-card-${g.category_id || "other"}`
+                        }
+                        data-group-declined={isDeclined ? "true" : "false"}>
+                      <div className="ev-line-card-desc" style={cardStyle}>
+                        <div><b>{g.label}</b></div>
+                        {g.description ? (
+                          <div className="ev-group-desc">{g.description}</div>
+                        ) : null}
+                        {isDeclined && g.declined_at ? (
+                          <div style={{
+                                  fontSize: 11,
+                                  color: "#7F1D1D",
+                                  marginTop: 2,
+                                  textDecoration: "none",
+                                }}>
+                            Declined {String(g.declined_at).slice(0, 10)}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="ev-line-card-row" style={cardStyle}>
+                        <span className="ev-line-card-label">Subtotal</span>
+                        <span className="ev-line-card-value">
+                          {fmt(g.subtotal)}
+                        </span>
+                      </div>
+                      {showActionCol ? (
+                        <div className="ev-line-card-action">
+                          {isDeclined ? (
+                            <button
+                              type="button"
+                              onClick={() => restoreGroup(gKey)}
+                              disabled={isBusy}
+                              className="ev-group-btn"
+                              style={{
+                                padding: "10px 14px",
+                                fontSize: 13,
+                                borderRadius: 8,
+                                border: "1px solid #D4D4D8",
+                                background: "#FFFFFF",
+                                cursor: isBusy ? "wait" : "pointer",
+                                width: "100%",
+                                minHeight: 44,
+                              }}
+                              data-testid={
+                                `estimate-grouped-restore-btn-mobile-${g.category_id || "other"}`
+                              }
+                            >
+                              Restore
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => declineGroup(gKey)}
+                              disabled={isBusy}
+                              className="ev-group-btn"
+                              style={{
+                                padding: "10px 14px",
+                                fontSize: 13,
+                                borderRadius: 8,
+                                border: "1px solid #DC2626",
+                                background: "#FFFFFF",
+                                color: "#DC2626",
+                                cursor: isBusy ? "wait" : "pointer",
+                                width: "100%",
+                                minHeight: 44,
+                              }}
+                              data-testid={
+                                `estimate-grouped-decline-btn-mobile-${g.category_id || "other"}`
+                              }
+                            >
+                              Decline
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+              </>
             ) : (
-            <table className="iv-lines" data-testid="estimate-line-items-table">
+            <>
+            <table className="iv-lines hidden sm:table" data-testid="estimate-line-items-table">
               <thead>
                 <tr>
                   <th>Description</th>
@@ -832,6 +939,72 @@ export default function EstimateView({
                 );})}
               </tbody>
             </table>
+            {/* Feb-2026 · Responsive quote/estimate ship — itemized
+                stacked-card fallback for < sm. */}
+            <ul className="ev-lines-cards sm:hidden"
+                data-testid="estimate-line-items-cards">
+              {line_items.length === 0 ? (
+                <li className="ev-line-card ev-line-card-empty">No line items.</li>
+              ) : line_items.map((li, i) => {
+                const isDeclined = (li.customer_status || "pending") === "declined";
+                const cardStyle = isDeclined
+                  ? { textDecoration: "line-through", opacity: 0.55 }
+                  : undefined;
+                return (
+                  <li key={i}
+                      className="ev-line-card"
+                      data-testid={`estimate-line-item-card-${i}`}
+                      data-customer-status={li.customer_status || "pending"}>
+                    <div className="ev-line-card-desc" style={cardStyle}>
+                      {li.description}
+                      {isDeclined ? (
+                        <span style={{
+                                marginLeft: 8, fontSize: 11,
+                                padding: "2px 6px",
+                                borderRadius: 6,
+                                background: "#FEE2E2",
+                                color: "#7F1D1D",
+                                textDecoration: "none",
+                              }}
+                              data-testid={`estimate-line-item-declined-chip-mobile-${i}`}>
+                          Declined
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="ev-line-card-row" style={cardStyle}>
+                      <span className="ev-line-card-label">Subtotal</span>
+                      <span className="ev-line-card-value">{fmt(li.total)}</span>
+                    </div>
+                    {as_customer && actionable && !locked ? (
+                      <div className="ev-line-card-action">
+                        {isDeclined ? (
+                          <button
+                            className="iv-btn"
+                            style={{ fontSize: 13, width: "100%", minHeight: 44 }}
+                            disabled={busyLineIdx === i}
+                            onClick={() => undeclineLine(i)}
+                            data-testid={`estimate-line-item-undecline-mobile-${i}`}
+                          >
+                            Undo decline
+                          </button>
+                        ) : (
+                          <button
+                            className="iv-btn ev-btn-decline"
+                            style={{ fontSize: 13, width: "100%", minHeight: 44 }}
+                            disabled={busyLineIdx === i}
+                            onClick={() => setLineDeclineOpen(i)}
+                            data-testid={`estimate-line-item-decline-mobile-${i}`}
+                          >
+                            Decline
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+            </>
             )}
           </div>
         )}

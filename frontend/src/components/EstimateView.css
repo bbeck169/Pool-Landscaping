@@ -160,3 +160,82 @@
   margin-top: 2px;
   white-space: pre-wrap;
 }
+
+/* Feb-2026 · Responsive quote/estimate ship — stacked card
+ * layout rendered below Tailwind ``sm`` (< 640px). Table
+ * remains authoritative at ≥ 640px. Cards mirror the same
+ * per-group / per-line data but present each row as a
+ * self-contained tap target so the Decline button stays
+ * reachable at 375px without horizontal scroll.
+ *
+ * The card container is emitted on every viewport (Tailwind
+ * ``sm:hidden`` toggles display); the sole visual rule that
+ * needs to run at desktop is ``display:none``, which the
+ * utility already applies. Everything below styles the block
+ * once it is visible.
+ */
+.ev-lines-cards {
+  list-style: none;
+  margin: 12px 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ev-line-card {
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  padding: 14px;
+  background: #FFFFFF;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ev-line-card-empty {
+  color: #6B7280;
+  font-style: italic;
+  text-align: center;
+  padding: 20px 14px;
+}
+.ev-line-card-desc {
+  font-size: 14px;
+  line-height: 1.4;
+  color: #0F172A;
+  word-break: break-word;
+}
+.ev-line-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+}
+.ev-line-card-label {
+  color: #6B7280;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 700;
+}
+.ev-line-card-value {
+  font-weight: 700;
+  font-size: 15px;
+  color: #0F172A;
+}
+.ev-line-card-action {
+  display: flex;
+  justify-content: stretch;
+}
+
+/* Kill the desktop table's ``min-width:700px`` + horizontal
+ * scroll wrapper below sm so the container never widens
+ * beyond the viewport. The table itself is ``display:none``
+ * via Tailwind ``hidden``, but the wrapper CSS below is
+ * defensive against any lingering table intrinsic sizing. */
+@media (max-width: 639.98px) {
+  .ev-lines-wrap {
+    overflow-x: visible;
+  }
+  .ev-lines-wrap table {
+    min-width: 0;
+  }
+}

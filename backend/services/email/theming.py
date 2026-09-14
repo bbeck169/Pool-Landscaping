@@ -202,13 +202,21 @@ def wrap_html_in_shell(
     inner = inner_html or ""
 
     if r["logo_url"]:
+        # Feb-2026 · Responsive quote/estimate ship — logo aspect
+        # ratio fix. The prior style pinned ``max-height:56px`` which
+        # squished tall logos at ``width=180``. Now: HTML width attr
+        # relaxed to 200, ``max-width:200px`` + ``height:auto`` +
+        # ``width:auto`` preserves the natural aspect ratio in every
+        # major email client, and ``margin:0 auto;display:block``
+        # combined with the surrounding ``<td align="center">`` (see
+        # below) centers the logo inside the dark brand header bar.
         header_cell = (
             f'<img src="{_esc(r["logo_url"])}" '
             f'alt="{company_txt}" '
-            f'width="180" '
-            f'style="max-width:180px;max-height:56px;display:block;'
-            f'border:0;outline:none;text-decoration:none;'
-            f'height:auto;line-height:100%;-ms-interpolation-mode:bicubic;" />'
+            f'width="200" '
+            f'style="max-width:200px;width:auto;height:auto;display:block;'
+            f'margin:0 auto;border:0;outline:none;text-decoration:none;'
+            f'line-height:100%;-ms-interpolation-mode:bicubic;" />'
         )
     else:
         header_cell = (
@@ -271,8 +279,8 @@ def wrap_html_in_shell(
         f'border-collapse:collapse;">'
         # Header band.
         f'<tr>'
-        f'<td align="left" '
-        f'style="background:{primary};padding:22px 28px;" '
+        f'<td align="center" '
+        f'style="background:{primary};padding:22px 28px;text-align:center;" '
         f'bgcolor="{primary}">'
         f'{mso_header}'
         f'{header_cell}'
