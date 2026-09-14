@@ -1820,13 +1820,15 @@ async def customer_manual_geocode(
                 "geocoded_at": after.get("geocoded_at"),
             }
         # Distinguish empty-address from ZERO_RESULTS.
-        from services.google_maps.geocoding import _flatten_addr as _fa
-        addr = (_fa(doc.get("service_address")) or " ".join(filter(None, [
-            doc.get("service_street") or doc.get("street"),
-            doc.get("service_city") or doc.get("city"),
-            doc.get("service_state") or doc.get("state"),
-            doc.get("service_zip") or doc.get("zip"),
-        ]))).strip()
+        # Feb-2026 · Fix — Re-geocode button reported "no address"
+        # even when ``customer.address`` was populated because the
+        # old fallback only checked ``service_address`` + structured
+        # legacy fields. ``resolve_customer_address`` now walks the
+        # canonical fallback chain (mirrors the geocode path).
+        from services.google_maps.geocoding import (
+            resolve_customer_address as _resolve_addr,
+        )
+        addr = _resolve_addr(doc)
         if not addr:
             return {"ok": False, "reason": "no_address"}
         return {"ok": False, "reason": "not_found",

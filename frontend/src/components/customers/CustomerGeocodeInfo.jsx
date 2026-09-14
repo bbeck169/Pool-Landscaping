@@ -31,6 +31,52 @@ import { colors } from "@/theme";
 
 const _ADMIN_ROLES = new Set(["admin", "super_admin", "owner", "manager"]);
 
+/**
+ * Feb-2026 · Fix — Re-geocode button reported "no address" for
+ * customers whose only populated address field was ``address``
+ * (the field the display renderer reads on ``CustomerDetail.jsx``).
+ * Mirror the backend ``resolve_customer_address`` fallback chain
+ * on the client so:
+ *   * The button can short-circuit BEFORE the network round-trip
+ *     when no address is resolvable anywhere on the doc.
+ *   * The display + geocode paths never drift — both read the
+ *     same ordered fallback.
+ *
+ * Order (must match ``services/google_maps/geocoding.py``):
+ *   1. service_address    (may be a dict; we flatten to string)
+ *   2. address
+ *   3. street_address
+ *   4. mailing_address
+ *   5. structured composite (service_* or bare street/city/state/zip)
+ */
+function _flat(raw) {
+  if (typeof raw === "string") return raw.trim();
+  if (raw && typeof raw === "object") {
+    return [
+      raw.street, raw.city, raw.state,
+      raw.postal_code || raw.zip,
+    ].filter(Boolean).map(String).map((s) => s.trim())
+     .filter(Boolean).join(" ").trim();
+  }
+  return "";
+}
+
+export function resolveCustomerAddress(customer) {
+  if (!customer) return "";
+  for (const k of ["service_address", "address",
+                     "street_address", "mailing_address"]) {
+    const v = _flat(customer[k]);
+    if (v) return v;
+  }
+  const parts = [
+    customer.service_street || customer.street || "",
+    customer.service_city   || customer.city   || "",
+    customer.service_state  || customer.state  || "",
+    customer.service_zip    || customer.zip    || "",
+  ].map((s) => String(s || "").trim()).filter(Boolean);
+  return parts.join(" ").trim();
+}
+
 function readCoords(customer) {
   if (!customer) return { lat: null, lng: null };
   const lat = (customer.latitude !== undefined && customer.latitude !== null)
@@ -54,6 +100,20 @@ export default function CustomerGeocodeInfo({ customer, role, onRefetch, onToast
   const canReGeocode = _ADMIN_ROLES.has((role || "").toLowerCase());
 
   const handleReGeocode = async () => {
+    // Feb-2026 · Fix — resolve the address on the client so the
+    // "No address on file" toast never falsely fires when the
+    // customer has data in ``address`` / ``street_address`` /
+    // ``mailing_address``. Backend uses the same fallback chain
+    // (see ``services/google_maps/geocoding.resolve_customer_
+    // address``) — both sides must stay in lockstep.
+    const _resolved = resolveCustomerAddress(customer);
+    if (!_resolved) {
+      onToast?.({
+        tone: "error",
+        message: "No address on file — add a service address first.",
+      });
+      return;
+    }
     setBusy(true);
     try {
       const r = await api.post(

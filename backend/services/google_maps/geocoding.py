@@ -58,6 +58,48 @@ def _flatten_addr(raw: Any) -> str:
     return ""
 
 
+# Feb-2026 · Fix — Re-geocode button falsely reported "no address"
+# because the fallback chain read only ``service_address`` +
+# structured legacy fields, missing customers whose only populated
+# address field was ``address`` / ``street_address`` / ``mailing_
+# address``. This helper is the single source of truth for the
+# resolution order — every caller MUST use it so the display path
+# (which uses ``address``) and the geocode path stay in lockstep.
+#
+# Order:
+#   1. ``service_address``        — canonical (may be free-form or dict).
+#   2. ``address``                — the field the display renderer reads.
+#   3. ``street_address``         — legacy admin-side alias.
+#   4. ``mailing_address``        — billing fallback (last resort).
+#   5. Structured composite      — ``service_street/city/state/zip`` OR
+#                                    the legacy ``street/city/state/zip``.
+def resolve_customer_address(customer: Dict[str, Any]) -> str:
+    """Return the first non-empty address on ``customer`` (trimmed).
+
+    Reads every field the various customer-writing paths have used
+    over time. Returns empty string when NONE of them yield a
+    non-empty value — that's the ``no_address`` signal callers
+    should honor.
+    """
+    if not customer:
+        return ""
+    # Free-form / dict fields first (in priority order).
+    for _k in ("service_address", "address", "street_address",
+                 "mailing_address"):
+        _v = _flatten_addr(customer.get(_k))
+        if _v:
+            return _v
+    # Structured composite as a last resort. Accept either the
+    # ``service_*`` prefix (new) or the bare fields (legacy).
+    parts = list(filter(None, [
+        (customer.get("service_street") or customer.get("street") or "").strip(),
+        (customer.get("service_city")   or customer.get("city")   or "").strip(),
+        (customer.get("service_state")  or customer.get("state")  or "").strip(),
+        (customer.get("service_zip")    or customer.get("zip")    or "").strip(),
+    ]))
+    return " ".join(parts).strip()
+
+
 # ═════════════════════════════════════════════════════════════════
 # Phase I1.7.e · Chunk 3 · Feb-2026 — Platform raw-httpx impl.
 # Extracted so :mod:`services.maps.dispatcher` can call it directly
@@ -193,12 +235,12 @@ async def geocode_and_persist_customer(customer_id: str, tenant_id: str) -> bool
                 return False
         except Exception:
             pass
-    addr = _flatten_addr(cust.get("service_address")) or " ".join(filter(None, [
-        cust.get("service_street") or cust.get("street"),
-        cust.get("service_city") or cust.get("city"),
-        cust.get("service_state") or cust.get("state"),
-        cust.get("service_zip") or cust.get("zip"),
-    ]))
+    # Feb-2026 · Fix — Re-geocode button. The fallback chain now
+    # walks EVERY historical address field (``service_address`` →
+    # ``address`` → ``street_address`` → ``mailing_address`` →
+    # structured composite) so a customer whose only populated
+    # field is the display-renderer's ``address`` still geocodes.
+    addr = resolve_customer_address(cust)
     if not addr.strip():
         return False
     hit = await geocode_address(addr, tenant_id=tenant_id)

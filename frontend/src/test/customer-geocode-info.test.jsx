@@ -77,7 +77,11 @@ describe("CustomerGeocodeInfo (Feb-2026)", () => {
   it("renders 'unavailable' + Re-geocode button (admin) — click posts and refetches", async () => {
     const customer = {
       id: "cust_2",
-      // No latitude/longitude/geocoded_at.
+      // No latitude/longitude/geocoded_at. Feb-2026 · Re-geocode
+      // fix — the button short-circuits without a POST when the
+      // customer has NO address anywhere on the doc, so the
+      // happy-path click test must seed a resolvable address.
+      address: "5542 W Big Oak St, Phoenix, AZ 85083",
     };
     apiPostImpl.mockResolvedValue({
       ok: true,
