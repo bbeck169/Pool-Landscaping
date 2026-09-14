@@ -1,9 +1,17 @@
 """Phase 28.1 · Warranty / Service-Plan Portal.
 
 Plans, contracts, claims + customer portal + expiration reminder cron.
+
+Feb-2026 · Linked entities — every contract may carry
+``linked_type`` + ``linked_id`` pointing at an *install-workflow*
+job (any ``jobs`` row whose ``service_type`` contains ``install``,
+case-insensitive) or a ``customer_equipment`` unit. Denormalized
+``linked_summary`` is hydrated on read for the customer-scoped
+list endpoints so the admin + portal UIs render without an
+extra round-trip.
 """
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from dateutil.relativedelta import relativedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,6 +22,138 @@ from utils import get_current_user, new_id, now_iso, require_admin
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
+
+
+# ═════════════ Feb-2026 · Linked-entity helpers ══════════════════════
+# ``linked_type`` = ``install`` targets a jobs row whose
+# ``service_type`` contains the substring ``install`` (case-
+# insensitive) — pragmatic definition since there is no dedicated
+# install workflow flag. Documented in
+# ``memory/FEATURE_WARRANTY_CONTRACTS.md``.
+_LINKED_TYPES = ("install", "equipment", "none")
+
+
+def _install_service_match() -> Dict[str, Any]:
+    """Return the Mongo ``service_type`` filter that identifies
+    install-workflow jobs.  Case-insensitive substring match."""
+    return {"service_type": {"$regex": "install", "$options": "i"}}
+
+
+async def _validate_link(linked_type: Optional[str],
+                          linked_id: Optional[str],
+                          tenant_id: str) -> None:
+    """Enforce the linked_type / linked_id invariants.  Raises 422
+    on any mismatch with a stable error prefix so the frontend can
+    map the reason back to a field-level error banner."""
+    if linked_type in (None, "", "none"):
+        if linked_id:
+            raise HTTPException(
+                422,
+                "warranty.link.none_id_forbidden: "
+                "linked_id must be null when linked_type is 'none'",
+            )
+        return
+    if linked_type not in _LINKED_TYPES:
+        raise HTTPException(
+            422,
+            f"warranty.link.invalid_type: linked_type must be one of "
+            f"{_LINKED_TYPES}",
+        )
+    if not linked_id:
+        raise HTTPException(
+            422,
+            "warranty.link.missing_id: "
+            "linked_id is required when linked_type is not 'none'",
+        )
+    if linked_type == "install":
+        job = await db.jobs.find_one(
+            {"id": linked_id, "tenant_id": tenant_id,
+             **_install_service_match()},
+            {"_id": 0, "id": 1},
+        )
+        if not job:
+            raise HTTPException(
+                422,
+                "warranty.link.install_not_found: "
+                "linked_id must reference an install-workflow job "
+                "in this tenant",
+            )
+    elif linked_type == "equipment":
+        eq = await db.customer_equipment.find_one(
+            {"id": linked_id, "tenant_id": tenant_id,
+             "is_deleted": {"$ne": True}},
+            {"_id": 0, "id": 1},
+        )
+        if not eq:
+            raise HTTPException(
+                422,
+                "warranty.link.equipment_not_found: "
+                "linked_id must reference a customer_equipment row "
+                "in this tenant",
+            )
+
+
+async def _load_linked_summary(linked_type: Optional[str],
+                                linked_id: Optional[str],
+                                tenant_id: str) -> Optional[Dict[str, Any]]:
+    """Return the denormalized display block hydrated per contract
+    on read. ``None`` when the contract isn't linked or when the
+    referenced entity has since disappeared (soft-deleted, hard
+    delete via ops script, etc.)."""
+    if not linked_id or linked_type in (None, "", "none"):
+        return None
+    if linked_type == "install":
+        job = await db.jobs.find_one(
+            {"id": linked_id, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1, "title": 1, "service_type": 1,
+             "scheduled_date": 1, "completed_at": 1},
+        )
+        if not job:
+            return None
+        return {
+            "type": "install",
+            "label": job.get("title") or job.get("service_type") or "Install",
+            "details": {
+                "service_type": job.get("service_type"),
+                "service_date": (job.get("scheduled_date")
+                                  or job.get("completed_at")),
+            },
+        }
+    if linked_type == "equipment":
+        eq = await db.customer_equipment.find_one(
+            {"id": linked_id, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1, "equipment_type": 1, "brand": 1,
+             "model": 1, "serial_number": 1},
+        )
+        if not eq:
+            return None
+        parts = [eq.get("brand"), eq.get("model")]
+        label = eq.get("equipment_type") or "Equipment"
+        subtitle = " ".join([p for p in parts if p])
+        if subtitle:
+            label = f"{label} — {subtitle}"
+        return {
+            "type": "equipment",
+            "label": label,
+            "details": {
+                "equipment_type": eq.get("equipment_type"),
+                "brand": eq.get("brand"),
+                "model": eq.get("model"),
+                "serial_number": eq.get("serial_number"),
+            },
+        }
+    return None
+
+
+async def _serialize_contract(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the flat wire shape used by the admin + portal
+    customer-scoped list endpoints. Never surfaces ``_id``."""
+    row = dict(row)
+    row.pop("_id", None)
+    row["linked_summary"] = await _load_linked_summary(
+        row.get("linked_type"), row.get("linked_id"), row.get("tenant_id"),
+    )
+    return row
 
 
 # ─── Seed defaults ───────────────────────────────────────────────────
@@ -81,12 +221,17 @@ class ContractIn(BaseModel):
     notes: Optional[str] = ""
     price_override: Optional[float] = None
     custom_end_date: Optional[str] = None
+    # Feb-2026 · linked entity metadata.
+    linked_type: Optional[Literal["install", "equipment", "none"]] = None
+    linked_id: Optional[str] = None
 
 
 class ContractPatch(BaseModel):
     notes: Optional[str] = None
     custom_end_date: Optional[str] = None
     asset_reference: Optional[str] = None
+    linked_type: Optional[Literal["install", "equipment", "none"]] = None
+    linked_id: Optional[str] = None
 
 
 class CancelIn(BaseModel): reason: str
@@ -186,6 +331,7 @@ async def create_contract(body: ContractIn,
     cust = await db.customers.find_one(
         {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0})
     if not cust: raise HTTPException(404, "Customer not found")
+    await _validate_link(body.linked_type, body.linked_id, tenant["id"])
     end_date = body.custom_end_date or _add_months(
         body.start_date, plan["duration_months"])
     doc = {
@@ -205,12 +351,22 @@ async def create_contract(body: ContractIn,
                           else plan.get("price", 0)),
         "status": "active",
         "notes": body.notes or "",
+        # Feb-2026 · linked entity fields.
+        "linked_type": (body.linked_type
+                          if body.linked_type in ("install", "equipment")
+                          else "none"),
+        "linked_id": body.linked_id
+                        if body.linked_type in ("install", "equipment")
+                        else None,
         "created_by": user["id"],
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
     await db.warranty_contracts.insert_one(dict(doc))
     doc.pop("_id", None)
+    doc["linked_summary"] = await _load_linked_summary(
+        doc.get("linked_type"), doc.get("linked_id"), tenant["id"],
+    )
     return doc
 
 
@@ -222,14 +378,37 @@ async def update_contract(cid: str, body: ContractPatch,
             if v is not None}
     if "custom_end_date" in upd:
         upd["end_date"] = upd["custom_end_date"]
+    # Feb-2026 · Whenever the patch touches linked_type / linked_id
+    # revalidate the pair as a unit so partial edits can't leave a
+    # dangling id (linked_type flipped to 'none' without clearing
+    # linked_id, or vice-versa).
+    if "linked_type" in upd or "linked_id" in upd:
+        current = await db.warranty_contracts.find_one(
+            {"id": cid, "tenant_id": tenant["id"]},
+            {"_id": 0, "linked_type": 1, "linked_id": 1},
+        ) or {}
+        new_type = upd.get("linked_type",
+                              current.get("linked_type") or "none")
+        new_id_ = upd.get("linked_id", current.get("linked_id"))
+        if new_type in (None, "", "none"):
+            new_type = "none"
+            new_id_ = None
+        await _validate_link(new_type, new_id_, tenant["id"])
+        upd["linked_type"] = new_type
+        upd["linked_id"] = new_id_
     if upd:
         upd["updated_at"] = now_iso()
         r = await db.warranty_contracts.update_one(
             {"id": cid, "tenant_id": tenant["id"]}, {"$set": upd})
         if r.matched_count == 0:
             raise HTTPException(404, "Contract not found")
-    return await db.warranty_contracts.find_one(
+    fresh = await db.warranty_contracts.find_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0})
+    if fresh:
+        fresh["linked_summary"] = await _load_linked_summary(
+            fresh.get("linked_type"), fresh.get("linked_id"), tenant["id"],
+        )
+    return fresh
 
 
 @router.post("/warranties/contracts/{cid}/cancel")
@@ -353,6 +532,125 @@ async def update_claim(cid: str, body: ClaimPatch,
               "status": "claim_pending"},
             {"$set": {"status": "active", "updated_at": now_iso()}})
     return doc
+
+
+# ═════════ Feb-2026 · Customer-scoped warranty views ══════════════════
+#
+# The IMPORTANT ordering rule: ``/customers/me/warranties`` MUST be
+# declared BEFORE ``/customers/{customer_id}/warranties`` or FastAPI
+# will route ``me`` into the ``{customer_id}`` path and 403 the
+# request when the caller is a customer.
+#
+# Both endpoints paginate with the standard envelope
+# ``{items, page, page_size, total, total_pages}``.
+
+def _page_env(items: List[Dict[str, Any]], page: int,
+                page_size: int, total: int) -> Dict[str, Any]:
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    return {
+        "items": items, "page": page, "page_size": page_size,
+        "total": total, "total_pages": total_pages,
+    }
+
+
+@router.get("/customers/me/warranties")
+async def customer_me_warranties(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Portal read-only. Returns the caller's warranty contracts
+    with ``linked_summary`` hydrated so the portal card grid renders
+    with a single round-trip."""
+    if user.get("role") != "customer":
+        raise HTTPException(403, "Customer portal only")
+    cid = user.get("customer_id") or user.get("id")
+    q = {"tenant_id": tenant["id"], "customer_id": cid}
+    total = await db.warranty_contracts.count_documents(q)
+    rows = await db.warranty_contracts.find(q, {"_id": 0}) \
+        .sort("start_date", -1) \
+        .skip((page - 1) * page_size).limit(page_size).to_list(page_size)
+    items = [await _serialize_contract(r) for r in rows]
+    return _page_env(items, page, page_size, total)
+
+
+@router.get("/customers/{customer_id}/warranties")
+async def admin_customer_warranties(
+    customer_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin surface — same shape as the portal endpoint, keyed by
+    an explicit customer id."""
+    cust = await db.customers.find_one(
+        {"id": customer_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    q = {"tenant_id": tenant["id"], "customer_id": customer_id}
+    total = await db.warranty_contracts.count_documents(q)
+    rows = await db.warranty_contracts.find(q, {"_id": 0}) \
+        .sort("start_date", -1) \
+        .skip((page - 1) * page_size).limit(page_size).to_list(page_size)
+    items = [await _serialize_contract(r) for r in rows]
+    return _page_env(items, page, page_size, total)
+
+
+@router.get("/customers/{customer_id}/warranties/link-options")
+async def admin_customer_link_options(
+    customer_id: str,
+    type: Literal["install", "equipment"] = Query(...),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Autopopulate feed for the Add-Warranty modal's dependent
+    dropdown.  Admin only — customers never see this URL."""
+    cust = await db.customers.find_one(
+        {"id": customer_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+
+    if type == "install":
+        cur = db.jobs.find(
+            {"tenant_id": tenant["id"], "customer_id": customer_id,
+             **_install_service_match()},
+            {"_id": 0, "id": 1, "title": 1, "service_type": 1,
+             "scheduled_date": 1, "completed_at": 1},
+        ).sort("scheduled_date", -1).limit(200)
+        rows = await cur.to_list(200)
+        options = [{
+            "id": r["id"],
+            "title": r.get("title") or r.get("service_type") or "Install",
+            "service_date": (r.get("scheduled_date")
+                              or r.get("completed_at")),
+            "service_type": r.get("service_type"),
+        } for r in rows]
+        return {"type": "install", "options": options,
+                "count": len(options)}
+
+    # type == "equipment"
+    cur = db.customer_equipment.find(
+        {"tenant_id": tenant["id"], "customer_id": customer_id,
+         "is_deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "equipment_type": 1, "brand": 1,
+         "model": 1, "serial_number": 1},
+    ).sort("created_at", 1)
+    rows = await cur.to_list(200)
+    options = [{
+        "id": r["id"],
+        "equipment_type": r.get("equipment_type"),
+        "brand": r.get("brand"),
+        "model": r.get("model"),
+        "serial_number": r.get("serial_number"),
+    } for r in rows]
+    return {"type": "equipment", "options": options,
+            "count": len(options)}
 
 
 # ═══════════ CUSTOMER PORTAL ═════════════════════════════════════════

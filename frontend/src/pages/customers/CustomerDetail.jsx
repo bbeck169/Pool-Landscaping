@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock } from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from '@/theme';
@@ -8,6 +8,7 @@ import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import { Button, Modal, TextInput, Skeleton, Chip, StatusPill, EmptyState, Toast } from "@/components/ui-kit";
 import { ActivationControl } from "@/components/customers/ActivationControl";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
+import CustomerWarrantiesLibrary from "@/components/customers/CustomerWarrantiesLibrary";
 import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
 import SendServiceRecordsLinkModal from "@/components/customers/SendServiceRecordsLinkModal";
 import CustomerTagPicker from "@/components/customers/CustomerTagPicker";
@@ -145,6 +146,7 @@ const TABS = [
   { k: "quotes", label: "Quotes", icon: FileText },
   { k: "invoices", label: "Invoices", icon: FileText },
   { k: "equipment", label: "Equipment", icon: Beaker },
+  { k: "warranties", label: "Warranties", icon: ShieldCheck },
   { k: "tasks", label: "Tasks", icon: ListChecks },
   { k: "notes", label: "Notes", icon: StickyNote },
   { k: "credits", label: "Credits", icon: DollarSign },
@@ -907,6 +909,15 @@ export default function CustomerDetail() {
 
           {tab === "equipment" ? (
             <CustomerEquipmentLibrary
+              customerId={id}
+              currentUser={(() => {
+                try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; }
+              })()}
+            />
+          ) : null}
+
+          {tab === "warranties" ? (
+            <CustomerWarrantiesLibrary
               customerId={id}
               currentUser={(() => {
                 try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; }

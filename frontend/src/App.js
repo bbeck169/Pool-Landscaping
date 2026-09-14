@@ -357,6 +357,7 @@ import {
   PortalDocuments, PortalMessages, PortalProfile,
   PortalRequestService, PortalPaymentComplete,
 } from "@/pages/portal/PortalPages";
+import PortalWarranties from "@/pages/portal/PortalWarranties";
 import {
   PortalServiceReports, PortalServiceReportDetail,
 } from "@/pages/portal/PortalServiceReports";
@@ -1266,6 +1267,7 @@ export default function App() {
             {/* Phase 17 · Feb 2026 — QuickBooks Online read-sync integration. */}
             <Route path="admin/integrations/qbo" element={<QuickBooksIntegrationPage />} />
             <Route path="portal/documents" element={<PortalDocuments />} />
+            <Route path="portal/warranties" element={<PortalWarranties />} />
             <Route path="portal/messages" element={<PortalMessages />} />
             <Route path="portal/chats" element={<PortalChatsPage />} />
             <Route path="portal/photos" element={<PortalPhotosPage />} />
