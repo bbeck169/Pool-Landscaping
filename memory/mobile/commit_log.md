@@ -1863,3 +1863,15 @@
 - **Files modified**: `app/job/[id]/checklist.tsx`, `src/lib/waterBodies.ts`
 - **Files created**: `__tests__/chemistry-gate-mobile.test.ts`, `memory/FEATURE_CHEMISTRY_GATE_MOBILE.md`
 - **Web files referenced**: None (mobile-only behavior fix)
+
+## Iteration 96 — Sync arrival radius to 75m (server parity)
+- **Commit**: ad60be0c45
+- **Date**: 2026-09-14
+- **Changes**:
+  - Changed `ARRIVE_RADIUS_M` in `JobTimerCard.tsx` from 150 → 75.
+  - Changed `RADIUS_M` in `geofence.ts` from 150 → 75.
+  - `jobGeofence.ts` `FALLBACK_RADIUS_M` already 75 — no change needed.
+  - Added sync comments referencing `backend/routers/gps_auto_start.py`.
+  - Added 3 Jest tests locking all three constants to 75m.
+- **Files modified**: `src/components/job/JobTimerCard.tsx`, `src/geofence.ts`
+- **Files created**: `__tests__/arrival-radius-sync.test.ts`, `memory/FEATURE_MOBILE_ARRIVAL_RADIUS_SYNC.md`

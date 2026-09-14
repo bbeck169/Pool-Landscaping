@@ -227,10 +227,14 @@ def seed_ctx():
 # ═══════════════════════════════════════════════════════════════════════
 def test_list_returns_submitted_reports_only(customer_headers, seed_ctx):
     """Submitted reports show up; unsubmitted reports are filtered out."""
-    r = requests.get(f"{API}/customers/me/service-reports",
+    r = requests.get(f"{API}/customers/me/service-reports?page_size=100",
                        headers=customer_headers, timeout=30)
     assert r.status_code == 200, r.text
-    rows = r.json()
+    # Feb-2026 · customer service-reports enhancements ship the
+    # paginated ``{items, ...}`` envelope. Legacy list callers used
+    # the bare array — updated here to walk ``payload["items"]``.
+    payload = r.json()
+    rows = payload["items"] if isinstance(payload, dict) else payload
     assert isinstance(rows, list)
 
     seeded_titles = {
@@ -247,12 +251,14 @@ def test_list_returns_submitted_reports_only(customer_headers, seed_ctx):
 
 def test_list_isolates_to_current_customer(customer_headers, seed_ctx):
     """The other customer's report must NEVER appear in Jenny's list."""
-    r = requests.get(f"{API}/customers/me/service-reports",
+    r = requests.get(f"{API}/customers/me/service-reports?page_size=100",
                        headers=customer_headers, timeout=30)
     assert r.status_code == 200
 
     other_job_title = seed_ctx["seeded"]["jobs"]["other_customer"]["title"]
-    leaked = [row for row in r.json() if row.get("job_title") == other_job_title]
+    payload = r.json()
+    rows = payload["items"] if isinstance(payload, dict) else payload
+    leaked = [row for row in rows if row.get("job_title") == other_job_title]
     assert not leaked, (
         f"customer isolation broken — other customer's report leaked: {leaked}"
     )
@@ -262,10 +268,11 @@ def test_list_populates_tech_name_via_cascade(customer_headers, seed_ctx):
     """Both submitted Jenny reports must render a non-empty ``tech_name``
     matching Mike's real name — proves the resolver cascade works for
     both id shapes (``users.id`` and ``technicians.id``)."""
-    r = requests.get(f"{API}/customers/me/service-reports",
+    r = requests.get(f"{API}/customers/me/service-reports?page_size=100",
                        headers=customer_headers, timeout=30)
     assert r.status_code == 200
-    rows = r.json()
+    payload = r.json()
+    rows = payload["items"] if isinstance(payload, dict) else payload
 
     seeded_titles = {
         f"{_JOB_TITLE_PREFIX}jenny_userIdShape",

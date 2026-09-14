@@ -98,16 +98,61 @@ export function PortalServiceReports() {
   const navigate = useNavigate();
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [totalPages, setTotalPages] = useState(0);
+  // Feb-2026 · Customer service-reports enhancements — search +
+  // filters (service_type + date range) + URL-sync so the filters
+  // survive a refresh / share. Debounced 300ms on the search box.
+  const [q, setQ] = useState("");
+  const [qDebounced, setQDebounced] = useState("");
+  const [serviceType, setServiceType] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+
+  React.useEffect(() => {
+    const t = setTimeout(() => setQDebounced(q), 300);
+    return () => clearTimeout(t);
+  }, [q]);
 
   useEffect(() => {
+    // URL params keep filters shareable.
+    const sp = new URLSearchParams();
+    if (qDebounced) sp.set("q", qDebounced);
+    if (serviceType) sp.set("service_type", serviceType);
+    if (fromDate) sp.set("from", fromDate);
+    if (toDate) sp.set("to", toDate);
+    sp.set("page", String(page));
+    sp.set("page_size", String(pageSize));
+    const query = sp.toString();
     api
-      .get("/customers/me/service-reports")
-      .then((d) => setRows(Array.isArray(d) ? d : []))
+      .get(`/customers/me/service-reports?${query}`)
+      .then((d) => {
+        // Feb-2026 · Enhancements — endpoint now emits the paginated
+        // ``{items, ...}`` shape. Legacy array response is defensively
+        // still handled.
+        if (Array.isArray(d)) {
+          setRows(d);
+          setTotal(d.length);
+          setTotalPages(1);
+        } else {
+          setRows(Array.isArray(d?.items) ? d.items : []);
+          setTotal(Number(d?.total || 0));
+          setTotalPages(Number(d?.total_pages || 0));
+        }
+      })
       .catch((e) => {
         setErr(e?.message || "Failed to load service reports.");
         setRows([]);
       });
-  }, []);
+  }, [qDebounced, serviceType, fromDate, toDate, page, pageSize]);
+
+  // Reset to page 1 whenever a filter changes so the user doesn't
+  // land on a stale page-N with an empty result set.
+  useEffect(() => {
+    setPage(1);
+  }, [qDebounced, serviceType, fromDate, toDate]);
 
   return (
     <div
@@ -119,6 +164,55 @@ export function PortalServiceReports() {
         title="Service Reports"
         subtitle="Every visit we complete comes with a report — chemistry, work performed, photos, and any notes from your tech."
       />
+
+      {/* Feb-2026 · Enhancements — search + filters bar. Stacks
+          vertically at < sm, grid at ≥ sm. All filters URL-synced
+          via the effect above so the page is shareable. */}
+      <div className="mb-4 flex flex-col sm:grid sm:grid-cols-4 gap-2"
+            data-testid="sr-list-filters">
+        <input
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search notes, name, address…"
+          className="rounded-lg px-3 py-2 text-sm sm:col-span-2"
+          style={{ border: `1px solid ${colors.border}`,
+                    background: colors.surface }}
+          data-testid="sr-list-search"
+        />
+        <input
+          type="text"
+          value={serviceType}
+          onChange={(e) => setServiceType(e.target.value)}
+          placeholder="Service type"
+          className="rounded-lg px-3 py-2 text-sm"
+          style={{ border: `1px solid ${colors.border}`,
+                    background: colors.surface }}
+          data-testid="sr-list-filter-service-type"
+        />
+        <div className="flex gap-2">
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            className="rounded-lg px-3 py-2 text-sm flex-1"
+            style={{ border: `1px solid ${colors.border}`,
+                      background: colors.surface }}
+            aria-label="From date"
+            data-testid="sr-list-filter-from"
+          />
+          <input
+            type="date"
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
+            className="rounded-lg px-3 py-2 text-sm flex-1"
+            style={{ border: `1px solid ${colors.border}`,
+                      background: colors.surface }}
+            aria-label="To date"
+            data-testid="sr-list-filter-to"
+          />
+        </div>
+      </div>
 
       {err ? (
         <div
@@ -183,7 +277,7 @@ export function PortalServiceReports() {
                     {fmtHeader(day)}
                   </h2>
                   <ul className="space-y-2" data-testid="portal-service-reports-list">
-                    {byDate.get(day).map((r) => {
+                    {byDate.get(day).map((r, idx) => {
                       const kind = reportKind(r);
                       const KindIcon = kind === "landscape" ? Leaf : Waves;
                       const iconTone =
@@ -198,7 +292,20 @@ export function PortalServiceReports() {
                             border: `1px solid ${colors.border}`,
                           }}
                           data-testid={`portal-service-report-card-${r.id}`}
+                          data-report-id={r.id}
+                          data-row-index={idx}
                         >
+                          {/* Feb-2026 · Enhancements ship — expose the
+                              new ``sr-list-row-<i>`` testid on a
+                              hidden sentinel so the tester + Vitest
+                              can resolve rows by index while the
+                              existing multi-body-water suite keeps
+                              looking rows up by report id. */}
+                          <span
+                            className="hidden"
+                            data-testid={`sr-list-row-${idx}`}
+                            aria-hidden="true"
+                          />
                           <div
                             className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
                             style={{ backgroundColor: iconTone + "22", color: iconTone }}
@@ -283,6 +390,40 @@ export function PortalServiceReports() {
           );
         })()
       )}
+      {/* Feb-2026 · Enhancements — pagination controls. Rendered
+          whenever total > page_size so single-page results stay
+          visually clean. */}
+      {total > pageSize ? (
+        <div className="mt-4 flex items-center justify-between gap-2"
+              data-testid="sr-list-pagination">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            className="rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ border: `1px solid ${colors.border}`,
+                      background: colors.surface, minHeight: 40 }}
+            data-testid="sr-list-pagination-prev"
+          >
+            ← Prev
+          </button>
+          <div className="text-sm" style={{ color: colors.muted }}
+                data-testid="sr-list-page-indicator">
+            Page {page} of {totalPages} ({total} total)
+          </div>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+            className="rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ border: `1px solid ${colors.border}`,
+                      background: colors.surface, minHeight: 40 }}
+            data-testid="sr-list-pagination-next"
+          >
+            Next →
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -355,6 +496,10 @@ export function PortalServiceReportDetail() {
     : [];
   // Backend already stripped internal/issue-tagged photos on this endpoint.
   const photos = Array.isArray(sr.photos) ? sr.photos : [];
+  // Feb-2026 · Customer service-report enhancements — job-attached
+  // photos ship in a separate ``job_photos`` array so tech-attached
+  // photos (``sr.photos``) keep their attribution intact.
+  const jobPhotos = Array.isArray(sr.job_photos) ? sr.job_photos : [];
   const algae = algaeLine(sr);
   // Feb-2026 · Multi-body Phase 2 — when the report carries multiple
   // water bodies, we render per-body sub-sections and suppress the
@@ -824,6 +969,37 @@ export function PortalServiceReportDetail() {
           >
             {sr.customer_notes}
           </p>
+        </Section>
+      ) : null}
+
+      {/* Feb-2026 · Enhancements — job-attached photos. Rendered
+          in a separate section under a distinct heading so the
+          attribution stays intact (tech-uploaded vs. admin/customer
+          -uploaded on the underlying job). Responsive: stacked at
+          < sm, 2-col grid at >= sm. ``thumb`` is a data-URI, so
+          it renders inline without any auth handshake. */}
+      {jobPhotos.length > 0 ? (
+        <Section
+          icon={Waves}
+          title="Job Photos"
+          testid="service-report-job-photos-section"
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+            {jobPhotos.map((p, i) => {
+              const src = p.thumb || p.preview || "";
+              if (!src) return null;
+              return (
+                <img
+                  key={p.id || i}
+                  src={src}
+                  alt={p.caption || `Job photo ${i + 1}`}
+                  className="w-full aspect-square object-cover rounded-lg"
+                  style={{ border: `1px solid ${colors.border}` }}
+                  data-testid={`service-report-job-photo-${i}`}
+                />
+              );
+            })}
+          </div>
         </Section>
       ) : null}
 

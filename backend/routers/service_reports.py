@@ -13,7 +13,8 @@ Endpoints (all tenant-scoped):
 """
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import db, logger
@@ -2215,53 +2216,119 @@ def _annotate_report_for_admin(sr: dict) -> dict:
 
 @router.get("/customers/me/service-reports")
 async def list_my_service_reports(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    q: Optional[str] = Query(None, description="Case-insensitive substring — notes + customer name + address"),
+    service_type: Optional[str] = Query(None),
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
+    """Customer-facing service-report list with search, filters, and
+    pagination.
+
+    Feb-2026 · Enhancements ship — the prior implementation hard-
+    capped at 200 rows with no filtering. New contract: page/page_size
+    (max 100), ``q`` substring search across notes + customer name +
+    address, ``service_type`` exact match, ``from``/``to`` inclusive
+    ISO date range on ``service_date``. Response shape:
+    ``{items, page, page_size, total, total_pages}``.
+    """
     if user.get("role") != "customer" or not user.get("customer_id"):
         raise HTTPException(403, "Customer portal only")
 
-    # Find all jobs for this customer's id, then all completed reports.
     from utils import not_deleted_filter as _nd_portal
-    job_ids = [j["id"] async for j in db.jobs.find(
-        {"tenant_id": tenant["id"], "customer_id": user["customer_id"], **_nd_portal()},
-        {"_id": 0, "id": 1},
-    )]
-    if not job_ids:
-        return []
-    # Feb-2026 · P1 hotfix — the submit path stamps ``submitted_at``
-    # on the service_report doc but has never updated the ``status``
-    # field, so the prior filter of
-    # ``status ∈ {submitted, completed, final}`` matched ZERO reports in
-    # real tenant data (every submitted row is ``status=None``, with
-    # the submitted-lifecycle tracked via ``submitted_at``).  Filter on
-    # the actual write-side signal instead — customer isolation is
-    # already enforced by the ``job_ids`` join above.
-    rows = await db.service_reports.find(
-        {"tenant_id": tenant["id"], "job_id": {"$in": job_ids},
-         "submitted_at": {"$ne": None}},
-        {"_id": 0},
-    ).sort("submitted_at", -1).to_list(200)
+    import math
+    import re as _re
 
-    # Feb-2026 · P1 hotfix — resolve tech names via the shared cascade.
-    # ``sr.get("tech_name")`` was always None (the field is never
-    # written on the service_report doc; only ``tech_id`` is stamped),
-    # so the portal rendered "Technician not recorded" on every visit.
+    # Match the job filter — customer-owned jobs are the sole
+    # source-of-truth for what reports this customer can see.
+    job_filter: Dict[str, Any] = {
+        "tenant_id": tenant["id"],
+        "customer_id": user["customer_id"],
+        **_nd_portal(),
+    }
+    if service_type:
+        # Match either ``service_type`` OR the legacy ``job_type``
+        # field — both writes exist in the wild.
+        job_filter["$or"] = [
+            {"service_type": service_type},
+            {"job_type": service_type},
+        ]
+    jobs = [j async for j in db.jobs.find(
+        job_filter,
+        {"_id": 0, "id": 1, "title": 1, "service_type": 1, "job_type": 1,
+         "scheduled_start": 1, "customer_name": 1, "address": 1,
+         "customer_id": 1},
+    )]
+    if not jobs:
+        return {"items": [], "page": page, "page_size": page_size,
+                 "total": 0, "total_pages": 0}
+    job_by_id = {j["id"]: j for j in jobs}
+    job_ids = list(job_by_id.keys())
+
+    # Report filter — pin to the submitted set + optional date range on
+    # ``service_date`` (falls back to ``submitted_at`` when the report
+    # doesn't carry an explicit ``service_date``).
+    report_filter: Dict[str, Any] = {
+        "tenant_id": tenant["id"],
+        "job_id": {"$in": job_ids},
+        "submitted_at": {"$ne": None},
+    }
+    date_clause: Dict[str, Any] = {}
+    if from_:
+        date_clause["$gte"] = str(from_)
+    if to:
+        # Inclusive upper bound — pad to end-of-day so a bare date
+        # string doesn't skip reports submitted later that same day.
+        date_clause["$lte"] = f"{to}T23:59:59.999Z"
+    if date_clause:
+        # Match against submitted_at (canonical write-side signal —
+        # ``service_date`` isn't consistently populated in the wild).
+        report_filter["submitted_at"] = {**report_filter["submitted_at"],
+                                           **date_clause}
+
+    # Substring search — Mongo ``$or`` with case-insensitive $regex
+    # (input escaped via ``re.escape`` so bad-actor input can't break
+    # the query).
+    if q and q.strip():
+        _safe = _re.escape(q.strip())
+        _pat = {"$regex": _safe, "$options": "i"}
+        # Restrict job_ids to those whose customer_name / address match
+        # the substring (the report doc doesn't carry those fields).
+        matched_job_ids = [
+            j["id"] for j in jobs
+            if _re.search(_safe, str(j.get("customer_name") or ""), _re.I)
+            or _re.search(_safe, str(j.get("address") or ""), _re.I)
+        ]
+        _or_clauses = [{"notes": _pat}, {"customer_notes": _pat}]
+        if matched_job_ids:
+            _or_clauses.append({"job_id": {"$in": matched_job_ids}})
+        report_filter["$or"] = _or_clauses
+
+    total = await db.service_reports.count_documents(report_filter)
+    if total == 0:
+        return {"items": [], "page": page, "page_size": page_size,
+                 "total": 0, "total_pages": 0}
+    total_pages = math.ceil(total / page_size)
+    skip = (page - 1) * page_size
+    rows = await db.service_reports.find(
+        report_filter, {"_id": 0},
+    ).sort("submitted_at", -1).skip(skip).limit(page_size).to_list(page_size)
+
     from services.service_report_view import resolve_technician_names
     _tech_ids = list({r.get("tech_id") for r in rows if r.get("tech_id")})
     _name_map = await resolve_technician_names(
         db, tenant["id"], _tech_ids,
     ) if _tech_ids else {}
 
-    out = []
+    items = []
     for sr in rows:
-        job = await db.jobs.find_one({"id": sr.get("job_id")}, {"_id": 0, "photos.data": 0}) or {}
-        # Feb-2026 · Multi-body Phase 1 — expose a compact body summary
-        # so the customer portal history list can render badges without
-        # loading each report's full water_bodies payload.
+        job = job_by_id.get(sr.get("job_id")) or {}
         bodies = iter_water_bodies(sr)
         body_summaries = [summarize_body(b) for b in bodies]
-        out.append({
+        items.append({
             "id": sr.get("id"),
             "job_id": sr.get("job_id"),
             "job_title": job.get("title"),
@@ -2273,7 +2340,8 @@ async def list_my_service_reports(
             "water_bodies_summary": body_summaries,
             "water_body_count": len(body_summaries),
         })
-    return out
+    return {"items": items, "page": page, "page_size": page_size,
+             "total": total, "total_pages": total_pages}
 
 
 @router.get("/customers/me/service-reports/{report_id}")
@@ -2309,6 +2377,13 @@ async def get_my_service_report(
         "address": job.get("address"),
         "scheduled_start": job.get("scheduled_start"),
     }
+    # Feb-2026 · Customer service-report enhancements — merge
+    # ``job.photos`` into a SEPARATE ``job_photos`` array on the
+    # customer detail response so tech-attached photos (already
+    # exposed under ``photos``) stay attributed independently.
+    # Each entry carries the compact display shape + a token-scoped
+    # URL pointing at the customer-session streaming route below.
+    sr["job_photos"] = _build_customer_job_photos(job)
     # Feb-2026 · P1 hotfix — populate ``tech_name`` (never persisted on
     # the report doc; see the list-endpoint comment above). Falls back
     # to ``effective_tid(job)`` when the report's ``tech_id`` doesn't
@@ -2323,6 +2398,124 @@ async def get_my_service_report(
     else:
         sr["tech_name"] = ""
     return sr
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Feb-2026 · Customer service-report enhancements — job.photos helpers +
+# customer-session photo streaming route.
+# ═══════════════════════════════════════════════════════════════════════
+def _build_customer_job_photos(job: dict) -> list:
+    """Return the customer-safe display shape for ``job.photos``.
+
+    * Filters soft-deleted entries.
+    * Emits an embedded ``thumb`` (data-URI) when the photo carries a
+      pre-generated thumbnail — those work as ``<img src>`` on the
+      customer viewer without any auth handshake.
+    * Emits a token-scoped ``url`` that hits the customer-session
+      streaming route below. The endpoint verifies job ownership,
+      so anon → 401, wrong-customer session → 403.
+    * Never returns raw base64 originals (kept off the wire so the
+      list detail response stays small).
+    """
+    out = []
+    for p in (job.get("photos") or []):
+        if not isinstance(p, dict) or p.get("is_deleted"):
+            continue
+        _pid = p.get("id")
+        if not _pid:
+            continue
+        out.append({
+            "id":            _pid,
+            "caption":       p.get("caption") or p.get("label") or "",
+            "created_at":    (p.get("uploaded_at") or p.get("created_at")
+                                or p.get("taken_at")),
+            "uploader_role": p.get("uploader_role") or "technician",
+            # Embedded thumbnail (data-URI) — no auth handshake needed
+            # for the ``<img>`` tag.
+            "thumb":         p.get("thumb") or "",
+            # Token-scoped streaming URL — customer session enforces
+            # ownership. Relative here; the frontend renders with its
+            # bearer token via fetch/blob or ``?auth=<token>``.
+            "url":           f"/api/customers/me/jobs/{job.get('id')}"
+                             f"/photos/{_pid}",
+        })
+    return out
+
+
+@router.get("/customers/me/jobs/{jid}/photos/{photo_id}")
+async def stream_customer_job_photo(
+    jid: str,
+    photo_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Stream a single ``job.photos[]`` entry to the owning customer.
+
+    Auth: customer session (or ``?auth=<bearer>`` fallback handled by
+    ``get_current_user`` uniformly across the codebase for ``<img>``
+    compatibility). Returns:
+      * 200 — photo found + customer owns the job (streams from S3
+        when ``s3_key`` is set, else decodes the embedded base64).
+      * 403 — session valid but the customer doesn't own the job.
+      * 404 — photo id not found on this job.
+      * 410 — photo soft-deleted.
+      * 502 — S3 read failure.
+      * 503 — storage not configured (embedded fallback also empty).
+    """
+    if user.get("role") != "customer" or not user.get("customer_id"):
+        raise HTTPException(401, "customer_only")
+    job = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "customer_id": 1, "photos": 1},
+    )
+    if not job:
+        raise HTTPException(404, "job_not_found")
+    if job.get("customer_id") != user["customer_id"]:
+        raise HTTPException(403, "not_your_job")
+    photo = next(
+        (p for p in (job.get("photos") or [])
+         if isinstance(p, dict) and p.get("id") == photo_id),
+        None,
+    )
+    if not photo:
+        raise HTTPException(404, "photo_not_found")
+    if photo.get("is_deleted"):
+        raise HTTPException(410, "photo_deleted")
+
+    # ── Prefer S3 stream if the photo has an ``s3_key`` ──
+    s3_key = photo.get("s3_key")
+    if s3_key:
+        try:
+            from services.aws_s3.photos import get_object as _s3_get
+            data = _s3_get(s3_key)
+            mime = photo.get("s3_mime") or photo.get("mime") \
+                or photo.get("content_type") or "image/jpeg"
+            return Response(content=data, media_type=mime, headers={
+                "Cache-Control": "private, no-store",
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[customer-job-photo] s3 read failed: %s", e)
+            raise HTTPException(502, "storage_read_failed") from e
+
+    # ── Fall back to the embedded base64 data URI ──
+    embedded = photo.get("data") or photo.get("data_url") \
+        or photo.get("preview") or photo.get("thumb")
+    if isinstance(embedded, str) and embedded.startswith("data:"):
+        import base64 as _b64
+        try:
+            _hdr, _b64part = embedded.split(",", 1)
+            _mime = _hdr.split(";")[0].split(":", 1)[1]
+        except Exception:  # noqa: BLE001
+            _b64part = embedded.split(",", 1)[-1]
+            _mime = photo.get("mime") or "image/jpeg"
+        try:
+            data = _b64.b64decode(_b64part)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, "base64_decode_failed") from e
+        return Response(content=data, media_type=_mime, headers={
+            "Cache-Control": "private, no-store",
+        })
+    raise HTTPException(503, "no_storage_backing")
 
 
 

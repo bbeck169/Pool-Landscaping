@@ -263,9 +263,12 @@ describe("PortalServiceReports — list surface", () => {
     // Import lazily so the mock above is in place.
     const { api } = await import("@/api");
     api.get.mockImplementation(async (path) => {
-      if (path.startsWith("/customers/me/service-reports/")) return {};
-      if (path === "/customers/me/service-reports") {
-        return [
+      // Feb-2026 · list endpoint now emits the paginated envelope +
+      // accepts URL search params (page/page_size/q/service_type/…),
+      // so match with ``startsWith`` and return ``{items: [...]}``.
+      if (/^\/customers\/me\/service-reports\/[^?]/.test(path)) return {};
+      if (path.startsWith("/customers/me/service-reports")) {
+        const items = [
           {
             id: "r1",
             job_id: "j1",
@@ -294,6 +297,7 @@ describe("PortalServiceReports — list surface", () => {
             ],
           },
         ];
+        return { items, page: 1, page_size: 20, total: items.length, total_pages: 1 };
       }
       return null;
     });
