@@ -8,7 +8,8 @@
  *   POST   /api/recurring-jobs/{id}/generate?through=YYYY-MM-DD
  */
 import React, { useEffect, useState } from "react";
-import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban } from "lucide-react";
+import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import {
@@ -174,7 +175,31 @@ export default function RecurringJobs() {
       if (editing.id) {
         await api.patch(`/recurring-jobs/${editing.id}`, payload);
       } else {
-        await api.post("/recurring-jobs", payload);
+        // Feb-2026 · Phase — Recommended Schedule auto-assign v1.
+        // Backend returns ``auto_assign_info`` on create so we can
+        // pick the toast variant without a second round-trip.
+        const created = await api.post("/recurring-jobs", payload);
+        const info = created?.auto_assign_info || {};
+        if (info.auto_assigned) {
+          const dowName = DOW[info.day_of_week] || "the assigned day";
+          toast.success(
+            `Assigned to ${info.technician_name || "a technician"} ` +
+            `on ${dowName} based on route proximity`,
+            { duration: 4500 },
+          );
+        } else if (info.reason === "no_geocode") {
+          toast(
+            "Created — no coordinates on customer, please assign manually",
+            { duration: 4500 },
+          );
+        } else if (info.reason === "no_existing_routes") {
+          toast(
+            "Created without auto-assign — no existing routes for this frequency yet",
+            { duration: 4500 },
+          );
+        }
+        // ``manual_override`` and any other reason → no extra toast;
+        // the create itself is the confirmation.
       }
       setModalOpen(false); setEditing(null);
       await load();
@@ -365,6 +390,21 @@ export default function RecurringJobs() {
                             style={{ background: "#FEF3C7", color: "#92400E" }}
                             data-testid={`recurring-job-inactive-badge-${r.id}`}>
                         Inactive
+                      </span>
+                    ) : null}
+                    {/* Feb-2026 · Recommended Schedule auto-assign v1.
+                        Persistent breadcrumb — this template was
+                        placed by the route-proximity centroid pick,
+                        not by a human choosing a tech/day. Tooltip
+                        surfaces the extra-drive-time estimate. */}
+                    {r.auto_assigned ? (
+                      <span
+                        className="inline-flex items-center gap-1 ml-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                        style={{ background: "#DBEAFE", color: "#1E3A8A" }}
+                        title={`via route proximity · +${r.auto_assign_extra_minutes || 0}m extra drive time`}
+                        data-testid={`recurring-job-auto-assign-badge-${r.id}`}
+                      >
+                        <Sparkles size={9} /> Auto-assigned
                       </span>
                     ) : null}
                   </td>

@@ -170,13 +170,15 @@ def _parse_date(s: Optional[str]) -> Optional[date]:
         return None
 
 
-def _validate(body: RecurringJobIn | RecurringJobPatch) -> None:
+def _validate(body: RecurringJobIn | RecurringJobPatch,
+               skip_dow_gate: bool = False) -> None:
     freq = body.frequency
     if freq is not None and freq not in VALID_FREQ:
         raise HTTPException(422, f"frequency must be one of {sorted(VALID_FREQ)}")
     if freq == "custom" and not body.interval_days:
         raise HTTPException(422, "interval_days is required for custom frequency")
-    if freq in ("weekly", "biweekly") and body.day_of_week is None:
+    if freq in ("weekly", "biweekly") and body.day_of_week is None \
+            and not skip_dow_gate:
         raise HTTPException(422, "day_of_week (0=Mon…6=Sun) is required for weekly/biweekly")
     if freq == "monthly":
         # Feb-2026 · monthly can be classic day-of-month or nth-weekday.
@@ -438,7 +440,63 @@ async def _ensure_indexes():
 async def create_recurring(body: RecurringJobIn,
                              user: dict = Depends(require_admin_or_manager),
                              tenant: dict = Depends(get_current_tenant)):
-    _validate(body)
+    # Feb-2026 · Phase — Recommended Schedule auto-assign v1.
+    # Detect the trigger BEFORE ``_validate`` runs so the weekly/
+    # biweekly day-of-week gate doesn't reject a payload we're
+    # about to auto-fill. When the caller left BOTH the tech and
+    # the day unset, we try to hug an existing route slot; a
+    # successful pick mutates the body so downstream code sees a
+    # fully-populated shape.
+    def _empty(v):
+        return v is None or (isinstance(v, str) and not v.strip())
+    _wants_auto_assign = (_empty(body.assigned_tech_id)
+                             and _empty(body.crew_id)
+                             and body.day_of_week is None)
+    auto: Dict[str, Any] = {"auto_assigned": False,
+                              "reason": "manual_override",
+                              "assigned_tech_id": None,
+                              "day_of_week": None,
+                              "technician_name": None,
+                              "extra_minutes": 0,
+                              "source_meters": 0}
+    if _wants_auto_assign:
+        try:
+            from services.recurring_jobs.route_proximity import (
+                compute_route_proximity_assignment,
+            )
+            auto = await compute_route_proximity_assignment(
+                tenant_id=tenant["id"], body=body.dict(),
+            )
+        except Exception as _aa_exc:                            # noqa: BLE001
+            logger.warning("[auto-assign] compute failed: %s", _aa_exc)
+            auto = {"auto_assigned": False,
+                     "reason": "internal_error",
+                     "assigned_tech_id": None,
+                     "day_of_week": None,
+                     "technician_name": None,
+                     "extra_minutes": 0,
+                     "source_meters": 0}
+        if auto.get("auto_assigned"):
+            # Mutate the incoming body so ``_validate`` sees the
+            # freshly-filled tech + day and the doc composition
+            # below persists them.
+            body.assigned_tech_id = auto["assigned_tech_id"]
+            body.day_of_week = auto["day_of_week"]
+
+    # ── Validation ─────────────────────────────────────────────────
+    # Skip only the weekly/biweekly day-of-week gate when auto-
+    # assign was attempted (even if it fell through — spec §2 says
+    # the record persists without a tech/day in that case). All
+    # other validation still runs.
+    if _wants_auto_assign and not auto.get("auto_assigned") \
+            and body.frequency in ("weekly", "biweekly") \
+            and body.day_of_week is None:
+        # Auto-assign wanted to fill in the day + tech but the
+        # window was empty (no peer routes / no geocode). Persist
+        # the record anyway per spec §2 — skip only the DOW gate.
+        _validate(body, skip_dow_gate=True)
+    else:
+        _validate(body)
     # Feb-2026 · Recurring Jobs · is_active gate. On create,
     # ``start_date`` is already required by ``RecurringJobIn`` so
     # this is only a defense-in-depth pair-check for callers that
@@ -458,6 +516,7 @@ async def create_recurring(body: RecurringJobIn,
     # to avoid a follow-up crew lookup).
     crew = await _resolve_crew_ref(tenant["id"], body.crew_id)
     doc = body.dict()
+
     # Feb-2026 · Never-end intent overrides end_date. If the caller
     # said "runs until manually stopped", clear the end date so the
     # generator walks forever.
@@ -477,9 +536,30 @@ async def create_recurring(body: RecurringJobIn,
         "created_at": now_iso(),
         "updated_at": now_iso(),
         "created_by": user["id"],
+        # Feb-2026 · Recommended Schedule auto-assign v1 —
+        # persistent breadcrumbs so the list + detail views can
+        # render the "Auto-assigned via route proximity" badge
+        # without a follow-up call. See
+        # ``memory/FEATURE_RECOMMEND_SCHEDULE_AUTO_ASSIGN.md``.
+        "auto_assigned": bool(auto.get("auto_assigned")),
+        "auto_assign_reason": auto.get("reason"),
+        "auto_assign_extra_minutes": int(auto.get("extra_minutes") or 0),
+        "auto_assign_source_meters": int(auto.get("source_meters") or 0),
     })
     await db.recurring_job_templates.insert_one(doc)
     doc.pop("_id", None)
+    # Attach the client-only ``auto_assign_info`` bundle so the
+    # frontend can pick the toast variant + render the badge in one
+    # round-trip. Kept out of the persisted doc so the DB shape
+    # stays flat.
+    doc["auto_assign_info"] = {
+        "auto_assigned": bool(auto.get("auto_assigned")),
+        "reason": auto.get("reason"),
+        "technician_id": auto.get("assigned_tech_id"),
+        "technician_name": auto.get("technician_name"),
+        "day_of_week": auto.get("day_of_week"),
+        "extra_minutes": int(auto.get("extra_minutes") or 0),
+    }
     return doc
 
 
