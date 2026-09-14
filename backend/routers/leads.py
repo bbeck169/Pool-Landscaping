@@ -74,6 +74,33 @@ _VALID_SOURCES = {
 _VALID_INTERESTS = {"Pool", "Landscape", "Both"}
 _INBOUND_MANAGER_ROLES = {"admin", "super_admin", "manager"}
 
+# Feb-2026 · Public-lead form widened acceptance. The historical
+# whitelist above silently coerced any interest string outside
+# {"Pool","Landscape","Both"} to ``null`` — new form copy uses
+# free-form phrases like "Pool cleaning" or "Landscape design +
+# monthly maintenance", so the coercion truncates real intent.
+# ``_normalize_interest`` keeps the enum accept-list for the
+# common cases (short badge rendering + segment reporting) but
+# passes any non-empty free-form string through verbatim (bounded
+# to 120 chars to keep the ``leads`` column indexable).
+_INTEREST_MAX_LEN = 120
+
+
+def _normalize_interest(raw: Optional[str]) -> Optional[str]:
+    """Return the caller's ``service_interest`` verbatim when set,
+    truncated to 120 chars. Empty / whitespace-only → ``None``.
+
+    Historical enum coercion is gone (see the ``_VALID_INTERESTS``
+    docstring above). The frontend memo promised verbatim
+    persistence — this helper is what makes that true.
+    """
+    if not raw:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    return s[:_INTEREST_MAX_LEN]
+
 
 def _normalize_status(raw: Optional[str]) -> str:
     """Phase 34 · Task CC — every lead-status write funnels through here.
@@ -291,9 +318,8 @@ async def create_lead(body: LeadIn,
     src = (body.source or "admin_manual").strip()
     if src not in _VALID_SOURCES:
         src = "admin_manual"
-    interest = body.service_interest
-    if interest and interest not in _VALID_INTERESTS:
-        interest = None
+    # Feb-2026 · widened acceptance — see ``_normalize_interest``.
+    interest = _normalize_interest(body.service_interest)
     doc = body.dict()
     doc.update({
         "id": new_id(),
@@ -1200,9 +1226,8 @@ async def public_lead_intake(body: PublicLeadIn,
         raise HTTPException(400, "Name is required")
     if not (body.email or "").strip() and not (body.phone or "").strip():
         raise HTTPException(400, "One of email or phone is required")
-    interest = body.service_interest
-    if interest and interest not in _VALID_INTERESTS:
-        interest = None
+    # Feb-2026 · widened acceptance — see ``_normalize_interest``.
+    interest = _normalize_interest(body.service_interest)
 
     now = now_iso()
     lid = new_id()

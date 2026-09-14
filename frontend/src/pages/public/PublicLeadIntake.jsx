@@ -119,7 +119,10 @@ export default function PublicLeadIntake() {
             </button>
           </div>
         ) : (
-          <form onSubmit={submit} className="bg-white rounded-xl shadow p-6 space-y-4" data-testid="public-lead-form">
+          <form onSubmit={submit}
+                    noValidate
+                    className="bg-white rounded-xl shadow p-6 space-y-4"
+                    data-testid="public-lead-form">
             <div>
               <label className="text-xs font-medium text-slate-600">Your name *</label>
               <input value={name} onChange={(e) => setName(e.target.value)}

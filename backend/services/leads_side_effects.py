@@ -41,21 +41,50 @@ _PHX = ZoneInfo("America/Phoenix")
 # US state abbreviation regex — pulls the 2-letter code out of a
 # free-form address if the caller didn't supply it separately. We
 # accept 3+ digit ZIPs before/after, comma separators, etc.
+# Feb-2026 · Tightened tail-of-address matching. The previous
+# heuristic matched ANY 2 uppercase letters at end-of-string, which
+# turned "123 Test St" → state "ST" (a street-suffix false
+# positive that auto-rejected legitimate leads). The parser now:
+#   1. Matches against the RAW address (preserves case) so only
+#      real uppercase codes match; street suffixes typed in title
+#      case ("St", "Ave", "Rd") no longer trip the tail branch.
+#   2. Validates the captured code against a whitelist of real US
+#      state abbreviations. "ST" / "AV" / "RD" / "PL" etc. are
+#      all NOT states and are dropped.
 _STATE_RE = re.compile(r"\b([A-Z]{2})\b(?=\s+\d{5}|\s*,?\s*\d{5}|\s*$)")
+
+_US_STATE_CODES = frozenset({
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "DC",
+})
 
 
 def _extract_state(lead: Dict[str, Any]) -> Optional[str]:
     """Extract a 2-letter US state code from the lead's stored state
     field or from the tail of the free-form service_address. Returns
-    uppercase or None when nothing plausible found."""
+    uppercase or None when nothing plausible found.
+
+    Feb-2026 hardening — the free-form parse runs against the RAW
+    address (case preserved) AND the captured token is validated
+    against ``_US_STATE_CODES``. Any 2-letter word boundary that
+    isn't a real state (e.g. street suffixes like "St", "Rd", or
+    typos like "SW") is dropped so it can never auto-reject a
+    legitimate lead."""
     explicit = (lead.get("state") or "").strip().upper()
-    if len(explicit) == 2 and explicit.isalpha():
+    if len(explicit) == 2 and explicit.isalpha() and explicit in _US_STATE_CODES:
         return explicit
-    addr = (lead.get("service_address") or lead.get("address") or "").upper()
+    addr = (lead.get("service_address") or lead.get("address") or "")
     if not addr:
         return None
     m = _STATE_RE.search(addr)
-    return m.group(1) if m else None
+    if not m:
+        return None
+    code = m.group(1).upper()
+    return code if code in _US_STATE_CODES else None
 
 
 async def _tenant_config(tenant_id: str) -> Dict[str, Any]:

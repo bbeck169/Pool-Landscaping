@@ -11,6 +11,7 @@ Street Address input replaced the old free-text "Service address" field:
 - **Visible label** — `<label htmlFor="address">Street Address <span aria-hidden>*</span></label>`.
 - **Semantic attributes** — `id="address"`, `name="address"`, `type="text"`, `required`, `minLength={3}`, `autoComplete="street-address"`, `aria-label="Street Address"`, `aria-required="true"`, `aria-invalid={boolean}`, `aria-describedby="address-error"` when the error renders.
 - **Client validation** — submit blocks when the trimmed value is under 3 chars. Error surfaced via a `role="alert"` div right beneath the input (`data-testid="lead-form-address-error"`). Error auto-clears the moment the visitor types.
+- **Feb-2026 · tester follow-up** — the `<form>` now carries `noValidate` so the JS-driven validation path runs. The browser's native HTML5 constraint validation would otherwise fire first and short-circuit `setAddressErr(...)`, preventing the custom `lead-form-address-error` element from ever rendering in a real browser (the input's `required` + `minLength={3}` attributes stay in place for screen-reader announcement).
 - **Testids** — `lead-form-address-input`, `lead-form-address-error`, `lead-form-service-interest`. Legacy `public-lead-address` was replaced (only referenced by the old shape).
 
 ### Wire keys
@@ -42,6 +43,56 @@ The hidden `<input name="service_interest" data-testid="lead-form-service-intere
 **Persistence** — `lead_row_from_form_values` (public-form insert path) materializes both `address` and `service_address` on the `leads` row plus the canonical `service_interest`. Locked by pytest.
 
 **Precedence rule (documented)** — when a structured `address` field AND a free-text `notes` field are both present on the payload, the structured field wins. The notes stay preserved verbatim under the `message` column but never influence `address`. `test_explicit_address_wins_over_freeform_notes_heuristic` locks this.
+
+## Feb-2026 · Tester follow-up patches (`backend/routers/leads.py` + `backend/services/leads_side_effects.py`)
+
+Two backend follow-ups landed after the initial ship:
+
+### `service_interest` whitelist widened
+
+Historical code at `routers/leads.py:1204` silently coerced any interest string outside `{"Pool", "Landscape", "Both"}` to `null`. The original memo promised verbatim persistence — the enum coercion truncated real intent (e.g. "Pool cleaning", "Landscape design + monthly maintenance") to nothing.
+
+**Fix** — new `_normalize_interest(raw)` helper:
+- Empty / whitespace-only → `None`.
+- Any non-empty free-form string → passed through verbatim, trimmed, and capped at **120 chars** so the `leads.service_interest` column stays indexable.
+- Legacy enum values (`Pool` / `Landscape` / `Both`) continue to land unchanged.
+
+Both public-form (line 1229 → single call to `_normalize_interest`) AND admin-manual (line 321) paths now share the helper. `_VALID_INTERESTS` set retained for report/segment aggregation but is no longer a hard gate.
+
+### Address state-parser tightened
+
+`services/leads_side_effects.py::_extract_state` previously uppercased the whole address before matching `\b([A-Z]{2})\b(?=…\s*$)`, which promoted title-case street suffixes to "state codes":
+
+```
+"123 Test St" → uppercased → "123 TEST ST" → tail matches ``ST`` → rejected_state="ST"
+```
+
+Every lead whose visitor typed a simple street with no state token got auto-rejected as out-of-state.
+
+**Fix** — two guards:
+1. The regex now runs against the **raw address** (case preserved) so title-case suffixes (`"St"`, `"Ave"`, `"Rd"`) never match `[A-Z]{2}` to begin with.
+2. Any captured 2-letter token is then validated against a whitelist `_US_STATE_CODES` (50 states + DC). Non-state uppercase tokens (`"ST"`, `"ZZ"`, `"XX"`) are dropped, so even a shouty visitor who types `"123 MAIN ST"` never fires the auto-reject.
+3. The `explicit state` field on the lead doc gets the same whitelist treatment — a bad admin entry of `"XX"` can no longer quietly auto-reject the lead.
+
+Locked by 8 new pytest cases parametrized across the six most-common street suffixes.
+
+### Curl recipe (updated)
+
+The tester recipe now works end-to-end — free-form interest + street-only address don't trigger either failure mode:
+
+```bash
+API_URL=https://<host>
+curl -s -X POST "$API_URL/api/public/leads" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name":             "Jane Doe",
+    "email":            "jane@example.com",
+    "address":          "123 Test St",
+    "service_interest": "Pool cleaning"
+  }' | python3 -m json.tool
+```
+
+Expected: 200 · lead persisted with `address == "123 Test St"`, `service_interest == "Pool cleaning"`, `status != "rejected"` (no `rejected_state` on the doc).
 
 ## Curl recipe (for the tester)
 

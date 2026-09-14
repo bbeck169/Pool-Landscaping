@@ -178,9 +178,22 @@
   list-style: none;
   margin: 12px 0 4px;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  /* Feb-2026 · Public estimate viewer — line-item duplication fix.
+     ``display: flex`` used to be declared unconditionally here,
+     which won on specificity ties against Tailwind's
+     ``.sm\:hidden { display: none }`` (same specificity, later
+     declaration wins). Result: at ≥640px the desktop table AND
+     the mobile card list both rendered, doubling every row on
+     public magic-link estimates. Scope the flex layout inside
+     the mobile media query so the cards inherit ``display: none``
+     from ``sm:hidden`` at desktop widths. */
+}
+@media (max-width: 639.98px) {
+  .ev-lines-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
 }
 .ev-line-card {
   border: 1px solid #E5E7EB;
