@@ -45,6 +45,8 @@ import SoshiePublishingTile from "@/components/admin/SoshiePublishingTile";
 import CrewProductivityTile from "@/components/admin/CrewProductivityTile";
 // Feb-2026 · UX Polish Batch B — Routing Cost telemetry tile.
 import RoutingCostTile from "@/components/admin/RoutingCostTile";
+// Feb-2026 · Polish bundle Item 3 — Warranties nearing expiration tile.
+import WarrantiesExpiringTile from "@/components/admin/WarrantiesExpiringTile";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -637,6 +639,15 @@ export default function AdminDashboard() {
       {["super_admin", "admin", "owner"].includes(user?.role) ? (
         <div className="mb-6">
           <RoutingCostTile />
+        </div>
+      ) : null}
+
+      {/* Feb-2026 · Polish bundle Item 3 — Warranties nearing expiration.
+          Admin+/super_admin only; hides itself when zero contracts
+          are within the 30-day window. */}
+      {["super_admin", "admin", "owner"].includes(user?.role) ? (
+        <div className="mb-6">
+          <WarrantiesExpiringTile />
         </div>
       ) : null}
 

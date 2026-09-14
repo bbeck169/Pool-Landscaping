@@ -1,3 +1,36 @@
+## Iteration 89 — Mobile Polish: Equipment Library Jest + Warranty CRUD v1.5
+- **Commit**: 6727f4e4
+- **Date**: 2026-09-14
+- **Changes**:
+  - Item 1: Created `__tests__/customer-equipment-units.test.tsx` — 7 passing tests covering empty state, card fields, add form, submit payload, photo thumbs, delete confirmation, delete API call
+  - Item 2: Upgraded WarrantyCard with optional `onEdit`/`onDelete` props for action buttons
+  - Item 2: Rewrote CustomerWarrantiesSection with full CRUD: Add/Edit modal (contract name, provider, coverage dates, linked entity type/id dependent picker, notes), delete with confirmation modal
+  - Item 2: Portal warranties stays read-only per v1.5 scope
+  - Item 2: Added 4 new CRUD warranty tests (total 9)
+  - Updated memos: `FEATURE_CUSTOMER_EQUIPMENT_LIBRARY_MOBILE.md` (Jest summary), created `FEATURE_WARRANTY_CONTRACTS_MOBILE_V1_5.md`
+- **Files modified**: `WarrantyCard.tsx`, `CustomerWarrantiesSection.tsx` (rewrite), `warranty-contracts-mobile.test.tsx`, new `customer-equipment-units.test.tsx`
+- **Test results**: 16 tests passing (7 equipment + 9 warranty)
+
+
+## Iteration 88 — Multi-industry Phase D (Mobile Parity)
+- **Commit**: 6727f4e4
+- **Date**: 2026-09-14
+- **Changes**:
+  - Created `src/config/industries.ts` — 25-slug enum + labels (byte-parallel to web)
+  - Created `src/hooks/useIndustries.ts` — hook with module-scope cache via `GET /api/tenants/current`
+  - Created `src/components/tenant/TenantIndustryBadges.tsx` — ≤4 inline chips, >4 overflow
+  - Created `src/components/settings/IndustriesSettings.tsx` — 25-toggle auto-save list
+  - Created `app/settings/industries.tsx` — full-page industries settings screen
+  - Modified `src/nav/adminNav.ts` — added `industry` tag on Pool Service + Landscape AI, added `filterNavByIndustries()` helper
+  - Modified `app/(app)/more.tsx` — wired industry filter before RBAC in DrawerGroup
+  - Modified `app/settings/index.tsx` — added Industries link in General tab
+  - Modified `app/settings/tenant.tsx` — mounted TenantIndustryBadges
+  - Created `__tests__/multi-industry-phase-d.test.tsx` — 10 passing tests
+  - Written `/app/memory/FEATURE_MULTI_INDUSTRY_PHASE_D.md`
+- **Files modified**: 10 files (6 new, 4 modified)
+- **Web files referenced**: `frontend/src/config/industries.js`, `frontend/src/hooks/useIndustries.js`, `frontend/src/components/tenant/TenantIndustryBadges.jsx`, `frontend/src/nav/adminNav.js`
+
+
 ## Iteration 87 — Warranty Contracts (Mobile Parity, Read-Only v1)
 - **Commit**: a345eefc
 - **Date**: 2026-09-14

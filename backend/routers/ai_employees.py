@@ -28,7 +28,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from config import db, logger, EMERGENT_LLM_KEY
@@ -871,6 +871,81 @@ async def send_message(eid: str, cid: str, body: MessageIn,
         # pick whichever surface fits their UI.  Empty list means the
         # tenant has no matching KB docs (or an empty KB entirely).
         "sources": kb_sources,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase Feb-2026 · Polish bundle — AI RAG "Top KB docs cited" tile.
+#
+# Read-only observability. Aggregates the ``sources[]`` array baked
+# onto every ``ai_employee_messages`` assistant row by the KB RAG
+# retrieval pass (see FEATURE_AI_EMPLOYEES_KB_RAG.md § Response
+# payload delta). Grouped by ``doc_id``, ordered by citation count
+# desc, with last-cited-at derived from the newest assistant row
+# for that doc.
+#
+# Empty telemetry (tenants with no chats, no matching sources, or
+# an empty KB) returns ``items=[]`` — no dedicated citations
+# collection exists in this phase, so the endpoint is intentionally
+# read-only against the message log. If a future phase adds a
+# write-side `ai_kb_citations` collection, this handler can flip to
+# querying that store without changing the response shape.
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/ai/kb/citations/top")
+async def top_kb_citations(
+    days: int = Query(7, ge=1, le=365),
+    limit: int = Query(10, ge=1, le=50),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return the top-N most-cited KB docs for the tenant in the
+    last ``days`` window. Admin+/super_admin only."""
+    until_dt = datetime.now(timezone.utc)
+    since_dt = until_dt - timedelta(days=days)
+    since_iso = since_dt.isoformat()
+    until_iso = until_dt.isoformat()
+
+    pipeline = [
+        {"$match": {
+            "tenant_id": tenant["id"],
+            "role": "assistant",
+            "created_at": {"$gte": since_iso},
+            "sources": {"$exists": True, "$ne": []},
+        }},
+        {"$unwind": "$sources"},
+        {"$match": {"sources.doc_id": {"$ne": None}}},
+        {"$group": {
+            "_id": "$sources.doc_id",
+            "doc_title": {"$last": "$sources.title"},
+            "citations": {"$sum": 1},
+            "last_cited_at": {"$max": "$created_at"},
+        }},
+        {"$sort": {"citations": -1, "last_cited_at": -1}},
+        {"$limit": limit},
+    ]
+    try:
+        rows = await db.ai_employee_messages.aggregate(pipeline).to_list(limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            f"[ai.kb.citations] aggregate failed tenant={tenant['id']}: {exc}"
+        )
+        rows = []
+
+    items = [
+        {
+            "doc_id": r.get("_id"),
+            "doc_title": r.get("doc_title") or "",
+            "citations": int(r.get("citations") or 0),
+            "last_cited_at": r.get("last_cited_at"),
+        }
+        for r in rows
+    ]
+    return {
+        "items": items,
+        "days": days,
+        "since": since_iso,
+        "until": until_iso,
     }
 
 

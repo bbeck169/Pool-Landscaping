@@ -321,6 +321,108 @@ async def list_contracts(customer_id: Optional[str] = None,
     return {"items": rows, "total": len(rows)}
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Phase Feb-2026 · Polish bundle — Warranties nearing expiration.
+#
+# Admin dashboard tile source. Filters ``warranty_contracts`` for
+# rows still active whose ``end_date`` falls within the caller's
+# window (default 30 days). Sorted by ``end_date`` ASC so the most
+# imminent expiration is first. Soft-deleted / cancelled / renewed
+# rows are excluded via a ``status == "active"`` guard.
+# ═══════════════════════════════════════════════════════════════════
+
+def _short_id(s: Any) -> str:
+    if not s:
+        return ""
+    s = str(s)
+    return s[:4] if len(s) <= 8 else s[-4:]
+
+
+def _equipment_summary(eq: Dict[str, Any]) -> str:
+    parts = [eq.get("equipment_type") or "Equipment"]
+    tail = " ".join(p for p in [eq.get("brand"), eq.get("model")]
+                    if p and str(p).strip())
+    label = parts[0]
+    if tail:
+        label = f"Equipment: {parts[0]} {tail}".strip()
+    else:
+        label = f"Equipment: {parts[0]}".strip()
+    return label
+
+
+async def _linked_summary_string(linked_type: Optional[str],
+                                    linked_id: Optional[str],
+                                    tenant_id: str) -> Optional[str]:
+    """Short human string used by the warranties-expiring tile.
+
+    ``install``   → "Install job #<short_id>"
+    ``equipment`` → "Equipment: <type> <brand> <model>"
+    unlinked      → None (omitted from response so the UI can hide
+    the summary chip cleanly).
+    """
+    if not linked_id or linked_type in (None, "", "none"):
+        return None
+    if linked_type == "install":
+        return f"Install job #{_short_id(linked_id)}"
+    if linked_type == "equipment":
+        eq = await db.customer_equipment.find_one(
+            {"id": linked_id, "tenant_id": tenant_id},
+            {"_id": 0, "equipment_type": 1, "brand": 1, "model": 1},
+        )
+        if not eq:
+            return None
+        return _equipment_summary(eq)
+    return None
+
+
+@router.get("/warranties/expiring-soon")
+async def warranties_expiring_soon(
+    days: int = Query(30, ge=1, le=365),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Contracts still active whose ``end_date`` is within the next
+    ``days``. Sorted by earliest expiration first. Admin+/super_admin.
+    """
+    today = datetime.now(timezone.utc).date()
+    end_iso = (today + timedelta(days=days)).isoformat()
+    today_iso = today.isoformat()
+
+    q: Dict[str, Any] = {
+        "tenant_id": tenant["id"],
+        "status": "active",
+        "is_deleted": {"$ne": True},
+        "end_date": {"$gte": today_iso, "$lte": end_iso},
+    }
+    rows = await db.warranty_contracts.find(q, {"_id": 0}) \
+        .sort("end_date", 1).to_list(500)
+
+    items: List[Dict[str, Any]] = []
+    for r in rows:
+        try:
+            end_d = datetime.strptime(str(r.get("end_date"))[:10],
+                                        "%Y-%m-%d").date()
+            days_remaining = (end_d - today).days
+        except Exception:
+            days_remaining = None
+        entry: Dict[str, Any] = {
+            "id": r.get("id"),
+            "contract_name": r.get("plan_name_snapshot") or "Warranty",
+            "customer_id": r.get("customer_id"),
+            "customer_name": r.get("customer_name_snapshot") or "",
+            "provider": r.get("plan_kind_snapshot") or "",
+            "coverage_end": r.get("end_date"),
+            "days_remaining": days_remaining,
+        }
+        summary = await _linked_summary_string(
+            r.get("linked_type"), r.get("linked_id"), tenant["id"],
+        )
+        if summary:
+            entry["linked_summary"] = summary
+        items.append(entry)
+    return {"items": items, "days": days}
+
+
 @router.post("/warranties/contracts")
 async def create_contract(body: ContractIn,
                               user: dict = Depends(require_admin),

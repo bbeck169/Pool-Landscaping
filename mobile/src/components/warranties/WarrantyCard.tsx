@@ -1,12 +1,14 @@
 /**
- * WarrantyCard — read-only card for a single warranty contract.
+ * WarrantyCard — card for a single warranty contract.
  *
  * Shared by the portal warranties screen and the admin/tech customer
  * detail section. Renders contract_name, provider, coverage window,
  * and the optional linked_summary chip.
+ *
+ * v1.5: accepts optional onEdit / onDelete for admin CRUD.
  */
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
@@ -49,16 +51,20 @@ export default function WarrantyCard({
   warranty,
   index,
   testIdPrefix = "warranty",
+  onEdit,
+  onDelete,
 }: {
   warranty: WarrantyContract;
   index: number;
   testIdPrefix?: string;
+  onEdit?: (w: WarrantyContract) => void;
+  onDelete?: (w: WarrantyContract) => void;
 }) {
   const expired = isExpired(warranty.coverage_end);
 
   return (
     <View style={s.card} testID={`${testIdPrefix}-card-${index}`}>
-      {/* Header: contract name */}
+      {/* Header: contract name + actions */}
       <View style={s.cardHeader}>
         <Ionicons name="shield-checkmark-outline" size={18} color={expired ? colors.muted : colors.brand} />
         <Text
@@ -73,6 +79,20 @@ export default function WarrantyCard({
             <Text style={s.expiredBadgeText}>EXPIRED</Text>
           </View>
         )}
+        {(onEdit || onDelete) ? (
+          <View style={s.cardActions}>
+            {onEdit ? (
+              <Pressable onPress={() => onEdit(warranty)} hitSlop={8} testID={`${testIdPrefix}-edit-btn-${index}`}>
+                <Ionicons name="create-outline" size={18} color={colors.brand} />
+              </Pressable>
+            ) : null}
+            {onDelete ? (
+              <Pressable onPress={() => onDelete(warranty)} hitSlop={8} testID={`${testIdPrefix}-delete-btn-${index}`}>
+                <Ionicons name="trash-outline" size={18} color="#B91C1C" />
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
       </View>
 
       {/* Provider */}
@@ -135,6 +155,11 @@ const s = StyleSheet.create({
   },
   cardNameExpired: {
     color: colors.muted,
+  },
+  cardActions: {
+    flexDirection: "row",
+    gap: spacing.md,
+    marginLeft: spacing.sm,
   },
   expiredBadge: {
     paddingHorizontal: 6,

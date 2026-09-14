@@ -11,6 +11,8 @@ import { Plus, Save, Trash2, Sparkles, TrendingUp, PlusCircle, Bell,
 import { api } from "@/api";
 import { colors } from "@/theme";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
+// Feb-2026 · Polish bundle Item 2 — Top KB docs cited tile.
+import TopKBCitationsTile from "@/components/admin/TopKBCitationsTile";
 
 const KIND_OPTIONS = [
   { key: "company_profile", label: "Company profile" },
@@ -114,6 +116,8 @@ export default function AIBrainPage() {
       </div>
 
       <WeeklyAIEmployeesSummary />
+
+      <TopKBCitationsTile />
 
       <TopQuestionsWidget onSaveToKnowledge={async (q) => {
         try {

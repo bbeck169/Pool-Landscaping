@@ -32,6 +32,7 @@ export type NavEntry = {
   icon: string;          // Ionicons name
   tier: NavTier;
   roles?: NavRole[];     // if omitted → all three admin-like roles
+  industry?: string;     // Phase D — if set, entry requires this industry in tenant.industries[]
   testID: string;
 };
 
@@ -140,13 +141,13 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Avg Job Time",       route: "/avg-job-time",         icon: "bar-chart-outline",    tier: "t1", testID: "drawer-nav-avg-job-time" },
       { label: "Log History",        route: "/log-history",          icon: "list-outline",         tier: "t1", testID: "drawer-nav-log-history" },
       { label: "Maintenance",        route: "/maintenance",          icon: "construct-outline",    tier: "t1", testID: "drawer-nav-maintenance" },
-      { label: "Pool Service",       route: "/pool-service",         icon: "water-outline",        tier: "t1", testID: "drawer-nav-pool-service" },
+      { label: "Pool Service",       route: "/pool-service",         icon: "water-outline",        tier: "t1", industry: "pools", testID: "drawer-nav-pool-service" },
       { label: "Equipment",          route: "/equipment",            icon: "hammer-outline",       tier: "t1", testID: "drawer-nav-equipment" },
       { label: "Price Book",         route: "/price-book",           icon: "pricetags-outline",    tier: "t1", testID: "drawer-nav-price-book" },
       { label: "Handbook",           route: "/handbook",             icon: "book-outline",         tier: "t1", testID: "drawer-nav-handbook" },
       { label: "Time Off",           route: "/time-off",             icon: "leaf-outline",         tier: "t1", testID: "drawer-nav-time-off" },
       { label: "Time Off Approvals", route: "/admin/time-off",       icon: "checkmark-done-outline", tier: "t2", testID: "drawer-nav-time-off-admin" },
-      { label: "Landscape AI",       route: "/landscape",            icon: "leaf-outline",         tier: "t1", testID: "drawer-nav-landscape" },
+      { label: "Landscape AI",       route: "/landscape",            icon: "leaf-outline",         tier: "t1", industry: "landscaping", testID: "drawer-nav-landscape" },
       { label: "CAD Studio",         route: "/cad",                  icon: "cube-outline",         tier: "t1", testID: "drawer-nav-cad" },
       { label: "Satellite Measure",  route: "/measure",              icon: "resize-outline",       tier: "t1", testID: "drawer-nav-measure" },
       { label: "Virtual Bid",        route: "/virtual-bid",          icon: "cash-outline",         tier: "t1", testID: "drawer-nav-virtual-bid" },
@@ -277,6 +278,22 @@ export const ADMIN_NAV: NavGroup[] = [
     ],
   },
 ];
+
+// ── Phase D — Industry gate helper ─────────────────────────────────
+//
+// Mirrors ``frontend/src/nav/adminNav.js::filterNavByIndustries``.
+// Entries with an ``industry`` tag are hidden unless the tenant's
+// ``industries[]`` includes that slug.
+//
+// Fail-open: if ``industries`` is empty or non-array, all entries pass
+// (prevents a blank drawer during migration rollout).
+export function filterNavByIndustries(
+  entries: NavEntry[],
+  industries: string[],
+): NavEntry[] {
+  if (!Array.isArray(industries) || industries.length === 0) return entries;
+  return entries.filter((e) => !e.industry || industries.includes(e.industry));
+}
 
 // Convenience — flat list for validation/tests.
 export const FLAT_ENTRIES: NavEntry[] = [

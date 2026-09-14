@@ -17,7 +17,8 @@ import { getDiagnostics, formatDiagnostics, clearDiagnostics } from "@/src/utils
 // Renders the ``QUICK_ACCESS`` shortcut group + the eight canonical
 // admin groups from a single source of truth so parity edits are a
 // one-file change.
-import { ADMIN_NAV, QUICK_ACCESS, canSeeEntry, type NavEntry, type NavGroup } from "@/src/nav/adminNav";
+import { ADMIN_NAV, QUICK_ACCESS, canSeeEntry, filterNavByIndustries, type NavEntry, type NavGroup } from "@/src/nav/adminNav";
+import { useIndustries } from "@/src/hooks/useIndustries";
 
 export default function More() {
   const { user, logout } = useAuth();
@@ -31,6 +32,7 @@ export default function More() {
   const showAdminSection = isAdmin || isSuperAdmin || isMarketing;
   const showSeoSection = isAdmin || isSuperAdmin;
   const roleLabel = user?.role === "admin" ? "Administrator" : user?.role === "customer" ? "Customer" : "Technician";
+  const { industries } = useIndustries();
 
   // Landscape AI, CAD Design Studio, Measure (Satellite), and Virtual Bid are admin-only
   // and intentionally omitted from the technician nav.
@@ -158,11 +160,11 @@ export default function More() {
         {showAdminSection ? (
           <>
             {/* Quick-Access shortcut group (top of drawer) */}
-            <DrawerGroup group={QUICK_ACCESS} role={role} router={router} />
+            <DrawerGroup group={QUICK_ACCESS} role={role} router={router} industries={industries} />
 
             {/* Eight canonical admin groups mirroring web sidebar order */}
             {ADMIN_NAV.map((g) => (
-              <DrawerGroup key={g.key} group={g} role={role} router={router} />
+              <DrawerGroup key={g.key} group={g} role={role} router={router} industries={industries} />
             ))}
           </>
         ) : null}
@@ -393,12 +395,14 @@ const styles = StyleSheet.create({
 
 // ── Data-driven drawer render (Feb-2026 parity) ────────────────────
 
-function DrawerGroup({ group, role, router }: {
+function DrawerGroup({ group, role, router, industries }: {
   group: NavGroup;
   role: string;
   router: ReturnType<typeof useRouter>;
+  industries: string[];
 }) {
-  const visible = group.entries.filter((e) => canSeeEntry(role, e));
+  const industryFiltered = filterNavByIndustries(group.entries, industries);
+  const visible = industryFiltered.filter((e) => canSeeEntry(role, e));
   if (visible.length === 0) return null;
   return (
     <View style={styles.section} testID={`drawer-group-${group.key}`}>

@@ -62,3 +62,18 @@ gated by `isAdminOrTech` role check.
 ## Dependencies
 No new dependencies required — uses existing `expo-image`, `expo-image-picker`,
 `@expo/vector-icons`, and the `src/api/files.ts` upload wrapper.
+
+
+## Jest Test Coverage (added Sep-2026)
+
+**File**: `__tests__/customer-equipment-units.test.tsx` — **7 tests passing**
+
+| # | Test | Assertion |
+|---|------|-----------|
+| 1 | Empty list state | Renders "No equipment recorded yet." when API returns `{ items: [] }` |
+| 2 | Card renders all fields | Type, brand, model, serial, install_date all present on card |
+| 3 | Add form opens | Pressing "Add Equipment" shows form modal with all inputs |
+| 4 | Submit payload | `POST /api/customer-equipment` receives correct payload shape with `customer_id` |
+| 5 | Photo thumbnails | Equipment with photos renders `equipment-photo-thumb-0/1` testIDs |
+| 6 | Delete confirmation | Delete button opens confirmation modal with Cancel/Delete buttons |
+| 7 | Delete API call | Confirming delete calls `DELETE /api/customer-equipment/{id}` |

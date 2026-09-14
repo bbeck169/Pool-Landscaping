@@ -60,7 +60,7 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import db, logger
 from utils import new_id, now_iso, require_admin_or_manager
@@ -68,6 +68,14 @@ from routers.tenants import get_current_tenant
 
 
 router = APIRouter(tags=["recurring_jobs_backfill"])
+
+
+# Phase Feb-2026 · Polish bundle — orphans preview ``?source=`` filter.
+# Callers can narrow the returned clusters to a single detection
+# pathway. Unknown values are rejected with 422 so a typo surfaces
+# loudly instead of silently returning the full list.
+_VALID_BACKFILL_SOURCES = ("structural", "keyword_match",
+                            "gap_inference", "default")
 
 
 # Phase Feb-2026 · Recurring-jobs backfill · keyword broaden.
@@ -316,15 +324,41 @@ async def _scan_orphans(tenant_id: str) -> List[Dict[str, Any]]:
 
 @router.get("/recurring-jobs/orphans")
 async def list_orphans(
+    source: Optional[str] = Query(
+        default=None,
+        description=(
+            "Optional filter — return only clusters whose "
+            "``backfill_source`` matches. "
+            f"One of {_VALID_BACKFILL_SOURCES}. Unknown values 422."
+        ),
+    ),
     user: dict = Depends(require_admin_or_manager),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Read-only preview of orphan clusters."""
+    """Read-only preview of orphan clusters.
+
+    ``?source=`` narrows the response to a single detection
+    pathway (structural / keyword_match / gap_inference / default).
+    Omitting the param preserves the pre-polish behaviour (all
+    clusters). Any other value returns 422 so a typo can't silently
+    return the unfiltered list.
+    """
+    if source is not None and source not in _VALID_BACKFILL_SOURCES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"recurring_jobs.orphans.invalid_source: source must be "
+                f"one of {_VALID_BACKFILL_SOURCES}"
+            ),
+        )
     rows = await _scan_orphans(tenant["id"])
+    if source is not None:
+        rows = [r for r in rows if r.get("backfill_source") == source]
     return {
         "orphan_count": len(rows),
         "total_occurrences": sum(r["occurrence_count"] for r in rows),
         "orphans": rows,
+        "source_filter": source,
     }
 
 

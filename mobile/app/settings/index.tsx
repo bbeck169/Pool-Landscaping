@@ -38,6 +38,7 @@ const TABS: { key: TabKey; label: string; icon: string }[] = [
 const GENERAL_LINKS: { icon: string; label: string; route: string }[] = [
   { icon: "briefcase-outline",     label: "Business settings",            route: "/settings/business" },
   { icon: "business-outline",      label: "Tenant name & brand colours", route: "/settings/tenant" },
+  { icon: "earth-outline",         label: "Industries",                   route: "/settings/industries" },
   { icon: "id-card-outline",       label: "Business card",               route: "/settings/business-card" },
   { icon: "document-text-outline", label: "Default terms & conditions",  route: "/settings/terms" },
   { icon: "document-outline",      label: "Legal documents",             route: "/settings/legal" },

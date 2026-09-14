@@ -17,6 +17,7 @@ import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
+import TenantIndustryBadges from "@/src/components/tenant/TenantIndustryBadges";
 
 const TIMEZONES = [
   { value: "America/New_York", label: "Eastern", short: "ET" },
@@ -106,6 +107,11 @@ export default function TenantSettingsScreen() {
       </View>
       <BreadcrumbBar title="Tenant Settings" />
 
+      {/* Industry badges — Phase D */}
+      <View style={s.badgeRow}>
+        <TenantIndustryBadges max={4} />
+      </View>
+
       <ScrollView
         contentContainerStyle={s.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.brand} />}
@@ -191,6 +197,7 @@ const s = StyleSheet.create({
   gateBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
   navBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface },
   navTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
+  badgeRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   scroll: { padding: spacing.lg, paddingBottom: 40 },
   card: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border },
   sectionLabel: { fontFamily: font.bold, fontSize: 10, color: colors.muted, letterSpacing: 1, textTransform: "uppercase", marginBottom: spacing.sm },

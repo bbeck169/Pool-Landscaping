@@ -9,13 +9,19 @@
  *   5. WarrantyCard renders expired badge for past-end contracts
  */
 import React from "react";
-import { render, waitFor } from "@testing-library/react-native";
+import { render, waitFor, fireEvent } from "@testing-library/react-native";
 
 // ── Mocks ──────────────────────────────────────────────────────────
 jest.mock("@/src/api", () => ({
   api: {
     get: jest.fn(),
+    post: jest.fn(),
+    patch: jest.fn(),
+    del: jest.fn(),
   },
+}));
+jest.mock("@/src/components/ToastProvider", () => ({
+  useToast: () => ({ showToast: jest.fn() }),
 }));
 jest.mock("@/src/auth", () => ({
   useAuth: () => ({ user: { role: "customer" }, loading: false }),
@@ -45,6 +51,9 @@ jest.mock("expo-router", () => ({
 
 import { api } from "@/src/api";
 const mockGet = api.get as jest.Mock;
+const mockPost = api.post as jest.Mock;
+const mockPatch = api.patch as jest.Mock;
+const mockDel = api.del as jest.Mock;
 
 import WarrantyCard from "@/src/components/warranties/WarrantyCard";
 import CustomerWarrantiesSection from "@/src/components/warranties/CustomerWarrantiesSection";
@@ -89,7 +98,12 @@ describe("WarrantyCard", () => {
 });
 
 describe("CustomerWarrantiesSection", () => {
-  beforeEach(() => mockGet.mockReset());
+  beforeEach(() => {
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockPatch.mockReset();
+    mockDel.mockReset();
+  });
 
   it("renders empty state when API returns no items", async () => {
     mockGet.mockResolvedValueOnce({ items: [] });
@@ -133,6 +147,105 @@ describe("CustomerWarrantiesSection", () => {
     );
     await waitFor(() => {
       expect(getByTestId("warranty-error")).toBeTruthy();
+    });
+  });
+
+  it("shows Add Warranty button and opens form modal", async () => {
+    mockGet.mockResolvedValueOnce({ items: [] });
+    const { getByTestId } = render(
+      <CustomerWarrantiesSection customerId="cust-1" />,
+    );
+    await waitFor(() => {
+      expect(getByTestId("warranty-add-btn")).toBeTruthy();
+    });
+    fireEvent.press(getByTestId("warranty-add-btn"));
+    await waitFor(() => {
+      expect(getByTestId("warranty-modal")).toBeTruthy();
+      expect(getByTestId("warranty-contract-name-input")).toBeTruthy();
+      expect(getByTestId("warranty-provider-input")).toBeTruthy();
+      expect(getByTestId("warranty-coverage-start-input")).toBeTruthy();
+      expect(getByTestId("warranty-coverage-end-input")).toBeTruthy();
+      expect(getByTestId("warranty-linked-type-select")).toBeTruthy();
+    });
+  });
+
+  it("submits correct payload to POST /api/warranties/contracts", async () => {
+    mockGet.mockResolvedValueOnce({ items: [] });
+    mockPost.mockResolvedValueOnce({ id: "new-w" });
+    // After save, reload
+    mockGet.mockResolvedValueOnce({ items: [{ id: "new-w", contract_name: "Test Plan" }] });
+
+    const { getByTestId } = render(
+      <CustomerWarrantiesSection customerId="cust-1" />,
+    );
+    await waitFor(() => {
+      expect(getByTestId("warranty-add-btn")).toBeTruthy();
+    });
+
+    fireEvent.press(getByTestId("warranty-add-btn"));
+    await waitFor(() => {
+      expect(getByTestId("warranty-contract-name-input")).toBeTruthy();
+    });
+
+    fireEvent.changeText(getByTestId("warranty-contract-name-input"), "Test Plan");
+    fireEvent.changeText(getByTestId("warranty-provider-input"), "Acme Corp");
+    fireEvent.changeText(getByTestId("warranty-coverage-start-input"), "2025-01-01");
+    fireEvent.changeText(getByTestId("warranty-coverage-end-input"), "2028-01-01");
+
+    fireEvent.press(getByTestId("warranty-modal-save-btn"));
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        "/warranties/contracts",
+        expect.objectContaining({
+          customer_id: "cust-1",
+          contract_name: "Test Plan",
+          provider: "Acme Corp",
+          coverage_start: "2025-01-01",
+          coverage_end: "2028-01-01",
+          linked_type: "none",
+          linked_id: null,
+        }),
+      );
+    });
+  });
+
+  it("shows edit and delete buttons per card", async () => {
+    mockGet.mockResolvedValueOnce({
+      items: [{ id: "w1", contract_name: "Existing Plan", provider: "Vendor" }],
+    });
+    const { getByTestId } = render(
+      <CustomerWarrantiesSection customerId="cust-1" />,
+    );
+    await waitFor(() => {
+      expect(getByTestId("warranty-edit-btn-0")).toBeTruthy();
+      expect(getByTestId("warranty-delete-btn-0")).toBeTruthy();
+    });
+  });
+
+  it("opens delete confirmation and calls DELETE on confirm", async () => {
+    mockGet.mockResolvedValueOnce({
+      items: [{ id: "w1", contract_name: "Delete Me" }],
+    });
+    mockDel.mockResolvedValueOnce({});
+    mockGet.mockResolvedValueOnce({ items: [] });
+
+    const { getByTestId, getByText } = render(
+      <CustomerWarrantiesSection customerId="cust-1" />,
+    );
+    await waitFor(() => {
+      expect(getByTestId("warranty-delete-btn-0")).toBeTruthy();
+    });
+
+    fireEvent.press(getByTestId("warranty-delete-btn-0"));
+    await waitFor(() => {
+      expect(getByText("Delete warranty?")).toBeTruthy();
+      expect(getByTestId("warranty-delete-confirm-btn")).toBeTruthy();
+    });
+
+    fireEvent.press(getByTestId("warranty-delete-confirm-btn"));
+    await waitFor(() => {
+      expect(mockDel).toHaveBeenCalledWith("/warranties/contracts/w1");
     });
   });
 });
