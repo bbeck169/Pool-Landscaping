@@ -6,7 +6,9 @@ import * as Location from "expo-location";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
-const ARRIVE_RADIUS_M = 150;
+// Must stay in sync with backend DEFAULT_ARRIVAL_RADIUS_M in
+// backend/routers/gps_auto_start.py (currently 75m).
+const ARRIVE_RADIUS_M = 75;
 
 function fmt(s: number) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -20,7 +22,7 @@ function distanceM(a: { lat: number; lng: number }, b: { lat: number; lng: numbe
 }
 
 /**
- * Automated job timer. Auto-starts when the tech's GPS enters the job site (150m),
+ * Automated job timer. Auto-starts when the tech's GPS enters the job site (75m),
  * and stops automatically when the job is marked completed (handled server-side).
  * No manual start/stop. Foreground detection here; background geofencing runs in a native build.
  */

@@ -5,7 +5,9 @@ import * as TaskManager from "expo-task-manager";
 import { api } from "@/src/api";
 
 export const GEOFENCE_TASK = "job-arrival-geofence";
-const RADIUS_M = 150;
+// Must stay in sync with backend DEFAULT_ARRIVAL_RADIUS_M in
+// backend/routers/gps_auto_start.py (currently 75m).
+const RADIUS_M = 75;
 
 // Background task: fires when the tech's device enters a job-site region (native builds only).
 if (Platform.OS !== "web") {
