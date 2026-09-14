@@ -67,7 +67,7 @@ describe("Mobile RecurringJobs · form fields render with stable testIDs", () =>
     "recurring-customer-id",
     "recurring-service-type",
     "recurring-day-of-month",
-    "recurring-start-date",
+    "recurring-job-start-date-input",
     "recurring-end-date",
     "recurring-ends-never",
     "recurring-ends-on-date",

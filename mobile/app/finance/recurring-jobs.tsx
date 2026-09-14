@@ -11,7 +11,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
   View, Text, StyleSheet, Switch, TextInput, Pressable, Platform,
-  Modal, ScrollView,
+  Modal,
 } from "react-native";
 import { useFocusEffect } from "expo-router";
 import DateTimePicker from "@react-native-community/datetimepicker";
@@ -23,6 +23,7 @@ import { PrimaryButton, Sheet } from "@/src/components/ui";
 import { showConfirm } from "@/src/components/ConfirmModal";
 import { AdminListPage } from "@/src/components/layout/AdminListPage";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import { useToast } from "@/src/components/ToastProvider";
 
 type RecurringJob = {
   id: string;
@@ -37,6 +38,7 @@ type RecurringJob = {
   end_date?: string | null;
   price_cents?: number;
   active: boolean;
+  is_active?: boolean;
   notes?: string;
   recurrence_never_ends?: boolean;
   monthly_pattern?: "day_of_month" | "nth_weekday";
@@ -165,6 +167,8 @@ export default function RecurringJobsMobile() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Partial<RecurringJob> | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [hardDeleteTarget, setHardDeleteTarget] = useState<RecurringJob | null>(null);
+  const { showToast } = useToast();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -189,6 +193,7 @@ export default function RecurringJobsMobile() {
       start_date: todayIso(),
       price_cents: 12000,
       active: true,
+      is_active: false,
       recurrence_never_ends: true,
       end_date: null,
       monthly_pattern: "day_of_month",
@@ -201,7 +206,7 @@ export default function RecurringJobsMobile() {
     // (mirrors the web RecurringJobs.jsx openEdit).
     const neverEnds = row.recurrence_never_ends === true
       || (row.recurrence_never_ends == null && !row.end_date);
-    setEditing({ ...row, recurrence_never_ends: neverEnds });
+    setEditing({ ...row, recurrence_never_ends: neverEnds, is_active: row.is_active ?? false });
   }, []);
 
   const closeSheet = useCallback(() => { setEditing(null); setSaveErr(null); }, []);
@@ -209,6 +214,11 @@ export default function RecurringJobsMobile() {
   const save = useCallback(async () => {
     if (!editing) return;
     setSaveErr(null);
+    // Client-side gate: is_active=true requires a start_date.
+    if (editing.is_active && !(editing.start_date || "").trim()) {
+      setSaveErr("A start date is required before activating this recurring job.");
+      return;
+    }
     const payload: any = { ...editing };
     // Same exclusivity rule as web — Never wins, end_date is nulled.
     if (payload.recurrence_never_ends) payload.end_date = null;
@@ -221,7 +231,12 @@ export default function RecurringJobsMobile() {
       setEditing(null);
       await load();
     } catch (e: any) {
-      setSaveErr(e?.message || "Save failed");
+      const detail = e?.detail || e?.message || "Save failed";
+      if (typeof detail === "string" && detail.includes("start_date_required_for_active")) {
+        setSaveErr("A start date is required before activating this recurring job.");
+      } else {
+        setSaveErr(typeof detail === "string" ? detail : "Save failed");
+      }
     }
   }, [editing, load]);
 
@@ -266,6 +281,27 @@ export default function RecurringJobsMobile() {
     });
   }, [load]);
 
+  const softDelete = useCallback(async (row: RecurringJob) => {
+    setBusyId(row.id);
+    try {
+      await api.del(`/recurring-jobs/${row.id}`);
+      await load();
+    } catch { /* ignore */ } finally { setBusyId(null); }
+  }, [load]);
+
+  const hardDelete = useCallback(async (row: RecurringJob) => {
+    setBusyId(row.id);
+    try {
+      const res: any = await api.del(`/recurring-jobs/${row.id}?hard=true`);
+      const n = res?.future_jobs_cancelled ?? 0;
+      setHardDeleteTarget(null);
+      showToast(`Recurring template deleted permanently (${n} future jobs cancelled)`);
+      await load();
+    } catch (e: any) {
+      showToast(e?.message || "Delete failed");
+    } finally { setBusyId(null); }
+  }, [load, showToast]);
+
   const sheetTitle = useMemo(
     () => editing?.id ? "Edit recurring job" : "New recurring job",
     [editing?.id],
@@ -307,12 +343,19 @@ export default function RecurringJobsMobile() {
                         testID={`recurring-edit-${r.id}`}>
               <Text style={s.customer}>{formatCustomerName(r)}</Text>
             </Pressable>
-            <Switch
-              value={r.active}
-              onValueChange={() => toggleActive(r)}
-              disabled={busyId === r.id}
-              testID={`recurring-toggle-${r.id}`}
-            />
+            <View style={s.badgeRow}>
+              {r.is_active === false ? (
+                <View style={s.inactiveBadge} testID={`recurring-job-inactive-badge-${r.id}`}>
+                  <Text style={s.inactiveBadgeText}>Inactive</Text>
+                </View>
+              ) : null}
+              <Switch
+                value={r.active}
+                onValueChange={() => toggleActive(r)}
+                disabled={busyId === r.id}
+                testID={`recurring-toggle-${r.id}`}
+              />
+            </View>
           </View>
           <View style={s.metaRow}>
             <Text style={s.meta}>{cadenceLabel(r)}</Text>
@@ -344,6 +387,24 @@ export default function RecurringJobsMobile() {
                 testID={`recurring-stop-${r.id}`}
               />
             ) : null}
+          </View>
+          <View style={s.deleteRow}>
+            <Pressable
+              onPress={() => softDelete(r)}
+              disabled={busyId === r.id}
+              style={[s.softDeleteBtn, busyId === r.id && { opacity: 0.5 }]}
+              testID={`recurring-job-soft-delete-btn-${r.id}`}
+            >
+              <Text style={s.softDeleteText}>Delete</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setHardDeleteTarget(r)}
+              disabled={busyId === r.id}
+              style={[s.hardDeleteBtn, busyId === r.id && { opacity: 0.5 }]}
+              testID={`recurring-job-hard-delete-btn-${r.id}`}
+            >
+              <Text style={s.hardDeleteText}>Delete permanently</Text>
+            </Pressable>
           </View>
         </View>
       ))}
@@ -458,8 +519,26 @@ export default function RecurringJobsMobile() {
               label="Start date"
               value={editing.start_date}
               onChange={(iso) => setEditing((x) => ({ ...(x || {}), start_date: iso }))}
-              testID="recurring-start-date"
+              testID="recurring-job-start-date-input"
             />
+
+            {/* Active toggle — disabled when start_date is empty (matches web contract). */}
+            <View style={s.activeToggleBox} testID="recurring-active-section">
+              <View style={{ flex: 1 }}>
+                <Text style={s.fieldLabel}>Active</Text>
+                <Text style={s.meta}>
+                  {(editing.start_date || "").trim()
+                    ? "Nightly generator materializes occurrences when active."
+                    : "Requires start date"}
+                </Text>
+              </View>
+              <Switch
+                value={!!editing.is_active}
+                disabled={!(editing.start_date || "").trim()}
+                onValueChange={(v) => setEditing((x) => ({ ...(x || {}), is_active: v }))}
+                testID="recurring-job-active-toggle"
+              />
+            </View>
 
             {/* Ends radio · Never (default) | On date */}
             <View style={s.endsBox} testID="recurring-ends-box">
@@ -530,6 +609,50 @@ export default function RecurringJobsMobile() {
           </View>
         ) : null}
       </Sheet>
+
+      {/* Hard-delete confirmation modal */}
+      <Modal
+        visible={!!hardDeleteTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setHardDeleteTarget(null)}
+        testID="recurring-job-hard-delete-confirm-modal"
+      >
+        <Pressable style={s.modalBackdrop} onPress={() => setHardDeleteTarget(null)}>
+          <View />
+        </Pressable>
+        <View style={s.modalContainer}>
+          <View style={s.modalCard} testID="recurring-job-hard-delete-confirm-modal">
+            <Text style={s.modalTitle}>Permanently delete this recurring job?</Text>
+            <Text style={s.modalBody}>
+              This removes the recurring template AND cancels any future scheduled jobs derived from
+              it. Completed jobs will not be affected. This cannot be undone.
+            </Text>
+            {(hardDeleteTarget?.customer_name || hardDeleteTarget?.service_type) ? (
+              <Text style={s.modalTarget}>
+                Target: {hardDeleteTarget?.customer_name || "—"} · {hardDeleteTarget?.service_type || "—"}
+              </Text>
+            ) : null}
+            <View style={s.modalActions}>
+              <Pressable
+                onPress={() => setHardDeleteTarget(null)}
+                style={s.modalCancelBtn}
+                testID="recurring-job-hard-delete-cancel-btn"
+              >
+                <Text style={s.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => hardDeleteTarget && hardDelete(hardDeleteTarget)}
+                disabled={busyId === hardDeleteTarget?.id}
+                style={[s.modalConfirmBtn, busyId === hardDeleteTarget?.id && { opacity: 0.6 }]}
+                testID="recurring-job-hard-delete-confirm-btn"
+              >
+                <Text style={s.modalConfirmText}>Delete permanently</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </AdminListPage>
   );
 }
@@ -546,6 +669,26 @@ const s = StyleSheet.create({
   meta: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
   notes: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurfaceSecondary },
   rowActions: { flexDirection: "row", gap: spacing.sm },
+  deleteRow: { flexDirection: "row", gap: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
+  badgeRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  inactiveBadge: { backgroundColor: "#FEF3C7", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  inactiveBadgeText: { fontFamily: font.bold, fontSize: 10, color: "#92400E", textTransform: "uppercase" as const, letterSpacing: 0.5 },
+  softDeleteBtn: { flex: 1, minHeight: 44, alignItems: "center" as const, justifyContent: "center" as const, borderRadius: radius.sm, borderWidth: 1, borderColor: "#FECACA", backgroundColor: colors.surface },
+  softDeleteText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#B91C1C" },
+  hardDeleteBtn: { flex: 1, minHeight: 44, alignItems: "center" as const, justifyContent: "center" as const, borderRadius: radius.sm, backgroundColor: "#B91C1C" },
+  hardDeleteText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#FFFFFF" },
+  activeToggleBox: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, gap: spacing.sm },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(15,23,42,0.55)" },
+  modalContainer: { position: "absolute" as const, left: 0, right: 0, bottom: 0, top: 0, justifyContent: "center" as const, alignItems: "center" as const, paddingHorizontal: spacing.lg },
+  modalCard: { width: "100%" as const, maxWidth: 400, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: "hidden" as const },
+  modalTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#B91C1C", padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  modalBody: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurface, padding: spacing.md },
+  modalTarget: { fontFamily: font.regular, fontSize: fontSize.xs, color: colors.muted, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
+  modalActions: { flexDirection: "row" as const, gap: spacing.sm, padding: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, justifyContent: "flex-end" as const },
+  modalCancelBtn: { minHeight: 44, paddingHorizontal: spacing.md, alignItems: "center" as const, justifyContent: "center" as const, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  modalCancelText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurface },
+  modalConfirmBtn: { minHeight: 44, paddingHorizontal: spacing.md, alignItems: "center" as const, justifyContent: "center" as const, borderRadius: radius.sm, backgroundColor: "#B91C1C" },
+  modalConfirmText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#FFFFFF" },
   fieldLabel: {
     fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.muted,
     marginBottom: spacing.xs,
