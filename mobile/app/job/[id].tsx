@@ -577,6 +577,31 @@ export default function JobDetail() {
             />
           ) : null}
 
+          {/* Tech Check-In — public customer feed entry */}
+          {canManage && job.id ? (
+            <Pressable
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                backgroundColor: "#ECFDF5",
+                paddingVertical: 14,
+                borderRadius: themeRadius.md,
+                borderWidth: 1,
+                borderColor: "#A7F3D0",
+                marginTop: themeSpacing.sm,
+              }}
+              onPress={() => router.push(`/job/${id}/checkin`)}
+              testID="job-detail-log-checkin-btn"
+            >
+              <Ionicons name="location" size={18} color="#059669" />
+              <Text style={{ fontFamily: themeFont.bold, fontSize: 14, color: "#059669", letterSpacing: 0.5 }}>
+                Log Check-In
+              </Text>
+            </Pressable>
+          ) : null}
+
           {job.notes ? (
             <View style={styles.notesBox}>
               <Text style={styles.notesLabel}>Notes</Text>
