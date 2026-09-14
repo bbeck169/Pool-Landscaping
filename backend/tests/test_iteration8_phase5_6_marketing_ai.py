@@ -205,19 +205,29 @@ class TestCheckins:
         assert requests.get(f"{API}/checkins", headers=H(customer_token), timeout=15).status_code == 403
 
     def test_post_checkin_technician_allowed(self, tech_token):
-        payload = {"address": "TEST_Iter8 Site", "lat": 33.7, "lng": -112.3, "note": "pytest check-in"}
-        r = requests.post(f"{API}/checkins", headers=H(tech_token), json=payload, timeout=15)
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert d["address"] == "TEST_Iter8 Site"
-        assert d.get("technician_name")
+        # Feb-2026 · Technician Check-In flow — the endpoint now
+        # enforces ``job_id`` + ``photo_file_ids`` (min 1). The
+        # legacy shape (address+lat+lng+note) is rejected with 422
+        # so a mobile client that forgets to upload a photo first
+        # gets a clear validation error, not a silent no-op.
+        payload = {"address": "TEST_Iter8 Site",
+                    "lat": 33.7, "lng": -112.3, "note": "pytest check-in"}
+        r = requests.post(f"{API}/checkins", headers=H(tech_token),
+                            json=payload, timeout=15)
+        assert r.status_code == 422, r.text
 
     def test_post_checkin_admin_allowed(self, admin_token):
+        # Same as above — RBAC lets admin through but the tightened
+        # payload contract rejects the legacy shape with 422.
         r = requests.post(f"{API}/checkins", headers=H(admin_token),
-                          json={"address": "TEST_Iter8 Admin", "lat": 33.7, "lng": -112.3, "note": "admin"}, timeout=15)
-        assert r.status_code == 200
+                          json={"address": "TEST_Iter8 Admin",
+                                 "lat": 33.7, "lng": -112.3,
+                                 "note": "admin"}, timeout=15)
+        assert r.status_code == 422, r.text
 
     def test_post_checkin_customer_forbidden(self, customer_token):
+        # RBAC still short-circuits before the validator, so
+        # customers get 403 regardless of payload shape.
         r = requests.post(f"{API}/checkins", headers=H(customer_token),
                           json={"address": "x", "lat": 0, "lng": 0}, timeout=15)
         assert r.status_code == 403

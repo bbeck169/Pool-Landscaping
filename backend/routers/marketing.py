@@ -358,12 +358,52 @@ async def create_checkin(body: CheckinIn,
                          tenant: dict = Depends(get_current_tenant)):
     if user.get("role") not in ("technician", "admin", "super_admin"):
         raise HTTPException(403, "Not allowed")
-    doc = body.dict()
+
+    # Feb-2026 · Technician Check-In flow — validate that each
+    # ``photo_file_ids`` entry references a real, tenant-scoped
+    # public_checkin upload. Bad ids surface as 422 with a payload
+    # naming the offender so the mobile client can highlight the
+    # broken photo tile.
+    seen_ids = list(dict.fromkeys(body.photo_file_ids))
+    if len(seen_ids) != len(body.photo_file_ids):
+        raise HTTPException(422, detail={
+            "code": "PHOTO_FILE_IDS_DUPLICATE",
+            "message": "photo_file_ids must be unique",
+        })
+    file_docs = await db.files.find(
+        {"id": {"$in": seen_ids},
+         "tenant_id": tenant["id"],
+         "is_deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "purpose": 1, "linked_entity_type": 1,
+         "storage_path": 1, "storage": 1},
+    ).to_list(len(seen_ids) + 1)
+    found_ids = {d["id"] for d in file_docs}
+    missing = [fid for fid in seen_ids if fid not in found_ids]
+    if missing:
+        raise HTTPException(422, detail={
+            "code": "PHOTO_FILE_IDS_INVALID",
+            "message": "One or more photo_file_ids do not exist for this tenant",
+            "missing": missing,
+        })
+    # Purpose gate — uploads have to be flagged as public_checkin so
+    # a tech can't accidentally attach an invoice PDF or a customer
+    # avatar as a check-in photo.
+    wrong_purpose = [d["id"] for d in file_docs
+                       if (d.get("purpose") or "") != "public_checkin"]
+    if wrong_purpose:
+        raise HTTPException(422, detail={
+            "code": "PHOTO_FILE_IDS_WRONG_PURPOSE",
+            "message": "Photos must be uploaded with purpose='public_checkin'",
+            "wrong_purpose": wrong_purpose,
+        })
+
+    doc = body.model_dump()
     doc.update({
         "id": new_id(),
         "tenant_id": tenant["id"],
-        "technician_id": user.get("technician_id"),
+        "technician_id": user.get("technician_id") or user.get("id"),
         "technician_name": user.get("name"),
+        "status": "draft",
         "created_at": now_iso(),
     })
     await db.checkins.insert_one(doc)

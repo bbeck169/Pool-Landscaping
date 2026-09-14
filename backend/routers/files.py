@@ -148,6 +148,13 @@ async def upload_file(
         "id": file_id,
         "tenant_id": tenant_id,
         "storage_path": meta["path"],
+        # Feb-2026 · Technician Check-In flow — explicit backing
+        # marker so consumers (public map, moderation queue,
+        # analytics) can query ``storage='s3'`` without inferring
+        # from ``storage_path`` prefixes. The upload path is
+        # already S3-only (503 above if storage isn't configured),
+        # so every row inserted here is by definition S3-backed.
+        "storage": "s3",
         "original_filename": file.filename or fname,
         "content_type": content_type,
         "size": int(meta["size"]),

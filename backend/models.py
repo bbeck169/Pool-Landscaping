@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator, AliasChoices
 from typing import List, Optional, Any, Dict
 import re
 
@@ -735,11 +735,40 @@ class ReviewRespond(BaseModel):
 
 
 class CheckinIn(BaseModel):
-    job_id: Optional[str] = None
+    """Feb-2026 · Technician Check-In flow.
+
+    Tightened payload for ``POST /api/checkins``. Required fields:
+
+    * ``job_id`` — the workorder/job this check-in is bound to.
+    * ``latitude`` / ``longitude`` — the tech's GPS capture. Accepts
+      the legacy short aliases ``lat`` / ``lng`` for backwards
+      compatibility with the marketing-map admin path.
+    * ``note`` — 1..2000 chars of free text. This is the customer-
+      facing description that will be rewritten by the LLM and
+      surfaced on the public map.
+    * ``photo_file_ids`` — 1..5 file ids previously uploaded via
+      ``POST /api/files/upload`` with ``purpose='public_checkin'``
+      and ``linked_entity_type='public_checkin'``.
+
+    ``address`` is kept optional for backwards compatibility with
+    the marketing map pin admin page — the customer's address is
+    the source of truth for the public pin, this field only exists
+    for human-readable dashboard display.
+    """
+    job_id: str = Field(..., min_length=1)
+    latitude: float = Field(
+        ..., ge=-90, le=90,
+        validation_alias=AliasChoices("latitude", "lat"),
+    )
+    longitude: float = Field(
+        ..., ge=-180, le=180,
+        validation_alias=AliasChoices("longitude", "lng"),
+    )
+    note: str = Field(..., min_length=1, max_length=2000)
+    photo_file_ids: List[str] = Field(..., min_length=1, max_length=5)
     address: Optional[str] = ""
-    lat: Optional[float] = None
-    lng: Optional[float] = None
-    note: Optional[str] = ""
+
+    model_config = {"populate_by_name": True}
 
 
 class AIChatIn(BaseModel):

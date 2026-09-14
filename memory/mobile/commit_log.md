@@ -1891,3 +1891,14 @@
 - **Files modified**: `app/finance/recurring-jobs.tsx`, `__tests__/recurring-jobs-mobile-form.test.tsx`
 - **Files created**: `__tests__/recurring-jobs-is-active-hard-delete.test.ts`, `memory/FEATURE_RECURRING_JOBS_MOBILE_PARITY.md`
 - **Web files referenced**: `frontend/src/pages/admin/RecurringJobs.jsx`, `memory/FEATURE_RECURRING_JOBS_ACTIVE_AND_DELETE.md`
+
+## Iteration 98 — Technician Check-In Flow (GPS + Photo + Two-Step Submit)
+- **Commit**: 5b5df20f6c
+- **Date**: 2026-09-14
+- **Changes**:
+  - Created `app/job/[id]/checkin.tsx` — full Check-In composer screen with GPS capture, multiline note (1–2000 chars), photo picker (1–5 via /api/files/upload with purpose='public_checkin'), upload progress per photo, retry on failure, two-step submission (POST /checkins → POST /checkins/{id}/submit-public).
+  - Added "Log Check-In" button on Job Detail (`app/job/[id].tsx`) — green icon+label, gated on canManage.
+  - 28 new Jest tests covering submit validation, two-step flow, photo upload failure blocking, testID map, job detail button.
+- **Files modified**: `app/job/[id].tsx`
+- **Files created**: `app/job/[id]/checkin.tsx`, `__tests__/tech-checkin-mobile.test.ts`, `memory/FEATURE_TECH_CHECKIN_MOBILE.md`
+- **Web files referenced**: None (new mobile-only feature paired with backend)
