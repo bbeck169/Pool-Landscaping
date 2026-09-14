@@ -73,7 +73,8 @@ verification. Response contract:
 | Case | Status |
 | ---- | ------ |
 | Correct token, file belongs to the token's quote | **200** + `Content-Type: <file>` + `Content-Disposition: attachment; filename="<name>"` + `Cache-Control: private, no-store` |
-| Missing token (query param absent) | **422** (FastAPI required-param validator) |
+| Missing token (query param absent) | **401** (`{"detail":"missing_token"}` — normalised from FastAPI's default 422 so the route matches other portal auth surfaces) |
+| Empty-string token (`?token=`) | **401** (same explicit branch — guards against an empty string slipping past a truthy check) |
 | Invalid / expired / wrong-`sub` token | **401** (`_verify_estimate_token`) |
 | Token valid but file's quote / tenant differs | **403** |
 | File soft-deleted (`is_deleted=True`) | **410** |
@@ -187,9 +188,14 @@ curl -sD - "$API/api/portal/quotes/via-token/files/$FID?token=$MTOK" \
   -o /tmp/downloaded.pdf | head -12
 file /tmp/downloaded.pdf                        # should say "PDF document"
 
-# 3. Missing token → 422 (required query param).
+# 3. Missing token → 401 (normalised from FastAPI's default 422 so
+#    this route matches other portal auth surfaces).
 curl -s -o /dev/null -w '%{http_code}\n' \
   "$API/api/portal/quotes/via-token/files/$FID"
+
+# 3b. Empty-string token → 401 too.
+curl -s -o /dev/null -w '%{http_code}\n' \
+  "$API/api/portal/quotes/via-token/files/$FID?token="
 
 # 4. Invalid token → 401.
 curl -s -o /dev/null -w '%{http_code}\n' \

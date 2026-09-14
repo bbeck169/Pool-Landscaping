@@ -665,11 +665,19 @@ def _resolve_url_base(request: Request) -> str:
 @router.get("/portal/quotes/via-token/files/{file_id}")
 async def download_attachment_via_token(
     file_id: str,
-    token: str = Query(...),
+    token: Optional[str] = None,
 ):
     from services.file_storage import (
         StorageError, get_object, is_storage_configured,
     )
+
+    # Feb-2026 · Uniform 401 for missing/empty token — the route sits
+    # alongside other portal auth surfaces, so a missing credential
+    # must land as 401 (not FastAPI's default 422 for required
+    # query params). ``_load_est_from_token`` handles invalid /
+    # expired / wrong-``sub`` tokens with 401 downstream.
+    if not token:
+        raise HTTPException(status_code=401, detail="missing_token")
 
     # 401 — invalid/expired/missing token. ``_load_est_from_token``
     # already normalises the various JWT failures into a 401 and

@@ -230,15 +230,25 @@ def test_token_scoped_download_wrong_quote_returns_403(
     )
     assert r_wrong.status_code == 403, r_wrong.text
 
-    # No token: 401 (Query param is required by FastAPI so a bare
-    # request lands as 422; we assert the missing-credentials
-    # class 4xx here — the exact 401-vs-422 code depends on how
-    # ``token=Query(...)`` reports the missing-required param).
+    # No token: 401 (uniform auth posture — the route explicitly
+    # normalises FastAPI's default 422 for a missing required
+    # query param into a 401 ``missing_token`` response so it
+    # matches the other portal auth surfaces).
     r_bare = requests.get(
         f"{BASE_URL}/api/portal/quotes/via-token/files/{file_a['id']}",
         timeout=REQ_TIMEOUT,
     )
-    assert r_bare.status_code in (401, 422), r_bare.text
+    assert r_bare.status_code == 401, r_bare.text
+
+    # Empty-string token (``?token=``) → 401 too. Guards against a
+    # regression where ``token: Optional[str] = None`` becomes
+    # ``token: str = None`` and an empty string slips past the
+    # not-truthy check.
+    r_empty = requests.get(
+        f"{BASE_URL}/api/portal/quotes/via-token/files/{file_a['id']}",
+        params={"token": ""}, timeout=REQ_TIMEOUT,
+    )
+    assert r_empty.status_code == 401, r_empty.text
 
     # Invalid token → 401 (jwt.decode fails inside
     # ``_verify_estimate_token``).
