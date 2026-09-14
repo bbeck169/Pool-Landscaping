@@ -84,6 +84,10 @@ vi.mock("@/nav/adminNav", () => ({
       entries: [{ to: "/reports", feature: "reports", label: "Reports Hub" }],
     },
   ],
+  // Phase Feb-2026 · Multi-industry Phase C — top bar now imports
+  // this helper; identity fallback keeps K75 nav tests decoupled
+  // from the new industry gate.
+  filterNavByIndustries: (entries) => entries,
 }));
 
 

@@ -197,7 +197,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/log-history",       label: "Log History",      icon: History,     feature: "jobs", subsection: "Workforce" },
     // Field service
     { to: "/maintenance",  label: "Maintenance",  icon: Cog,      feature: "jobs", subsection: "Field Service" },
-    { to: "/pool-service", label: "Pool Service", icon: Waves,    feature: "jobs", subsection: "Field Service" },
+    { to: "/pool-service", label: "Pool Service", icon: Waves,    feature: "jobs", industry: "pools", subsection: "Field Service" },
     { to: "/equipment",    label: "Equipment",    icon: Wrench,   feature: "jobs", subsection: "Field Service" },
     { to: "/admin/assets", label: "Assets",       icon: Wrench,   feature: "jobs", subsection: "Field Service" },
     // Inventory
@@ -219,7 +219,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/handbook",                    label: "Handbook",              icon: BookOpen,   feature: "dashboard", subsection: "Business OS" },
     { to: "/admin/onboarding",            label: "Onboarding Dashboard", icon: ClipboardListIcon2, feature: "settings", subsection: "Business OS" },
     // AI Tools (admin only)
-    { to: "/landscape",   label: "Landscape AI",       icon: Image,       feature: "landscape",   hard_rule: "admin_only", subsection: "AI Tools" },
+    { to: "/landscape",   label: "Landscape AI",       icon: Image,       feature: "landscape",   industry: "landscaping", hard_rule: "admin_only", subsection: "AI Tools" },
     { to: "/cad",         label: "CAD Studio",         icon: PencilRuler, feature: "cad",         hard_rule: "admin_only", subsection: "AI Tools" },
     { to: "/measure",     label: "Satellite Measure",  icon: Ruler,       feature: "measure",     hard_rule: "admin_only", subsection: "AI Tools" },
     { to: "/virtual-bid", label: "Virtual Bid",        icon: Sparkles,    feature: "virtual_bid", hard_rule: "admin_only", subsection: "AI Tools" },
@@ -286,7 +286,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/reports/gps-auto-start-audit", label: "GPS Auto-Start Audit", icon: MapPin,   feature: "reports" },
     { to: "/reports/revenue-slices",      label: "Revenue Slices",    icon: PieChart,  feature: "reports" },
     { to: "/admin/recurring-jobs",         label: "Recurring Jobs",      icon: CalendarClock, feature: "scheduling" },
-    { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports" },
+    { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports", industry: "pools" },
     { to: "/admin/reports/job-margins",    label: "Job Margin Leaderboard", icon: TrendingUp, feature: "reports" },
     // G2 · Feb-2026 — Driver Activity (server-detected GPS stops).
     { to: "/admin/reports/driver-activity", label: "Driver Activity",   icon: Truck, feature: "reports", hard_rule: "manager_only" },
@@ -345,7 +345,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/budget",                 label: "Budget Setup",        icon: Calculator, feature: "settings" },
     { to: "/admin/budget/dashboard",       label: "Budget Dashboard",    icon: TrendingUp, feature: "reports" },
     { to: "/admin/budget/wizard",          label: "Budget Wizard",       icon: Sparkles, feature: "settings" },
-    { to: "/landscape/time-clock",         label: "Landscape Time Clock", icon: Timer,  feature: "jobs" },
+    { to: "/landscape/time-clock",         label: "Landscape Time Clock", icon: Timer,  feature: "jobs", industry: "landscaping" },
     { to: "/access-history",              label: "Access History",    icon: ScrollText, feature: "audit_logs" },
     // Feb-2026 · Diagnostics — browse client-side errors captured by
     // the frontend Error Boundary (admin+ / super_admin only).
@@ -376,6 +376,27 @@ export const ADMIN_NAV_V2 = [
 export const NAV_FLAT = ADMIN_NAV_V2.flatMap((g) =>
   g.entries.map((e) => ({ ...e, group: g.label }))
 );
+
+// ─── Phase Feb-2026 · Multi-industry Phase C helper ────────────────
+// Filter a nav-entry list by the tenant's active industries.
+// Entries tagged with an ``industry`` slug are hidden unless that
+// slug appears in ``industries``. Untagged entries (the vast
+// majority) are always shown — Phase C's "light touch" scope only
+// gates a handful of pool/landscape-specific surfaces.
+//
+// Empty ``industries`` array (tenant migration hasn't landed yet,
+// or an admin explicitly cleared the array) → show everything
+// (fail-open) so the sidebar never mysteriously empties out.
+export function filterNavByIndustries(entries, industries) {
+  if (!Array.isArray(entries)) return entries;
+  const arr = Array.isArray(industries) ? industries : [];
+  if (arr.length === 0) return entries;
+  return entries.filter((e) => {
+    if (!e || typeof e !== "object") return true;
+    if (typeof e.industry !== "string") return true;
+    return arr.includes(e.industry);
+  });
+}
 
 export const KEYBOARD_SHORTCUTS = [
   { keys: "⌘K / Ctrl+K", label: "Open command palette" },

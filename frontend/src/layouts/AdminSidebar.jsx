@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Star, ChevronRight, ChevronDown, Search as SearchIcon, HelpCircle, GripVertical, Home as HomeIcon } from "lucide-react";
-import { ADMIN_NAV_V2, NAV_FLAT, KEYBOARD_SHORTCUTS, SHORTCUT_TARGETS } from "@/nav/adminNav";
+import { ADMIN_NAV_V2, NAV_FLAT, KEYBOARD_SHORTCUTS, SHORTCUT_TARGETS, filterNavByIndustries } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useIndustries } from "@/hooks/useIndustries";
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import { colors, gradients } from "@/theme";
 // Feb-2026 · Drag-and-drop reordering of pinned nav items.
@@ -37,6 +38,10 @@ function saveLS(k, v)  { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 /* ═══ Admin Sidebar (Phase 15 redesign) ═══════════════════════════════ */
 export default function AdminSidebar() {
   const { can, effectiveRole } = usePermissions();
+  // Phase Feb-2026 · Multi-industry Phase C — hide industry-specific
+  // nav items (Pool Service, Landscape AI, etc.) when the tenant
+  // doesn't have that industry active.
+  const { industries } = useIndustries();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -123,7 +128,7 @@ export default function AdminSidebar() {
 
   const visible = useMemo(() => ADMIN_NAV_V2.map((g) => ({
     ...g,
-    entries: g.entries.filter((e) => {
+    entries: filterNavByIndustries(g.entries, industries).filter((e) => {
       if (e.hard_rule === "admin_only" && effectiveRole !== "admin") return false;
       if (e.hard_rule === "super_admin_only" && effectiveRole !== "super_admin") return false;
       // Feb 2026 · Task A hotfix — ``manager_only`` is authoritative.
@@ -143,7 +148,7 @@ export default function AdminSidebar() {
       }
       return can(e.feature || "dashboard", "read") || effectiveRole === "admin";
     }),
-  })).filter((g) => g.entries.length > 0), [can, effectiveRole]);
+  })).filter((g) => g.entries.length > 0), [can, effectiveRole, industries]);
 
   const flatVisible = useMemo(() => visible.flatMap((g) => g.entries), [visible]);
   const pinnedItems = pinned.map((to) => flatVisible.find((e) => e.to === to)).filter(Boolean);

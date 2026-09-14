@@ -43,6 +43,12 @@ vi.mock("@/nav/adminNav", () => ({
       { to: "/schedule", label: "Schedule", icon: () => null, feature: "schedule" },
     ]},
   ],
+  NAV_FLAT: [],
+  KEYBOARD_SHORTCUTS: [],
+  SHORTCUT_TARGETS: {},
+  // Phase Feb-2026 · Multi-industry Phase C — identity fallback so
+  // the AdminSidebar's new industry filter is a no-op in this test.
+  filterNavByIndustries: (entries) => entries,
 }));
 
 

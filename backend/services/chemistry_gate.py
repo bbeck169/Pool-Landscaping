@@ -247,3 +247,38 @@ def is_pool_job(job: Dict[str, Any]) -> bool:
         # without readings.  If the caller knows it's a landscape
         # job it can skip calling the gate entirely.
         return True
+
+
+def warn_if_pool_job_on_non_pool_tenant(job: Dict[str, Any],
+                                         tenant: Dict[str, Any]) -> None:
+    """Feb-2026 · Multi-industry Phase C — data-drift resilience.
+
+    If ``is_pool_job(job)`` returns True but the tenant's
+    ``industries`` array does NOT contain ``"pools"``, log a
+    warning.  We intentionally do NOT raise — the gate itself
+    still fires because the *job* is a pool job, but the
+    tenant/job mismatch is worth surfacing to ops so they can
+    either flip the tenant's Industries setting or reclassify
+    the job.
+
+    Import site: called from ``chemistry_required_gate`` /
+    ``chemistry_required_reading_gate`` after ``is_pool_job``
+    but before the reading validator loop, so a warning fires
+    on every mismatched call.
+    """
+    if not is_pool_job(job):
+        return
+    try:
+        from services.industries import tenant_has_industry
+        if tenant and not tenant_has_industry(tenant, "pools"):
+            from config import logger
+            logger.warning(
+                "[chem-gate] tenant=%s job=%s pool-shaped but tenant "
+                "industries=%s — expected 'pools'. Reclassify the "
+                "job or activate the Pools industry in Settings.",
+                tenant.get("id"), job.get("id"),
+                tenant.get("industries"),
+            )
+    except Exception:
+        # Never crash the completion path on a diagnostic log.
+        pass

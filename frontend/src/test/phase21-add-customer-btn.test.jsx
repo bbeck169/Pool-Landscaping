@@ -37,6 +37,8 @@ vi.mock("@/nav/adminNav", () => ({
     key: "ops", label: "Ops", icon: () => null,
     entries: [{ to: "/dashboard", feature: "dashboard", label: "Dashboard" }],
   }],
+  // Phase Feb-2026 · Multi-industry Phase C — identity fallback.
+  filterNavByIndustries: (entries) => entries,
 }));
 vi.mock("@/hooks/usePermissions", () => ({
   // Phase Hygiene B · Feb-2026 — AdminTopBar's ``useVisibleGroups``

@@ -7,6 +7,7 @@ import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors, money, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useIndustries } from "@/hooks/useIndustries";
 import { PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, Modal, Toast } from "@/components/ui-kit";
 import { useAttendance } from "@/hooks/useAttendance";
 import WorkstreamJobDrawer from "@/pages/ops/WorkstreamJobDrawer";
@@ -37,7 +38,10 @@ const SECTIONS = [
   { k: "timeclock",  label: "Timeclock",    icon: Clock },
   { k: "coverage",   label: "Coverage",     icon: MapPin },
   { k: "maintenance",label: "Maintenance",  icon: Waves },
-  { k: "pool",       label: "Pool Service", icon: Waves },
+  // Phase Feb-2026 · Multi-industry Phase C — the pool tab is
+  // gated by the tenant's ``pools`` industry. Landscape-only /
+  // multi-industry-without-pools tenants no longer see this row.
+  { k: "pool",       label: "Pool Service", icon: Waves, industry: "pools" },
   { k: "equipment",  label: "Equipment",    icon: Wrench },
   { k: "pricebook",  label: "Price Book",   icon: Package },
   { k: "loghistory", label: "Log History",  icon: History },
@@ -86,7 +90,15 @@ export default function OpsHub() {
 
   const isTech = user?.role === "technician";
   const allowed = isTech ? ["schedule", "routes", "timesheets"] : SECTIONS.map((s) => s.k);
-  const filtered = SECTIONS.filter((s) => allowed.includes(s.k));
+  // Phase Feb-2026 · Multi-industry Phase C — hide industry-scoped
+  // tabs (currently just "pool") when the tenant's active
+  // ``industries`` array excludes that slug.  Empty industries
+  // array (migration pending) → fail-open, show everything.
+  const { industries } = useIndustries();
+  const industrySet = Array.isArray(industries) ? industries : [];
+  const filtered = SECTIONS
+    .filter((s) => allowed.includes(s.k))
+    .filter((s) => !s.industry || industrySet.length === 0 || industrySet.includes(s.industry));
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="ops-hub">

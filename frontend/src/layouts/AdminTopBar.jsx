@@ -37,9 +37,10 @@
 import React, { useMemo } from "react";
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, MenuIcon, LogOut, Plus as PlusIcon } from "lucide-react";
-import { ADMIN_NAV_V2 } from "@/nav/adminNav";
+import { ADMIN_NAV_V2, filterNavByIndustries } from "@/nav/adminNav";
 import { topNavForRole } from "@/nav/topNavRegistry";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useIndustries } from "@/hooks/useIndustries";
 import { useAuth } from "@/auth";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { colors, gradients } from "@/theme";
@@ -74,6 +75,11 @@ import {
  */
 function useVisibleGroups() {
   const { can, effectiveRole } = usePermissions();
+  // Phase Feb-2026 · Multi-industry Phase C — same filter applied
+  // in AdminSidebar; keeps the two nav surfaces in sync so a
+  // pool-only tenant never sees a "Landscape AI" chip in the top
+  // bar while it's hidden from the sidebar.
+  const { industries } = useIndustries();
   return useMemo(() => {
     if (!["admin", "super_admin", "manager"].includes(effectiveRole)) {
       return [];
@@ -81,7 +87,7 @@ function useVisibleGroups() {
     return ADMIN_NAV_V2
       .map((g) => ({
         ...g,
-        entries: g.entries.filter((e) => {
+        entries: filterNavByIndustries(g.entries, industries).filter((e) => {
           if (e.hard_rule === "admin_only" && effectiveRole !== "admin") return false;
           if (e.hard_rule === "super_admin_only" && effectiveRole !== "super_admin") return false;
           if (e.hard_rule === "manager_only") {
@@ -103,7 +109,7 @@ function useVisibleGroups() {
         }
         return { ...g, noSub, bySub };
       });
-  }, [can, effectiveRole]);
+  }, [can, effectiveRole, industries]);
 }
 
 
