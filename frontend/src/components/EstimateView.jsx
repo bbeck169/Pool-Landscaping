@@ -55,6 +55,17 @@ function fmt(n) {
   return Number(n || 0).toFixed(2);
 }
 
+// Feb-2026 · Public Quote Attachments — human-readable byte size
+// for the customer-facing Attachments list. Mirrors the backend
+// ``emailer._human_size`` formatter so the size string next to
+// each file in the reminder email + the on-page list stay in sync.
+function _fmtAttachmentSize(nbytes) {
+  const n = Math.max(0, Number(nbytes) || 0);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 // The estimate can be loaded via two paths:
 //   { estimateId, isAdmin }        — authenticated fetch of /full
 //   { token }                       — public magic-link
@@ -1057,10 +1068,55 @@ export default function EstimateView({
           </table>
         )}
         termsSection={(
-          <DocTermsSection
-            terms={data?.terms_and_conditions}
-            testidPrefix="estimate"
-          />
+          <>
+            {/* Feb-2026 · Public Quote Attachments — customer-facing
+                downloads section. Renders only when the viewer payload
+                carries ≥ 1 attachment. Each row is a full-width
+                tappable button below sm (44px min tap target) and a
+                compact horizontal row at ≥ sm. The ``url`` on each
+                entry is already absolute + tokenised by the backend
+                (see routers/estimate_viewer.py::_build_payload), so
+                the anchor here is just a passthrough. */}
+            {(data?.attachments || []).length > 0 ? (
+              <div
+                className="ev-attachments-wrap"
+                data-testid="estimate-attachments-section"
+              >
+                <div className="ev-attachments-title">Attachments</div>
+                <ul className="ev-attachments-list">
+                  {(data.attachments || []).map((att, i) => (
+                    <li
+                      key={att.id || i}
+                      className="ev-attachment-row"
+                      data-testid={`estimate-attachment-row-${i}`}
+                    >
+                      <div className="ev-attachment-meta">
+                        <span className="ev-attachment-name">
+                          {att.filename}
+                        </span>
+                        <span className="ev-attachment-size">
+                          {_fmtAttachmentSize(att.size)}
+                        </span>
+                      </div>
+                      <a
+                        href={att.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ev-attachment-btn"
+                        data-testid={`estimate-attachment-download-${i}`}
+                      >
+                        Download
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            <DocTermsSection
+              terms={data?.terms_and_conditions}
+              testidPrefix="estimate"
+            />
+          </>
         )}
         disclaimer={(
           <div className="ev-disclaimer" data-testid="estimate-disclaimer">

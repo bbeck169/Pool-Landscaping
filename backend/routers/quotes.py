@@ -1174,6 +1174,7 @@ async def send_quote_to_customer(
     try:
         email_sent = await send_estimate_reminder_email(
             doc, tenant, review_url, override_to=recipient,
+            magic_token=tok,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning(
@@ -1462,7 +1463,7 @@ async def send_reminder(qid: str,
         )
         await notify_customer(doc["customer_id"], title, body, sms=True)
         email_sent = await send_estimate_reminder_email(
-            doc, tenant, review_url,
+            doc, tenant, review_url, magic_token=tok,
         )
         count = int(doc.get("reminder_count") or 0) + 1
         await db.quotes.update_one(

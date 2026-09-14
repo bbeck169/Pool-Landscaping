@@ -239,3 +239,89 @@
     min-width: 0;
   }
 }
+
+/* Feb-2026 · Public Quote Attachments — customer-facing
+ * download list block. Desktop: compact horizontal row per
+ * attachment. Below sm: stacked card with a full-width
+ * Download button (44px min tap target). Style is intentionally
+ * neutral so it inherits the branded shell background. */
+.ev-attachments-wrap {
+  margin: 20px 0 12px;
+  padding: 14px 16px;
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  background: #F9FAFB;
+}
+.ev-attachments-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-weight: 700;
+  color: #0F172A;
+  margin-bottom: 8px;
+}
+.ev-attachments-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ev-attachment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+}
+.ev-attachment-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.ev-attachment-name {
+  font-size: 14px;
+  color: #0F172A;
+  font-weight: 600;
+  word-break: break-all;
+}
+.ev-attachment-size {
+  font-size: 12px;
+  color: #6B7280;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.ev-attachment-btn {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #0284C7;
+  background: #0284C7;
+  color: #FFFFFF;
+  font-weight: 700;
+  font-size: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.ev-attachment-btn:hover {
+  background: #0369A1;
+  border-color: #0369A1;
+}
+@media (max-width: 639.98px) {
+  .ev-attachment-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .ev-attachment-btn {
+    display: block;
+    text-align: center;
+    min-height: 44px;
+    line-height: 28px;
+  }
+}

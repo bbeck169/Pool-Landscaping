@@ -170,9 +170,24 @@ def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
     )
 
 
+def _human_size(nbytes: int) -> str:
+    """Compact 'x B / x KB / x MB' formatter shared by the reminder
+    email attachment link list. Never returns negative numbers.
+    """
+    n = max(0, int(nbytes or 0))
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
 def _estimate_reminder_html(inv: dict, name: str, tenant: dict,
                                 review_url: str,
-                                attachment_count: int = 0) -> str:
+                                attachment_count: int = 0,
+                                attachments: Optional[list] = None,
+                                magic_token: str = "",
+                                ) -> str:
     """Feb-2026 · P0 fix — Estimate/Quote reminder template.
 
     Fundamentally different from the invoice reminder:
@@ -188,9 +203,49 @@ def _estimate_reminder_html(inv: dict, name: str, tenant: dict,
     doc_type_label = "quote" if inv.get("doc_type") == "quote" else "estimate"
     doc_number = _invoice_display_number(inv)
     company = (tenant or {}).get("company_name") or "your service provider"
-    n = max(0, int(attachment_count or 0))
+    # Feb-2026 · Public Quote Attachments — prefer a clickable list
+    # over the legacy count-only copy when the caller passed a
+    # per-attachment list AND the reminder's ``magic_token``. Each
+    # link resolves against the SAME public token-scoped file route
+    # the customer viewer already uses, so there's zero extra auth
+    # to hand-roll. Falls back to the count copy when the list is
+    # empty or the token is missing (legacy callers).
+    _attach_list = list(attachments or [])
+    n = max(0, int(attachment_count if attachment_count else len(_attach_list)))
     attach_html = ""
-    if n > 0:
+    if _attach_list and magic_token:
+        _base = (APP_PUBLIC_URL or "").rstrip("/")
+        _rows_html = ""
+        for att in _attach_list:
+            _fid = att.get("id")
+            if not _fid:
+                continue
+            _fname = (att.get("filename") or _fid)
+            _size_str = _human_size(att.get("size"))
+            _rel = (
+                f"/api/portal/quotes/via-token/files/{_fid}"
+                f"?token={magic_token}"
+            )
+            _href = f"{_base}{_rel}" if _base else _rel
+            _rows_html += (
+                f'<li style="margin:6px 0;">'
+                f'<a href="{_href}" '
+                f'style="color:#0891b2;text-decoration:none;font-weight:600;">'
+                f'{_fname}</a>'
+                f' <span style="color:#64748b;font-size:12px;">'
+                f'({_size_str})</span></li>'
+            )
+        if _rows_html:
+            attach_html = (
+                '<div style="margin-top:14px;padding:12px 16px;'
+                'background:#F8FAFC;border:1px solid #E2E8F0;'
+                'border-radius:10px;">'
+                '<div style="font-weight:700;color:#0F172A;'
+                'font-size:13px;margin-bottom:4px;">Attachments</div>'
+                f'<ul style="margin:0;padding-left:18px;">{_rows_html}</ul>'
+                '</div>'
+            )
+    elif n > 0:
         noun = "attachment" if n == 1 else "attachments"
         attach_html = (
             f'<p style="font-size:13px;color:#475569;margin:8px 0 0;">'
@@ -337,7 +392,10 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
 
 async def send_estimate_reminder_email(inv: dict, tenant: dict,
                                           review_url: str,
-                                          *, override_to: Optional[str] = None) -> bool:
+                                          *,
+                                          override_to: Optional[str] = None,
+                                          magic_token: str = "",
+                                          ) -> bool:
     """Feb-2026 · P0 — Email the customer a review reminder for a
     pending estimate/quote. Distinct from ``send_invoice_reminder_email``
     in template, subject, and CTA URL. Never mentions "balance",
@@ -384,12 +442,40 @@ async def send_estimate_reminder_email(inv: dict, tenant: dict,
         )
         return False
     try:
-        attachment_count = await db.files.count_documents({
-            "purpose": "invoice_attachment",  # legacy label — same collection
-            "linked_entity_id": inv.get("id"),
-            "deleted_at": None,
-        })
+        # Feb-2026 · Public Quote Attachments — pull the per-file
+        # rows (id + filename + size) so the template can render a
+        # click-through list. Falls back to the count-only copy
+        # inside ``_estimate_reminder_html`` when either the list is
+        # empty OR the caller didn't pass a ``magic_token`` (legacy
+        # callsites). ``is_deleted != True`` matches the files.py
+        # convention (missing OR false).
+        _files = await db.files.find(
+            {
+                "tenant_id": inv.get("tenant_id"),
+                "purpose": "invoice_attachment",
+                "linked_entity_type": "invoice",
+                "linked_entity_id": inv.get("id"),
+                "is_deleted": {"$ne": True},
+            },
+            {
+                "_id": 0, "id": 1, "original_filename": 1,
+                "content_type": 1, "size": 1, "created_at": 1,
+            },
+        ).sort("created_at", -1).to_list(500)
+        _attachments = [
+            {
+                "id": r.get("id"),
+                "filename": r.get("original_filename") or r.get("id"),
+                "content_type": (
+                    r.get("content_type") or "application/octet-stream"
+                ),
+                "size": int(r.get("size") or 0),
+            }
+            for r in _files if r.get("id")
+        ]
+        attachment_count = len(_attachments)
     except Exception:  # noqa: BLE001
+        _attachments = []
         attachment_count = 0
     doc_type_label = "quote" if doc_type == "quote" else "estimate"
     company = (tenant or {}).get("company_name") or "your service provider"
@@ -409,6 +495,8 @@ async def send_estimate_reminder_email(inv: dict, tenant: dict,
                 inv, cust.get("name", "there"),
                 tenant or {}, review_url,
                 attachment_count=attachment_count,
+                attachments=_attachments,
+                magic_token=magic_token,
             ),
             branding,
         )

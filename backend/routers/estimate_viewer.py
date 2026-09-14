@@ -48,11 +48,11 @@ from io import BytesIO
 from typing import Any, Dict, List, Optional
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from config import db, logger, JWT_SECRET, JWT_ALGO
+from config import db, logger, JWT_SECRET, JWT_ALGO, APP_PUBLIC_URL
 from utils import get_current_user, now_iso, new_id
 from routers.tenants import get_current_tenant
 from routers.invoice_viewer import _resolve_logo_path
@@ -161,7 +161,10 @@ def _compute_totals(est: dict) -> Dict[str, Any]:
 
 
 async def _build_payload(est: dict, tenant: dict, *,
-                          as_customer: bool) -> Dict[str, Any]:
+                          as_customer: bool,
+                          magic_token: Optional[str] = None,
+                          url_base: Optional[str] = None,
+                          ) -> Dict[str, Any]:
     company = await _load_company(tenant["id"])
     bill_to = await _load_customer(est.get("customer_id"), tenant["id"])
     property_address = est.get("property_address")
@@ -203,6 +206,54 @@ async def _build_payload(est: dict, tenant: dict, *,
     )
     signature_status = str(est.get("signature_status") or "").lower() or None
 
+    # Feb-2026 · Public Quote Attachments — surface tenant-scoped
+    # ``invoice_attachment``-purposed files that are linked to this
+    # quote to the customer viewer. Only populated when a
+    # ``magic_token`` is supplied so the download URL is signed +
+    # scoped to THIS quote via the same JWT the viewer already
+    # trusts. The auth'd admin surface keeps using the pre-existing
+    # ``/api/files/*`` router directly (unchanged).
+    attachments: List[Dict[str, Any]] = []
+    if magic_token:
+        # ``linked_entity_type=="invoice"`` is the unified label the
+        # existing ``InvoiceAttachments`` component uses for BOTH
+        # invoices AND quotes/estimates (see
+        # frontend/src/components/quotes/InvoiceAttachments.jsx line
+        # 8). Purpose stays "invoice_attachment". Not-deleted is
+        # ``is_deleted != True`` (matches missing OR false) to align
+        # with routers/files.py conventions.
+        _base = (url_base or APP_PUBLIC_URL or "").rstrip("/")
+        _rows = await db.files.find(
+            {
+                "tenant_id": tenant["id"],
+                "linked_entity_type": "invoice",
+                "linked_entity_id": est.get("id"),
+                "purpose": "invoice_attachment",
+                "is_deleted": {"$ne": True},
+            },
+            {
+                "_id": 0, "id": 1, "original_filename": 1,
+                "content_type": 1, "size": 1, "created_at": 1,
+            },
+        ).sort("created_at", -1).to_list(500)
+        for r in _rows:
+            _fid = r.get("id")
+            if not _fid:
+                continue
+            _rel = (
+                f"/api/portal/quotes/via-token/files/{_fid}"
+                f"?token={magic_token}"
+            )
+            attachments.append({
+                "id": _fid,
+                "filename": r.get("original_filename") or _fid,
+                "content_type": (
+                    r.get("content_type") or "application/octet-stream"
+                ),
+                "size": int(r.get("size") or 0),
+                "url": f"{_base}{_rel}" if _base else _rel,
+            })
+
     return {
         "estimate_id": est.get("id"),
         "status": est.get("status") or "draft",
@@ -242,6 +293,10 @@ async def _build_payload(est: dict, tenant: dict, *,
         # Phase C · Feb-2026 — signature gate surface fields.
         "signature_status": signature_status,
         "require_signature_before_approve": require_signature_before_approve,
+        # Feb-2026 · Public Quote Attachments — token-scoped download
+        # URLs for the customer viewer. Empty list on auth'd admin
+        # payloads (where ``magic_token`` isn't threaded in).
+        "attachments": attachments,
     }
 
 
@@ -571,9 +626,109 @@ async def _load_est_from_token(tok: str) -> Dict[str, Any]:
 
 @router.get("/portal/quotes/via-token")
 @router.get("/portal/estimates/via-token", deprecated=True)
-async def view_estimate_via_token(token: str = Query(...)):
+async def view_estimate_via_token(request: Request, token: str = Query(...)):
     ctx = await _load_est_from_token(token)
-    return await _build_payload(ctx["est"], ctx["tenant"], as_customer=True)
+    return await _build_payload(
+        ctx["est"], ctx["tenant"], as_customer=True,
+        magic_token=token, url_base=_resolve_url_base(request),
+    )
+
+
+def _resolve_url_base(request: Request) -> str:
+    """Resolve the absolute URL prefix used to render tokenised
+    attachment download links inside the magic-link viewer payload.
+
+    Prefers ``APP_PUBLIC_URL`` (production canonical host); falls back
+    to ``<scheme>://<host>`` reconstructed from the incoming ``Request``
+    so local + preview environments stay self-consistent even when the
+    env var isn't set. Returns an empty string if neither is
+    resolvable — the payload then emits a relative URL and the
+    customer's browser fills in the origin.
+    """
+    if APP_PUBLIC_URL:
+        return APP_PUBLIC_URL
+    try:
+        base = str(request.base_url).rstrip("/")
+        return base
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# ══════════════════════════════════════════════════════════════════
+# GET /portal/quotes/via-token/files/{file_id}?token=…
+#   — public token-scoped download for attachments linked to the
+#     quote referenced by the magic-link JWT. Auth path forks the
+#     SAME ``_verify_estimate_token`` helper the viewer uses so
+#     tokens minted for one quote can never surface files for
+#     another quote / tenant.
+# ══════════════════════════════════════════════════════════════════
+@router.get("/portal/quotes/via-token/files/{file_id}")
+async def download_attachment_via_token(
+    file_id: str,
+    token: str = Query(...),
+):
+    from services.file_storage import (
+        StorageError, get_object, is_storage_configured,
+    )
+
+    # 401 — invalid/expired/missing token. ``_load_est_from_token``
+    # already normalises the various JWT failures into a 401 and
+    # confirms the token's ``eid``/``tid``/``cid`` triple matches an
+    # existing quote.
+    ctx = await _load_est_from_token(token)
+    est = ctx["est"]
+    tenant = ctx["tenant"]
+
+    doc = await db.files.find_one({"id": file_id})
+    # 404 — no such file record (or it's on a different tenant we
+    # don't want to leak the existence of).
+    if not doc:
+        raise HTTPException(404, detail="not_found")
+    # 410 — file was soft-deleted (existed but no longer available).
+    if doc.get("is_deleted"):
+        raise HTTPException(410, detail="deleted")
+    # 403 — tenant / entity mismatch. Return 403 (not 404) so the
+    # customer-facing UI can distinguish "wrong token for this file"
+    # from "file gone entirely".
+    if doc.get("tenant_id") != tenant["id"]:
+        raise HTTPException(403, detail="forbidden")
+    if (
+        doc.get("linked_entity_type") != "invoice"
+        or doc.get("linked_entity_id") != est.get("id")
+        or doc.get("purpose") != "invoice_attachment"
+    ):
+        raise HTTPException(403, detail="forbidden")
+
+    if not is_storage_configured():
+        raise HTTPException(503, detail={
+            "code": "STORAGE_UNAVAILABLE",
+            "message": "File storage is not configured on this server.",
+        })
+
+    try:
+        data, ct = get_object(doc["storage_path"])
+    except StorageError as e:
+        logger.warning("[VIA-TOKEN FILES] get_object failed: %s", e)
+        raise HTTPException(502, detail={
+            "code": "STORAGE_READ_FAILED",
+            "message": str(e),
+        })
+
+    filename = doc.get("original_filename") or file_id
+    # ``attachment`` disposition (spec) — the customer explicitly
+    # clicked "Download", not embedded in an <img>/<iframe>. Filename
+    # is escaped for RFC-6266 safety.
+    _safe = filename.replace('"', "").replace("\r", "").replace("\n", "")
+    return Response(
+        content=data,
+        media_type=(
+            doc.get("content_type") or ct or "application/octet-stream"
+        ),
+        headers={
+            "Content-Disposition": f'attachment; filename="{_safe}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.post("/portal/quotes/via-token/accept")
