@@ -769,6 +769,12 @@ api_router.include_router(_tt_zillow_adapter.router)
 from routers import files as _f0_files  # noqa: E402
 api_router.include_router(_f0_files.router)
 
+# Phase Feb-2026 · Customer Equipment Library — canonical resource
+# (one doc per equipment unit; brand/model/serial/install_date). Photos
+# link through /api/files/upload with linked_entity_type='customer_equipment'.
+from routers import customer_equipment as _feb2026_customer_equipment  # noqa: E402
+api_router.include_router(_feb2026_customer_equipment.router)
+
 # Phase 51a · Feb 2026 — Walkie-Talkie async voice-clip backend.
 from routers import walkie as _p51a_walkie  # noqa: E402
 api_router.include_router(_p51a_walkie.router)
