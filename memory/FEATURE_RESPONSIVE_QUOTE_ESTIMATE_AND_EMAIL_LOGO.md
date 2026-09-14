@@ -175,3 +175,105 @@ admin login) now returns HTML with:
 * `/app/mobile/` Expo parity — delegated separately.
 * Any other tables/pages beyond Quote detail + Estimate viewer.
 * Any other email content changes beyond the logo styling.
+
+
+---
+
+## Feb-2026 · Follow-up (K71 admin surface + route map)
+
+### Gap 1 — Admin `/quotes/:id` responsive fix (SHIPPED)
+
+Prior ship only touched the customer-facing `EstimateView.jsx`.
+Admin `/quotes/:id` and `/invoices/:id` route through
+`QuoteInvoiceDetail.jsx` → `K71LineItemsEditor.jsx`, which still
+rendered a 5-column table with intrinsic minimum widths >
+375 px. Tester saw `scrollWidth = 415` at 375 × 812.
+
+Follow-up changes:
+
+| File | Change | LOC delta |
+| ---- | ------ | --------- |
+| `frontend/src/components/quotes/K71LineItemsEditor.jsx` | Added `MobileCard` (read-mode stacked card, distinct `-mobile-` testids); gated `<table>` with `hidden sm:table` in read mode; parameterized `LegacyBadge` testid to disambiguate desktop/mobile duplicates. When ANY row is in edit mode (`editIndex !== null`) the table renders unconditionally + the mobile list unmounts, so the `<tr>`-based `EditableRow` remains the sole editing surface across viewports (existing edit UX preserved verbatim). | +100 |
+| `frontend/src/pages/quotes/QuoteInvoiceDetail.jsx` | Wrapped the two secondary admin tables (`internal-margin-table`, `admin-declined-lines-table`) in `overflow-x-auto` scroll containers with a `minWidth` on the `<table>` — page-level scroll stays at 375 px; the wide dense-numeric tables scroll internally only. | +4 / −0 |
+| `frontend/src/test/k71-line-items-responsive-cards.test.jsx` (NEW) | 5 Vitest tests — table gate + card list + edit flow round-trip + legacy-badge testid disambiguation + delete/undo. | +139 |
+
+Runtime metrics captured against
+`/quotes/ba9fde33-5717-4c0f-b7a5-a1c17a58700f` (invoice-shaped
+doc — same component tree):
+
+| Viewport | `scrollWidth` | `clientWidth` | K71 `<table>` | K71 cards |
+| -------- | ------------- | ------------- | ------------- | --------- |
+| 375 × 812 | **375** | 375 | `display: none` | 3 cards rendered |
+| 1280 × 800 | **1280** | 1280 | `display: table` | `display: none` |
+
+No horizontal scroll at 375 px. Desktop layout unchanged.
+
+`QuoteInvoiceDetail.jsx` outer wrapper is
+`<div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6">` —
+no fixed pixel widths / hardcoded `overflow-x: auto` on the main
+container. `min-w-0` in the header-left flex column is a
+flex-shrink override (correct) and was left in place.
+
+### Gap 2 — Route map & magic-link recipe
+
+Which surfaces render which components:
+
+| Route | Component | Auth | Notes |
+| ----- | --------- | ---- | ----- |
+| `/quotes/:id` | `pages/quotes/QuoteInvoiceDetail` → `components/quotes/K71LineItemsEditor` | staff (admin / super_admin) | `docType="quote"`; K71 now stacked-card < sm. |
+| `/invoices/:id` | Same as above with `docType="invoice"` | staff | Shares K71 responsive treatment. |
+| `/portal/quotes/via-token?token=…` | `components/EstimateView` (mounted by public route in `App.js:650+`) | **public magic-link (no auth)** | Stacked-card < sm shipped in the prior slice. |
+| `/portal/estimates/via-token?token=…` | Same as above (deprecated alias). | public magic-link | Same responsive treatment. |
+| `/e/estimate?token=…` | `EstimateView` (customer email CTA landing) | public magic-link | Same responsive treatment. |
+| `/portal/*` (customer login) | `pages/PortalPages.jsx` → `EstimateView` | customer session | Same responsive treatment. |
+
+Magic-link mint recipe (for `e1_tester` to reach EstimateView
+directly without touching the admin UI):
+
+```bash
+API=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d '=' -f2)
+
+# 1. Log in as super admin.
+TOK=$(curl -s -X POST "$API/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"super@aquaterra.com","password":"password123"}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
+
+# 2. Pick a quote id (any recent one — response shape varies by
+#    build, so parse defensively).
+QID=$(curl -s -H "Authorization: Bearer $TOK" "$API/api/quotes?limit=5" \
+  | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+items = d if isinstance(d, list) else d.get("items") or d.get("quotes") or []
+print(items[0]["id"] if items else "")')
+
+# 3. Mint the magic-link URL (backend router:
+#    ``estimate_viewer.py`` → GET /api/quotes/{qid}/magic-link).
+curl -s -H "Authorization: Bearer $TOK" \
+  "$API/api/quotes/$QID/magic-link" \
+  | python3 -m json.tool
+# → response includes:
+#   { "url": "…/portal/quotes/via-token?token=<jwt>", "expires_at": "…" }
+```
+
+Load that `url` at viewport 375 × 812 to hit `EstimateView` in
+its customer-facing mode. No auth headers required — the JWT in
+the query string is the sole credential.
+
+For admin-side responsive verification, load
+`/quotes/<qid>` or `/invoices/<qid>` directly with a
+super-admin session (seed the token via
+`window.localStorage.setItem('token', …)` and
+`localStorage.setItem('user', JSON.stringify(user))` — see
+`frontend/src/auth.jsx` for the storage keys).
+
+### Test-suite status after follow-up
+
+* Vitest: **569 files passed | 1 skipped · 4300 tests passed |
+  34 skipped · exit 0** (+5 from `k71-line-items-responsive-cards.test.jsx`).
+* K71 legacy suite unchanged: `k71-line-items-editor.test.jsx`
+  (18 tests) + `pb2-line-item-overrides.test.jsx` (5 tests) all
+  still green.
+* Pytest (email) unchanged from prior slice.
+* Runtime check: `curl /` → 200, `curl /api/openapi.json` → 200,
+  **paths = 1734** unchanged.

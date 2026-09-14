@@ -1025,8 +1025,10 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                     Internal margin — not shown to customer
                   </span>
                 </div>
-                <table className="w-full text-xs"
-                        data-testid="internal-margin-table">
+                <div className="overflow-x-auto -mx-1">
+                  <table className="w-full text-xs"
+                          data-testid="internal-margin-table"
+                          style={{ minWidth: 560 }}>
                   <thead>
                     <tr style={{ color: "#92400E" }}>
                       <th className="text-left py-1">Line</th>
@@ -1075,6 +1077,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                     </tr>
                   </tbody>
                 </table>
+                </div>
               </div>
             );
           })() : null}
@@ -1868,7 +1871,9 @@ export function AdminDeclinedLinesListImpl({ lineItems }) {
             style={{ color: "#B91C1C" }}>
         Declined by customer
       </div>
-      <table className="w-full text-xs" data-testid="admin-declined-lines-table">
+      <div className="overflow-x-auto -mx-1">
+      <table className="w-full text-xs" data-testid="admin-declined-lines-table"
+             style={{ minWidth: 460 }}>
         <thead>
           <tr style={{ color: "#B91C1C" }}>
             <th className="text-left py-1">Line</th>
@@ -1919,6 +1924,7 @@ export function AdminDeclinedLinesListImpl({ lineItems }) {
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

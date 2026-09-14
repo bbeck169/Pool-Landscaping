@@ -39,12 +39,12 @@ import CategoryPicker from "@/components/income/CategoryPicker";
 const MAX_LONG_DESC = 500;
 const UNDO_WINDOW_MS = 5000;
 
-function LegacyBadge() {
+function LegacyBadge({ testid = "k71-uncategorized-badge" }) {
   return (
     <span
       className="px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide"
       style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
-      data-testid="k71-uncategorized-badge"
+      data-testid={testid}
     >
       Uncategorized
     </span>
@@ -480,6 +480,94 @@ function ReadRow({ line, index, canEdit, deleteDisabled, onEdit, onDelete }) {
   );
 }
 
+function MobileCard({ line, index, canEdit, deleteDisabled, onEdit, onDelete }) {
+  const q = Number(line.quantity || 0);
+  const u = Number(line.unit_price || 0);
+  const legacy = isLegacyLine(line);
+  return (
+    <li
+      className="rounded-xl border p-3 flex flex-col gap-2"
+      style={{
+        borderColor: colors.divider,
+        background: line.is_late_fee ? "#FFF7ED" : colors.surface,
+      }}
+      data-testid={`k71-card-${index}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold break-words"
+                  style={{ color: colors.onSurface }}>
+              {line.description}
+            </span>
+            {line.is_late_fee ? (
+              <span
+                className="px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide"
+                style={{ backgroundColor: "#FEE2E2", color: "#B91C1C" }}
+                data-testid={`late-fee-chip-mobile-${index}`}
+              >
+                Late fee
+              </span>
+            ) : null}
+            {legacy ? <LegacyBadge testid={`k71-uncategorized-badge-mobile-${index}`} /> : null}
+          </div>
+          {line.long_description ? (
+            <div className="text-xs mt-1"
+                 style={{ color: colors.muted }}
+                 data-testid={`k71-longdesc-mobile-${index}`}>
+              {line.long_description}
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="flex items-baseline justify-between border-t pt-2"
+           style={{ borderColor: colors.divider }}>
+        <span className="text-[11px] uppercase font-bold tracking-wide"
+              style={{ color: colors.muted }}>
+          {q} × {money(u)}
+        </span>
+        <span className="font-semibold tabular-nums"
+              style={{ color: colors.onSurface }}>
+          {money(q * u)}
+        </span>
+      </div>
+      {canEdit ? (
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => onEdit(index)}
+            className="px-3 py-2 rounded text-xs font-semibold flex items-center gap-1"
+            style={{ background: colors.surfaceSecondary,
+                     border: `1px solid ${colors.border}`,
+                     color: colors.brand,
+                     minHeight: 40 }}
+            data-testid={`k71-card-edit-btn-${index}`}
+          >
+            <Pencil size={12} /> Edit
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(index)}
+            disabled={deleteDisabled}
+            className="px-3 py-2 rounded text-xs font-semibold flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: colors.surfaceSecondary,
+                     border: `1px solid ${colors.border}`,
+                     color: "#DC2626",
+                     minHeight: 40 }}
+            data-testid={`k71-card-delete-btn-${index}`}
+            title={deleteDisabled
+              ? "Finish the pending delete first"
+              : "Delete line"}
+          >
+            <Trash2 size={12} /> Delete
+          </button>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+
 function UndoToast({ onUndo, testid }) {
   return (
     <div
@@ -658,7 +746,12 @@ export default function K71LineItemsEditor({
           </span>
         </div>
       ) : null}
-      <table className="w-full text-sm" data-testid="k71-line-items-table">
+      <table
+        className={`w-full text-sm ${
+          editIndex === null ? "hidden sm:table" : ""
+        }`}
+        data-testid="k71-line-items-table"
+      >
         <thead>
           <tr style={{ borderBottom: `1px solid ${colors.divider}` }}>
             <th className="text-left px-2 py-2 font-semibold"
@@ -697,6 +790,32 @@ export default function K71LineItemsEditor({
           ))}
         </tbody>
       </table>
+
+      {/* Feb-2026 · Responsive Quote/Estimate follow-up — mobile
+          stacked-card fallback for < sm. Kept out of the DOM
+          entirely while any row is in edit mode (``editIndex !==
+          null``) so the ``<tr>``-based ``EditableRow`` becomes
+          the sole visible surface + owns focus. Distinct
+          ``-mobile`` testids preserve every existing table-based
+          test assertion. */}
+      {editIndex === null ? (
+        <ul
+          className="sm:hidden mt-2 flex flex-col gap-2 list-none p-0"
+          data-testid="k71-line-items-cards"
+        >
+          {items.map((li, i) => (
+            <MobileCard
+              key={i}
+              line={li}
+              index={i}
+              canEdit={canEdit}
+              deleteDisabled={pendingDelete !== null}
+              onEdit={setEditIndex}
+              onDelete={handleDelete}
+            />
+          ))}
+        </ul>
+      ) : null}
 
       {canEdit ? (
         <div className="mt-3 flex justify-start">
