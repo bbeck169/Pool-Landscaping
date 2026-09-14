@@ -24,7 +24,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Printer, Download, Send, Copy, Archive, FilePlus, CalendarPlus,
   MessageSquare, Check, X as XIcon, Trash2, Edit3, Loader2, CheckCircle2,
-  XCircle,
+  XCircle, FileText, File as FileIcon,
 } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import "@/components/InvoiceView.css";
@@ -1084,12 +1084,52 @@ export default function EstimateView({
               >
                 <div className="ev-attachments-title">Attachments</div>
                 <ul className="ev-attachments-list">
-                  {(data.attachments || []).map((att, i) => (
+                  {(data.attachments || []).map((att, i) => {
+                    // Feb-2026 · Attachment thumbnails — branch on the
+                    // ``content_type`` field the backend already emits
+                    // (see FEATURE_PUBLIC_QUOTE_ATTACHMENTS.md). Image
+                    // types render an <img> preview (lazy-loaded); PDF
+                    // + everything else render a lucide glyph inside a
+                    // matching 64px square. The wrapping <a> mirrors
+                    // the existing Download button so a click on the
+                    // preview still opens the same tokenised URL in a
+                    // new tab.
+                    const ct = String(att.content_type || "").toLowerCase();
+                    const isImg = ct.startsWith("image/");
+                    const isPdf = ct === "application/pdf";
+                    const iconTile = (
+                      <div
+                        className="w-16 h-16 rounded-md border border-gray-200 bg-white flex items-center justify-center text-gray-500 shrink-0"
+                        aria-hidden="true"
+                      >
+                        {isPdf
+                          ? <FileText size={28} />
+                          : <FileIcon size={28} />}
+                      </div>
+                    );
+                    return (
                     <li
                       key={att.id || i}
                       className="ev-attachment-row"
                       data-testid={`estimate-attachment-row-${i}`}
                     >
+                      <a
+                        href={att.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block shrink-0 self-start sm:self-auto"
+                        aria-label={`Open ${att.filename} in a new tab`}
+                        data-testid={`estimate-attachment-thumb-${i}`}
+                      >
+                        {isImg ? (
+                          <img
+                            src={att.url}
+                            alt={att.filename}
+                            loading="lazy"
+                            className="w-16 h-16 object-cover rounded-md border border-gray-200 bg-white"
+                          />
+                        ) : iconTile}
+                      </a>
                       <div className="ev-attachment-meta">
                         <span className="ev-attachment-name">
                           {att.filename}
@@ -1108,7 +1148,8 @@ export default function EstimateView({
                         Download
                       </a>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </div>
             ) : null}

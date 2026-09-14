@@ -179,4 +179,69 @@ describe("EstimateView · Attachments section (public viewer)", () => {
     await screen.findByTestId("estimate-view");
     expect(screen.queryByTestId("estimate-attachments-section")).toBeNull();
   });
+
+  // Feb-2026 · Attachment thumbnails — content-type branch coverage.
+  // Image attachments render an <img> preview inside the tokenised
+  // new-tab anchor; PDF attachments render an icon glyph (no <img>).
+  it("renders an <img> thumbnail for image attachments in a new-tab anchor", async () => {
+    const payload = {
+      ..._basePayload(),
+      attachments: [
+        {
+          id: "file-img",
+          filename: "before.png",
+          content_type: "image/png",
+          size: 12_345,
+          url: "https://app.example.com/api/portal/quotes/via-token/files/file-img?token=jwt-img",
+        },
+      ],
+    };
+    _setupRouting(payload);
+    render(<EstimateView estimateId="q-1" token="jwt-img" />);
+
+    const thumb = await screen.findByTestId("estimate-attachment-thumb-0");
+    // The wrapping element is the <a target="_blank"> so clicking the
+    // preview opens the tokenised URL in a new tab (same behaviour as
+    // the Download button next to it).
+    expect(thumb.tagName).toBe("A");
+    expect(thumb.getAttribute("href")).toBe(payload.attachments[0].url);
+    expect(thumb.getAttribute("target")).toBe("_blank");
+    expect(thumb.getAttribute("rel")).toMatch(/noopener/);
+
+    // The image-branch renders an <img> with the same tokenised URL as
+    // src + lazy-loading + object-cover for the 64px square.
+    const img = thumb.querySelector("img");
+    expect(img).toBeTruthy();
+    expect(img.getAttribute("src")).toBe(payload.attachments[0].url);
+    expect(img.getAttribute("loading")).toBe("lazy");
+    // No stray icon svgs when we're on the image branch.
+    expect(thumb.querySelector("svg")).toBeNull();
+  });
+
+  it("renders a PDF icon (no <img>) for PDF attachments", async () => {
+    const payload = {
+      ..._basePayload(),
+      attachments: [
+        {
+          id: "file-pdf",
+          filename: "proposal.pdf",
+          content_type: "application/pdf",
+          size: 98_765,
+          url: "https://app.example.com/api/portal/quotes/via-token/files/file-pdf?token=jwt-pdf",
+        },
+      ],
+    };
+    _setupRouting(payload);
+    render(<EstimateView estimateId="q-1" token="jwt-pdf" />);
+
+    const thumb = await screen.findByTestId("estimate-attachment-thumb-0");
+    expect(thumb.tagName).toBe("A");
+    expect(thumb.getAttribute("href")).toBe(payload.attachments[0].url);
+    expect(thumb.getAttribute("target")).toBe("_blank");
+    // PDF branch does NOT render an <img> element — that would 404 the
+    // preview and paint a broken-image glyph. It renders a lucide
+    // <svg> icon inside the 64px tile instead.
+    expect(thumb.querySelector("img")).toBeNull();
+    expect(thumb.querySelector("svg")).toBeTruthy();
+  });
 });

@@ -239,3 +239,98 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 * Any other email template beyond `send_estimate_reminder_email`.
 * Any change to `/api/files/{id}/download` auth (still admin-only).
 * Attaching real bytes to outgoing emails (Option A: links only).
+
+## Feb-2026 · Follow-up · Attachment thumbnails (public viewer)
+
+Small frontend-only extension on top of the section above. Adds a
+64×64 preview tile to the LEFT of each attachment row so customers
+get a visual cue (image preview or file-type icon) before they
+click Download.
+
+### Touched files
+
+| File | Change | LOC delta |
+| ---- | ------ | --------- |
+| `frontend/src/components/EstimateView.jsx` | Added `File` icon import; injected a thumbnail anchor per attachment that branches on `content_type` | +~55 |
+| `frontend/src/test/estimate-view-attachments.test.jsx` | +2 Vitest cases (image renders `<img>` inside new-tab anchor; PDF renders `<svg>` glyph, no `<img>`) | +~65 |
+
+No new CSS files, no backend touch, no OpenAPI diff.
+
+### Content-type branching
+
+Branch is a `String(att.content_type || "").toLowerCase()` prefix
+check driven by the `content_type` field already emitted by
+`routers/estimate_viewer.py::_build_payload`:
+
+| `content_type` | Thumbnail |
+| -------------- | --------- |
+| `image/*` (png, jpeg, webp, gif, heic, …) | `<img src={att.url} loading="lazy" class="w-16 h-16 object-cover rounded-md border">` |
+| `application/pdf` | `<div class="w-16 h-16 …"><FileText size={28} /></div>` (lucide) |
+| anything else | `<div class="w-16 h-16 …"><File size={28} /></div>` (lucide, aliased locally as `FileIcon`) |
+
+Both the icon-branch and image-branch are wrapped in
+`<a href={att.url} target="_blank" rel="noopener noreferrer">` so
+clicking the preview opens the same tokenised download URL as the
+Download button next to it (no separate lightbox — deferred).
+
+### Testid map
+
+| Testid | Element | Notes |
+| ------ | ------- | ----- |
+| `estimate-attachment-row-<i>` | `<li>` per attachment | Unchanged from the original attachments phase |
+| `estimate-attachment-thumb-<i>` | Anchor wrapping the 64×64 tile | **NEW** — image `<img>` OR icon `<div>` sits inside |
+| `estimate-attachment-download-<i>` | Download button on far right | Unchanged |
+
+### Responsive layout
+
+Tailwind classes only — no changes to `EstimateView.css`. The
+existing `.ev-attachment-row` block already flips
+`flex-direction: column; align-items: stretch;` at
+`max-width: 639.98px` (matches Tailwind's default `sm` breakpoint
+at 640px), so the layout falls out naturally:
+
+* `< sm`: the row is a stacked column. The thumbnail anchor uses
+  `self-start` so it stays 64×64 and left-aligned (not stretched
+  to full-width). Filename+size sits below it, Download button
+  bottom.
+* `≥ sm`: the row is a horizontal flex row. The thumbnail anchor
+  uses `sm:self-auto` to inherit `align-items: center` from the
+  parent (thumb-left, filename+size middle, Download-right).
+
+Thumbnail is `shrink-0` so a long filename never squeezes the 64px
+preview.
+
+### Admin surface parity
+
+Admin quote/invoice detail (`pages/quotes/QuoteInvoiceDetail.jsx`
+line 1086) already renders the attachments strip via
+`components/quotes/InvoiceAttachments.jsx` →
+`components/files/FileList.jsx`. `FileList` (lines 78–90) ALREADY
+renders a per-row 48×48 preview tile with the exact same
+content-type branching contract:
+
+* `content_type` starts with `image/` → `<AuthedImage>` (48×48)
+* `content_type` starts with `video/` → lucide `Video` icon
+* everything else (including PDF) → lucide `FileText` icon
+
+Visual parity is therefore already met on the admin surface; no
+change was made there. Kept at 48px (not 64px) because that is
+the pre-existing admin card density — matching it to the public
+viewer would visually redesign the grid + fight `FileList`'s
+2-column `sm:grid-cols-2` layout, which is out of scope.
+
+### Test-suite status (this follow-up)
+
+* **Vitest**: `578 files passed | 1 skipped · 4345 passed | 34
+  skipped · exit 0` (+2 vs the previous 4343 baseline logged
+  above). New file total: 4 tests in
+  `estimate-view-attachments.test.jsx`.
+* **OpenAPI paths**: **1738** (unchanged — no backend diff).
+
+### Out of scope (this follow-up)
+
+* Backend attachments payload changes — none needed.
+* Lightbox overlay for image previews — deferred.
+* PDF first-page rasterisation — deferred.
+* Admin `FileList` visual redesign — deferred (parity already met).
+* Mobile Expo attachment thumbnails — delegated separately.
