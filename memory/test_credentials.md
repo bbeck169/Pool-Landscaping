@@ -13,6 +13,7 @@
 - **technician** · `mike@aquaterra.com` · `password123`
 - **technician** · `carlos@aquaterra.com` · `password123`
 - **customer** · `customer@aquaterra.com` · `password123`
+- **customer (secondary)** · `customer2@aquaterra.com` · `password123` — Feb-2026 seeded via `seed_demo_second_customer()` (idempotent, boot-time). Anchored to the Robert Blake customer record so it is a distinct `customer_id` from `customer@aquaterra.com`. Use this account to verify wrong-customer 403 branches (e.g. `GET /api/customers/me/jobs/{jid}/photos/{photo_id}`).
 
 ## Notes
 - Landscape techs carry `role: "technician"` + `department: "landscaping"` and are required to

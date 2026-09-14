@@ -1744,6 +1744,13 @@ async def _background_seed():
         # got promoted to admin by an unrelated migration. Idempotent.
         from seed import seed_demo_manager as _seed_demo_manager
         await step("seed_demo_manager", _seed_demo_manager())
+    # Feb-2026 · Customer service-reports enhancements — idempotent
+    # seed for a second customer login so ``e1_tester`` can verify the
+    # wrong-customer 403 branch on the new photo-stream route. Runs
+    # unconditionally (mirrors ``seed_demo_manager``'s posture) — the
+    # helper is a no-op when the anchor customer row is missing.
+    from seed import seed_demo_second_customer as _seed_second_customer
+    await step("seed_demo_second_customer", _seed_second_customer())
     # ``auto_heal_demo_passwords`` already self-gates on APP_ENV=production
     # inside seed.py — left unconditional here so the log line still
     # prints (helps ops confirm the safe-in-prod posture).

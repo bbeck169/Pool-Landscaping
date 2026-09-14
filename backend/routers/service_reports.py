@@ -2347,6 +2347,7 @@ async def list_my_service_reports(
 @router.get("/customers/me/service-reports/{report_id}")
 async def get_my_service_report(
     report_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
@@ -2382,8 +2383,11 @@ async def get_my_service_report(
     # customer detail response so tech-attached photos (already
     # exposed under ``photos``) stay attributed independently.
     # Each entry carries the compact display shape + a token-scoped
-    # URL pointing at the customer-session streaming route below.
-    sr["job_photos"] = _build_customer_job_photos(job)
+    # ABSOLUTE URL pointing at the customer-session streaming route
+    # below — customers hit the portal from mobile clients that
+    # can't resolve relative URLs against the API host.
+    sr["job_photos"] = _build_customer_job_photos(job,
+                                                    _resolve_photo_url_base(request))
     # Feb-2026 · P1 hotfix — populate ``tech_name`` (never persisted on
     # the report doc; see the list-endpoint comment above). Falls back
     # to ``effective_tid(job)`` when the report's ``tech_id`` doesn't
@@ -2404,16 +2408,40 @@ async def get_my_service_report(
 # Feb-2026 · Customer service-report enhancements — job.photos helpers +
 # customer-session photo streaming route.
 # ═══════════════════════════════════════════════════════════════════════
-def _build_customer_job_photos(job: dict) -> list:
+def _resolve_photo_url_base(request: Request) -> str:
+    """Return the absolute URL prefix for the customer photo stream.
+
+    Mirrors ``routers/estimate_viewer._resolve_url_base`` — prefers
+    ``APP_PUBLIC_URL`` (production canonical host), falls back to
+    ``request.base_url`` for preview/local. Empty string on failure
+    (caller emits a relative URL and the browser fills in origin).
+    """
+    import os as _os_env
+    _env = (_os_env.environ.get("APP_PUBLIC_URL") or "").strip().rstrip("/")
+    if _env:
+        return _env
+    try:
+        return str(request.base_url).rstrip("/")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _build_customer_job_photos(job: dict, base_url: str = "") -> list:
     """Return the customer-safe display shape for ``job.photos``.
 
     * Filters soft-deleted entries.
-    * Emits an embedded ``thumb`` (data-URI) when the photo carries a
-      pre-generated thumbnail — those work as ``<img src>`` on the
-      customer viewer without any auth handshake.
-    * Emits a token-scoped ``url`` that hits the customer-session
-      streaming route below. The endpoint verifies job ownership,
-      so anon → 401, wrong-customer session → 403.
+    * Emits an embedded ``thumb`` (data-URI) only when the photo
+      carries a pre-generated thumbnail — those work as ``<img src>``
+      on the customer viewer without any auth handshake. The field is
+      omitted (not emitted as an empty string) when absent so the
+      client can cleanly branch on ``photo.thumb`` presence.
+      Server-side thumbnail generation on the admin
+      ``POST /api/jobs/{jid}/photos`` upload path is a larger change
+      tracked separately; today, thumbs only exist for photos taken
+      through the tech app.
+    * Emits an ABSOLUTE token-scoped ``url`` that hits the customer-
+      session streaming route below. The endpoint verifies job
+      ownership, so anon → 401, wrong-customer session → 403.
     * Never returns raw base64 originals (kept off the wire so the
       list detail response stays small).
     """
@@ -2424,21 +2452,24 @@ def _build_customer_job_photos(job: dict) -> list:
         _pid = p.get("id")
         if not _pid:
             continue
-        out.append({
+        _rel = f"/api/customers/me/jobs/{job.get('id')}/photos/{_pid}"
+        entry: dict = {
             "id":            _pid,
             "caption":       p.get("caption") or p.get("label") or "",
             "created_at":    (p.get("uploaded_at") or p.get("created_at")
                                 or p.get("taken_at")),
             "uploader_role": p.get("uploader_role") or "technician",
-            # Embedded thumbnail (data-URI) — no auth handshake needed
-            # for the ``<img>`` tag.
-            "thumb":         p.get("thumb") or "",
             # Token-scoped streaming URL — customer session enforces
-            # ownership. Relative here; the frontend renders with its
-            # bearer token via fetch/blob or ``?auth=<token>``.
-            "url":           f"/api/customers/me/jobs/{job.get('id')}"
-                             f"/photos/{_pid}",
-        })
+            # ownership. Absolute when ``base_url`` is set so mobile
+            # clients + shared magic-links resolve correctly.
+            "url":           f"{base_url}{_rel}" if base_url else _rel,
+        }
+        _thumb = p.get("thumb") or ""
+        if _thumb:
+            # Embedded thumbnail (data-URI) — no auth handshake for the
+            # ``<img>`` tag. Omitted entirely when absent.
+            entry["thumb"] = _thumb
+        out.append(entry)
     return out
 
 
@@ -2486,16 +2517,26 @@ async def stream_customer_job_photo(
     s3_key = photo.get("s3_key")
     if s3_key:
         try:
-            from services.aws_s3.photos import get_object as _s3_get
-            data = _s3_get(s3_key)
+            from services.aws_s3.photos import read_object as _s3_read
+            data = _s3_read(s3_key)
+        except Exception as e:  # noqa: BLE001
+            # Import-error / unexpected raise — fall through to the
+            # embedded-base64 branch below so a partial S3 outage or
+            # a stale module symbol never 502s a legitimate request.
+            logger.warning("[customer-job-photo] s3 read raised: %s", e)
+            data = None
+        if data is not None:
             mime = photo.get("s3_mime") or photo.get("mime") \
                 or photo.get("content_type") or "image/jpeg"
             return Response(content=data, media_type=mime, headers={
                 "Cache-Control": "private, no-store",
             })
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[customer-job-photo] s3 read failed: %s", e)
-            raise HTTPException(502, "storage_read_failed") from e
+        # ``read_object`` returned ``None`` — S3 disabled / misconfigured
+        # / read failed. Fall through to the embedded-base64 branch.
+        logger.warning(
+            "[customer-job-photo] s3 read returned None key=%s — "
+            "falling back to embedded base64", s3_key,
+        )
 
     # ── Fall back to the embedded base64 data URI ──
     embedded = photo.get("data") or photo.get("data_url") \

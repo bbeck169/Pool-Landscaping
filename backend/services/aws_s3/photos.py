@@ -254,6 +254,30 @@ def generate_signed_url(s3_key: str,
         return None
 
 
+def read_object(s3_key: str) -> Optional[bytes]:
+    """Return the raw bytes stored at ``s3_key``.
+
+    Contract mirrors the rest of this module — returns ``None`` when
+    S3 is disabled, misconfigured, or the read fails for any reason.
+    Never raises. Callers MUST treat ``None`` as "S3 unavailable —
+    fall back to the DB/embedded copy".
+    """
+    cfg = _cfg()
+    client = _client(cfg)
+    if client is None or not s3_key:
+        return None
+    try:
+        resp = client.get_object(Bucket=cfg["bucket"], Key=s3_key)
+        body = resp.get("Body")
+        if body is None:
+            return None
+        return body.read()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[photos-s3] read_object failed key=%s err=%s",
+                        s3_key, exc)
+        return None
+
+
 def delete_photo(s3_key: str) -> bool:
     """Delete an object. Returns ``True`` on success, ``False`` on
     disabled/failure. Never raises."""

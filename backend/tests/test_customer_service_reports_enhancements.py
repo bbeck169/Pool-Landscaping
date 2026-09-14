@@ -182,11 +182,22 @@ def test_detail_response_includes_job_photos_field(customer_login):
     assert "photos" in detail
     for p in detail["job_photos"]:
         assert isinstance(p, dict)
-        # URL is relative + points at the token-scoped streaming
-        # route (customer session enforces ownership). The
-        # frontend prepends the origin at render time.
-        assert p.get("url", "").startswith("/api/customers/me/jobs/")
+        # Feb-2026 post-tester fix — URL must be ABSOLUTE
+        # (starts with ``http`` — accepts both http + https so
+        # local dev + preview + prod all pass) so mobile clients
+        # and shared magic links can resolve it without needing
+        # to fill in the origin.
+        _url = p.get("url", "")
+        assert _url.startswith(("http://", "https://")), (
+            f"job_photos url must be absolute, got: {_url!r}"
+        )
+        assert "/api/customers/me/jobs/" in _url
         assert p.get("id")
+        # ``thumb`` is either present (non-empty data-URI) or
+        # entirely absent — never an empty string. The dispatch
+        # asked us to omit the field rather than emit "".
+        if "thumb" in p:
+            assert p["thumb"], "thumb must be non-empty when present"
 
 
 # ─── Acceptance 3 — anon GET on the photo route → 401 ────────────
@@ -208,6 +219,127 @@ def test_anon_get_on_photo_route_returns_401(customer_login):
     if not photos:
         pytest.skip("job has no attached photos")
     url = photos[0]["url"]
-    # Anon (no Authorization header) → 401.
-    r_anon = requests.get(f"{BASE_URL}{url}", timeout=REQ_TIMEOUT)
+    # URL is absolute (points at ``APP_PUBLIC_URL``). For the anon
+    # check we hit the same path on BASE_URL so this test always
+    # exercises the pod under test.
+    from urllib.parse import urlparse
+    _path = urlparse(url).path
+    r_anon = requests.get(f"{BASE_URL}{_path}", timeout=REQ_TIMEOUT)
     assert r_anon.status_code == 401, r_anon.text
+
+
+# ─── Acceptance — wrong-customer session → 403 ───────────────────
+
+def test_wrong_customer_session_returns_403_on_photo_route(customer_login):
+    """A different customer's bearer token must NOT be able to
+    stream photos belonging to the first customer's job. Requires
+    the ``customer2@aquaterra.com`` fixture seeded by
+    ``seed_demo_second_customer`` (see ``/app/memory/test_credentials.md``)."""
+    r = customer_login["sess"].get(
+        f"{BASE_URL}/api/customers/me/service-reports?page_size=1",
+        timeout=REQ_TIMEOUT,
+    )
+    body = r.json()
+    if not body.get("items"):
+        pytest.skip("primary customer has no submitted reports")
+    rid = body["items"][0]["id"]
+    r_d = customer_login["sess"].get(
+        f"{BASE_URL}/api/customers/me/service-reports/{rid}",
+        timeout=REQ_TIMEOUT,
+    )
+    photos = r_d.json().get("job_photos") or []
+    if not photos:
+        pytest.skip("primary customer's job has no attached photos")
+    url = photos[0]["url"]
+
+    tok2 = _login("customer2@aquaterra.com", "password123")
+    if not tok2:
+        pytest.skip("customer2 fixture not seeded — see "
+                    "/app/memory/test_credentials.md")
+    # ``url`` is absolute (points at ``APP_PUBLIC_URL`` — may be a
+    # different pod than ``BASE_URL``). Rebase onto BASE_URL so we
+    # test against the same pod that minted ``tok2``.
+    from urllib.parse import urlparse
+    _path = urlparse(url).path
+    r_wrong = requests.get(
+        f"{BASE_URL}{_path}",
+        headers={"Authorization": f"Bearer {tok2}"},
+        timeout=REQ_TIMEOUT,
+    )
+    # Must be 403 (customer session valid, ownership check fails).
+    assert r_wrong.status_code == 403, r_wrong.text
+
+
+# ─── Acceptance — S3 read failure falls back to base64 ───────────
+
+def test_customer_photo_endpoint_never_502s_regression():
+    """Lightweight regression check on the historical 502 bug.
+
+    The pre-fix code imported ``services.aws_s3.photos.get_object``
+    — a symbol that never existed in the module — and emitted
+    ``HTTPException(502, "storage_read_failed")`` when the import
+    raised. That branch is gone now; this test locks the two
+    invariants:
+
+      1. ``services.aws_s3.photos.read_object`` exists and returns
+         ``None`` for a bad key (contract: never raises).
+      2. ``services.aws_s3.photos.get_object`` DOES NOT exist —
+         the router should not silently regress back to the broken
+         symbol.
+      3. The router source no longer emits the historical
+         ``storage_read_failed`` 502.
+    """
+    # 1) ``read_object`` exists with the "never raises" contract.
+    from services.aws_s3 import photos as _photos_mod
+    assert callable(getattr(_photos_mod, "read_object", None)), (
+        "read_object must exist on services.aws_s3.photos"
+    )
+    # Bad key + likely-disabled config → returns None, never raises.
+    assert _photos_mod.read_object("does/not/exist") is None
+
+    # 2) ``get_object`` MUST NOT be resurrected on the module.
+    assert not hasattr(_photos_mod, "get_object"), (
+        "get_object was the historical broken symbol — do not "
+        "re-add it; use read_object (bytes) or generate_signed_url."
+    )
+
+    # 3) Router source no longer emits the historical 502.
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1]
+           / "routers" / "service_reports.py").read_text()
+    assert "storage_read_failed" not in src, (
+        "customer photo endpoint should never emit the historical "
+        "502 storage_read_failed — falls back to embedded base64 "
+        "or 503 no_storage_backing"
+    )
+
+
+def test_customer_photo_endpoint_happy_path_not_502(customer_login):
+    """Live-pod check — hit an actual customer photo URL. Expected
+    2xx (S3 or embedded base64) or 4xx (photo missing on this seed)
+    — but NEVER 502. Anchors the "no more storage_read_failed"
+    guarantee against the deployed backend."""
+    r = customer_login["sess"].get(
+        f"{BASE_URL}/api/customers/me/service-reports?page_size=1",
+        timeout=REQ_TIMEOUT,
+    )
+    body = r.json()
+    if not body.get("items"):
+        pytest.skip("customer has no submitted reports")
+    rid = body["items"][0]["id"]
+    r_d = customer_login["sess"].get(
+        f"{BASE_URL}/api/customers/me/service-reports/{rid}",
+        timeout=REQ_TIMEOUT,
+    )
+    photos = r_d.json().get("job_photos") or []
+    if not photos:
+        pytest.skip("job has no attached photos")
+    from urllib.parse import urlparse
+    _path = urlparse(photos[0]["url"]).path
+    r_stream = customer_login["sess"].get(
+        f"{BASE_URL}{_path}", timeout=REQ_TIMEOUT,
+    )
+    assert r_stream.status_code != 502, (
+        f"customer photo endpoint 502'd — historical bug regressed: "
+        f"{r_stream.text}"
+    )

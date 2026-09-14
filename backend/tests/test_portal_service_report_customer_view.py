@@ -134,7 +134,19 @@ async def _fetch_report(rid: str, tenant_id: str, uid: str) -> Dict[str, Any]:
     from routers.service_reports import get_my_service_report
     user = await _db().users.find_one({"id": uid}, {"_id": 0})
     tenant = await _db().tenants.find_one({"id": tenant_id}, {"_id": 0})
-    return await get_my_service_report(rid, user=user, tenant=tenant)
+    # Feb-2026 · absolute-URL follow-up — the route now takes a
+    # ``request: Request`` positional so it can resolve the
+    # ``job_photos[].url`` prefix. Build a minimal Starlette
+    # Request stub with a working ``base_url`` for these DTO tests.
+    from starlette.requests import Request
+    req = Request({
+        "type": "http",
+        "scheme": "https",
+        "server": ("test", 443),
+        "path": "/",
+        "headers": [(b"host", b"test.local")],
+    })
+    return await get_my_service_report(rid, req, user=user, tenant=tenant)
 
 
 _COST_FIELDS = (

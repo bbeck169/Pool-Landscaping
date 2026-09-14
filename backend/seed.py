@@ -413,6 +413,101 @@ async def seed_demo_manager():
     return {"repaired": True, "updates": updates}
 
 
+async def seed_demo_second_customer():
+    """Feb-2026 · Customer service-reports enhancements — idempotent
+    seed for a second customer login.
+
+    The initial ``seed()`` bulk-seeds only one customer login row
+    (``customer@aquaterra.com`` → Jennifer Carson), which prevents
+    ``e1_tester`` from verifying the wrong-customer 403 branch on
+    the new ``GET /api/customers/me/jobs/{jid}/photos/{photo_id}``
+    stream route. This helper self-heals across every boot so a
+    preview pod that was seeded pre-cutover picks up the second
+    account without manual intervention.
+
+    Invariant:
+
+        customer2@aquaterra.com  ⇒  users row with role="customer",
+                                    linked to customers[1] (Robert
+                                    Blake) via ``customer_id``,
+                                    password_hash = hash("password123").
+        customers[1].email == "customer2@aquaterra.com"
+        customers[1].has_login == True
+
+    Never bulk-seeds the customer doc itself — the row must already
+    exist (created by ``seed()``). If it's missing this is a no-op.
+    Idempotent.
+    """
+    from utils import hash_password
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    tenant_id = tenant["id"] if tenant else None
+    email = "customer2@aquaterra.com"
+
+    # Anchor to a customer doc that isn't the primary demo customer.
+    # Prefer Robert Blake by name — falls back to any other customer
+    # in the aquaterra tenant if the name drifted.
+    cust = await db.customers.find_one(
+        {**({"tenant_id": tenant_id} if tenant_id else {}),
+         "name": "Robert Blake"}, {"_id": 0, "id": 1},
+    )
+    if not cust:
+        cust = await db.customers.find_one(
+            {**({"tenant_id": tenant_id} if tenant_id else {}),
+             "email": {"$ne": "customer@aquaterra.com"}},
+            {"_id": 0, "id": 1},
+        )
+    if not cust:
+        return {"created": False, "reason": "no_anchor_customer"}
+    cust_id = cust["id"]
+
+    # 1) Ensure the customer doc carries the login email + has_login.
+    await db.customers.update_one(
+        {"id": cust_id},
+        {"$set": {"email": email, "has_login": True}},
+    )
+
+    # 2) Ensure the users row exists + password + customer_id are correct.
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        updates = {}
+        if existing.get("role") != "customer":
+            updates["role"] = "customer"
+        if existing.get("customer_id") != cust_id:
+            updates["customer_id"] = cust_id
+        if tenant_id and existing.get("tenant_id") != tenant_id:
+            updates["tenant_id"] = tenant_id
+        if existing.get("active") is False:
+            updates["active"] = True
+        # Always heal the password so the account authenticates with
+        # the shared demo default — same posture as
+        # ``auto_heal_demo_passwords_if_needed``.
+        updates["password_hash"] = hash_password("password123")
+        await db.users.update_one({"email": email}, {"$set": updates})
+        return {"created": False, "healed": True, "email": email,
+                 "customer_id": cust_id}
+
+    await db.users.insert_one({
+        "id": new_id(),
+        "name": "Robert Blake",
+        "email": email,
+        "password_hash": hash_password("password123"),
+        "role": "customer",
+        "avatar": "",
+        "technician_id": None,
+        "customer_id": cust_id,
+        "active": True,
+        "created_at": now_iso(),
+        **({"tenant_id": tenant_id} if tenant_id else {}),
+    })
+    from config import logger as _lg
+    _lg.info("[seed_demo_second_customer] created customer2@aquaterra.com "
+             f"linked to customer_id={cust_id}")
+    return {"created": True, "email": email, "customer_id": cust_id}
+
+
+
+
+
 async def seed():
     if await db.users.count_documents({}) > 0:
         return

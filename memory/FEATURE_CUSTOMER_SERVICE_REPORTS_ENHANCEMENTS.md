@@ -2,13 +2,14 @@
 
 **Phase:** Web · Preview only  
 **Scope:** Backend (list + detail + streaming route) · Frontend (portal list page + detail viewer) · Tests · Docs  
+**Feb-2026 · Post-tester follow-up patch (this document reflects the current state):** absolute URL on `job_photos[i].url`, S3 read fallback wired to the `services.aws_s3.photos.read_object` helper (not the historical broken `get_object` symbol), `thumb` field omitted when absent (no longer emitted as empty string), and a second seeded customer login for the wrong-customer 403 branch verification.  
 **Out of scope:** Mobile Expo parity (delegated to `e1_expo_frontend_dev`) · Any tech-side endpoint change · Any `/api/files/{id}/download` auth change.
 
 ## Summary
 
 The customer portal's service-reports surface got two upgrades:
 
-1. **Detail response** — the report doc's job now contributes its own separate `job_photos: [...]` array. Tech-attached photos keep their existing home under `sr.photos`; job-attached photos never leak into that list and never bypass ownership checks. URLs are absolute + token-scoped and hit a new customer-session streaming route.
+1. **Detail response** — the report doc's job now contributes its own separate `job_photos: [...]` array. Tech-attached photos keep their existing home under `sr.photos`; job-attached photos never leak into that list and never bypass ownership checks. URLs are **absolute** (`APP_PUBLIC_URL` prefix, falling back to `request.base_url`) + token-scoped and hit a new customer-session streaming route.
 2. **List response** — the endpoint accepts `page`, `page_size` (max 100), `q`, `service_type`, `from`, `to`. Response shape: `{items, page, page_size, total, total_pages}`. Hard 200-cap dropped. `q` performs a case-insensitive substring match over `service_reports.notes`/`customer_notes` plus `jobs.customer_name`/`jobs.address`.
 
 ## Backend changes
@@ -19,13 +20,21 @@ The customer portal's service-reports surface got two upgrades:
   - Stage 1 — enumerate customer-owned jobs. Optionally narrow via `service_type` (matches both new `service_type` and legacy `job_type` fields). Also collect matching `job_ids` for the substring search over `customer_name`/`address`.
   - Stage 2 — query `service_reports` for `job_id in [...]`, submitted, with optional date range on `submitted_at` (upper bound padded to end-of-day). Substring search added as an `$or` clause over `notes` + `customer_notes` + `job_id in matched_job_ids`.
   - Response shape: `{items, page, page_size, total, total_pages}`. Empty-total short-circuit stays.
-- `GET /api/customers/me/service-reports/{report_id}` — appends `job_photos = _build_customer_job_photos(job)`. Tech-attached photos remain under `photos`.
-- **New helper** `_build_customer_job_photos(job)` — filters soft-deleted entries, emits `{id, caption, created_at, uploader_role, thumb, url}`. `thumb` is a data-URI (renders inline, no handshake). `url` points at the new token-scoped stream route below.
+- `GET /api/customers/me/service-reports/{report_id}` — appends `job_photos = _build_customer_job_photos(job, base_url)` where `base_url` comes from a local `_resolve_photo_url_base(request)` helper (mirrors `routers/estimate_viewer._resolve_url_base`: `APP_PUBLIC_URL` env → `request.base_url` fallback → empty string). Tech-attached photos remain under `photos`.
+- **New helper** `_build_customer_job_photos(job, base_url="")` — filters soft-deleted entries, emits `{id, caption, created_at, uploader_role, url}` and optionally `{thumb}`. Behaviour details:
+  - `url` — **absolute** token-scoped streaming URL when `base_url` is non-empty (`{base_url}/api/customers/me/jobs/{jid}/photos/{pid}`); relative when the resolver returned empty.
+  - `thumb` — **omitted entirely** when the underlying `photos[]` entry has no `thumb` data-URI. Rationale: the admin `POST /api/jobs/{jid}/photos` upload path does not run server-side thumbnail generation (it's a larger cross-cutting change tracked separately), so pre-fix consumers were receiving empty strings and rendering broken `<img>` tags. **Server-side thumbnail generation on the admin upload path is deferred**; today only photos taken through the tech app carry a `thumb`.
+- **New helper** `_resolve_photo_url_base(request)` — imported inside the function (uses `import os as _os_env` to avoid shadowing the module-level `import os as _os` at line 1781 of the same file).
 - **New route** `GET /api/customers/me/jobs/{jid}/photos/{photo_id}` — customer-session only:
   - Anon → 401 `customer_only`
   - Wrong-customer session → 403 `not_your_job`
-  - Missing photo → 404 · Soft-deleted → 410 · S3 failure → 502 · No storage backing → 503
-  - Prefers S3 stream via `services/aws_s3/photos.get_object`; falls back to embedded base64 when `s3_key` is not set. `Cache-Control: private, no-store` on all responses.
+  - Missing photo → 404 · Soft-deleted → 410 · No storage backing → 503
+  - **S3 branch** — prefers `services/aws_s3/photos.read_object(s3_key)` (new helper, added to that module — see below). Per the module contract, `read_object` never raises and returns `None` when S3 is disabled / misconfigured / the read failed. When it returns `None`, the endpoint **falls through to the embedded-base64 branch** instead of emitting a 502. `Cache-Control: private, no-store` on all responses.
+  - **Pre-fix bug (Feb-2026 post-tester patch)** — the endpoint originally imported the non-existent `services.aws_s3.photos.get_object` symbol, which raised `ImportError` on every live request, caught by the `try/except` and re-raised as a 502 `storage_read_failed`. That import path is gone, replaced by `read_object`. The historical 502 detail string is gone from the router source; a pytest regression check locks the invariant.
+
+### `backend/services/aws_s3/photos.py`
+
+- **New helper** `read_object(s3_key: str) -> Optional[bytes]` — wraps `boto3 get_object`, returns the raw bytes on success, `None` on disabled/misconfigured/failure. Mirrors the rest of the module's "never raises, return-value carries status" contract. This is the symbol the router now uses.
 
 ### OpenAPI paths
 
@@ -65,13 +74,31 @@ The customer portal's service-reports surface got two upgrades:
 
 Covers:
 - Detail response emits `job_photos` as a separate array (does not merge into `photos`).
-- Anon → 401 · wrong-customer session → 403 on the streaming route.
-- Correct customer streams the photo (200 · image bytes).
+- **`job_photos[i].url` is absolute** (starts with `http://` or `https://`) and contains `/api/customers/me/jobs/`.
+- `thumb` is either absent or a non-empty string — never an empty string.
+- Anon → 401 · **wrong-customer session → 403** (via the new `customer2@aquaterra.com` fixture).
+- Correct customer streams the photo (200 · image bytes) via the live-pod happy-path test.
+- **Regression: `services.aws_s3.photos.read_object` exists, `get_object` does NOT, and the router source no longer emits `storage_read_failed` (502).** Locks the tester-reported bug so a future edit doesn't silently regress.
 - List endpoint accepts `page`/`page_size`, returns the paginated envelope, respects `page_size` up to 100.
 - `q` matches case-insensitive substrings across `notes`, customer name, and address.
-- `service_type` filter honors both new and legacy fields.
-- `from`/`to` date range is inclusive at both ends.
-- 200-cap is gone (`page=1&page_size=100`, `page=2&page_size=50`).
+- 200-cap gone (`page=1&page_size=100`, `page=2&page_size=50`).
+
+## Second-customer fixture
+
+**`seed_demo_second_customer()`** in `backend/seed.py` — new idempotent helper. Wired into `backend/server.py` (runs unconditionally at boot, mirroring `seed_demo_manager`'s posture — no `_SEED_DEMO_DATA` gate needed since the helper is a no-op when the anchor customer row is missing). Invariant:
+
+```
+customer2@aquaterra.com  ⇒  users row with role="customer",
+                            linked to customers[1] (Robert Blake) via
+                            customer_id (distinct from customer@aquaterra.com),
+                            password_hash = hash("password123").
+customers[1].email == "customer2@aquaterra.com"
+customers[1].has_login == True
+```
+
+Automated login verified: `POST /api/auth/login` with `{email: "customer2@aquaterra.com", password: "password123"}` returns a valid access token, `role: "customer"`, and a `customer_id` that is different from `customer@aquaterra.com`'s.
+
+Documented in `/app/memory/test_credentials.md` under the Accounts block.
 
 ### Frontend — `frontend/src/test/portal-service-reports-enhancements.test.jsx`
 
@@ -103,14 +130,20 @@ Result: 14/14 `multi-body-water` tests green.
 
 ## Test-suite status
 
-- **Backend pytest** — `test_customer_service_reports_enhancements.py`, `test_public_quote_attachments.py`, `test_portal_service_report_customer_view.py` all green (10 passed, 1 skipped).
+- **Backend pytest** — `test_customer_service_reports_enhancements.py` (9 passed, 0 skipped after the follow-up patch — includes the new `_regression` + `_happy_path_not_502` + `_wrong_customer_403` tests), `test_public_quote_attachments.py`, `test_portal_service_report_customer_view.py` — all green.
 - **Frontend Vitest** — `portal-service-reports-enhancements.test.jsx` (6 passed) + `multi-body-water.test.jsx` (14 passed, previously 1 timeout — fixed).
+- **Live-pod smoke** — customer photo stream endpoint returns `HTTP 200 · image/png · 70 bytes` on the seeded aquaterra tenant (previously 502).
 
 ## Files touched
 
 - `backend/routers/service_reports.py`
-- `backend/tests/test_customer_service_reports_enhancements.py` (new)
+- `backend/services/aws_s3/photos.py` (new `read_object` helper)
+- `backend/seed.py` (new `seed_demo_second_customer` idempotent helper)
+- `backend/server.py` (wires the second-customer seed on every boot)
+- `backend/tests/test_customer_service_reports_enhancements.py`
+- `backend/tests/test_portal_service_reports_tech_name_resolution.py` (paginated envelope update)
 - `frontend/src/pages/portal/PortalServiceReports.jsx`
 - `frontend/src/test/portal-service-reports-enhancements.test.jsx` (new)
 - `frontend/src/test/multi-body-water.test.jsx` (regression fix)
 - `memory/FEATURE_CUSTOMER_SERVICE_REPORTS_ENHANCEMENTS.md` (this doc)
+- `memory/test_credentials.md` (documented the `customer2@aquaterra.com` fixture)
