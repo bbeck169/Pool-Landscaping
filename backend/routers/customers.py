@@ -1646,9 +1646,25 @@ async def create_customer(body: CustomerIn,
     # customer's address so it lands on the Dispatch Board without
     # waiting for the next boot backfill pass. Non-blocking — the
     # helper silently no-ops when the API key isn't configured.
+    # Feb-2026 · Auto-geocode phase — stamp ``geocode_address_hash``
+    # up-front so a follow-up PUT with an unchanged address
+    # short-circuits without a second Google round-trip.
     try:
         import asyncio as _a17
-        from services.google_maps.geocoding import geocode_and_persist_customer as _gp17
+        from services.google_maps.geocoding import (
+            geocode_and_persist_customer as _gp17,
+            resolve_customer_address as _resolve_addr17,
+        )
+        from routers.admin_customer_geocode_backfill import (
+            address_hash as _addr_hash17,
+        )
+        _resolved_create = _resolve_addr17(doc)
+        _hash_create = _addr_hash17(_resolved_create)
+        if _hash_create:
+            await db.customers.update_one(
+                {"id": doc["id"], "tenant_id": tenant["id"]},
+                {"$set": {"geocode_address_hash": _hash_create}},
+            )
         _a17.create_task(_gp17(doc["id"], tenant["id"]))
     except Exception:
         pass
@@ -2481,16 +2497,24 @@ async def update_customer(cid: str, body: CustomerIn,
     # free-form or any structured field) actually changed. Clears the
     # ``geocoded_at`` stamp so the helper doesn't short-circuit on the
     # cache and picks up new coordinates immediately.
-    _addr_keys = (
-        "service_address", "service_street", "street",
-        "service_city", "city", "service_state", "state",
-        "service_zip", "zip",
+    # Feb-2026 · Auto-geocode phase — expanded to walk EVERY field
+    # ``resolve_customer_address`` reads (free-form + structured +
+    # legacy variants) + idempotency-guarded via
+    # ``geocode_address_hash`` so an update that mutates only, say,
+    # notes doesn't re-fire the geocode.
+    from services.google_maps.geocoding import (
+        resolve_customer_address as _resolve_addr,
     )
-    _addr_changed = any(
-        (payload.get(k) or "") != (existing.get(k) or "")
-        for k in _addr_keys
+    from routers.admin_customer_geocode_backfill import (
+        address_hash as _addr_hash,
     )
-    if _addr_changed:
+    _merged_after = {**existing, **payload}
+    _new_addr = _resolve_addr(_merged_after)
+    _old_addr = _resolve_addr(existing)
+    _new_hash = _addr_hash(_new_addr)
+    _old_hash = existing.get("geocode_address_hash") or _addr_hash(_old_addr)
+    _addr_changed = _new_addr != _old_addr or _new_hash != _old_hash
+    if _addr_changed and _new_addr:
         try:
             import asyncio as _a17
             from services.google_maps.geocoding import (
@@ -2498,7 +2522,8 @@ async def update_customer(cid: str, body: CustomerIn,
             )
             await db.customers.update_one(
                 {"id": cid, "tenant_id": tenant["id"]},
-                {"$unset": {"geocoded_at": ""}},
+                {"$unset": {"geocoded_at": ""},
+                 "$set": {"geocode_address_hash": _new_hash}},
             )
             _a17.create_task(_gp17(cid, tenant["id"]))
         except Exception:

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
-import { Plus, Search, Upload, Download, Filter, MoreVertical, Users, Tag, BellRing, UserCheck, UserX, Star, Send, Mail } from "lucide-react";
+import { Plus, Search, Upload, Download, Filter, MoreVertical, Users, Tag, BellRing, UserCheck, UserX, Star, Send, Mail, MapPinned } from "lucide-react";
 import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -56,6 +56,53 @@ function useDebounced(value, delay = 250) {
   }, [value, delay]);
   return v;
 }
+
+
+// Feb-2026 · Phase — Customer geocoding on save + one-time backfill.
+// Admin+/super_admin-only. Fires ``POST /api/admin/customers/
+// backfill-geocoding`` and picks the toast variant off the response
+// envelope. Kept as a small component so the top-level list page's
+// header row stays legible.
+function BackfillGeocodingButton() {
+  const [busy, setBusy] = React.useState(false);
+  const onClick = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await api.post("/admin/customers/backfill-geocoding", {});
+      if (r && r.enqueued) {
+        sonnerToast(
+          "Backfill running in background — refresh the list in a few minutes to see updates",
+          { duration: 6000 },
+        );
+      } else {
+        const updated = r?.updated ?? 0;
+        const failed = r?.failed ?? 0;
+        const skipped = r?.skipped_no_address ?? 0;
+        sonnerToast.success(
+          `Backfill complete: ${updated} customers updated, ${failed} failed, ${skipped} skipped (no address)`,
+          { duration: 6000 },
+        );
+      }
+    } catch (e) {
+      sonnerToast.error(
+        `Backfill failed: ${e?.message || "unknown error"}`,
+      );
+    } finally { setBusy(false); }
+  };
+  return (
+    <Button
+      variant="ghost"
+      onClick={onClick}
+      disabled={busy}
+      testid="admin-customers-backfill-geocoding-btn"
+      title="Geocode every customer missing GPS coordinates"
+    >
+      <MapPinned size={16} /> {busy ? "Backfilling…" : "Backfill missing GPS"}
+    </Button>
+  );
+}
+
 
 export default function CustomersList() {
   const navigate = useNavigate();
@@ -1231,6 +1278,15 @@ export default function CustomersList() {
                 <Mail size={16} /> Portal Invite
                 {selected.size > 0 ? ` (${selected.size})` : ""}
               </Button>
+            ) : null}
+            {/* Feb-2026 · Phase — Customer geocoding on save +
+                one-time backfill. Admin+/super_admin-only trigger
+                for POST /api/admin/customers/backfill-geocoding.
+                Small button — reuses the shared ghost variant, no
+                new modal. Toast copy branches on the response
+                envelope (inline counts vs. enqueued). */}
+            {isAdmin ? (
+              <BackfillGeocodingButton />
             ) : null}
           </>
         }

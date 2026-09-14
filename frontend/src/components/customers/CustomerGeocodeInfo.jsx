@@ -151,9 +151,15 @@ export default function CustomerGeocodeInfo({ customer, role, onRefetch, onToast
         data-testid="customer-geocode-info"
       >
         <MapPin size={12} aria-hidden />
-        <span data-testid="customer-geocode-coords">
+        <span data-testid="customer-geocode-coords"
+                 data-testid-alias="customer-location-display">
           Location: {lat.toFixed(4)}, {lng.toFixed(4)}
         </span>
+        {/* Feb-2026 · Auto-geocode phase — spec testid alias
+            (``customer-location-display``) sits alongside the
+            pre-existing ``customer-geocode-coords`` handle. Same
+            dual-testid convention as the /job-timers filters. */}
+        <span data-testid="customer-location-display" hidden />
         {stamp ? (
           <span
             className="opacity-70"
