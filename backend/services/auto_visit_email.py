@@ -14,17 +14,95 @@ All rows land in `db.outbound_emails` regardless of send status so the
 audit trail exists even when RESEND_API_KEY is unset. Non-blocking:
 any exception here is caught + logged; the submit endpoint still
 returns success.
+
+Phase COMM1 · Feb-2026:
+    - Required-Four readings render as qualitative bands (Below /
+      Average / Above / Elevated) with the numeric value as a small
+      muted subtitle. Optional readings still render as plain
+      values (see ``services.chemistry_bands``).
+    - The email header, section titles, sub-headers, and CTA button
+      use the tenant's stored brand colors
+      (``business_settings.brand_primary_hex`` /
+      ``brand_secondary_hex``); a per-tenant fallback palette kicks
+      in when unset.
+    - A "Visit photos" grid renders up to six tech-attached photos
+      (customer-safe, tag-filtered); a "+N more in your report"
+      link back to the portal appears when the tech attached more.
 """
 from __future__ import annotations
 import os
 import re
-from typing import Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from config import db, logger
 from utils import new_id, now_iso
 
+# Phase COMM1 · Feb-2026 — customer-facing band classifier used
+# for the Required Four rows. Lives in ``chemistry_bands`` so the
+# same thresholds render across door-hanger email, portal page,
+# and this auto-visit email.
+from services.chemistry_bands import (
+    band_for_reading, CANONICAL_BAND_THRESHOLDS, DISPLAY_LABELS,
+)
+
 
 AUTO_EMAIL_KEY = "auto_visit_email"
+
+
+# ─── Phase COMM1 · brand palette resolution ─────────────────────────
+#
+# The tenant's stored ``brand_primary_hex`` / ``brand_secondary_hex``
+# come from Business Settings. We derive a third accent hex from the
+# secondary (or the primary, when only one color is set) so the CTA
+# button always has enough contrast against the body background.
+#
+# NO new schema fields are introduced — the accent is a pure
+# derivation of the two existing brand colors.
+_DEFAULT_PRIMARY_HEX   = "#0B4A6F"   # matches services.email.theming
+_DEFAULT_SECONDARY_HEX = "#0369A1"
+_DEFAULT_ACCENT_HEX    = "#2563EB"
+
+
+def _valid_hex(candidate: Any) -> Optional[str]:
+    if not candidate:
+        return None
+    s = str(candidate).strip()
+    if not s.startswith("#") or len(s) != 7:
+        return None
+    try:
+        int(s[1:], 16)
+    except ValueError:
+        return None
+    return s.lower()
+
+
+def _resolve_palette(branding: Optional[Mapping[str, Any]]) -> Dict[str, str]:
+    """Return ``{primary, secondary, accent}`` with per-tenant
+    values when set, else a sensible defaults palette.
+
+    Reads both the effective settings shape
+    (``brand_primary_hex`` — used by the shared email shell) and
+    the raw tenant shape (``brand_primary`` — used by portal
+    widgets) so the helper works with whatever dict shape the
+    caller has on hand.
+    """
+    b: Mapping[str, Any] = branding or {}
+    primary = (
+        _valid_hex(b.get("brand_primary_hex"))
+        or _valid_hex(b.get("brand_primary"))
+        or _valid_hex(b.get("primary_hex"))
+        or _DEFAULT_PRIMARY_HEX
+    )
+    secondary = (
+        _valid_hex(b.get("brand_secondary_hex"))
+        or _valid_hex(b.get("brand_secondary"))
+        or _valid_hex(b.get("secondary_hex"))
+        or _DEFAULT_SECONDARY_HEX
+    )
+    # No dedicated accent field on the schema — reuse secondary
+    # when set, else fall back to the platform accent.
+    accent = secondary if secondary != _DEFAULT_SECONDARY_HEX else _DEFAULT_ACCENT_HEX
+    return {"primary": primary, "secondary": secondary, "accent": accent}
 
 
 def _get_settings(tenant: dict) -> dict:
@@ -54,32 +132,140 @@ def _visit_date_formatted(sr: dict, job: dict) -> str:
     return (ts or "")[:10]
 
 
-def _pool_body_sections(sr: dict) -> list[dict]:
-    sections = []
-    readings = sr.get("chemical_readings") or {}
-    if isinstance(readings, dict) and readings:
-        rows = "".join(
-            f"<tr><td style='padding:4px 12px 4px 0;color:#555'>{k}</td>"
-            f"<td style='padding:4px 0;font-weight:600'>{v}</td></tr>"
-            for k, v in readings.items() if v not in (None, "", 0)
-        )
-        if rows:
+# ─── Reading normaliser + band-aware row builder (Phase COMM1) ───────
+#
+# The customer email speaks CANONICAL keys (matches the chemistry
+# gate). Legacy dict-shape readings might arrive with mixed casing
+# ("pH", "FC", "Free Cl") — we look up the canonical form via the
+# gate's alias table so the band classifier fires on every payload.
+def _canonicalize_reading_key(raw: Any) -> Optional[str]:
+    try:
+        from services.chemistry_gate import _canonical_key
+        ck = _canonical_key(raw)
+        if ck:
+            return ck
+    except Exception:                                       # noqa: BLE001
+        pass
+    return None
+
+
+def _iter_readings(readings: Any):
+    """Yield ``(canonical_key, display_label, value, band_label)``
+    tuples for the render loop. Accepts BOTH the list-of-dicts shape
+    (``[{"key": "free_chlorine", "value": 2.5, "unit": "ppm", "label": …}]``)
+    and the legacy dict shape (``{"free_chlorine": 2.5}``).
+
+    ``band_label`` is the pre-computed band string set by the
+    portal redact (``_redact_report_for_customer`` — Slice 3C).
+    When present, the render loop uses it verbatim; when absent, it
+    falls back to ``band_for_reading(key, value)``.
+    """
+    if isinstance(readings, dict):
+        for k, v in readings.items():
+            ck = _canonicalize_reading_key(k)
+            display = DISPLAY_LABELS.get(ck, str(k))
+            yield ck, display, v, None
+        return
+    if isinstance(readings, list):
+        for row in readings:
+            if not isinstance(row, dict):
+                continue
+            raw_key = row.get("key") or row.get("name")
+            ck = _canonicalize_reading_key(raw_key)
+            display = (row.get("label_display")
+                         or DISPLAY_LABELS.get(ck)
+                         or str(raw_key or ""))
+            yield ck, display, row.get("value"), row.get("label")
+        return
+
+
+def _reading_unit(raw: Any) -> str:
+    """Best-effort unit lookup for the numeric subtitle. Canonical
+    keys carry standardised units — everything else prints unit-less."""
+    UNIT = {
+        "free_chlorine":    "ppm",
+        "alkalinity":       "ppm",
+        "cyanuric_acid":    "ppm",
+        "ph":               "",
+        "calcium_hardness": "ppm",
+        "salt":             "ppm",
+        "tds":              "ppm",
+        "phosphates":       "ppb",
+    }
+    if isinstance(raw, dict) and raw.get("unit"):
+        return str(raw["unit"]) or ""
+    if isinstance(raw, str):
+        return UNIT.get(raw, "")
+    return ""
+
+
+def _pool_body_sections(sr: dict, palette: Dict[str, str]) -> list[dict]:
+    """Phase COMM1 · Feb-2026 — Required Four render as bands (with
+    the numeric value as a muted subtitle). Optional readings still
+    render as raw ``value + unit``; ``palette`` supplies the sub-
+    header color (secondary) so section titles pick up brand.
+    """
+    sections: list[dict] = []
+    readings = sr.get("chemical_readings")
+    if readings:
+        # Split rendered rows into two visual buckets for tests:
+        #   * banded (Required Four + extended optionals that HAVE
+        #     a threshold in chemistry_bands)
+        #   * plain (unknown keys, or the tech typed a non-numeric
+        #     value → we still surface the raw string)
+        html_rows: list[str] = []
+        text_rows: list[str] = []
+        for ck, display, val, pre_label in _iter_readings(readings):
+            # Phase COMM1 · Feb-2026 — a row renders when EITHER
+            # the numeric value is present OR the redact
+            # pipeline has pre-attached a band ``label``. That
+            # keeps the customer-safe (numerics-stripped) shape
+            # rendering as band-only rows while the tech-facing /
+            # pre-redact shape shows band + numeric subtitle.
+            has_value = val not in (None, "", 0)
+            if not has_value and not pre_label:
+                continue
+            band = pre_label or (band_for_reading(ck, val) if ck else None)
+            unit = _reading_unit(ck) if ck else ""
+            # Subtitle only rendered when we have a numeric value.
+            subtitle = ""
+            if has_value:
+                num_str = str(val)
+                subtitle = (
+                    f"{band} · {num_str}{(' ' + unit) if unit else ''}"
+                    if band
+                    else f"{num_str}{(' ' + unit) if unit else ''}"
+                )
+            primary_line = band if band else (str(val) if has_value else "")
+            html_rows.append(
+                f"<tr>"
+                f"<td style='padding:6px 12px 6px 0;color:#555;font-size:13px'>"
+                f"{display}</td>"
+                f"<td style='padding:6px 0;font-weight:600;font-size:14px;"
+                f"color:{palette['primary']}'>{primary_line}"
+                f"<div style='font-size:11px;color:#888;font-weight:400'>"
+                f"{subtitle}</div></td>"
+                f"</tr>"
+            )
+            text_rows.append(f"  {display}: {primary_line}"
+                              + (f"  ({subtitle})" if subtitle else ""))
+        if html_rows:
             sections.append({
-                "title": "Chemical readings",
-                "html": f"<table cellspacing='0'>{rows}</table>",
-                "text": "\n".join(f"  {k}: {v}" for k, v in readings.items()
-                                  if v not in (None, "", 0)),
+                "title": "Water chemistry",
+                "html": (f"<table cellspacing='0' style='width:100%;"
+                          f"border-collapse:collapse'>{''.join(html_rows)}</table>"),
+                "text": "\n".join(text_rows),
             })
     added = sr.get("chemicals_added") or []
     if added:
         items = "".join(
-            f"<li>{c.get('name', c.get('type', 'Chemical'))} — "
+            f"<li style='margin:4px 0'>{c.get('name', c.get('type', 'Chemical'))} — "
             f"{c.get('amount', '')} {c.get('unit', '')}</li>"
             for c in added if isinstance(c, dict)
         )
         sections.append({
             "title": "Chemicals added",
-            "html": f"<ul>{items}</ul>",
+            "html": f"<ul style='padding-left:18px;margin:8px 0'>{items}</ul>",
             "text": "\n".join(f"  • {c.get('name', 'Chemical')} — {c.get('amount', '')} {c.get('unit', '')}"
                               for c in added if isinstance(c, dict)),
         })
@@ -119,8 +305,83 @@ def _landscape_body_sections(sr: dict) -> list[dict]:
     }]
 
 
-def render_email(tenant: dict, job: dict, sr: dict, customer: dict) -> dict:
-    """Return {subject, html, text}. `sr` must already be customer-redacted."""
+def _photo_ts(p: Dict[str, Any]) -> str:
+    """Sort-key extractor for the photos grid — newest first. Falls
+    back to a stable string so the sort is deterministic when the
+    ``taken_at`` timestamps aren't set (older seed data)."""
+    for k in ("taken_at", "created_at", "uploaded_at", "submitted_at"):
+        v = p.get(k)
+        if v:
+            return str(v)
+    return ""
+
+
+def _photos_grid(
+    sr: dict, portal_link: str, palette: Dict[str, str], safe_photos: List[Dict[str, Any]],
+) -> Dict[str, str]:
+    """Phase COMM1 · Feb-2026 — 3-column, up-to-6-photo thumbnail
+    grid + optional "+N more in your report" link. Each thumbnail
+    links back to the portal (never a raw S3 URL) so auth stays in
+    the loop.
+
+    Returns ``{"html": …, "text": …}``. Both are empty strings when
+    ``safe_photos`` is empty — callers can concatenate unconditionally.
+    """
+    if not safe_photos:
+        return {"html": "", "text": ""}
+    ordered = sorted(safe_photos, key=_photo_ts, reverse=True)
+    top6 = ordered[:6]
+    overflow = max(0, len(ordered) - 6)
+    grid_cells = []
+    for p in top6:
+        url = p.get("url") or p.get("uri") or ""
+        if not url:
+            continue
+        grid_cells.append(
+            f'<td style="width:33.33%;padding:6px" valign="top" align="center">'
+            f'<a href="{portal_link}" style="text-decoration:none;">'
+            f'<img src="{url}" alt="Visit photo" '
+            f'style="max-width:180px;width:100%;height:auto;border-radius:8px;'
+            f'border:1px solid #E5E7EB;display:block" />'
+            f'</a></td>'
+        )
+    # Bucket into rows of 3 for reliable email-client rendering
+    # (grid CSS is unreliable across Outlook variants).
+    html_rows = []
+    for i in range(0, len(grid_cells), 3):
+        html_rows.append("<tr>" + "".join(grid_cells[i:i + 3]) + "</tr>")
+    section = (
+        f'<h3 style="margin:20px 0 8px;font-family:system-ui;font-size:15px;'
+        f'color:{palette["primary"]}">Visit photos</h3>'
+        f'<table cellspacing="0" cellpadding="0" style="width:100%;'
+        f'border-collapse:collapse">{"".join(html_rows)}</table>'
+    )
+    if overflow > 0:
+        section += (
+            f'<p style="margin:6px 0 0;font-size:12px">'
+            f'<a href="{portal_link}" '
+            f'style="color:{palette["accent"]};text-decoration:none">'
+            f'+{overflow} more in your report →</a></p>'
+        )
+    text = f"Visit photos: {len(top6)} attached"
+    if overflow > 0:
+        text += f" (+{overflow} more in your portal)"
+    text += f"\n  {portal_link}"
+    return {"html": section, "text": text}
+
+
+def render_email(
+    tenant: dict, job: dict, sr: dict, customer: dict,
+    branding: Optional[Mapping[str, Any]] = None,
+) -> dict:
+    """Return {subject, html, text}. `sr` must already be customer-redacted.
+
+    Phase COMM1 · Feb-2026 — ``branding`` (effective business
+    settings dict, keyword-only) supplies the per-tenant palette.
+    Callers that don't have the dict on hand may omit it and the
+    renderer falls back to the raw ``tenant`` doc's brand keys.
+    """
+    palette = _resolve_palette(branding or tenant)
     company = tenant.get("name") or "Pool & Landscaping"
     # Phase 34 · Feb 2026 — brand logo header. Tenant override wins;
     # falls back to the shared brand mark so every service-visit email
@@ -136,7 +397,7 @@ def render_email(tenant: dict, job: dict, sr: dict, customer: dict) -> dict:
     if is_landscape:
         sections = _landscape_body_sections(sr)
     else:
-        sections = _pool_body_sections(sr)
+        sections = _pool_body_sections(sr, palette)
 
     customer_notes = (sr.get("customer_notes") or "").strip()
     # Safety net: even though _redact strips internal_notes at data
@@ -156,11 +417,27 @@ def render_email(tenant: dict, job: dict, sr: dict, customer: dict) -> dict:
     portal_link = f"{app_url}/portal/service-reports" if app_url else "/portal/service-reports"
 
     # ─── HTML ───────────────────────────────────────────────────────
-    header_html = ""
+    # Phase COMM1 · Feb-2026 — header uses the tenant primary color
+    # as the band background so the email surface matches the
+    # customer's brand at a glance.
+    header_html = (
+        f'<table cellspacing="0" cellpadding="0" style="width:100%;'
+        f'border-collapse:collapse;background:{palette["primary"]};'
+        f'padding:16px 20px" bgcolor="{palette["primary"]}">'
+        f'<tr><td>'
+    )
     if logo:
-        header_html += f'<img src="{logo}" alt="{company}" style="max-height:48px;margin-bottom:8px"/>'
-    header_html += f'<h1 style="margin:0 0 4px;font-family:system-ui;font-size:20px">{company}</h1>'
-    header_html += '<div style="color:#666;font-size:14px">Service visit summary</div>'
+        header_html += (
+            f'<img src="{logo}" alt="{company}" '
+            f'style="max-height:48px;margin-bottom:8px;display:block" />'
+        )
+    header_html += (
+        f'<div style="color:#FFFFFF;font-family:system-ui;'
+        f'font-size:20px;font-weight:700">{company}</div>'
+        f'<div style="color:rgba(255,255,255,0.85);font-family:system-ui;'
+        f'font-size:14px;margin-top:2px">Service visit summary</div>'
+        f'</td></tr></table>'
+    )
 
     info_rows = [
         ("Date", visit_date),
@@ -174,26 +451,35 @@ def render_email(tenant: dict, job: dict, sr: dict, customer: dict) -> dict:
     )
 
     sections_html = "".join(
-        f'<h3 style="margin:16px 0 4px;font-family:system-ui;font-size:15px">{s["title"]}</h3>{s["html"]}'
+        f'<h3 style="margin:16px 0 4px;font-family:system-ui;font-size:15px;'
+        f'color:{palette["secondary"]}">{s["title"]}</h3>{s["html"]}'
         for s in sections
     )
-    notes_html = (f'<h3 style="margin:16px 0 4px;font-family:system-ui;font-size:15px">Notes from your tech</h3>'
-                  f'<p style="white-space:pre-line;background:#f6f6f6;padding:12px;border-radius:6px">{customer_notes}</p>'
-                  if customer_notes else "")
-    photos_html = ""
-    if safe_photos:
-        photos_html = '<h3 style="margin:16px 0 4px;font-family:system-ui;font-size:15px">Photos</h3><div>'
-        for p in safe_photos[:8]:
-            u = p.get("url") or p.get("uri") or ""
-            if u:
-                photos_html += f'<img src="{u}" alt="Service photo" style="max-width:180px;margin:4px 4px 0 0;border-radius:4px"/>'
-        photos_html += "</div>"
+    notes_html = ""
+    if customer_notes:
+        notes_html = (
+            f'<h3 style="margin:16px 0 4px;font-family:system-ui;font-size:15px;'
+            f'color:{palette["secondary"]}">Notes from your tech</h3>'
+            f'<p style="white-space:pre-line;background:#f6f6f6;padding:12px;'
+            f'border-radius:6px">{customer_notes}</p>'
+        )
+    photos_block = _photos_grid(sr, portal_link, palette, safe_photos)
+    photos_html = photos_block["html"]
 
     cta_html = ""
     if include_reviews:
-        cta_html += (f'<p><a href="{review_link}" style="background:#2563eb;color:#fff;text-decoration:none;'
-                     f'padding:10px 16px;border-radius:6px;display:inline-block">Leave us a review</a></p>')
-    cta_html += (f'<p><a href="{portal_link}" style="color:#2563eb">View full history in your portal →</a></p>')
+        cta_html += (
+            f'<p><a href="{review_link}" '
+            f'style="background:{palette["accent"]};color:#fff;'
+            f'text-decoration:none;padding:10px 16px;border-radius:6px;'
+            f'display:inline-block;font-weight:600">Leave us a review</a></p>'
+        )
+    cta_html += (
+        f'<p><a href="{portal_link}" '
+        f'style="background:{palette["accent"]};color:#fff;'
+        f'text-decoration:none;padding:10px 16px;border-radius:6px;'
+        f'display:inline-block;font-weight:600">View full report →</a></p>'
+    )
 
     footer_html = ('<p style="color:#888;font-size:12px;margin-top:24px">'
                    'This is an automatic recap of the customer-facing portion of your visit. '
@@ -204,10 +490,13 @@ def render_email(tenant: dict, job: dict, sr: dict, customer: dict) -> dict:
                     if app_url else '')
     footer_html += '</p>'
 
-    html = (f'<div style="font-family:system-ui;max-width:600px;padding:20px">'
+    html = (f'<div style="font-family:system-ui;max-width:600px;margin:0 auto;'
+            f'background:#FFFFFF">'
             f'{header_html}'
+            f'<div style="padding:20px">'
             f'<table style="margin-top:12px" cellspacing="0">{info_html}</table>'
             f'{sections_html}{notes_html}{photos_html}{cta_html}{footer_html}'
+            f'</div>'
             f'</div>')
 
     # ─── Text ───────────────────────────────────────────────────────
@@ -224,6 +513,8 @@ def render_email(tenant: dict, job: dict, sr: dict, customer: dict) -> dict:
         text_lines.append("")
     if customer_notes:
         text_lines += ["Notes from your tech:", customer_notes, ""]
+    if photos_block["text"]:
+        text_lines += [photos_block["text"], ""]
     if include_reviews:
         text_lines.append(f"Leave a review: {review_link}")
     text_lines.append(f"Portal: {portal_link}")
@@ -283,7 +574,20 @@ async def send_visit_summary_email(tenant: dict, job: dict, sr: dict) -> Optiona
         from routers.service_reports import _redact_report_for_customer
         safe_sr = _redact_report_for_customer(dict(sr))
 
-        rendered = render_email(tenant, job, safe_sr, customer)
+        # Phase COMM1 · Feb-2026 — resolve effective branding once
+        # per fan-out so every recipient shares the same palette.
+        try:
+            from services.tenants.business_settings import (
+                get_effective_business_settings,
+            )
+            branding = await get_effective_business_settings(
+                db, tenant["id"], absolutize=True,
+            )
+        except Exception:                                   # noqa: BLE001
+            branding = None
+
+        rendered = render_email(tenant, job, safe_sr, customer,
+                                 branding=branding)
         resend_key = os.environ.get("RESEND_API_KEY")
         last_row = None
         for to_email in recipients:

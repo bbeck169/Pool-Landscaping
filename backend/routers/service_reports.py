@@ -1184,7 +1184,7 @@ async def submit_service_report(
         try:
             customer = await db.customers.find_one(
                 {"id": _job.get("customer_id"), "tenant_id": _tid},
-                {"_id": 0, "phone": 1, "name": 1},
+                {"_id": 0, "phone": 1, "name": 1, "first_name": 1, "last_name": 1},
             ) or {}
             phone = customer.get("phone") or ""
             if not phone:
@@ -1193,13 +1193,19 @@ async def submit_service_report(
                     {"$set": {"customer_notified.sms_status": "no_phone"}},
                 )
                 return
-            tname = _tenant.get("name") or "Your service"
             import os as _os_task_u
             app_url = _os_task_u.environ.get("APP_PUBLIC_URL", "").rstrip("/")
             portal_link = f"{app_url}/portal/service-reports"
-            sms_body = (
-                f"Your {tname} service is complete. "
-                f"View your report: {portal_link}"
+            # Phase COMM1 · Feb-2026 — build the concise template.
+            # See ``services.completion_sms_template.build_completion_sms_body``
+            # for the rules (first-name derivation, title trim,
+            # per-tenant business name).
+            from services.completion_sms_template import (
+                build_completion_sms_body,
+            )
+            sms_body = build_completion_sms_body(
+                tenant=_tenant, job=_job, customer=customer,
+                portal_link=portal_link,
             )
             from services.sms.rc_adapter import send as _send_sms
             sms_res = await _send_sms(

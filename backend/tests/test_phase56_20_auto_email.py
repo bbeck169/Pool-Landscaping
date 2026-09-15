@@ -90,9 +90,19 @@ class TestRenderer:
                       "footer_text": "Custom footer."}}}
         job = {"id": "job1", "customer_id": "cust1",
                "address": "123 Main St", "service_type": "pool"}
+        # Phase CHEM1 · Feb-2026 — dict-shape ``chemical_readings`` was
+        # broken by the redact step in Feb-2026 Slice 3C (it silently
+        # dropped every dict row). Switched this fixture to the
+        # canonical list-of-dicts shape so the assertions below run
+        # against real rendered output.
         sr = {"id": "sr1", "kind": "pool",
               "tech_name": "Mike",
-              "chemical_readings": {"pH": 7.4, "FC": 3},
+              "chemical_readings": [
+                  {"key": "ph",            "value": 7.4, "unit": ""},
+                  {"key": "free_chlorine", "value": 3.0, "unit": "ppm"},
+                  {"key": "alkalinity",    "value": 90,  "unit": "ppm"},
+                  {"key": "cyanuric_acid", "value": 45,  "unit": "ppm"},
+              ],
               "chemicals_added": [{"name": "Muriatic Acid", "amount": 32, "unit": "oz"}],
               "checklist_completed": [{"label": "Skimmed pool", "done": True}],
               "observations": {"visible_algae": "light"},
@@ -107,6 +117,8 @@ class TestRenderer:
         safe_sr = _redact_report_for_customer(dict(sr))
         out = render_email(tenant, job, safe_sr, {"email": "c@x.com"})
         assert "Test Tenant" in out["subject"]
+        # Phase COMM1 · Feb-2026 — the pH row surfaces via the display
+        # label from ``chemistry_gate.DISPLAY_LABELS`` (``"pH"``).
         assert "pH" in out["html"]
         assert "Muriatic Acid" in out["html"]
         assert "Light algae was observed and treated." in out["html"]
