@@ -509,6 +509,30 @@ def apply_water_bodies_payload(upd: Dict[str, Any],
         # structured 422 detail without loss.
         bodies = validate_water_bodies(raw)
         upd["water_bodies"] = bodies
+        # Feb-2026 · P0 autosave dual-write fix — the web checklist
+        # writes tech edits to TOP-LEVEL ``chemical_readings`` /
+        # ``chemicals_added`` (see ``PoolChecklistForm.updReading`` +
+        # ``_updChem``) but never syncs those edits back into the
+        # client's ``water_bodies[0]`` mirror.  Every autosave
+        # therefore sent BOTH:
+        #   * ``water_bodies``       — stale (missing the newest keystroke)
+        #   * ``chemical_readings``  — fresh
+        # Without this merge, the flatten step below would REBUILD
+        # the fresh top-level keys from the stale mirror and silently
+        # zero out the tech's edit on every save.  Legacy top-level
+        # values win when BOTH are present because they carry the
+        # freshest write.  See:
+        #   backend/tests/test_service_report_autosave_dual_write.py
+        if bodies and (
+            "chemical_readings" in upd or "chemicals_added" in upd
+        ):
+            body0 = dict(bodies[0])
+            if "chemical_readings" in upd:
+                body0["readings"] = list(upd["chemical_readings"] or [])
+            if "chemicals_added" in upd:
+                body0["chemicals_used"] = list(upd["chemicals_added"] or [])
+            bodies[0] = body0
+            upd["water_bodies"] = bodies
         # Rebuild the flat mirror unconditionally when
         # ``water_bodies`` is present in the patch — even when the
         # array is empty (an explicit clear). ``flatten_pool_readings``
