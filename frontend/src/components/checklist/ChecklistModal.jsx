@@ -11,6 +11,7 @@
  * All endpoints are pre-existing (Step 1 discovery). No new backend.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 
 // Phase 39 · Step 2 — Visit Recap prompt shown after Close Job succeeds.
@@ -134,6 +135,11 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   // paths (Save & exit button, submit success, recap dismissal)
   // still call ``onClose`` directly — they're not implicit closes.
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  // Phase C1.1 · Feb-2026 — in-flight save-and-close state so the
+  // Discard dialog can disable its destructive path while a
+  // flushSave() is running.  ``isSaving`` is a state (not a ref)
+  // because the dialog's disabled/label attributes need to react.
+  const [isSaving, setIsSaving] = useState(false);
   const attemptClose = useCallback(() => {
     if (!open) return;
     if (dirtyRef.current) {
@@ -246,6 +252,30 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
       savingRef.current = false;
     }
   }, [jobId]);
+
+  // Phase C1.1 · Feb-2026 — Save & close primary path.  ``flushSave``
+  // swallows its own errors and flips ``dirtyRef.current`` to false
+  // ONLY on success, so we can trust that flag as the post-condition:
+  //   * dirtyRef.current === false   → save succeeded → close
+  //   * dirtyRef.current === true    → save failed → keep modal open
+  //                                     + surface a truthful toast
+  const saveAndClose = useCallback(async () => {
+    setIsSaving(true);
+    try {
+      await flushSave();
+    } finally {
+      setIsSaving(false);
+    }
+    if (!dirtyRef.current) {
+      setDiscardConfirmOpen(false);
+      onClose?.();
+    } else {
+      toast.error(
+        "Couldn't save your changes — please check your connection and try again.",
+      );
+    }
+  }, [flushSave, onClose]);
+
 
   const scheduleAutosave = useCallback(() => {
     dirtyRef.current = true;
@@ -457,9 +487,13 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   // calling ``onClose`` so a stray autosave-in-flight doesn't try
   // to reopen the discarded state on completion.
   function renderDiscardConfirm() {
+    // Keep-editing is always enabled — the tech's escape hatch even
+    // when a save is in flight.  Save & close and Discard both go
+    // through ``isSaving`` so the tech can't double-click either
+    // while a network round-trip is pending.
     return (
       <div
-        onClick={() => setDiscardConfirmOpen(false)}
+        onClick={() => { if (!isSaving) setDiscardConfirmOpen(false); }}
         style={{
           position: "absolute", inset: 0, zIndex: 60,
           background: "rgba(15,23,42,0.55)",
@@ -472,7 +506,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
           onClick={(e) => e.stopPropagation()}
           style={{
             background: c.surface, borderRadius: 10, padding: 20,
-            width: "min(400px, 92vw)",
+            width: "min(440px, 92vw)",
             boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
           }}
           data-testid="checklist-discard-confirm"
@@ -481,13 +515,17 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             fontSize: 16, fontWeight: 700, color: c.onSurface,
             marginBottom: 8,
           }}>
-            Discard unsaved changes?
+            Save before closing?
           </div>
-          <div style={{ fontSize: 13, color: c.muted, marginBottom: 16 }}>
-            You have unsaved changes on this checklist. Discard them?
+          <div
+            id="checklist-discard-hint"
+            style={{ fontSize: 13, color: c.muted, marginBottom: 16 }}
+          >
+            You have unsaved changes on this checklist. Save now, or discard them?
           </div>
           <div style={{
-            display: "flex", justifyContent: "flex-end", gap: 8,
+            display: "flex", justifyContent: "flex-end",
+            flexWrap: "wrap", gap: 8,
           }}>
             <button
               type="button"
@@ -508,11 +546,34 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
                 setDiscardConfirmOpen(false);
                 onClose?.();
               }}
+              aria-describedby="checklist-discard-hint"
+              disabled={isSaving}
               className="px-3 py-1.5 rounded-md text-sm font-semibold text-white"
-              style={{ background: "#DC2626" }}
+              style={{ background: "#DC2626", opacity: isSaving ? 0.5 : 1 }}
               data-testid="checklist-discard-confirm-btn"
+              title="Chemistry values entered since your last save will be lost."
             >
-              Discard
+              Discard changes
+            </button>
+            <button
+              type="button"
+              onClick={saveAndClose}
+              disabled={isSaving}
+              className="px-3 py-1.5 rounded-md text-sm font-semibold text-white inline-flex items-center gap-1"
+              style={{
+                background: c.brand,
+                opacity: isSaving ? 0.7 : 1,
+              }}
+              data-testid="checklist-save-and-close"
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>Save &amp; close</>
+              )}
             </button>
           </div>
         </div>

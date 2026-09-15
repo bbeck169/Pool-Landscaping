@@ -210,3 +210,125 @@ describe("Phase C1 · ChecklistModal — DIRTY path", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
+
+
+// ═════════════════════════════════════════════════════════════════════
+// Phase C1.1 · Feb-2026 — Smart Discard: Save & close primary path.
+// ═════════════════════════════════════════════════════════════════════
+describe("Phase C1.1 · ChecklistModal — Save & close primary path", () => {
+  it("Save & close on a dirty form calls flushSave then onClose", async () => {
+    const onClose = vi.fn();
+    // The initial hydrate patches DO run — return success for every
+    // patch call so the ``saveAndClose`` flushSave clears
+    // ``dirtyRef.current`` and lets the modal close.
+    _mockPatch.mockImplementation(async (_p, body) => body);
+    render(<ChecklistModal jobId="job-c1" open onClose={onClose} />);
+    await _drain();
+    await _makeDirty();
+
+    // Reset patch counter so we can assert the Save & close call
+    // fires exactly one additional flushSave().
+    const patchCallsBeforeSave = _mockPatch.mock.calls.length;
+    // Queue a SUCCESS response for the Save & close flushSave call.
+    _mockPatch.mockResolvedValueOnce({ ok: true });
+
+    fireEvent.click(screen.getByTestId("checklist-modal-backdrop"));
+    await screen.findByTestId("checklist-discard-confirm");
+
+    // Confirm dialog now shows the three C1.1 buttons.
+    expect(screen.getByTestId("checklist-save-and-close")).toBeInTheDocument();
+    expect(screen.getByTestId("checklist-discard-confirm-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("checklist-discard-keep-editing")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("checklist-save-and-close"));
+      await Promise.resolve();
+    });
+    await _drain(60);
+
+    // flushSave was invoked at least once past our snapshot.
+    expect(_mockPatch.mock.calls.length).toBeGreaterThan(patchCallsBeforeSave);
+    // onClose fired after the save succeeded.
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("Save & close failure keeps the modal open + surfaces a truthful toast", async () => {
+    const { toast: sonnerToast } = await import("sonner");
+    const onClose = vi.fn();
+    render(<ChecklistModal jobId="job-c1" open onClose={onClose} />);
+    await _drain();
+    await _makeDirty();
+
+    // Queue a failing PATCH for the Save & close flushSave call.
+    _mockPatch.mockRejectedValueOnce(new Error("network down"));
+
+    fireEvent.click(screen.getByTestId("checklist-modal-backdrop"));
+    await screen.findByTestId("checklist-discard-confirm");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("checklist-save-and-close"));
+      await Promise.resolve();
+    });
+    await _drain(60);
+
+    // Modal STAYS open, dirty state preserved.
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByTestId("checklist-modal")).toBeInTheDocument();
+    // Truthful toast fired with the exact copy from the spec.
+    expect(sonnerToast.error).toHaveBeenCalledWith(
+      "Couldn't save your changes — please check your connection and try again.",
+    );
+  });
+
+  it("during in-flight save, Save & close + Discard are disabled; Keep editing stays enabled", async () => {
+    const onClose = vi.fn();
+    render(<ChecklistModal jobId="job-c1" open onClose={onClose} />);
+    await _drain();
+    await _makeDirty();
+
+    // Queue a PATCH that never resolves so we can observe the
+    // in-flight disabled state.
+    let releaseSave;
+    _mockPatch.mockImplementationOnce(() => new Promise((r) => { releaseSave = () => r({ ok: true }); }));
+
+    fireEvent.click(screen.getByTestId("checklist-modal-backdrop"));
+    await screen.findByTestId("checklist-discard-confirm");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("checklist-save-and-close"));
+      await Promise.resolve();
+    });
+    await _drain(20);
+
+    // Save & close is now in "Saving…" mode — the button label
+    // includes "Saving" and both destructive buttons are disabled.
+    expect(screen.getByTestId("checklist-save-and-close").textContent)
+      .toMatch(/Saving/);
+    expect(screen.getByTestId("checklist-save-and-close")).toBeDisabled();
+    expect(screen.getByTestId("checklist-discard-confirm-btn")).toBeDisabled();
+    // Keep editing stays enabled — the tech's escape hatch.
+    expect(screen.getByTestId("checklist-discard-keep-editing")).not.toBeDisabled();
+
+    // Release the promise so React unmounts cleanly.
+    await act(async () => { releaseSave?.(); await Promise.resolve(); });
+    await _drain(20);
+  });
+
+  it("Discard changes still works destructively (backward compat with C1 testid)", async () => {
+    const onClose = vi.fn();
+    render(<ChecklistModal jobId="job-c1" open onClose={onClose} />);
+    await _drain();
+    await _makeDirty();
+
+    // Count PATCH calls before clicking Discard — Discard must NOT
+    // fire a flushSave.
+    const patchCallsBefore = _mockPatch.mock.calls.length;
+
+    fireEvent.click(screen.getByTestId("checklist-modal-backdrop"));
+    await screen.findByTestId("checklist-discard-confirm");
+    fireEvent.click(screen.getByTestId("checklist-discard-confirm-btn"));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // No extra PATCH — this is the destructive path.
+    expect(_mockPatch.mock.calls.length).toBe(patchCallsBefore);
+  });
+});
+
