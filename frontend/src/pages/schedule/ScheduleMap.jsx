@@ -48,6 +48,7 @@ import React, { useMemo, useState, useCallback, useEffect, useRef } from "react"
 import { Map, AdvancedMarker, InfoWindow, useMap } from "../../lib/maps";
 import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import { colors } from "@/theme";
+import TeardropPin from "@/components/maps/TeardropPin";
 
 // Deterministic fallback color for jobs whose technician has no
 // ``display_color_hex`` picked (or is unassigned).
@@ -226,13 +227,21 @@ function _ClusteredMarkers({ pins, techColorMap, onSelect }) {
               aria-label={`Job pin for ${job.customer_name || "job"}`}
               data-testid={`schedule-map-pin-${job.id}`}
               style={{
-                width: 20, height: 20, borderRadius: 999,
-                background: colorHex,
-                border: "2px solid #ffffff",
-                boxShadow: "0 1px 3px rgba(0,0,0,0.35)",
+                background: "transparent",
+                border: 0,
+                padding: 0,
                 cursor: "pointer",
+                filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.35))",
+                transform: "translateY(-24px)",
               }}
-            />
+            >
+              {/* Phase M1 · Feb-2026 · Sitewide custom teardrop pin.
+                   Per-marker color semantics (assigned-tech color
+                   via ``techColorMap`` → unassigned slate fallback)
+                   are preserved verbatim; only the SHAPE changes. */}
+              <TeardropPin color={colorHex}
+                             testid={`schedule-map-pin-${job.id}-svg`} />
+            </button>
           </AdvancedMarker>
         );
       })}

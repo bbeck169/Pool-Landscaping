@@ -26,11 +26,24 @@
 import React from "react";
 import { AdvancedMarker, InfoWindow } from "../../lib/maps";
 import { colors } from "@/theme";
+import TeardropPin, { colorFromId } from "@/components/maps/TeardropPin";
 
-function tintFor(staleness) {
-  if (staleness < 120) return "#10B981"; // emerald-500
-  if (staleness < 300) return "#F59E0B"; // amber-500
-  return "#94A3B8";                       // slate-400 (stale fallback)
+// Phase M1 · Feb-2026 · Sitewide custom teardrop map pin.
+//   Colour no longer conveys freshness — instead we resolve each
+//   position to the technician's assigned display colour (with a
+//   deterministic 12-color safe-palette fallback).  Freshness now
+//   rides on the halo instead: the pulsing ring is shown only
+//   while ``staleness_s < FRESH_S`` (unchanged 120 s window).
+const FRESH_S = 120;
+
+function _pinColor(position, techColorById) {
+  const tid = position?.user_id;
+  const _explicit =
+    (position && position.color) ||
+    (position && position.display_color_hex) ||
+    (techColorById && tid ? techColorById.get(tid) : null);
+  if (_explicit) return _explicit;
+  return colorFromId(tid || "unknown");
 }
 
 function firstName(full) {
@@ -39,10 +52,15 @@ function firstName(full) {
   return s.split(/\s+/)[0] || "";
 }
 
-function TechDot({ position, active, dimmed, stale, onClick }) {
-  const color = tintFor(position.staleness_s);
+function TechDot({ position, active, dimmed, stale, techColorById, onClick }) {
+  const color = _pinColor(position, techColorById);
   const label = firstName(position.user_name);
   const opacity = dimmed ? 0.35 : (stale ? 0.5 : 1);
+  // Phase M1 · Feb-2026 — halo pulses ONLY while the ping is
+  // still ``fresh`` (staleness < 120 s).  Everything else — the
+  // 15-min ``stale`` dimmer + the isolate-mode ``dimmed`` fade
+  // — is orthogonal to freshness and stays as-is.
+  const fresh = (position?.staleness_s ?? 999) < FRESH_S;
   return (
     <button
       type="button"
@@ -51,24 +69,25 @@ function TechDot({ position, active, dimmed, stale, onClick }) {
       data-testid={`dispatch-live-tech-${position.user_id}`}
       data-stale={stale ? "true" : "false"}
       data-dimmed={dimmed ? "true" : "false"}
+      data-fresh={fresh ? "true" : "false"}
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
-        transform: "translateY(-4px)",
+        transform: "translateY(-24px)",
         opacity,
         filter: stale ? "grayscale(60%)" : "none",
+        cursor: "pointer",
+        background: "transparent",
+        border: 0,
+        padding: 0,
       }}
     >
-      <span
-        style={{
-          width: 18,
-          height: 18,
-          borderRadius: 999,
-          background: color,
-          border: active ? "3px solid #ffffff" : "2px solid #ffffff",
-          boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
-        }}
+      <TeardropPin
+        color={color}
+        pulse={fresh}
+        title={position.user_name || "Technician"}
+        testid={`dispatch-live-tech-pin-${position.user_id}`}
       />
       {label ? (
         <span
@@ -82,6 +101,7 @@ function TechDot({ position, active, dimmed, stale, onClick }) {
             border: `1px solid ${colors.border}`,
             boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
             whiteSpace: "nowrap",
+            transform: "translateY(-6px)",
           }}
         >
           {label}
@@ -107,6 +127,7 @@ export default function LiveTechPinsLayer({
   positions = [],
   isolatedTechId = null,
   staleThresholdMs = STALE_MS_DEFAULT,
+  techColorById = null,
 }) {
   const [activeId, setActiveId] = React.useState(null);
   const active = React.useMemo(
@@ -133,6 +154,7 @@ export default function LiveTechPinsLayer({
               active={activeId === p.user_id}
               dimmed={dimmed}
               stale={stale}
+              techColorById={techColorById}
               onClick={(e) => {
                 e.stopPropagation();
                 setActiveId(p.user_id);

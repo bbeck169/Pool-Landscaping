@@ -18,6 +18,7 @@ import { Play, Pause, RotateCcw, MapPin, Route, Clock, Share2 } from "lucide-rea
 import { colors } from "@/theme";
 import useGpsRoute from "@/hooks/useGpsRoute";
 import ShareReplayModal from "@/pages/admin/ShareReplayModal";
+import TeardropPin from "@/components/maps/TeardropPin";
 
 const _SPEED_CHOICES = [1, 2, 5, 10, 30, 60];
 const _IDLE_GAP_S = 5 * 60;         // gaps larger than 5 min are compressed
@@ -402,12 +403,19 @@ export default function RouteReplayPanel({ techId, day }) {
                                            lng: marker.lon }}
                               zIndex={10}
                               data-testid="route-replay-marker">
+                {/* Phase M1 · Feb-2026 · sitewide custom teardrop
+                     pin.  The two-state colour (done/in-progress)
+                     is preserved verbatim — only the shape flips
+                     from a round dot to the tapered teardrop. */}
                 <div style={{
-                  width: 22, height: 22, borderRadius: 11,
-                  background: done ? "#065F46" : "#0EA5E9",
-                  border: "3px solid #FFFFFF",
-                  boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
-                }} />
+                  transform: "translateY(-24px)",
+                  filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))",
+                }}>
+                  <TeardropPin
+                    color={done ? "#065F46" : "#0EA5E9"}
+                    testid="route-replay-marker-svg"
+                  />
+                </div>
               </AdvancedMarker>
             )}
           </Map>

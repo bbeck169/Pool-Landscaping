@@ -15,6 +15,8 @@ import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import { colors } from "@/theme";
 import { colorForPin } from "@/pages/dispatch/dispatchColors";
 import LiveTechPinsLayer from "@/pages/dispatch/LiveTechPinsLayer";
+import TeardropPin from "@/components/maps/TeardropPin";
+import { renderToStaticMarkup } from "react-dom/server";
 import DispatchColorLegend from "@/pages/dispatch/DispatchColorLegend";
 import formatAddress from "@/utils/formatAddress";
 
@@ -41,6 +43,12 @@ function decodePolyline(encoded) {
 }
 
 function PinDot({ scheduled, colorHex, onClick, testId }) {
+  // Phase M1 · Feb-2026 · Sitewide custom teardrop pin.  Preserves
+  // the pre-existing per-marker color semantics (status /
+  // job-category / assigned-tech color feed through unchanged) —
+  // only the SHAPE changes.  The ``scheduled`` prop still lights
+  // the pin up with a subtle amber ring so today's stops stay
+  // easy to spot on the board.
   return (
     <button
       type="button"
@@ -48,13 +56,21 @@ function PinDot({ scheduled, colorHex, onClick, testId }) {
       data-testid={testId}
       aria-label="Customer pin"
       style={{
-        width: 22, height: 22, borderRadius: 999,
-        background: colorHex || "#0EA5E9",
-        border: scheduled ? "3px solid #FDE68A" : "2px solid #ffffff",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.35)",
+        background: "transparent",
+        border: 0,
+        padding: 0,
         cursor: "pointer",
+        filter: scheduled
+          ? "drop-shadow(0 0 3px #FDE68A) drop-shadow(0 1px 2px rgba(0,0,0,0.35))"
+          : "drop-shadow(0 1px 2px rgba(0,0,0,0.35))",
+        transform: "translateY(-24px)",
       }}
-    />
+    >
+      <TeardropPin
+        color={colorHex || "#0EA5E9"}
+        testid={`${testId}-svg`}
+      />
+    </button>
   );
 }
 
@@ -101,18 +117,25 @@ function PinsLayer({ pins, techColorById, onSelect, pinColorMode = "tech", isola
     const gm = window.google.maps;
     if (!gm.marker?.AdvancedMarkerElement) return undefined;
     const newMarkers = pins.map((p) => {
-      const dot = document.createElement("div");
-      dot.style.width = "22px";
-      dot.style.height = "22px";
-      dot.style.borderRadius = "999px";
-      dot.style.background = colorForPin(p, pinColorMode, techColorById);
-      dot.style.border = p.is_scheduled_this_day ? "3px solid #FDE68A" : "2px solid #ffffff";
-      dot.style.boxShadow = "0 1px 3px rgba(0,0,0,0.35)";
-      dot.style.cursor = "pointer";
-      dot.style.opacity = _isDimmed(p) ? "0.3" : "1";
+      // Phase M1 · Feb-2026 — teardrop-shaped cluster leaves.
+      // ``AdvancedMarkerElement`` accepts a plain DOM node; we
+      // render the same ``<TeardropPin>`` server-side into a
+      // string and slot it in.  The ``scheduled`` amber ring is
+      // preserved via a drop-shadow filter on the wrapper.
+      const wrap = document.createElement("div");
+      wrap.style.cursor = "pointer";
+      wrap.style.opacity = _isDimmed(p) ? "0.3" : "1";
+      wrap.style.filter = p.is_scheduled_this_day
+        ? "drop-shadow(0 0 3px #FDE68A) drop-shadow(0 1px 2px rgba(0,0,0,0.35))"
+        : "drop-shadow(0 1px 2px rgba(0,0,0,0.35))";
+      wrap.style.transform = "translateY(-24px)";
+      wrap.innerHTML = renderToStaticMarkup(
+        <TeardropPin color={colorForPin(p, pinColorMode, techColorById)}
+                     testid={`dispatch-pin-cluster-${p.customer_id}-svg`} />,
+      );
       const marker = new gm.marker.AdvancedMarkerElement({
         position: { lat: p.lat, lng: p.lng },
-        content: dot,
+        content: wrap,
       });
       marker.addListener("gmp-click", () => onSelect(p.customer_id));
       return marker;
@@ -276,11 +299,16 @@ export default function DispatchMapView({
           pins={unroutedPins}
           onSelect={onSelectCustomer}
         />
-        {/* Phase P2 · Feb-2026 — live technician GPS markers. */}
+        {/* Phase P2 · Feb-2026 — live technician GPS markers.
+             Phase M1 · Feb-2026 — pin colour now sources from the
+             tech directory's ``display_color_hex`` (with a
+             deterministic 12-color fallback in ``TeardropPin``).
+             Freshness rides on the halo instead of colour. */}
         <LiveTechPinsLayer
           positions={liveTechPositions}
           isolatedTechId={isolatedTechId}
           staleThresholdMs={staleThresholdMs}
+          techColorById={techColorById}
         />
         <FocusOnStop pins={pins} focusedStopId={focusedStopId} />
         {polyline ? <PolylineOverlay encoded={polyline} /> : null}

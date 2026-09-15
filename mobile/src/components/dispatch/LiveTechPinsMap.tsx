@@ -25,6 +25,7 @@ import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 
 import { colors, spacing, radius, font } from "@/src/theme";
 import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
+import TeardropPin, { colorFromId } from "@/src/components/maps/TeardropPin";
 
 const STYLES: { mapType: "standard" | "satellite" | "hybrid"; label: string; icon: string }[] = [
   { mapType: "standard",  label: "Streets",   icon: "map-outline" },
@@ -33,15 +34,6 @@ const STYLES: { mapType: "standard" | "satellite" | "hybrid"; label: string; ico
 ];
 
 const STYLE_KEY = "dispatch_map_style_v1";
-
-// Deterministic color per user_id — mirrors the same idea as
-// TechAvatar so pins match the load-strip swatches.
-function _colorFromId(id: string): string {
-  let h = 0;
-  for (let i = 0; i < (id || "").length; i++) h = ((h << 5) - h) + id.charCodeAt(i);
-  const palette = ["#EF4444","#F97316","#EAB308","#22C55E","#06B6D4","#3B82F6","#8B5CF6","#EC4899"];
-  return palette[Math.abs(h) % palette.length];
-}
 
 function _initials(name: string): string {
   return (name || "?")
@@ -119,27 +111,33 @@ export default function LiveTechPinsMap({
         toolbarEnabled={false}
         testID="dispatch-live-map-view"
       >
-        {positions.map((p) => (
-          <Marker
-            key={p.user_id}
-            identifier={`dispatch-live-pin-${p.user_id}`}
-            coordinate={{ latitude: p.lat, longitude: p.lon }}
-            onPress={() => onPinTap(p.user_id, p.user_name)}
-            anchor={{ x: 0.5, y: 0.5 }}
-            tracksViewChanges={false}
-          >
-            <View
-              style={[
-                styles.pin,
-                { backgroundColor: _colorFromId(p.user_id) },
-                p.is_stale && styles.pinStale,
-              ]}
-              testID={`dispatch-live-pin-${p.user_id}`}
+        {positions.map((p) => {
+          const pinColor = colorFromId(p.user_id);
+          const isFresh = !p.is_stale;
+          return (
+            <Marker
+              key={p.user_id}
+              identifier={`dispatch-live-pin-${p.user_id}`}
+              coordinate={{ latitude: p.lat, longitude: p.lon }}
+              onPress={() => onPinTap(p.user_id, p.user_name)}
+              anchor={{ x: 0.5, y: 1.0 }}
+              tracksViewChanges={isFresh}
             >
-              <Text style={styles.pinText}>{_initials(p.user_name)}</Text>
-            </View>
-          </Marker>
-        ))}
+              <View
+                style={[p.is_stale && styles.pinStale]}
+                testID={`dispatch-live-pin-${p.user_id}`}
+              >
+                <TeardropPin
+                  color={pinColor}
+                  pulse={isFresh}
+                  testID={`dispatch-live-teardrop-${p.user_id}`}
+                >
+                  <Text style={styles.pinText}>{_initials(p.user_name)}</Text>
+                </TeardropPin>
+              </View>
+            </Marker>
+          );
+        })}
       </MapView>
 
       {/* Map-type toggle (standard / satellite / hybrid) */}
@@ -166,15 +164,8 @@ export default function LiveTechPinsMap({
 const styles = StyleSheet.create({
   wrap: { flex: 1, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceSecondary },
   map: { flex: 1 },
-  pin: {
-    width: 32, height: 32, borderRadius: 16,
-    alignItems: "center", justifyContent: "center",
-    borderWidth: 2, borderColor: "#fff",
-    shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 3, shadowOffset: { width: 0, height: 1 },
-    elevation: 3,
-  },
   pinStale: { opacity: 0.55 },
-  pinText: { fontFamily: font.bold, fontSize: 11, color: "#fff" },
+  pinText: { fontFamily: font.bold, fontSize: 10, color: "#fff", textAlign: "center" },
   styleBtn: {
     position: "absolute", top: spacing.sm, right: spacing.sm,
     flexDirection: "row", alignItems: "center", gap: 4,

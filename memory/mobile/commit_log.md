@@ -1996,3 +1996,19 @@
 - **Files modified**: `app/job/[id].tsx`
 - **Files created**: `app/job/[id]/checkin.tsx`, `__tests__/tech-checkin-mobile.test.ts`, `memory/FEATURE_TECH_CHECKIN_MOBILE.md`
 - **Web files referenced**: None (new mobile-only feature paired with backend)
+
+## Iteration 95 — Phase M1: Sitewide Custom Teardrop Map Pin
+- **Commit**: e82e90681b362d580f0e638eab4b112c3a4d50ad
+- **Date**: 2026-09-15
+- **Changes**:
+  - Created `TeardropPin.tsx` — SVG teardrop pin with hollow center, 12-color palette, pulse halo
+  - Updated `LiveTechPinsMap.tsx` — teardrop pins with per-tech colors + pulse for fresh GPS
+  - Updated `DailyRouteMap.native.tsx` — teardrop pins with numbered overlay + status badges
+  - Updated `ScheduleMap.native.tsx` — teardrop pins replacing native pinColor markers
+- **Files modified**:
+  - `/app/mobile/src/components/maps/TeardropPin.tsx` (NEW)
+  - `/app/mobile/src/components/dispatch/LiveTechPinsMap.tsx`
+  - `/app/mobile/src/components/schedule/DailyRouteMap.native.tsx`
+  - `/app/mobile/src/components/schedule/ScheduleMap.native.tsx`
+- **Web files referenced**:
+  - `/app/frontend/src/pages/dispatch/LiveTechPinsLayer.jsx`

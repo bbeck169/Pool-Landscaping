@@ -63,6 +63,7 @@ import {
 // white-screen crash class).
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import type { Region } from "react-native-maps";
+import TeardropPin from "@/src/components/maps/TeardropPin";
 
 const PINNED_STATUSES = new Set([
   "completed", "could_not_service", "skipped", "canceled", "cancelled",
@@ -523,7 +524,7 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
                   latitude: p.coords.lat,
                   longitude: p.coords.lng,
                 }}
-                anchor={{ x: 0.5, y: 0.5 }}
+                anchor={{ x: 0.5, y: 1.0 }}
                 onPress={() => setSelectedId(p.job.id)}
                 tracksViewChanges={false}
               >
@@ -658,13 +659,17 @@ function RoutePinView({
   const bg = PIN_BG[pinKind];
   return (
     <View
-      style={[s.pin, { backgroundColor: bg }]}
       testID={`schedule-daily-route-map-pin-view-${jobId}`}
       accessibilityLabel={`Route stop ${num} (${pinKind})`}
     >
-      <Text style={s.pinNumber} testID={`schedule-daily-route-map-pin-num-${jobId}`}>
-        {num}
-      </Text>
+      <TeardropPin
+        color={bg}
+        testID={`schedule-daily-route-map-teardrop-${jobId}`}
+      >
+        <Text style={s.pinNumber} testID={`schedule-daily-route-map-pin-num-${jobId}`}>
+          {num}
+        </Text>
+      </TeardropPin>
       {pinKind === "completed" ? (
         <View style={[s.pinBadge, { backgroundColor: "#fff" }]} testID={`schedule-daily-route-map-pin-badge-completed-${jobId}`}>
           <Ionicons name="checkmark" size={9} color={PIN_BG.completed} />
@@ -738,16 +743,11 @@ const s = StyleSheet.create({
   mapWrap: { height: 280, width: "100%" },
   map: { flex: 1 },
   pin: {
-    width: 28, height: 28, borderRadius: 14,
-    alignItems: "center", justifyContent: "center",
-    borderWidth: 2, borderColor: "#fff",
-    shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 3,
+    // Teardrop wrapper — no circular background needed anymore
   },
-  pinNumber: { fontFamily: font.bold, fontSize: 12, color: "#fff", lineHeight: 14 },
+  pinNumber: { fontFamily: font.bold, fontSize: 11, color: "#fff", lineHeight: 14, textAlign: "center" },
   pinBadge: {
-    position: "absolute", right: -2, bottom: -2,
+    position: "absolute", right: 2, top: 0,
     width: 14, height: 14, borderRadius: 7,
     alignItems: "center", justifyContent: "center",
     borderWidth: 1, borderColor: "#fff",

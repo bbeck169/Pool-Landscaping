@@ -13,6 +13,7 @@ import { useRouter } from "expo-router";
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
+import TeardropPin from "@/src/components/maps/TeardropPin";
 // K58 · Feb-2026 — shared coord resolver so ScheduleMap and DailyRouteMap
 // stay in lockstep on which jobs are "mapped".  See PHASE_K58_MAP_COORD_LADDER.md.
 import { resolveJobCoords, type JobLikeForCoords } from "@/src/utils/jobCoords";
@@ -157,11 +158,17 @@ export default function ScheduleMap({ jobs, testID }: Props) {
           <Marker
             key={j.id}
             coordinate={{ latitude: j.__coords.lat, longitude: j.__coords.lng }}
-            pinColor={pinColor(j.status)}
+            anchor={{ x: 0.5, y: 1.0 }}
             title={j.customer_name || "Job"}
             onPress={() => setSelected(j)}
+            tracksViewChanges={false}
             testID={`schedule-map-pin-${j.id}`}
-          />
+          >
+            <TeardropPin
+              color={pinColor(j.status)}
+              testID={`schedule-map-teardrop-${j.id}`}
+            />
+          </Marker>
         ))}
       </MapView>
 

@@ -122,10 +122,16 @@ describe("<ScheduleMap />", () => {
 
   it("uses techColorMap for the pin colour and falls back for unassigned", () => {
     render(<ScheduleMap jobs={_jobs} techs={_techs} techColorMap={_techColorMap} />);
-    const pinA = screen.getByTestId("schedule-map-pin-job-1");
-    const pinB = screen.getByTestId("schedule-map-pin-job-2");
-    expect(pinA.getAttribute("style")).toContain("rgb(255, 0, 0)");
-    expect(pinB.getAttribute("style")).toContain("rgb(0, 255, 0)");
+    // Phase M1 · Feb-2026 — colour moved from the button's inline
+    // ``background`` style to the ``<TeardropPin>`` SVG body's
+    // ``fill`` attribute.  Same per-marker colour semantics, just
+    // exposed one hop deeper in the DOM.
+    expect(
+      screen.getByTestId("schedule-map-pin-job-1-svg-body").getAttribute("fill"),
+    ).toBe("#FF0000");
+    expect(
+      screen.getByTestId("schedule-map-pin-job-2-svg-body").getAttribute("fill"),
+    ).toBe("#00FF00");
   });
 
   it("falls back to slate-400 when a pinned job has no techColorMap entry", () => {
@@ -139,9 +145,12 @@ describe("<ScheduleMap />", () => {
       location_lng: -112.37,
     };
     render(<ScheduleMap jobs={[unassignedJob]} techs={_techs} techColorMap={_techColorMap} />);
-    const pin = screen.getByTestId("schedule-map-pin-job-un");
-    // slate-400 → #94A3B8 → rgb(148, 163, 184).
-    expect(pin.getAttribute("style")).toContain("rgb(148, 163, 184)");
+    // Phase M1 · Feb-2026 — check the SVG body ``fill`` attribute
+    // instead of the wrapping button's inline ``background`` style.
+    // slate-400 hex is ``#94A3B8``.
+    expect(
+      screen.getByTestId("schedule-map-pin-job-un-svg-body").getAttribute("fill"),
+    ).toBe("#94A3B8");
   });
 
   it("shows an InfoWindow with customer, address, time, and tech name on click", () => {
