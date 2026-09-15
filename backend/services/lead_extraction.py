@@ -82,6 +82,213 @@ _SERVICE_INTEREST_ALIASES: List[str] = [
     "service_type", "what_service", "which_service",
 ]
 
+
+# ── Phase L2 · Feb-2026 — label-based resolution ─────────────────
+#
+# Marketing-form authors sometimes end up with auto-generated field
+# ids like ``field_Service Address_5`` or ``field_9`` (the admin
+# builder's ``crypto.randomUUID().slice(0,4)`` short-id path).  Those
+# keys don't match any alias in the tables above, so the pre-L2
+# extractor silently dropped the values.  ``extract_contact_fields
+# _with_schema`` resolves each canonical field by scanning the form
+# schema's LABELS as a second-pass fallback:
+#
+#   1. Exact key/name match (pre-L2 alias path — still wins).
+#   2. Case-insensitive LABEL match against the synonym list.
+#   3. Fuzzy contains match on the label (a normalized label CONTAINS
+#      any synonym token from the list) — must NOT cross-match
+#      unrelated fields (see the ``_LABEL_ANTI_MATCH`` filter).
+#
+_LABEL_SYNONYMS: Dict[str, List[str]] = {
+    "address": [
+        "service address", "property address", "street address", "address",
+        "location", "where is the service", "service location",
+        "home address", "mailing address", "job address", "site address",
+        "install address",
+    ],
+    "notes": [
+        "description of services needed", "services needed",
+        "service description", "what service do you need",
+        "notes", "message", "additional info", "additional information",
+        "details", "how can we help", "how can we help you",
+        "how did you hear", "your message", "inquiry", "question",
+        "comments", "description",
+    ],
+    "phone": [
+        "phone", "phone number", "cell phone", "cell", "mobile",
+        "mobile number", "home phone", "work phone", "telephone",
+        "contact number", "call back number",
+    ],
+    "email": [
+        "email", "email address", "e-mail", "your email",
+        "contact email",
+    ],
+    "name": [
+        "name", "full name", "your name", "contact name", "customer name",
+    ],
+    "first_name": [
+        "first name", "given name", "your first name",
+    ],
+    "last_name": [
+        "last name", "surname", "family name", "your last name",
+    ],
+    "company_name": [
+        "company", "company name", "business", "business name",
+        "organization", "organization name", "your company",
+    ],
+    "city": ["city", "town", "municipality"],
+    "state": ["state", "region", "province"],
+    "zip": [
+        "zip", "zip code", "zipcode", "postal code", "postcode",
+    ],
+    "service_interest": [
+        "service interest", "requested service", "service",
+        "service type", "which service", "what service",
+    ],
+}
+
+# Anti-match tokens.  If the label contains ANY of these tokens for a
+# given canonical field, we refuse the fuzzy branch.  Prevents things
+# like ``"Phone Address Book"`` from hijacking ``address``.
+_LABEL_ANTI_MATCH: Dict[str, List[str]] = {
+    "address": ["book", "phone", "email"],
+    "phone": ["address", "email"],
+    "email": ["address", "phone"],
+    "name":  ["company", "business", "first", "last", "product",
+                "service", "user"],
+    "notes": [],
+}
+
+
+def _norm_label(s: Any) -> str:
+    """Lower-case, collapse non-alnum runs to single spaces, strip.
+    ``"Service Address:"`` → ``"service address"``."""
+    if not isinstance(s, str):
+        return ""
+    return re.sub(r"[^a-z0-9]+", " ", s.strip().lower()).strip()
+
+
+def _label_matches_canonical(label: str, canonical: str) -> bool:
+    """True when ``label`` corresponds to ``canonical``.
+
+    Runs exact-match first, then fuzzy contains — but ONLY when
+    every anti-match token in ``_LABEL_ANTI_MATCH[canonical]`` is
+    ABSENT from the label.  This is what keeps
+    ``"Phone Address Book"`` from cross-matching ``address``.
+    """
+    if not label:
+        return False
+    nl = _norm_label(label)
+    syn = _LABEL_SYNONYMS.get(canonical) or []
+    if nl in {_norm_label(s) for s in syn}:
+        return True
+    anti = _LABEL_ANTI_MATCH.get(canonical) or []
+    if any(a in nl for a in anti):
+        return False
+    return any(_norm_label(s) in nl for s in syn)
+
+
+def _read_schema_value(vals: Dict[str, Any], field: Dict[str, Any]) -> Optional[str]:
+    """Read the value for a schema field from ``vals`` under the
+    field's ``id`` or ``name`` (whichever produces a non-empty
+    string).  Whitespace is stripped."""
+    for key in ("id", "name"):
+        raw = vals.get(field.get(key))
+        if raw is None:
+            continue
+        s = raw if isinstance(raw, str) else str(raw)
+        s = s.strip()
+        if s:
+            return s
+    return None
+
+
+def extract_contact_fields_with_schema(
+    vals: Optional[Dict[str, Any]],
+    schema_fields: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Optional[str]]:
+    """Phase L2 · Feb-2026 — label-aware extractor.
+
+    Runs the pre-L2 key-based ``extract_contact_fields`` first so
+    an exact key match ALWAYS wins.  Then, for any canonical field
+    that came back empty, scans ``schema_fields`` for a label that
+    matches the canonical's synonym list (case-insensitive exact,
+    then fuzzy contains with an anti-match filter).
+    """
+    base = extract_contact_fields(vals)
+    if not schema_fields:
+        return base
+
+    # Map: canonical -> base key on the ``base`` dict.
+    _canonical_to_base = {
+        "address": "address",
+        "notes": "message",
+        "phone": "phone",
+        "email": "email",
+        "name": "name",
+        "first_name": "first_name",
+        "last_name": "last_name",
+        "company_name": "company_name",
+        "city": "city",
+        "state": "state",
+        "zip": "zip",
+        "service_interest": "service_interest",
+    }
+
+    for canonical, base_key in _canonical_to_base.items():
+        if base.get(base_key):
+            continue  # pre-L2 key path already resolved it — respected
+        for f in schema_fields or []:
+            if not isinstance(f, dict):
+                continue
+            label = f.get("label") or f.get("title") or ""
+            if not _label_matches_canonical(label, canonical):
+                continue
+            val = _read_schema_value(vals or {}, f)
+            if val:
+                base[base_key] = val
+                break
+    return base
+
+
+def lead_row_from_form_values_with_schema(
+    *, tid: str, vals: Dict[str, Any],
+    source_label: str,
+    schema_fields: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Phase L2 companion of ``lead_row_from_form_values`` that
+    accepts the form-schema field list for label-based resolution.
+
+    Used by the L2 backfill migration; live intake paths continue to
+    call ``lead_row_from_form_values`` for now (upgrading them is a
+    follow-up ticket — the migration + this function unblock the
+    "historical leads have empty address" report in the meantime)."""
+    from utils import new_id, now_iso
+
+    fields = extract_contact_fields_with_schema(vals, schema_fields)
+    return {
+        "id": new_id(),
+        "tenant_id": tid,
+        "name": fields["name"] or WEBSITE_VISITOR_FALLBACK,
+        "first_name": fields["first_name"] or "",
+        "last_name": fields["last_name"] or "",
+        "phone": fields["phone"] or "",
+        "email": fields["email"] or "",
+        "address": fields["address"] or "",
+        "service_address": fields["address"] or "",
+        "city": fields["city"] or "",
+        "state": fields["state"] or "",
+        "zip": fields["zip"] or "",
+        "company_name": fields["company_name"] or "",
+        "service_interest": fields["service_interest"] or None,
+        "message": fields["message"] or "",
+        "source": source_label or "Web Form",
+        "status": "new",
+        "notes": fields["message"] or "",
+        "est_value": 0.0,
+        "created_at": now_iso(),
+    }
+
 # Sentinel string for a submission that yielded no usable contact.
 # Historical value; do not change without a coordinated backfill
 # because the P19 + F5 backfill migrations query on it.

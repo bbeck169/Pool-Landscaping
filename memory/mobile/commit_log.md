@@ -2024,3 +2024,19 @@
   - `/app/mobile/__tests__/teardrop-pin-parity.test.ts` (NEW)
 - **Web files referenced**:
   - `/app/memory/tech_color_palette.md` (canonical spec)
+
+## Iteration 97 — Phase T1: Sitewide input theme (white bg + navy text)
+- **Commit**: (same session)
+- **Date**: 2026-09-15
+- **Changes**:
+  - Added `inputColors` constants to `theme.ts` (bg=#FFFFFF, text=#000080, placeholder=rgba(0,0,128,0.55))
+  - Created `AppTextInput` wrapper at `src/components/ui/AppTextInput.tsx`
+  - Batch-replaced all 247 `<TextInput` → `<AppTextInput` across 154 files
+  - Cleaned unused `TextInput` imports from react-native in 5 files
+  - Added Jest test `__tests__/app-text-input-theme.test.tsx` (4 tests, all pass)
+- **Files modified**:
+  - `/app/mobile/src/theme.ts` (inputColors added)
+  - `/app/mobile/src/components/ui/AppTextInput.tsx` (NEW)
+  - `/app/mobile/__tests__/app-text-input-theme.test.tsx` (NEW)
+  - 154 files across `src/` and `app/` (TextInput → AppTextInput)
+- **Web files referenced**: None (mobile-only theme change)

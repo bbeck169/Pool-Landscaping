@@ -474,6 +474,12 @@ api_router.include_router(_k63f_resend_router.router)
 # rate-limited routes (autocomplete + details).
 from routers import public_places as _feb2026_public_places  # noqa: E402
 api_router.include_router(_feb2026_public_places.router)
+# Phase L2 · Feb-2026 — Super-Admin backfill trigger. Historical
+# leads whose form-submission fields carry auto-generated ids
+# (e.g. ``field_Service Address_5``) can be re-extracted through
+# the label-aware resolver.  Router already prefixes ``/api``.
+from routers import admin_leads_backfill_label_resolution as _l2_backfill  # noqa: E402
+app.include_router(_l2_backfill.router)
 # K65 · Feb-2026 — super-admin perf-explain diagnostic endpoint.
 # Gated by ``FEATURE_PERF_EXPLAIN=1`` env flag; 404 when off so the
 # route is invisible on prod by default.
