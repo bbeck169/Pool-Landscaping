@@ -111,11 +111,15 @@ describe("Repair-mode service log — customer portal (PortalServiceReports.jsx)
   });
 
   it("hides the chemistry section on repair reports", () => {
-    // The chemistry render guard combines kind==pool AND readings AND
-    // work_class != "repair" — the exact conjunction the spec asks
-    // for.
+    // Phase CHEM4 · Feb-2026 — the render guard was refactored so
+    // the primary Pool block ALWAYS renders when kind==pool AND
+    // work_class != "repair" (readings-empty state renders a
+    // truthful empty row instead of collapsing the section). The
+    // behavioural guarantee is unchanged: repair visits still hide
+    // chemistry entirely — the outer conjunction still gates on
+    // ``kind === "pool"`` && ``work_class != "repair"``.
     expect(portalSrc).toMatch(
-      /kind === "pool"[\s\S]{0,80}readings\.length > 0[\s\S]{0,180}work_class[\s\S]{0,50}!==\s*"repair"/,
+      /kind === "pool"[\s\S]{0,120}work_class[\s\S]{0,50}!==\s*"repair"/,
     );
   });
 

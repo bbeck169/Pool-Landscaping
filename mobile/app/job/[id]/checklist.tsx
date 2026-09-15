@@ -28,6 +28,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { usePreventRemove } from "@react-navigation/core";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 
 import { api, ApiError } from "@/src/api";
@@ -106,6 +107,7 @@ export default function JobChecklistScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { showToast } = useToast();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
 
   const role = user?.role || "";
@@ -924,7 +926,7 @@ export default function JobChecklistScreen() {
           </View>
         }
       />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 160 }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 160 + insets.bottom }}>
         <View style={styles.hero} testID="checklist-hero">
           <Text style={styles.heroLabel}>
             {clientType} · backend:{backendKind}{locked ? " · LOCKED" : ""}
@@ -1080,7 +1082,7 @@ export default function JobChecklistScreen() {
       </ScrollView>
 
       {!locked && (
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}>
           <Pressable
             style={styles.draftBtn}
             onPress={saveDraft}

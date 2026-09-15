@@ -32,6 +32,11 @@ import { colors } from "@/theme";
 // stale server payload (no ``label`` attached) still classifies the
 // reading with the same thresholds the email builder uses.
 import { bandForReading, DISPLAY_LABELS } from "@/utils/chemistryBands";
+// Phase CHEM4 · Feb-2026 — canonical body-type → label map lives in
+// ``lib/waterBodies`` so the same words render everywhere (tech UI,
+// admin dispatch, portal). Re-using instead of forking prevents
+// "Spa" vs "SPA" vs "spa" drift between surfaces.
+import { BODY_TYPE_LABELS, BODY_TYPE_TINTS } from "@/lib/waterBodies";
 import {
   PageHeader,
   Skeleton,
@@ -502,13 +507,25 @@ export function PortalServiceReportDetail() {
   // photos (``sr.photos``) keep their attribution intact.
   const jobPhotos = Array.isArray(sr.job_photos) ? sr.job_photos : [];
   const algae = algaeLine(sr);
-  // Feb-2026 · Multi-body Phase 2 — when the report carries multiple
-  // water bodies, we render per-body sub-sections and suppress the
-  // flat top-level chemistry/chemicals surface (backend still returns
-  // them as a legacy mirror, but they'd duplicate what's inside
-  // ``water_bodies[0]``). Single-body reports keep the classic layout.
+  // Phase CHEM4 · Feb-2026 — Hybrid Pool + additional-body layout.
+  //
+  //   Flat "Pool" block at the top → sourced from the report's
+  //   TOP-LEVEL ``chemical_readings`` + ``chemicals_added``. Never
+  //   recomputed from ``water_bodies[0]``.
+  //
+  //   Additional bodies (Spa, Fountain, Water Feature, Other) →
+  //   iterate ``water_bodies`` starting at INDEX 1. Each renders in
+  //   its own card with per-body chemistry + chemicals.
+  //
+  //   Single-body reports (or reports with only the primary pool in
+  //   ``water_bodies``) render the flat block only — no cards.
   const bodies = Array.isArray(sr.water_bodies) ? sr.water_bodies : [];
-  const isMultiBody = bodies.length > 1;
+  const additionalBodies = bodies.slice(1);
+  const primaryLabel = (bodies[0]?.label
+                         || bodies[0]?.name
+                         || BODY_TYPE_LABELS[bodies[0]?.type]
+                         || BODY_TYPE_LABELS[bodies[0]?.body_type]
+                         || "Pool");
 
   return (
     <div
@@ -624,26 +641,135 @@ export function PortalServiceReportDetail() {
         </div>
       ) : null}
 
-      {/* Feb-2026 · Multi-body Phase 2 — per-body chemistry / chemicals
-          breakdown. Only renders when the visit covered more than one
-          body of water (e.g., Pool + Spa). Each body gets its own card
-          with the type label, its qualitative readings (bands only —
-          matches Slice 3C safety rules), and its chemicals list. This
-          section replaces the flat top-level readings/chemicals for
-          multi-body reports; single-body reports keep the classic
-          layout above. */}
-      {isMultiBody
+      {/* Phase CHEM4 · Feb-2026 — Flat Pool block. Always renders
+          (unless the visit is a Repair or non-pool). Sourced from
+          the report's TOP-LEVEL ``chemical_readings`` +
+          ``chemicals_added`` — never recomputed from
+          ``water_bodies[0]``. If both surfaces are empty we still
+          render a truthful empty-state row so the section doesn't
+          collapse invisibly. */}
+      {kind === "pool"
        && (sr.work_class || "").toLowerCase() !== "repair" ? (
         <Section
           icon={Droplet}
-          title={`Serviced ${bodies.length} bodies of water`}
+          title={primaryLabel}
+          testid="portal-service-report-primary-pool"
+        >
+          {readings.length === 0 && chemicalsAdded.length === 0 ? (
+            <div
+              className="text-sm italic"
+              style={{ color: colors.muted }}
+              data-testid="portal-service-report-primary-empty"
+            >
+              No chemistry recorded
+            </div>
+          ) : (
+            <>
+              {readings.length > 0 ? (
+                <ul
+                  className="grid grid-cols-1 sm:grid-cols-2 gap-2"
+                  data-testid="portal-service-report-readings-list"
+                >
+                  {readings.map((r, i) => {
+                    // Feb-2026 hotfix — prefer the server-attached
+                    // classification when present, else derive from
+                    // the numeric value using the SAME thresholds
+                    // the door-hanger email uses.
+                    const derived = bandForReading(r.key, r.value);
+                    const _CHIP_KEY = {
+                      "Below Average": "below",
+                      "Average":       "average",
+                      "Above Average": "above",
+                      "Elevated":      "elevated",
+                    };
+                    const band = r.label || _CHIP_KEY[derived] || "average";
+                    const displayName = DISPLAY_LABELS[r.key] || r.name || r.key;
+                    return (
+                      <li
+                        key={r.key || r.name || i}
+                        className="flex items-center justify-between rounded-xl p-3"
+                        style={{
+                          backgroundColor: colors.surfaceSecondary,
+                          border: `1px solid ${colors.divider}`,
+                        }}
+                        data-testid={`portal-service-report-reading-${r.key || i}`}
+                      >
+                        <div className="min-w-0">
+                          <div
+                            className="text-sm font-semibold truncate"
+                            style={{ color: colors.onSurface }}
+                          >
+                            {displayName}
+                          </div>
+                        </div>
+                        <ChemChip
+                          band={band}
+                          testid={`chem-label-${r.key || i}`}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+              {chemicalsAdded.length > 0 ? (
+                <div
+                  className={readings.length > 0 ? "mt-4" : ""}
+                  data-testid="portal-service-report-chemicals-block"
+                >
+                  <div
+                    className="text-[11px] uppercase tracking-wider font-bold mb-2"
+                    style={{ color: colors.muted }}
+                  >
+                    Chemicals added
+                  </div>
+                  <ul className="space-y-1.5">
+                    {chemicalsAdded.map((c, i) => {
+                      const name = c.name || c.chemical || "Chemical";
+                      const amount = c.amount ?? c.qty ?? c.quantity ?? "";
+                      const unit = c.unit || c.default_unit || "";
+                      return (
+                        <li
+                          key={i}
+                          className="flex items-center justify-between text-sm py-1"
+                          data-testid={`portal-service-report-chemical-${i}`}
+                        >
+                          <span style={{ color: colors.onSurface }}>{name}</span>
+                          <span className="font-semibold" style={{ color: colors.onSurface }}>
+                            {amount} {unit}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+            </>
+          )}
+        </Section>
+      ) : null}
+
+      {/* Phase CHEM4 · Feb-2026 — Additional bodies (Spa, Fountain,
+          Water Feature, Other). Iterates ``water_bodies`` starting
+          at INDEX 1 — the primary pool at index 0 is already
+          rendered above from the flat top-level surface. Repair
+          visits omit chemistry entirely. */}
+      {kind === "pool"
+       && additionalBodies.length > 0
+       && (sr.work_class || "").toLowerCase() !== "repair" ? (
+        <Section
+          icon={Droplet}
+          title={
+            additionalBodies.length === 1
+              ? "Additional body of water"
+              : `${additionalBodies.length} additional bodies of water`
+          }
           testid="portal-service-report-water-bodies"
         >
           <div
             className="space-y-3"
             data-testid="portal-service-report-water-bodies-list"
           >
-            {bodies.map((b, bi) => {
+            {additionalBodies.map((b, bi) => {
               const bReadings = Array.isArray(b?.readings)
                 ? b.readings.filter(
                     (r) => r && (r.label || (r.value !== null && r.value !== undefined && r.value !== "")),
@@ -655,148 +781,161 @@ export function PortalServiceReportDetail() {
               const bMedia = Array.isArray(b?.media)
                 ? b.media.filter((m) => m && m.url)
                 : [];
-              const typeSlug = (b?.type || "pool");
-              const label = b?.label || typeSlug;
-              // Reuse the pool cyan for pool bodies; neutral tint
-              // otherwise. Kept in one place so it matches the tech UI.
-              const tintBg   = typeSlug === "pool" ? "#E0F2FE" : "#F1F5F9";
-              const tintFg   = typeSlug === "pool" ? "#0369A1" : "#334155";
-              const tintBd   = typeSlug === "pool" ? "#7DD3FC" : "#CBD5E1";
+              const typeSlug = (b?.type || b?.body_type || "other");
+              // Phase CHEM4 · Feb-2026 — card title uses the canonical
+              // BODY_TYPE_LABELS map so "spa" → "Spa" (not "SPA" or
+              // "spa"), then falls back to the raw slug when the map
+              // has no entry (unknown body type from a stale seed).
+              const canonicalTitle = BODY_TYPE_LABELS[typeSlug] || typeSlug || "Water Body";
+              // Optional subtitle when the tech named the body
+              // (e.g. "East side spa" → renders as "Spa — East side spa").
+              const subtitle = (b?.name && b.name !== canonicalTitle)
+                ? b.name
+                : "";
+              const tint = BODY_TYPE_TINTS[typeSlug] || BODY_TYPE_TINTS.other;
               return (
                 <div
                   key={b?.id || bi}
                   className="rounded-xl overflow-hidden"
                   style={{
-                    border: `1px solid ${tintBd}`,
+                    border: `1px solid ${tint.border}`,
                     backgroundColor: colors.surface,
                   }}
                   data-testid={`portal-service-report-body-${bi}`}
                 >
                   <div
                     className="flex items-center gap-2 px-3 py-2"
-                    style={{ backgroundColor: tintBg }}
+                    style={{ backgroundColor: tint.bg }}
                   >
                     <span
                       className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
                       style={{
                         backgroundColor: colors.surface,
-                        color: tintFg,
-                        border: `1px solid ${tintBd}`,
+                        color: tint.fg,
+                        border: `1px solid ${tint.border}`,
                       }}
                       data-testid={`portal-service-report-body-badge-${bi}`}
                     >
-                      {typeSlug.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase())}
+                      {canonicalTitle}
                     </span>
-                    <span
-                      className="text-sm font-semibold"
-                      style={{ color: colors.onSurface }}
-                      data-testid={`portal-service-report-body-label-${bi}`}
-                    >
-                      {label}
-                    </span>
+                    {subtitle ? (
+                      <span
+                        className="text-sm"
+                        style={{ color: colors.muted }}
+                        data-testid={`portal-service-report-body-subtitle-${bi}`}
+                      >
+                        — {subtitle}
+                      </span>
+                    ) : null}
                   </div>
-                  <div className="p-3 space-y-3">
-                    {bReadings.length > 0 ? (
-                      <div>
-                        <div
-                          className="text-[11px] uppercase tracking-wider font-bold mb-2"
-                          style={{ color: colors.muted }}
-                        >
-                          Water chemistry
+                  {/* Sub-block only renders when at least one of
+                      readings/chemicals is present. When both are
+                      empty we still show the card header — the
+                      customer needs to know that body was visited. */}
+                  {(bReadings.length > 0 || bChems.length > 0) ? (
+                    <div className="p-3 space-y-3">
+                      {bReadings.length > 0 ? (
+                        <div>
+                          <div
+                            className="text-[11px] uppercase tracking-wider font-bold mb-2"
+                            style={{ color: colors.muted }}
+                          >
+                            Water chemistry
+                          </div>
+                          <ul
+                            className="grid grid-cols-1 sm:grid-cols-2 gap-2"
+                            data-testid={`portal-service-report-body-readings-${bi}`}
+                          >
+                            {bReadings.map((r, ri) => {
+                              const derived = bandForReading(r.key, r.value);
+                              const _CHIP_KEY = {
+                                "Below Average": "below",
+                                "Average":       "average",
+                                "Above Average": "above",
+                                "Elevated":      "elevated",
+                              };
+                              const band = r.label || _CHIP_KEY[derived] || "average";
+                              const displayName = DISPLAY_LABELS[r.key] || r.name || r.key;
+                              return (
+                                <li
+                                  key={r.key || r.name || ri}
+                                  className="flex items-center justify-between rounded-xl p-3"
+                                  style={{
+                                    backgroundColor: colors.surfaceSecondary,
+                                    border: `1px solid ${colors.divider}`,
+                                  }}
+                                  data-testid={`portal-service-report-body-${bi}-reading-${r.key || ri}`}
+                                >
+                                  <div className="min-w-0">
+                                    <div
+                                      className="text-sm font-semibold truncate"
+                                      style={{ color: colors.onSurface }}
+                                    >
+                                      {displayName}
+                                    </div>
+                                  </div>
+                                  <ChemChip band={band} testid={`chem-label-${bi}-${r.key || ri}`} />
+                                </li>
+                              );
+                            })}
+                          </ul>
                         </div>
-                        <ul
-                          className="grid grid-cols-1 sm:grid-cols-2 gap-2"
-                          data-testid={`portal-service-report-body-readings-${bi}`}
-                        >
-                          {bReadings.map((r, ri) => {
-                            const derived = bandForReading(r.key, r.value);
-                            const _CHIP_KEY = {
-                              "Below Average": "below",
-                              "Average":       "average",
-                              "Above Average": "above",
-                              "Elevated":      "elevated",
-                            };
-                            const band = r.label || _CHIP_KEY[derived] || "average";
-                            const displayName = DISPLAY_LABELS[r.key] || r.name || r.key;
-                            return (
-                              <li
-                                key={r.key || r.name || ri}
-                                className="flex items-center justify-between rounded-xl p-3"
-                                style={{
-                                  backgroundColor: colors.surfaceSecondary,
-                                  border: `1px solid ${colors.divider}`,
-                                }}
-                                data-testid={`portal-service-report-body-${bi}-reading-${r.key || ri}`}
-                              >
-                                <div className="min-w-0">
-                                  <div
-                                    className="text-sm font-semibold truncate"
+                      ) : null}
+                      {bChems.length > 0 ? (
+                        <div>
+                          <div
+                            className="text-[11px] uppercase tracking-wider font-bold mb-2"
+                            style={{ color: colors.muted }}
+                          >
+                            Chemicals added
+                          </div>
+                          <ul
+                            className="space-y-1.5"
+                            data-testid={`portal-service-report-body-chemicals-${bi}`}
+                          >
+                            {bChems.map((c_, ci) => {
+                              const name = c_.name || c_.chemical || "Chemical";
+                              const amount = c_.amount ?? c_.qty ?? c_.quantity ?? "";
+                              const unit = c_.unit || c_.default_unit || "";
+                              return (
+                                <li
+                                  key={ci}
+                                  className="flex items-center justify-between text-sm py-1"
+                                  data-testid={`portal-service-report-body-${bi}-chemical-${ci}`}
+                                >
+                                  <span style={{ color: colors.onSurface }}>{name}</span>
+                                  <span
+                                    className="font-semibold"
                                     style={{ color: colors.onSurface }}
                                   >
-                                    {displayName}
-                                  </div>
-                                </div>
-                                <ChemChip band={band} testid={`chem-label-${bi}-${r.key || ri}`} />
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </div>
-                    ) : null}
-                    {bChems.length > 0 ? (
-                      <div>
-                        <div
-                          className="text-[11px] uppercase tracking-wider font-bold mb-2"
-                          style={{ color: colors.muted }}
-                        >
-                          Chemicals added
+                                    {amount} {unit}
+                                  </span>
+                                </li>
+                              );
+                            })}
+                          </ul>
                         </div>
-                        <ul
-                          className="space-y-1.5"
-                          data-testid={`portal-service-report-body-chemicals-${bi}`}
+                      ) : null}
+                      {bMedia.length > 0 ? (
+                        <div
+                          className="text-[11px]"
+                          style={{ color: colors.muted }}
+                          data-testid={`portal-service-report-body-media-count-${bi}`}
                         >
-                          {bChems.map((c_, ci) => {
-                            const name = c_.name || c_.chemical || "Chemical";
-                            const amount = c_.amount ?? c_.qty ?? c_.quantity ?? "";
-                            const unit = c_.unit || c_.default_unit || "";
-                            return (
-                              <li
-                                key={ci}
-                                className="flex items-center justify-between text-sm py-1"
-                                data-testid={`portal-service-report-body-${bi}-chemical-${ci}`}
-                              >
-                                <span style={{ color: colors.onSurface }}>{name}</span>
-                                <span
-                                  className="font-semibold"
-                                  style={{ color: colors.onSurface }}
-                                >
-                                  {amount} {unit}
-                                </span>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </div>
-                    ) : null}
-                    {bMedia.length > 0 ? (
-                      <div
-                        className="text-[11px]"
-                        style={{ color: colors.muted }}
-                        data-testid={`portal-service-report-body-media-count-${bi}`}
-                      >
-                        {bMedia.length} photo{bMedia.length === 1 ? "" : "s"} attached
-                      </div>
-                    ) : null}
-                    {(b?.notes || "").trim() ? (
-                      <div
-                        className="text-xs whitespace-pre-wrap"
-                        style={{ color: colors.onSurface }}
-                        data-testid={`portal-service-report-body-notes-${bi}`}
-                      >
-                        {b.notes}
-                      </div>
-                    ) : null}
-                  </div>
+                          {bMedia.length} photo{bMedia.length === 1 ? "" : "s"} attached
+                        </div>
+                      ) : null}
+                      {(b?.notes || "").trim() ? (
+                        <div
+                          className="text-xs whitespace-pre-wrap"
+                          style={{ color: colors.onSurface }}
+                          data-testid={`portal-service-report-body-notes-${bi}`}
+                        >
+                          {b.notes}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
@@ -804,109 +943,12 @@ export function PortalServiceReportDetail() {
         </Section>
       ) : null}
 
-      {/* Pool: chemical readings — Feb-2026 · Slice 3C · qualitative
-          chips only. Customers see Below / Average / Above Avg /
-          Elevated per reading; raw numeric values are never shown on
-          the portal.  Backend already strips numeric readings and
-          attaches the classification band.
-          Feb-2026 · Repair-mode addition — repair visits omit the
-          chemistry surface entirely (matches the tech-facing form).
-          Feb-2026 · Multi-body Phase 2 — when the report has multiple
-          bodies, the flat top-level readings/chemicals sections are
-          suppressed. The per-body breakdown below carries the same
-          data + labels. */}
-      {kind === "pool"
-       && !isMultiBody
-       && readings.length > 0
-       && (sr.work_class || "").toLowerCase() !== "repair" ? (
-        <Section
-          icon={Droplet}
-          title="Water chemistry"
-          testid="portal-service-report-readings"
-        >
-          <ul
-            className="grid grid-cols-1 sm:grid-cols-2 gap-2"
-            data-testid="portal-service-report-readings-list"
-          >
-            {readings.map((r, i) => {
-              // Feb-2026 hotfix — prefer the server-attached
-              // classification when present, else derive from the
-              // numeric value using the SAME thresholds the door-
-              // hanger email uses.  Falls back to the pre-hotfix
-              // "average" default only when neither path resolves.
-              const derived = bandForReading(r.key, r.value);
-              // ChemChip keys are lowercase short codes; the helper
-              // returns display labels ("Above Average" etc.).
-              // Map full display → chip key here so the chip picks
-              // the correct color + short label.
-              const _CHIP_KEY = {
-                "Below Average": "below",
-                "Average":       "average",
-                "Above Average": "above",
-                "Elevated":      "elevated",
-              };
-              const band = r.label || _CHIP_KEY[derived] || "average";
-              const displayName = DISPLAY_LABELS[r.key] || r.name || r.key;
-              return (
-                <li
-                  key={r.key || r.name || i}
-                  className="flex items-center justify-between rounded-xl p-3"
-                  style={{
-                    backgroundColor: colors.surfaceSecondary,
-                    border: `1px solid ${colors.divider}`,
-                  }}
-                  data-testid={`portal-service-report-reading-${r.key || i}`}
-                >
-                  <div className="min-w-0">
-                    <div
-                      className="text-sm font-semibold truncate"
-                      style={{ color: colors.onSurface }}
-                    >
-                      {displayName}
-                    </div>
-                    {/* Numeric value + unit intentionally NOT rendered
-                        on customer-facing surfaces — only the band chip
-                        conveys the reading (Feb-2026 hotfix). */}
-                  </div>
-                  <ChemChip
-                    band={band}
-                    testid={`chem-label-${r.key || i}`}
-                  />
-                </li>
-              );
-            })}
-          </ul>
-        </Section>
-      ) : null}
-
-      {/* Pool: chemicals added */}
-      {kind === "pool" && !isMultiBody && chemicalsAdded.length > 0 ? (
-        <Section
-          icon={Beaker}
-          title="Chemicals added"
-          testid="portal-service-report-chemicals"
-        >
-          <ul className="space-y-1.5">
-            {chemicalsAdded.map((c, i) => {
-              const name = c.name || c.chemical || "Chemical";
-              const amount = c.amount ?? c.qty ?? c.quantity ?? "";
-              const unit = c.unit || c.default_unit || "";
-              return (
-                <li
-                  key={i}
-                  className="flex items-center justify-between text-sm py-1"
-                  data-testid={`portal-service-report-chemical-${i}`}
-                >
-                  <span style={{ color: colors.onSurface }}>{name}</span>
-                  <span className="font-semibold" style={{ color: colors.onSurface }}>
-                    {amount} {unit}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </Section>
-      ) : null}
+      {/* Phase CHEM4 · Feb-2026 — legacy flat readings + chemicals
+          sections removed. They now live inside the primary Pool
+          block above (fed by the same top-level ``chemical_readings``
+          + ``chemicals_added`` surfaces). Kept as a marker so future
+          diffs stay easy to read.
+      */}
 
       {/* Checklist — pool + landscape */}
       {checklistItems.length > 0 ? (

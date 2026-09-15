@@ -9,17 +9,17 @@
  *   Read path: resolves `cyanuric` → `cyanuric_acid`.
  *   Write path: always writes `cyanuric_acid`; drops legacy `cyanuric` entry.
  */
-import React, { useMemo } from "react";
+import React, { useMemo, useCallback } from "react";
 import {
-  View, Text, Pressable, StyleSheet, Alert, Platform } from "react-native";
+  View, Text, Pressable, StyleSheet, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import {
   WaterBody, BODY_TYPE_LABELS, BODY_TYPE_TINTS,
   READING_ALLOWLIST, READING_LABELS, READING_REQUIRED,
-  CHEMICAL_ALLOWLIST, CHEMICAL_LABELS,
 } from "@/src/lib/waterBodies";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import ChemicalDropdownStack from "./ChemicalDropdownStack";
 
 // Phase CHEM2 — alias: legacy `cyanuric` → canonical `cyanuric_acid`.
 const LEGACY_ALIAS: Record<string, string> = { cyanuric: "cyanuric_acid" };
@@ -29,13 +29,15 @@ interface Props {
   index: number;
   locked: boolean;
   canRemove: boolean;
+  /** Phase CHEM4 — body 0 is primary; its chemistry/chemicals live at report level. */
+  isPrimary?: boolean;
   highlightMissing?: string[];
   onChange: (updated: WaterBody) => void;
   onRemove: () => void;
 }
 
 export default function WaterBodyPanel({
-  body, index, locked, canRemove, highlightMissing, onChange, onRemove,
+  body, index, locked, canRemove, isPrimary = false, highlightMissing, onChange, onRemove,
 }: Props) {
   const tint = BODY_TYPE_TINTS[body.type] || BODY_TYPE_TINTS.pool;
   const allowedReadings = useMemo(
@@ -50,10 +52,6 @@ export default function WaterBodyPanel({
     () => new Set(highlightMissing || []),
     [highlightMissing],
   );
-  const allowedChemicals = useMemo(
-    () => CHEMICAL_ALLOWLIST[body.type] || CHEMICAL_ALLOWLIST.pool,
-    [body.type],
-  );
 
   // Phase CHEM2 — alias: legacy `cyanuric` → canonical `cyanuric_acid`.
 
@@ -62,8 +60,6 @@ export default function WaterBodyPanel({
     for (const r of body.readings || []) {
       if (!r?.key) continue;
       const canonical = LEGACY_ALIAS[r.key] || r.key;
-      // If canonical key already set (from the actual `cyanuric_acid` entry),
-      // skip the legacy duplicate — canonical wins.
       if (canonical !== r.key && map.has(canonical)) continue;
       map.set(canonical, r);
     }
@@ -73,12 +69,9 @@ export default function WaterBodyPanel({
   const setReading = (key: string, value: string) => {
     let next = [...(body.readings || [])];
     const meta = READING_LABELS[key] || { name: key, unit: "ppm" };
-
-    // Phase CHEM2 — on write to cyanuric_acid, drop legacy `cyanuric` entry.
     if (key === "cyanuric_acid") {
       next = next.filter((r) => r.key !== "cyanuric");
     }
-
     const idx = next.findIndex((r) => r.key === key);
     if (idx >= 0) {
       next[idx] = { ...next[idx], value: value || null };
@@ -91,21 +84,32 @@ export default function WaterBodyPanel({
   const setLabel = (label: string) => onChange({ ...body, label });
   const setNotes = (notes: string) => onChange({ ...body, notes });
 
-  /* chemicals_used — add / update / remove */
-  const addChemical = (slug: string) => {
-    const meta = CHEMICAL_LABELS[slug] || { name: slug, unit: "oz" };
-    const next = [...(body.chemicals_used || []), { product_slug: slug, amount: 0, unit: meta.unit, product_name: meta.name }];
-    onChange({ ...body, chemicals_used: next });
-  };
-  const updateChemical = (idx: number, amount: string) => {
-    const next = [...(body.chemicals_used || [])];
-    next[idx] = { ...next[idx], amount: amount || 0 };
-    onChange({ ...body, chemicals_used: next });
-  };
-  const removeChemical = (idx: number) => {
-    const next = (body.chemicals_used || []).filter((_: any, i: number) => i !== idx);
-    onChange({ ...body, chemicals_used: next });
-  };
+  /* ── Phase CHEM3 · ChemicalDropdownStack adapter ─────────────────────
+   *
+   * ChemicalDropdownStack works with `chemicals_added[*].slug`,
+   * but the body persists `chemicals_used[*].product_slug`.
+   *
+   * Read:  product_slug → slug  (before passing rows in)
+   * Write: slug → product_slug  (on the stack's onChange callback)
+   */
+  const chemAdapted = useMemo(
+    () => (body.chemicals_used || []).map((c: any) => ({
+      ...c,
+      slug: c.product_slug || c.slug,
+    })),
+    [body.chemicals_used],
+  );
+
+  const handleChemChange = useCallback(
+    (patch: { chemicals_added: any[] }) => {
+      const next = patch.chemicals_added.map((c: any) => {
+        const { slug, ...rest } = c;
+        return { ...rest, product_slug: slug || c.product_slug };
+      });
+      onChange({ ...body, chemicals_used: next });
+    },
+    [body, onChange],
+  );
 
   const handleRemove = () => {
     const hasData = (body.readings || []).some((r) => r.value !== null && r.value !== "")
@@ -120,10 +124,6 @@ export default function WaterBodyPanel({
       onRemove();
     }
   };
-
-  /* already-added slugs for the "add chemical" dropdown */
-  const addedSlugs = new Set((body.chemicals_used || []).map((c: any) => c.product_slug));
-  const availableChemicals = allowedChemicals.filter((s) => !addedSlugs.has(s));
 
   return (
     <View style={[s.card, { borderColor: tint.border }]} testID={`water-body-panel-${index}`}>
@@ -150,74 +150,55 @@ export default function WaterBodyPanel({
         ) : null}
       </View>
 
-      {/* Chemistry readings */}
-      <Text style={s.sectionLabel}>Chemistry Readings</Text>
-      {allowedReadings.map((key) => {
-        const meta = READING_LABELS[key] || { name: key, unit: "ppm", short: key };
-        const cur = readingsByKey.get(key);
-        const isMissing = missingSet.has(key);
-        const isRequired = requiredSet.has(key);
-        return (
-          <View key={key} style={[s.readingRow, isMissing && s.readingRowMissing]} testID={`reading-row-${index}-${key}`}>
-            <View style={s.readingLabel}>
-              <Text style={[s.readingName, isMissing && { color: colors.error }]}>
-                {meta.name}
-                {isRequired ? <Text style={{ color: colors.error }}> *</Text> : null}
-              </Text>
-              {meta.unit ? <Text style={s.readingUnit}>{meta.unit}</Text> : null}
-            </View>
-            <AppTextInput
-              style={[s.readingInput, isMissing && s.readingInputMissing]}
-              value={cur?.value != null ? String(cur.value) : ""}
-              onChangeText={(v) => setReading(key, v)}
-              keyboardType="decimal-pad"
-              editable={!locked}
-              placeholder="—"
-              placeholderTextColor={colors.muted}
-              testID={`reading-input-${index}-${key}`}
-            />
-          </View>
-        );
-      })}
-
-      {/* Chemicals used — hidden on Expo Web per product trim */}
-      {Platform.OS !== "web" && (
+      {/* Chemistry readings — suppressed for primary body (lives at report level) */}
+      {!isPrimary && (
         <>
-          <Text style={s.sectionLabel}>Chemicals Used</Text>
-          {(body.chemicals_used || []).map((chem: any, ci: number) => {
-            const meta = CHEMICAL_LABELS[chem.product_slug] || { name: chem.product_name || chem.product_slug, unit: chem.unit };
+          <Text style={s.sectionLabel}>Chemistry Readings</Text>
+          {allowedReadings.map((key) => {
+            const meta = READING_LABELS[key] || { name: key, unit: "ppm", short: key };
+            const cur = readingsByKey.get(key);
+            const isMissing = missingSet.has(key);
+            const isRequired = requiredSet.has(key);
             return (
-              <View key={`${chem.product_slug}-${ci}`} style={s.chemRow} testID={`chem-row-${index}-${ci}`}>
-                <Text style={s.chemName}>{meta.name}</Text>
+              <View key={key} style={[s.readingRow, isMissing && s.readingRowMissing]} testID={`reading-row-${index}-${key}`}>
+                <View style={s.readingLabel}>
+                  <Text style={[s.readingName, isMissing && { color: colors.error }]}>
+                    {meta.name}
+                    {isRequired ? <Text style={{ color: colors.error }}> *</Text> : null}
+                  </Text>
+                  {meta.unit ? <Text style={s.readingUnit}>{meta.unit}</Text> : null}
+                </View>
                 <AppTextInput
-                  style={s.chemInput}
-                  value={chem.amount != null ? String(chem.amount) : ""}
-                  onChangeText={(v) => updateChemical(ci, v)}
+                  style={[s.readingInput, isMissing && s.readingInputMissing]}
+                  value={cur?.value != null ? String(cur.value) : ""}
+                  onChangeText={(v) => setReading(key, v)}
                   keyboardType="decimal-pad"
                   editable={!locked}
-                  placeholder="0"
+                  placeholder="—"
                   placeholderTextColor={colors.muted}
-                  testID={`chem-amount-${index}-${ci}`}
+                  testID={`reading-input-${index}-${key}`}
                 />
-                <Text style={s.chemUnit}>{meta.unit}</Text>
-                {!locked ? (
-                  <Pressable onPress={() => removeChemical(ci)} hitSlop={8} testID={`chem-remove-${index}-${ci}`}>
-                    <Ionicons name="close-outline" size={16} color={colors.error} />
-                  </Pressable>
-                ) : null}
               </View>
             );
           })}
-          {!locked && availableChemicals.length > 0 ? (
-            <Pressable
-              style={s.addChemBtn}
-              onPress={() => addChemical(availableChemicals[0])}
-              testID={`add-chemical-${index}`}
-            >
-              <Ionicons name="add-outline" size={14} color={colors.brand} />
-              <Text style={s.addChemText}>Add chemical</Text>
-            </Pressable>
-          ) : null}
+        </>
+      )}
+
+      {/* Phase CHEM4 — Chemicals used, suppressed for primary body */}
+      {!isPrimary && (
+        <>
+          <Text style={s.sectionLabel} testID={`water-body-chem-header-${index}`}>
+            Additional Body of Water Chemicals
+          </Text>
+          <Text style={s.subHeader} testID={`water-body-chem-subheader-${index}`}>
+            {BODY_TYPE_LABELS[body.type] || body.type}
+          </Text>
+          <ChemicalDropdownStack
+            chemicalsAdded={chemAdapted as any}
+            locked={locked}
+            onChange={handleChemChange}
+            bodyType={body.type}
+          />
         </>
       )}
 
@@ -280,6 +261,12 @@ const s = StyleSheet.create({
     marginTop: spacing.md,
     marginBottom: spacing.xs,
   },
+  subHeader: {
+    fontFamily: font.medium,
+    fontSize: fontSize.sm,
+    color: colors.onSurface,
+    marginBottom: spacing.xs,
+  },
   readingRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -323,49 +310,6 @@ const s = StyleSheet.create({
   readingInputMissing: {
     borderColor: colors.error,
     borderWidth: 1.5,
-  },
-  chemRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    paddingVertical: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  chemName: {
-    flex: 1,
-    fontFamily: font.medium,
-    fontSize: fontSize.sm,
-    color: colors.onSurface,
-  },
-  chemInput: {
-    width: 60,
-    fontFamily: font.medium,
-    fontSize: fontSize.sm,
-    textAlign: "right",
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    color: colors.onSurface,
-  },
-  chemUnit: {
-    fontFamily: font.regular,
-    fontSize: fontSize.xs,
-    color: colors.muted,
-    width: 50,
-  },
-  addChemBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingVertical: 8,
-  },
-  addChemText: {
-    fontFamily: font.medium,
-    fontSize: fontSize.sm,
-    color: colors.brand,
   },
   notesInput: {
     fontFamily: font.regular,

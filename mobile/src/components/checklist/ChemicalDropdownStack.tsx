@@ -6,7 +6,7 @@
  * `CHEMICALS_CATALOG` entry. Persistence unchanged — commit fires the
  * parent onChange which flows into the autosave path.
  */
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useMemo } from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
@@ -15,6 +15,7 @@ import {
   normalizeChemQty,
   type ChemCatalogEntry,
 } from "@/src/config/chemicalsCatalog";
+import { CHEMICAL_ALLOWLIST } from "@/src/lib/waterBodies";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
 // Legacy CHEM_TYPES export retained for callers that still import the
@@ -44,13 +45,22 @@ type Props = {
   locked?: boolean;
   onChange: (patch: { chemicals_added: ChemAdded[] }) => void;
   jobId?: string;
+  /** Phase CHEM3 — filter catalog entries by body type allow-list. */
+  bodyType?: string;
 };
 
 export default function ChemicalDropdownStack({
-  chemicalsAdded = [], locked = false, onChange,
+  chemicalsAdded = [], locked = false, onChange, bodyType,
 }: Props) {
   const draftsRef = useRef<Record<string, string>>({});
   const [, force] = useState(0);
+
+  // Phase CHEM3 — when bodyType is provided, only show allowed chemicals.
+  const catalog = useMemo(() => {
+    if (!bodyType) return CHEMICALS_CATALOG;
+    const allowed = new Set(CHEMICAL_ALLOWLIST[bodyType] || CHEMICAL_ALLOWLIST.pool);
+    return CHEMICALS_CATALOG.filter((c) => allowed.has(c.slug));
+  }, [bodyType]);
 
   const findIdx = (entry: ChemCatalogEntry) =>
     chemicalsAdded.findIndex(
@@ -83,7 +93,7 @@ export default function ChemicalDropdownStack({
 
   return (
     <View testID="chemicals-stack" style={styles.stack}>
-      {CHEMICALS_CATALOG.map((entry) => {
+      {catalog.map((entry) => {
         const idx = findIdx(entry);
         const existing = idx >= 0 ? chemicalsAdded[idx] : null;
         const seed = existing?.quantity != null ? String(existing.quantity) : "";

@@ -2110,3 +2110,44 @@
 - **Files modified**:
   - `/app/mobile/src/components/checklist/WaterBodyPanel.tsx`
   - `/app/mobile/__tests__/chem2-cyanuric-alias.test.ts` (NEW)
+
+## Iteration 103 — Phase CHEM3: Reuse ChemicalDropdownStack inside WaterBodyPanel
+- **Commit**: (same session)
+- **Date**: 2026-09-15
+- **Changes**:
+  - Replaced legacy CHEMICALS USED section in WaterBodyPanel with ChemicalDropdownStack
+  - Added bodyType prop to ChemicalDropdownStack that filters catalog via CHEMICAL_ALLOWLIST
+  - Read adapter: maps body.chemicals_used[*].product_slug → slug for the stack
+  - Write adapter: maps stack slug → product_slug for persistence
+  - Removed legacy chemical helpers (addChemical, updateChemical, removeChemical, allowedChemicals)
+  - Removed unused styles (chemRow, chemInput, chemUnit, etc.)
+  - Fixed missing useMemo import in ChemicalDropdownStack
+  - Added 6 Jest tests (all pass) + all 26 chem tests green
+- **Files modified**:
+  - `/app/mobile/src/components/checklist/WaterBodyPanel.tsx`
+  - `/app/mobile/src/components/checklist/ChemicalDropdownStack.tsx`
+  - `/app/mobile/__tests__/chem3-chemical-dropdown-adapter.test.ts` (NEW)
+
+## Iteration 104 — Phase CHEM4: isPrimary body suppression + additional-body header labels
+- **Commit**: (same session)
+- **Date**: 2026-09-15
+- **Changes**:
+  - WaterBodyPanel: Added `isPrimary` prop; gated Chemistry Readings + Chemicals sections behind `!isPrimary`
+  - WaterBodyManager: Passes `isPrimary={idx === 0}` to body 0
+  - Additional-body header: "ADDITIONAL BODY OF WATER CHEMICALS" + sub-header with body type label
+  - Added `subHeader` style
+  - 6 Jest tests, all pass; 32 total across chem suites
+- **Files modified**:
+  - `/app/mobile/src/components/checklist/WaterBodyPanel.tsx`
+  - `/app/mobile/src/components/checklist/WaterBodyManager.tsx`
+  - `/app/mobile/__tests__/chem4-isprimary-suppression.test.tsx` (NEW)
+
+## Iteration 105 — Phase M2: Safe-area inset on Checklist screen footer
+- **Commit**: (same session)
+- **Date**: 2026-09-15
+- **Changes**:
+  - Imported `useSafeAreaInsets` from `react-native-safe-area-context`
+  - Footer: `paddingBottom: insets.bottom + spacing.md` (mirrors check-in screen pattern)
+  - ScrollView: `paddingBottom: 160 + insets.bottom` so last item scrolls above footer
+- **Files modified**:
+  - `/app/mobile/app/job/[id]/checklist.tsx`

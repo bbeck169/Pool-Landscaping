@@ -56,6 +56,7 @@ export default function WaterBodyManager({ bodies, locked, highlightBodies, onCh
           index={idx}
           locked={locked}
           canRemove={bodies.length > 1}
+          isPrimary={idx === 0}
           highlightMissing={highlightBodies?.[idx]}
           onChange={(updated) => updateBody(idx, updated)}
           onRemove={() => removeBody(idx)}
