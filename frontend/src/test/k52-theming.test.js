@@ -107,7 +107,11 @@ describe("K52 · Slice A — Filter row navy (Schedule)", () => {
     expect(stripStart).toBeGreaterThan(-1);
     expect(stripEnd).toBeGreaterThan(stripStart);
     const strip = CAL_SCHED.slice(stripStart, stripEnd);
-    ["calendar-filter-tech", "calendar-filter-crew",
+    // Phase S1 · Feb-2026 — the tech dropdown's primary testid was
+    // renamed from ``calendar-filter-tech`` to ``schedule-tech-filter``
+    // (mobile mirror uses the same id). Legacy id preserved as
+    // ``data-testid-legacy`` for pre-S1 assertions.
+    ["schedule-tech-filter", "calendar-filter-crew",
      "calendar-filter-service", "calendar-filter-status"].forEach((tid) => {
       const trigIdx = strip.indexOf(`data-testid="${tid}"`);
       expect(trigIdx, `trigger ${tid} present`).toBeGreaterThan(-1);

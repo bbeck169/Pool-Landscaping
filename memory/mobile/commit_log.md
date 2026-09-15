@@ -2183,3 +2183,22 @@
   - `/app/mobile/__tests__/m3-internal-media-relabel.test.tsx` (NEW)
 - **Web files referenced**: None
 - **VideoMediaUploader.tsx**: Confirmed untouched (empty git diff)
+
+
+## Iteration 98 — Phase S1: Schedule per-tech filter + tech default to "My jobs only"
+- **Commit**: ac688faed
+- **Date**: 2026-09-15
+- **Changes**:
+  - Added `techFilter` state with AsyncStorage persistence (key: `schedule.tech_filter.{userId}`)
+  - Tech role: defaults to own user ID (backend already scopes by `technician_id`); dropdown hidden
+  - Admin/Manager/Owner: defaults to "All techs"; dropdown visible below Calendar/Grid toggle
+  - Filter logic: `"all"` → all jobs; specific tech → that tech's jobs + unassigned
+  - Downstream memos (`dayJobs`, `weekCounts`, `jobsByDay`) all use `filteredJobs`
+  - Header subtitle shows filtered job count
+  - Tech picker modal: "All techs" + alphabetically sorted tech entries, checkmark on active
+  - 8 Jest source-structure tests pass
+  - Screenshot: admin sees "All techs" dropdown, picker modal opens with options
+- **Files modified**:
+  - `/app/mobile/app/(app)/schedule/calendar.tsx`
+  - `/app/mobile/__tests__/s1-schedule-tech-filter.test.tsx` (NEW)
+- **Web files referenced**: None (parallel web work by e1_dev)
