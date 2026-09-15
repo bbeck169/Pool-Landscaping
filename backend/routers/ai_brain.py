@@ -252,7 +252,34 @@ async def get_system_prompt(
     q: Optional[str] = None,
 ):
     _require_admin(user)
-    return {"system_prompt": await _build_system_prompt(tenant["id"], query=q)}
+    prompt = await _build_system_prompt(tenant["id"], query=q)
+    # Phase P3 · Feb-2026 — Deliverable 1 · retrieval metadata for
+    # the admin preview panel.  Only meaningful when ``?q=`` is set;
+    # otherwise ``sources`` is [] and ``kb_row_count`` is the total
+    # active KB row count so the panel can show "0 retrieved from N".
+    sources: List[Dict[str, Any]] = []
+    if q and q.strip():
+        try:
+            from services.ai_kb_retrieval import retrieve_kb_sources
+            sources = await retrieve_kb_sources(tenant["id"], q.strip())
+        except Exception as exc:                                     # noqa: BLE001
+            logger.warning("[kb-preview] retriever failed: %s", exc)
+            sources = []
+    kb_row_count = await db.ai_knowledge_base.count_documents({
+        "tenant_id": tenant["id"], "is_active": True,
+        "$or": [{"is_deleted": {"$ne": True}}, {"is_deleted": {"$exists": False}}],
+    })
+    return {
+        "system_prompt": prompt,
+        "retrieved": [
+            {"id": s.get("doc_id"), "title": s.get("title"),
+             "kind": s.get("kind"), "score": s.get("score")}
+            for s in sources
+        ],
+        "retrieved_count": len(sources),
+        "kb_row_count": kb_row_count,
+        "query": q or "",
+    }
 
 
 # ══════════════════════════════════════════════════════════════

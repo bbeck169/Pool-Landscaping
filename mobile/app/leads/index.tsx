@@ -221,10 +221,9 @@ export default function Leads() {
           <Text style={styles.inputLabel}>Address</Text>
           <AddressAutocomplete
             value={form.address}
-            onChangeText={(v) => setForm((f) => ({ ...f, address: v }))}
-            onSelect={(sel: AddressSelection) => {
-              setForm((f) => ({ ...f, address: sel.description }));
-              setAddressGeo(sel.lat != null && sel.lng != null ? { lat: sel.lat, lng: sel.lng } : null);
+            onChange={(sel: AddressSelection) => {
+              setForm((f) => ({ ...f, address: sel.formatted || "" }));
+              setAddressGeo(sel.latitude != null && sel.longitude != null ? { lat: sel.latitude, lng: sel.longitude } : null);
             }}
             testID="newlead-address"
           />

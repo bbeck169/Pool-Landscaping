@@ -153,6 +153,29 @@ export default function AIBrainPage() {
 
       <DailyDigestToggle />
 
+      {/* Phase P3 · Feb-2026 · Deliverable 1 — retrieval preview
+           panel.  Debounced 300ms.  Empty ``q`` → legacy full-concat
+           preview.  Non-empty ``q`` → RAG top-5. */}
+      <KBRetrievalPreviewPanel />
+
+      {/* Phase P3 · Feb-2026 · Deliverable 2 — Knowledge Library
+           grid.  Renders only KB rows with ``source_file_id`` set
+           (uploaded manuals) with View / Supersede / Delete
+           per-card actions. */}
+      <KnowledgeLibrarySection
+        items={items}
+        onSupersede={(row) => { setUploadOpen(true); /* modal will honor pre-fill in D3b if needed */ }}
+        onDelete={async (row) => {
+          try {
+            await api.delete(`/ai/knowledge/${row.id}`);
+            toast.success("Removed from Library");
+            await load();
+          } catch (e) {
+            toast.error(`Delete failed: ${e.message || e}`);
+          }
+        }}
+      />
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
         <div className="lg:col-span-1 rounded-xl p-2 max-h-[70vh] overflow-y-auto"
              style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
@@ -543,3 +566,237 @@ function DailyDigestToggle() {
     </div>
   );
 }
+
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase P3 · Feb-2026 · Deliverable 1 — retrieval preview panel.
+//
+// Debounced 300ms.  On empty query, still fetches the panel so the
+// admin sees the legacy full-concat.  Retrieval metadata is surfaced
+// above the preview so admins can grok which KB rows would be shown
+// to Copilot for that candidate question.
+// ═══════════════════════════════════════════════════════════════════
+function KBRetrievalPreviewPanel() {
+  const [q, setQ] = React.useState("");
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    const t = setTimeout(async () => {
+      setLoading(true); setError("");
+      try {
+        const params = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
+        const res = await api.get(`/ai/knowledge/system-prompt${params}`);
+        setData(res);
+      } catch (e) {
+        setError(e?.message || "Preview failed");
+        setData(null);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  const retrieved = data?.retrieved || [];
+  const isRag = !!(q.trim());
+  const summary = isRag
+    ? `Retrieved ${retrieved.length} snippet${retrieved.length === 1 ? "" : "s"} from ${data?.kb_row_count ?? "?"} KB rows.`
+    : `No query — showing the legacy full-concat preview (${data?.kb_row_count ?? "?"} active KB rows).`;
+
+  return (
+    <div className="rounded-xl p-3 mt-3"
+         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+         data-testid="kb-preview-panel">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div>
+          <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
+            System prompt preview
+          </div>
+          <div className="text-[11px]" style={{ color: colors.muted }}>
+            Preview what Copilot would see for a candidate question.
+          </div>
+        </div>
+        <input
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Preview retrieval for a candidate question…"
+          className="text-sm rounded-md px-2 py-1.5 w-full sm:w-96"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="kb-preview-q-input"
+        />
+      </div>
+      <div className="text-xs mb-2" style={{ color: colors.muted }}
+           data-testid="kb-preview-retrieved-count">
+        {loading ? "Loading preview…" : summary}
+      </div>
+      {isRag && retrieved.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2"
+             data-testid="kb-preview-retrieved-list">
+          {retrieved.map((r) => (
+            <span
+              key={r.id}
+              className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
+              style={{ backgroundColor: colors.brandTertiary, color: colors.brand }}
+              data-testid={`kb-preview-retrieved-item-${r.id}`}
+            >
+              {r.title || "(untitled)"}
+              {typeof r.score === "number" ? (
+                <span style={{ opacity: 0.7 }}>· {r.score}</span>
+              ) : null}
+            </span>
+          ))}
+        </div>
+      )}
+      {error ? (
+        <div className="text-xs" style={{ color: "#B91C1C" }}
+             data-testid="kb-preview-error">
+          {error}
+        </div>
+      ) : (
+        <pre
+          className="text-[11px] font-mono whitespace-pre-wrap max-h-64 overflow-y-auto p-2 rounded"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="kb-preview-body"
+        >
+          {data?.system_prompt || ""}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase P3 · Feb-2026 · Deliverable 2 — Knowledge Library.
+//
+// Client-side grid over the KB rows already loaded on the page.
+// Only rows with ``source_file_id`` are shown (uploaded manuals).
+// View / Supersede / Delete per card.  Search matches title + tags
+// + the leading slice of content_md.  Sorted newest first.
+// ═══════════════════════════════════════════════════════════════════
+function KnowledgeLibrarySection({ items, onSupersede, onDelete }) {
+  const [search, setSearch] = React.useState("");
+  const libraryItems = React.useMemo(() => {
+    const base = (items || []).filter((r) => r && r.source_file_id);
+    const q = search.trim().toLowerCase();
+    let filtered = base;
+    if (q) {
+      filtered = base.filter((r) => {
+        const hay = [
+          r.title, (r.tags || []).join(" "),
+          (r.content_md || "").slice(0, 500),
+        ].filter(Boolean).join(" ").toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    return [...filtered].sort((a, b) => (
+      (b.created_at || "").localeCompare(a.created_at || "")
+    ));
+  }, [items, search]);
+
+  return (
+    <div className="rounded-xl p-3 mt-3"
+         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+         data-testid="kb-library-section">
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div>
+          <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
+            Knowledge Library
+          </div>
+          <div className="text-[11px]" style={{ color: colors.muted }}>
+            Uploaded manuals (PDF · DOCX · TXT · MD).
+          </div>
+        </div>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search title, tags, content…"
+          className="text-sm rounded-md px-2 py-1.5 w-full sm:w-72"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="kb-library-search"
+        />
+      </div>
+      {libraryItems.length === 0 ? (
+        <div className="text-xs p-4 text-center"
+             style={{ color: colors.muted }}
+             data-testid="kb-library-empty">
+          No uploaded manuals yet — use the Upload button to add one.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"
+             data-testid="kb-library-grid">
+          {libraryItems.map((r) => (
+            <div
+              key={r.id}
+              className="rounded-lg p-3"
+              style={{
+                backgroundColor: colors.surfaceSecondary,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid={`kb-library-card-${r.id}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="text-sm font-semibold truncate"
+                     style={{ color: colors.onSurface }}>
+                  {r.title}
+                </div>
+                {r.source_type ? (
+                  <span
+                    className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase"
+                    style={{ backgroundColor: colors.brandTertiary, color: colors.brand }}
+                    data-testid={`kb-library-badge-${r.id}`}
+                  >{r.source_type}</span>
+                ) : null}
+              </div>
+              <div className="text-[10px] mt-0.5" style={{ color: colors.muted }}>
+                {(r.created_at || "").slice(0, 10)}
+                {r.tags && r.tags.length > 0 ? ` · ${r.tags.join(", ")}` : ""}
+              </div>
+              <div className="mt-2 flex items-center gap-2 text-[11px]">
+                <a
+                  href={`/api/files/${r.source_file_id}/download`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline"
+                  style={{ color: colors.brand }}
+                  data-testid={`kb-library-view-${r.id}`}
+                >View original</a>
+                <button
+                  type="button"
+                  onClick={() => onSupersede?.(r)}
+                  className="underline"
+                  style={{ color: colors.brand }}
+                  data-testid={`kb-library-supersede-${r.id}`}
+                >Supersede</button>
+                <button
+                  type="button"
+                  onClick={() => onDelete?.(r)}
+                  className="underline"
+                  style={{ color: "#B91C1C" }}
+                  data-testid={`kb-library-delete-${r.id}`}
+                >Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+

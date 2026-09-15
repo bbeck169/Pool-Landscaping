@@ -399,12 +399,40 @@ export default function CustomersList() {
       const res = await api.post(
         `/customers/${cust.id}/send-card-add-link`, {},
       );
+      // Phase P3 · Feb-2026 — Deliverable 4 · truthful toast.
+      // The backend now returns a per-channel breakdown
+      // (``outcome`` = ``"sent" | "partial"`` + ``channels.email`` /
+      // ``channels.sms`` = ``{sent, status, error}``).  If ONE of the
+      // two channels silently failed (e.g. RC mocked because BYO
+      // creds missing), we must NOT claim full success — mirror the
+      // L3 truthful-toast pattern.
       const to = [res.email_recipient, res.sms_recipient]
         .filter(Boolean).join(" and ");
-      setToast({
-        tone: "success",
-        message: to ? `Add-card link sent to ${to}` : "Add-card link sent",
-      });
+      const partial = res.outcome === "partial";
+      if (partial) {
+        const failedChannels = [];
+        if (res.channels?.email && !res.channels.email.sent) {
+          failedChannels.push(
+            `email (${res.channels.email.status || "no_status"})`,
+          );
+        }
+        if (res.channels?.sms && !res.channels.sms.sent) {
+          failedChannels.push(
+            `SMS (${res.channels.sms.status || "no_status"})`,
+          );
+        }
+        setToast({
+          tone: "warning",
+          message: to
+            ? `Add-card link sent to ${to} — but ${failedChannels.join(" + ")} did not go through. Check ops logs.`
+            : `Add-card link partially sent — ${failedChannels.join(" + ")} did not go through.`,
+        });
+      } else {
+        setToast({
+          tone: "success",
+          message: to ? `Add-card link sent to ${to}` : "Add-card link sent",
+        });
+      }
     } catch (e) {
       const msg = e?.detail?.code === "RATE_LIMITED"
         ? "Please wait a few minutes before sending another link."

@@ -189,7 +189,34 @@ export default function Login({ variant = "staff" } = {}) {
       }
       await _postLoginRedirect();
     } catch (err) {
-      setError(err.message || "Login failed");
+      // Phase P3 · Feb-2026 — structured 401 detail body (see
+      // ``backend/routers/auth.py::login``).  The backend emits:
+      //   * ``account_locked``       + ISO ``locked_until``
+      //   * ``invalid_credentials``  (also for unknown emails —
+      //     enumeration guard)
+      // Anything else falls back to whatever the request parser
+      // put on ``err.message``.
+      const detail = err?.data?.detail;
+      if (detail && typeof detail === "object" && detail.code === "account_locked") {
+        let friendly = "";
+        try {
+          const when = new Date(detail.locked_until);
+          if (!Number.isNaN(when.getTime())) {
+            friendly = when.toLocaleTimeString([], {
+              hour: "numeric", minute: "2-digit",
+            });
+          }
+        } catch { /* ignore parse failure */ }
+        setError(
+          friendly
+            ? `Account locked. Try again after ${friendly}.`
+            : (detail.message || "Account locked. Try again later."),
+        );
+      } else if (detail && typeof detail === "object" && detail.code === "invalid_credentials") {
+        setError(detail.message || "Wrong email or password.");
+      } else {
+        setError(err.message || "Login failed");
+      }
     } finally {
       setSubmitting(false);
     }

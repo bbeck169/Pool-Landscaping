@@ -333,7 +333,19 @@ async def login(request: Request, body: LoginRequest):
     now = datetime.now(timezone.utc)
 
     # Generic message to avoid user enumeration.
-    invalid = HTTPException(status_code=401, detail="Incorrect email or password")
+    # Phase P3 · Feb-2026 — Deliverable 3 ships structured 401
+    # detail bodies so the frontend can distinguish
+    # ``account_locked`` from ``invalid_credentials`` without
+    # string-parsing.  "User not found" collapses into
+    # ``invalid_credentials`` so account enumeration is still
+    # impossible from the response.
+    invalid = HTTPException(
+        status_code=401,
+        detail={
+            "code": "invalid_credentials",
+            "message": "Wrong email or password.",
+        },
+    )
 
     if not all_records:
         # No non-deleted user — attempt one last-resort find so a
@@ -368,9 +380,18 @@ async def login(request: Request, body: LoginRequest):
         if lock_dt > now:
             await _audit_auth("login_locked", email, ip, "failure", "attempt while locked")
             mins = max(1, int((lock_dt - now).total_seconds() // 60) + 1)
+            # Phase P3 · Feb-2026 — structured 401 detail so the FE
+            # can render a friendly local-time banner without
+            # regex-parsing the ``message`` string.  The status
+            # code stays 401 (per the P3 spec) so a single client
+            # handler covers both lockout and invalid-credentials.
             raise HTTPException(
-                status_code=429,
-                detail=f"Account temporarily locked. Try again in {mins} minute(s).",
+                status_code=401,
+                detail={
+                    "code": "account_locked",
+                    "locked_until": lock_dt.isoformat(),
+                    "message": f"Account locked. Try again in {mins} minute(s).",
+                },
             )
 
     # 2) Verify password against every non-deleted candidate.  Any

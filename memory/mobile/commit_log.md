@@ -2040,3 +2040,16 @@
   - `/app/mobile/__tests__/app-text-input-theme.test.tsx` (NEW)
   - 154 files across `src/` and `app/` (TextInput → AppTextInput)
 - **Web files referenced**: None (mobile-only theme change)
+
+## Iteration 98 — Bugfix: Address field missing from leads list + offline banner false positive
+- **Commit**: (same session)
+- **Date**: 2026-09-15
+- **Root cause**: The leads list page (`/leads`) used an inline Sheet form with NO address field. The `NewLeadForm` with `AddressAutocomplete` existed at separate routes (`/leads/new`, `/(app)/new-lead`), but testers always used the `+` button on the leads list which opened the inline form. Additionally, `mapApiError.ts` fallback classified all unknown errors as "You're offline".
+- **Changes**:
+  - Added `AddressAutocomplete` to inline form in `app/leads/index.tsx` with correct `onChange` prop
+  - Fixed `mapApiError.ts` fallback to return "Something went wrong" (kind: "client") instead of "You're offline" (kind: "offline") for non-network errors
+  - Fixed prop mismatch: `onSelect`/`onChangeText` → correct `onChange` callback with `sel.formatted`/`sel.latitude`/`sel.longitude`
+- **Files modified**:
+  - `/app/mobile/app/leads/index.tsx`
+  - `/app/mobile/src/utils/mapApiError.ts`
+- **Verified**: 3 screenshots on deployed preview confirming Address visible → 5 suggestions → populated + dismissed
