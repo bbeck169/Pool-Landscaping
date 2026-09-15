@@ -109,6 +109,58 @@ export function uploadFile({
   });
 }
 
+// ── uploadKnowledgeFile — POST /api/ai/knowledge/file ─────────────
+// Phase KB3 · Feb-2026 — same XHR-with-progress shape as
+// ``uploadFile`` but targets the AI Brain ingestion endpoint.  The
+// backend performs S3 upload + text extraction + KB row insertion
+// in one call and returns ``{kb, file}``.
+export function uploadKnowledgeFile({
+  file, title, kind, tags, onProgress,
+} = {}) {
+  return new Promise((resolve, reject) => {
+    if (!file) { reject(new Error("file is required")); return; }
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    if (title) fd.append("title", title);
+    if (kind) fd.append("kind", kind);
+    if (tags) fd.append("tags", tags);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE}/api/ai/knowledge/file`, true);
+    const headers = authedHeaders();
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+
+    if (typeof onProgress === "function") {
+      xhr.upload.addEventListener("progress", (ev) => {
+        if (ev.lengthComputable) {
+          onProgress(Math.round((ev.loaded / ev.total) * 100));
+        }
+      });
+    }
+    xhr.addEventListener("load", () => {
+      const body = xhr.responseText || "";
+      let parsed = null;
+      try { parsed = JSON.parse(body); } catch { parsed = null; }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(parsed || {});
+      } else {
+        let msg = null;
+        const d = parsed?.detail;
+        if (d && typeof d === "object") msg = d.message || d.code;
+        else if (d) msg = d;
+        if (!msg) msg = `Upload failed (${xhr.status})`;
+        const err = new Error(msg);
+        err.status = xhr.status;
+        err.data = parsed;
+        reject(err);
+      }
+    });
+    xhr.addEventListener("error", () => reject(new Error("Network error during upload")));
+    xhr.addEventListener("abort", () => reject(new Error("Upload aborted")));
+    xhr.send(fd);
+  });
+}
+
 // ── deleteFile — soft delete ────────────────────────────────────
 export async function deleteFile(id) {
   const res = await fetch(`${BASE}/api/files/${id}/delete`, {

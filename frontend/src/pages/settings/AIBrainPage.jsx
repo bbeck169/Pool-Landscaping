@@ -7,12 +7,15 @@
 import React from "react";
 import { toast } from "sonner";
 import { Plus, Save, Trash2, Sparkles, TrendingUp, PlusCircle, Bell,
-          Image as ImageIcon, MessageSquare, Gauge, Star, RefreshCw } from "lucide-react";
+          Image as ImageIcon, MessageSquare, Gauge, Star, RefreshCw,
+          UploadCloud, ExternalLink } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
 // Feb-2026 · Polish bundle Item 2 — Top KB docs cited tile.
 import TopKBCitationsTile from "@/components/admin/TopKBCitationsTile";
+// Phase KB3 · Feb-2026 — PDF/DOCX/TXT/MD ingestion modal.
+import KBFileUploadModal from "./KBFileUploadModal";
 
 const KIND_OPTIONS = [
   { key: "company_profile", label: "Company profile" },
@@ -28,6 +31,8 @@ export default function AIBrainPage() {
   const [draft, setDraft] = React.useState(null);
   const [saving, setSaving] = React.useState(false);
   const [deleteId, setDeleteId] = React.useState(null);
+  // Phase KB3 · Feb-2026 — file-ingestion modal.
+  const [uploadOpen, setUploadOpen] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -106,13 +111,24 @@ export default function AIBrainPage() {
             Everything the AI Copilot + marketing suggestions know about your company.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={createNew}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold hover:brightness-95"
-          style={{ backgroundColor: colors.brand, color: "#fff" }}
-          data-testid="ai-brain-new-btn"
-        ><Plus size={14} /> New entry</button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setUploadOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border hover:brightness-95"
+            style={{ backgroundColor: colors.surface,
+                     color: colors.onSurface,
+                     borderColor: colors.border }}
+            data-testid="ai-brain-upload-file-btn"
+          ><UploadCloud size={14} /> Upload file</button>
+          <button
+            type="button"
+            onClick={createNew}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold hover:brightness-95"
+            style={{ backgroundColor: colors.brand, color: "#fff" }}
+            data-testid="ai-brain-new-btn"
+          ><Plus size={14} /> New entry</button>
+        </div>
       </div>
 
       <WeeklyAIEmployeesSummary />
@@ -161,8 +177,15 @@ export default function AIBrainPage() {
             >
               <div className="text-xs font-semibold truncate"
                    style={{ color: colors.onSurface }}>{it.title}</div>
-              <div className="text-[11px]" style={{ color: colors.muted }}>
-                {it.kind} · {it.is_active ? "active" : "inactive"}
+              <div className="text-[11px] flex items-center gap-1.5" style={{ color: colors.muted }}>
+                <span>{it.kind} · {it.is_active ? "active" : "inactive"}</span>
+                {it.source_type ? (
+                  <span
+                    className="px-1 py-0.5 rounded text-[9px] font-semibold uppercase"
+                    style={{ backgroundColor: colors.brandTertiary, color: colors.brand }}
+                    data-testid={`ai-brain-source-badge-${it.id}`}
+                  >{it.source_type}</span>
+                ) : null}
               </div>
             </button>
           ))}
@@ -235,6 +258,18 @@ export default function AIBrainPage() {
                   data-testid="ai-brain-active-checkbox"
                 /> Active (included in AI system prompt)
               </label>
+              {draft.source_file_id ? (
+                <a
+                  href={`/api/files/${draft.source_file_id}/download`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs underline"
+                  style={{ color: colors.brand }}
+                  data-testid="ai-brain-view-original-link"
+                >
+                  <ExternalLink size={12} /> View original {draft.source_type ? `(${draft.source_type.toUpperCase()})` : ""}
+                </a>
+              ) : null}
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -275,6 +310,13 @@ export default function AIBrainPage() {
         onCancel={() => setDeleteId(null)}
         onConfirm={confirmDelete}
       />
+
+      {uploadOpen && (
+        <KBFileUploadModal
+          onClose={() => setUploadOpen(false)}
+          onUploaded={() => { setUploadOpen(false); load(); }}
+        />
+      )}
     </div>
   );
 }

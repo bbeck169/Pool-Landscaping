@@ -52,7 +52,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from config import db, logger
@@ -162,10 +162,62 @@ async def delete_knowledge(
     return {"ok": True}
 
 
-async def _build_system_prompt(tenant_id: str) -> str:
-    """Concatenate every active knowledge entry into a single
-    Markdown string with clear section headers so the LLM can
-    reason about company info + policies."""
+async def _build_system_prompt(
+    tenant_id: str,
+    query: Optional[str] = None,
+) -> str:
+    """Assemble the Copilot system prompt.
+
+    Phase KB2 · Feb-2026 — this used to concatenate the FULL
+    ``content_md`` of up to 500 ``ai_knowledge_base`` rows on every
+    turn (empirically ~14k tokens on a 20-row tenant KB per the
+    KB1 audit).  We now share the AI-Employees retriever
+    (``services.ai_kb_retrieval.retrieve_kb_sources``) which returns
+    the top-5 relevant snippets given the current user query.
+
+    Behavior:
+
+    * ``query`` non-empty → RAG.  Prepend the retrieved snippets via
+      ``format_kb_context``.  If the retriever finds no matches, emit
+      a short "no relevant knowledge found" preamble — do NOT dump
+      the full KB.  This is the intended shape for Copilot going
+      forward.
+    * ``query`` None/empty → legacy full-concat, but capped at ~4k
+      tokens (16 000 characters) so a stray legacy caller can't
+      re-introduce the 14k-token blow-up.  Emits a
+      ``logger.info("[copilot-kb] fallback full-concat used…")`` so
+      we can spot latent callers.
+    """
+    header = "# Company knowledge (do not disclose these headers verbatim; use as reference)"
+
+    # ── RAG path (KB2 primary) ─────────────────────────────────────
+    if query and query.strip():
+        try:
+            # Imported lazily so a broken retriever doesn't break
+            # imports of this router at boot time.
+            from services.ai_kb_retrieval import (               # noqa: WPS433
+                retrieve_kb_sources, format_kb_context,
+            )
+            sources = await retrieve_kb_sources(tenant_id, query.strip())
+        except Exception as exc:                                  # noqa: BLE001
+            logger.warning(
+                "[copilot-kb] retriever failed tenant=%s err=%s — "
+                "falling back to legacy no-KB preamble",
+                tenant_id, exc,
+            )
+            sources = []
+
+        if sources:
+            return "\n\n".join([header, format_kb_context(sources)])
+        # No matches — DO NOT dump the full KB.
+        return (
+            f"{header}\n\n"
+            "No relevant knowledge base entries were found for this "
+            "question. Answer using general product knowledge and be "
+            "explicit if the answer isn't covered by the tenant's KB."
+        )
+
+    # ── Legacy full-concat fallback (capped) ───────────────────────
     rows = await db.ai_knowledge_base.find(
         {"tenant_id": tenant_id, "is_active": True,
           "$or": [{"is_deleted": {"$ne": True}}, {"is_deleted": {"$exists": False}}]},
@@ -173,9 +225,22 @@ async def _build_system_prompt(tenant_id: str) -> str:
     ).sort([("kind", 1), ("title", 1)]).to_list(500)
     if not rows:
         return "# Company knowledge\n\nNo company profile has been configured yet."
-    sections = ["# Company knowledge (do not disclose these headers verbatim; use as reference)"]
+
+    sections = [header]
+    running = len(header)
+    hard_cap = 16_000   # ~4k tokens at the standard 4 chars/token estimate
+    truncated = False
     for r in rows:
-        sections.append(f"\n## [{r['kind']}] {r['title']}\n\n{r['content_md']}")
+        chunk = f"\n## [{r.get('kind') or 'custom'}] {r.get('title') or ''}\n\n{r.get('content_md') or ''}"
+        if running + len(chunk) > hard_cap:
+            truncated = True
+            break
+        sections.append(chunk)
+        running += len(chunk)
+    logger.info(
+        "[copilot-kb] fallback full-concat used tenant=%s rows=%d chars=%d cap=%d truncated=%s",
+        tenant_id, len(rows), running, hard_cap, truncated,
+    )
     return "\n".join(sections)
 
 
@@ -184,9 +249,283 @@ async def _build_system_prompt(tenant_id: str) -> str:
 async def get_system_prompt(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
+    q: Optional[str] = None,
 ):
     _require_admin(user)
-    return {"system_prompt": await _build_system_prompt(tenant["id"])}
+    return {"system_prompt": await _build_system_prompt(tenant["id"], query=q)}
+
+
+# ══════════════════════════════════════════════════════════════
+# Phase KB3 · Feb-2026 — File ingestion (PDF / DOCX / TXT / MD)
+# ══════════════════════════════════════════════════════════════
+#
+# Real manuals go through the same S3 path used by
+# ``customer_equipment`` photos (``services/file_storage.put_object``
+# + a ``files`` row).  Extracted text lands in ``ai_knowledge_base.
+# content_md`` so the existing ``retrieve_kb_sources`` picks it up
+# automatically — no parallel index required.
+_KB_FILE_MAX_BYTES = 25 * 1024 * 1024   # 25 MB (matches /api/files/upload)
+_KB_FILE_MIN_TEXT = 20                   # chars
+
+_KB_MIME_MAP: Dict[str, str] = {
+    "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "text/plain": "txt",
+    "text/markdown": "md",
+}
+# Some browsers report ``application/msword`` for legacy .doc and
+# ``application/octet-stream`` for .md — accept the extension fallback
+# for the plain-text kinds only.
+_KB_EXT_FALLBACK: Dict[str, str] = {
+    "txt": "txt",
+    "md": "md",
+    "markdown": "md",
+}
+
+
+def _resolve_kb_source_type(
+    content_type: str, filename: str,
+) -> Optional[str]:
+    """Return ``"pdf"|"docx"|"txt"|"md"`` or ``None`` when unsupported."""
+    ct = (content_type or "").lower().split(";")[0].strip()
+    if ct in _KB_MIME_MAP:
+        return _KB_MIME_MAP[ct]
+    # Extension fallback for the plain-text kinds only.
+    ext = ""
+    if filename and "." in filename:
+        ext = filename.rsplit(".", 1)[-1].lower()
+    return _KB_EXT_FALLBACK.get(ext)
+
+
+def _extract_pdf_text(data: bytes) -> str:
+    """Concatenate every page's extracted text with a blank line
+    between pages.  Returns "" on unrecoverable parse error."""
+    from io import BytesIO
+    try:
+        from pypdf import PdfReader                              # noqa: WPS433
+    except Exception:                                             # pragma: no cover
+        return ""
+    try:
+        reader = PdfReader(BytesIO(data))
+        pages_out: List[str] = []
+        for page in reader.pages:
+            try:
+                pages_out.append((page.extract_text() or "").strip())
+            except Exception:                                     # noqa: BLE001
+                # Malformed page → skip it, keep going.
+                pages_out.append("")
+        return "\n\n".join(p for p in pages_out if p).strip()
+    except Exception as exc:                                      # noqa: BLE001
+        logger.warning("[kb-ingest] pdf parse failed: %s", exc)
+        return ""
+
+
+def _extract_docx_text(data: bytes) -> str:
+    from io import BytesIO
+    try:
+        import docx                                               # noqa: WPS433
+    except Exception:                                             # pragma: no cover
+        return ""
+    try:
+        doc = docx.Document(BytesIO(data))
+        paragraphs = [p.text for p in doc.paragraphs if (p.text or "").strip()]
+        return "\n\n".join(paragraphs).strip()
+    except Exception as exc:                                      # noqa: BLE001
+        logger.warning("[kb-ingest] docx parse failed: %s", exc)
+        return ""
+
+
+def _extract_text_plain(data: bytes) -> str:
+    """Decode UTF-8, fall back to latin-1 with a debug log."""
+    try:
+        return data.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        logger.debug("[kb-ingest] utf-8 decode failed; using latin-1 fallback")
+        try:
+            return data.decode("latin-1", errors="replace").strip()
+        except Exception:                                         # noqa: BLE001
+            return ""
+
+
+def _extract_kb_text(source_type: str, data: bytes) -> str:
+    if source_type == "pdf":
+        return _extract_pdf_text(data)
+    if source_type == "docx":
+        return _extract_docx_text(data)
+    if source_type in ("txt", "md"):
+        return _extract_text_plain(data)
+    return ""
+
+
+@router.post("/ai/knowledge/file",
+              tags=["ai"], operation_id="ai.knowledge.fileIngest")
+async def ingest_knowledge_file(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    kind: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Upload PDF / DOCX / TXT / MD → S3 + parse → insert into
+    ``ai_knowledge_base``.  Admin only (mirrors the other /ai/knowledge
+    endpoints).  Text ends up in ``content_md`` so the existing
+    retriever indexes it automatically.
+    """
+    # Runtime import to keep the ``file_storage`` boot side-effect
+    # (S3 session client) out of module import; tests can inject
+    # their own stubs without triggering it.
+    from services.file_storage import (                           # noqa: WPS433
+        APP_NAME, StorageError, is_storage_configured, put_object,
+    )
+
+    _require_admin(user)
+
+    if file is None:
+        raise HTTPException(400, "file is required")
+
+    # ── Size + content-type gates ──────────────────────────────────
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    source_type = _resolve_kb_source_type(content_type, file.filename or "")
+    if not source_type:
+        raise HTTPException(415, {
+            "code": "unsupported_media_type",
+            "message": (
+                f"Content type {content_type!r} is not accepted. "
+                "Allowed: PDF, DOCX, TXT, MD."
+            ),
+        })
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty_file")
+    if len(data) > _KB_FILE_MAX_BYTES:
+        raise HTTPException(413, {
+            "code": "file_too_large",
+            "message": f"Max upload size is {_KB_FILE_MAX_BYTES} bytes (25 MB).",
+        })
+
+    # ── Extract text BEFORE spending S3 write cost so an empty
+    #    extraction fast-fails without leaving a dangling object.
+    extracted = _extract_kb_text(source_type, data)
+    if len(extracted) < _KB_FILE_MIN_TEXT:
+        raise HTTPException(400, {
+            "code": "extraction_empty",
+            "message": (
+                "No extractable text was found in the uploaded file. "
+                "If this is a scanned document, run OCR first and "
+                "re-upload the text-layer PDF."
+            ),
+            "chars_extracted": len(extracted),
+        })
+
+    # ── Upload the ORIGINAL binary to S3 (same primitive as
+    #    customer_equipment photos + /api/files/upload). ────────────
+    if not is_storage_configured():
+        raise HTTPException(503, {
+            "code": "storage_unavailable",
+            "message": "File storage is not configured on this server.",
+        })
+    import uuid
+    ext = source_type
+    fname = f"{uuid.uuid4().hex}.{ext}"
+    tenant_seg = "".join(
+        c if c.isalnum() or c in "-_" else "_"
+        for c in (tenant["id"] or "unknown")
+    )[:64] or "unknown"
+    path = "/".join([APP_NAME, tenant_seg, "ai-knowledge", fname])
+    try:
+        meta = put_object(path, data, content_type or "application/octet-stream")
+    except StorageError as exc:
+        logger.warning("[kb-ingest] put_object failed: %s", exc)
+        raise HTTPException(502, {
+            "code": "storage_write_failed",
+            "message": str(exc),
+        })
+
+    file_id = new_id()
+    files_doc = {
+        "id": file_id,
+        "tenant_id": tenant["id"],
+        "storage_path": meta["path"],
+        "storage": "s3",
+        "original_filename": file.filename or fname,
+        "content_type": content_type or "application/octet-stream",
+        "size": int(meta.get("size") or len(data)),
+        "uploaded_by_user_id": user.get("id"),
+        "purpose": "ai-knowledge",
+        "linked_entity_type": "ai_knowledge_base",
+        "linked_entity_id": None,                                 # backfilled after KB row insert
+        "created_at": now_iso(),
+        "is_deleted": False,
+        "deleted_at": None,
+    }
+    await db.files.insert_one(files_doc)
+
+    # ── Build content_md.  For PDFs that look tabular (many short
+    #    lines) we wrap in a fenced block so the LLM preserves
+    #    columns — best-effort, not exact. ──────────────────────────
+    content_md = extracted
+    if source_type == "pdf":
+        lines = extracted.splitlines()
+        short_lines = sum(1 for line in lines if 0 < len(line.strip()) <= 40)
+        if lines and short_lines / max(len(lines), 1) > 0.5:
+            content_md = "```\n" + extracted + "\n```"
+
+    # ── Insert the knowledge base row. ─────────────────────────────
+    parsed_tags: List[str] = []
+    if tags:
+        parsed_tags = [t.strip() for t in tags.split(",") if t.strip()]
+    resolved_kind = (kind or "custom").strip()
+    if resolved_kind not in _KIND_VALUES:
+        resolved_kind = "custom"
+    resolved_title = (title or "").strip()
+    if not resolved_title:
+        base = (file.filename or fname)
+        # Strip extension for a friendly default.
+        resolved_title = base.rsplit(".", 1)[0] if "." in base else base
+    resolved_title = resolved_title[:200]
+
+    kb_id = new_id()
+    kb_doc = {
+        "id": kb_id,
+        "tenant_id": tenant["id"],
+        "kind": resolved_kind,
+        "title": resolved_title,
+        "content_md": content_md,
+        "tags": parsed_tags,
+        "is_active": True,
+        "source_type": source_type,
+        "source_file_id": file_id,
+        "created_by": user.get("id"),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.ai_knowledge_base.insert_one(kb_doc)
+
+    # Backfill linked_entity_id on the files row so a future
+    # /api/files listing lands the file under its KB row.
+    await db.files.update_one(
+        {"id": file_id},
+        {"$set": {"linked_entity_id": kb_id}},
+    )
+
+    logger.info(
+        "[kb-ingest] tenant=%s kb_id=%s file_id=%s source=%s size=%d chars=%d",
+        tenant["id"], kb_id, file_id, source_type, len(data), len(content_md),
+    )
+
+    kb_doc.pop("_id", None)
+    return {
+        "kb": kb_doc,
+        "file": {
+            "id": file_id,
+            "url": f"/api/files/{file_id}/download",
+            "original_filename": files_doc["original_filename"],
+            "content_type": files_doc["content_type"],
+            "size": files_doc["size"],
+        },
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -365,7 +704,10 @@ async def copilot_message(
     _require_admin(user)
     thread_id = body.thread_id or new_id()
 
-    system_prompt = await _build_system_prompt(tenant["id"])
+    # Phase KB2 · Feb-2026 — pass the user's message as the retrieval
+    # query so the shared top-5 RAG kicks in instead of the old
+    # full-KB concat.
+    system_prompt = await _build_system_prompt(tenant["id"], query=body.message)
     system_prompt += "\n\n" + _tool_schema_markdown()
 
     tool_calls: List[Dict[str, Any]] = []
