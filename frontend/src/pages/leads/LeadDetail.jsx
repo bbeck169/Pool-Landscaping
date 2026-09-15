@@ -229,7 +229,13 @@ export default function LeadDetail() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { if (id) loadCommunications(); }, [id, loadCommunications]);
+  // Only load communications once the lead itself has resolved
+  // (avoids a spurious "Failed to load communications" toast when
+  // the caller drops us on a URL whose ``:id`` doesn't exist).
+  useEffect(() => {
+    if (lead?.id) loadCommunications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead?.id]);
 
   const setStatus = async (status) => {
     setBusy(true);

@@ -256,3 +256,54 @@ input.reorder-num-input {
     --note-label-fg:     #4B5563;    /* gray-600  · "Customer note:" prefix */
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+ * Phase T1 · Feb-2026 — Sitewide text-input theme (WEB).
+ * ═══════════════════════════════════════════════════════════════
+ * Mirrors the mobile ``AppTextInput`` theme already shipped by the
+ * mobile pod:
+ *
+ *   background   #FFFFFF                (solid white)
+ *   text color   #000080                (navy)
+ *   placeholder  rgba(0, 0, 128, 0.55)  (55%-opacity navy)
+ *
+ * SCOPE — applies to text-shaped single-line ``<input>`` types +
+ * every ``<textarea>``:
+ *
+ *   text · email · tel · search · url · password · number
+ *   plus untyped ``<input>`` (defaults to ``text``)
+ *
+ * OUT OF SCOPE — visually unchanged:
+ *
+ *   checkbox · radio · file · color · date · datetime-local · time ·
+ *   month · week · range · submit · reset · button · image · hidden
+ *   <select> · <option> · shadcn ``<DatePicker>`` triggers (they're
+ *   ``<button>``s under the hood)
+ *
+ * The ``@layer base`` wrapper keeps the specificity at the lowest
+ * Tailwind layer so any per-consumer utility override on
+ * ``className`` (e.g. ``bg-slate-50``, ``text-white``) still wins.
+ * Focus ring, border, and disabled styling stay whatever the
+ * consumer set — this rule ONLY touches ``background-color``,
+ * ``color``, and ``::placeholder`` color.
+ *
+ * Shadcn's ``<Input>``/``<Textarea>`` render native elements so a
+ * single selector covers BOTH the 124 shadcn call-sites and the
+ * 888 raw ``<input>`` / 149 raw ``<textarea>`` occurrences on the
+ * web app — including the public embedded lead widget, marketing
+ * form preview, customer portal, and admin pages.
+ * ═══════════════════════════════════════════════════════════════ */
+@layer base {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]):not([type="date"]):not([type="datetime-local"]):not([type="time"]):not([type="month"]):not([type="week"]):not([type="range"]):not([type="submit"]):not([type="reset"]):not([type="button"]):not([type="image"]):not([type="hidden"]),
+    textarea {
+        background-color: #FFFFFF;
+        color: #000080;
+    }
+
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]):not([type="date"]):not([type="datetime-local"]):not([type="time"]):not([type="month"]):not([type="week"]):not([type="range"]):not([type="submit"]):not([type="reset"]):not([type="button"]):not([type="image"]):not([type="hidden"])::placeholder,
+    textarea::placeholder {
+        color: rgba(0, 0, 128, 0.55);
+        opacity: 1;   /* Firefox lowers placeholder opacity by default. */
+    }
+}
+
