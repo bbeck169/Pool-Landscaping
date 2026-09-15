@@ -2151,3 +2151,18 @@
   - ScrollView: `paddingBottom: 160 + insets.bottom` so last item scrolls above footer
 - **Files modified**:
   - `/app/mobile/app/job/[id]/checklist.tsx`
+
+
+## Iteration 96 — Phase CHEM5: Unify all water-body forms + remove duplicate
+- **Commit**: 428713647
+- **Date**: 2026-09-15
+- **Changes**:
+  - WaterBodyPanel: `!isPrimary` gates already removed (prior step); both Chemistry Readings + Chemicals render on all bodies
+  - PoolChecklistForm: Removed standalone "Chemicals Added" block (section title, ChemicalDropdownStack, quick-add button, ChemicalPickerSheet)
+  - Cleaned up orphaned imports (ChemicalPickerSheet) and state (pickerOpen)
+  - Test file: Flipped assertions so isPrimary=true body now expects BOTH sections rendered; header = "Pool"
+  - 6/6 Jest tests pass; testID-based screenshot verification confirms removal
+- **Files modified**:
+  - `/app/mobile/src/components/checklist/PoolChecklistForm.tsx`
+  - `/app/mobile/__tests__/chem4-isprimary-suppression.test.tsx`
+- **Web files referenced**: None (continuation of prior CHEM5 work)

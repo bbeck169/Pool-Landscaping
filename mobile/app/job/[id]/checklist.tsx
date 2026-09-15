@@ -968,31 +968,6 @@ export default function JobChecklistScreen() {
           ) : null}
         </View>
 
-        {/* Photos — always visible */}
-        <View style={styles.card} testID="checklist-photos-card">
-          <Text style={styles.cardTitle}>Photos</Text>
-          <PhotoUploader
-            jobId={String(id)}
-            photos={report.photos || []}
-            onPhotosChange={(next) => setReport({ ...report, photos: next })}
-            max={PHOTO_CAP}
-            disabled={locked}
-          />
-        </View>
-
-        {/* Videos — Phase 5B */}
-        <View style={styles.card} testID="checklist-videos-card">
-          <VideoMediaUploader
-            entityKind="job"
-            entityId={String(id)}
-            existingVideos={job.videos || []}
-            onUploaded={(v) => setJob((j: any) => ({ ...j, videos: [...(j.videos || []), v] }))}
-            onDeleted={(vid) => setJob((j: any) => ({ ...j, videos: (j.videos || []).filter((vv: any) => vv.id !== vid) }))}
-            onPatched={(v) => setJob((j: any) => ({ ...j, videos: (j.videos || []).map((vv: any) => (vv.id === v.id ? v : vv)) }))}
-            readonly={locked}
-          />
-        </View>
-
         {/* Phase 27 — Unified service-report media (photos + videos via /api/service-reports/{id}/media) */}
         {report?.id && (
           <View style={styles.card} testID="checklist-sr-media-card">
@@ -1007,6 +982,32 @@ export default function JobChecklistScreen() {
             />
           </View>
         )}
+
+        {/* Phase M3 — Internal Photos (relocated below Visit Media) */}
+        <View style={styles.card} testID="checklist-photos-card">
+          <Text style={styles.cardTitle}>Internal Photos</Text>
+          <PhotoUploader
+            jobId={String(id)}
+            photos={report.photos || []}
+            onPhotosChange={(next) => setReport({ ...report, photos: next })}
+            max={PHOTO_CAP}
+            disabled={locked}
+          />
+        </View>
+
+        {/* Phase M3 — Internal Videos (relocated below Internal Photos) */}
+        <View style={styles.card} testID="checklist-videos-card">
+          <Text style={styles.cardTitle}>Internal Videos</Text>
+          <VideoMediaUploader
+            entityKind="job"
+            entityId={String(id)}
+            existingVideos={job.videos || []}
+            onUploaded={(v) => setJob((j: any) => ({ ...j, videos: [...(j.videos || []), v] }))}
+            onDeleted={(vid) => setJob((j: any) => ({ ...j, videos: (j.videos || []).filter((vv: any) => vv.id !== vid) }))}
+            onPatched={(v) => setJob((j: any) => ({ ...j, videos: (j.videos || []).map((vv: any) => (vv.id === v.id ? v : vv)) }))}
+            readonly={locked}
+          />
+        </View>
 
         {/* Template-specific form */}
         <View style={styles.card} testID={`checklist-form-${clientType}`}>
