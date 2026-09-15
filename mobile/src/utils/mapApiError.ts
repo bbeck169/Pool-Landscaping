@@ -73,9 +73,9 @@ export function mapApiError(err: unknown): MappedError {
     };
   }
 
-  // Fallback for unknown errors
+  // Fallback for unknown errors — NOT necessarily offline
   const msg = err instanceof Error ? err.message : String(err || "Unknown error");
-  return { title: "You're offline", message: msg, kind: "offline" };
+  return { title: "Something went wrong", message: msg, kind: "client" };
 }
 
 /** Returns the Ionicons icon name appropriate for each error kind. */

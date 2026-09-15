@@ -9,6 +9,7 @@ import { Loading, EmptyState, StatusChip, PrimaryButton, Sheet } from "@/src/com
 import { Header, FilterRow, IconButton } from "@/src/components/widgets";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import AddressAutocomplete, { type AddressSelection } from "@/src/components/common/AddressAutocomplete";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -48,7 +49,8 @@ export default function Leads() {
   const [refreshing, setRefreshing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [sel, setSel] = useState<any>(null);
-  const [form, setForm] = useState({ name: "", phone: "", email: "", source: "Website", notes: "", est_value: "" });
+  const [form, setForm] = useState({ name: "", phone: "", email: "", source: "Website", notes: "", est_value: "", address: "" });
+  const [addressGeo, setAddressGeo] = useState<{ lat: number; lng: number } | null>(null);
 
   // Convert-to-job/quote state
   const [convOpen, setConvOpen] = useState(false);
@@ -95,9 +97,17 @@ export default function Leads() {
 
   const create = async () => {
     if (!form.name.trim()) return;
-    await api.post("/leads", { ...form, est_value: parseFloat(form.est_value) || 0 });
+    await api.post("/leads", {
+      ...form,
+      est_value: parseFloat(form.est_value) || 0,
+      lat: addressGeo?.lat ?? null,
+      lng: addressGeo?.lng ?? null,
+      latitude: addressGeo?.lat ?? null,
+      longitude: addressGeo?.lng ?? null,
+    });
     setAddOpen(false);
-    setForm({ name: "", phone: "", email: "", source: "Website", notes: "", est_value: "" });
+    setForm({ name: "", phone: "", email: "", source: "Website", notes: "", est_value: "", address: "" });
+    setAddressGeo(null);
     load(filter);
   };
 
@@ -207,6 +217,18 @@ export default function Leads() {
             />
           </View>
         ))}
+        <View style={{ marginBottom: spacing.sm }}>
+          <Text style={styles.inputLabel}>Address</Text>
+          <AddressAutocomplete
+            value={form.address}
+            onChangeText={(v) => setForm((f) => ({ ...f, address: v }))}
+            onSelect={(sel: AddressSelection) => {
+              setForm((f) => ({ ...f, address: sel.description }));
+              setAddressGeo(sel.lat != null && sel.lng != null ? { lat: sel.lat, lng: sel.lng } : null);
+            }}
+            testID="newlead-address"
+          />
+        </View>
         <View style={{ height: spacing.sm }} />
         <PrimaryButton title="Add Lead" onPress={create} testID="save-lead-button" />
       </Sheet>

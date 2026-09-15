@@ -580,6 +580,26 @@ async def list_recurring(active: Optional[bool] = Query(None),
             r["upcoming"] = [d.isoformat() for d in occ]
         except Exception:
             r["upcoming"] = []
+
+    # Phase R2 · Feb-2026 — attach the extra customer fields the
+    # client-side search filters on (company_name, email, phone).
+    # Batch fetch so the row count doesn't fan out into N+1 queries.
+    cust_ids = list({r.get("customer_id") for r in rows if r.get("customer_id")})
+    cust_map: Dict[str, Dict[str, Any]] = {}
+    if cust_ids:
+        async for c in db.customers.find(
+            {"tenant_id": tenant["id"], "id": {"$in": cust_ids}},
+            {"_id": 0, "id": 1, "company_name": 1, "email": 1, "phone": 1},
+        ):
+            cust_map[c["id"]] = c
+    for r in rows:
+        c = cust_map.get(r.get("customer_id") or "") or {}
+        # Never overwrite an existing denormalized value on the row —
+        # some rows historically carry ``customer_name`` at insert time.
+        r.setdefault("customer_company_name", c.get("company_name") or "")
+        r.setdefault("customer_email", c.get("email") or "")
+        r.setdefault("customer_phone", c.get("phone") or "")
+
     return {"items": rows, "count": len(rows)}
 
 

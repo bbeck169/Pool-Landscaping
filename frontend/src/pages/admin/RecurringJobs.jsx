@@ -7,8 +7,8 @@
  *   DELETE /api/recurring-jobs/{id}
  *   POST   /api/recurring-jobs/{id}/generate?through=YYYY-MM-DD
  */
-import React, { useEffect, useState } from "react";
-import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban, Sparkles } from "lucide-react";
+import React, { useEffect, useState, useMemo } from "react";
+import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban, Sparkles, Search } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -78,6 +78,28 @@ export default function RecurringJobs() {
   // running the mutating backfill first.
   const [orphanPreview, setOrphanPreview] = useState(null);
   const [orphanBusy, setOrphanBusy] = useState(false);
+  // Phase R2 · Feb-2026 — customer search.  Client-side filter.
+  //   ``searchInput``: what the user is typing (unthrottled).
+  //   ``searchQuery``: debounced value (250ms) used for filtering.
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchInput.trim().toLowerCase()), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+  // Filtered view — kept as a memo so ``_visibleIds`` and the
+  // table render share the exact same result set (bulk-select "on
+  // page" must scope to the filtered rows, not the raw list).
+  const filteredItems = useMemo(() => {
+    if (!searchQuery) return items;
+    return items.filter((r) => {
+      const hay = [
+        r.customer_name, r.customer_company_name,
+        r.customer_email, r.customer_phone,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(searchQuery);
+    });
+  }, [items, searchQuery]);
 
   const load = async () => {
     setLoading(true);
@@ -288,11 +310,10 @@ export default function RecurringJobs() {
     }
   };
 
-  // Header "select all on page" checkbox.  Respects any client-side
-  // filtering — currently the page has none, but the helper reads
-  // ``items`` directly so a future filter drop-in wires through
-  // without a rewrite.
-  const _visibleIds = () => items.map((r) => r.id);
+  // Header "select all on page" checkbox.  Respects the R2 client-
+  // side search filter — bulk-select on page = every row currently
+  // visible under the active search query.
+  const _visibleIds = () => filteredItems.map((r) => r.id);
   const _allVisibleSelected = () => {
     const vis = _visibleIds();
     return vis.length > 0 && vis.every((id) => selectedIds.has(id));
@@ -445,6 +466,41 @@ export default function RecurringJobs() {
           Loading…
         </div>
       ) : (
+        <>
+        {/* Phase R2 · Feb-2026 — customer search.  Client-side
+             filter; bulk-select "on page" scopes to filtered rows. */}
+        <div className="mb-3 relative max-w-md">
+          <Search
+            size={14}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+            style={{ color: colors.muted }}
+          />
+          <input
+            type="search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search by customer name…"
+            aria-label="Search recurring jobs by customer"
+            data-testid="recurring-search-input"
+            className="w-full text-sm rounded-md py-1.5 pl-8 pr-8"
+            style={{
+              backgroundColor: colors.surface,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+          />
+          {searchInput ? (
+            <button
+              type="button"
+              onClick={() => setSearchInput("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-slate-100"
+              aria-label="Clear customer search"
+              data-testid="recurring-search-clear"
+            >
+              <X size={12} style={{ color: colors.muted }} />
+            </button>
+          ) : null}
+        </div>
         <div className="rounded-2xl overflow-hidden"
              style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
           <table className="w-full text-sm" data-testid="recurring-jobs-table">
@@ -480,12 +536,14 @@ export default function RecurringJobs() {
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 ? (
+              {filteredItems.length === 0 ? (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-sm"
                        style={{ color: colors.muted }} data-testid="recurring-jobs-empty">
-                  No recurring jobs yet — click "New recurring job" to add your first.
+                  {items.length === 0
+                    ? "No recurring jobs yet — click \"New recurring job\" to add your first."
+                    : "No recurring jobs match your search."}
                 </td></tr>
-              ) : items.map((r) => (
+              ) : filteredItems.map((r) => (
                 <tr key={r.id} data-testid={`recurring-job-row-${r.id}`}
                     style={{ borderBottom: `1px solid ${colors.border}`,
                               backgroundColor: selectedIds.has(r.id)
@@ -602,6 +660,7 @@ export default function RecurringJobs() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {modalOpen && editing ? (
