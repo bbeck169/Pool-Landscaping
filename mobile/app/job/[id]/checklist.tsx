@@ -983,32 +983,6 @@ export default function JobChecklistScreen() {
           </View>
         )}
 
-        {/* Phase M3 — Internal Photos (relocated below Visit Media) */}
-        <View style={styles.card} testID="checklist-photos-card">
-          <Text style={styles.cardTitle}>Internal Photos</Text>
-          <PhotoUploader
-            jobId={String(id)}
-            photos={report.photos || []}
-            onPhotosChange={(next) => setReport({ ...report, photos: next })}
-            max={PHOTO_CAP}
-            disabled={locked}
-          />
-        </View>
-
-        {/* Phase M3 — Internal Videos (relocated below Internal Photos) */}
-        <View style={styles.card} testID="checklist-videos-card">
-          <Text style={styles.cardTitle}>Internal Videos</Text>
-          <VideoMediaUploader
-            entityKind="job"
-            entityId={String(id)}
-            existingVideos={job.videos || []}
-            onUploaded={(v) => setJob((j: any) => ({ ...j, videos: [...(j.videos || []), v] }))}
-            onDeleted={(vid) => setJob((j: any) => ({ ...j, videos: (j.videos || []).filter((vv: any) => vv.id !== vid) }))}
-            onPatched={(v) => setJob((j: any) => ({ ...j, videos: (j.videos || []).map((vv: any) => (vv.id === v.id ? v : vv)) }))}
-            readonly={locked}
-          />
-        </View>
-
         {/* Template-specific form */}
         <View style={styles.card} testID={`checklist-form-${clientType}`}>
           {/* Phase v · Multi-body water bodies (pool type only). */}
@@ -1079,6 +1053,34 @@ export default function JobChecklistScreen() {
               }}
             />
           )}
+        </View>
+
+        {/* Phase M4 — Internal Photos (very bottom of scrollable content).
+            Internal-only — bound to job.photos, never surfaced to customer portal. */}
+        <View style={styles.card} testID="checklist-photos-card">
+          <Text style={styles.cardTitle}>Internal Photos</Text>
+          <PhotoUploader
+            jobId={String(id)}
+            photos={report.photos || []}
+            onPhotosChange={(next) => setReport({ ...report, photos: next })}
+            max={PHOTO_CAP}
+            disabled={locked}
+          />
+        </View>
+
+        {/* Phase M4 — Internal Videos (very bottom of scrollable content).
+            Internal-only — bound to job.videos, never surfaced to customer portal. */}
+        <View style={styles.card} testID="checklist-videos-card">
+          <Text style={styles.cardTitle}>Internal Videos</Text>
+          <VideoMediaUploader
+            entityKind="job"
+            entityId={String(id)}
+            existingVideos={job.videos || []}
+            onUploaded={(v) => setJob((j: any) => ({ ...j, videos: [...(j.videos || []), v] }))}
+            onDeleted={(vid) => setJob((j: any) => ({ ...j, videos: (j.videos || []).filter((vv: any) => vv.id !== vid) }))}
+            onPatched={(v) => setJob((j: any) => ({ ...j, videos: (j.videos || []).map((vv: any) => (vv.id === v.id ? v : vv)) }))}
+            readonly={locked}
+          />
         </View>
       </ScrollView>
 

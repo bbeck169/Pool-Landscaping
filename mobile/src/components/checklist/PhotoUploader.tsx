@@ -117,31 +117,30 @@ export default function PhotoUploader({
             )}
           </View>
         ))}
-        {!disabled && remaining > 0 && (
-          <>
-            <View style={styles.cell}>
-              <Pressable
-                style={styles.add}
-                onPress={() => pick(true)}
-                testID="checklist-photo-camera"
-              >
-                <Ionicons name="camera-outline" size={22} color={colors.muted} />
-                <Text style={styles.addText}>Camera</Text>
-              </Pressable>
-            </View>
-            <View style={styles.cell}>
-              <Pressable
-                style={styles.add}
-                onPress={() => pick(false)}
-                testID="checklist-photo-library"
-              >
-                <Ionicons name="images-outline" size={22} color={colors.muted} />
-                <Text style={styles.addText}>Library</Text>
-              </Pressable>
-            </View>
-          </>
-        )}
       </View>
+      {/* Upload buttons — styled to match Visit Media (ServiceReportMediaUploader) */}
+      {!disabled && remaining > 0 && (
+        <View style={styles.uploadRow}>
+          <Pressable
+            style={[styles.uploadBtn, busy && { opacity: 0.5 }]}
+            onPress={() => pick(true)}
+            disabled={busy}
+            testID="checklist-photo-camera"
+          >
+            <Ionicons name="camera-outline" size={16} color={colors.brand} />
+            <Text style={styles.uploadBtnText}>Photo</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.uploadBtn, busy && { opacity: 0.5 }]}
+            onPress={() => pick(false)}
+            disabled={busy}
+            testID="checklist-photo-library"
+          >
+            <Ionicons name="images-outline" size={16} color={colors.brand} />
+            <Text style={styles.uploadBtnText}>Library</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
@@ -162,13 +161,17 @@ const styles = StyleSheet.create({
     position: "absolute", top: 4, right: 4, backgroundColor: "rgba(0,0,0,0.7)",
     borderRadius: 12, padding: 4, alignItems: "center", justifyContent: "center",
   },
-  add: {
-    flex: 1, borderRadius: radius.md, borderWidth: 2, borderStyle: "dashed",
-    borderColor: colors.border, alignItems: "center", justifyContent: "center",
-    backgroundColor: colors.surfaceSecondary,
+  // Phase M4 — Upload buttons styled to match Visit Media (ServiceReportMediaUploader).
+  uploadRow: {
+    flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.sm,
   },
-  addText: {
-    fontFamily: font.bold, fontSize: fontSize.xs, color: colors.muted,
-    marginTop: 4, textTransform: "uppercase",
+  uploadBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 8,
+    borderRadius: radius.md, borderWidth: 1.5, borderStyle: "dashed",
+    borderColor: colors.border, backgroundColor: colors.surfaceSecondary,
+  },
+  uploadBtnText: {
+    fontSize: fontSize.sm, fontFamily: font.semibold, color: colors.onSurface,
   },
 });
