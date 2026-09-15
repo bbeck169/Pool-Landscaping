@@ -449,7 +449,43 @@ export default function CalendarSchedule() {
   const [range, setRange] = useState({ start: null, end: null });   // for the "Custom" preset row
 
   const [q, setQ] = useState(params.get("q") || "");
-  const [techId, setTechId] = useState(params.get("technician_id") || "");
+  // Phase S1 · Feb-2026 — per-tech filter with role-aware default +
+  // localStorage persistence.
+  //
+  //   • Tech role   → default to the tech's own ``technician_id``
+  //     (localStorage overridable, but the dropdown itself is
+  //     hidden — techs can only ever see their own schedule).
+  //   • Admin/manager/owner/super_admin → default to ``""`` (All techs).
+  //   • URL ``?technician_id=`` always wins on first mount
+  //     (link-shares stay predictable).
+  //
+  // Filtering rule (see the ``filteredJobs`` memo below): when a
+  // specific tech is selected, jobs with an EMPTY ``technician_id``
+  // (unassigned / "open") remain visible — techs may need to pick
+  // up unassigned work.
+  const _isTech = String(user?.role || "").toLowerCase() === "technician";
+  const _isAdminLike = (user?.role === "admin"
+                        || user?.role === "super_admin"
+                        || user?.role === "manager"
+                        || user?.role === "owner");
+  const _techFilterKey = user?.id
+    ? `schedule.tech_filter.${user.id}`
+    : null;
+  const [techId, setTechId] = useState(() => {
+    // 1) URL param wins (link-shares, deep-links from dispatch).
+    const urlV = params.get("technician_id");
+    if (urlV) return urlV;
+    // 2) Per-user localStorage remembers the last non-URL pick.
+    try {
+      if (_techFilterKey) {
+        const saved = localStorage.getItem(_techFilterKey);
+        if (saved !== null && saved !== undefined) return saved;
+      }
+    } catch { /* SSR / storage-blocked mode */ }
+    // 3) Role-driven default.
+    if (_isTech) return user?.technician_id || "";
+    return "";                                    // admin-like → All techs
+  });
   const [status, setStatus] = useState(params.get("status") || "");
   const [service, setService] = useState(params.get("service") || "");
   // Phase F6a · Feb-2026 — crew filter (WEB). Crew id → derives the
@@ -569,7 +605,11 @@ export default function CalendarSchedule() {
           j.crew_id === crewId ||
           crewMemberIds.includes(j.technician_id);
         if (!jobBelongsToCrew) return false;
-      } else if (techId && j.technician_id !== techId) {
+      } else if (techId && j.technician_id !== techId
+                    && !!j.technician_id) {
+        // Phase S1 · Feb-2026 — a specific tech is selected. Show
+        // jobs assigned to that tech PLUS unassigned jobs (an empty
+        // ``technician_id`` — "open" work that techs may pick up).
         return false;
       }
       if (status && j.status !== status) return false;
@@ -1155,10 +1195,29 @@ export default function CalendarSchedule() {
           ) : null}
         </div>
 
+        {/* Phase S1 · Feb-2026 — dropdown is hidden entirely for
+            the ``technician`` role. Admin / manager / owner see the
+            full picker. ``schedule-tech-filter`` is the canonical
+            testid (mirror lives on mobile) and
+            ``calendar-filter-tech`` is preserved for pre-S1 tests. */}
+        {_isTech ? null : (
         <select
           value={techId}
-          onChange={(e) => { setTechId(e.target.value); setParam("technician_id", e.target.value); }}
-          data-testid="calendar-filter-tech"
+          onChange={(e) => {
+            const nextV = e.target.value;
+            setTechId(nextV);
+            setParam("technician_id", nextV);
+            // Persist per-user so the pick survives reloads. Techs
+            // never reach this branch (dropdown hidden above) so no
+            // no-op write is required for them.
+            try {
+              if (_techFilterKey) {
+                localStorage.setItem(_techFilterKey, nextV);
+              }
+            } catch { /* storage-blocked / private mode */ }
+          }}
+          data-testid="schedule-tech-filter"
+          data-testid-legacy="calendar-filter-tech"
           className="text-sm rounded-lg px-2 py-1.5"
           disabled={!!crewId}
           style={{ background: colors.nav.bg,
@@ -1169,9 +1228,12 @@ export default function CalendarSchedule() {
           title={crewId
             ? "Techs are locked to the selected crew — clear the crew filter to change"
             : undefined}
+          aria-label="Technician"
         >
           <option value="">{crewId ? "Techs (from crew)" : "All techs"}</option>
-          {techs.map((t) => (
+          {techs.slice().sort((a, b) =>
+            (a.name || a.email || "").localeCompare(b.name || b.email || "")
+          ).map((t) => (
             // Phase K42 · Feb-2026 — always emit the AUTHORITATIVE
             // ``technicians.id`` (``t.id``).  Historically this used
             // ``t.user_id || t.id`` which shipped ``users.id`` when
@@ -1185,6 +1247,7 @@ export default function CalendarSchedule() {
             <option key={t.id} value={t.id}>{t.name || t.email}</option>
           ))}
         </select>
+        )}
 
         {/* Phase F6a · Feb-2026 — "All crews" filter (WEB only). Populates
             from GET /api/crews and adds a `crew_id` param to the schedule

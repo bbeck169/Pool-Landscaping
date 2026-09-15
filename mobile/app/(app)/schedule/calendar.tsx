@@ -120,6 +120,7 @@ type Job = {
 type Mode = "grid" | "calendar";
 const MODE_KEY = "aq-schedule-mode-v1";
 const MAP_VISIBLE_KEY = "schedule.mapVisible";
+const TECH_FILTER_KEY = "schedule.tech_filter";
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const addDays = (d: Date, n: number) => { const c = new Date(d); c.setDate(c.getDate() + n); return c; };
@@ -266,6 +267,10 @@ function ScheduleCalendarInner() {
   const [crewMembers, setCrewMembers] = useState<string[]>([]);
   const [allTechs, setAllTechs] = useState<any[]>([]);
 
+  // Phase S1 — Per-tech schedule filter (admin dropdown, tech auto-scope).
+  const [techFilter, setTechFilter] = useState<string>("all");
+  const [techPickerOpen, setTechPickerOpen] = useState(false);
+
   // Phase P17 — OOM fix: cache the last-fetched date range so day-tap
   // navigation inside the already-loaded window skips the network.
   // Margin = 3 days → only re-fetch when the user navigates close to
@@ -299,6 +304,23 @@ function ScheduleCalendarInner() {
       if (typeof v === "string" && v.length > 0) setCrewFilter(v);
     }).catch(() => {});
   }, []);
+
+  // Phase S1 — Load persisted tech filter on mount.
+  useEffect(() => {
+    const uid = user?.id || "";
+    if (!uid) { return; }
+    const key = `${TECH_FILTER_KEY}.${uid}`;
+    storage.getItem<string>(key, "").then((v: any) => {
+      if (typeof v === "string" && v.length > 0) {
+        setTechFilter(v);
+      } else {
+        setTechFilter(isTech ? (user?.id || "all") : "all");
+      }
+    }).catch(() => {
+      setTechFilter(isTech ? (user?.id || "all") : "all");
+    });
+  }, [user?.id, isTech]);
+
   const setModePersist = (m: Mode) => {
     setMode(m);
     storage.setItem(MODE_KEY, m).catch(() => {/* incognito — in-memory only */});
@@ -321,6 +343,25 @@ function ScheduleCalendarInner() {
       setCrewMembers(names);
     } else { setCrewMembers([]); }
   }, [crews, allTechs]);
+
+  // Phase S1 — Tech filter helpers.
+  const handleTechFilterChange = useCallback((val: string) => {
+    setTechFilter(val);
+    const uid = user?.id || "";
+    if (uid) storage.setItem(`${TECH_FILTER_KEY}.${uid}`, val).catch(() => {});
+  }, [user?.id]);
+
+  const sortedTechs = useMemo(
+    () => [...allTechs].sort((a: any, b: any) => (a.name || "").localeCompare(b.name || "")),
+    [allTechs],
+  );
+
+  // Phase S1 — Client-side tech filter. "all" shows everything; a
+  // specific tech_id keeps that tech's jobs + unassigned jobs.
+  const filteredJobs = useMemo(() => {
+    if (techFilter === "all") return jobs;
+    return jobs.filter((j) => j.technician_id === techFilter || !j.technician_id);
+  }, [jobs, techFilter]);
 
   // K15 · per-request AbortController — abort stale loads on new ones.
   const loadAbortRef = useRef<AbortController | null>(null);
@@ -402,21 +443,21 @@ function ScheduleCalendarInner() {
 
   const focusISO = iso(focus);
   const dayJobs = useMemo(() => {
-    const list = jobs.filter((j) => j.scheduled_date === focusISO);
+    const list = filteredJobs.filter((j) => j.scheduled_date === focusISO);
     list.sort((a, b) => (a.route_index ?? a.route_order ?? 999) - (b.route_index ?? b.route_order ?? 999));
     // Phase 30X · schedule is per-day; no time-of-day tiebreaker.
     return list;
-  }, [jobs, focusISO]);
+  }, [filteredJobs, focusISO]);
 
   /** Job-count map for the 7 visible WeekStrip days (client-side). */
   const weekCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const j of jobs) {
+    for (const j of filteredJobs) {
       const d = j.scheduled_date?.slice(0, 10);
       if (d) counts[d] = (counts[d] || 0) + 1;
     }
     return counts;
-  }, [jobs]);
+  }, [filteredJobs]);
 
   // Phase 1 Offline Read — which of today's jobs are cached for offline.
   const dayJobIds = useMemo(() => dayJobs.map((j) => j.id), [dayJobs]);
@@ -579,12 +620,12 @@ function ScheduleCalendarInner() {
   );
   const jobsByDay = useMemo(() => {
     const m: Record<string, Job[]> = {};
-    for (const j of jobs) {
+    for (const j of filteredJobs) {
       const d = j.scheduled_date || "";
       (m[d] = m[d] || []).push(j);
     }
     return m;
-  }, [jobs]);
+  }, [filteredJobs]);
 
   if (role === "customer") return <Redirect href="/(app)/jobs" />;
   if (!modeLoaded) return null;
@@ -593,7 +634,7 @@ function ScheduleCalendarInner() {
     <View style={styles.root}>
       <Header
         title="Schedule"
-        subtitle={loading ? "Loading…" : `${jobs.length} jobs in window · ${mode}`}
+        subtitle={loading ? "Loading…" : `${filteredJobs.length} jobs in window · ${mode}`}
         right={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
             {/* Sync route button */}
@@ -721,6 +762,31 @@ function ScheduleCalendarInner() {
           );
         })}
       </View>
+
+      {/* Phase S1 — Per-tech filter dropdown (admin/manager/owner only). */}
+      {!isTech && (
+        <View style={styles.techFilterRow} testID="schedule-tech-filter-row">
+          <Pressable
+            onPress={() => setTechPickerOpen(true)}
+            style={styles.techFilterBtn}
+            testID="schedule-tech-filter"
+            accessibilityRole="button"
+            accessibilityLabel="Filter schedule by technician"
+          >
+            <Ionicons name="person-outline" size={14} color={techFilter === "all" ? colors.muted : colors.brand} />
+            <Text
+              style={[styles.techFilterLabel, techFilter !== "all" && { color: colors.brand, fontFamily: font.bold }]}
+              numberOfLines={1}
+              testID="schedule-tech-filter-label"
+            >
+              {techFilter === "all"
+                ? "All techs"
+                : sortedTechs.find((t: any) => t.id === techFilter)?.name || "Tech"}
+            </Text>
+            <Ionicons name="chevron-down" size={12} color={techFilter === "all" ? colors.muted : colors.brand} />
+          </Pressable>
+        </View>
+      )}
 
       {/* K15 · Error card with retry — replaces the old tiny inline bar */}
       {err ? (
@@ -888,6 +954,53 @@ function ScheduleCalendarInner() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* Phase S1 — Tech filter picker modal */}
+      <Modal
+        visible={techPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTechPickerOpen(false)}
+      >
+        <Pressable
+          style={techPickerStyles.backdrop}
+          onPress={() => setTechPickerOpen(false)}
+        >
+          <View style={techPickerStyles.sheet}>
+            <Text style={techPickerStyles.title}>Filter by technician</Text>
+            <ScrollView style={{ maxHeight: 350 }}>
+              <Pressable
+                onPress={() => { handleTechFilterChange("all"); setTechPickerOpen(false); }}
+                style={[techPickerStyles.row, techFilter === "all" && techPickerStyles.rowActive]}
+                testID="tech-filter-option-all"
+              >
+                <Ionicons name="people-outline" size={16} color={techFilter === "all" ? colors.brand : colors.onSurface} />
+                <Text style={[techPickerStyles.rowLabel, techFilter === "all" && { color: colors.brand, fontFamily: font.bold }]}>
+                  All techs
+                </Text>
+                {techFilter === "all" && <Ionicons name="checkmark" size={16} color={colors.brand} />}
+              </Pressable>
+              {sortedTechs.map((t: any) => (
+                <Pressable
+                  key={t.id}
+                  onPress={() => { handleTechFilterChange(t.id); setTechPickerOpen(false); }}
+                  style={[techPickerStyles.row, techFilter === t.id && techPickerStyles.rowActive]}
+                  testID={`tech-filter-option-${t.id}`}
+                >
+                  <Ionicons name="person-outline" size={16} color={techFilter === t.id ? colors.brand : colors.onSurface} />
+                  <Text style={[techPickerStyles.rowLabel, techFilter === t.id && { color: colors.brand, fontFamily: font.bold }]}>
+                    {t.name}
+                  </Text>
+                  {techFilter === t.id && <Ionicons name="checkmark" size={16} color={colors.brand} />}
+                </Pressable>
+              ))}
+              {sortedTechs.length === 0 && (
+                <Text style={techPickerStyles.empty}>No technicians found</Text>
+              )}
+            </ScrollView>
+          </View>
+        </Pressable>
       </Modal>
     </View>
   );
@@ -1643,6 +1756,29 @@ const styles = StyleSheet.create({
   errRetryText: {
     fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff",
   },
+  // Phase S1 — Tech filter dropdown
+  techFilterRow: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  techFilterBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  techFilterLabel: {
+    fontFamily: font.medium,
+    fontSize: fontSize.sm,
+    color: colors.onSurfaceSecondary,
+    maxWidth: 160,
+  },
 });
 
 const gStyles = StyleSheet.create({
@@ -2046,6 +2182,62 @@ const actMenuStyles = StyleSheet.create({
     fontFamily: font.medium,
     fontSize: fontSize.base,
     color: colors.onSurface,
+  },
+});
+
+// Phase S1 — Tech filter picker modal styles.
+const techPickerStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing.xl,
+  },
+  sheet: {
+    width: "100%",
+    maxWidth: 340,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    ...Platform.select({
+      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 12 },
+      android: { elevation: 8 },
+      default: {},
+    }),
+  },
+  title: {
+    fontFamily: font.bold,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.xs,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radius.md,
+  },
+  rowActive: {
+    backgroundColor: colors.brandTertiary || "#EFF6FF",
+  },
+  rowLabel: {
+    flex: 1,
+    fontFamily: font.medium,
+    fontSize: fontSize.base,
+    color: colors.onSurface,
+  },
+  empty: {
+    fontFamily: font.regular,
+    fontSize: fontSize.base,
+    color: colors.muted,
+    textAlign: "center",
+    paddingVertical: 20,
   },
 });
 

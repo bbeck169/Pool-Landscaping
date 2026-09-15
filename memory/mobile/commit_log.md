@@ -2166,3 +2166,20 @@
   - `/app/mobile/src/components/checklist/PoolChecklistForm.tsx`
   - `/app/mobile/__tests__/chem4-isprimary-suppression.test.tsx`
 - **Web files referenced**: None (continuation of prior CHEM5 work)
+
+
+## Iteration 97 — Phase M3: Relabel + relocate Internal Photos / Internal Videos
+- **Commit**: 525a1bbcd
+- **Date**: 2026-09-15
+- **Changes**:
+  - Reordered checklist sections: Visit Media → Internal Photos → Internal Videos → Template Form
+  - Relabeled "Photos" card title → "Internal Photos"
+  - Added "Internal Videos" `<Text>` title wrapping `VideoMediaUploader` (component itself untouched)
+  - All props, state bindings, and handlers preserved — zero functional changes
+  - 5 Jest source-structure tests pass (title assertions + ordering assertions)
+  - Screenshot verification: all 3 cards present in correct order, titles correct
+- **Files modified**:
+  - `/app/mobile/app/job/[id]/checklist.tsx`
+  - `/app/mobile/__tests__/m3-internal-media-relabel.test.tsx` (NEW)
+- **Web files referenced**: None
+- **VideoMediaUploader.tsx**: Confirmed untouched (empty git diff)

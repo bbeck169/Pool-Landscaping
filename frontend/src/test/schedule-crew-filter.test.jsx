@@ -41,8 +41,11 @@ describe("CalendarSchedule · F6a crew filter", () => {
   });
 
   it("disables the tech dropdown when a crew is selected", () => {
-    // The tech <select> gets `disabled={!!crewId}`.
-    expect(SRC).toMatch(/data-testid="calendar-filter-tech"[\s\S]{0,600}disabled=\{!!crewId\}/);
+    // The tech <select> gets `disabled={!!crewId}`. Phase S1 · Feb-2026
+    // renamed the primary testid to ``schedule-tech-filter``; the
+    // legacy id ``calendar-filter-tech`` is preserved as
+    // ``data-testid-legacy`` for pre-S1 regression tests.
+    expect(SRC).toMatch(/data-testid="schedule-tech-filter"[\s\S]{0,600}disabled=\{!!crewId\}/);
   });
 
   it("renders the crew-member chips row when a crew is active", () => {
