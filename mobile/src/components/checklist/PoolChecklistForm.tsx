@@ -26,8 +26,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 // K60 · Feb-2026 — expand short-form chemistry labels (FC, TA, CYA, …)
 // to full names on the display surface.  Data keys unchanged.
-import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
-import ChemicalPickerSheet from "./ChemicalPickerSheet";
+import { snapRecommendationToPreset } from "./ChemicalDropdownStack";
 // Phase 44 · Fix 5 — `react-native-draggable-flatlist` uses
 // `setPointerCapture` on web which throws inside the RN-Web synthetic
 // event target. Gate the drag list to native only; on web we render a
@@ -194,8 +193,7 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
     [checklistItems, onChange],
   );
 
-  // Phase 31 · Step 2c — quick-add sheet visibility.
-  const [pickerOpen, setPickerOpen] = useState(false);
+  // Phase CHEM5 — standalone Chemicals Added removed; chemicals now live per-body in WaterBodyPanel.
 
   // Phase 34e — dose recommendations (mobile mirror of web).
   // Phase 56.10 — extended with `category` (`routine` / `ordering_note`
@@ -626,39 +624,7 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
         ) : null}
       </View>
 
-      {/* Chemicals Added — Phase 37 stacked dropdown rows */}
-      <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
-        Chemicals Added
-      </Text>
-      <ChemicalDropdownStack
-        chemicalsAdded={chemicalsAdded as any}
-        locked={locked}
-        onChange={onChange as any}
-        jobId={jobId}
-      />
-
-      {/* Phase 31 · Step 2c — quick-add sheet trigger. Complements the
-          preset-based dropdown above with a stepper-driven flow for the
-          "I just poured X of Y" case where the tech knows the exact
-          quantity and doesn't want to hunt for a preset. */}
-      <Pressable
-        onPress={() => !locked && setPickerOpen(true)}
-        style={styles.quickAddBtn}
-        disabled={locked}
-        testID="chem-picker-open"
-        accessibilityRole="button"
-        accessibilityLabel="Open quick-add chemical picker"
-      >
-        <Ionicons name="add-circle-outline" size={18} color={colors.brand} />
-        <Text style={styles.quickAddText}>Quick add chemical</Text>
-      </Pressable>
-      <ChemicalPickerSheet
-        visible={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        chemicalsAdded={chemicalsAdded}
-        onChange={onChange as any}
-        locked={locked}
-      />
+      {/* Phase CHEM5 — standalone Chemicals Added removed; chemicals live per-body in WaterBodyPanel. */}
 
       {/* Checklist */}
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Checklist</Text>

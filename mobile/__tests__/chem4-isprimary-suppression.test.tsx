@@ -1,9 +1,12 @@
 /**
- * Phase CHEM4 — isPrimary body suppression + additional-body header labels.
+ * Phase CHEM5 — Unified water-body forms + header labels.
+ *
+ * Supersedes CHEM4 isPrimary suppression. After CHEM5, ALL bodies
+ * (including isPrimary=true) render Chemistry Readings and Chemicals.
  *
  * Tests:
- *  1. Body 0 (isPrimary=true) → Chemistry Readings NOT rendered.
- *  2. Body 0 (isPrimary=true) → Chemicals Used NOT rendered.
+ *  1. Body 0 (isPrimary=true) → Chemistry Readings IS rendered.
+ *  2. Body 0 (isPrimary=true) → Chemicals section IS rendered, header = "Pool".
  *  3. Body 1 (isPrimary=false, spa) → Chemistry Readings + Chemicals both render.
  *  4. Body 1 (spa) → header "Additional Body of Water Chemicals" + sub-header "Spa".
  *  5. Body 1 (fountain) → sub-header "Fountain".
@@ -26,10 +29,10 @@ const makeBody = (type: string, overrides?: any) => ({
 
 const noop = () => {};
 
-describe("Phase CHEM4 — isPrimary suppression + additional-body headers", () => {
+describe("Phase CHEM5 — unified water-body forms + header labels", () => {
 
-  it("isPrimary=true → Chemistry Readings section NOT rendered", () => {
-    const { queryByTestId, queryByText } = render(
+  it("isPrimary=true → Chemistry Readings section IS rendered", () => {
+    const { getByText, getByTestId } = render(
       <WaterBodyPanel
         body={makeBody("pool")}
         index={0}
@@ -40,12 +43,13 @@ describe("Phase CHEM4 — isPrimary suppression + additional-body headers", () =
         onRemove={noop}
       />,
     );
-    expect(queryByText("Chemistry Readings")).toBeNull();
-    expect(queryByTestId("reading-row-0-free_chlorine")).toBeNull();
+    expect(getByText("Chemistry Readings")).toBeTruthy();
+    // Pool bodies should show reading rows
+    expect(getByTestId("reading-row-0-free_chlorine")).toBeTruthy();
   });
 
-  it("isPrimary=true → Chemicals Used section NOT rendered", () => {
-    const { queryByText, queryByTestId } = render(
+  it('isPrimary=true → Chemicals section IS rendered with header "Pool"', () => {
+    const { getByTestId } = render(
       <WaterBodyPanel
         body={makeBody("pool")}
         index={0}
@@ -56,9 +60,9 @@ describe("Phase CHEM4 — isPrimary suppression + additional-body headers", () =
         onRemove={noop}
       />,
     );
-    expect(queryByText("Additional Body of Water Chemicals")).toBeNull();
-    expect(queryByText("Chemicals Used")).toBeNull();
-    expect(queryByTestId("water-body-chem-header-0")).toBeNull();
+    const header = getByTestId("water-body-chem-header-0");
+    expect(header).toBeTruthy();
+    expect(header.props.children).toBe("Pool");
   });
 
   it("isPrimary=false (spa) → Chemistry Readings + Chemicals both render", () => {

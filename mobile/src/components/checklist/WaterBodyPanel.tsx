@@ -150,57 +150,51 @@ export default function WaterBodyPanel({
         ) : null}
       </View>
 
-      {/* Chemistry readings — suppressed for primary body (lives at report level) */}
-      {!isPrimary && (
-        <>
-          <Text style={s.sectionLabel}>Chemistry Readings</Text>
-          {allowedReadings.map((key) => {
-            const meta = READING_LABELS[key] || { name: key, unit: "ppm", short: key };
-            const cur = readingsByKey.get(key);
-            const isMissing = missingSet.has(key);
-            const isRequired = requiredSet.has(key);
-            return (
-              <View key={key} style={[s.readingRow, isMissing && s.readingRowMissing]} testID={`reading-row-${index}-${key}`}>
-                <View style={s.readingLabel}>
-                  <Text style={[s.readingName, isMissing && { color: colors.error }]}>
-                    {meta.name}
-                    {isRequired ? <Text style={{ color: colors.error }}> *</Text> : null}
-                  </Text>
-                  {meta.unit ? <Text style={s.readingUnit}>{meta.unit}</Text> : null}
-                </View>
-                <AppTextInput
-                  style={[s.readingInput, isMissing && s.readingInputMissing]}
-                  value={cur?.value != null ? String(cur.value) : ""}
-                  onChangeText={(v) => setReading(key, v)}
-                  keyboardType="decimal-pad"
-                  editable={!locked}
-                  placeholder="—"
-                  placeholderTextColor={colors.muted}
-                  testID={`reading-input-${index}-${key}`}
-                />
-              </View>
-            );
-          })}
-        </>
-      )}
+      {/* Chemistry readings — rendered for every body */}
+      <Text style={s.sectionLabel}>Chemistry Readings</Text>
+      {allowedReadings.map((key) => {
+        const meta = READING_LABELS[key] || { name: key, unit: "ppm", short: key };
+        const cur = readingsByKey.get(key);
+        const isMissing = missingSet.has(key);
+        const isRequired = requiredSet.has(key);
+        return (
+          <View key={key} style={[s.readingRow, isMissing && s.readingRowMissing]} testID={`reading-row-${index}-${key}`}>
+            <View style={s.readingLabel}>
+              <Text style={[s.readingName, isMissing && { color: colors.error }]}>
+                {meta.name}
+                {isRequired ? <Text style={{ color: colors.error }}> *</Text> : null}
+              </Text>
+              {meta.unit ? <Text style={s.readingUnit}>{meta.unit}</Text> : null}
+            </View>
+            <AppTextInput
+              style={[s.readingInput, isMissing && s.readingInputMissing]}
+              value={cur?.value != null ? String(cur.value) : ""}
+              onChangeText={(v) => setReading(key, v)}
+              keyboardType="decimal-pad"
+              editable={!locked}
+              placeholder="—"
+              placeholderTextColor={colors.muted}
+              testID={`reading-input-${index}-${key}`}
+            />
+          </View>
+        );
+      })}
 
-      {/* Phase CHEM4 — Chemicals used, suppressed for primary body */}
+      {/* Phase CHEM5 — Chemicals used on every body; header varies by isPrimary */}
+      <Text style={s.sectionLabel} testID={`water-body-chem-header-${index}`}>
+        {isPrimary ? "Pool" : "Additional Body of Water Chemicals"}
+      </Text>
       {!isPrimary && (
-        <>
-          <Text style={s.sectionLabel} testID={`water-body-chem-header-${index}`}>
-            Additional Body of Water Chemicals
-          </Text>
-          <Text style={s.subHeader} testID={`water-body-chem-subheader-${index}`}>
-            {BODY_TYPE_LABELS[body.type] || body.type}
-          </Text>
-          <ChemicalDropdownStack
-            chemicalsAdded={chemAdapted as any}
-            locked={locked}
-            onChange={handleChemChange}
-            bodyType={body.type}
-          />
-        </>
+        <Text style={s.subHeader} testID={`water-body-chem-subheader-${index}`}>
+          {BODY_TYPE_LABELS[body.type] || body.type}
+        </Text>
       )}
+      <ChemicalDropdownStack
+        chemicalsAdded={chemAdapted as any}
+        locked={locked}
+        onChange={handleChemChange}
+        bodyType={body.type}
+      />
 
       {/* Notes */}
       <Text style={s.sectionLabel}>Notes</Text>
