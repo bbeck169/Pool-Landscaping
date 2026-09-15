@@ -58,10 +58,10 @@ export const READING_ALLOWLIST: Record<string, string[]> = {
 
 export const READING_REQUIRED: Record<string, string[]> = {
   pool: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid"],
-  spa: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid"],
+  spa: [],
   water_feature: [],
   fountain: [],
-  other: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid"],
+  other: [],
 };
 
 /* ── Chemical allow-list per body type ──────────────────────────────── */

@@ -2089,3 +2089,24 @@
   - `/app/mobile/__tests__/chem1-required-four.test.ts` (NEW)
 - **Before grep count**: 30 occurrences of total_chlorine/Total Chlorine
 - **After grep count**: 0 (outside tests)
+
+## Iteration 101 — Phase CHEM1.1: READING_REQUIRED only enforces on pool bodies
+- **Commit**: (same session)
+- **Date**: 2026-09-15
+- **Changes**:
+  - Set spa, water_feature, fountain, other to `[]` in READING_REQUIRED (only pool keeps Required Four)
+  - Updated tests: 13 tests (added spa/other/water_feature/fountain empty assertions + blank spa/other validation tests)
+- **Files modified**:
+  - `/app/mobile/src/lib/waterBodies.ts`
+  - `/app/mobile/__tests__/chem1-required-four.test.ts`
+
+## Iteration 102 — Phase CHEM2: Cyanuric alias dedupe on WaterBodyPanel
+- **Commit**: (same session)
+- **Date**: 2026-09-15
+- **Changes**:
+  - WaterBodyPanel read path: `readingsByKey` resolves `cyanuric` → `cyanuric_acid` via LEGACY_ALIAS; canonical key wins if both exist
+  - WaterBodyPanel write path: `setReading` strips legacy `cyanuric` entries when writing `cyanuric_acid`
+  - Added 7 Jest tests covering all 5 alias scenarios + write-path verification
+- **Files modified**:
+  - `/app/mobile/src/components/checklist/WaterBodyPanel.tsx`
+  - `/app/mobile/__tests__/chem2-cyanuric-alias.test.ts` (NEW)

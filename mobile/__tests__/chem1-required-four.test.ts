@@ -29,11 +29,24 @@ describe("Phase CHEM1 — total_chlorine removed + Required Four only", () => {
   });
 
   it("READING_REQUIRED for pool contains exactly the Required Four", () => {
+    expect(READING_REQUIRED.pool).toHaveLength(4);
     expect([...READING_REQUIRED.pool].sort()).toEqual([...REQUIRED_FOUR].sort());
   });
 
-  it("READING_REQUIRED for spa enforces the Required Four (per-body)", () => {
-    expect([...READING_REQUIRED.spa].sort()).toEqual([...REQUIRED_FOUR].sort());
+  it("READING_REQUIRED for spa is empty (no gating)", () => {
+    expect(READING_REQUIRED.spa).toEqual([]);
+  });
+
+  it("READING_REQUIRED for water_feature is empty", () => {
+    expect(READING_REQUIRED.water_feature).toEqual([]);
+  });
+
+  it("READING_REQUIRED for fountain is empty", () => {
+    expect(READING_REQUIRED.fountain).toEqual([]);
+  });
+
+  it("READING_REQUIRED for other is empty", () => {
+    expect(READING_REQUIRED.other).toEqual([]);
   });
 
   it("READING_LABELS does not contain total_chlorine", () => {
@@ -91,5 +104,15 @@ describe("Phase CHEM1 — total_chlorine removed + Required Four only", () => {
     expect(missing).toContain("alkalinity");
     expect(missing).toContain("cyanuric_acid");
     expect(missing).not.toContain("total_chlorine");
+  });
+
+  it("spa body with ALL readings blank triggers no required-field warning", () => {
+    const body = { type: "spa", label: "Hot Tub", readings: [] } as any;
+    expect(missingRequiredReadings(body)).toEqual([]);
+  });
+
+  it("other body with ALL readings blank triggers no required-field warning", () => {
+    const body = { type: "other", label: "Pond", readings: [] } as any;
+    expect(missingRequiredReadings(body)).toEqual([]);
   });
 });

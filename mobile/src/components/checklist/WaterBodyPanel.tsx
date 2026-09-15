@@ -3,6 +3,11 @@
  *
  * Renders chemistry inputs (filtered by type allow-list), a chemicals
  * section, notes, and a remove button. One card per body of water.
+ *
+ * Phase CHEM2 · Cyanuric alias dedupe:
+ *   Legacy `cyanuric` key treated as alias for canonical `cyanuric_acid`.
+ *   Read path: resolves `cyanuric` → `cyanuric_acid`.
+ *   Write path: always writes `cyanuric_acid`; drops legacy `cyanuric` entry.
  */
 import React, { useMemo } from "react";
 import {
@@ -15,6 +20,9 @@ import {
   CHEMICAL_ALLOWLIST, CHEMICAL_LABELS,
 } from "@/src/lib/waterBodies";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+
+// Phase CHEM2 — alias: legacy `cyanuric` → canonical `cyanuric_acid`.
+const LEGACY_ALIAS: Record<string, string> = { cyanuric: "cyanuric_acid" };
 
 interface Props {
   body: WaterBody;
@@ -47,18 +55,31 @@ export default function WaterBodyPanel({
     [body.type],
   );
 
+  // Phase CHEM2 — alias: legacy `cyanuric` → canonical `cyanuric_acid`.
+
   const readingsByKey = useMemo(() => {
     const map = new Map<string, any>();
     for (const r of body.readings || []) {
-      if (r?.key) map.set(r.key, r);
+      if (!r?.key) continue;
+      const canonical = LEGACY_ALIAS[r.key] || r.key;
+      // If canonical key already set (from the actual `cyanuric_acid` entry),
+      // skip the legacy duplicate — canonical wins.
+      if (canonical !== r.key && map.has(canonical)) continue;
+      map.set(canonical, r);
     }
     return map;
   }, [body.readings]);
 
   const setReading = (key: string, value: string) => {
-    const next = [...(body.readings || [])];
-    const idx = next.findIndex((r) => r.key === key);
+    let next = [...(body.readings || [])];
     const meta = READING_LABELS[key] || { name: key, unit: "ppm" };
+
+    // Phase CHEM2 — on write to cyanuric_acid, drop legacy `cyanuric` entry.
+    if (key === "cyanuric_acid") {
+      next = next.filter((r) => r.key !== "cyanuric");
+    }
+
+    const idx = next.findIndex((r) => r.key === key);
     if (idx >= 0) {
       next[idx] = { ...next[idx], value: value || null };
     } else {

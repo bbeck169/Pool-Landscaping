@@ -21,7 +21,10 @@ for the raise contract.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
 
@@ -121,6 +124,23 @@ def _is_valid_reading(v: Any) -> bool:
     return False
 
 
+def _is_blank_reading(v: Any) -> bool:
+    """Phase CHEM2 · Feb-2026 — "blank" means the tech never entered
+    anything: ``None`` OR whitespace-only string. Every other value
+    (including unparseable strings like ``"abc"`` or literal ``0``)
+    is treated as a real, tech-entered value for merge purposes.
+
+    Distinct from :func:`_is_valid_reading` — that helper decides
+    whether the gate accepts the value; this one decides whether an
+    alias collision should prefer this value over its peer.
+    """
+    if v is None:
+        return True
+    if isinstance(v, str) and not v.strip():
+        return True
+    return False
+
+
 def normalize_readings(source: Any) -> Dict[str, Any]:
     """Coerce a ``chemical_readings`` payload into a flat
     ``{canonical_key: value}`` dict.  Accepts:
@@ -130,24 +150,100 @@ def normalize_readings(source: Any) -> Dict[str, Any]:
     * dict:            ``{"free_chlorine": 2.5, …}``
                        — the legacy ``jobs.chemical_readings`` shape.
 
-    Unknown / unaliased keys are dropped.  The first occurrence of
-    a canonical key wins (list order preserved).
+    Unknown / unaliased keys are dropped.
+
+    Phase CHEM2 · Feb-2026 — Alias dedupe (prefer-value-over-blank):
+        Legacy and canonical alias keys frequently coexist in the
+        same payload (e.g. ``cyanuric`` + ``cyanuric_acid``,
+        ``chlorine`` + ``free_chlorine``, ``total_alkalinity`` +
+        ``alkalinity``, ``cya`` + ``cyanuric_acid``, …).  The merge
+        below resolves every alias collision using two rules only:
+
+          1. If one side is blank and the other is non-blank, KEEP
+             the non-blank value under the canonical key. This is
+             the common case where a tenant migrated schemas but
+             left one shape empty.
+          2. If both sides are non-blank, the value stored under
+             the CANONICAL key wins; the alias hit is logged and
+             dropped. This is a legitimate authoring collision
+             that the tenant must eventually clean up in Mongo.
+
+        Ordering within the input dict/list no longer decides the
+        winner — the merge is order-independent.
     """
     out: Dict[str, Any] = {}
+    # Provenance per canonical key — ``"canonical"`` means the value
+    # was written by the canonical key itself (e.g. ``cyanuric_acid``);
+    # ``"alias"`` means it came from a legacy alias (e.g. ``cyanuric``,
+    # ``cya``).  Used by the both-non-blank branch to decide the
+    # winner (rule 2 above).
+    _prov: Dict[str, str] = {}
+
+    def _norm_input_key(k: Any) -> str:
+        return str(k or "").strip().lower().replace("-", "_")
+
+    def _upsert(ck: str, raw_key: Any, val: Any) -> None:
+        is_canonical_key = _norm_input_key(raw_key) == ck
+        new_blank = _is_blank_reading(val)
+        if ck not in out:
+            out[ck] = val
+            _prov[ck] = "canonical" if is_canonical_key else "alias"
+            return
+        stored_blank = _is_blank_reading(out[ck])
+        stored_prov  = _prov.get(ck, "alias")
+        # Rule 1 — one side blank, one side non-blank: keep the
+        # non-blank value.
+        if stored_blank and not new_blank:
+            out[ck] = val
+            _prov[ck] = "canonical" if is_canonical_key else "alias"
+            return
+        if (not stored_blank) and new_blank:
+            return
+        # Rule 2 — both non-blank: canonical wins.
+        if (not stored_blank) and (not new_blank):
+            if is_canonical_key and stored_prov != "canonical":
+                logger.info(
+                    "[chem-normalize] %s alias collision — keeping "
+                    "%s, drop legacy %s",
+                    ck, ck, out.get("_prev_key", "alias"),
+                )
+                out[ck] = val
+                _prov[ck] = "canonical"
+                return
+            if (not is_canonical_key) and stored_prov == "canonical":
+                logger.info(
+                    "[chem-normalize] %s alias collision — keeping "
+                    "%s, drop legacy %s",
+                    ck, ck, raw_key,
+                )
+                return
+            # Neither is the canonical key OR both look canonical
+            # (impossible by construction). First-seen wins for
+            # determinism and we still surface the collision.
+            logger.info(
+                "[chem-normalize] %s alias collision — keeping %s, "
+                "drop legacy %s",
+                ck, ck, raw_key,
+            )
+            return
+        # Both blank — keep first-seen (already stored).
+        return
+
     if isinstance(source, dict):
         for k, v in source.items():
             ck = _canonical_key(k)
-            if ck and ck not in out:
-                out[ck] = v
+            if ck:
+                _upsert(ck, k, v)
         return out
     if isinstance(source, list):
         for row in source:
             if not isinstance(row, dict):
                 continue
-            ck = _canonical_key(row.get("key") or row.get("name"))
-            if not ck or ck in out:
+            raw = row.get("key") or row.get("name")
+            ck = _canonical_key(raw)
+            if not ck:
                 continue
-            out[ck] = row.get("value")
+            _upsert(ck, raw, row.get("value"))
         return out
     return out
 
