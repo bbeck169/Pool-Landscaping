@@ -125,6 +125,37 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   const [recapOpen, setRecapOpen] = useState(false);
   const [recapCustomer, setRecapCustomer] = useState(null);
 
+  // Phase C1 · Feb-2026 — guarded close.  ``dirtyRef.current`` already
+  // tracks every autosave-worthy edit (scheduleAutosave sets it true,
+  // successful flushSave sets it false).  ``attemptClose`` intercepts
+  // the three implicit-close triggers (backdrop tap, header "×",
+  // Escape key) and either closes silently on a clean form OR opens
+  // a small Discard confirm on a dirty form.  Explicit save-then-exit
+  // paths (Save & exit button, submit success, recap dismissal)
+  // still call ``onClose`` directly — they're not implicit closes.
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const attemptClose = useCallback(() => {
+    if (!open) return;
+    if (dirtyRef.current) {
+      setDiscardConfirmOpen(true);
+    } else {
+      onClose?.();
+    }
+  }, [open, onClose]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      // Ignore Esc while the Discard confirm itself is open —
+      // that dialog handles its own dismissal path.
+      if (e.key === "Escape" && !discardConfirmOpen) {
+        e.stopPropagation();
+        attemptClose();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, discardConfirmOpen, attemptClose]);
+
   // Reset when the modal closes / re-opens for a different job.
   useEffect(() => {
     if (!open) {
@@ -392,7 +423,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   // ─── Overlay + shell ────────────────────────────────────────────────
   const backdrop = (
     <div
-      onClick={onClose}
+      onClick={attemptClose}
       style={{
         position: "fixed", inset: 0, zIndex: 50,
         background: "rgba(15,23,42,0.55)",
@@ -407,15 +438,87 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
           width: "min(760px, 96vw)", maxHeight: "92vh",
           display: "flex", flexDirection: "column",
           boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
+          position: "relative",   /* Phase C1 · anchor the Discard confirm overlay */
         }}
         data-testid="checklist-modal"
       >
         {renderHeader()}
         {renderBody()}
         {renderFooter()}
+        {discardConfirmOpen && renderDiscardConfirm()}
       </div>
     </div>
   );
+
+  // Phase C1 · Feb-2026 — Discard-changes confirm dialog.  Rendered
+  // as an overlay ON TOP of the checklist shell so its own backdrop
+  // tap dismisses the confirm (not the checklist).  The primary red
+  // ``Discard`` button flips ``dirtyRef.current`` to false BEFORE
+  // calling ``onClose`` so a stray autosave-in-flight doesn't try
+  // to reopen the discarded state on completion.
+  function renderDiscardConfirm() {
+    return (
+      <div
+        onClick={() => setDiscardConfirmOpen(false)}
+        style={{
+          position: "absolute", inset: 0, zIndex: 60,
+          background: "rgba(15,23,42,0.55)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          borderRadius: 12,
+        }}
+        data-testid="checklist-discard-confirm-backdrop"
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            background: c.surface, borderRadius: 10, padding: 20,
+            width: "min(400px, 92vw)",
+            boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
+          }}
+          data-testid="checklist-discard-confirm"
+        >
+          <div style={{
+            fontSize: 16, fontWeight: 700, color: c.onSurface,
+            marginBottom: 8,
+          }}>
+            Discard unsaved changes?
+          </div>
+          <div style={{ fontSize: 13, color: c.muted, marginBottom: 16 }}>
+            You have unsaved changes on this checklist. Discard them?
+          </div>
+          <div style={{
+            display: "flex", justifyContent: "flex-end", gap: 8,
+          }}>
+            <button
+              type="button"
+              onClick={() => setDiscardConfirmOpen(false)}
+              className="px-3 py-1.5 rounded-md text-sm font-semibold"
+              style={{
+                background: c.surfaceAlt, color: c.onSurface,
+                border: `1px solid ${c.border}`,
+              }}
+              data-testid="checklist-discard-keep-editing"
+            >
+              Keep editing
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                dirtyRef.current = false;
+                setDiscardConfirmOpen(false);
+                onClose?.();
+              }}
+              className="px-3 py-1.5 rounded-md text-sm font-semibold text-white"
+              style={{ background: "#DC2626" }}
+              data-testid="checklist-discard-confirm-btn"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   function renderHeader() {
     const clientType = job ? getChecklistType(job) : "";
@@ -494,9 +597,9 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={attemptClose}
           style={{ background: "transparent", border: 0, cursor: "pointer", color: "#fff" }}
-          aria-label="Close"
+          aria-label="Close checklist"
           data-testid="checklist-modal-close"
         >
           <X size={18} />
