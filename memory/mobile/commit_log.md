@@ -1,3 +1,23 @@
+## Iteration 93 — Fix: AddressAutocomplete "missing" on Expo web preview
+- **Commit**: 8acf65b0
+- **Date**: 2026-09-14
+- **Root cause**: Stale Metro bundler cache — the deployed Metro dev server was serving a cached bundle from before AddressAutocomplete was added. The tester's "You're offline" banner was from `mapApiError.ts` network error handler, not a persistent offline state. Cache headers (`no-store, no-cache`) were correct but Metro's in-memory cache was stale.
+- **Fixes applied**:
+  1. Cleared Metro cache (`node_modules/.cache/metro-*`, `/tmp/metro-*`, `/tmp/haste-map-*`) and restarted mobile service
+  2. Added `AddressErrorBoundary` class component in `NewLeadForm.tsx` — wraps `AddressAutocomplete` so if it ever crashes (stale cache, lazy-load failure), a plain TextInput fallback renders instead of the entire Address section disappearing
+- **Evidence**: 5 consecutive Playwright runs (including cache-cleared sessions) all show Address section rendering correctly. All testIDs found. 5 suggestions appear for "1600 Amphi". Selection populates address + lat/lng.
+- **Files modified**: `src/components/NewLeadForm.tsx` (error boundary added)
+
+
+## Iteration 92 — Fix AddressAutocomplete dropdown linger after selection
+- **Commit**: 8acf65b0
+- **Date**: 2026-09-14
+- **Root cause**: The e1_tester report was from a stale build — the component renders correctly on the live preview. However, the dropdown lingered after selection because `setQuery(formatted)` re-triggered the debounce useEffect which re-fetched suggestions.
+- **Fix**: Added `justSelectedRef` flag to suppress the debounce fetch immediately after a suggestion is selected. Also cleared `suggestions` array + `open` state before the query update to prevent any stale rendering.
+- **Files modified**: `src/components/common/AddressAutocomplete.tsx`
+- **Evidence**: Playwright DOM check confirms Address wrapper:1, Input:1, Location btn:1. Dropdown visible after select: False.
+
+
 ## Iteration 91 — Lead Intake Address Autofill (Google Places)
 - **Commit**: 23baaa27
 - **Date**: 2026-09-14

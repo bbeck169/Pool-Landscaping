@@ -112,6 +112,7 @@ export default function AddressAutocomplete({
   const [remoteErr, setRemoteErr] = useState("");
   const sessionTokenRef = useRef(makeSessionToken());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const justSelectedRef = useRef(false);
 
   // Sync with parent value resets.
   useEffect(() => { setQuery(value || ""); }, [value]);
@@ -119,6 +120,12 @@ export default function AddressAutocomplete({
   // Debounced suggestions fetch.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    // Skip fetch right after a suggestion was selected — the query
+    // changed to the full address string, not a manual keystroke.
+    if (justSelectedRef.current) {
+      justSelectedRef.current = false;
+      return;
+    }
     const trimmed = (query || "").trim();
     if (trimmed.length < MIN_QUERY) {
       setSuggestions([]);
@@ -179,9 +186,11 @@ export default function AddressAutocomplete({
         sessionTokenRef.current = makeSessionToken();
 
         if (!details) {
+          justSelectedRef.current = true;
           setQuery(row.description || "");
-          emitManual(row.description || "");
+          setSuggestions([]);
           setOpen(false);
+          emitManual(row.description || "");
           return;
         }
 
@@ -194,7 +203,10 @@ export default function AddressAutocomplete({
           .filter(Boolean)
           .join(", ");
 
+        justSelectedRef.current = true;
         setQuery(formatted || row.description || "");
+        setSuggestions([]);
+        setOpen(false);
         onChange?.({
           street: details.street || "",
           city: details.city || "",
@@ -205,7 +217,6 @@ export default function AddressAutocomplete({
           formatted,
           place_id: row.place_id,
         });
-        setOpen(false);
       } catch {
         setRemoteErr("Address lookup failed — type manually.");
       } finally {

@@ -658,6 +658,160 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
     )
 
 
+# ─── Phase R1 · Feb-2026 · Recurring-Jobs Bulk Hard Delete ────────────
+#
+# Extracted from ``delete_recurring(hard=True)`` so the per-row + bulk
+# endpoints share ONE removal + audit path.  Never raises HTTPException
+# so the bulk loop can aggregate per-id status without one bad id
+# short-circuiting the response.
+async def _hard_delete_recurring_job(
+    *,
+    tpl_id: str,
+    actor: Dict[str, Any],
+    tenant_id: str,
+    today_anchor: str,
+) -> Dict[str, Any]:
+    """Hard-delete one recurring template + cancel its future visits.
+
+    Parameters
+    ----------
+    tpl_id
+        Recurring-job template id.
+    actor
+        The authenticated user dict — used for the audit trail.
+    tenant_id
+        Owning tenant.  Rows belonging to a different tenant return
+        ``status = "forbidden"`` and are NOT touched.
+    today_anchor
+        ISO date string.  Every child job whose ``scheduled_date >=
+        today_anchor`` is cancelled.  Callers preserving the pre-R1
+        strictly-greater semantics pass tomorrow's date; the bulk
+        endpoint passes ``date.today().isoformat()`` per the phase
+        brief.
+
+    Returns
+    -------
+    dict shaped as::
+
+        {"recurring_job_id": str,
+         "status": "deleted" | "not_found" | "forbidden" | "error",
+         "future_visits_deleted": int,
+         "error"?: str}
+    """
+    try:
+        tpl = await db.recurring_job_templates.find_one(
+            {"id": tpl_id}, {"_id": 0},
+        )
+        if not tpl:
+            return {"recurring_job_id": tpl_id,
+                     "status": "not_found",
+                     "future_visits_deleted": 0}
+        if tpl.get("tenant_id") != tenant_id:
+            return {"recurring_job_id": tpl_id,
+                     "status": "forbidden",
+                     "future_visits_deleted": 0}
+        cancel_res = await db.jobs.update_many(
+            {
+                "tenant_id": tenant_id,
+                "recurring_template_id": tpl_id,
+                "status": "scheduled",
+                "scheduled_date": {"$gte": today_anchor},
+            },
+            {"$set": {"status": "cancelled",
+                       "cancelled_at": now_iso(),
+                       "cancelled_reason": "recurring_template_hard_deleted",
+                       "updated_at": now_iso()}},
+        )
+        future_visits_deleted = int(cancel_res.modified_count or 0)
+        await db.recurring_job_templates.delete_one(
+            {"id": tpl_id, "tenant_id": tenant_id},
+        )
+        try:
+            await db.audit_logs.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant_id,
+                "actor_user_id": actor.get("id"),
+                "actor_email": actor.get("email"),
+                "action": "recurring_job.hard_delete",
+                "target_type": "recurring_job_template",
+                "target_id": tpl_id,
+                "target_snapshot": {
+                    k: tpl.get(k) for k in
+                    ("id", "customer_id", "service_type", "frequency",
+                     "start_date", "end_date", "is_active", "active")
+                },
+                "future_jobs_cancelled": future_visits_deleted,
+                "created_at": now_iso(),
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"[recurring hard-delete] audit log write failed: {e}")
+        return {"recurring_job_id": tpl_id,
+                 "status": "deleted",
+                 "future_visits_deleted": future_visits_deleted}
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f"[recurring hard-delete] id={tpl_id} unexpected error: {e}")
+        return {"recurring_job_id": tpl_id,
+                 "status": "error",
+                 "future_visits_deleted": 0,
+                 "error": str(e)}
+
+
+class _BulkDeleteIn(BaseModel):
+    recurring_job_ids: List[str] = Field(..., min_items=1, max_items=200)
+
+
+@router.post("/recurring-jobs/bulk-delete")
+async def bulk_hard_delete_recurring(
+    body: _BulkDeleteIn,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase R1 · Feb-2026 — bulk hard-delete recurring templates.
+
+    Best-effort per-id: verifies tenant ownership, cancels every
+    future-scheduled child job (``scheduled_date >= today``), removes
+    the template row, and emits an audit-log entry.  Never raises
+    on partial failures — each id gets its own status row and the
+    caller sees an aggregate summary.
+
+    Auth: ``require_admin`` (accepts ``admin`` / ``super_admin`` /
+    ``owner`` per ``utils.require_admin``).  Non-admin callers get
+    403 before this handler ever runs.
+    """
+    # Preserve caller order + de-dupe silently — repeat ids in a
+    # single call would double-count summary numbers otherwise.
+    ids_seen: set = set()
+    ordered_ids: List[str] = []
+    for tid in body.recurring_job_ids:
+        if tid and tid not in ids_seen:
+            ids_seen.add(tid)
+            ordered_ids.append(tid)
+
+    today_iso = date.today().isoformat()
+    results: List[Dict[str, Any]] = []
+    for tid in ordered_ids:
+        results.append(await _hard_delete_recurring_job(
+            tpl_id=tid, actor=user, tenant_id=tenant["id"],
+            today_anchor=today_iso,
+        ))
+
+    templates_deleted = sum(1 for r in results if r["status"] == "deleted")
+    future_visits_deleted = sum(
+        int(r.get("future_visits_deleted") or 0) for r in results)
+    errors = sum(1 for r in results
+                    if r["status"] in ("error", "forbidden", "not_found"))
+    return {
+        "results": results,
+        "summary": {
+            "templates_deleted": templates_deleted,
+            "future_visits_deleted": future_visits_deleted,
+            "errors": errors,
+        },
+    }
+
+
 @router.delete("/recurring-jobs/{tpl_id}")
 async def delete_recurring(tpl_id: str,
                              hard: bool = Query(False),
@@ -677,59 +831,33 @@ async def delete_recurring(tpl_id: str,
           — completed / in-progress children are preserved.
         - Emit an ``audit_logs`` entry so the delete is traceable.
     Both branches are admin-only (same auth as create/patch).
+
+    Phase R1 · Feb-2026 — the ``hard=true`` branch delegates to
+    ``_hard_delete_recurring_job`` so ``POST /recurring-jobs/bulk-
+    delete`` can share the exact same removal + audit logic.  The
+    per-row wire contract is preserved: this endpoint's response
+    stays ``{id, hard_deleted: True, future_jobs_cancelled: N}``
+    while the helper returns the newer, richer per-id status shape
+    the bulk endpoint aggregates.
     """
     if hard:
-        # Fetch the doc first so the audit entry carries a snapshot
-        # + we can 404 cleanly when the id is unknown.
-        tpl = await db.recurring_job_templates.find_one(
-            {"id": tpl_id, "tenant_id": tenant["id"]}, {"_id": 0},
+        # Pre-Phase-R1 semantics: cancel visits STRICTLY AFTER today
+        # (``scheduled_date > today``).  The helper's cutoff is a
+        # ``>=`` comparator, so pass ``tomorrow`` to preserve
+        # backwards-compat.
+        tomorrow_iso = (date.today() + timedelta(days=1)).isoformat()
+        result = await _hard_delete_recurring_job(
+            tpl_id=tpl_id, actor=user, tenant_id=tenant["id"],
+            today_anchor=tomorrow_iso,
         )
-        if not tpl:
+        if result["status"] == "not_found":
             raise HTTPException(404, "template not found")
-        # Cancel future-scheduled children (leave completed/in-
-        # progress rows alone).
-        today_iso = date.today().isoformat()
-        cancel_res = await db.jobs.update_many(
-            {
-                "tenant_id": tenant["id"],
-                "recurring_template_id": tpl_id,
-                "status": "scheduled",
-                "scheduled_date": {"$gt": today_iso},
-            },
-            {"$set": {"status": "cancelled",
-                       "cancelled_at": now_iso(),
-                       "cancelled_reason": "recurring_template_hard_deleted",
-                       "updated_at": now_iso()}},
-        )
-        # Remove the template row.
-        await db.recurring_job_templates.delete_one(
-            {"id": tpl_id, "tenant_id": tenant["id"]},
-        )
-        # Audit trail — same collection every other admin action
-        # writes to (best-effort, never blocks the delete).
-        try:
-            await db.audit_logs.insert_one({
-                "id": new_id(),
-                "tenant_id": tenant["id"],
-                "actor_user_id": user.get("id"),
-                "actor_email": user.get("email"),
-                "action": "recurring_job.hard_delete",
-                "target_type": "recurring_job_template",
-                "target_id": tpl_id,
-                "target_snapshot": {
-                    k: tpl.get(k) for k in
-                    ("id", "customer_id", "service_type", "frequency",
-                     "start_date", "end_date", "is_active", "active")
-                },
-                "future_jobs_cancelled": cancel_res.modified_count,
-                "created_at": now_iso(),
-            })
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[recurring hard-delete] audit log write failed: {e}")
+        if result["status"] == "forbidden":  # pragma: no cover
+            raise HTTPException(403, "template not owned by tenant")
         return {
             "id": tpl_id,
             "hard_deleted": True,
-            "future_jobs_cancelled": cancel_res.modified_count,
+            "future_jobs_cancelled": result["future_visits_deleted"],
         }
 
     # ── Soft delete branch (existing behavior) ──

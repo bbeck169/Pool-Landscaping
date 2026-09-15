@@ -9,6 +9,19 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
 import AddressAutocomplete, { type AddressSelection } from "@/src/components/common/AddressAutocomplete";
 
+// Defensive wrapper: if AddressAutocomplete crashes (stale cache, lazy-load
+// failure, etc.) the form still renders a plain TextInput for the address.
+class AddressErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children;
+  }
+}
+
 const SOURCES = ["Door-to-door", "Referral", "Website", "Google", "Facebook", "Walk-in", "Phone", "Other"];
 const blank = { name: "", phone: "", email: "", source: "Door-to-door", est_value: "", notes: "", address: "" };
 
@@ -120,17 +133,30 @@ export default function NewLeadForm({ onDone }: { onDone?: () => void }) {
       ))}
 
       <Text style={styles.label}>Address</Text>
-      <AddressAutocomplete
-        value={form.address}
-        onChange={(sel: AddressSelection) => {
-          setForm((f) => ({ ...f, address: sel.formatted || sel.street || "" }));
-          if (sel.latitude != null && sel.longitude != null) {
-            setGeo({ lat: sel.latitude, lng: sel.longitude });
-          }
-        }}
-        placeholder="123 Palm St, Surprise, AZ"
-        testID="newlead-address"
-      />
+      <AddressErrorBoundary
+        fallback={
+          <TextInput
+            style={styles.input}
+            value={form.address}
+            onChangeText={(v) => set("address", v)}
+            placeholder="123 Palm St, Surprise, AZ"
+            placeholderTextColor={colors.muted}
+            testID="newlead-address"
+          />
+        }
+      >
+        <AddressAutocomplete
+          value={form.address}
+          onChange={(sel: AddressSelection) => {
+            setForm((f) => ({ ...f, address: sel.formatted || sel.street || "" }));
+            if (sel.latitude != null && sel.longitude != null) {
+              setGeo({ lat: sel.latitude, lng: sel.longitude });
+            }
+          }}
+          placeholder="123 Palm St, Surprise, AZ"
+          testID="newlead-address"
+        />
+      </AddressErrorBoundary>
       <Pressable style={[styles.locBtn, geo && styles.locBtnDone]} onPress={attachLocation} disabled={locating} testID="newlead-attach-location">
         {locating ? (
           <ActivityIndicator color={geo ? "#16A34A" : colors.brand} size="small" />

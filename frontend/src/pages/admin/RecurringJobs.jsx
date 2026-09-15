@@ -60,6 +60,19 @@ export default function RecurringJobs() {
   // fires) — the confirmation is a distinct destructive action
   // gated behind its own explicit confirm button.
   const [hardDeleteTarget, setHardDeleteTarget] = useState(null);
+  // Phase R1 · Feb-2026 — Bulk Hard Delete state.
+  //   ``selectedIds``: Set<string> of the checked rows across the
+  //     currently-visible page.  Cleared after a successful bulk.
+  //   ``bulkModalOpen``: gates the confirmation popup.
+  //   ``bulkAcked``: user MUST tick the acknowledgement checkbox
+  //     before the red "Permanently Delete" button becomes
+  //     enabled — no type-to-confirm.
+  //   ``bulkBusy``: prevents double-submits + drives the button's
+  //     visual busy state during the network round-trip.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkAcked, setBulkAcked] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   // Feb-2026 P0 · Orphan-backfill state. Populated lazily on mount
   // so operators see a "Missing N template(s)" banner without
   // running the mutating backfill first.
@@ -232,6 +245,77 @@ export default function RecurringJobs() {
     } finally { setBusy(null); }
   };
 
+  // Phase R1 · Feb-2026 — Bulk Hard Delete.
+  //
+  // Posts every selected template id to
+  // ``POST /api/recurring-jobs/bulk-delete``.  The backend returns
+  // HTTP 200 even on partial failures with a summary + per-id
+  // status list, so the toast reflects the TRUTH — "Deleted 3 of 3"
+  // vs "Deleted 2 of 3; 1 failed — see log".  On any per-id error
+  // we fire a warning-style toast, never a success.
+  const bulkHardDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!bulkAcked) return;
+    setBulkBusy(true);
+    try {
+      const ids = Array.from(selectedIds);
+      const res = await api.post("/recurring-jobs/bulk-delete", {
+        recurring_job_ids: ids,
+      });
+      const summary = res?.summary || {};
+      const deleted = Number(summary.templates_deleted || 0);
+      const visits = Number(summary.future_visits_deleted || 0);
+      const errs = Number(summary.errors || 0);
+      const total = ids.length;
+      if (errs === 0) {
+        toast.success(
+          `Deleted ${deleted} template${deleted === 1 ? "" : "s"}` +
+          ` and ${visits} future visit${visits === 1 ? "" : "s"}.`,
+        );
+      } else {
+        toast.warning(
+          `Deleted ${deleted} of ${total}; ${errs} failed — see log.`,
+        );
+      }
+      setSelectedIds(new Set());
+      setBulkModalOpen(false);
+      setBulkAcked(false);
+      await load();
+    } catch (e) {
+      toast.error(e?.message || "Bulk delete failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  // Header "select all on page" checkbox.  Respects any client-side
+  // filtering — currently the page has none, but the helper reads
+  // ``items`` directly so a future filter drop-in wires through
+  // without a rewrite.
+  const _visibleIds = () => items.map((r) => r.id);
+  const _allVisibleSelected = () => {
+    const vis = _visibleIds();
+    return vis.length > 0 && vis.every((id) => selectedIds.has(id));
+  };
+  const _someVisibleSelected = () => {
+    const vis = _visibleIds();
+    return vis.some((id) => selectedIds.has(id));
+  };
+  const _toggleAllVisible = () => {
+    if (_allVisibleSelected()) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(_visibleIds()));
+    }
+  };
+  const _toggleOne = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
   const stopRecurrence = async (row) => {
     // Feb-2026 · Never-end recurrence · Stop action. Confirm because
     // this removes unstarted future occurrences from db.jobs.
@@ -285,6 +369,31 @@ export default function RecurringJobs() {
                 style={{ background: colors.brand, color: "#fff", border: 0 }}
                 data-testid="recurring-jobs-create">
           <Plus size={14} /> New recurring job
+        </button>
+        {/* Phase R1 · Feb-2026 — bulk hard-delete toolbar button.
+             Always rendered so its testid is queryable by unit
+             tests + Playwright; disabled when nothing is
+             selected. The label appends the running count so
+             ops always sees ``Delete permanently (N)`` — the
+             count comes from the visible-page checkbox state,
+             not the server. */}
+        <button
+          type="button"
+          onClick={() => { setBulkAcked(false); setBulkModalOpen(true); }}
+          disabled={selectedIds.size === 0}
+          className="inline-flex items-center gap-1 text-sm font-bold px-3 py-2 rounded-md ml-2"
+          style={{
+            background: selectedIds.size === 0 ? "#FEE2E2" : "#B91C1C",
+            color: selectedIds.size === 0 ? "#B91C1C" : "#FFFFFF",
+            border: 0,
+            opacity: selectedIds.size === 0 ? 0.5 : 1,
+            cursor: selectedIds.size === 0 ? "not-allowed" : "pointer",
+          }}
+          aria-disabled={selectedIds.size === 0}
+          data-testid="recurring-bulk-hard-delete"
+        >
+          <Trash2 size={14} />{" "}
+          Delete permanently{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
         </button>
       </div>
 
@@ -341,6 +450,26 @@ export default function RecurringJobs() {
           <table className="w-full text-sm" data-testid="recurring-jobs-table">
             <thead>
               <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                {/* Phase R1 · Feb-2026 — bulk-select header cell.
+                     Tri-state semantics: unchecked when nothing on
+                     the page is selected, checked when EVERY visible
+                     row is selected, ``indeterminate`` when some
+                     rows are selected. */}
+                <th className="px-3 py-2.5" style={{ width: "36px" }}>
+                  <input
+                    type="checkbox"
+                    checked={_allVisibleSelected()}
+                    ref={(el) => {
+                      if (el) {
+                        el.indeterminate = !_allVisibleSelected() && _someVisibleSelected();
+                      }
+                    }}
+                    onChange={_toggleAllVisible}
+                    aria-label="Select all recurring jobs on this page"
+                    data-testid="recurring-select-all"
+                    className="cursor-pointer"
+                  />
+                </th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Customer</th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Service</th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Frequency</th>
@@ -352,13 +481,26 @@ export default function RecurringJobs() {
             </thead>
             <tbody>
               {items.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-sm"
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-sm"
                        style={{ color: colors.muted }} data-testid="recurring-jobs-empty">
                   No recurring jobs yet — click "New recurring job" to add your first.
                 </td></tr>
               ) : items.map((r) => (
                 <tr key={r.id} data-testid={`recurring-job-row-${r.id}`}
-                    style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    style={{ borderBottom: `1px solid ${colors.border}`,
+                              backgroundColor: selectedIds.has(r.id)
+                                ? "#EFF6FF" : "transparent" }}>
+                  {/* Phase R1 · Feb-2026 — bulk-select row checkbox. */}
+                  <td className="px-3 py-2.5" style={{ width: "36px" }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(r.id)}
+                      onChange={() => _toggleOne(r.id)}
+                      aria-label={`Select ${r.customer_name || r.id}`}
+                      data-testid={`recurring-row-checkbox-${r.id}`}
+                      className="cursor-pointer"
+                    />
+                  </td>
                   <td className="px-3 py-2.5" style={{ color: colors.onSurface }}>{r.customer_name}</td>
                   <td className="px-3 py-2.5 text-xs" style={{ color: colors.muted }}>{r.service_type}</td>
                   <td className="px-3 py-2.5 text-xs" style={{ color: colors.muted }}>
@@ -807,6 +949,84 @@ export default function RecurringJobs() {
                                  opacity: busy === hardDeleteTarget.id ? 0.6 : 1 }}
                        data-testid="recurring-job-hard-delete-confirm-btn">
                 Delete permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {/* Phase R1 · Feb-2026 — Bulk Hard Delete confirmation modal.
+           Independent of the per-row ``hardDeleteTarget`` modal — a
+           distinct flow keyed off ``bulkModalOpen``. Primary button
+           is gated behind an ack checkbox (no type-to-confirm), and
+           displays the running selection count so the operator
+           always sees exactly what's about to be permanently
+           removed.  Cancel closes without any network activity. */}
+      {bulkModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              data-testid="recurring-bulk-hard-delete-modal">
+          <div className="w-full max-w-md rounded-2xl"
+                style={{ background: colors.surface,
+                          border: `1px solid ${colors.border}` }}>
+            <div className="flex items-center justify-between px-5 py-3"
+                  style={{ borderBottom: `1px solid ${colors.border}` }}>
+              <h2 className="text-lg font-bold" style={{ color: "#B91C1C" }}>
+                Permanently delete {selectedIds.size} recurring template{selectedIds.size === 1 ? "" : "s"}?
+              </h2>
+              <button type="button"
+                       onClick={() => { setBulkModalOpen(false); setBulkAcked(false); }}
+                       aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 text-sm" style={{ color: colors.onSurface }}>
+              <p className="mb-2">The following will be removed:</p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>
+                  <span className="font-semibold">{selectedIds.size}</span>{" "}
+                  recurring job template{selectedIds.size === 1 ? "" : "s"}
+                </li>
+                <li>
+                  All future scheduled visits (date &ge; today) linked
+                  to these templates
+                </li>
+                <li style={{ color: colors.muted }}>
+                  Past / completed visits will be preserved for reporting
+                </li>
+              </ul>
+              <label className="flex items-start gap-2 mt-4 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={bulkAcked}
+                  onChange={(e) => setBulkAcked(e.target.checked)}
+                  className="mt-0.5 cursor-pointer"
+                  data-testid="recurring-bulk-hard-delete-ack"
+                />
+                <span>I understand — this cannot be undone</span>
+              </label>
+            </div>
+            <div className="px-5 py-3 flex items-center justify-end gap-2"
+                  style={{ borderTop: `1px solid ${colors.border}` }}>
+              <button type="button"
+                       onClick={() => { setBulkModalOpen(false); setBulkAcked(false); }}
+                       className="text-sm font-semibold px-3 py-1.5 rounded"
+                       style={{ border: `1px solid ${colors.border}`,
+                                 background: colors.surface,
+                                 color: colors.onSurface }}
+                       data-testid="recurring-bulk-hard-delete-cancel">
+                Cancel
+              </button>
+              <button type="button"
+                       onClick={bulkHardDelete}
+                       disabled={!bulkAcked || bulkBusy || selectedIds.size === 0}
+                       aria-disabled={!bulkAcked || bulkBusy || selectedIds.size === 0}
+                       className="text-sm font-bold px-4 py-1.5 rounded"
+                       style={{ background: "#B91C1C", color: "#FFFFFF",
+                                 border: 0,
+                                 opacity: (!bulkAcked || bulkBusy) ? 0.5 : 1,
+                                 cursor: (!bulkAcked || bulkBusy) ? "not-allowed" : "pointer" }}
+                       data-testid="recurring-bulk-hard-delete-confirm">
+                {bulkBusy ? "Deleting…" : "Permanently Delete"}
               </button>
             </div>
           </div>
