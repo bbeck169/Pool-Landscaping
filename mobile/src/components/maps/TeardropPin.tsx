@@ -1,4 +1,6 @@
 /**
+ * Canonical fallback palette: /app/memory/tech_color_palette.md v1
+ *
  * Phase M1 · Apr-2026 — Sitewide custom teardrop map pin.
  *
  * Classic teardrop map-marker silhouette:
@@ -29,30 +31,40 @@ import Animated, {
 /* ── Helpers ────────────────────────────────────────────────────────── */
 
 /**
- * 12-color deterministic palette — matches the web counterpart.
- * Given a string id, returns one of 12 fixed hex colors.
+ * 12-color deterministic palette — canonical v1.
+ * Must stay byte-identical to web's _SAFE_PALETTE so the same
+ * technician id produces the same fallback color on both surfaces.
+ * See /app/memory/tech_color_palette.md v1.
  */
-const PALETTE_12 = [
-  "#EF4444", // red-500
-  "#F97316", // orange-500
-  "#EAB308", // yellow-500
-  "#22C55E", // green-500
-  "#14B8A6", // teal-500
-  "#06B6D4", // cyan-500
-  "#3B82F6", // blue-500
-  "#6366F1", // indigo-500
-  "#8B5CF6", // violet-500
-  "#A855F7", // purple-500
-  "#EC4899", // pink-500
-  "#F43F5E", // rose-500
+const PALETTE = [
+  "#EF4444", //  0 red-500
+  "#F97316", //  1 orange-500
+  "#EAB308", //  2 yellow-500
+  "#22C55E", //  3 green-500
+  "#10B981", //  4 emerald-500
+  "#06B6D4", //  5 cyan-500
+  "#0EA5E9", //  6 sky-500
+  "#3B82F6", //  7 blue-500
+  "#6366F1", //  8 indigo-500
+  "#8B5CF6", //  9 violet-500
+  "#EC4899", // 10 pink-500
+  "#14B8A6", // 11 teal-500
 ] as const;
 
-export function colorFromId(id: string): string {
-  let h = 0;
-  for (let i = 0; i < (id || "").length; i++) {
-    h = ((h << 5) - h + id.charCodeAt(i)) | 0;
+/**
+ * Java-style String.hashCode → palette index.
+ * Empty / null / undefined → palette[0] (#EF4444).
+ * Raw input — no trim, no lowercase, no Unicode normalization.
+ */
+export function colorFromId(id: string | null | undefined): string {
+  if (!id) return PALETTE[0];
+  const s = String(id);
+  let hash = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    hash = ((hash * 31) + s.charCodeAt(i)) | 0; // int32 wrap
   }
-  return PALETTE_12[Math.abs(h) % PALETTE_12.length];
+  const idx = Math.abs(hash) % 12;
+  return PALETTE[idx];
 }
 
 /**

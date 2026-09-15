@@ -2012,3 +2012,15 @@
   - `/app/mobile/src/components/schedule/ScheduleMap.native.tsx`
 - **Web files referenced**:
   - `/app/frontend/src/pages/dispatch/LiveTechPinsLayer.jsx`
+
+## Iteration 96 — Align mobile colorFromId to canonical palette v1
+- **Commit**: (same session as iter 95)
+- **Date**: 2026-09-15
+- **Changes**:
+  - Updated `colorFromId` in `TeardropPin.tsx` to canonical palette v1 (palette order + Java-style hashCode parity with web)
+  - Added Jest test file `__tests__/teardrop-pin-parity.test.ts` (12 tests, all pass)
+- **Files modified**:
+  - `/app/mobile/src/components/maps/TeardropPin.tsx` (palette + hash updated)
+  - `/app/mobile/__tests__/teardrop-pin-parity.test.ts` (NEW)
+- **Web files referenced**:
+  - `/app/memory/tech_color_palette.md` (canonical spec)
