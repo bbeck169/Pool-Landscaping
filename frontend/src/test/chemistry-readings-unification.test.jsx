@@ -97,7 +97,7 @@ describe("ServiceReport.jsx · compact renderer removed", () => {
       /import \{ CORE_KEYS as _CORE_READING_KEYS \} from "@\/utils\/chemistryGate"/,
     );
     expect(REPORT_SRC).toMatch(
-      /required=\{_CORE_READING_KEYS\.includes\(canon\)\}/,
+      /required=\{_REQUIRED_MARKER_KEYS\.has\(canon\)\}/,
     );
   });
 
@@ -121,7 +121,7 @@ describe("PoolChecklistForm.jsx · required marker wired to core keys", () => {
       /import \{ CORE_KEYS as _CORE_READING_KEYS \} from "@\/utils\/chemistryGate"/,
     );
     expect(FORM_SRC).toMatch(
-      /required=\{_CORE_READING_KEYS\.includes\(key\)\}/,
+      /required=\{_REQUIRED_MARKER_KEYS\.has\(key\)\}/,
     );
   });
 });

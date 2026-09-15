@@ -146,7 +146,7 @@ def env():
                 "started_at": "2026-02-15T18:00:00Z",
                 "completed_at": "2026-02-15T18:14:00Z",
                 "chemical_readings": {
-                    "total_chlorine": 3.0, "free_chlorine": 2.5,
+                    "free_chlorine": 2.5,
                     "ph": 7.4, "alkalinity": 100, "conditioner": 40,
                 },
                 "chemicals_added": [
@@ -351,7 +351,7 @@ def test_service_log_admin_pool(env):
     assert j["chemical_cost_usd"] in (18.40, 18.4)
     # Water test rows present in stable order.
     labels = [r["label"] for r in j["water_test"]]
-    assert labels == ["Total Chlorine", "Free Chlorine", "Ph Balance",
+    assert labels == [ "Free Chlorine", "Ph Balance",
                         "Alkalinity", "Conditioner"]
     # Checklist has 7 pool items, order preserved.
     items = j["checklist_state"]["items"]

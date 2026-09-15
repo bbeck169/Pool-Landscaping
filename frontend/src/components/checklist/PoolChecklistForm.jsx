@@ -24,17 +24,23 @@ import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDro
 // to full names on the display surface.  Data keys unchanged.  Kept in
 // lockstep with mobile/src/lib/expandChemistryLabel.ts.
 import { expandChemistryLabel } from "../../lib/expandChemistryLabel";
-// Feb-2026 · Unification — the five gate-required readings get a red
+// Feb-2026 · Unification — the four gate-required readings get a red
 // ``*`` marker on their input row.  Kept in exact lockstep with
 // backend ``services/chemistry_gate.CORE_READINGS`` so any tenant
 // customization can't drift the visual marker out of the gate.
+//
+// Phase CHEM1 · Feb-2026 — the required set is the "Required Four"
+// (free_chlorine, ph, alkalinity, cyanuric_acid). ``canonicalReadingKey``
+// aliases the ``alkalinity`` reading to ``total_alkalinity`` — the
+// small ``_REQUIRED_MARKER_KEYS`` union below folds both onto the
+// same required flag so the star renders no matter which shape the
+// template surfaces.
 import { CORE_KEYS as _CORE_READING_KEYS } from "@/utils/chemistryGate";
 
 // Phase 48 — per-key validation rules for the manual-entry reading rows.
 // Keys are normalized snake_case; aliases share the same rule.
 const _READING_RULES = {
   free_chlorine:    { min: 0, max: 10,   decimals: 2, unit: "ppm" },
-  total_chlorine:   { min: 0, max: 10,   decimals: 2, unit: "ppm" },
   chlorine:         { min: 0, max: 10,   decimals: 2, unit: "ppm" },
   ph:               { min: 0, max: 14,   decimals: 2, unit: "pH" },
   total_alkalinity: { min: 0, max: 500,  decimals: 1, unit: "ppm" },
@@ -44,14 +50,22 @@ const _READING_RULES = {
   salt:             { min: 0, max: 6000, decimals: 0, unit: "ppm" },
 };
 const _READING_DEFAULTS = {
-  free_chlorine: 3, total_chlorine: 3, combined_chlorine: 0.5, chlorine: 3, tcl: 3,
+  free_chlorine: 3, combined_chlorine: 0.5, chlorine: 3,
   ph: 7.6, total_alkalinity: 100, alkalinity: 100,
   cyanuric_acid: 70, cya: 70,
 };
+// Phase CHEM1 · Feb-2026 — the visual "*" marker mirrors the backend
+// Required Four gate. ``canonicalReadingKey`` folds the ``alkalinity``
+// reading onto ``total_alkalinity``, so the marker set contains both
+// spellings.
+const _REQUIRED_MARKER_KEYS = new Set([
+  ..._CORE_READING_KEYS,
+  "total_alkalinity",
+]);
 // Phase 49.1 — keys whose "blank" state means "not typed yet" (not
 // "not tested"). Users must explicitly toggle Not-tested for these rows.
 const _DEFAULT_TESTED_KEYS = new Set([
-  "free_chlorine", "total_chlorine", "combined_chlorine", "chlorine", "tcl",
+  "free_chlorine", "combined_chlorine", "chlorine",
   "ph",
   "total_alkalinity", "alkalinity",
   "cyanuric_acid", "cya",
@@ -290,7 +304,6 @@ const _cyaVals = ["N/A", ...Array.from({ length: 49 }, (_, i) => 20 + i * 10), "
 const CYA_OVER_500_VALUE = 501;
 
 const CHIP_SCALES = {
-  total_chlorine:    { values: _chlorineVals,    palette: "chlorine" },
   free_chlorine:     { values: _chlorineVals,    palette: "chlorine" },
   chlorine:          { values: _chlorineVals,    palette: "chlorine" },
   combined_chlorine: { values: _chlorineVals,    palette: "chlorine" },
@@ -330,7 +343,6 @@ const _resolveScale = (r) => {
 // whichever key came in.
 const _NAME_TO_CANONICAL = {
   "free chlorine": "free_chlorine",
-  "total chlorine": "total_chlorine",
   "combined chlorine": "combined_chlorine",
   "chlorine": "free_chlorine",
   "ph": "ph",
@@ -806,7 +818,7 @@ export default function PoolChecklistForm({
                 previous={prev}
                 recent={recentRaw}
                 locked={locked}
-                required={_CORE_READING_KEYS.includes(key)}
+                required={_REQUIRED_MARKER_KEYS.has(key)}
                 onChange={(val) => updReading(i, val)}
               />
             );

@@ -509,7 +509,6 @@ async def seed_demo_second_customer():
 _PREVIEW_POOL_JOB_ID = "c40ea98d-d42b-4f91-890e-04fe398b0ee9"
 _PREVIEW_POOL_READING_KEYS = [
     ("free_chlorine",  "Free Chlorine",   "ppm"),
-    ("total_chlorine", "Total Chlorine",  "ppm"),
     ("alkalinity",     "Total Alkalinity","ppm"),
     ("ph",             "pH",              ""),
     ("cyanuric_acid",  "Cyanuric Acid",   "ppm"),

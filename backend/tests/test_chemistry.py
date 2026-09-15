@@ -12,14 +12,16 @@ import pytest
 from services.chemistry import classify_reading, classify_readings
 
 
-# ── Free / Total Chlorine ────────────────────────────────────────────────
-@pytest.mark.parametrize("chem", ["free_chlorine", "chlorine", "total_chlorine"])
+# ── Free Chlorine ────────────────────────────────────────────────────────
+# Phase CHEM1 · Feb-2026 — ``total_chlorine`` was removed from the
+# chemistry classifier + gate. Aliases still fold onto ``free_chlorine``.
+@pytest.mark.parametrize("chem", ["free_chlorine", "chlorine"])
 def test_chlorine_below(chem):
     assert classify_reading(chem, 0) == "below"
     assert classify_reading(chem, 1.99) == "below"
 
 
-@pytest.mark.parametrize("chem", ["free_chlorine", "chlorine", "total_chlorine"])
+@pytest.mark.parametrize("chem", ["free_chlorine", "chlorine"])
 def test_chlorine_average_boundary(chem):
     # lower band boundary — 2.0 exactly enters average
     assert classify_reading(chem, 2.0) == "average"

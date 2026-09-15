@@ -156,10 +156,9 @@ POOL_READINGS = [
     # in service_reports.py so legacy Field Report + Pool Checklist share
     # the same top-of-form sequence.
     {"key": "combined_chlorine", "label": "Combined Chlorine", "unit": "ppm", "ideal": "0–0.2", "min": 0, "max": 0.2},
-    # Feb-2026 · P16A — mirror the ``total_cl`` field addition
-    # from POOL_READING_FIELDS_DEFAULT so the legacy Field Report
-    # stays in lockstep with ``chemistry_gate.CORE_READINGS``.
-    {"key": "total_cl", "label": "Total Chlorine", "unit": "ppm", "ideal": "1–3", "min": 1, "max": 3},
+    # Phase CHEM1 · Feb-2026 — Total Chlorine (``total_cl``) removed.
+    # The chemistry gate now requires the "Required Four" only
+    # (free_chlorine, ph, alkalinity, cyanuric_acid).
     # Feb-2026 · P12B — was ``"chlorine"``; renamed to the canonical
     # ``"free_chlorine"`` so legacy Field Report + Pool Checklist stay
     # in lockstep with ``chemistry_gate.CORE_READINGS``.

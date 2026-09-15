@@ -10,7 +10,6 @@
 
 const _K60_LABEL_MAP = Object.freeze({
   fc:   "Free Chlorine",
-  tc:   "Total Chlorine",
   ph:   "pH",
   ta:   "Total Alkalinity",
   cya:  "Cyanuric Acid",

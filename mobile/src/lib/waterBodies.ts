@@ -47,21 +47,21 @@ export const BODY_TYPE_TINTS: Record<string, { bg: string; fg: string; border: s
 /* ── Reading allow-list per body type ───────────────────────────────── */
 
 export const READING_ALLOWLIST: Record<string, string[]> = {
-  pool: ["free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
+  pool: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
   spa: ["free_chlorine", "ph", "alkalinity", "calcium_hardness", "water_temp"],
   water_feature: ["free_chlorine", "ph", "water_temp"],
   fountain: ["free_chlorine", "ph", "water_temp"],
-  other: ["free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
+  other: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
 };
 
-/* ── Required readings (only pool blocks submit) ───────────────────── */
+/* ── Required readings — the Required Four per body ─────────────────── */
 
 export const READING_REQUIRED: Record<string, string[]> = {
-  pool: ["free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid"],
-  spa: [],
+  pool: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid"],
+  spa: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid"],
   water_feature: [],
   fountain: [],
-  other: [],
+  other: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid"],
 };
 
 /* ── Chemical allow-list per body type ──────────────────────────────── */
@@ -78,7 +78,6 @@ export const CHEMICAL_ALLOWLIST: Record<string, string[]> = {
 
 export const READING_LABELS: Record<string, { name: string; unit: string; short: string }> = {
   free_chlorine:      { name: "Free Chlorine",      unit: "ppm", short: "FC" },
-  total_chlorine:     { name: "Total Chlorine",      unit: "ppm", short: "TC" },
   combined_chlorine:  { name: "Combined Chlorine",   unit: "ppm", short: "CC" },
   ph:                 { name: "pH",                  unit: "",    short: "pH" },
   alkalinity:         { name: "Total Alkalinity",    unit: "ppm", short: "TA" },

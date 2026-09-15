@@ -86,7 +86,6 @@ async def _mk_service_report(tid: str, jid: str, *,
 def _full_readings() -> List[Dict[str, Any]]:
     return [
         {"key": "free_chlorine",  "value": 2.5},
-        {"key": "total_chlorine", "value": 3.0},
         {"key": "ph",             "value": 7.4},
         {"key": "alkalinity",     "value": 80},
         {"key": "cyanuric_acid",  "value": 40},
@@ -108,7 +107,7 @@ def test_helper_valid_reading_accepts_zero_and_negative():
     from services.chemistry_gate import assert_core_readings_present
     # Zero and negatives are REAL chemistry values → gate passes.
     assert_core_readings_present({
-        "free_chlorine": 0, "total_chlorine": -1.5,
+        "free_chlorine": 0,
         "ph": "7.0", "alkalinity": 80, "cyanuric_acid": 40,
     })  # no raise
 
@@ -117,19 +116,17 @@ def test_helper_rejects_empty_whitespace_and_unparseable_strings():
     from services.chemistry_gate import missing_core_readings
     r = missing_core_readings({
         "free_chlorine": "",
-        "total_chlorine": "   ",
         "ph": "not-a-number",
         "alkalinity": 80,
         "cyanuric_acid": 40,
     })
-    assert set(r) == {"free_cl", "total_cl", "ph"}
+    assert set(r) == {"free_cl", "ph"}
 
 
 def test_helper_accepts_list_of_dicts_shape():
     from services.chemistry_gate import missing_core_readings
     r = missing_core_readings([
         {"key": "free_chlorine", "value": 2.5},
-        {"key": "total_chlorine", "value": 3.0},
         {"key": "ph", "value": 7.4},
         {"key": "alkalinity", "value": 80},
         # cya missing
@@ -141,7 +138,7 @@ def test_helper_accepts_aliased_keys():
     from services.chemistry_gate import missing_core_readings
     # UI-friendly aliases fold onto canonical keys.
     r = missing_core_readings({
-        "free_cl": 2.5, "total_cl": 3.0,
+        "free_cl": 2.5,
         "ph": 7.4, "alk": 80, "cya": 40,
     })
     assert r == []
@@ -156,10 +153,10 @@ def test_422_payload_carries_both_canonical_and_display_labels():
         assert_core_readings_present({})  # nothing present
     d = ei.value.detail
     assert d["missing_fields"] == [
-        "free_cl", "total_cl", "alkalinity", "ph", "cya",
+        "free_cl", "alkalinity", "ph", "cya",
     ]
     assert d["missing_labels"] == [
-        "Free Cl", "Total Cl", "Alkalinity", "pH", "CYA",
+        "Free Cl", "Alkalinity", "pH", "CYA",
     ]
     # Arrays are index-aligned so a caller can zip them safely.
     assert len(d["missing_fields"]) == len(d["missing_labels"])
@@ -174,14 +171,19 @@ def test_submit_with_all_5_cores_completes_the_job():
         jid = await _mk_pool_job(tid)
         await _mk_service_report(tid, jid, readings=_full_readings())
         try:
+            from fastapi import BackgroundTasks
+            from starlette.requests import Request
             from routers.service_reports import submit_service_report
             # A tech user whose ``technician_id`` matches the report.
             tech_user = {"id": "u-cg", "role": "technician",
                          "technician_id": "cg-tech",
                          "tenant_id": tid}
             tenant = await _db().tenants.find_one({"id": tid}, {"_id": 0}) or {"id": tid}
+            _req = Request({"type": "http", "headers": [], "method": "POST",
+                            "path": "/", "query_string": b"", "scheme": "http",
+                            "server": ("test", 0)})
             r = await submit_service_report(
-                jid, user=tech_user, tenant=tenant,
+                jid, BackgroundTasks(), _req, user=tech_user, tenant=tenant,
             )
             assert r.get("submitted_at")
             after = await _db().jobs.find_one({"id": jid}, {"_id": 0, "status": 1})
@@ -201,12 +203,20 @@ def test_submit_with_one_core_missing_raises_422():
         partial = [r for r in partial if r["key"] not in ("cyanuric_acid", "ph")]
         await _mk_service_report(tid, jid, readings=partial)
         try:
+            from fastapi import BackgroundTasks
+            from starlette.requests import Request
             from routers.service_reports import submit_service_report
             tech_user = {"id": "u-cg", "role": "technician",
                          "technician_id": "cg-tech", "tenant_id": tid}
             tenant = await _db().tenants.find_one({"id": tid}, {"_id": 0}) or {"id": tid}
+            _req = Request({"type": "http", "headers": [], "method": "POST",
+                            "path": "/", "query_string": b"", "scheme": "http",
+                            "server": ("test", 0)})
             with pytest.raises(HTTPException) as ei:
-                await submit_service_report(jid, user=tech_user, tenant=tenant)
+                await submit_service_report(
+                    jid, BackgroundTasks(), _req,
+                    user=tech_user, tenant=tenant,
+                )
             assert ei.value.status_code == 422
             detail = ei.value.detail
             assert detail["detail"] == "chemistry_core_readings_missing"
@@ -236,11 +246,18 @@ def test_submit_ok_with_optionals_blank():
         ]
         await _mk_service_report(tid, jid, readings=readings)
         try:
+            from fastapi import BackgroundTasks
+            from starlette.requests import Request
             from routers.service_reports import submit_service_report
             tech_user = {"id": "u-cg", "role": "technician",
                          "technician_id": "cg-tech", "tenant_id": tid}
             tenant = await _db().tenants.find_one({"id": tid}, {"_id": 0}) or {"id": tid}
-            r = await submit_service_report(jid, user=tech_user, tenant=tenant)
+            _req = Request({"type": "http", "headers": [], "method": "POST",
+                            "path": "/", "query_string": b"", "scheme": "http",
+                            "server": ("test", 0)})
+            r = await submit_service_report(
+                jid, BackgroundTasks(), _req, user=tech_user, tenant=tenant,
+            )
             assert r.get("submitted_at")
         finally:
             await _drain(tid, jid)

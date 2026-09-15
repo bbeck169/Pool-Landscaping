@@ -60,6 +60,12 @@ def _mk_pool_job_with_report(*, tenant_id: str, tech_email: str,
         "customer_id": cid, "customer_name": "P12 Test",
         "service_type": "Pool service",
         "title": "P12 pool submit hardening test",
+        # Phase CHEM1 · Feb-2026 — baseline test signature drift fix.
+        # ``services.authz.is_tech_authorized_on_job`` matches on the
+        # ``technician_id`` field. The legacy ``assigned_tech_ids``
+        # array shape was never a canonical source for the submit
+        # gate, so the fixture now stamps ``technician_id`` too.
+        "technician_id": tech_id,
         "assigned_tech_ids": [tech_id],
         "status": "in-progress",
         "price": 0,   # skip auto-invoice path — keeps the test focused.
@@ -70,9 +76,9 @@ def _mk_pool_job_with_report(*, tenant_id: str, tech_email: str,
     _sync.service_reports.insert_one({
         "id": sr_id, "tenant_id": tenant_id, "job_id": jid,
         "tech_id": tech_id, "template": "pool",
+        # Phase CHEM1 · Feb-2026 — Required Four only.
         "chemical_readings": [
             {"key": "free_chlorine",   "name": "Free Chlorine",     "value": 2.5, "unit": "ppm"},
-            {"key": "total_chlorine",  "name": "Total Chlorine",    "value": 3.0, "unit": "ppm"},
             {"key": "ph",              "name": "pH",                "value": 7.4},
             {"key": "alkalinity",      "name": "Total Alkalinity",  "value": 100, "unit": "ppm"},
             {"key": "cyanuric_acid",   "name": "Cyanuric Acid",     "value": 40,  "unit": "ppm"},
@@ -232,60 +238,48 @@ def test_default_pool_template_uses_canonical_free_chlorine_key():
     )
 
 
-# ── 4b. P16A — default pool template exposes ``total_cl`` too ────
-def test_default_pool_template_exposes_total_cl():
-    """P16A — the pre-P16 default template omitted ``total_cl``, so
-    techs following the default UI reliably hit
-    ``chemistry_core_readings_missing`` because the gate requires
-    all 5 core readings (free_chlorine, total_chlorine, ph,
-    alkalinity, cyanuric_acid) but the UI only surfaced 4 of them
-    unless an admin had customized the template.
-
-    Pins the field's presence + shape.  Uses key ``total_cl`` which
-    the gate aliases to ``total_chlorine`` via
-    ``chemistry_gate._ALIASES``."""
+# ── 4b. P16A — default pool template no longer exposes ``total_cl`` ────
+def test_default_pool_template_does_not_expose_total_cl():
+    """Phase CHEM1 · Feb-2026 — Total Chlorine was removed from the
+    default template AND from the chemistry gate's Required set. The
+    template must not surface a ``total_cl`` (or ``total_chlorine``)
+    field any more."""
     from routers.service_reports import POOL_READING_FIELDS_DEFAULT
-    from services.chemistry_gate import _canonical_key
     keys = {f["key"] for f in POOL_READING_FIELDS_DEFAULT}
-    assert "total_cl" in keys, (
-        f"``total_cl`` must be present in the default template; "
+    assert "total_cl" not in keys, (
+        f"``total_cl`` must NOT be present after Phase CHEM1; "
         f"present keys: {sorted(keys)}"
     )
-    # Alias-folds to the canonical CORE reading name.
-    assert _canonical_key("total_cl") == "total_chlorine"
-    # Shape check — same "type: select" contract as the other rows.
-    total_cl_field = next(f for f in POOL_READING_FIELDS_DEFAULT
-                          if f["key"] == "total_cl")
-    assert total_cl_field["type"] == "select"
-    assert total_cl_field["unit"] == "ppm"
-    assert total_cl_field["min"] == 0
-    assert total_cl_field["max"] > 0
-
-
-# ── 4c. P16A — legacy Field Report ``POOL_READINGS`` mirrors the addition ──
-def test_legacy_pool_readings_also_exposes_total_cl():
-    """P16A · parallel — the legacy Field Report list in
-    ``routers/jobs.py::POOL_READINGS`` MUST stay in lockstep with
-    ``POOL_READING_FIELDS_DEFAULT`` so admins running the older Field
-    Report UI don't hit the same missing-field trap."""
-    from routers.jobs import POOL_READINGS
-    keys = [f["key"] for f in POOL_READINGS]
-    assert "total_cl" in keys, (
-        f"legacy POOL_READINGS must mirror ``total_cl``; keys: {keys}"
+    assert "total_chlorine" not in keys, (
+        f"``total_chlorine`` must NOT be present after Phase CHEM1; "
+        f"present keys: {sorted(keys)}"
     )
 
 
-# ── 4d. P16A — submit with all 5 core readings passes without 422 ──
+# ── 4c. P16A parallel — legacy Field Report ``POOL_READINGS`` mirrors the removal ──
+def test_legacy_pool_readings_also_drops_total_cl():
+    """Phase CHEM1 · parallel — the legacy Field Report list in
+    ``routers/jobs.py::POOL_READINGS`` MUST stay in lockstep with
+    ``POOL_READING_FIELDS_DEFAULT`` so admins running the older Field
+    Report UI don't see a ghost ``total_cl`` row."""
+    from routers.jobs import POOL_READINGS
+    keys = [f["key"] for f in POOL_READINGS]
+    assert "total_cl" not in keys, (
+        f"legacy POOL_READINGS must NOT surface ``total_cl`` after "
+        f"Phase CHEM1; keys: {keys}"
+    )
+
+
+# ── 4d. Phase CHEM1 — submit with all four Required Four readings passes ──
 def test_submit_with_full_core_readings_passes_gate(p12_env):
-    """End-to-end proof: a submit carrying all 5 core readings
-    (including the newly-exposed ``total_cl``) returns 200 with
-    ``submitted_at`` populated — the chemistry gate does NOT trip."""
+    """End-to-end proof: a submit carrying the Required Four (Free Cl,
+    pH, Alkalinity, CYA) returns 200 with ``submitted_at`` populated —
+    the chemistry gate does NOT trip."""
     tok = _login(p12_env["tech"]["email"])
     hdrs = {"Authorization": f"Bearer {tok}"}
-    # The p12_env fixture already seeded the report with all 5 core
-    # readings — proving the endpoint returns 200 confirms the gate
-    # accepts the payload shape ``total_cl`` (aliased) + the four
-    # canonical peers.
+    # The p12_env fixture seeded the report with the Required Four
+    # already populated. Proving 200 confirms the gate accepts the
+    # new payload shape (no Total Chlorine required).
     r = requests.post(
         f"{API}/jobs/{p12_env['job_id']}/service-report/submit",
         headers=hdrs, timeout=30,
@@ -303,7 +297,6 @@ def test_gate_alias_maps_bare_chlorine_to_free_chlorine():
     from services.chemistry_gate import missing_core_readings
     readings = [
         {"key": "chlorine",         "value": 2.5},   # legacy key
-        {"key": "total_chlorine",   "value": 3.0},
         {"key": "ph",               "value": 7.4},
         {"key": "alkalinity",       "value": 100},
         {"key": "cyanuric_acid",    "value": 40},

@@ -35,7 +35,6 @@ const _mockGet = vi.fn(async (path) => {
       // way back to the server.
       chemical_readings: [
         { key: "free_chlorine",  name: "Free Chlorine",    value: null, unit: "ppm" },
-        { key: "total_chlorine", name: "Total Chlorine",   value: null, unit: "ppm" },
         { key: "ph",             name: "pH",               value: null },
         { key: "alkalinity",     name: "Total Alkalinity", value: null, unit: "ppm" },
         { key: "cyanuric_acid",  name: "Cyanuric Acid",    value: null, unit: "ppm" },
@@ -82,7 +81,6 @@ describe("Chemistry key alignment (P12B)", () => {
     const cur = {
       chemical_readings: [
         { key: "free_chlorine",  name: "Free Chlorine",    value: 2.5, unit: "ppm" },
-        { key: "total_chlorine", name: "Total Chlorine",   value: 3.0, unit: "ppm" },
         { key: "ph",             name: "pH",               value: 7.4 },
         { key: "alkalinity",     name: "Total Alkalinity", value: 100, unit: "ppm" },
         { key: "cyanuric_acid",  name: "Cyanuric Acid",    value: 40,  unit: "ppm" },
@@ -94,7 +92,7 @@ describe("Chemistry key alignment (P12B)", () => {
     const outgoingKeys = patchBody.chemical_readings.map((r) => r.key).sort();
     expect(outgoingKeys).toEqual([
       "alkalinity", "cyanuric_acid", "free_chlorine",
-      "ph", "total_chlorine",
+      "ph",
     ]);
     // Belt-and-braces — the pre-P12 keys must NOT appear.
     expect(outgoingKeys).not.toContain("chlorine");
@@ -106,7 +104,8 @@ describe("Chemistry key alignment (P12B)", () => {
     const [_url, body] = _mockPatch.mock.calls[0];
     const bodyKeys = body.chemical_readings.map((r) => r.key).sort();
     expect(bodyKeys).toContain("free_chlorine");
-    expect(bodyKeys).toContain("total_chlorine");
+    // Phase CHEM1 · Feb-2026 — Total Chlorine no longer round-trips.
+    expect(bodyKeys).not.toContain("total_chlorine");
     expect(bodyKeys).not.toContain("chlorine");
   });
 

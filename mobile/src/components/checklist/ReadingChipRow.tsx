@@ -23,7 +23,7 @@ const normalizeKey = (name: string) =>
 
 // Phase 46.1 defaults, shown as placeholder text when the field is empty.
 const DEFAULT_VALUES: Record<string, number> = {
-  free_chlorine: 3,   total_chlorine: 3,  combined_chlorine: 0.5, chlorine: 3, tcl: 3,
+  free_chlorine: 3,   combined_chlorine: 0.5, chlorine: 3, tcl: 3,
   ph: 7.6,
   total_alkalinity: 100, alkalinity: 100,
   cyanuric_acid: 70,  cya: 70,
@@ -36,7 +36,7 @@ const DEFAULT_VALUES: Record<string, number> = {
 // the input dims. Includes Combined Chlorine + TCL aliases per Phase 49
 // Fix 1 (Combined/Total Chlorine were also spec'd for default-tested).
 const DEFAULT_TESTED_KEYS = new Set<string>([
-  "free_chlorine", "total_chlorine", "combined_chlorine", "chlorine", "tcl",
+  "free_chlorine", "combined_chlorine", "chlorine", "tcl",
   "ph",
   "total_alkalinity", "alkalinity",
   "cyanuric_acid", "cya",
@@ -48,7 +48,6 @@ const DEFAULT_TESTED_KEYS = new Set<string>([
 type Rule = { min: number; max: number; decimals: number };
 const RULES: Record<string, Rule> = {
   free_chlorine:      { min: 0, max: 10,    decimals: 2 },
-  total_chlorine:     { min: 0, max: 10,    decimals: 2 },
   combined_chlorine:  { min: 0, max: 10,    decimals: 2 },
   chlorine:           { min: 0, max: 10,    decimals: 2 },
   ph:                 { min: 0, max: 14,    decimals: 2 },

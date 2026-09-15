@@ -9,10 +9,13 @@
 //
 // Canonical keys mirror the backend so mock service-report docs can
 // be dropped in either shape (list-of-dicts or flat dict).
+//
+// Phase CHEM1 · Feb-2026 — the Required set is the "Required Four"
+// (free_chlorine, ph, alkalinity, cyanuric_acid). Total Chlorine was
+// removed from CORE_KEYS + every alias / label map here.
 
 export const CORE_KEYS = [
   "free_chlorine",
-  "total_chlorine",
   "alkalinity",
   "ph",
   "cyanuric_acid",
@@ -20,7 +23,6 @@ export const CORE_KEYS = [
 
 const LABEL = {
   free_chlorine: "Free Cl",
-  total_chlorine: "Total Cl",
   alkalinity: "Alkalinity",
   ph: "pH",
   cyanuric_acid: "CYA",
@@ -36,7 +38,6 @@ export const DISPLAY_LABELS = LABEL;
 // prefer to key on those (e.g. analytics) don't have to re-derive.
 export const CANONICAL_SHORT_LABELS = {
   free_chlorine: "free_cl",
-  total_chlorine: "total_cl",
   alkalinity: "alkalinity",
   ph: "ph",
   cyanuric_acid: "cya",
@@ -46,9 +47,6 @@ const ALIASES = {
   free_cl: "free_chlorine",
   freecl: "free_chlorine",
   "free chlorine": "free_chlorine",
-  total_cl: "total_chlorine",
-  totalcl: "total_chlorine",
-  "total chlorine": "total_chlorine",
   cya: "cyanuric_acid",
   cyanuric: "cyanuric_acid",
   "cyanuric acid": "cyanuric_acid",

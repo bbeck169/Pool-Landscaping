@@ -72,7 +72,6 @@ def chem_line_cost_cents(name: str, qty: float, prices: Dict[str, int]) -> int:
 # ─── Canonical water-test key order (post-P0 Workstream fix) ─────────
 _WATER_TEST_CANONICAL: List[Tuple[str, str, str]] = [
     ("free_chlorine",   "Free Chlorine",  "ppm"),
-    ("total_chlorine",  "Total Chlorine", "ppm"),
     ("ph",              "Ph Balance",     ""),
     ("alkalinity",      "Alkalinity",     "ppm"),
     ("cyanuric_acid",   "CYA",            "ppm"),

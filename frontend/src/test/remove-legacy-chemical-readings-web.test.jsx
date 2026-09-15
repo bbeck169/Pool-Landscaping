@@ -38,7 +38,6 @@ const _baseProps = {
   locked: false,
   readings: [
     { key: "free_chlorine",  name: "Free Chlorine",  unit: "ppm", value: null },
-    { key: "total_chlorine", name: "Total Chlorine", unit: "ppm", value: null },
     { key: "ph",             name: "pH",             unit: "",    value: null },
     { key: "alkalinity",     name: "Total Alkalinity", unit: "ppm", value: null },
     { key: "cyanuric_acid",  name: "Cyanuric Acid",  unit: "ppm", value: null },
@@ -72,7 +71,7 @@ describe("Pool checklist · legacy Chemical Readings header removed", () => {
   it("still renders every reading input row", () => {
     render(<PoolChecklistForm {..._baseProps} onChange={() => {}} />);
     for (const key of [
-      "free_chlorine", "total_chlorine", "ph",
+      "free_chlorine", "ph",
       "total_alkalinity", "cyanuric_acid",
     ]) {
       expect(screen.getByTestId(`pool-reading-${key}-input`)).toBeTruthy();

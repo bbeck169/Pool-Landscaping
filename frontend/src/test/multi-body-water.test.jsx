@@ -40,7 +40,7 @@ import {
 describe("waterBodies helpers", () => {
   it("READING_ALLOWLIST matches the approved kickoff spec", () => {
     expect(READING_ALLOWLIST.pool).toEqual([
-      "free_chlorine", "total_chlorine", "ph", "alkalinity",
+      "free_chlorine", "ph", "alkalinity",
       "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates",
     ]);
     expect(READING_ALLOWLIST.spa).toEqual([
@@ -54,8 +54,11 @@ describe("waterBodies helpers", () => {
     ]);
   });
 
-  it("READING_REQUIRED gates only pool", () => {
-    expect(READING_REQUIRED.pool).toHaveLength(5);
+  it("READING_REQUIRED gates only pool (Required Four)", () => {
+    expect(READING_REQUIRED.pool).toHaveLength(4);
+    expect(READING_REQUIRED.pool).toEqual([
+      "free_chlorine", "ph", "alkalinity", "cyanuric_acid",
+    ]);
     expect(READING_REQUIRED.spa).toHaveLength(0);
     expect(READING_REQUIRED.water_feature).toHaveLength(0);
     expect(READING_REQUIRED.fountain).toHaveLength(0);
@@ -96,13 +99,12 @@ describe("waterBodies helpers", () => {
 
   it("missingRequiredReadings flags empty pool cores; is empty for spa", () => {
     const empty = missingRequiredReadings({ type: "pool", readings: [] });
-    expect(empty).toEqual(["free_chlorine", "total_chlorine", "ph",
+    expect(empty).toEqual(["free_chlorine", "ph",
                             "alkalinity", "cyanuric_acid"]);
     const filled = missingRequiredReadings({
       type: "pool",
       readings: [
         { key: "free_chlorine", value: 3 },
-        { key: "total_chlorine", value: 3 },
         { key: "ph", value: 7.4 },
         { key: "alkalinity", value: 90 },
         { key: "cyanuric_acid", value: 45 },

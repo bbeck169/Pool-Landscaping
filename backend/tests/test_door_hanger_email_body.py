@@ -170,7 +170,6 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
             "tenant_id": tid, "job_id": jid, "tech_id": "test-tech",
             "chemical_readings": [
                 {"key": "free_chlorine",  "value": 2.5, "unit": "ppm"},
-                {"key": "total_chlorine", "value": 3.0, "unit": "ppm"},
                 {"key": "ph",             "value": 7.4},
                 {"key": "alkalinity",     "value": 80,  "unit": "ppm"},
                 {"key": "cyanuric_acid",  "value": 40,  "unit": "ppm"},
@@ -253,7 +252,7 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
             _wt_start = body.index("Water Test</h3>")
             _wt_end   = body.index("</table>", _wt_start)
             _wt = body[_wt_start:_wt_end]
-            for _label in ("Free Chlorine", "Total Chlorine", "pH",
+            for _label in ("Free Chlorine", "pH",
                            "Alkalinity", "Cyanuric Acid"):
                 assert f">{_label}</td>" in _wt, (
                     f"missing display label {_label!r} in Water Test section"
@@ -316,7 +315,7 @@ def test_door_hanger_legacy_readings_on_job_doc_still_render(monkeypatch):
         cid = await _mk_customer(tid)
         jid = await _mk_pool_job(tid, cid, seed_fields={
             "chemical_readings": {
-                "free_chlorine": 1.8, "total_chlorine": 2.4,
+                "free_chlorine": 1.8,
                 "ph": 7.5, "alkalinity": 90, "cyanuric_acid": 45,
             },
             "chemicals_added": [
@@ -619,7 +618,6 @@ def test_door_hanger_elevated_ph_renders_band_not_number(monkeypatch):
             "submitted_at": now_iso(),
             "chemical_readings": [
                 {"key": "free_chlorine",  "value": 2.5},
-                {"key": "total_chlorine", "value": 3.0},
                 {"key": "ph",             "value": 8.5},
                 {"key": "alkalinity",     "value": 90},
                 {"key": "cyanuric_acid",  "value": 45},
@@ -659,7 +657,6 @@ def test_door_hanger_water_test_renders_all_five_cores_in_fixed_order(monkeypatc
                 {"key": "cyanuric_acid",  "value": 45},
                 {"key": "ph",             "value": 7.4},
                 {"key": "alkalinity",     "value": 90},
-                {"key": "total_chlorine", "value": 3.0},
                 {"key": "free_chlorine",  "value": 2.5},
             ],
         })
@@ -673,12 +670,12 @@ def test_door_hanger_water_test_renders_all_five_cores_in_fixed_order(monkeypatc
             # Every core rendered, in display order.
             positions = {
                 lbl: _wt.index(f">{lbl}</td>") for lbl in
-                ("Free Chlorine", "Total Chlorine", "pH",
+                ("Free Chlorine", "pH",
                  "Alkalinity", "Cyanuric Acid")
             }
             ordered = sorted(positions.items(), key=lambda kv: kv[1])
             assert [k for k, _ in ordered] == [
-                "Free Chlorine", "Total Chlorine", "pH",
+                "Free Chlorine", "pH",
                 "Alkalinity", "Cyanuric Acid",
             ]
         finally:
@@ -700,7 +697,6 @@ def test_door_hanger_optional_readings_omit_when_blank(monkeypatch):
             "submitted_at": now_iso(),
             "chemical_readings": [
                 {"key": "free_chlorine",   "value": 2.5},
-                {"key": "total_chlorine",  "value": 3.0},
                 {"key": "ph",              "value": 7.4},
                 {"key": "alkalinity",      "value": 90},
                 {"key": "cyanuric_acid",   "value": 45},
@@ -737,7 +733,6 @@ def test_door_hanger_optional_reading_rendered_when_filled(monkeypatch):
             "submitted_at": now_iso(),
             "chemical_readings": [
                 {"key": "free_chlorine",   "value": 2.5},
-                {"key": "total_chlorine",  "value": 3.0},
                 {"key": "ph",              "value": 7.4},
                 {"key": "alkalinity",      "value": 90},
                 {"key": "cyanuric_acid",   "value": 45},
@@ -788,7 +783,6 @@ def test_door_hanger_extended_readings_render_with_bands(monkeypatch):
             "submitted_at": now_iso(),
             "chemical_readings": [
                 {"key": "free_chlorine",   "value": 2.5},
-                {"key": "total_chlorine",  "value": 3.0},
                 {"key": "ph",              "value": 7.4},
                 {"key": "alkalinity",      "value": 90},
                 {"key": "cyanuric_acid",   "value": 45},
@@ -850,7 +844,6 @@ def test_door_hanger_combined_chlorine_never_rendered(monkeypatch):
             "chemical_readings": [
                 {"key": "free_chlorine",     "value": 2.5},
                 {"key": "combined_chlorine", "value": 0.5, "unit": "ppm"},
-                {"key": "total_chlorine",    "value": 3.0},
                 {"key": "ph",                "value": 7.4},
                 {"key": "alkalinity",        "value": 90},
                 {"key": "cyanuric_acid",     "value": 45},
@@ -888,7 +881,6 @@ def test_door_hanger_new_customer_labels(monkeypatch):
             "submitted_at": now_iso(),
             "chemical_readings": [
                 {"key": "free_chlorine",  "value": 2.5},
-                {"key": "total_chlorine", "value": 3.0},
                 {"key": "ph",             "value": 7.4},
                 {"key": "alkalinity",     "value": 90},
                 {"key": "cyanuric_acid",  "value": 45},
@@ -903,8 +895,9 @@ def test_door_hanger_new_customer_labels(monkeypatch):
                        body.index("</table>", body.index("Water Test</h3>"))]
             # New customer-facing labels present.
             assert ">Free Chlorine</td>" in _wt
-            assert ">Total Chlorine</td>" in _wt
             assert ">Cyanuric Acid</td>" in _wt
+            # Phase CHEM1 · Total Chlorine removed — must not surface.
+            assert ">Total Chlorine</td>" not in _wt
             # Tech-facing shorthand must NOT leak into the customer email.
             assert ">Free Cl</td>" not in _wt
             assert ">Total Cl</td>" not in _wt
@@ -932,7 +925,6 @@ def test_door_hanger_zero_value_optionals_are_unmeasured_sentinel(monkeypatch):
             "chemical_readings": [
                 # Core readings real.
                 {"key": "free_chlorine",  "value": 2.5},
-                {"key": "total_chlorine", "value": 3.0},
                 {"key": "ph",             "value": 7.4},
                 {"key": "alkalinity",     "value": 90},
                 {"key": "cyanuric_acid",  "value": 45},
@@ -976,7 +968,6 @@ def test_door_hanger_water_temp_renders_raw_not_banded(monkeypatch):
             "submitted_at": now_iso(),
             "chemical_readings": [
                 {"key": "free_chlorine",  "value": 2.5},
-                {"key": "total_chlorine", "value": 3.0},
                 {"key": "ph",             "value": 7.4},
                 {"key": "alkalinity",     "value": 90},
                 {"key": "cyanuric_acid",  "value": 45},
@@ -1040,7 +1031,6 @@ def _elevated_seed_readings(elevated_count: int) -> list:
     """
     all_core = [
         ("free_chlorine",  12.0, 2.5),   # (>10 elevated, average)
-        ("total_chlorine", 12.0, 3.0),
         ("ph",             8.6,  7.4),
         ("alkalinity",     200,  90),
         ("cyanuric_acid",  180,  45),

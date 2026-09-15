@@ -83,7 +83,6 @@ async def _mk_completed_pool_job(
         "created_at": now_iso(),
         "chemical_readings": [
             {"key": "free_chlorine",  "value": 2.5},
-            {"key": "total_chlorine", "value": 3.0},
             {"key": "ph",             "value": 7.4},
             {"key": "alkalinity",     "value": 80},
             {"key": "cyanuric_acid",  "value": 40},
@@ -143,7 +142,6 @@ def test_edit_within_window_as_technician_writes_audit_row():
             body = _patch(
                 chemical_readings=[
                     {"key": "free_chlorine",  "value": 2.8},   # was 2.5
-                    {"key": "total_chlorine", "value": 3.0},
                     {"key": "ph",             "value": 7.4},
                     {"key": "alkalinity",     "value": 80},
                     {"key": "cyanuric_acid",  "value": 40},
@@ -315,7 +313,6 @@ def test_edit_violating_chemistry_gate_writes_no_audit_row():
             from routers.jobs import patch_job_edit_window
             body = _patch(chemical_readings=[
                 {"key": "free_chlorine",  "value": 2.5},
-                {"key": "total_chlorine", "value": 3.0},
                 {"key": "ph",             "value": 7.4},
                 {"key": "alkalinity",     "value": 80},
                 # CYA blanked out — gate must block.
@@ -437,7 +434,6 @@ def test_edit_does_not_duplicate_elevated_followup_ledger():
             await patch_job_edit_window(
                 jid, _patch(chemical_readings=[
                     {"key": "free_chlorine",  "value": 12.0},
-                    {"key": "total_chlorine", "value": 12.0},
                     {"key": "ph",             "value": 8.6},
                     {"key": "alkalinity",     "value": 200},
                     {"key": "cyanuric_acid",  "value": 40},

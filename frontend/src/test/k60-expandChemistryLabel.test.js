@@ -13,7 +13,7 @@ import { expandChemistryLabel } from "../lib/expandChemistryLabel";
 describe("K60 · expandChemistryLabel (web) — full mapping (case-insensitive)", () => {
   const cases = [
     ["FC", "Free Chlorine"],
-    ["TC", "Total Chlorine"],
+    // Phase CHEM1 · Feb-2026 — "TC" (Total Chlorine) label removed.
     ["pH", "pH"],
     ["TA", "Total Alkalinity"],
     ["CYA", "Cyanuric Acid"],

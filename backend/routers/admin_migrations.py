@@ -1395,3 +1395,63 @@ async def clear_stale_forced_reset_flags(
         "tenant_id": body.tenant_id,
         **counts,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase CHEM1 · Feb-2026 — Remove ``total_chlorine`` from every
+# persisted service report (list-of-dicts + dict + nested water_bodies).
+# Super_admin only, dry-run default. Idempotent — the per-doc
+# ``$unset`` filter short-circuits already-clean docs.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/chemistry/remove-total-chlorine",
+    operation_id="admin.chemistry.remove_total_chlorine",
+    summary="Phase CHEM1 · $unset total_chlorine from every service report",
+)
+async def remove_total_chlorine(
+    force: bool = Query(
+        False,
+        description=(
+            "Bypass the ``feb2026_chemistry_remove_total_chlorine_v1`` "
+            "sentinel. Every ``$unset`` filter is still idempotent, so "
+            "re-runs after the initial sweep flip zero docs."
+        ),
+    ),
+    dry_run: bool = Query(
+        False,
+        description=(
+            "When true, returns the scan counts (per collection) "
+            "without writing. Default is False so operators can "
+            "one-shot the sweep on demand."
+        ),
+    ),
+    tenant_id: Optional[str] = Query(
+        None,
+        description=(
+            "Optional — target a single tenant. When omitted the "
+            "sweep runs across ALL tenants."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Phase CHEM1 · Feb-2026 — one-shot ``$unset`` sweep that removes
+    every persisted trace of the ``total_chlorine`` reading. See
+    ``services/migrations/chemistry_remove_total_chlorine_v1.py`` for
+    the exact match filters."""
+    _require_super_admin(user)
+    from services.migrations.chemistry_remove_total_chlorine_v1 import (
+        run_remove_total_chlorine_migration,
+    )
+    report = await run_remove_total_chlorine_migration(
+        force=bool(force),
+        dry_run=bool(dry_run),
+        tenant_id=tenant_id,
+    )
+    logger.info(
+        "[chem1-remove-total-chlorine-api] user=%s caller_tenant=%s "
+        "force=%s dry_run=%s tenant_id=%s totals=%s",
+        user.get("id"), tenant.get("id"), force, dry_run, tenant_id,
+        (report.get("totals") or {}),
+    )
+    return report

@@ -50,7 +50,6 @@ import ServiceReport from "@/pages/tech/ServiceReport";
 
 const CORE_ROWS = [
   { key: "free_chlorine",  value: null },
-  { key: "total_chlorine", value: null },
   { key: "alkalinity",     value: null },
   { key: "ph",             value: null },
   { key: "cyanuric_acid",  value: null },
@@ -99,16 +98,16 @@ afterEach(() => cleanup());
 
 
 describe("ServiceReport · chemistry gate button transitions", () => {
-  it("1. Only pH + Free Cl filled → disabled + title 'Missing: Total Cl, Alkalinity, CYA'", async () => {
+  it("1. Only pH + Free Cl filled → disabled + title 'Missing: Alkalinity, CYA'", async () => {
     const btn = await renderWithReport(
       mkReport({
         chemical_readings: readingsWithFilled(["ph", "free_chlorine"]),
       }),
     );
     expect(btn).toBeDisabled();
-    // Exact case + comma-space separator per Fix-1 spec.
+    // Phase CHEM1 · Feb-2026 — Total Cl removed from the missing list.
     expect(btn.getAttribute("title")).toBe(
-      "Missing: Total Cl, Alkalinity, CYA",
+      "Missing: Alkalinity, CYA",
     );
   });
 
@@ -120,17 +119,17 @@ describe("ServiceReport · chemistry gate button transitions", () => {
       mkReport({ chemical_readings: rows }),
     );
     expect(btn).toBeDisabled();
-    // Same three missing cores — optionals are ignored.
+    // Same two missing cores — optionals are ignored.
     expect(btn.getAttribute("title")).toBe(
-      "Missing: Total Cl, Alkalinity, CYA",
+      "Missing: Alkalinity, CYA",
     );
   });
 
-  it("3. All 5 cores filled → enabled + title cleared", async () => {
+  it("3. All Required Four filled → enabled + title cleared", async () => {
     const btn = await renderWithReport(
       mkReport({
         chemical_readings: readingsWithFilled([
-          "free_chlorine", "total_chlorine",
+          "free_chlorine",
           "alkalinity", "ph", "cyanuric_acid",
         ]),
       }),
@@ -148,7 +147,6 @@ describe("ServiceReport · chemistry gate button transitions", () => {
     // missing.  Backend rule mirrored by the client.
     const rows = [
       { key: "free_chlorine",  value: 0 },       // real reading
-      { key: "total_chlorine", value: "-1.5" },  // real reading (stringified)
       { key: "alkalinity",     value: 80 },
       { key: "ph",             value: 7.4 },
       { key: "cyanuric_acid",  value: 40 },
@@ -162,7 +160,6 @@ describe("ServiceReport · chemistry gate button transitions", () => {
   it("5. Empty + whitespace + unparseable strings are ALL missing", async () => {
     const rows = [
       { key: "free_chlorine",  value: "" },
-      { key: "total_chlorine", value: "   " },
       { key: "alkalinity",     value: "not-a-number" },
       { key: "ph",             value: 7.4 },
       { key: "cyanuric_acid",  value: 40 },
@@ -172,7 +169,7 @@ describe("ServiceReport · chemistry gate button transitions", () => {
     );
     expect(btn).toBeDisabled();
     expect(btn.getAttribute("title")).toBe(
-      "Missing: Free Cl, Total Cl, Alkalinity",
+      "Missing: Free Cl, Alkalinity",
     );
   });
 });

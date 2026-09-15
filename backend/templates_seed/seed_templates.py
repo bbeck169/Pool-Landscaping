@@ -459,7 +459,7 @@ TEMPLATES = [
      "description":"Per-visit water chemistry readings and chemicals added.",
      "schema":[
        _sec("Pool Info",[_f("customer","Customer","text",required=True),_f("pool_id","Pool ID","text"),_f("date","Date","date",required=True),_f("visit_type","Visit type","select",options=["Weekly","Bi-weekly","On-call","Opening","Closing"])]),
-       _sec("Readings",[_f("readings","","table",columns=[{"key":"time","label":"Time"},{"key":"free_chlorine","label":"Free Cl (ppm)","type":"number"},{"key":"total_chlorine","label":"Total Cl (ppm)","type":"number"},{"key":"ph","label":"pH","type":"number"},{"key":"alkalinity","label":"Alk (ppm)","type":"number"},{"key":"cya","label":"CYA (ppm)","type":"number"},{"key":"calcium_hardness","label":"CaHardness (ppm)","type":"number"},{"key":"temp_f","label":"Temp (°F)","type":"number"}])]),
+       _sec("Readings",[_f("readings","","table",columns=[{"key":"time","label":"Time"},{"key":"free_chlorine","label":"Free Cl (ppm)","type":"number"},{"key":"ph","label":"pH","type":"number"},{"key":"alkalinity","label":"Alk (ppm)","type":"number"},{"key":"cya","label":"CYA (ppm)","type":"number"},{"key":"calcium_hardness","label":"CaHardness (ppm)","type":"number"},{"key":"temp_f","label":"Temp (°F)","type":"number"}])]),
        _sec("Chemicals Added",[_f("chems","","table",columns=[{"key":"chemical","label":"Chemical"},{"key":"amount","label":"Amount"},{"key":"unit","label":"Unit"}])]),
        _sec("Observations",[_f("clarity","Water clarity","select",options=["Clear","Hazy","Cloudy","Green"]),_f("issues","Issues observed","long_text")]),
        _sec("Technician",[_f("tech_name","Technician","text"),_f("signature","Signature","signature")]),

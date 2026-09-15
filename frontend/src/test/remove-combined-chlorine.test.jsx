@@ -31,7 +31,6 @@ import PoolChecklistForm from "@/components/checklist/PoolChecklistForm";
 
 const READING_FIELDS = [
   { key: "free_chlorine",     name: "Free Chlorine",     unit: "ppm" },
-  { key: "total_chlorine",    name: "Total Chlorine",    unit: "ppm" },
   { key: "combined_chlorine", name: "Combined Chlorine", unit: "ppm" },
   { key: "ph",                name: "pH",                unit: "pH"  },
   { key: "total_alkalinity",  name: "Total Alkalinity",  unit: "ppm" },
@@ -75,7 +74,7 @@ describe("Job Checklist · Combined Chlorine removed (web)", () => {
 
   it("renders the five remaining chem inputs", () => {
     render(<PoolChecklistForm {...baseProps} onChange={() => {}} />);
-    for (const k of ["free_chlorine", "total_chlorine", "ph",
+    for (const k of ["free_chlorine", "ph",
                      "total_alkalinity", "cyanuric_acid"]) {
       expect(screen.getByTestId(`pool-reading-${k}-input`)).toBeTruthy();
     }
@@ -103,8 +102,11 @@ describe("Job Checklist · Combined Chlorine removed (web)", () => {
     expect(keys.includes("combined_chlorine")).toBe(false);
     expect(keys.includes("combined chlorine")).toBe(false);
     // Other core readings still round-trip through the payload.
+    // Phase CHEM1 · Feb-2026 — Total Chlorine removed; the Required
+    // Four (free_chlorine, ph, alkalinity, cyanuric_acid) are the
+    // canonical checks.
     expect(keys.includes("free_chlorine")).toBe(true);
-    expect(keys.includes("total_chlorine")).toBe(true);
+    expect(keys.includes("total_chlorine")).toBe(false);
     expect(keys.includes("ph")).toBe(true);
   });
 });

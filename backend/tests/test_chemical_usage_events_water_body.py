@@ -165,7 +165,6 @@ def test_snapshot_iterates_water_bodies_and_stamps_wb_id():
             {"type": "pool", "label": "Main Pool",
               "readings": [
                 {"key": "free_chlorine", "value": 3.0},
-                {"key": "total_chlorine", "value": 3.2},
                 {"key": "ph", "value": 7.5},
                 {"key": "alkalinity", "value": 100},
                 {"key": "cyanuric_acid", "value": 45},
@@ -278,7 +277,6 @@ def test_report_by_water_body_splits_multi_body_invoice():
             {"type": "pool", "label": "Main Pool",
               "readings": [
                 {"key": "free_chlorine", "value": 3.0},
-                {"key": "total_chlorine", "value": 3.2},
                 {"key": "ph", "value": 7.5},
                 {"key": "alkalinity", "value": 100},
                 {"key": "cyanuric_acid", "value": 45},

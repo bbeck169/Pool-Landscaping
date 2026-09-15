@@ -164,11 +164,11 @@ def test_pool_close_missing_readings_returns_structured_422():
         assert outer.get("detail") == "chemistry_core_readings_missing"
         assert isinstance(outer.get("missing_fields"), list)
         assert set(outer["missing_fields"]) == {
-            "free_cl", "total_cl", "alkalinity", "ph", "cya",
+            "free_cl", "alkalinity", "ph", "cya",
         }
         assert isinstance(outer.get("missing_labels"), list)
         assert set(outer["missing_labels"]) == {
-            "Free Cl", "Total Cl", "Alkalinity", "pH", "CYA",
+            "Free Cl", "Alkalinity", "pH", "CYA",
         }
         assert isinstance(outer.get("message"), str)
         assert "chemistry" in outer["message"].lower() \
@@ -187,7 +187,6 @@ def test_pool_close_with_all_readings_succeeds_200():
         jid = _seed_pool_job(tid, tech_id)
         _seed_report(tid, jid, tech_id, readings=[
             {"key": "free_chlorine",   "value": 2.5},
-            {"key": "total_chlorine",  "value": 3.0},
             {"key": "alkalinity",      "value": 80},
             {"key": "ph",              "value": 7.4},
             {"key": "cyanuric_acid",   "value": 40},
@@ -249,7 +248,6 @@ def test_pool_close_partial_readings_returns_only_missing_labels():
         jid = _seed_pool_job(tid, tech_id)
         _seed_report(tid, jid, tech_id, readings=[
             {"key": "free_chlorine",  "value": 2.5},
-            {"key": "total_chlorine", "value": 3.0},
             {"key": "alkalinity",     "value": 80},
             {"key": "ph",             "value": 7.4},
             # cyanuric_acid intentionally missing

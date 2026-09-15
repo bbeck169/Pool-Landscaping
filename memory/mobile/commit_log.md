@@ -2053,3 +2053,39 @@
   - `/app/mobile/app/leads/index.tsx`
   - `/app/mobile/src/utils/mapApiError.ts`
 - **Verified**: 3 screenshots on deployed preview confirming Address visible → 5 suggestions → populated + dismissed
+
+## Iteration 99 — Phase C1 + C1.1: Dirty-close guard for checklist
+- **Commit**: (same session)
+- **Date**: 2026-09-15
+- **Changes**:
+  - Added `usePreventRemove` from `@react-navigation/core` to intercept back navigation when dirty
+  - Added `attemptClose()` function that checks `dirtyRef.current` before closing
+  - Added three-button confirm dialog Modal: Save & close, Discard changes, Keep editing
+  - Save & close: flushes save, shows spinner + "Saving…", handles success/failure
+  - Discard: clears dirty, navigates back without saving
+  - Keep editing: dismisses dialog only
+  - Added "×" close button to Header for explicit close path
+  - Added `isDirtyForGuard` state synced with `dirtyRef` via interval (for reactive `usePreventRemove`)
+  - Fixed mapApiError.ts fallback from "You're offline" to "Something went wrong" (from iteration 98)
+  - Added Jest test file with 5 tests (all pass)
+- **Files modified**:
+  - `/app/mobile/app/job/[id]/checklist.tsx`
+  - `/app/mobile/__tests__/checklist-dirty-close-guard.test.tsx` (NEW)
+- **Verified**: Screenshot of dirty-close dialog showing all three buttons on deployed preview
+
+## Iteration 100 — Phase CHEM1: Remove Total Chlorine + relax non-required chemistry
+- **Commit**: (same session)
+- **Date**: 2026-09-15
+- **Changes**:
+  - Removed `total_chlorine` from READING_ALLOWLIST (pool, other), READING_REQUIRED, READING_LABELS, DEFAULT_VALUES, DEFAULT_TESTED_KEYS, RULES, _NAME_TO_CANONICAL, _K60_LABEL_MAP, and REQUIRED_READING_KEYS
+  - Updated READING_REQUIRED to enforce Required Four (free_chlorine, ph, alkalinity, cyanuric_acid) on pool, spa, AND other body types
+  - Added 8 Jest tests — all pass
+- **Files modified**:
+  - `/app/mobile/src/lib/waterBodies.ts`
+  - `/app/mobile/src/components/checklist/PoolChecklistForm.tsx`
+  - `/app/mobile/src/components/checklist/ReadingChipRow.tsx`
+  - `/app/mobile/src/lib/expandChemistryLabel.ts`
+  - `/app/mobile/app/(app)/service-report/[id].tsx`
+  - `/app/mobile/__tests__/chem1-required-four.test.ts` (NEW)
+- **Before grep count**: 30 occurrences of total_chlorine/Total Chlorine
+- **After grep count**: 0 (outside tests)

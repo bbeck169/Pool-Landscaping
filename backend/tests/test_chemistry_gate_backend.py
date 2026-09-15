@@ -51,7 +51,6 @@ from services.water_bodies import (  # noqa: E402
 
 CORE_READINGS_PAYLOAD = [
     {"key": "free_chlorine",    "value": 2.5, "unit": "ppm"},
-    {"key": "total_chlorine",   "value": 2.6, "unit": "ppm"},
     {"key": "ph",               "value": 7.4},
     {"key": "alkalinity",       "value": 90,  "unit": "ppm"},
     {"key": "cyanuric_acid",    "value": 40,  "unit": "ppm"},
@@ -193,7 +192,7 @@ def test_acceptance_4_close_gate_fallback_to_water_bodies():
     }
     gathered = gather_readings_for_job(job, rep)
     assert set(gathered.keys()) >= {
-        "free_chlorine", "total_chlorine", "ph",
+        "free_chlorine", "ph",
         "alkalinity", "cyanuric_acid",
     }
     # Explicit gate call also passes (no exception).
@@ -239,8 +238,8 @@ def test_acceptance_5_close_gate_rejects_when_nothing_present():
     detail = exc_info.value.detail
     assert isinstance(detail, dict)
     assert detail.get("detail") == "chemistry_core_readings_missing"
-    # All five cores are missing.
-    assert len(detail.get("missing_fields") or []) == 5
+    # All four cores are missing (Phase CHEM1 removed total_chlorine).
+    assert len(detail.get("missing_fields") or []) == 4
 
 
 # ─── Bonus — shared pipeline (one canonical import point) ────────

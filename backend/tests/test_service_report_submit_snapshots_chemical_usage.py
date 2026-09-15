@@ -150,7 +150,6 @@ async def _seed_job_and_report(tenant_id: str, customer_id: str,
         "submitted_at": None,
         "chemical_readings": [
             {"key": "free_chlorine",  "value": 2.5},
-            {"key": "total_chlorine", "value": 3.0},
             {"key": "ph",             "value": 7.4},
             {"key": "alkalinity",     "value": 90},
             {"key": "cyanuric_acid",  "value": 45},

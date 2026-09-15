@@ -26,7 +26,6 @@
 
 const _K60_LABEL_MAP: Readonly<Record<string, string>> = Object.freeze({
   fc:         "Free Chlorine",
-  tc:         "Total Chlorine",
   cc:         "Combined Chlorine",
   ph:         "pH",
   ta:         "Total Alkalinity",

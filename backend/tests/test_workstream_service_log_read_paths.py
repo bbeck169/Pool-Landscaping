@@ -137,14 +137,13 @@ async def _call_service_log(jid: str, tenant_id: str) -> Dict[str, Any]:
 # ═════════════════════════════════════════════════════════════════════
 # 1. Chemistry via service_report LIST shape → all 5 rows.
 # ═════════════════════════════════════════════════════════════════════
-def test_water_test_list_shape_from_service_report_renders_all_5_including_cya():
+def test_water_test_list_shape_from_service_report_renders_required_four_including_cya():
     async def _go():
         tid = await _tenant_id()
         jid = await _mk_pool_job(tid)
         await _mk_service_report(tid, jid, {
             "chemical_readings": [
                 {"key": "free_chlorine",  "label": "Free Chlorine",  "value": 2.5, "unit": "ppm"},
-                {"key": "total_chlorine", "label": "Total Chlorine", "value": 3.0, "unit": "ppm"},
                 {"key": "ph",             "label": "pH",             "value": 7.4},
                 {"key": "alkalinity",     "label": "Alkalinity",     "value": 80,  "unit": "ppm"},
                 {"key": "cyanuric_acid",  "label": "CYA",            "value": 40,  "unit": "ppm"},
@@ -153,9 +152,10 @@ def test_water_test_list_shape_from_service_report_renders_all_5_including_cya()
         try:
             payload = await _call_service_log(jid, tid)
             wt = payload["water_test"]
-            assert len(wt) == 5, wt
+            # Phase CHEM1 · Feb-2026 — Required Four surfaces exactly.
+            assert len(wt) == 4, wt
             assert [r["key"] for r in wt] == [
-                "free_chlorine", "total_chlorine", "ph",
+                "free_chlorine", "ph",
                 "alkalinity", "cyanuric_acid",
             ], wt
             # Fix-A explicit CYA rendering (bundled into this ship).
@@ -169,15 +169,15 @@ def test_water_test_list_shape_from_service_report_renders_all_5_including_cya()
 
 
 # ═════════════════════════════════════════════════════════════════════
-# 2. Chemistry via service_report DICT shape → all 5 rows.
+# 2. Chemistry via service_report DICT shape → Required Four rows.
 # ═════════════════════════════════════════════════════════════════════
-def test_water_test_dict_shape_from_service_report_renders_all_5():
+def test_water_test_dict_shape_from_service_report_renders_required_four():
     async def _go():
         tid = await _tenant_id()
         jid = await _mk_pool_job(tid)
         await _mk_service_report(tid, jid, {
             "chemical_readings": {
-                "free_chlorine": 2.5, "total_chlorine": 3.0,
+                "free_chlorine": 2.5,
                 "ph": 7.4, "alkalinity": 80, "cyanuric_acid": 40,
             },
         })
@@ -187,7 +187,8 @@ def test_water_test_dict_shape_from_service_report_renders_all_5():
             values = {r["key"]: r["value"] for r in wt}
             assert values["free_chlorine"] == 2.5
             assert values["cyanuric_acid"] == 40.0
-            assert len(wt) == 5
+            # Phase CHEM1 · Feb-2026 — Required Four surfaces exactly.
+            assert len(wt) == 4
         finally:
             await _drain(tid, jid)
 
@@ -202,7 +203,7 @@ def test_water_test_backward_compat_reads_from_job_when_service_report_missing()
         tid = await _tenant_id()
         jid = await _mk_pool_job(tid, seed_fields={
             "chemical_readings": {
-                "free_chlorine": 1.5, "total_chlorine": 2.0,
+                "free_chlorine": 1.5,
                 "ph": 7.6, "alkalinity": 100, "cyanuric_acid": 55,
             },
         })
@@ -211,7 +212,7 @@ def test_water_test_backward_compat_reads_from_job_when_service_report_missing()
             payload = await _call_service_log(jid, tid)
             values = {r["key"]: r["value"] for r in payload["water_test"]}
             assert values == {
-                "free_chlorine": 1.5, "total_chlorine": 2.0,
+                "free_chlorine": 1.5,
                 "ph": 7.6, "alkalinity": 100.0, "cyanuric_acid": 55.0,
             }
         finally:
@@ -319,7 +320,6 @@ def test_water_test_ordering_matches_canonical_spec():
                 {"key": "cyanuric_acid",  "value": 40},
                 {"key": "ph",             "value": 7.4},
                 {"key": "free_chlorine",  "value": 2.5},
-                {"key": "total_chlorine", "value": 3.0},
                 # A custom reading — should render AFTER canonical.
                 {"key": "calcium_hardness","value": 250},
             ],
@@ -328,7 +328,7 @@ def test_water_test_ordering_matches_canonical_spec():
             payload = await _call_service_log(jid, tid)
             wt = payload["water_test"]
             assert [r["key"] for r in wt] == [
-                "free_chlorine", "total_chlorine", "ph",
+                "free_chlorine", "ph",
                 "alkalinity", "cyanuric_acid", "calcium_hardness",
             ], wt
         finally:

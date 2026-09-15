@@ -51,22 +51,14 @@ POOL_CHECKLIST_DEFAULT = [
 POOL_READING_FIELDS_DEFAULT = [
     # key=machine, name=user label, ideal=text hint, min/max=picker range, step=picker step
     #
-    # Phase 56.3 follow-up — first-five reorder per operations request:
-    #   1. Combined/Total Chlorine  2. Free Chlorine  3. pH
-    #   4. Total Alkalinity  5. Cyanuric Acid
-    # The remaining rows (calcium_hardness, salt, tds, phosphates,
-    # water_temp) keep their existing order after the top five. This is
-    # a UI order change only — no data migration required.
+    # Phase CHEM1 · Feb-2026 — the Total Chlorine (``total_cl``) field
+    # was removed. The Required set is now the "Required Four":
+    # free_chlorine, ph, alkalinity, cyanuric_acid. See
+    # ``services/chemistry_gate.CORE_READINGS``. Combined Chlorine
+    # remains a customer-facing optional reading; other rows stay
+    # exactly as they were.
     {"key": "combined_chlorine", "name": "Combined Chlorine", "unit": "ppm",  "type": "select",
      "ideal": "0–0.2",    "min": 0,    "max": 20,   "step": 0.1},
-    # Feb-2026 · P16A — added ``total_cl`` because the ``chemistry_gate``
-    # requires it as a CORE reading, but the pre-P16 default template
-    # never exposed the field.  Result: techs following the default
-    # UI reliably hit ``chemistry_core_readings_missing`` unless an
-    # admin had customized the template.  Placed AFTER combined_chlorine
-    # so ``total = free + combined`` reads in the natural mental order.
-    {"key": "total_cl",          "name": "Total Chlorine",    "unit": "ppm",  "type": "select",
-     "ideal": "1–3",      "min": 0,    "max": 20,   "step": 0.1},
     # Feb-2026 · P12B — was ``"chlorine"``; renamed to the canonical
     # ``"free_chlorine"`` so it matches ``chemistry_gate.CORE_READINGS``
     # verbatim.  The bare ``"chlorine"`` key had no entry in the
@@ -678,13 +670,14 @@ async def submit_service_report(
                                   tenant["id"], rep, idem_body)
         return rep  # idempotent
     # Feb-2026 · Chemistry required-readings gate.  Pool jobs MUST
-    # have all 5 core readings (Free Cl, Total Cl, Alkalinity, pH,
-    # CYA) before we accept the submit.  Landscape jobs skip the
-    # gate — no chemistry surface on that checklist. Feb-2026 ·
+    # have the Required Four (Free Cl, Alkalinity, pH, CYA — see
+    # Phase CHEM1) before we accept the submit.  Landscape jobs skip
+    # the gate — no chemistry surface on that checklist. Feb-2026 ·
     # Repair-mode addition — a job tagged ``work_class == "repair"``
     # ALSO skips (repair visits are photo/video/notes only per the
     # locked product spec).
     from services.chemistry_gate import (
+        assert_bodies_required_readings_present,
         assert_core_readings_present, gather_readings_for_job, is_pool_job,
     )
     _report_wc = (rep.get("work_class") or "").lower()
@@ -692,6 +685,11 @@ async def submit_service_report(
     _is_repair = "repair" in (_report_wc, _job_wc)
     if is_pool_job(job) and not _is_repair:
         assert_core_readings_present(gather_readings_for_job(job, rep))
+        # Phase CHEM1 · Feb-2026 — multi-body enforcement. Iterates
+        # every water body whose type requires readings (currently
+        # ``pool``) and raises 422 with per-body detail when any
+        # Required Four value is missing on any such body.
+        assert_bodies_required_readings_present(rep.get("water_bodies"))
     now = now_iso()
     # Phase 22 · Feb 2026 — backfill ``public_uuid`` on submit for
     # reports that were bootstrapped before the field existed. Safe
@@ -1806,7 +1804,6 @@ _TARGET_RANGES = {
     "ph":               (7.2, 7.6),
     "free_chlorine":    (1.0, 3.0),
     "chlorine":         (1.0, 3.0),
-    "total_chlorine":   (1.0, 3.0),
     "combined_chlorine":(0.0, 0.2),
     "alkalinity":       (80, 120),
     "total_alkalinity": (80, 120),

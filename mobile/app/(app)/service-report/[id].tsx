@@ -25,7 +25,7 @@ import AppTextInput from "@/src/components/ui/AppTextInput";
 // Feb-2026 · Required-reading keys — covers all canonical/alias forms.
 // Mirrors the Set in PoolChecklistForm.tsx.
 const REQUIRED_READING_KEYS = new Set<string>([
-  "free_chlorine", "total_chlorine",
+  "free_chlorine",
   "alkalinity", "total_alkalinity",
   "ph", "cyanuric_acid", "cya",
 ]);

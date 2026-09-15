@@ -27,6 +27,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { usePreventRemove } from "@react-navigation/core";
 import * as Clipboard from "expo-clipboard";
 
 import { api, ApiError } from "@/src/api";
@@ -135,6 +136,12 @@ export default function JobChecklistScreen() {
   // Phase 39 · Step 2 — Visit Recap modal state, mirrors web.
   const [recapOpen, setRecapOpen] = useState(false);
   const [recapCustomer, setRecapCustomer] = useState<any>(null);
+
+  // Phase C1 · Dirty-close guard state.
+  const [dirtyCloseOpen, setDirtyCloseOpen] = useState(false);
+  const [saveAndClosing, setSaveAndClosing] = useState(false);
+  // Stores the prevented navigation action to replay after discard/save.
+  const preventedNavRef = useRef<{ data: { action: any } } | null>(null);
 
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
@@ -565,6 +572,86 @@ export default function JobChecklistScreen() {
     setSaveState("idle");
   }, [id, flushSave]);
 
+  // ─── Phase C1 · Dirty-close guard ────────────────────────────────────
+  //
+  // Intercepts navigation (header ×, Android back, iOS swipe-back) when
+  // the checklist form has unsaved changes. Shows a three-button confirm:
+  //   • Save & close (primary) — flush save then navigate back
+  //   • Discard changes (destructive) — clear dirty, navigate back
+  //   • Keep editing (neutral) — dismiss dialog only
+  //
+  const attemptClose = useCallback(() => {
+    if (!dirtyRef.current) {
+      router.back();
+      return;
+    }
+    setDirtyCloseOpen(true);
+  }, [router]);
+
+  const handleSaveAndClose = useCallback(async () => {
+    setSaveAndClosing(true);
+    dirtyRef.current = true; // force flush
+    const result = await flushSave();
+    setSaveAndClosing(false);
+    if (result.ok) {
+      dirtyRef.current = false;
+      setIsDirtyForGuard(false); // immediately unblock navigation
+      setDirtyCloseOpen(false);
+      // Replay the prevented navigation action if it exists
+      setTimeout(() => {
+        if (preventedNavRef.current) {
+          const { action } = preventedNavRef.current.data;
+          preventedNavRef.current = null;
+          router.dispatch(action);
+        } else {
+          router.back();
+        }
+      }, 50);
+    } else {
+      showToast("Couldn't save your changes — please check your connection and try again.");
+      // Keep dialog open, keep dirty
+    }
+  }, [flushSave, router, showToast]);
+
+  const handleDiscard = useCallback(() => {
+    dirtyRef.current = false;
+    setIsDirtyForGuard(false); // immediately unblock navigation
+    setDirtyCloseOpen(false);
+    setTimeout(() => {
+      if (preventedNavRef.current) {
+        const { action } = preventedNavRef.current.data;
+        preventedNavRef.current = null;
+        router.dispatch(action);
+      } else {
+        router.back();
+      }
+    }, 50);
+  }, [router]);
+
+  const handleKeepEditing = useCallback(() => {
+    preventedNavRef.current = null;
+    setDirtyCloseOpen(false);
+  }, []);
+
+  // Intercept back navigation (Android back button, iOS swipe-back, programmatic).
+  // `usePreventRemove` gates on `dirtyRef.current` — only prevents when dirty.
+  // We use a state mirror because the hook needs a reactive boolean.
+  const [isDirtyForGuard, setIsDirtyForGuard] = useState(false);
+  // Keep the reactive state in sync with the ref. We update it on every
+  // scheduleAutosave (dirty=true) and after successful flush (dirty=false).
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setIsDirtyForGuard(dirtyRef.current);
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
+
+  usePreventRemove(isDirtyForGuard && !recapOpen, (e) => {
+    // Store the prevented action so we can replay it after save/discard
+    preventedNavRef.current = e;
+    setDirtyCloseOpen(true);
+  });
+
   // ─── Save draft (explicit) ───────────────────────────────────────────
   //
   // K61.b.2 · Feb-2026 — Save-draft now branches on the ``flushSave``
@@ -823,7 +910,20 @@ export default function JobChecklistScreen() {
 
   return (
     <View style={styles.root}>
-      <Header title="Job Checklist" right={<OfflineBadge testID="checklist-header-offline-badge" />} />
+      <Header
+        title="Job Checklist"
+        back
+        right={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <OfflineBadge testID="checklist-header-offline-badge" />
+            {!locked && (
+              <Pressable onPress={attemptClose} hitSlop={10} testID="checklist-header-close-btn">
+                <Ionicons name="close" size={24} color={colors.onSurface} />
+              </Pressable>
+            )}
+          </View>
+        }
+      />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 160 }}>
         <View style={styles.hero} testID="checklist-hero">
           <Text style={styles.heroLabel}>
@@ -1105,6 +1205,57 @@ export default function JobChecklistScreen() {
           ]);
         }}
       />
+
+      {/* Phase C1 · Dirty-close guard confirm dialog */}
+      <Modal visible={dirtyCloseOpen} transparent animationType="fade" testID="checklist-dirty-close-dialog">
+        <View style={styles.errorDialogOverlay}>
+          <View style={styles.errorDialogCard}>
+            <Ionicons name="alert-circle-outline" size={36} color={colors.brand} />
+            <Text style={styles.errorDialogTitle} testID="checklist-dirty-close-title">
+              Save before closing?
+            </Text>
+            <Text style={styles.errorDialogMessage} testID="checklist-dirty-close-body">
+              You have unsaved changes on this checklist. Save now, or discard them?
+            </Text>
+            <View style={styles.dirtyCloseActions}>
+              {/* Save & close — primary */}
+              <TouchableOpacity
+                style={[styles.dirtyCloseSaveBtn, saveAndClosing && { opacity: 0.7 }]}
+                onPress={handleSaveAndClose}
+                disabled={saveAndClosing}
+                testID="checklist-save-and-close"
+              >
+                {saveAndClosing ? (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <ActivityIndicator size="small" color="#fff" />
+                    <Text style={styles.dirtyCloseSaveBtnText}>Saving…</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.dirtyCloseSaveBtnText}>Save &amp; close</Text>
+                )}
+              </TouchableOpacity>
+              {/* Discard changes — destructive */}
+              <TouchableOpacity
+                style={[styles.dirtyCloseDiscardBtn, saveAndClosing && { opacity: 0.4 }]}
+                onPress={handleDiscard}
+                disabled={saveAndClosing}
+                accessibilityHint="Chemistry values entered since your last save will be lost."
+                testID="checklist-discard-confirm-btn"
+              >
+                <Text style={styles.dirtyCloseDiscardBtnText}>Discard changes</Text>
+              </TouchableOpacity>
+              {/* Keep editing — neutral */}
+              <TouchableOpacity
+                style={styles.dirtyCloseKeepBtn}
+                onPress={handleKeepEditing}
+                testID="checklist-discard-keep-editing"
+              >
+                <Text style={styles.dirtyCloseKeepBtnText}>Keep editing</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1243,4 +1394,21 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand, alignItems: "center",
   },
   errorDialogRetryText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
+  // Phase C1 · Dirty-close guard dialog styles
+  dirtyCloseActions: { gap: spacing.sm, width: "100%" },
+  dirtyCloseSaveBtn: {
+    paddingVertical: 12, borderRadius: radius.md,
+    backgroundColor: colors.brand, alignItems: "center",
+  },
+  dirtyCloseSaveBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
+  dirtyCloseDiscardBtn: {
+    paddingVertical: 12, borderRadius: radius.md,
+    backgroundColor: "#DC2626", alignItems: "center",
+  },
+  dirtyCloseDiscardBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
+  dirtyCloseKeepBtn: {
+    paddingVertical: 12, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border, alignItems: "center",
+  },
+  dirtyCloseKeepBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.muted },
 });

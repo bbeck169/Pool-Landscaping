@@ -92,7 +92,6 @@ def test_validator_accepts_pool_full_chemistry():
         "type": "pool",
         "readings": [
             {"key": "free_chlorine", "value": 3.0},
-            {"key": "total_chlorine", "value": 3.2},
             {"key": "ph", "value": 7.5},
             {"key": "alkalinity", "value": 100},
             {"key": "cyanuric_acid", "value": 45},
@@ -106,7 +105,7 @@ def test_validator_accepts_pool_full_chemistry():
     assert len(out) == 1
     assert out[0]["type"] == "pool"
     assert out[0]["label"] == "Pool"
-    assert len(out[0]["readings"]) == 6
+    assert len(out[0]["readings"]) == 5
     assert len(out[0]["chemicals_used"]) == 2
 
 
@@ -327,7 +326,6 @@ def test_patch_multi_body_persists_and_mirrors_top_level():
                 {"type": "pool",
                  "readings": [
                     {"key": "free_chlorine", "value": 3.0},
-                    {"key": "total_chlorine", "value": 3.2},
                     {"key": "ph", "value": 7.5},
                     {"key": "alkalinity", "value": 100},
                     {"key": "cyanuric_acid", "value": 45},
@@ -356,7 +354,8 @@ def test_patch_multi_body_persists_and_mirrors_top_level():
         assert bodies[1]["type"] == "spa"
         # Legacy mirrors are rebuilt: chemical_readings = pool body
         # readings; chemicals_added = union of all bodies' chemicals.
-        assert len(rep["chemical_readings"]) == 5
+        # Phase CHEM1 · Feb-2026 — Required Four pool readings.
+        assert len(rep["chemical_readings"]) == 4
         assert any(r["key"] == "free_chlorine" for r in rep["chemical_readings"])
         assert len(rep["chemicals_added"]) == 2
         slugs = {c.get("product_slug") for c in rep["chemicals_added"]}
@@ -413,7 +412,6 @@ def test_patch_legacy_only_syncs_water_bodies_zero():
             json={
                 "chemical_readings": [
                     {"key": "free_chlorine", "value": 2.9},
-                    {"key": "total_chlorine", "value": 3.0},
                     {"key": "ph", "value": 7.4},
                     {"key": "alkalinity", "value": 90},
                     {"key": "cyanuric_acid", "value": 50},
@@ -485,7 +483,6 @@ def test_submit_uses_water_bodies_pool_readings_for_gate():
                 {"type": "pool",
                  "readings": [
                     {"key": "free_chlorine", "value": 3.0},
-                    {"key": "total_chlorine", "value": 3.2},
                     {"key": "ph", "value": 7.5},
                     {"key": "alkalinity", "value": 100},
                     {"key": "cyanuric_acid", "value": 45},
@@ -698,7 +695,6 @@ def test_chemical_usage_snapshot_captures_all_bodies_chemicals():
                 {"type": "pool",
                  "readings": [
                     {"key": "free_chlorine", "value": 3.0},
-                    {"key": "total_chlorine", "value": 3.2},
                     {"key": "ph", "value": 7.5},
                     {"key": "alkalinity", "value": 100},
                     {"key": "cyanuric_acid", "value": 45},

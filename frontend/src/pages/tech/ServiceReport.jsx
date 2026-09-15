@@ -12,6 +12,14 @@ import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin,
 // Feb-2026 · Chemistry required-readings gate — shared with backend.
 import { missingCoreReadings } from "@/utils/chemistryGate";
 import { CORE_KEYS as _CORE_READING_KEYS } from "@/utils/chemistryGate";
+// Phase CHEM1 · Feb-2026 — the "*" marker mirrors the backend Required
+// Four. ``canonicalReadingKey`` folds ``alkalinity`` onto
+// ``total_alkalinity``, so the marker set carries both spellings and
+// the star renders for whichever key the template surfaces.
+const _REQUIRED_MARKER_KEYS = new Set([
+  ..._CORE_READING_KEYS,
+  "total_alkalinity",
+]);
 // Feb-2026 · Unification — chemistry section renders the SAME row as
 // the schedule ChecklistModal (verbose labels, "Not tested" pill,
 // "Previously tested at:" caption, sparkline, outlier warning).
@@ -536,7 +544,7 @@ export default function ServiceReport() {
                   previous={undefined}
                   recent={undefined}
                   locked={locked}
-                  required={_CORE_READING_KEYS.includes(canon)}
+                  required={_REQUIRED_MARKER_KEYS.has(canon)}
                   onChange={upd}
                 />
               );

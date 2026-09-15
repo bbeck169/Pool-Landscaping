@@ -443,7 +443,6 @@ _DH_BAND_CHIPS = {
 # the renderer, so unknown / experimental readings never leak.
 _DH_DISPLAY_ORDER = [
     ("free_chlorine",    "Free Chlorine"),
-    ("total_chlorine",   "Total Chlorine"),
     ("ph",               "pH"),
     ("alkalinity",       "Alkalinity"),
     ("cyanuric_acid",    "Cyanuric Acid"),
@@ -459,7 +458,7 @@ _DH_DISPLAY_ORDER = [
 # ``frozenset`` here because the renderer needs O(1) membership and
 # a stable local reference (avoids a circular import at module load).
 _DH_CORE_KEYS = frozenset({
-    "free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid",
+    "free_chlorine", "ph", "alkalinity", "cyanuric_acid",
 })
 
 

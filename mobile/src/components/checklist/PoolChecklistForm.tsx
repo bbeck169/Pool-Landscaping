@@ -41,7 +41,6 @@ const DRAG_REORDER_ENABLED = Platform.OS !== "web";
 // Phase 37 — canonical testid key (parity with web PoolChecklistForm.jsx).
 const _NAME_TO_CANONICAL: Record<string, string> = {
   "free chlorine": "free_chlorine",
-  "total chlorine": "total_chlorine",
   "combined chlorine": "combined_chlorine",    // kept for historic data reads
   "chlorine": "free_chlorine",
   "ph": "ph",
@@ -64,7 +63,6 @@ const _NAME_TO_CANONICAL: Record<string, string> = {
   "psi": "filter_psi",
   // Short-form abbreviations (backend template defaults)
   "fc": "free_chlorine",
-  "tc": "total_chlorine",
   "cc": "combined_chlorine",                    // kept for historic data reads
   "ta": "total_alkalinity",
   "ch": "calcium_hardness",

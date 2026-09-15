@@ -55,7 +55,6 @@ describe("PortalServiceReportDetail · water-test bands", () => {
   it("renders 'Average' band for free_chlorine=2.0 and NEVER surfaces 2.0", async () => {
     getMock.mockResolvedValueOnce(mkSr([
       { key: "free_chlorine",  value: 2.0 },
-      { key: "total_chlorine", value: 3.0 },
       { key: "ph",             value: 7.4 },
       { key: "alkalinity",     value: 90 },
       { key: "cyanuric_acid",  value: 45 },
@@ -76,7 +75,6 @@ describe("PortalServiceReportDetail · water-test bands", () => {
   it("renders 'Elevated' band chip for pH=8.5 without leaking the number", async () => {
     getMock.mockResolvedValueOnce(mkSr([
       { key: "free_chlorine",  value: 2.5 },
-      { key: "total_chlorine", value: 3.0 },
       { key: "ph",             value: 8.5 },
       { key: "alkalinity",     value: 90 },
       { key: "cyanuric_acid",  value: 45 },
@@ -95,7 +93,6 @@ describe("PortalServiceReportDetail · water-test bands", () => {
   it("omits optional readings (water_temp) when blank", async () => {
     getMock.mockResolvedValueOnce(mkSr([
       { key: "free_chlorine",  value: 2.5 },
-      { key: "total_chlorine", value: 3.0 },
       { key: "ph",             value: 7.4 },
       { key: "alkalinity",     value: 90 },
       { key: "cyanuric_acid",  value: 45 },
@@ -117,7 +114,6 @@ describe("PortalServiceReportDetail · water-test bands", () => {
     getMock.mockResolvedValueOnce(mkSr(
       [
         { key: "free_chlorine",  value: 2.5 },
-        { key: "total_chlorine", value: 3.0 },
         { key: "ph",             value: 7.4 },
         { key: "alkalinity",     value: 90 },
         { key: "cyanuric_acid",  value: 45 },

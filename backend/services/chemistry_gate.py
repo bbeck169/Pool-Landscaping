@@ -25,11 +25,16 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
-# Canonical field names.  Aliases (``free_cl`` / ``total_cl`` / ``cya``)
-# fold onto these keys during normalisation.
+# Canonical field names — the "Required Four" per Phase CHEM1 (Feb-2026).
+# Aliases (``free_cl`` / ``cya`` / ``alk``) fold onto these keys during
+# normalisation.
+#
+# Phase CHEM1 · Feb-2026 — ``total_chlorine`` was removed from the
+# Required set. It is neither a required reading nor a persisted field
+# any more; a one-shot ``$unset`` migration lives at
+# ``services/migrations/chemistry_remove_total_chlorine_v1.py``.
 CORE_READINGS: List[str] = [
     "free_chlorine",
-    "total_chlorine",
     "alkalinity",
     "ph",
     "cyanuric_acid",
@@ -39,7 +44,6 @@ CORE_READINGS: List[str] = [
 # by legacy API consumers and machine parsers (kebab-y snake case).
 _LABEL: Dict[str, str] = {
     "free_chlorine":  "free_cl",
-    "total_chlorine": "total_cl",
     "alkalinity":     "alkalinity",
     "ph":             "ph",
     "cyanuric_acid":  "cya",
@@ -50,7 +54,6 @@ _LABEL: Dict[str, str] = {
 # Product-approved wording (Feb-2026 spec).
 DISPLAY_LABELS: Dict[str, str] = {
     "free_chlorine":  "Free Cl",
-    "total_chlorine": "Total Cl",
     "alkalinity":     "Alkalinity",
     "ph":             "pH",
     "cyanuric_acid":  "CYA",
@@ -69,9 +72,6 @@ _ALIASES: Dict[str, str] = {
     # ``free_chlorine`` so those tenants stop hitting a phantom
     # ``chemistry_core_readings_missing`` on submit.
     "chlorine":           "free_chlorine",
-    "total_cl":           "total_chlorine",
-    "totalcl":            "total_chlorine",
-    "total chlorine":     "total_chlorine",
     "cya":                "cyanuric_acid",
     "cyanuric":           "cyanuric_acid",
     "cyanuric acid":      "cyanuric_acid",
@@ -169,7 +169,7 @@ def missing_core_reading_labels(source: Any) -> List[str]:
 
 
 def assert_core_readings_present(source: Any) -> None:
-    """Raise ``HTTPException(422)`` when any of the five core
+    """Raise ``HTTPException(422)`` when any of the four core
     chemistry readings is missing.  Uses the same detail shape
     across every call site so the FE can key off ``detail`` and
     render ``missing_fields`` / ``missing_labels`` inline.
@@ -186,6 +186,93 @@ def assert_core_readings_present(source: Any) -> None:
             "missing_fields": [_LABEL[k] for k in missing_keys],
             "missing_labels": [DISPLAY_LABELS[k] for k in missing_keys],
             "message": "Cannot close job — required chemistry readings missing",
+        },
+    )
+
+
+def assert_bodies_required_readings_present(bodies: Any) -> None:
+    """Phase CHEM1 · Feb-2026 — multi-body enforcement of the
+    Required Four.
+
+    Iterates every ``water_bodies[*]`` whose ``type`` requires
+    readings (see ``services.water_bodies.READING_REQUIRED``) and
+    raises the same 422 shape as :func:`assert_core_readings_present`
+    when any Required Four reading is missing on any such body.
+
+    The 422 detail includes a ``bodies`` array so the FE can point
+    at the offending body:
+
+        {
+          "detail": "chemistry_core_readings_missing",
+          "message": "...",
+          "missing_fields": [...],       # union across bodies
+          "missing_labels": [...],       # union across bodies
+          "bodies": [
+            {"id": "wb-...", "label": "Kids Pool",
+             "type": "pool",
+             "missing_fields": ["free_cl"], "missing_labels": ["Free Cl"]},
+            ...
+          ]
+        }
+
+    A single-body report (or a report whose only readable body
+    already satisfied :func:`assert_core_readings_present`) never
+    hits the raise path here — the helper is additive to the flat
+    gate. Skips silently when ``bodies`` is falsy or not a list.
+    """
+    if not bodies or not isinstance(bodies, list):
+        return
+    # Lazy import — avoid a top-level circular between chemistry_gate
+    # and water_bodies (water_bodies imports from us at call sites).
+    try:
+        from services.water_bodies import READING_REQUIRED
+    except Exception:                                     # noqa: BLE001
+        return
+
+    offenders: list = []
+    union_keys: set = set()
+    for body in bodies:
+        if not isinstance(body, dict):
+            continue
+        btype = (body.get("type") or "").strip().lower() or "pool"
+        required = READING_REQUIRED.get(btype) or ()
+        if not required:
+            continue
+        norm = normalize_readings(body.get("readings"))
+        missing_keys = [k for k in required
+                        if not _is_valid_reading(norm.get(k))]
+        if not missing_keys:
+            continue
+        for k in missing_keys:
+            union_keys.add(k)
+        offenders.append({
+            "id":    body.get("id"),
+            "label": (body.get("label")
+                       or body.get("name")
+                       or btype.title()),
+            "type":  btype,
+            "missing_fields": [_LABEL[k] for k in missing_keys
+                                 if k in _LABEL],
+            "missing_labels": [DISPLAY_LABELS[k] for k in missing_keys
+                                 if k in DISPLAY_LABELS],
+        })
+    if not offenders:
+        return
+    # Preserve CORE_READINGS ordering for the union arrays.
+    union_ordered = [k for k in CORE_READINGS if k in union_keys]
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "detail": "chemistry_core_readings_missing",
+            "missing_fields": [_LABEL[k] for k in union_ordered
+                                 if k in _LABEL],
+            "missing_labels": [DISPLAY_LABELS[k] for k in union_ordered
+                                 if k in DISPLAY_LABELS],
+            "bodies": offenders,
+            "message": (
+                "Cannot close job — required chemistry readings "
+                "missing on one or more water bodies"
+            ),
         },
     )
 
