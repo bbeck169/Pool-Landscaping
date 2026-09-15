@@ -319,38 +319,59 @@ async def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], tech
 
 
 _LANDSCAPE_KEYWORDS = ("landscap", "lawn", "mow", "garden", "trim", "blow", "cleanup")
+# Phase J1 · Feb-2026 — pool keywords mirror the frontend list at
+# frontend/src/lib/checklistType.js so a job whose service_type/title
+# clearly says "pool" is classified accordingly BEFORE we consult the
+# assigned tech's department. Kept in lockstep with that file.
+_POOL_KEYWORDS = ("pool", "chem")
 
 
 def _derive_checklist_kind(job: dict, tech_department: Optional[str]) -> str:
     """Phase 57.d / 56.3.B · read-time derivation of which checklist form
     to render.
 
-    Priority: explicit override → tech department → service_type keyword →
-    ``"pool"`` (safest default for this business).
+    Priority (Phase J1 · Feb-2026):
+      1. explicit override on the job
+      2. **Job Title / Service Type keywords** — promoted above tech
+         department so the work being performed drives the checklist
+         choice (a landscaping job gets the landscape checklist even
+         when assigned to a Pool tech, and vice versa)
+      3. tech department
+      4. ``"pool"`` fallback (safest default for this business)
 
     Department semantics (Phase 56.3.B):
       • ``pool``        → pool checklist
       • ``landscaping`` → landscape checklist
-      • ``both``        → the tech can service either; we look at the
-        service_type keywords first, and fall back to pool (safe default)
-        when nothing landscape-specific is detected.
+      • ``both``        → tech can service either; falls through to the
+        default when neither the service_type nor department is
+        conclusive.
+
+    Sync note: keep in lockstep with the web mirror
+    ``frontend/src/lib/checklistType.js :: getChecklistType`` (Phase J1
+    priority chain).
     """
+    # 1) Explicit override on the job — always wins.
     override = (job.get("checklist_kind_override") or "").strip().lower()
     if override in ("pool", "landscape", "landscaping"):
         return "landscape" if override.startswith("landscap") else "pool"
+    # 2) Job Title / Service Type / Job Type keywords — Phase J1
+    #    promoted above the tech-department block. Landscape signal
+    #    is checked first (historical order preserved), then pool.
+    hay = " ".join(str(job.get(k) or "") for k in ("service_type", "job_type", "title")).lower()
+    if any(k in hay for k in _LANDSCAPE_KEYWORDS):
+        return "landscape"
+    if any(k in hay for k in _POOL_KEYWORDS):
+        return "pool"
+    # 3) Tech department — only consulted when the job itself gave no
+    #    landscape/pool signal.
     dept = (tech_department or "").lower()
     if dept == "landscaping":
         return "landscape"
     if dept == "pool":
         return "pool"
-    if dept == "both":
-        hay_both = " ".join(str(job.get(k) or "") for k in ("service_type", "job_type", "title")).lower()
-        if any(k in hay_both for k in _LANDSCAPE_KEYWORDS):
-            return "landscape"
-        return "pool"
-    hay = " ".join(str(job.get(k) or "") for k in ("service_type", "job_type", "title")).lower()
-    if any(k in hay for k in _LANDSCAPE_KEYWORDS):
-        return "landscape"
+    # ``both`` (tech services either) falls through to the safe default
+    # below when no service_type keyword hit.
+    # 4) Fallback default.
     return "pool"
 
 

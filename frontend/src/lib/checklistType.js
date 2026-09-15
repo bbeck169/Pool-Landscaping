@@ -6,41 +6,55 @@
  * standalone lib module so both the web modal and any React component
  * can import without pulling in feature-specific state.
  *
- * The Python mirror lives at backend/routers/workstream.py :: get_checklist_type
+ * The Python mirror lives at backend/routers/jobs.py :: _derive_checklist_kind
  * (see also service_reports.py :: _detect_template which uses the same
  * keyword set but returns the backend template key `landscape`, not the
  * client-facing `landscaping`).
+ *
+ * Sync note (Phase J1 · Feb-2026): the priority chain here mirrors
+ * backend/routers/jobs.py :: _derive_checklist_kind. Keep both files
+ * in lockstep — service_type/title signal wins over tech department.
  */
 
 const POOL_KEYWORDS = ["pool", "chem"];
 const LANDSCAPING_KEYWORDS = ["landscap", "lawn", "mow", "garden", "trim", "blow", "cleanup"];
 
 /**
- * @param {object|null|undefined} job — job document; consults
- *   `checklist_kind` first (explicit override), then the assigned tech's
- *   `technician_department` (Phase 57), then keyword-derives from
- *   `service_type` / `job_type` / `title`. Default is "pool" per the
- *   Phase 57 fallback safety net (see HANDOFF).
+ * @param {object|null|undefined} job — job document.
+ *
+ * Priority chain (Phase J1 · Feb-2026):
+ *   1. explicit override via `checklist_kind` on the job
+ *   2. **Job Title / Service Type keywords** — promoted above tech
+ *      department so the work being performed drives the checklist
+ *      choice (a landscaping job gets the landscape checklist even
+ *      when assigned to a Pool tech, and vice versa)
+ *   3. tech department (`technician_department`)
+ *   4. `"pool"` fallback (safest default for this business — Phase 57)
+ *
  * @returns {"pool"|"landscaping"|"generic"}
  */
 export function getChecklistType(job) {
   if (!job) return "generic";
-  // Phase 57 · explicit override wins.
+  // 1) Phase 57 · explicit override wins.
   const kind = (job.checklist_kind || "").toLowerCase();
   if (kind === "pool") return "pool";
   if (kind === "landscape" || kind === "landscaping") return "landscaping";
-  // Phase 57 · assigned tech's department overrides keywords.
-  const dept = (job.technician_department || "").toLowerCase();
-  if (dept === "landscaping") return "landscaping";
-  if (dept === "pool") return "pool";
-  // Fallback: keyword sniff on service_type / job_type / title.
+  // 2) Phase J1 · Job Title / Service Type / Job Type keywords —
+  //    promoted above the tech-department block. Pool check preserved
+  //    ahead of landscape (historical frontend order).
   const hay = [job.service_type, job.job_type, job.title]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
   if (POOL_KEYWORDS.some((k) => hay.includes(k))) return "pool";
   if (LANDSCAPING_KEYWORDS.some((k) => hay.includes(k))) return "landscaping";
-  // No signal at all — default to pool (safest for this business).
+  // 3) Phase 57 · assigned tech's department — only consulted when the
+  //    job itself gave no keyword signal.
+  const dept = (job.technician_department || "").toLowerCase();
+  if (dept === "landscaping") return "landscaping";
+  if (dept === "pool") return "pool";
+  // 4) Fallback: no signal at all — default to pool (safest for this
+  //    business).
   return "pool";
 }
 
