@@ -14,7 +14,8 @@ import { api } from "@/api";
 import { toast } from "sonner";
 import { useAuth } from "@/auth";
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
-import { Phone, Mail, MapPin, Calendar, User, CheckCircle2, XCircle, MessageSquarePlus, AlertTriangle, ChevronLeft, RefreshCw, Bell } from "lucide-react";
+import { Phone, Mail, MapPin, Calendar, User, CheckCircle2, XCircle, MessageSquarePlus, AlertTriangle, ChevronLeft, RefreshCw, Bell, MessageCircle } from "lucide-react";
+import LeadComposeModal from "./LeadComposeModal";
 
 // Phase 34 · Task CC · Feb 2026 — canonical snake_case status enum.
 // Values MUST match backend `_CANONICAL_STATUSES` in routers/leads.py.
@@ -178,6 +179,7 @@ export default function LeadDetail() {
   const nav = useNavigate();
   const { user } = useAuth();
   const isAdmin = ["admin", "super_admin", "owner"].includes(user?.role);
+  const canCompose = ["admin", "super_admin", "owner", "manager"].includes(user?.role);
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
   const [noteText, setNoteText] = useState("");
@@ -187,6 +189,29 @@ export default function LeadDetail() {
   const [resendResult, setResendResult] = useState(null);
   const [lostOpen, setLostOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Phase L3 · Feb-2026 — compose modal + communication timeline.
+  const [composeChannel, setComposeChannel] = useState(null);   // "sms" | "email" | null
+  const [commItems, setCommItems] = useState([]);
+  const [commCursor, setCommCursor] = useState(null);
+  const [commHasMore, setCommHasMore] = useState(false);
+  const [commLoading, setCommLoading] = useState(false);
+
+  const loadCommunications = useCallback(async (opts = {}) => {
+    setCommLoading(true);
+    try {
+      const query = new URLSearchParams({ limit: "50" });
+      if (opts.cursor) query.set("cursor", opts.cursor);
+      const res = await api.get(`/leads/${id}/communications?${query.toString()}`);
+      const items = res?.items || [];
+      setCommItems((prev) => opts.cursor ? [...prev, ...items] : items);
+      setCommCursor(res?.next_cursor || null);
+      setCommHasMore(!!res?.has_more);
+    } catch (e) {
+      toast.error("Failed to load communications", { description: e?.message || "" });
+    } finally {
+      setCommLoading(false);
+    }
+  }, [id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -204,6 +229,7 @@ export default function LeadDetail() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (id) loadCommunications(); }, [id, loadCommunications]);
 
   const setStatus = async (status) => {
     setBusy(true);
@@ -280,6 +306,32 @@ export default function LeadDetail() {
           <ChevronLeft size={16} /> Back
         </button>
         <div className="flex-1" />
+        {canCompose && (
+          <>
+            <button
+              type="button"
+              disabled={!lead?.phone}
+              onClick={() => lead?.phone && setComposeChannel("sms")}
+              title={lead?.phone ? "Send SMS to this lead" : "No phone on file"}
+              aria-label={`Send SMS to ${lead?.name || "lead"}`}
+              className="inline-flex items-center gap-1 px-2 py-1 border border-slate-300 rounded text-xs hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              data-testid="lead-detail-send-sms"
+            >
+              <MessageCircle size={12} /> Send SMS
+            </button>
+            <button
+              type="button"
+              disabled={!lead?.email}
+              onClick={() => lead?.email && setComposeChannel("email")}
+              title={lead?.email ? "Send email to this lead" : "No email on file"}
+              aria-label={`Send email to ${lead?.name || "lead"}`}
+              className="inline-flex items-center gap-1 px-2 py-1 border border-slate-300 rounded text-xs hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              data-testid="lead-detail-send-email"
+            >
+              <Mail size={12} /> Send Email
+            </button>
+          </>
+        )}
         {isAdmin && (
           <button
             onClick={() => { setResendResult(null); setResendOpen(true); }}
@@ -490,6 +542,48 @@ export default function LeadDetail() {
               {timeline.map((ev, i) => <TimelineEntry key={i} ev={ev} />)}
             </div>
           </div>
+
+          {/* Phase L3 · Feb-2026 — Communication Timeline (SMS + email
+              + status changes + inbound RC SMS matched to this lead). */}
+          <div className="rounded-xl border border-slate-200 bg-white p-4"
+               data-testid="lead-communication-timeline">
+            <div className="text-sm font-semibold mb-2 flex items-center justify-between">
+              <span>Communication Timeline</span>
+              <button
+                type="button"
+                onClick={() => loadCommunications()}
+                className="text-xs text-slate-500 hover:text-slate-800 inline-flex items-center gap-1"
+                data-testid="lead-communication-timeline-refresh"
+                aria-label="Refresh communication timeline"
+              >
+                <RefreshCw size={12} /> Refresh
+              </button>
+            </div>
+            <div className="space-y-2">
+              {commLoading && commItems.length === 0 ? (
+                <div className="text-sm text-slate-400">Loading…</div>
+              ) : commItems.length === 0 ? (
+                <div className="text-sm text-slate-400">No communications yet.</div>
+              ) : (
+                commItems.map((it, i) => (
+                  <CommTimelineItem key={it.id || `${it.type}-${i}`} item={it} />
+                ))
+              )}
+            </div>
+            {commHasMore && (
+              <div className="mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => loadCommunications({ cursor: commCursor })}
+                  disabled={commLoading}
+                  className="px-3 py-1 rounded border border-slate-300 text-xs hover:bg-slate-50 disabled:opacity-50"
+                  data-testid="lead-communication-timeline-load-more"
+                >
+                  {commLoading ? "Loading…" : "Load more"}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* RIGHT — actions */}
@@ -526,6 +620,62 @@ export default function LeadDetail() {
 
       <CloseLostDialog open={lostOpen} onConfirm={closeLost}
                           onClose={() => setLostOpen(false)} busy={busy} />
+
+      {composeChannel && (
+        <LeadComposeModal
+          lead={lead}
+          channel={composeChannel}
+          onClose={() => setComposeChannel(null)}
+          onSent={() => loadCommunications()}
+        />
+      )}
+    </div>
+  );
+}
+
+
+// ─── Phase L3 · communication timeline row ─────────────────────────
+function CommTimelineItem({ item }) {
+  const type = item.type || "status_change";
+  const iconMeta = {
+    sms:            { bg: "#DCFCE7", fg: "#166534", label: "SMS" },
+    email:          { bg: "#DBEAFE", fg: "#1E3A8A", label: "Email" },
+    status_change:  { bg: "#F1F5F9", fg: "#475569", label: "Status change" },
+  }[type] || { bg: "#F1F5F9", fg: "#475569", label: type };
+  const when = item.created_at ? new Date(item.created_at).toLocaleString() : "";
+  const isInbound = item.direction === "inbound";
+  return (
+    <div
+      className="border-l-2 pl-3 py-2"
+      style={{ borderColor: iconMeta.fg + "55" }}
+      data-testid={`lead-comm-item-${type}`}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase"
+          style={{ background: iconMeta.bg, color: iconMeta.fg }}
+        >
+          {iconMeta.label}
+          {isInbound ? " · inbound" : ""}
+        </span>
+        {item.status ? (
+          <span className="text-[11px] text-slate-500">
+            {item.status}
+          </span>
+        ) : null}
+        <span className="text-xs text-slate-400 ml-auto">{when}</span>
+      </div>
+      {item.subject ? (
+        <div className="text-sm font-medium text-slate-800 mt-1">{item.subject}</div>
+      ) : null}
+      {item.body ? (
+        <div className="text-sm text-slate-700 mt-1 whitespace-pre-wrap">
+          {item.body.length > 400 ? item.body.slice(0, 400) + "…" : item.body}
+        </div>
+      ) : null}
+      {item.error ? (
+        <div className="text-xs text-rose-700 mt-1">Error: {item.error}</div>
+      ) : null}
     </div>
   );
 }

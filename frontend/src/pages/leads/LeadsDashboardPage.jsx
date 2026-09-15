@@ -7,8 +7,10 @@ import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
-import { Search, ArrowRight, X, Trash2, ChevronDown } from "lucide-react";
+import { Search, ArrowRight, X, Trash2, ChevronDown, Mail, MessageCircle } from "lucide-react";
 import { colors } from "@/theme";
+import { useAuth } from "@/auth";
+import LeadComposeModal from "./LeadComposeModal";
 
 // Phase K52.1a · Feb-2026 — the local ``colors`` const previously
 // shadowed the shared ``@/theme`` export.  It carried a slate-tinted
@@ -63,11 +65,15 @@ const isReferral = (l) =>
   typeof l?.source === "string" && l.source.startsWith("referral_from_customer:");
 
 export default function LeadsDashboardPage() {
+  const auth = useAuth() || {};
+  const isPrivileged = ["admin", "super_admin", "owner", "manager"].includes(auth.user?.role);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [filters, setFilters] = useState({ source: "", status: "", search: "" });
   const [selected, setSelected] = useState(null);
+  // Phase L3 · Feb-2026 — row-level compose modal.
+  const [composeTarget, setComposeTarget] = useState(null);   // { lead, channel } | null
   // Phase 34 · Task BB · Feb 2026 — bulk-select state.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -402,7 +408,7 @@ export default function LeadsDashboardPage() {
                 </span>
               ) : null}
             </div>
-            <div className="col-span-2">
+            <div className="col-span-2 flex items-center justify-between gap-1">
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
                     style={{
                       background: (STATUS_COLORS[l.status] || STATUS_COLORS.new).bg,
@@ -410,6 +416,35 @@ export default function LeadsDashboardPage() {
                     }}>
                 {STATUS_LABEL(l.status)}
               </span>
+              {isPrivileged && (
+                <div
+                  className="flex items-center gap-1"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    disabled={!l.phone}
+                    onClick={() => l.phone && setComposeTarget({ lead: l, channel: "sms" })}
+                    title={l.phone ? `Send SMS to ${l.name || l.phone}` : "No phone on file"}
+                    aria-label={`Send SMS to ${l.name || l.phone || "lead"}`}
+                    className="p-1 rounded hover:bg-slate-100 text-slate-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                    data-testid={`lead-row-sms-${l.id}`}
+                  >
+                    <MessageCircle size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!l.email}
+                    onClick={() => l.email && setComposeTarget({ lead: l, channel: "email" })}
+                    title={l.email ? `Send email to ${l.name || l.email}` : "No email on file"}
+                    aria-label={`Send email to ${l.name || l.email || "lead"}`}
+                    className="p-1 rounded hover:bg-slate-100 text-slate-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                    data-testid={`lead-row-email-${l.id}`}
+                  >
+                    <Mail size={14} />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -420,6 +455,15 @@ export default function LeadsDashboardPage() {
           lead={selected}
           onClose={() => setSelected(null)}
           onUpdated={() => { setSelected(null); refresh(); }}
+        />
+      )}
+
+      {composeTarget && (
+        <LeadComposeModal
+          lead={composeTarget.lead}
+          channel={composeTarget.channel}
+          onClose={() => setComposeTarget(null)}
+          onSent={() => refresh()}
         />
       )}
 

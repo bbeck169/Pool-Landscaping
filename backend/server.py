@@ -480,6 +480,14 @@ api_router.include_router(_feb2026_public_places.router)
 # the label-aware resolver.  Router already prefixes ``/api``.
 from routers import admin_leads_backfill_label_resolution as _l2_backfill  # noqa: E402
 app.include_router(_l2_backfill.router)
+# Phase L3 · Feb-2026 — Text + Email from Leads.  Reuses the
+# customer-side SMS (RingCentral) + email (Resend) providers to
+# compose free-form messages rooted at a lead.  Endpoints:
+#   POST /api/leads/{lead_id}/send-sms
+#   POST /api/leads/{lead_id}/send-email
+#   GET  /api/leads/{lead_id}/communications
+from routers import lead_communications as _l3_lead_comms  # noqa: E402
+api_router.include_router(_l3_lead_comms.router)
 # K65 · Feb-2026 — super-admin perf-explain diagnostic endpoint.
 # Gated by ``FEATURE_PERF_EXPLAIN=1`` env flag; 404 when off so the
 # route is invisible on prod by default.
