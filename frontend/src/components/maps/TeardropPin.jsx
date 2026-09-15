@@ -1,6 +1,12 @@
 /**
  * Phase M1 · Feb-2026 — Sitewide custom teardrop map pin.
  *
+ * **Canonical fallback palette**: /app/memory/tech_color_palette.md v1
+ * — the ``_SAFE_PALETTE`` + ``colorFromId`` hash below are the
+ * web source of truth for that memo. Any tweak to either MUST bump
+ * the memo's ``version`` field AND be coordinated with the mobile
+ * port so LiveTech pins agree byte-for-byte across surfaces.
+ *
  * Draws a classic teardrop map-marker silhouette (round head +
  * tapered tail) with a HOLLOW center — the "circle in the middle"
  * is a transparent hole, not a darker dot.  Anchored at the bottom
