@@ -29,10 +29,7 @@
  *                            already blocks non-admin)
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  View, Text, StyleSheet, Pressable, TextInput,
-  ActivityIndicator, Modal, ScrollView, Alert, Platform,
-} from "react-native";
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, Modal, ScrollView, Alert, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as FileSystemLegacy from "expo-file-system/legacy";
 import * as SharingModule from "expo-sharing";
@@ -41,6 +38,7 @@ import * as Print from "expo-print";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type LineKey = "revenue" | "cogs" | "opex" | "depreciation";
 const LINE_KEYS: LineKey[] = ["revenue", "cogs", "opex", "depreciation"];
@@ -141,7 +139,7 @@ function EbitLineRow(props: {
         usingOverride ? (
           <View style={styles.rowEdit} testID={`ebit-row-${lineKey}-override-mode`}>
             <Text style={[styles.rowEditLabel, { color: meta.color }]}>Override:</Text>
-            <TextInput
+            <AppTextInput
               value={String(override ?? "")}
               onChangeText={(t) => onOverrideChange(t === "" ? 0 : Number(t))}
               keyboardType="numeric"
@@ -163,7 +161,7 @@ function EbitLineRow(props: {
         ) : (
           <View style={styles.rowEdit} testID={`ebit-row-${lineKey}-adjustment-mode`}>
             <Text style={[styles.rowEditLabel, { color: meta.color }]}>Adjustment:</Text>
-            <TextInput
+            <AppTextInput
               value={String(adjustment ?? 0)}
               onChangeText={(t) => onAdjustmentChange(t === "" ? 0 : Number(t))}
               keyboardType="numeric"
@@ -575,7 +573,7 @@ export default function EbitPanel() {
         <View style={styles.customRow} testID="ebit-custom-picker">
           <View style={{ flex: 1 }}>
             <Text style={styles.dateLabel}>FROM</Text>
-            <TextInput
+            <AppTextInput
               value={customFrom}
               onChangeText={setCustomFrom}
               placeholder="YYYY-MM-DD"
@@ -586,7 +584,7 @@ export default function EbitPanel() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.dateLabel}>TO</Text>
-            <TextInput
+            <AppTextInput
               value={customTo}
               onChangeText={setCustomTo}
               placeholder="YYYY-MM-DD"
@@ -635,7 +633,7 @@ export default function EbitPanel() {
 
           {canEdit && !readonly ? (
             <View style={styles.saveRow} testID="ebit-save-row">
-              <TextInput
+              <AppTextInput
                 value={note}
                 onChangeText={setNote}
                 placeholder="Note for this version (optional)"

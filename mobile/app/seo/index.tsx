@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, ScrollView, Pressable, TextInput, RefreshControl, Alert, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl, Alert, StyleSheet } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -8,6 +8,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import { Header } from "@/src/components/widgets";
 import { Card, PrimaryButton, StatusChip, EmptyState, Sheet } from '@/src/components/ui';
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Tab = "articles" | "keywords" | "queue" | "settings";
 
@@ -231,9 +232,9 @@ export default function SeoStudio() {
           <>
             <Card>
               <Text style={styles.label}>Seed topic</Text>
-              <TextInput style={styles.input} value={seed} onChangeText={setSeed} placeholder="e.g. pool cleaning" placeholderTextColor={colors.muted} testID="seo-seed" />
+              <AppTextInput style={styles.input} value={seed} onChangeText={setSeed} placeholder="e.g. pool cleaning" placeholderTextColor={colors.muted} testID="seo-seed" />
               <Text style={styles.label}>Location</Text>
-              <TextInput style={styles.input} value={location} onChangeText={setLocation} placeholderTextColor={colors.muted} />
+              <AppTextInput style={styles.input} value={location} onChangeText={setLocation} placeholderTextColor={colors.muted} />
               <View style={{ height: spacing.sm }} />
               <PrimaryButton title="Suggest Keywords" icon="search" loading={kwLoading} onPress={suggestKeywords} testID="seo-suggest" />
             </Card>
@@ -315,11 +316,11 @@ export default function SeoStudio() {
               </Text>
             </View>
             <Text style={styles.label}>WordPress site URL</Text>
-            <TextInput style={styles.input} value={wpUrl} onChangeText={setWpUrl} autoCapitalize="none" keyboardType="url" placeholder="https://yoursite.com" placeholderTextColor={colors.muted} testID="wp-url" />
+            <AppTextInput style={styles.input} value={wpUrl} onChangeText={setWpUrl} autoCapitalize="none" keyboardType="url" placeholder="https://yoursite.com" placeholderTextColor={colors.muted} testID="wp-url" />
             <Text style={styles.label}>Username</Text>
-            <TextInput style={styles.input} value={wpUser} onChangeText={setWpUser} autoCapitalize="none" placeholder="admin" placeholderTextColor={colors.muted} testID="wp-user" />
+            <AppTextInput style={styles.input} value={wpUser} onChangeText={setWpUser} autoCapitalize="none" placeholder="admin" placeholderTextColor={colors.muted} testID="wp-user" />
             <Text style={styles.label}>Application password</Text>
-            <TextInput style={styles.input} value={wpPass} onChangeText={setWpPass} autoCapitalize="none" secureTextEntry placeholder={wp.connected ? "•••• (unchanged)" : "xxxx xxxx xxxx xxxx"} placeholderTextColor={colors.muted} testID="wp-pass" />
+            <AppTextInput style={styles.input} value={wpPass} onChangeText={setWpPass} autoCapitalize="none" secureTextEntry placeholder={wp.connected ? "•••• (unchanged)" : "xxxx xxxx xxxx xxxx"} placeholderTextColor={colors.muted} testID="wp-pass" />
             <Text style={styles.hint}>Create one in WordPress → Users → Profile → Application Passwords.</Text>
             <View style={{ height: spacing.sm }} />
             <PrimaryButton title="Save Connection" icon="save-outline" loading={wpSaving} onPress={saveWp} testID="wp-save" />
@@ -331,11 +332,11 @@ export default function SeoStudio() {
 
       <Sheet visible={genOpen} onClose={() => setGenOpen(false)} title="Generate AI Article" testID="seo-gen-sheet">
         <Text style={styles.label}>Target keyword</Text>
-        <TextInput style={styles.input} value={kw} onChangeText={setKw} placeholder="e.g. weekly pool maintenance" placeholderTextColor={colors.muted} testID="seo-gen-kw" />
+        <AppTextInput style={styles.input} value={kw} onChangeText={setKw} placeholder="e.g. weekly pool maintenance" placeholderTextColor={colors.muted} testID="seo-gen-kw" />
         <Text style={styles.label}>Working title (optional)</Text>
-        <TextInput style={styles.input} value={title} onChangeText={setTitle} placeholder="Leave blank to auto-generate" placeholderTextColor={colors.muted} />
+        <AppTextInput style={styles.input} value={title} onChangeText={setTitle} placeholder="Leave blank to auto-generate" placeholderTextColor={colors.muted} />
         <Text style={styles.label}>Word count</Text>
-        <TextInput style={styles.input} value={wordCount} onChangeText={setWordCount} keyboardType="number-pad" placeholderTextColor={colors.muted} />
+        <AppTextInput style={styles.input} value={wordCount} onChangeText={setWordCount} keyboardType="number-pad" placeholderTextColor={colors.muted} />
         <View style={{ height: spacing.md }} />
         <PrimaryButton title="Generate" icon="sparkles" loading={generating} onPress={generate} testID="seo-gen-submit" />
       </Sheet>

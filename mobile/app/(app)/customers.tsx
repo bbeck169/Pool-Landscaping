@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, FlatList, TextInput, RefreshControl, Pressable, Platform, Alert, Modal, ScrollView } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert, Modal, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -17,6 +17,7 @@ import { ImportExport } from "@/src/components/ImportExport";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
 import RestoreCustomerButton from "@/src/components/customers/RestoreCustomerButton";
 import PortalOnboardingHealthTile from "@/src/components/customers/PortalOnboardingHealthTile";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function Customers() {
   const router = useRouter();
@@ -371,7 +372,7 @@ export default function Customers() {
           ) : (
             <Ionicons name="search" size={18} color={colors.muted} />
           )}
-          <TextInput
+          <AppTextInput
             testID="customer-search-input"
             style={styles.searchInput}
             placeholder="Search customers"

@@ -1,6 +1,6 @@
 // Phase 16 · Feb-2026 — Weekly Digest settings + preview (Manager+).
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
@@ -8,6 +8,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Card, Loading, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -91,7 +92,7 @@ export default function WeeklyDigest() {
           <ScrollView contentContainerStyle={styles.body}>
             <Card>
               <Text style={styles.sectionLabel}>Recipients</Text>
-              <TextInput
+              <AppTextInput
                 testID="digest-recipients"
                 value={recipients}
                 onChangeText={setRecipients}
@@ -120,7 +121,7 @@ export default function WeeklyDigest() {
                 </View>
                 <View style={{ width: 80, marginLeft: spacing.md }}>
                   <Text style={styles.sectionLabel}>Hour</Text>
-                  <TextInput
+                  <AppTextInput
                     testID="digest-hour"
                     value={String(hour)}
                     onChangeText={(v) => setHour(Math.max(0, Math.min(23, parseInt(v || "0", 10))))}

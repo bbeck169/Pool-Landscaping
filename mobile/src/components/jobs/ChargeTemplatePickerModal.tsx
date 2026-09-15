@@ -12,11 +12,9 @@ import {
   StyleSheet,
   Modal,
   Pressable,
-  TextInput,
   ActivityIndicator,
   Alert,
-  ScrollView,
-} from "react-native";
+  ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import {
@@ -24,6 +22,7 @@ import {
   applyChargeTemplate,
   type ChargeTemplate,
 } from "@/src/api/chargeTemplates";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Props = {
   visible: boolean;
@@ -111,7 +110,7 @@ export default function ChargeTemplatePickerModal({
           {/* Search bar */}
           <View style={s.searchRow}>
             <Ionicons name="search-outline" size={16} color={colors.muted} />
-            <TextInput
+            <AppTextInput
               style={s.searchInput}
               value={search}
               onChangeText={setSearch}

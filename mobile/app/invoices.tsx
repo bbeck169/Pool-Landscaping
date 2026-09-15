@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -11,6 +11,7 @@ import { Loading, EmptyState, StatusChip, Sheet, PrimaryButton } from "@/src/com
 import { Header, FilterRow } from "@/src/components/widgets";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 Object.assign(statusMeta, {
   pending: { label: "Pending", bg: "#FEF9C3", fg: "#A16207" },
@@ -345,7 +346,7 @@ export default function Invoices() {
             <Text style={styles.paySub}>{payFor.title} · {formatCustomerName(payFor)}</Text>
             <Text style={styles.paySub}>Balance due: {money(payFor.balance)}</Text>
             <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>AMOUNT RECEIVED ($)</Text>
-            <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholderTextColor={colors.muted} testID="invoice-pay-amount" />
+            <AppTextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholderTextColor={colors.muted} testID="invoice-pay-amount" />
             <Text style={styles.hint}>Enter a partial amount to mark the invoice partially paid, or the full balance to close it.</Text>
             <View style={{ height: spacing.md }} />
             <PrimaryButton title="Save Payment" icon="checkmark" loading={busy} onPress={recordPayment} testID="invoice-pay-confirm" />

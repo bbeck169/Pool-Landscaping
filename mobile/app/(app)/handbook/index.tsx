@@ -3,7 +3,7 @@
  * Read-only for all roles. Tapping a section deep-links to `[code].tsx`.
  */
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 
@@ -11,6 +11,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, fontSize, font } from "@/src/theme";
 import { Loading } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function HandbookIndex() {
   const [rows, setRows] = useState<any[]>([]);
@@ -39,7 +40,7 @@ export default function HandbookIndex() {
       <Header title="Handbook" />
       <View style={styles.searchBox}>
         <Ionicons name="search" size={16} color={colors.muted} />
-        <TextInput value={q} onChangeText={setQ} placeholder="Search sections…"
+        <AppTextInput value={q} onChangeText={setQ} placeholder="Search sections…"
           placeholderTextColor={colors.muted} style={styles.searchInput}
           testID="mobile-handbook-search" />
       </View>

@@ -5,9 +5,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput,
-  TouchableOpacity, Alert, ActivityIndicator,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Header } from "@/src/components/widgets";
 import { colors, fontSize, radius, spacing } from "@/src/theme";
 import { listPipelines, createDeal } from "@/src/api/quoteiq_q1";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function DealNew() {
   const router = useRouter();
@@ -153,7 +152,7 @@ function Field({ label, value, onChange, keyboard, multiline, testID }: any) {
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={s.label}>{label}</Text>
-      <TextInput
+      <AppTextInput
         value={value}
         onChangeText={onChange}
         keyboardType={keyboard || "default"}

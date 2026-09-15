@@ -7,9 +7,8 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, FlatList, TextInput, Pressable, Alert,
-  KeyboardAvoidingView, Platform, ActionSheetIOS, ActivityIndicator,
-} from "react-native";
+  View, Text, StyleSheet, FlatList, Pressable, Alert,
+  KeyboardAvoidingView, Platform, ActionSheetIOS, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
@@ -17,6 +16,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { api, api_base, getAuthToken } from "@/src/api";
 import { colors, spacing, radius, fontSize, font } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type ChatAttachment = {
   id: string;
@@ -378,7 +378,7 @@ export default function ChatMobile() {
             )}
           </Pressable>
 
-          <TextInput
+          <AppTextInput
             value={draft}
             onChangeText={setDraft}
             placeholder="Message"

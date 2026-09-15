@@ -4,13 +4,13 @@
  */
 import React, { useEffect, useState, useCallback } from "react";
 import {
-  View, Text, StyleSheet, TextInput, Alert,
-  Pressable,
-} from "react-native";
+  View, Text, StyleSheet, Alert,
+  Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { Card, PrimaryButton, Sheet, EmptyState } from "@/src/components/ui";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 /* ── Skeleton ─────────────────────────────────────────────────── */
 function Skeleton({ height = 80 }: { height?: number }) {
@@ -80,7 +80,7 @@ function IngestModal({
     >
       <View style={s.modalBody}>
         <Text style={s.label}>Website URL</Text>
-        <TextInput
+        <AppTextInput
           style={s.input}
           placeholder="https://your-company.com"
           placeholderTextColor={colors.muted}
@@ -95,7 +95,7 @@ function IngestModal({
         <Text style={[s.label, { marginTop: spacing.md }]}>
           Optional additional paths (one per line)
         </Text>
-        <TextInput
+        <AppTextInput
           style={[s.input, { minHeight: 80, textAlignVertical: "top" }]}
           multiline
           placeholder={"/services\n/about"}

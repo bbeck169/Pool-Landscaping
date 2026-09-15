@@ -17,8 +17,7 @@
 import React, { useCallback, useEffect, useState, useRef } from "react";
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Alert, Modal, TextInput, KeyboardAvoidingView, Platform,
-} from "react-native";
+  ActivityIndicator, Alert, Modal, KeyboardAvoidingView, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -35,6 +34,7 @@ import {
 import { InvoiceAttachments } from "@/src/components/files";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
 
@@ -584,7 +584,7 @@ export default function EstimateViewScreen() {
                 ? `You're telling us you don't want "${line_items[lineDeclineOpen]?.description || "this item"}" (${fmt(line_items[lineDeclineOpen]?.total)}). Your total will adjust automatically.`
                 : ""}
             </Text>
-            <TextInput
+            <AppTextInput
               style={s.modalInput}
               value={lineDeclineReason}
               onChangeText={(t) => setLineDeclineReason(t.slice(0, 200))}
@@ -621,7 +621,7 @@ export default function EstimateViewScreen() {
           <View style={s.modalCard}>
             <Text style={s.modalTitle}>Decline Estimate</Text>
             <Text style={s.modalHelp}>Optional — let us know why so we can improve.</Text>
-            <TextInput style={s.modalInput} value={declineMsg} onChangeText={setDeclineMsg} multiline numberOfLines={3} placeholder="Reason (optional)" placeholderTextColor={colors.muted} testID="estimate-decline-reason" />
+            <AppTextInput style={s.modalInput} value={declineMsg} onChangeText={setDeclineMsg} multiline numberOfLines={3} placeholder="Reason (optional)" placeholderTextColor={colors.muted} testID="estimate-decline-reason" />
             <View style={s.modalActions}>
               <TouchableOpacity onPress={() => setDeclineOpen(false)} style={s.modalCancel}><Text style={s.modalCancelText}>Cancel</Text></TouchableOpacity>
               <TouchableOpacity onPress={onSubmitDecline} style={s.modalDeclineBtn} disabled={busy} testID="estimate-decline-confirm">
@@ -638,7 +638,7 @@ export default function EstimateViewScreen() {
           <View style={s.modalCard}>
             <Text style={s.modalTitle}>Request Changes</Text>
             <Text style={s.modalHelp}>Tell us what you&apos;d like changed.</Text>
-            <TextInput style={s.modalInput} value={changesMsg} onChangeText={setChangesMsg} multiline numberOfLines={4} placeholder="Describe the changes..." placeholderTextColor={colors.muted} testID="estimate-changes-message" />
+            <AppTextInput style={s.modalInput} value={changesMsg} onChangeText={setChangesMsg} multiline numberOfLines={4} placeholder="Describe the changes..." placeholderTextColor={colors.muted} testID="estimate-changes-message" />
             <View style={s.modalActions}>
               <TouchableOpacity onPress={() => setChangesOpen(false)} style={s.modalCancel}><Text style={s.modalCancelText}>Cancel</Text></TouchableOpacity>
               <TouchableOpacity onPress={onRequestChanges} style={s.modalSendBtn} disabled={busy || !changesMsg.trim()} testID="estimate-changes-confirm">

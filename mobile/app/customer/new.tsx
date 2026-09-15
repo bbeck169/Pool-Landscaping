@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TextInput, Platform, Pressable, Alert, Switch } from "react-native";
+import { View, Text, StyleSheet, Platform, Pressable, Alert, Switch } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -11,6 +11,7 @@ import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { PrimaryButton } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function CustomerForm() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -206,7 +207,7 @@ export function Field({
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput
+      <AppTextInput
         testID={testID}
         style={[styles.input, multiline && styles.multiline]}
         placeholderTextColor={colors.muted}

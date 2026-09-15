@@ -4,14 +4,14 @@
 // dev-client build — see EXPO_GO_RUNBOOK.md).
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, KeyboardAvoidingView,
-  Platform, Pressable, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, KeyboardAvoidingView,
+  Platform, Pressable, Alert } from "react-native";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton, EmptyState } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Turn = { role: "user" | "assistant"; text: string; card?: any };
 type Todo = { id: string; text: string; completed: boolean; created_at: string; due_at?: string | null };
@@ -200,7 +200,7 @@ export default function OsLana() {
             onPress={listening ? stopVoice : startVoice}
             testID="os-lana-mic"
           />
-          <TextInput
+          <AppTextInput
             style={styles.input}
             value={input}
             onChangeText={setInput}

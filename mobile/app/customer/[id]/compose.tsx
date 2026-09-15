@@ -11,9 +11,8 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert,
-  ActivityIndicator, Platform,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Alert,
+  ActivityIndicator, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -22,6 +21,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { PrimaryButton } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Template = {
   id: string;
@@ -191,7 +191,7 @@ export default function ComposeScreen() {
             {Object.keys(vars).map((k) => (
               <View key={k} style={s.varRow}>
                 <Text style={s.varLabel}>{k.replace(/_/g, " ").toUpperCase()}</Text>
-                <TextInput
+                <AppTextInput
                   style={s.varInput}
                   value={vars[k]}
                   onChangeText={(v) => setVars((p) => ({ ...p, [k]: v }))}
@@ -207,7 +207,7 @@ export default function ComposeScreen() {
         {channel === "email" ? (
           <>
             <Text style={s.varLabel}>SUBJECT</Text>
-            <TextInput
+            <AppTextInput
               style={s.varInput}
               value={subject}
               onChangeText={setSubject}
@@ -219,7 +219,7 @@ export default function ComposeScreen() {
         ) : null}
 
         <Text style={[s.varLabel, { marginTop: spacing.lg }]}>MESSAGE</Text>
-        <TextInput
+        <AppTextInput
           style={[s.varInput, { minHeight: 140, textAlignVertical: "top" }]}
           value={body}
           onChangeText={setBody}

@@ -13,14 +13,13 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, TextInput,
-  ActivityIndicator, Alert, Modal, ScrollView,
-} from "react-native";
+  View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Modal, ScrollView } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Channel = "email" | "sms";
 
@@ -231,7 +230,7 @@ export default function SendServiceRecordsLinkModal({
         <Text style={styles.label}>
           {channel === "email" ? "RECIPIENT EMAIL" : "RECIPIENT PHONE"}
         </Text>
-        <TextInput
+        <AppTextInput
           style={styles.input}
           value={recipient}
           onChangeText={setRecipient}

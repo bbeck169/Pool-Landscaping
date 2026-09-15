@@ -6,9 +6,8 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, TextInput, Modal,
-  ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform,
-} from "react-native";
+  View, Text, StyleSheet, Pressable, Modal,
+  ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -17,6 +16,7 @@ import { api } from "@/src/api";
 import { useToast } from "@/src/components/ToastProvider";
 import { uploadFile, FileRecord } from "@/src/api/files";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const EQUIPMENT_TYPES = [
   "Filter Pump", "Cleaning Pump", "Waterfall Pump", "Filter",
@@ -299,7 +299,7 @@ export default function CustomerEquipmentUnits({ customerId }: { customerId: str
               </Pressable>
 
               <Text style={s.label}>Brand</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 value={form.brand}
                 onChangeText={(v) => patchForm("brand", v.slice(0, 200))}
@@ -308,7 +308,7 @@ export default function CustomerEquipmentUnits({ customerId }: { customerId: str
                 testID="equipment-brand-input"
               />
               <Text style={s.label}>Model</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 value={form.model}
                 onChangeText={(v) => patchForm("model", v.slice(0, 200))}
@@ -317,7 +317,7 @@ export default function CustomerEquipmentUnits({ customerId }: { customerId: str
                 testID="equipment-model-input"
               />
               <Text style={s.label}>Serial Number</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 value={form.serial_number}
                 onChangeText={(v) => patchForm("serial_number", v.slice(0, 200))}
@@ -326,7 +326,7 @@ export default function CustomerEquipmentUnits({ customerId }: { customerId: str
                 testID="equipment-serial-input"
               />
               <Text style={s.label}>Install Date</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 value={form.install_date}
                 onChangeText={(v) => patchForm("install_date", v)}
@@ -335,7 +335,7 @@ export default function CustomerEquipmentUnits({ customerId }: { customerId: str
                 testID="equipment-install-date-input"
               />
               <Text style={s.label}>Notes</Text>
-              <TextInput
+              <AppTextInput
                 style={[s.input, { minHeight: 80 }]}
                 value={form.notes}
                 onChangeText={(v) => patchForm("notes", v.slice(0, 2000))}

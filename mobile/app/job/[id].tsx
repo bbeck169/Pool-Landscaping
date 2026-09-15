@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, ScrollView, Pressable, Linking, StyleSheet, TextInput, Alert } from "react-native";
+import { View, Text, ScrollView, Pressable, Linking, StyleSheet, Alert } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
@@ -43,6 +43,7 @@ import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
 import LineItemsSection from "@/src/components/jobs/LineItemsSection";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 // P0 fix — hard timeout so the detail screen never hangs on slow networks.
 const LOAD_TIMEOUT_MS = 20_000;
@@ -853,7 +854,7 @@ export default function JobDetail() {
         <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 4 }}>
           Notes
         </Text>
-        <TextInput
+        <AppTextInput
           testID="job-edit-notes-input"
           value={editNotes}
           onChangeText={setEditNotes}
@@ -873,7 +874,7 @@ export default function JobDetail() {
         <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 4 }}>
           Reason (optional)
         </Text>
-        <TextInput
+        <AppTextInput
           testID="job-edit-reason-input"
           value={editReason}
           onChangeText={setEditReason}

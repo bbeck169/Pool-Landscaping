@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -8,6 +8,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 function Stars({ n, size = 14 }: { n: number; size?: number }) {
   return (
@@ -110,7 +111,7 @@ export default function Reviews() {
             <View style={{ marginTop: 4 }}><Stars n={sel.rating} /></View>
             <Text style={styles.text}>{sel.text}</Text>
             <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>YOUR RESPONSE</Text>
-            <TextInput style={[styles.input, { height: 96, paddingTop: spacing.sm }]} value={response} onChangeText={setResponse} placeholder="Thank the customer…" placeholderTextColor={colors.muted} multiline testID="response-input" />
+            <AppTextInput style={[styles.input, { height: 96, paddingTop: spacing.sm }]} value={response} onChangeText={setResponse} placeholder="Thank the customer…" placeholderTextColor={colors.muted} multiline testID="response-input" />
             <View style={{ height: spacing.md }} />
             <PrimaryButton title="Post Response" onPress={submit} testID="post-response-button" />
           </>

@@ -1,8 +1,7 @@
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, RefreshControl,
-  TouchableOpacity, ActivityIndicator, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, RefreshControl,
+  TouchableOpacity, ActivityIndicator, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -10,6 +9,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const FIELDS = [
   { key: "company_name", label: "Company name", kb: "default" as const },
@@ -84,7 +84,7 @@ export default function BusinessCardSettings() {
           {FIELDS.map((f) => (
             <View key={f.key} style={s.field}>
               <Text style={s.label}>{f.label}</Text>
-              <TextInput
+              <AppTextInput
                 testID={`business-card-settings-input-${f.key}`}
                 style={s.input}
                 value={draft[f.key] || ""}

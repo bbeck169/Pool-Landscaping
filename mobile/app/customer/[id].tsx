@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Linking, TextInput, Platform, Alert, Switch, TouchableOpacity, Modal, KeyboardAvoidingView } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Linking, Platform, Alert, Switch, TouchableOpacity, Modal, KeyboardAvoidingView } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -32,6 +32,7 @@ import SubscriptionsSection from "@/src/components/subscriptions/SubscriptionsSe
 import PortalAccessPanel from "@/src/components/customers/PortalAccessPanel";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -631,7 +632,7 @@ export default function CustomerDetail() {
             <View style={styles.adjCard}>
               <Text style={styles.adjTitle}>Adjust Credit Balance</Text>
               <Text style={styles.adjCurrent}>Current: ${((creditsData?.balance_cents ?? c.credits_balance_cents ?? 0) / 100).toFixed(2)}</Text>
-              <TextInput
+              <AppTextInput
                 style={styles.adjInput}
                 value={adjAmount}
                 onChangeText={setAdjAmount}
@@ -640,7 +641,7 @@ export default function CustomerDetail() {
                 keyboardType="numeric"
                 testID="adjust-amount-input"
               />
-              <TextInput
+              <AppTextInput
                 style={[styles.adjInput, { minHeight: 60 }]}
                 value={adjReason}
                 onChangeText={setAdjReason}
@@ -858,7 +859,7 @@ export default function CustomerDetail() {
       <Sheet visible={loginSheet} onClose={() => setLoginSheet(false)} title="Create Customer Login" testID="create-login-sheet">
         <Text style={styles.sheetHint}>The customer will use these credentials to view their jobs and pay invoices.</Text>
         <Text style={styles.inputLabel}>Email</Text>
-        <TextInput
+        <AppTextInput
           testID="login-email-field"
           style={styles.input}
           value={loginEmail}
@@ -869,7 +870,7 @@ export default function CustomerDetail() {
           keyboardType="email-address"
         />
         <Text style={styles.inputLabel}>Temporary Password</Text>
-        <TextInput
+        <AppTextInput
           testID="login-password-field"
           style={styles.input}
           value={loginPw}

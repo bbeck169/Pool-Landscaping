@@ -5,12 +5,10 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
-  TextInput,
   Platform,
   Alert,
   Animated,
-  PanResponder,
-} from "react-native";
+  PanResponder } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import Svg, { Line, Polygon, Circle, Defs, Pattern, Rect, Path } from "react-native-svg";
 import ViewShot, { captureRef } from "react-native-view-shot";
@@ -23,6 +21,7 @@ import { AdminOnly } from "@/src/components/AdminOnly";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type El = {
   id: string;
@@ -791,7 +790,7 @@ function CadEditorScreen() {
       <Sheet visible={paletteOpen} onClose={() => setPaletteOpen(false)} title="Add element" testID="cad-palette-sheet">
         <View style={styles.palSearchBox}>
           <Ionicons name="search" size={16} color={colors.muted} />
-          <TextInput
+          <AppTextInput
             style={styles.palSearchInput}
             value={palSearch}
             onChangeText={setPalSearch}
@@ -848,11 +847,11 @@ function CadEditorScreen() {
         <View style={{ flexDirection: "row", gap: spacing.md, marginTop: spacing.md }}>
           <View style={{ flex: 1 }}>
             <Text style={styles.inputLabel}>WIDTH (FT)</Text>
-            <TextInput style={styles.input} keyboardType="decimal-pad" value={String(wFt)} onChangeText={(v) => setWFt(parseFloat(v) || 0)} testID="cad-width-ft" />
+            <AppTextInput style={styles.input} keyboardType="decimal-pad" value={String(wFt)} onChangeText={(v) => setWFt(parseFloat(v) || 0)} testID="cad-width-ft" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.inputLabel}>HEIGHT (FT)</Text>
-            <TextInput style={styles.input} keyboardType="decimal-pad" value={String(hFt)} onChangeText={(v) => setHFt(parseFloat(v) || 0)} testID="cad-height-ft" />
+            <AppTextInput style={styles.input} keyboardType="decimal-pad" value={String(hFt)} onChangeText={(v) => setHFt(parseFloat(v) || 0)} testID="cad-height-ft" />
           </View>
         </View>
         <View style={{ height: spacing.md }} />
@@ -862,7 +861,7 @@ function CadEditorScreen() {
       {/* Save sheet */}
       <Sheet visible={saveOpen} onClose={() => setSaveOpen(false)} title="Save design" testID="cad-save-sheet">
         <Text style={styles.inputLabel}>DESIGN NAME</Text>
-        <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Backyard redesign" placeholderTextColor={colors.muted} testID="cad-name" />
+        <AppTextInput style={styles.input} value={name} onChangeText={setName} placeholder="Backyard redesign" placeholderTextColor={colors.muted} testID="cad-name" />
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>ATTACH TO (OPTIONAL)</Text>
         {attachLabel ? (
           <View style={styles.attachRow}>

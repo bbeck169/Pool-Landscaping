@@ -3,14 +3,14 @@
  */
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ActivityIndicator, Alert, Platform,
-} from "react-native";
+  View, Text, StyleSheet, TouchableOpacity,
+  ActivityIndicator, Alert, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Props = { customerId: string };
 
@@ -73,7 +73,7 @@ export default function ServiceNotes({ customerId }: Props) {
 
       {composerOpen && (
         <View style={styles.composer}>
-          <TextInput
+          <AppTextInput
             style={styles.composerInput}
             value={newNote}
             onChangeText={setNewNote}

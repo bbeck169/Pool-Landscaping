@@ -9,12 +9,12 @@
  */
 import React, { useState } from "react";
 import {
-  View, Text, Pressable, Switch, StyleSheet, TextInput, Modal,
-  KeyboardAvoidingView, Platform, Alert,
-} from "react-native";
+  View, Text, Pressable, Switch, StyleSheet, Modal,
+  KeyboardAvoidingView, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Props = {
   customer: any;
@@ -126,7 +126,7 @@ export default function AutomationsMuteSection({ customer, isAdmin, onUpdated }:
               All automated emails & SMS will stop for this customer. Manual sends still work.
             </Text>
             <Text style={s.promptLabel}>Reason (optional, visible in audit log)</Text>
-            <TextInput
+            <AppTextInput
               style={s.reasonInput}
               value={muteReason}
               onChangeText={setMuteReason}

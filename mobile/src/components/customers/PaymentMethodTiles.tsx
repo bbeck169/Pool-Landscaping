@@ -15,8 +15,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, Pressable, ActivityIndicator,
-  Alert, Modal, TextInput, KeyboardAvoidingView, Platform,
-} from "react-native";
+  Alert, Modal, KeyboardAvoidingView, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 
@@ -25,6 +24,7 @@ import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useStripeConfig } from "@/src/config/stripe";
 import { StripeUnconfiguredBanner } from "@/src/lib/stripeConfig";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 /* ── Types ──────────────────────────────────────────────────── */
 type PM = {
@@ -229,7 +229,7 @@ function TypedDeleteModal({ pending, onConfirm, onCancel, busy }: {
           <Text style={dm.desc}>
             Type the last 4 (<Text style={dm.bold}>{pending?.last4}</Text>) to permanently remove this {isBank ? "bank account" : "card"}. This may cause future recurring charges to fail.
           </Text>
-          <TextInput
+          <AppTextInput
             style={dm.input}
             value={typed}
             onChangeText={setTyped}

@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, Pressable, TextInput, Platform, Alert, ScrollView } from "react-native";
+import { View, Text, StyleSheet, Pressable, Platform, Alert, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -8,6 +8,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading } from "@/src/components/ui";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function IncomeCategories() {
   const [cats, setCats] = useState<string[]>([]);
@@ -50,7 +51,7 @@ export default function IncomeCategories() {
     <View style={styles.root}>
       <Header title="Income Categories" back subtitle="Used to tag every invoice line item" />
       <View style={styles.addRow}>
-        <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="New category (e.g. Repairs)" placeholderTextColor={colors.muted} testID="cat-input" onSubmitEditing={add} />
+        <AppTextInput style={styles.input} value={name} onChangeText={setName} placeholder="New category (e.g. Repairs)" placeholderTextColor={colors.muted} testID="cat-input" onSubmitEditing={add} />
         <Pressable style={[styles.addBtn, busy && { opacity: 0.6 }]} onPress={add} disabled={busy} testID="cat-add">
           <Ionicons name="add" size={22} color="#fff" />
         </Pressable>

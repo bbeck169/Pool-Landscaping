@@ -18,8 +18,7 @@
  */
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
-  View, Text, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator, Platform,
-} from "react-native";
+  View, Text, Pressable, StyleSheet, Alert, ActivityIndicator, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 
@@ -83,6 +82,7 @@ export function canonicalReadingKey(r: { key?: string; name?: string }): string 
 // Feb-2026 · Unification — Re-export ReadingChipRow as ReadingInputRow
 // so callers can import the canonical component name used by the web.
 export { default as ReadingInputRow } from "./ReadingChipRow";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Reading = {
   key?: string; name: string; unit?: string; value: number | string | null;
@@ -736,7 +736,7 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 
       {/* Notes */}
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Notes</Text>
-      <TextInput
+      <AppTextInput
         multiline
         numberOfLines={4}
         editable={!locked}

@@ -5,13 +5,13 @@
 import React, { useEffect, useState, useCallback } from "react";
 import {
   View, Text, StyleSheet, Alert, ActivityIndicator,
-  Pressable, TextInput, Image, RefreshControl, FlatList,
-} from "react-native";
+  Pressable, Image, RefreshControl, FlatList } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { useToast } from "@/src/components/ToastProvider";
 import { Card, PrimaryButton, Sheet, EmptyState } from "@/src/components/ui";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 /* ── Chip ─────────────────────────────────────────────────────── */
 function Chip({
@@ -92,7 +92,7 @@ function EditModal({
     >
       <View style={s.modalBody}>
         <Text style={s.label}>Title</Text>
-        <TextInput
+        <AppTextInput
           style={s.input}
           value={title}
           onChangeText={setTitle}
@@ -101,7 +101,7 @@ function EditModal({
         />
 
         <Text style={[s.label, { marginTop: spacing.md }]}>Draft body</Text>
-        <TextInput
+        <AppTextInput
           style={[s.input, { minHeight: 160, textAlignVertical: "top" }]}
           multiline
           value={text}

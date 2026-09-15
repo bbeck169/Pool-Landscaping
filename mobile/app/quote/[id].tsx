@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Alert, Share, Platform,
-  Modal, TextInput, Pressable, FlatList, ActivityIndicator,
-} from "react-native";
+  Modal, Pressable, FlatList, ActivityIndicator } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -23,6 +22,7 @@ import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import SendToCustomerSheet from "@/src/components/quotes/SendToCustomerSheet";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function QuoteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -572,7 +572,7 @@ export default function QuoteDetail() {
           {/* Customer picker */}
           {dupPickingCustomer ? (
             <View style={styles.dupPickerArea} testID="duplicate-customer-picker">
-              <TextInput
+              <AppTextInput
                 style={styles.dupSearchInput}
                 value={dupSearch}
                 onChangeText={setDupSearch}

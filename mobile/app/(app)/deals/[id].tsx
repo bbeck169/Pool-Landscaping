@@ -14,9 +14,7 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
-  Modal,
-  TextInput,
-} from "react-native";
+  Modal } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,6 +26,7 @@ import {
   getDeal, getDealEvents, listPipelines, moveDeal, wonDeal, lostDeal,
   convertDeal,
 } from "@/src/api/quoteiq_q1";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const centsToUsd = (c: number) =>
   `$${((c || 0) / 100).toLocaleString(undefined, {
@@ -283,7 +282,7 @@ export default function DealDetail() {
         <View style={s.modalBg}>
           <View style={s.lostModal}>
             <Text style={s.sheetTitle}>Reason for losing</Text>
-            <TextInput
+            <AppTextInput
               value={lostReason}
               onChangeText={setLostReason}
               placeholder="e.g. price too high, went with competitor"

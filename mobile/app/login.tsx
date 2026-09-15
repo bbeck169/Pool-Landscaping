@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, Platform, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, Platform, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -19,6 +19,7 @@ import { isPreviewOrDev } from "@/src/utils/env";
 import { getFreshCachedJwt } from "@/src/lib/offline/jwtCache";
 import { getCachedMe } from "@/src/lib/offline/cache";
 import { storage } from "@/src/utils/storage";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function Login() {
   const { login, finalizeAccountChoice } = useAuth();
@@ -310,7 +311,7 @@ export default function Login() {
         <Text style={styles.label}>EMAIL</Text>
         <View style={styles.inputRow}>
           <Ionicons name="mail-outline" size={18} color={colors.muted} />
-          <TextInput
+          <AppTextInput
             testID="login-email-input"
             style={styles.input}
             placeholder="you@company.com"
@@ -326,7 +327,7 @@ export default function Login() {
         <Text style={styles.label}>PASSWORD</Text>
         <View style={styles.inputRow}>
           <Ionicons name="lock-closed-outline" size={18} color={colors.muted} />
-          <TextInput
+          <AppTextInput
             testID="login-password-input"
             style={styles.input}
             placeholder="••••••••"

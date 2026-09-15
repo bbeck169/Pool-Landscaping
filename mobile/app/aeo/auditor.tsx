@@ -5,9 +5,8 @@
 // scans (from the visibility history endpoint).
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Pressable,
-  ActivityIndicator, RefreshControl,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable,
+  ActivityIndicator, RefreshControl } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -16,6 +15,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Card, EmptyState, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type ScanResult = {
   aeo_signals?: Record<string, any>;
@@ -95,7 +95,7 @@ export default function AeoAuditor() {
         >
           <Card>
             <Text style={styles.sectionLabel}>Scan a URL</Text>
-            <TextInput
+            <AppTextInput
               testID="aeo-auditor-url-input"
               value={url}
               onChangeText={setUrl}

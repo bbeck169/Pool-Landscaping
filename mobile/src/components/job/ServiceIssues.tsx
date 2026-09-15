@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, ScrollView, Pressable, TextInput } from "react-native";
+import { View, Text, ScrollView, Pressable } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -8,6 +8,7 @@ import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
 import { styles } from "./styles";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function ServiceIssues({ job, canManage, isCustomer, onSaved }: { job: any; canManage: boolean; isCustomer: boolean; onSaved: (j: any) => void }) {
   const issues = job.service_issues || [];
@@ -119,7 +120,7 @@ export default function ServiceIssues({ job, canManage, isCustomer, onSaved }: {
 
       <Sheet visible={sheet} onClose={() => setSheet(false)} title="Report Service Issue" testID="issue-sheet">
         <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 420 }}>
-          <TextInput
+          <AppTextInput
             style={styles.issueInput}
             value={desc}
             onChangeText={setDesc}
@@ -128,7 +129,7 @@ export default function ServiceIssues({ job, canManage, isCustomer, onSaved }: {
             multiline
             testID="issue-desc-input"
           />
-          <TextInput
+          <AppTextInput
             style={[styles.issueInput, { minHeight: 44 }]}
             value={cost}
             onChangeText={setCost}

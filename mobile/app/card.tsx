@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Linking, Share, Platform, Alert, TextInput } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Linking, Share, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -15,6 +15,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, brandGradient } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 // Static fallback so the screen never renders blank while /card loads.
 const FALLBACK_COMPANY = {
@@ -239,7 +240,7 @@ export default function BusinessCard() {
         {editFields.map(([k, lbl]) => (
           <View key={k} style={{ marginBottom: spacing.sm }}>
             <Text style={styles.inputLabel}>{lbl}</Text>
-            <TextInput
+            <AppTextInput
               style={styles.input}
               value={form[k] || ""}
               onChangeText={(v) => setForm((f: any) => ({ ...f, [k]: v }))}

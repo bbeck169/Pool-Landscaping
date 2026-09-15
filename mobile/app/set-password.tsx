@@ -11,9 +11,8 @@
  */
 import React, { useState, useRef } from "react";
 import {
-  View, Text, StyleSheet, TextInput, Pressable, Platform,
-  Alert,
-} from "react-native";
+  View, Text, StyleSheet, Pressable, Platform,
+  Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -22,6 +21,7 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function SetPasswordScreen() {
   const router = useRouter();
@@ -42,7 +42,7 @@ export default function SetPasswordScreen() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const confirmRef = useRef<TextInput>(null);
+  const confirmRef = useRef<AppTextInput>(null);
 
   const handleSubmit = async () => {
     setError("");
@@ -150,7 +150,7 @@ export default function SetPasswordScreen() {
         <Text style={s.label}>NEW PASSWORD</Text>
         <View style={s.inputRow}>
           <Ionicons name="lock-closed-outline" size={18} color={colors.muted} />
-          <TextInput
+          <AppTextInput
             testID="set-password-input"
             style={s.input}
             placeholder="At least 6 characters"
@@ -170,7 +170,7 @@ export default function SetPasswordScreen() {
         <Text style={s.label}>CONFIRM PASSWORD</Text>
         <View style={s.inputRow}>
           <Ionicons name="checkmark-circle-outline" size={18} color={colors.muted} />
-          <TextInput
+          <AppTextInput
             ref={confirmRef}
             testID="set-password-confirm-input"
             style={s.input}

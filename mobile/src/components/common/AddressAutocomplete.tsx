@@ -13,11 +13,11 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator,
-  Platform,
-} from "react-native";
+  View, Text, Pressable, StyleSheet, ActivityIndicator,
+  Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const API = process.env.EXPO_PUBLIC_BACKEND_URL || "";
 const DEBOUNCE_MS = 250;
@@ -232,7 +232,7 @@ export default function AddressAutocomplete({
     <View style={s.root} testID={`${testID}-wrapper`}>
       {/* Input */}
       <View style={s.inputRow}>
-        <TextInput
+        <AppTextInput
           style={[s.input, errText ? s.inputError : null]}
           value={query}
           onChangeText={handleChangeText}

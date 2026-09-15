@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -9,6 +9,7 @@ import { Header } from "@/src/components/widgets";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { exportCsv, toCsvRow } from "@/src/utils/exportCsv";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 function fmtDuration(s: number) {
   if (!s) return "0m";
@@ -80,7 +81,7 @@ export default function JobTimersReport() {
 
       <View style={styles.searchWrap}>
         <Ionicons name="search" size={16} color={colors.muted} />
-        <TextInput
+        <AppTextInput
           style={styles.searchInput}
           value={q}
           onChangeText={setQ}

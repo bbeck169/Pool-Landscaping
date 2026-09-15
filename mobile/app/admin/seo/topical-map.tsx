@@ -1,15 +1,14 @@
 /** Phase 17B · Mobile — Topical Map: seed form + collapsible pillar tree. */
 import React, { useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { AdminOnlyGate, DesktopHint, BrandPill, CenterLoader } from "./_shared";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const INTENT_TONE: Record<string, "brand" | "green" | "amber" | "red" | "grey"> = {
   informational: "brand", commercial: "green",
@@ -72,12 +71,12 @@ function Inner() {
         <DesktopHint text="Graph visualization is desktop-only. Mobile shows a collapsible tree list." />
 
         <Text style={styles.label}>Seed keyword</Text>
-        <TextInput style={styles.input} value={seed}
+        <AppTextInput style={styles.input} value={seed}
                     onChangeText={setSeed}
                     autoCapitalize="none"
                     testID="topical-seed" />
         <Text style={styles.label}>Business context (optional)</Text>
-        <TextInput style={[styles.input, { minHeight: 80,
+        <AppTextInput style={[styles.input, { minHeight: 80,
                                             textAlignVertical: "top" }]}
                     multiline value={context}
                     onChangeText={setContext}

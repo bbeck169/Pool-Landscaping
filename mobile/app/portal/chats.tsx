@@ -4,8 +4,7 @@
 import React, { useCallback, useState } from "react";
 import {
   View, Text, StyleSheet, FlatList, Pressable, RefreshControl,
-  Modal, TextInput,
-} from "react-native";
+  Modal } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -13,6 +12,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function PortalChats() {
   const router = useRouter();
@@ -98,12 +98,12 @@ export default function PortalChats() {
                 <Ionicons name="close" size={22} color={colors.muted}/>
               </Pressable>
             </View>
-            <TextInput value={subject} onChangeText={setSubject}
+            <AppTextInput value={subject} onChangeText={setSubject}
                        placeholder="Subject"
                        placeholderTextColor={colors.muted}
                        style={styles.input}
                        testID="chat-new-subject" />
-            <TextInput value={firstMsg} onChangeText={setFirstMsg}
+            <AppTextInput value={firstMsg} onChangeText={setFirstMsg}
                        placeholder="Your message…" multiline
                        placeholderTextColor={colors.muted}
                        style={[styles.input, { minHeight: 100 }]}

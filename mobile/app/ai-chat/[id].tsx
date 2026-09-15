@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from "react";
-import { View, Text, StyleSheet, FlatList, TextInput, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, FlatList, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,6 +9,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import PersonaAvatar from "@/src/components/personas/PersonaAvatar";
 import { OfflineGate } from "@/src/components/OfflineGate";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Msg = { id: string; role: "user" | "assistant"; text: string };
 
@@ -119,7 +120,7 @@ export default function AIChat() {
         ) : null}
 
         <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
-          <TextInput
+          <AppTextInput
             style={styles.input}
             value={input}
             onChangeText={setInput}

@@ -2,17 +2,16 @@ import React, { useState } from "react";
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   TouchableOpacity,
   Switch,
   Platform,
-  Image,
-} from "react-native";
+  Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, font, fontSize, radius } from "@/src/theme";
 import TemplateTableField from "./TemplateTableField";
 import SignaturePadModal from "./SignaturePadModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Field = {
   type: string;
@@ -67,7 +66,7 @@ export default function TemplateFieldRenderer({
     return (
       <View testID={testIdBase}>
         {renderLabel()}
-        <TextInput
+        <AppTextInput
           value={value ?? ""}
           editable={!disabled}
           onChangeText={onChange}
@@ -84,7 +83,7 @@ export default function TemplateFieldRenderer({
     return (
       <View testID={testIdBase}>
         {renderLabel()}
-        <TextInput
+        <AppTextInput
           value={value ?? ""}
           editable={!disabled}
           onChangeText={onChange}
@@ -104,7 +103,7 @@ export default function TemplateFieldRenderer({
     return (
       <View testID={testIdBase}>
         {renderLabel()}
-        <TextInput
+        <AppTextInput
           value={value != null ? String(value) : ""}
           editable={!disabled}
           onChangeText={(t) => onChange(t === "" ? "" : Number(t))}
@@ -122,7 +121,7 @@ export default function TemplateFieldRenderer({
     return (
       <View testID={testIdBase}>
         {renderLabel()}
-        <TextInput
+        <AppTextInput
           value={value ?? ""}
           editable={!disabled}
           onChangeText={onChange}
@@ -236,7 +235,7 @@ export default function TemplateFieldRenderer({
   return (
     <View testID={testIdBase}>
       {renderLabel()}
-      <TextInput
+      <AppTextInput
         value={value ?? ""}
         editable={!disabled}
         onChangeText={onChange}

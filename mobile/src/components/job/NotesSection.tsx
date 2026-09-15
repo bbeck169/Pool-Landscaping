@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { View, Text, TextInput } from "react-native";
+import { View, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing } from "@/src/theme";
 import { styles } from "./styles";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function NotesSection({
   job,
@@ -25,7 +26,7 @@ export default function NotesSection({
         </View>
         <View style={styles.reportCard}>
           <Text style={styles.noteFieldLabel}>Customer notes <Text style={styles.noteHint}>· shown on service report</Text></Text>
-          <TextInput
+          <AppTextInput
             style={styles.noteInput}
             value={customerNotes}
             onChangeText={setCustomerNotes}
@@ -38,7 +39,7 @@ export default function NotesSection({
           />
           <View style={{ height: spacing.md }} />
           <Text style={styles.noteFieldLabel}>Internal notes <Text style={styles.noteHint}>· team only, hidden from customer</Text></Text>
-          <TextInput
+          <AppTextInput
             style={styles.noteInput}
             value={internalNotes}
             onChangeText={setInternalNotes}

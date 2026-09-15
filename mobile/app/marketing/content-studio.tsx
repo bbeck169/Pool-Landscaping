@@ -11,9 +11,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  Image, Alert, RefreshControl, Dimensions,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Image, Alert, RefreshControl, Dimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api, api_base } from "@/src/api";
@@ -21,6 +19,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Card, PrimaryButton, Loading } from "@/src/components/ui";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const ASPECT_OPTIONS = [
   { v: "1:1", label: "Square" },
@@ -125,7 +124,7 @@ export default function ContentStudio() {
 
         {/* Prompt */}
         <Text style={s.label}>PROMPT</Text>
-        <TextInput
+        <AppTextInput
           style={[s.input, s.textArea]}
           value={prompt}
           onChangeText={setPrompt}

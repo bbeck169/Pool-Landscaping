@@ -4,14 +4,14 @@
  */
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Modal, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Modal, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function AssetDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -160,21 +160,21 @@ export default function AssetDetail() {
                 </Pressable>
               ))}
             </View>
-            <TextInput value={form.cost}
+            <AppTextInput value={form.cost}
                        onChangeText={(v) => setForm({ ...form, cost: v })}
                        placeholder="Cost ($)"
                        placeholderTextColor={colors.muted}
                        keyboardType="numeric"
                        style={styles.input}
                        testID="maint-cost" />
-            <TextInput value={form.notes}
+            <AppTextInput value={form.notes}
                        onChangeText={(v) => setForm({ ...form, notes: v })}
                        placeholder="Notes"
                        placeholderTextColor={colors.muted}
                        multiline
                        style={[styles.input, { minHeight: 80 }]}
                        testID="maint-notes" />
-            <TextInput value={form.next_due_at}
+            <AppTextInput value={form.next_due_at}
                        onChangeText={(v) => setForm({ ...form, next_due_at: v })}
                        placeholder="Next due (YYYY-MM-DD, optional)"
                        placeholderTextColor={colors.muted}

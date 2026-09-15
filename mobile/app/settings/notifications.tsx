@@ -17,9 +17,8 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Pressable,
-  Switch, TouchableOpacity, ActivityIndicator,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable,
+  Switch, TouchableOpacity, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
@@ -28,6 +27,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import CommsWhitelistBanner from "@/src/components/comms/CommsWhitelistBanner";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Channel = "bell" | "push" | "email" | "sms";
 type ChannelMap = Partial<Record<Channel, boolean>>;
@@ -267,7 +267,7 @@ export default function NotificationPrefsScreen() {
             <View style={s.timeRow}>
               <View style={{ flex: 1 }}>
                 <Text style={s.timeLabel}>Start</Text>
-                <TextInput
+                <AppTextInput
                   testID="notif-quiet-hours-start"
                   style={[s.timeInput, !quiet.enabled && { opacity: 0.5 }]}
                   editable={!!quiet.enabled}
@@ -280,7 +280,7 @@ export default function NotificationPrefsScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={s.timeLabel}>End</Text>
-                <TextInput
+                <AppTextInput
                   testID="notif-quiet-hours-end"
                   style={[s.timeInput, !quiet.enabled && { opacity: 0.5 }]}
                   editable={!!quiet.enabled}

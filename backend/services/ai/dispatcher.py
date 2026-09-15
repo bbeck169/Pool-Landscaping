@@ -42,6 +42,7 @@ log = logging.getLogger("ai.dispatch")
 
 async def _emergent_platform_fallback(
     *, tenant_id: str, system_prompt: str, user_text: str,
+    parse_json: bool = True,
 ) -> AICompletionResult:
     """Last-resort platform fallback using the Emergent Universal
     LLM Key. Reuses the existing ``services.llm_provider`` wrapper
@@ -51,7 +52,18 @@ async def _emergent_platform_fallback(
     Phase I1.7.e · chunk 2 · Feb-2026 — honours ``AI_TESTMODE_MOCK``
     so the Emergent + OpenAI HTTP paths are skipped in preview /
     dev / staging. BYO providers already honour the same flag inside
-    their own ``complete()`` methods (see ``_helpers.ai_testmode_mock``)."""
+    their own ``complete()`` methods (see ``_helpers.ai_testmode_mock``).
+
+    Phase KB1.5 · Feb-2026 — ``parse_json`` is now threaded through
+    so plain-text chat surfaces (Copilot, AI-Employees) get the raw
+    Claude reply back verbatim instead of forcing an
+    ``_extract_json`` pass on a plain-text response (the classic
+    source of ``emergent_empty_json`` false-negatives leaking to
+    the UI as ``[emergent fallback error: emergent_empty_json]``).
+    Also retries ONCE on an empty / malformed body before giving up,
+    and rewrites the leaked internal error into a user-facing
+    message so the UI never sees ``emergent_empty_json`` verbatim.
+    """
     from ._helpers import ai_testmode_mock
     if ai_testmode_mock():
         from .testmode import mock_completion_result
@@ -62,20 +74,50 @@ async def _emergent_platform_fallback(
             provider_used="platform:emergent",
         )
     from services.llm_provider import call_llm_with_fallback
-    result = await call_llm_with_fallback(
-        system_prompt=system_prompt, user_text=user_text,
-        photo_urls=None,
-        provider="anthropic", model="claude-sonnet-4-5",
-    )
-    # ``call_llm_with_fallback`` returns ``{"raw": <json>, "provider": "emergent"|"openai"}``
-    # on success or ``{"error": ..., "provider": ...}`` on failure.
+
+    async def _one_shot() -> Dict[str, Any]:
+        return await call_llm_with_fallback(
+            system_prompt=system_prompt, user_text=user_text,
+            photo_urls=None,
+            provider="anthropic", model="claude-sonnet-4-5",
+            parse_json=parse_json,
+        )
+
+    result = await _one_shot()
+    _err = None
+    if isinstance(result, dict):
+        _err = result.get("error")
+    # Retry ONCE on an empty / malformed body — the Emergent
+    # chokepoint occasionally streams an initial keep-alive with no
+    # payload before the real response lands.
+    _RETRYABLE = {"emergent_empty_json", "emergent_empty_text",
+                   "openai_empty_json", "openai_empty_text"}
+    if _err in _RETRYABLE:
+        log.warning(
+            "[ai.dispatch] emergent %s — retrying once tenant=%s",
+            _err, tenant_id,
+        )
+        result = await _one_shot()
+
     content = ""
     if isinstance(result, dict):
         raw = result.get("raw") or {}
         if isinstance(raw, dict):
             content = raw.get("text") or raw.get("content") or ""
         if not content and result.get("error"):
-            content = f"[emergent fallback error: {result.get('error')}]"
+            # Phase KB1.5 — surface a user-facing message.  Keep the
+            # internal wrapper on the ``raw`` dict for observability
+            # dashboards but NEVER let it become the visible reply.
+            _raw_err = str(result.get("error"))
+            log.warning(
+                "[ai.dispatch] platform fallback failed tenant=%s "
+                "error=%s prompt_len=%d",
+                tenant_id, _raw_err, len(system_prompt or ""),
+            )
+            content = (
+                "The AI provider returned an unexpected response. "
+                "Please try again in a moment."
+            )
     return AICompletionResult(
         content=content,
         provider_key="emergent",
@@ -91,6 +133,7 @@ async def dispatch_ai_completion(
     *, tenant_id: str, system_prompt: str, user_text: str,
     model: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    parse_json: bool = True,
     db=None,
 ) -> AICompletionResult:
     """Dispatch an AI completion request.
@@ -100,6 +143,11 @@ async def dispatch_ai_completion(
         its monthly cap has been reached. HTTP-layer callers should
         translate this to a **429 Too Many Requests** and MUST NOT
         transparently fall back to the platform key.
+
+    Phase KB1.5 · Feb-2026 — ``parse_json`` is threaded through to
+    the platform fallback so chat surfaces (Copilot, AI-Employees)
+    that expect plain text don't get an ``emergent_empty_json``
+    false-negative when Claude replies with prose.
     """
     provider = await get_tenant_ai_provider(tenant_id, db=db)
     if provider is None:
@@ -109,6 +157,7 @@ async def dispatch_ai_completion(
         return await _emergent_platform_fallback(
             tenant_id=tenant_id,
             system_prompt=system_prompt, user_text=user_text,
+            parse_json=parse_json,
         )
     # Feb-2026 · P1 parallel fix — BYO empty-credentials guard.
     # When the tenant's BYO row exists but every ``required=True``
@@ -127,6 +176,7 @@ async def dispatch_ai_completion(
         return await _emergent_platform_fallback(
             tenant_id=tenant_id,
             system_prompt=system_prompt, user_text=user_text,
+            parse_json=parse_json,
         )
     short = short_name_for(provider.provider_key) or provider.provider_key
     # Rule 2: BYO exists — cap check FIRST.
@@ -165,6 +215,7 @@ async def dispatch_ai_completion(
             return await _emergent_platform_fallback(
                 tenant_id=tenant_id,
                 system_prompt=system_prompt, user_text=user_text,
+                parse_json=parse_json,
             )
         raise
     # Fire-and-forget usage record (still awaited so tests see it).

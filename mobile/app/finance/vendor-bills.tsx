@@ -6,13 +6,14 @@
 // Backend: GET/POST/PATCH `/api/cfo/bills`.
 // Admin / super-admin only.
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, TextInput } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
 import { AdminListPage } from "@/src/components/layout/AdminListPage";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Bill = {
   id: string;
@@ -103,7 +104,7 @@ export default function VendorBillsMobile() {
         >
           <View style={{ gap: spacing.md, padding: spacing.lg }}>
             <Field label="Vendor name" testID="vendor-bills-field-vendor">
-              <TextInput
+              <AppTextInput
                 value={draft.vendor_name || ""}
                 onChangeText={(t) => setDraft((d) => ({ ...d, vendor_name: t }))}
                 style={styles.input}
@@ -111,7 +112,7 @@ export default function VendorBillsMobile() {
               />
             </Field>
             <Field label="Amount (dollars)" testID="vendor-bills-field-amount">
-              <TextInput
+              <AppTextInput
                 value={draft._amount || ""}
                 onChangeText={(t) => setDraft((d) => ({ ...d, _amount: t }))}
                 keyboardType="decimal-pad"
@@ -120,7 +121,7 @@ export default function VendorBillsMobile() {
               />
             </Field>
             <Field label="Due date (YYYY-MM-DD)" testID="vendor-bills-field-due">
-              <TextInput
+              <AppTextInput
                 value={draft.due_date || ""}
                 onChangeText={(t) => setDraft((d) => ({ ...d, due_date: t }))}
                 style={styles.input}
@@ -128,7 +129,7 @@ export default function VendorBillsMobile() {
               />
             </Field>
             <Field label="Notes" testID="vendor-bills-field-notes">
-              <TextInput
+              <AppTextInput
                 value={draft.notes || ""}
                 onChangeText={(t) => setDraft((d) => ({ ...d, notes: t }))}
                 style={[styles.input, { minHeight: 60 }]}

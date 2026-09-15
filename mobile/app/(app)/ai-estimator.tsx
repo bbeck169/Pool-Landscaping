@@ -10,9 +10,8 @@
  */
 import React, { useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
-  Alert, ActivityIndicator, Switch,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  Alert, ActivityIndicator, Switch } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -20,6 +19,7 @@ import { Header } from "@/src/components/widgets";
 import { OfflineGate } from "@/src/components/OfflineGate";
 import { colors, fontSize, radius, spacing } from "@/src/theme";
 import { api } from "@/src/api";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const $ = (c: number) => `$${((c || 0) / 100).toFixed(2)}`;
 
@@ -66,7 +66,7 @@ export default function AiEstimator() {
         </View>
 
         <Text style={s.label}>Describe the job</Text>
-        <TextInput
+        <AppTextInput
           value={desc}
           onChangeText={setDesc}
           multiline

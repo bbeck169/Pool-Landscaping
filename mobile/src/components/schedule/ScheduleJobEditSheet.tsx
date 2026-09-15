@@ -10,12 +10,13 @@
  * notes, status.
  */
 import React, { useEffect, useState } from "react";
-import { View, Text, TextInput, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
 import LineItemsSection from "@/src/components/jobs/LineItemsSection";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const SERVICE_TYPES = [
   "Pool Cleaning", "Repair", "Landscaping", "Inspection",
@@ -102,7 +103,7 @@ export default function ScheduleJobEditSheet({ open, job, onClose, onSaved, onDe
       <View style={{ gap: spacing.md }}>
         <View>
           <Text style={label}>Title</Text>
-          <TextInput
+          <AppTextInput
             value={form.title || ""}
             onChangeText={setField("title")}
             style={input}
@@ -128,7 +129,7 @@ export default function ScheduleJobEditSheet({ open, job, onClose, onSaved, onDe
 
         <View>
           <Text style={label}>Scheduled date</Text>
-          <TextInput
+          <AppTextInput
             value={form.scheduled_date || ""}
             onChangeText={setField("scheduled_date")}
             placeholder="YYYY-MM-DD"
@@ -191,7 +192,7 @@ export default function ScheduleJobEditSheet({ open, job, onClose, onSaved, onDe
 
         <View>
           <Text style={label}>Notes</Text>
-          <TextInput
+          <AppTextInput
             value={form.notes || ""}
             onChangeText={setField("notes")}
             multiline

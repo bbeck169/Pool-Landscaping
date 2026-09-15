@@ -6,8 +6,7 @@
  */
 import React, { useMemo } from "react";
 import {
-  View, Text, TextInput, Pressable, StyleSheet, Alert, Platform,
-} from "react-native";
+  View, Text, Pressable, StyleSheet, Alert, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import {
@@ -15,6 +14,7 @@ import {
   READING_ALLOWLIST, READING_LABELS, READING_REQUIRED,
   CHEMICAL_ALLOWLIST, CHEMICAL_LABELS,
 } from "@/src/lib/waterBodies";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 interface Props {
   body: WaterBody;
@@ -113,7 +113,7 @@ export default function WaterBodyPanel({
             {BODY_TYPE_LABELS[body.type] || body.type}
           </Text>
         </View>
-        <TextInput
+        <AppTextInput
           style={s.labelInput}
           value={body.label || ""}
           onChangeText={setLabel}
@@ -145,7 +145,7 @@ export default function WaterBodyPanel({
               </Text>
               {meta.unit ? <Text style={s.readingUnit}>{meta.unit}</Text> : null}
             </View>
-            <TextInput
+            <AppTextInput
               style={[s.readingInput, isMissing && s.readingInputMissing]}
               value={cur?.value != null ? String(cur.value) : ""}
               onChangeText={(v) => setReading(key, v)}
@@ -168,7 +168,7 @@ export default function WaterBodyPanel({
             return (
               <View key={`${chem.product_slug}-${ci}`} style={s.chemRow} testID={`chem-row-${index}-${ci}`}>
                 <Text style={s.chemName}>{meta.name}</Text>
-                <TextInput
+                <AppTextInput
                   style={s.chemInput}
                   value={chem.amount != null ? String(chem.amount) : ""}
                   onChangeText={(v) => updateChemical(ci, v)}
@@ -202,7 +202,7 @@ export default function WaterBodyPanel({
 
       {/* Notes */}
       <Text style={s.sectionLabel}>Notes</Text>
-      <TextInput
+      <AppTextInput
         style={s.notesInput}
         value={body.notes || ""}
         onChangeText={setNotes}

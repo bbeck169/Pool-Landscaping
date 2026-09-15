@@ -9,11 +9,9 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  RefreshControl,
-} from "react-native";
+  RefreshControl } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -22,6 +20,7 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { listSends } from "@/src/api/comms";
 import SendStatusPill from "@/src/components/comms/SendStatusPill";
 import ChannelIcon from "@/src/components/comms/ChannelIcon";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const KIND_OPTIONS = [
   { value: "", label: "All kinds" },
@@ -169,7 +168,7 @@ export default function CommsSendsListScreen() {
           </TouchableOpacity>
           <View style={styles.filterInput}>
             <Ionicons name="search-outline" size={14} color={colors.muted} />
-            <TextInput
+            <AppTextInput
               testID="comms-sends-filter-recipient"
               style={styles.filterInputText}
               value={recipientQ}

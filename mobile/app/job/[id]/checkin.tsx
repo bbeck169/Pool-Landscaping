@@ -11,9 +11,8 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, TextInput, Pressable, ScrollView,
-  ActivityIndicator, KeyboardAvoidingView, Platform,
-} from "react-native";
+  View, Text, StyleSheet, Pressable, ScrollView,
+  ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -25,6 +24,7 @@ import { useToast } from "@/src/components/ToastProvider";
 import { geolocate, GeolocateResult } from "@/src/utils/geolocate";
 import { uploadFile, FileRecord } from "@/src/api/files";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const MAX_PHOTOS = 5;
 const NOTE_MAX = 2000;
@@ -364,7 +364,7 @@ export default function CheckinComposer() {
             </Pressable>
             <Text style={s.charCount}>{note.length}/{NOTE_MAX}</Text>
           </View>
-          <TextInput
+          <AppTextInput
             style={s.noteInput}
             value={note}
             onChangeText={(t) => setNote(t.slice(0, NOTE_MAX))}

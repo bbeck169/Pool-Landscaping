@@ -5,8 +5,7 @@
 // buttons use the Phase 9 provider endpoints.
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Pressable, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -16,6 +15,7 @@ import { useToast } from "@/src/components/ToastProvider";
 import { Card, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Provider = "netlify" | "vercel" | "cloudflare_pages";
 
@@ -184,7 +184,7 @@ export default function PublishConfig() {
                     {meta.fields.map((f) => (
                       <View key={f.key} style={styles.field}>
                         <Text style={styles.label}>{f.label}</Text>
-                        <TextInput
+                        <AppTextInput
                           testID={`publish-${p}-${f.key}`}
                           value={drafts[p][f.key] ?? ""}
                           onChangeText={(v) => setDraft(p, f.key, v)}

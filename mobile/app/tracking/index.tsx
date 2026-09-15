@@ -5,8 +5,7 @@
 import React, { useCallback, useState } from "react";
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  ActivityIndicator, RefreshControl, TextInput, ScrollView,
-} from "react-native";
+  ActivityIndicator, RefreshControl, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -15,6 +14,7 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Tracker = {
   id: string;
@@ -131,7 +131,7 @@ export default function TrackingScreen() {
       {/* Search */}
       <View style={s.searchWrap}>
         <Ionicons name="search" size={16} color={colors.muted} />
-        <TextInput style={s.searchInput} value={search} onChangeText={setSearch} placeholder="Search customer or address…" placeholderTextColor={colors.muted} testID="tracker-search" />
+        <AppTextInput style={s.searchInput} value={search} onChangeText={setSearch} placeholder="Search customer or address…" placeholderTextColor={colors.muted} testID="tracker-search" />
       </View>
 
       {loading ? (

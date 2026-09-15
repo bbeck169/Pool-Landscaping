@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Switch, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Switch, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -8,6 +8,7 @@ import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const FREQS = ["weekly", "monthly", "quarterly"];
 
@@ -152,7 +153,7 @@ export default function AutoBilling() {
         </View>
 
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>SERVICE</Text>
-        <TextInput style={styles.input} value={form.service} onChangeText={(v) => setForm((f) => ({ ...f, service: v }))} placeholder="e.g. Weekly Pool Cleaning" placeholderTextColor={colors.muted} testID="plan-service-input" />
+        <AppTextInput style={styles.input} value={form.service} onChangeText={(v) => setForm((f) => ({ ...f, service: v }))} placeholder="e.g. Weekly Pool Cleaning" placeholderTextColor={colors.muted} testID="plan-service-input" />
 
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>FREQUENCY</Text>
         <View style={styles.pickerWrap}>
@@ -164,7 +165,7 @@ export default function AutoBilling() {
         </View>
 
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>AMOUNT ($)</Text>
-        <TextInput style={styles.input} value={form.amount} onChangeText={(v) => setForm((f) => ({ ...f, amount: v }))} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.muted} testID="plan-amount-input" />
+        <AppTextInput style={styles.input} value={form.amount} onChangeText={(v) => setForm((f) => ({ ...f, amount: v }))} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.muted} testID="plan-amount-input" />
 
         <View style={{ height: spacing.md }} />
         <PrimaryButton title="Create Plan" onPress={create} testID="save-plan-button" />

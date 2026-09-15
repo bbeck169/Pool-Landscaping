@@ -22,10 +22,8 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
-  TextInput,
   Platform,
-  KeyboardAvoidingView,
-} from "react-native";
+  KeyboardAvoidingView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 
@@ -33,6 +31,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import { mapApiError } from "@/src/utils/mapApiError";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -567,7 +566,7 @@ function PortalResetModal({
           </Pressable>
 
           {mode === "explicit" ? (
-            <TextInput
+            <AppTextInput
               style={s.passwordInput}
               value={password}
               onChangeText={setPassword}

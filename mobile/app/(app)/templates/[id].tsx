@@ -14,14 +14,12 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
-  Linking,
-} from "react-native";
+  Linking } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -42,6 +40,7 @@ import {
   removePending,
   flushPendingTemplateDrafts,
 } from "@/src/utils/offlineTemplateDrafts";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
 const AUTOSAVE_INTERVAL_MS = 15000;
@@ -376,7 +375,7 @@ export default function TemplateFillScreen() {
         >
           {/* Header card */}
           <View style={styles.card} testID="template-fill-header">
-            <TextInput
+            <AppTextInput
               value={instance?.title || ""}
               onChangeText={setTitle}
               editable={!readOnly}

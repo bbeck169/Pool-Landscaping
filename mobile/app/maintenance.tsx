@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Platform, Alert, ScrollView } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert, ScrollView } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -9,6 +9,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header, FilterRow } from "@/src/components/widgets";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -174,7 +175,7 @@ export default function Maintenance() {
                 </Pressable>
               ))}
             </View>
-            <TextInput style={styles.input} value={schedDate} onChangeText={setSchedDate} placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} testID="maint-date-input" />
+            <AppTextInput style={styles.input} value={schedDate} onChangeText={setSchedDate} placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} testID="maint-date-input" />
 
             <Text style={styles.fieldLabel}>Assign technician</Text>
             <View style={styles.presetRow}>
@@ -189,7 +190,7 @@ export default function Maintenance() {
             </View>
 
             <Text style={styles.fieldLabel}>Repeat every (days)</Text>
-            <TextInput style={styles.input} value={schedInterval} onChangeText={setSchedInterval} keyboardType="number-pad" placeholder="90" placeholderTextColor={colors.muted} testID="maint-interval-input" />
+            <AppTextInput style={styles.input} value={schedInterval} onChangeText={setSchedInterval} keyboardType="number-pad" placeholder="90" placeholderTextColor={colors.muted} testID="maint-interval-input" />
             <Text style={styles.hint}>Sets how often the {sched.label.toLowerCase()} for this pool becomes due.</Text>
 
             <View style={{ height: spacing.md }} />

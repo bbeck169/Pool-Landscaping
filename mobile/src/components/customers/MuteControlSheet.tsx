@@ -12,14 +12,14 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, Pressable, StyleSheet, TextInput, ScrollView,
-} from "react-native";
+  View, Text, Pressable, StyleSheet, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Sheet } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 
 type Reason = { id: string; label: string; is_active?: boolean };
@@ -194,7 +194,7 @@ export default function MuteControlSheet({
               />
             </ScrollView>
             {selectedReasonId === "__custom__" ? (
-              <TextInput
+              <AppTextInput
                 testID={`mute-control-reason-custom-${cid}`}
                 value={customReason}
                 onChangeText={setCustomReason}

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Modal, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Modal, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -8,6 +8,7 @@ import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const TYPES = ["sick", "vacation", "personal", "unpaid"] as const;
 
@@ -156,13 +157,13 @@ function RequestSheet({ onClose, onDone }: { onClose: () => void; onDone: () => 
             ))}
           </View>
           <Text style={s.lbl}>From (YYYY-MM-DD)</Text>
-          <TextInput value={from} onChangeText={setFrom} style={s.input} testID="tof-from" />
+          <AppTextInput value={from} onChangeText={setFrom} style={s.input} testID="tof-from" />
           <Text style={s.lbl}>To (YYYY-MM-DD)</Text>
-          <TextInput value={to} onChangeText={setTo} style={s.input} testID="tof-to" />
+          <AppTextInput value={to} onChangeText={setTo} style={s.input} testID="tof-to" />
           <Text style={s.lbl}>Hours</Text>
-          <TextInput value={hours} onChangeText={setHours} keyboardType="numeric" style={s.input} testID="tof-hours" />
+          <AppTextInput value={hours} onChangeText={setHours} keyboardType="numeric" style={s.input} testID="tof-hours" />
           <Text style={s.lbl}>Reason</Text>
-          <TextInput value={reason} onChangeText={setReason} multiline style={[s.input, { height: 70 }]} testID="tof-reason" />
+          <AppTextInput value={reason} onChangeText={setReason} multiline style={[s.input, { height: 70 }]} testID="tof-reason" />
 
           {err ? <View style={s.errBox} testID="tof-error-banner"><Text style={s.errText}>{err}</Text></View> : null}
 

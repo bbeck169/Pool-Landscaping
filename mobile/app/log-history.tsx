@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading, EmptyState } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const RATING_COLOR: Record<string, string> = {
   "Average": "#16A34A",
@@ -68,7 +69,7 @@ export default function LogHistoryReport() {
         <View style={{ flex: 1 }}>
           <View style={styles.searchWrap}>
             <Ionicons name="search" size={16} color={colors.muted} />
-            <TextInput
+            <AppTextInput
               style={styles.searchInput}
               value={query}
               onChangeText={setQuery}

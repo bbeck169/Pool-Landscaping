@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Alert, TextInput, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Alert, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -9,6 +9,7 @@ import { Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { exportCsv, toCsvRow } from "@/src/utils/exportCsv";
 import { exportReportPdf } from "@/src/utils/exportReportPdf";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const PALETTE = ["#0284C7", "#16A34A", "#7C3AED", "#D97706", "#DB2777", "#0891B2", "#65A30D", "#DC2626"];
 
@@ -112,8 +113,8 @@ export default function BusinessReports() {
       </ScrollView>
       {preset === "custom" ? (
         <View style={styles.customRow}>
-          <TextInput style={styles.customInput} value={customFrom} onChangeText={setCustomFrom} placeholder="From YYYY-MM-DD" placeholderTextColor={colors.muted} testID="biz-custom-from" />
-          <TextInput style={styles.customInput} value={customTo} onChangeText={setCustomTo} placeholder="To YYYY-MM-DD" placeholderTextColor={colors.muted} testID="biz-custom-to" />
+          <AppTextInput style={styles.customInput} value={customFrom} onChangeText={setCustomFrom} placeholder="From YYYY-MM-DD" placeholderTextColor={colors.muted} testID="biz-custom-from" />
+          <AppTextInput style={styles.customInput} value={customTo} onChangeText={setCustomTo} placeholder="To YYYY-MM-DD" placeholderTextColor={colors.muted} testID="biz-custom-to" />
           <Pressable style={styles.applyBtn} onPress={() => { setLoading(true); load(); }} testID="biz-custom-apply"><Text style={styles.applyText}>Apply</Text></Pressable>
         </View>
       ) : null}

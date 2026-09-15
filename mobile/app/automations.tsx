@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Switch, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Switch, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const TRIGGERS = [
   { key: "lead_created", label: "Lead created" },
@@ -101,7 +102,7 @@ export default function Automations() {
 
       <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="New Automation" testID="add-automation-sheet">
         <Text style={styles.inputLabel}>NAME</Text>
-        <TextInput style={styles.input} value={form.name} onChangeText={(v) => setForm((f) => ({ ...f, name: v }))} placeholder="e.g. Welcome new leads" placeholderTextColor={colors.muted} testID="automation-name-input" />
+        <AppTextInput style={styles.input} value={form.name} onChangeText={(v) => setForm((f) => ({ ...f, name: v }))} placeholder="e.g. Welcome new leads" placeholderTextColor={colors.muted} testID="automation-name-input" />
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>WHEN (TRIGGER)</Text>
         <View style={styles.pickerWrap}>
           {TRIGGERS.map((t) => (

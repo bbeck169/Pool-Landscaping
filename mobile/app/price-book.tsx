@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -10,6 +10,7 @@ import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
 import { ImportExport } from "@/src/components/ImportExport";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 // Phase 54f · Feb-2026 — supplier badge on pricebook rows (mobile parity).
 const SUPPLIER_LABELS: Record<string, string> = {
@@ -218,7 +219,7 @@ export default function PriceBook() {
         {[["name", "Name *", "default"], ["category", "Category", "default"], ["unit", "Unit (each, hour…)", "default"], ["unit_price", "Unit Price ($)", "decimal-pad"]].map(([k, lbl, kt]) => (
           <View key={k as string} style={{ marginBottom: spacing.sm }}>
             <Text style={styles.inputLabel}>{lbl}</Text>
-            <TextInput
+            <AppTextInput
               testID={`item-${k}-input`}
               style={styles.input}
               value={(form as any)[k as string]}
@@ -236,7 +237,7 @@ export default function PriceBook() {
       <Sheet visible={!!editItem} onClose={() => setEditItem(null)} title={`Edit: ${editItem?.name || ""}`} testID="edit-item-sheet">
         <View style={{ marginBottom: spacing.sm }}>
           <Text style={styles.inputLabel}>Retail Price ($)</Text>
-          <TextInput
+          <AppTextInput
             testID="edit-unit-price-input"
             style={styles.input}
             value={editForm.unit_price}
@@ -249,7 +250,7 @@ export default function PriceBook() {
           <>
             <View style={{ marginBottom: spacing.sm }}>
               <Text style={styles.inputLabel}>Wholesale Price ($)</Text>
-              <TextInput
+              <AppTextInput
                 testID="edit-wholesale-price-input"
                 style={styles.input}
                 value={editForm.wholesale_price}
@@ -260,7 +261,7 @@ export default function PriceBook() {
             </View>
             <View style={{ marginBottom: spacing.sm }}>
               <Text style={styles.inputLabel}>Labor Cost ($)</Text>
-              <TextInput
+              <AppTextInput
                 testID="edit-labor-cost-input"
                 style={styles.input}
                 value={editForm.labor_cost_default}

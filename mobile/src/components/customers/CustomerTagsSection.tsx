@@ -17,13 +17,13 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  View, Text, Pressable, StyleSheet, Modal, TextInput, FlatList,
-  ActivityIndicator,
-} from "react-native";
+  View, Text, Pressable, StyleSheet, Modal, FlatList,
+  ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Tag = {
   id: string;
@@ -225,7 +225,7 @@ function TagPickerSheet({
           <View style={ss.searchWrap}>
             <Ionicons name="search" size={14} color={colors.muted}
                         style={{ marginRight: 6 }} />
-            <TextInput
+            <AppTextInput
               value={query}
               onChangeText={setQuery}
               placeholder="Search or create new…"

@@ -5,12 +5,10 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
-  TextInput,
   Platform,
   Alert,
   Linking,
-  ActivityIndicator,
-} from "react-native";
+  ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
@@ -24,6 +22,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const STYLES = [
   "Modern",
@@ -299,7 +298,7 @@ function LandscapeAIScreen() {
 
         {/* Prompt */}
         <Text style={[styles.sectionLabel, { marginTop: spacing.xl }]}>EXTRA NOTES (OPTIONAL)</Text>
-        <TextInput
+        <AppTextInput
           style={styles.textarea}
           value={prompt}
           onChangeText={setPrompt}

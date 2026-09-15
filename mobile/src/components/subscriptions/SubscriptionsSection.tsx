@@ -7,9 +7,7 @@
  */
 import React, { useCallback, useState, useEffect } from "react";
 import {
-  View, Text, StyleSheet, Pressable, Modal, TextInput,
-  Alert, Switch, ScrollView,
-} from "react-native";
+  View, Text, StyleSheet, Pressable, Modal, Alert, Switch, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import {
   listSubscriptions, listPrices, createSubscription,
@@ -21,6 +19,7 @@ import type { PaymentMethodRow as PMRow } from "@/src/api/stripe";
 import { useOnline } from "@/src/offline";
 import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 /* ═══════════ Helpers ═══════════ */
 
@@ -245,7 +244,7 @@ function CreateModal({
 
               {/* Quantity */}
               <Text style={[s.fieldLabel, { marginTop: spacing.md }]}>Quantity</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 keyboardType="number-pad"
                 value={quantity}
@@ -285,7 +284,7 @@ function CreateModal({
 
               {/* Trial days */}
               <Text style={[s.fieldLabel, { marginTop: spacing.md }]}>Trial days (optional)</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 keyboardType="number-pad"
                 value={trialDays}
@@ -360,7 +359,7 @@ function EditModal({
           <Text style={s.modalTitle}>Edit subscription</Text>
           <View style={s.modalBody}>
             <Text style={s.fieldLabel}>Quantity</Text>
-            <TextInput
+            <AppTextInput
               style={s.input}
               keyboardType="number-pad"
               value={quantity}

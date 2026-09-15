@@ -9,12 +9,12 @@
  */
 import React, { useState } from "react";
 import {
-  View, Text, TextInput, Pressable, Switch, StyleSheet, Alert,
-  ActivityIndicator,
-} from "react-native";
+  View, Text, Pressable, Switch, StyleSheet, Alert,
+  ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const MAX_ENTRIES = 4;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -173,7 +173,7 @@ function SectionEditor({
 
       {rows.map((row, i) => (
         <View key={i} style={s.row} testID={`${testPrefix}-row-${i}`}>
-          <TextInput
+          <AppTextInput
             style={s.addrInput}
             value={row[addressField] || ""}
             onChangeText={(v) => {
@@ -187,7 +187,7 @@ function SectionEditor({
             autoCapitalize="none"
             testID={`${testPrefix}-input-${i}`}
           />
-          <TextInput
+          <AppTextInput
             style={s.labelInput}
             value={row.label || ""}
             onChangeText={(v) => {

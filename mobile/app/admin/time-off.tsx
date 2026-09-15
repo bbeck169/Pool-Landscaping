@@ -1,10 +1,11 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Modal, TextInput } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Modal } from "react-native";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function AdminTimeOffScreen() {
   const [rows, setRows] = useState<any[]>([]);
@@ -102,7 +103,7 @@ export default function AdminTimeOffScreen() {
           <View style={s.modalBackdrop}>
             <View style={s.modalCard}>
               <Text style={s.h2}>Reject request?</Text>
-              <TextInput multiline value={notes} onChangeText={setNotes}
+              <AppTextInput multiline value={notes} onChangeText={setNotes}
                          placeholder="Notes (optional)"
                          style={s.notesInput}
                          testID="admin-tof-reject-notes" />
@@ -122,7 +123,7 @@ function PolicyField({ label, value, set, testid }: any) {
   return (
     <View style={{ marginBottom: 8 }}>
       <Text style={{ fontFamily: font.semibold, fontSize: 11, color: colors.muted, letterSpacing: 1 }}>{label.toUpperCase()}</Text>
-      <TextInput value={String(value)} keyboardType="numeric"
+      <AppTextInput value={String(value)} keyboardType="numeric"
                  onChangeText={(t) => set(Number(t) || 0)}
                  style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 8, marginTop: 4, fontFamily: font.regular }}
                  testID={testid} />

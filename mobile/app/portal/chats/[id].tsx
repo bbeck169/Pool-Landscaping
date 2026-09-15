@@ -12,10 +12,9 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, FlatList, TextInput, Pressable,
+  View, Text, StyleSheet, FlatList, Pressable,
   KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
-  ActionSheetIOS, Linking,
-} from "react-native";
+  ActionSheetIOS, Linking } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -30,6 +29,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import { AuthedImage } from "@/src/components/files/AuthedImage";
 import { humanBytes, buildAuthedDownloadUrl } from "@/src/api/files";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const POLL_MS = 4000;
 
@@ -520,7 +520,7 @@ export default function ChatThread() {
           </Pressable>
         )}
 
-        <TextInput
+        <AppTextInput
           value={text}
           onChangeText={setText}
           placeholder="Type a message…"

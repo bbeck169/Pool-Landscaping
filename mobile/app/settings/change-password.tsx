@@ -3,7 +3,7 @@
  * POST /api/auth/change-password { current_password, new_password }
  */
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
@@ -12,6 +12,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { PrimaryButton } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function ChangePassword() {
   const router = useRouter();
@@ -52,7 +53,7 @@ export default function ChangePassword() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={s.label}>CURRENT PASSWORD</Text>
-        <TextInput
+        <AppTextInput
           testID="change-pw-current"
           style={s.input}
           placeholder="Current password"
@@ -65,7 +66,7 @@ export default function ChangePassword() {
         />
 
         <Text style={s.label}>NEW PASSWORD</Text>
-        <TextInput
+        <AppTextInput
           testID="change-pw-new"
           style={s.input}
           placeholder="New password (8+ chars)"
@@ -78,7 +79,7 @@ export default function ChangePassword() {
         />
 
         <Text style={s.label}>CONFIRM NEW PASSWORD</Text>
-        <TextInput
+        <AppTextInput
           testID="change-pw-confirm"
           style={s.input}
           placeholder="Confirm new password"

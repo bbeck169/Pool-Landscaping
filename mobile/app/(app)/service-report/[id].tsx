@@ -3,7 +3,7 @@
  * Auto-loaded after clock-in. Autosaves every 5s. Photo cap 10 (server-enforced).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -20,6 +20,7 @@ import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import { canonicalReadingKey } from "@/src/components/checklist/PoolChecklistForm";
 import ReadingChipRow from "@/src/components/checklist/ReadingChipRow";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 // Feb-2026 · Required-reading keys — covers all canonical/alias forms.
 // Mirrors the Set in PoolChecklistForm.tsx.
@@ -485,7 +486,7 @@ export default function ServiceReportScreen() {
 
         {/* Notes */}
         <SectionCard title="Notes" testID="svc-report-notes">
-          <TextInput
+          <AppTextInput
             multiline numberOfLines={4}
             editable={!locked}
             style={styles.textarea}

@@ -15,11 +15,11 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, Pressable, TextInput, ScrollView, ActivityIndicator, StyleSheet,
-} from "react-native";
+  View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Customer = { customer_id?: string; customer_name?: string; total?: number };
 type ScenarioResult = {
@@ -210,7 +210,7 @@ export default function ScenarioPanel({
       <View style={styles.inputGrid}>
         <View style={styles.inputCol}>
           <Text style={styles.label}>Hire techs</Text>
-          <TextInput
+          <AppTextInput
             editable={!busy}
             keyboardType="number-pad"
             value={String(hireTechs)}
@@ -221,7 +221,7 @@ export default function ScenarioPanel({
         </View>
         <View style={styles.inputCol}>
           <Text style={styles.label}>Hourly rate ($)</Text>
-          <TextInput
+          <AppTextInput
             editable={!busy}
             keyboardType="decimal-pad"
             value={String(hourlyRate)}
@@ -240,7 +240,7 @@ export default function ScenarioPanel({
           <Pressable onPress={() => bumpPrice(-5)} disabled={busy} style={styles.priceBtn}>
             <Ionicons name="remove" size={16} color={colors.onSurface} />
           </Pressable>
-          <TextInput
+          <AppTextInput
             editable={!busy}
             keyboardType="numbers-and-punctuation"
             value={String(priceChangePct)}
@@ -287,7 +287,7 @@ export default function ScenarioPanel({
         )}
       </View>
 
-      <TextInput
+      <AppTextInput
         multiline
         numberOfLines={3}
         editable={!busy}

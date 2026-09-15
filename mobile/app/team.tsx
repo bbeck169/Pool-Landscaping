@@ -16,9 +16,7 @@
  */
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, FlatList, RefreshControl, Pressable, TextInput,
-  Alert, Modal, Switch, ActivityIndicator,
-} from "react-native";
+  View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Alert, Modal, Switch, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -30,6 +28,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const TECH_ROLES = ["pool_tech", "landscape_tech", "technician"];
 
@@ -530,7 +529,7 @@ function ResetPasswordModal({
                 <View style={{ marginTop: spacing.md }}>
                   <Text style={m.label}>New password</Text>
                   <View style={m.inputRow}>
-                    <TextInput
+                    <AppTextInput
                       style={m.input}
                       value={pw}
                       onChangeText={setPw}

@@ -10,9 +10,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput,
-  ActivityIndicator, Alert, Linking, Modal, Platform,
-} from "react-native";
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Linking, Modal, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -28,6 +26,7 @@ import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
 
@@ -257,7 +256,7 @@ export default function InvoiceDetail() {
                   </View>
                 ) : (
                   <View style={s.promoInputRow}>
-                    <TextInput
+                    <AppTextInput
                       style={s.promoInput}
                       value={promoCode}
                       onChangeText={setPromoCode}

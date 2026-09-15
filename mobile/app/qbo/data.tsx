@@ -1,6 +1,6 @@
 // Phase 17 · Feb-2026 — QBO mobile data browser (Manager+; read-only).
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl } from "react-native";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
@@ -8,6 +8,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Card, EmptyState, Loading } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const TABS = [
   { key: "customers",       label: "Customers" },
@@ -66,7 +67,7 @@ export default function QboData() {
             );
           })}
         </ScrollView>
-        <TextInput
+        <AppTextInput
           testID="qbo-mobile-search"
           value={q}
           onChangeText={setQ}

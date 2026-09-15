@@ -1,14 +1,14 @@
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, RefreshControl,
-  TouchableOpacity, ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, RefreshControl,
+  TouchableOpacity, ActivityIndicator, Alert, KeyboardAvoidingView, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const READINGS = [
   { k: "fc", label: "FC (ppm)", range: "Target 1\u20134" },
@@ -90,7 +90,7 @@ export default function CustomerChemistry() {
           <View style={s.card}>
             <Text style={s.sectionLabel}>POOL VOLUME</Text>
             <View style={s.volumeRow}>
-              <TextInput
+              <AppTextInput
                 style={s.volumeInput}
                 value={volume}
                 onChangeText={setVolume}
@@ -110,7 +110,7 @@ export default function CustomerChemistry() {
                   <Text style={s.readingLabel}>{r.label}</Text>
                   <Text style={s.readingRange}>{r.range}</Text>
                 </View>
-                <TextInput
+                <AppTextInput
                   style={[
                     s.readingInput,
                     readings[r.k]

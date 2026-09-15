@@ -6,9 +6,7 @@
 // intentionally out of scope this phase (documented in the deliverables).
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  RefreshControl, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import { useFocusEffect } from "expo-router";
@@ -22,6 +20,7 @@ import { useAuth } from "@/src/auth";
 import { useStripeConfig } from "@/src/config/stripe";
 import { showConfirm } from "@/src/components/ConfirmModal";
 import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Pm = {
   provider_payment_method_id: string;
@@ -127,7 +126,7 @@ export default function PaymentMethods() {
         {isAdminPlus(user) ? (
           <Card>
             <Text style={styles.sectionLabel}>Customer</Text>
-            <TextInput
+            <AppTextInput
               testID="pm-customer-search"
               value={q}
               onChangeText={setQ}

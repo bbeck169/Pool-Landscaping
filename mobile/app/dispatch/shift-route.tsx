@@ -7,8 +7,7 @@
 // common flows (whole route temp/permanent + partial with pre-selected).
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Pressable,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 
 import { api } from "@/src/api";
@@ -17,6 +16,7 @@ import { Card, Loading, PrimaryButton, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Scope = "whole_route" | "partial";
 type Duration = "temporary" | "permanent";
@@ -184,7 +184,7 @@ export default function ShiftRoutePage() {
             </Pressable>
           )}
 
-          <TextInput
+          <AppTextInput
             value={notes}
             onChangeText={setNotes}
             placeholder="Notes (optional)"

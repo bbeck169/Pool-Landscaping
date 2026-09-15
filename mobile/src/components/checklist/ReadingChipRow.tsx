@@ -14,8 +14,9 @@
  * read stale state here, only call onChange.
  */
 import React, { useMemo, useState } from "react";
-import { View, Text, TextInput, StyleSheet, Pressable } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const normalizeKey = (name: string) =>
   String(name || "").toLowerCase().replace(/[\s()]+/g, "_");
@@ -203,7 +204,7 @@ export default function ReadingChipRow({
       </View>
 
       <View style={styles.inputRow}>
-        <TextInput
+        <AppTextInput
           testID={`pool-reading-${key}-input`}
           keyboardType="decimal-pad"
           editable={!locked && !notTested}

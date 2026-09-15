@@ -1,15 +1,14 @@
 /** Phase 23 · Mobile — Inventory (read-only list for techs/admin). */
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  ActivityIndicator,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 function tint(current: number, reorder: number): string {
   if (current <= 0) return "#DC2626";
@@ -55,7 +54,7 @@ export default function InventoryMobile() {
       <ScrollView contentContainerStyle={{ padding: spacing.lg,
                                              paddingBottom: spacing["3xl"] }}>
         <View style={styles.searchRow}>
-          <TextInput
+          <AppTextInput
             value={q} onChangeText={setQ}
             placeholder="Search by name…"
             placeholderTextColor={colors.muted}

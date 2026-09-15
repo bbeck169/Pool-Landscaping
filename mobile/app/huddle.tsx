@@ -3,12 +3,13 @@
  * yesterday / today / blockers → posts to /api/huddles + huddles/{id}/action-items
  */
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, ScrollView } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 // Phase 38 · Feb-2026 · Phase 30.4 completeness — replaced legacy
 // `Alert.alert` (silently fails on user's Android/Expo Go build) with
 // an inline status banner (no new dep).
@@ -86,17 +87,17 @@ export default function HuddleScreen() {
 
       <View style={styles.card}>
         <Text style={styles.label}>What did you finish yesterday?</Text>
-        <TextInput value={yesterday} onChangeText={setYesterday} multiline placeholder="One per line"
+        <AppTextInput value={yesterday} onChangeText={setYesterday} multiline placeholder="One per line"
                    style={styles.input} testID="huddle-yesterday"/>
       </View>
       <View style={styles.card}>
         <Text style={styles.label}>What are you doing today?</Text>
-        <TextInput value={todayText} onChangeText={setTodayText} multiline placeholder="One per line"
+        <AppTextInput value={todayText} onChangeText={setTodayText} multiline placeholder="One per line"
                    style={styles.input} testID="huddle-today"/>
       </View>
       <View style={styles.card}>
         <Text style={styles.label}>Any blockers?</Text>
-        <TextInput value={blockers} onChangeText={setBlockers} multiline placeholder="One per line"
+        <AppTextInput value={blockers} onChangeText={setBlockers} multiline placeholder="One per line"
                    style={styles.input} testID="huddle-blockers"/>
       </View>
 

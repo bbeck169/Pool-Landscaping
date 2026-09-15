@@ -4,9 +4,8 @@
 // Delete uses `DELETE /api/aeo/response/templates/{id}`.
 import React, { useCallback, useMemo, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Pressable,
-  RefreshControl, Alert, FlatList,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable,
+  RefreshControl, Alert, FlatList } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -16,6 +15,7 @@ import { Card, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Template = {
   id: string;
@@ -77,7 +77,7 @@ export default function AeoLibrary() {
       <View style={styles.container}>
         <Header title="Response Library" />
         <View style={styles.top}>
-          <TextInput
+          <AppTextInput
             testID="library-search"
             value={q}
             onChangeText={setQ}

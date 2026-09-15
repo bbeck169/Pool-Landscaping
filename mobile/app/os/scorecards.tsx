@@ -2,12 +2,13 @@
 // Phase 41.2 · Feb-2026 — refactored onto the shared `<AdminListPage>`.
 // Web: BusinessOS.jsx Scorecards slice. Backend: GET/POST /kpi-scorecards.
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, TextInput } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
 import { AdminListPage } from "@/src/components/layout/AdminListPage";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function OsScorecards() {
   const [rows, setRows] = useState<any[]>([]);
@@ -57,9 +58,9 @@ export default function OsScorecards() {
       sheet={
         <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="New scorecard" testID="os-scorecards-sheet">
           <View style={{ gap: spacing.md, padding: spacing.lg }}>
-            <TextInput placeholder="Label (e.g. NPS)" value={draft.label} onChangeText={(t) => setDraft((d) => ({ ...d, label: t }))} style={styles.input} testID="os-scorecards-input-label" />
-            <TextInput placeholder="Target" value={draft.target} onChangeText={(t) => setDraft((d) => ({ ...d, target: t }))} keyboardType="decimal-pad" style={styles.input} testID="os-scorecards-input-target" />
-            <TextInput placeholder="Unit (%, $, count)" value={draft.unit} onChangeText={(t) => setDraft((d) => ({ ...d, unit: t }))} style={styles.input} testID="os-scorecards-input-unit" />
+            <AppTextInput placeholder="Label (e.g. NPS)" value={draft.label} onChangeText={(t) => setDraft((d) => ({ ...d, label: t }))} style={styles.input} testID="os-scorecards-input-label" />
+            <AppTextInput placeholder="Target" value={draft.target} onChangeText={(t) => setDraft((d) => ({ ...d, target: t }))} keyboardType="decimal-pad" style={styles.input} testID="os-scorecards-input-target" />
+            <AppTextInput placeholder="Unit (%, $, count)" value={draft.unit} onChangeText={(t) => setDraft((d) => ({ ...d, unit: t }))} style={styles.input} testID="os-scorecards-input-unit" />
             <PrimaryButton label={busy ? "Saving…" : "Save"} onPress={save} disabled={busy || !draft.label.trim()} testID="os-scorecards-save" />
           </View>
         </Sheet>

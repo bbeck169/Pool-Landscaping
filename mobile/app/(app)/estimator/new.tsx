@@ -5,9 +5,7 @@
  */
 import React, { useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  Image, Alert, ActivityIndicator,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Image, Alert, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
@@ -16,6 +14,7 @@ import { api } from "@/src/api";
 import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const SERVICE_TYPES = ["pool", "landscape", "hardscape", "repair", "other"];
 const LIDAR_ENABLED_KEY = "estimator_lidar_enabled";
@@ -128,12 +127,12 @@ export default function EstimatorNewMobile() {
       <ScrollView contentContainerStyle={{ padding: spacing.lg,
                                              paddingBottom: 120 }}>
         <Text style={styles.label}>Title *</Text>
-        <TextInput style={styles.input} value={title}
+        <AppTextInput style={styles.input} value={title}
                     onChangeText={setTitle}
                     testID="est-new-title" />
 
         <Text style={styles.label}>Address</Text>
-        <TextInput style={styles.input} value={address}
+        <AppTextInput style={styles.input} value={address}
                     onChangeText={setAddress}
                     testID="est-new-address" />
 
@@ -178,7 +177,7 @@ export default function EstimatorNewMobile() {
         )}
 
         <Text style={styles.label}>Scope description *</Text>
-        <TextInput style={[styles.input,
+        <AppTextInput style={[styles.input,
                              { minHeight: 100, textAlignVertical: "top" }]}
                     multiline value={description}
                     onChangeText={setDescription}

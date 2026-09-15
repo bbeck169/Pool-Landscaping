@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, Pressable, TextInput, Platform, ScrollView , StyleSheet } from "react-native";
+import { View, Text, Pressable, Platform, ScrollView , StyleSheet } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,6 +7,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { styles as jobStyles } from "./styles";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 
 const CONDITIONS: Record<string, string[]> = {
@@ -118,7 +119,7 @@ export default function MaintenanceLog({
           <View style={ml.fieldRow}>
             <Text style={ml.fieldLabel}>Filter pressure</Text>
             <View style={ml.psiWrap}>
-              <TextInput
+              <AppTextInput
                 style={ml.psiInput}
                 value={psi}
                 onChangeText={setPsi}
@@ -134,7 +135,7 @@ export default function MaintenanceLog({
           <View style={ml.fieldRow}>
             <Text style={ml.fieldLabel}>Salt level</Text>
             <View style={ml.psiWrap}>
-              <TextInput
+              <AppTextInput
                 style={ml.psiInput}
                 value={saltPpm}
                 onChangeText={setSaltPpm}
@@ -187,7 +188,7 @@ export default function MaintenanceLog({
           </ScrollView>
         ) : null}
 
-        <TextInput
+        <AppTextInput
           style={ml.notesInput}
           value={notes}
           onChangeText={setNotes}

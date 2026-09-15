@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, Pressable, TextInput, Platform } from "react-native";
+import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
@@ -10,6 +10,7 @@ import { Header } from "@/src/components/widgets";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
 import { Field } from "@/app/customer/new";
 import { Selector } from "@/app/job/new";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type LI = { description: string; quantity: string; unit_price: string; category: string };
 
@@ -101,7 +102,7 @@ export default function QuoteForm() {
                 </Pressable>
               ) : null}
             </View>
-            <TextInput
+            <AppTextInput
               testID={`item-desc-${i}`}
               style={styles.itemInput}
               placeholder="Description"
@@ -110,7 +111,7 @@ export default function QuoteForm() {
               onChangeText={(v) => updateItem(i, "description", v)}
             />
             <View style={{ flexDirection: "row", gap: spacing.sm }}>
-              <TextInput
+              <AppTextInput
                 testID={`item-qty-${i}`}
                 style={[styles.itemInput, { flex: 1 }]}
                 placeholder="Qty"
@@ -119,7 +120,7 @@ export default function QuoteForm() {
                 value={li.quantity}
                 onChangeText={(v) => updateItem(i, "quantity", v)}
               />
-              <TextInput
+              <AppTextInput
                 testID={`item-price-${i}`}
                 style={[styles.itemInput, { flex: 2 }]}
                 placeholder="Unit price"

@@ -1,15 +1,14 @@
 /** Phase 17A · Mobile — Site Auditor list. */
 import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  Modal, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Modal, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from 'expo-router';
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { AdminOnlyGate, ScoreChip, BrandPill, CenterLoader } from "./_shared";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const STATUS_TONE: Record<string, "brand" | "green" | "amber" | "red" | "grey"> = {
   queued: "amber", running: "brand", done: "green",
@@ -113,20 +112,20 @@ function Inner() {
           <Pressable style={styles.modal} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.modalTitle}>New audit</Text>
             <Text style={styles.label}>URL</Text>
-            <TextInput style={styles.input} value={url}
+            <AppTextInput style={styles.input} value={url}
                         autoCapitalize="none" autoCorrect={false}
                         onChangeText={setUrl}
                         testID="seo-audits-new-url" />
             <View style={{ flexDirection: "row", gap: spacing.md }}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.label}>Depth</Text>
-                <TextInput style={styles.input} value={depth}
+                <AppTextInput style={styles.input} value={depth}
                             onChangeText={setDepth} keyboardType="number-pad"
                             testID="seo-audits-new-depth" />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.label}>Max pages</Text>
-                <TextInput style={styles.input} value={maxPages}
+                <AppTextInput style={styles.input} value={maxPages}
                             onChangeText={setMaxPages}
                             keyboardType="number-pad"
                             testID="seo-audits-new-max" />

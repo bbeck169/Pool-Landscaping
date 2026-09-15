@@ -23,9 +23,8 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform,
-  ActivityIndicator, Alert, Modal, FlatList,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Platform,
+  ActivityIndicator, Alert, Modal, FlatList } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, Redirect } from "expo-router";
 
@@ -88,6 +87,7 @@ import JobNotesCallout from "@/src/components/schedule/JobNotesCallout";
 import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 import type { HourlyEntry } from "@/src/api/weather";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Job = {
   id: string;
@@ -1137,7 +1137,7 @@ function GridView(props: any) {
       {moveOpen ? (
         <View style={gStyles.moveBox} testID="grid-move-box">
           <Text style={gStyles.moveLabel}>Move {checked.size} job{checked.size === 1 ? "" : "s"} to:</Text>
-          <TextInput
+          <AppTextInput
             value={moveDate}
             onChangeText={setMoveDate}
             placeholder="YYYY-MM-DD"

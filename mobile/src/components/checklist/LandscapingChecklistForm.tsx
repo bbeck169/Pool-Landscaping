@@ -9,10 +9,11 @@
  * - Fallback labels aligned to the canonical 10-item ordered list.
  */
 import React from "react";
-import { View, Text, Pressable, TextInput, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type ChecklistItem = { id: string; label: string; checked: boolean; notes?: string };
 
@@ -82,7 +83,7 @@ export default function LandscapingChecklistForm(
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
         Job Notes <Text style={styles.subtle}>(Internal — not visible to customer)</Text>
       </Text>
-      <TextInput
+      <AppTextInput
         multiline
         numberOfLines={3}
         editable={!locked}
@@ -97,7 +98,7 @@ export default function LandscapingChecklistForm(
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
         Customer Notes <Text style={styles.subtle}>(visible to customer)</Text>
       </Text>
-      <TextInput
+      <AppTextInput
         multiline
         numberOfLines={3}
         editable={!locked}

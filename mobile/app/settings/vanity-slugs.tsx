@@ -1,8 +1,7 @@
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, RefreshControl,
-  TouchableOpacity, ActivityIndicator, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, RefreshControl,
+  TouchableOpacity, ActivityIndicator, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -11,6 +10,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const ALIAS_REGEX = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
 
@@ -122,7 +122,7 @@ export default function VanitySlugsPage() {
 
           {/* Add form */}
           <View style={s.addRow}>
-            <TextInput
+            <AppTextInput
               style={s.addInput}
               value={adding}
               onChangeText={(v) => { setAdding(v.toLowerCase()); setAddError(""); }}

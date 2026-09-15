@@ -1,9 +1,7 @@
 /** Phase 17C · Mobile — White-Label Reports: list, create, share PDF. */
 import React, { useCallback, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  Modal, Alert, ActivityIndicator, Switch,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Modal, Alert, ActivityIndicator, Switch } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
@@ -14,6 +12,7 @@ import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { AdminOnlyGate, BrandPill, CenterLoader } from "./_shared";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const BACKEND = process.env.EXPO_PUBLIC_BACKEND_URL || "";
 
@@ -170,11 +169,11 @@ function Inner() {
             <Text style={styles.modalTitle}>New report</Text>
 
             <Text style={styles.label}>Title</Text>
-            <TextInput style={styles.input} value={title}
+            <AppTextInput style={styles.input} value={title}
                         onChangeText={setTitle}
                         testID="report-new-title" />
             <Text style={styles.label}>Brand name (optional)</Text>
-            <TextInput style={styles.input} value={brandName}
+            <AppTextInput style={styles.input} value={brandName}
                         onChangeText={setBrandName}
                         testID="report-new-brand" />
 

@@ -13,12 +13,10 @@ import {
   StyleSheet,
   Pressable,
   Modal,
-  TextInput,
   Alert,
   ActivityIndicator,
   Switch,
-  ScrollView,
-} from "react-native";
+  ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/auth";
 import { useOnline } from "@/src/offline";
@@ -35,6 +33,7 @@ import {
 } from "@/src/api/lineItems";
 import type { LineItem, JobTotals, PricebookItem } from "@/src/api/lineItems";
 import ChargeTemplatePickerModal from "./ChargeTemplatePickerModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const LOCKED = new Set(["completed", "cancelled"]);
 
@@ -338,7 +337,7 @@ function AddEditSheet({
                 <Text style={s.fieldLabel}>From pricebook</Text>
                 <View style={s.searchRow}>
                   <Ionicons name="search-outline" size={16} color={colors.muted} />
-                  <TextInput
+                  <AppTextInput
                     style={s.searchInput}
                     value={pbSearch}
                     onChangeText={setPbSearch}
@@ -392,7 +391,7 @@ function AddEditSheet({
 
             {/* Description */}
             <Text style={s.fieldLabel}>Description</Text>
-            <TextInput
+            <AppTextInput
               style={[s.input, isEdit && s.inputReadonly]}
               value={desc}
               onChangeText={isEdit ? undefined : setDesc}
@@ -404,7 +403,7 @@ function AddEditSheet({
 
             {/* Quantity */}
             <Text style={[s.fieldLabel, { marginTop: spacing.md }]}>Quantity</Text>
-            <TextInput
+            <AppTextInput
               style={s.input}
               value={qty}
               onChangeText={setQty}
@@ -418,7 +417,7 @@ function AddEditSheet({
                 <Text style={[s.fieldLabel, { marginTop: spacing.md }]}>
                   Unit price ($)
                 </Text>
-                <TextInput
+                <AppTextInput
                   style={s.input}
                   value={unitPrice}
                   onChangeText={setUnitPrice}
@@ -462,7 +461,7 @@ function AddEditSheet({
                   ))}
                 </ScrollView>
                 {cats.length === 0 ? (
-                  <TextInput
+                  <AppTextInput
                     style={s.input}
                     value={category}
                     onChangeText={setCategory}

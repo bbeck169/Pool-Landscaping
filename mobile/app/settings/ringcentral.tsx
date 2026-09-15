@@ -18,9 +18,7 @@
  */
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput,
-  TouchableOpacity, ActivityIndicator, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -28,6 +26,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type RingCentralConfig = {
   webhook_url?: string | null;
@@ -115,7 +114,7 @@ export default function RingCentralSettings() {
         >
           <View style={s.field}>
             <Text style={s.label}>Webhook URL</Text>
-            <TextInput
+            <AppTextInput
               testID="ringcentral-settings-input-webhook_url"
               style={s.input}
               value={draft.webhook_url || ""}
@@ -130,7 +129,7 @@ export default function RingCentralSettings() {
 
           <View style={s.field}>
             <Text style={s.label}>Account ID</Text>
-            <TextInput
+            <AppTextInput
               testID="ringcentral-settings-input-account_id"
               style={s.input}
               value={draft.account_id || ""}
@@ -144,7 +143,7 @@ export default function RingCentralSettings() {
 
           <View style={s.field}>
             <Text style={s.label}>API key</Text>
-            <TextInput
+            <AppTextInput
               testID="ringcentral-settings-input-api_key"
               style={s.input}
               value={apiKeyInput}

@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, ScrollView, Pressable, TextInput, RefreshControl, Alert, Switch, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl, Alert, Switch, StyleSheet } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import { useFocusEffect } from "expo-router";
@@ -9,6 +9,7 @@ import { colors, spacing, font, fontSize, radius } from '@/src/theme';
 import { useToast } from "@/src/components/ToastProvider";
 import { Header } from "@/src/components/widgets";
 import { Card, PrimaryButton, EmptyState, Loading, Sheet } from '@/src/components/ui';
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Tab = "posts" | "reviews" | "business" | "connect";
 const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
@@ -362,9 +363,9 @@ export default function Gbp() {
             <View style={{ height: spacing.md }} />
             <Card>
               <Text style={styles.label}>Post content</Text>
-              <TextInput style={[styles.input, styles.textArea]} value={summary} onChangeText={setSummary} multiline placeholder="What's new? Share an update, offer or event…" placeholderTextColor={colors.muted} testID="gbp-summary" />
+              <AppTextInput style={[styles.input, styles.textArea]} value={summary} onChangeText={setSummary} multiline placeholder="What's new? Share an update, offer or event…" placeholderTextColor={colors.muted} testID="gbp-summary" />
               <Text style={styles.label}>Call-to-action link (optional)</Text>
-              <TextInput style={styles.input} value={ctaUrl} onChangeText={setCtaUrl} autoCapitalize="none" placeholder="https://…" placeholderTextColor={colors.muted} />
+              <AppTextInput style={styles.input} value={ctaUrl} onChangeText={setCtaUrl} autoCapitalize="none" placeholder="https://…" placeholderTextColor={colors.muted} />
               <View style={{ height: spacing.md }} />
               <PrimaryButton title="Publish to Google" icon="cloud-upload-outline" loading={posting} onPress={publishPost} disabled={!settings.connected} testID="gbp-publish" />
               {!settings.connected ? <Text style={styles.hint}>Connect your profile to publish. You can still draft posts with AI.</Text> : null}
@@ -430,7 +431,7 @@ export default function Gbp() {
                       <View style={styles.rvReply}><Text style={styles.rvReplyText}>↳ {rv.reviewReply.comment}</Text></View>
                     ) : replyFor === rv.name ? (
                       <>
-                        <TextInput style={[styles.input, styles.textArea, { marginTop: spacing.sm }]} value={replyText} onChangeText={setReplyText} multiline testID="gbp-reply-input" />
+                        <AppTextInput style={[styles.input, styles.textArea, { marginTop: spacing.sm }]} value={replyText} onChangeText={setReplyText} multiline testID="gbp-reply-input" />
                         <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm }}>
                           <View style={{ flex: 1 }}><PrimaryButton title="Send" loading={busy} onPress={() => sendReply(rv)} /></View>
                           <View style={{ flex: 1 }}><PrimaryButton title="Cancel" variant="outline" onPress={() => setReplyFor(null)} /></View>
@@ -454,9 +455,9 @@ export default function Gbp() {
             <Card>
               <Text style={styles.bizTitle}>{selected?.title || "Business"}</Text>
               <Text style={styles.label}>Primary phone</Text>
-              <TextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholderTextColor={colors.muted} testID="gbp-phone" />
+              <AppTextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholderTextColor={colors.muted} testID="gbp-phone" />
               <Text style={styles.label}>Website</Text>
-              <TextInput style={styles.input} value={website} onChangeText={setWebsite} autoCapitalize="none" keyboardType="url" placeholderTextColor={colors.muted} testID="gbp-website" />
+              <AppTextInput style={styles.input} value={website} onChangeText={setWebsite} autoCapitalize="none" keyboardType="url" placeholderTextColor={colors.muted} testID="gbp-website" />
 
               <View style={styles.rowBetween}>
                 <Text style={styles.label}>Edit business hours</Text>
@@ -470,9 +471,9 @@ export default function Gbp() {
                     <Switch value={!h.closed} onValueChange={(v) => setHours({ ...hours, [d]: { ...h, closed: !v } })} />
                     {!h.closed ? (
                       <>
-                        <TextInput style={styles.timeInput} value={h.open} onChangeText={(v) => setHours({ ...hours, [d]: { ...h, open: v } })} placeholder="09:00" placeholderTextColor={colors.muted} />
+                        <AppTextInput style={styles.timeInput} value={h.open} onChangeText={(v) => setHours({ ...hours, [d]: { ...h, open: v } })} placeholder="09:00" placeholderTextColor={colors.muted} />
                         <Text style={styles.hourDash}>–</Text>
-                        <TextInput style={styles.timeInput} value={h.close} onChangeText={(v) => setHours({ ...hours, [d]: { ...h, close: v } })} placeholder="17:00" placeholderTextColor={colors.muted} />
+                        <AppTextInput style={styles.timeInput} value={h.close} onChangeText={(v) => setHours({ ...hours, [d]: { ...h, close: v } })} placeholder="17:00" placeholderTextColor={colors.muted} />
                       </>
                     ) : (
                       <Text style={styles.closedText}>Closed</Text>
@@ -504,11 +505,11 @@ export default function Gbp() {
             </Card>
             <Card>
               <Text style={styles.label}>OAuth Client ID</Text>
-              <TextInput style={styles.input} value={cid} onChangeText={setCid} autoCapitalize="none" placeholder="…apps.googleusercontent.com" placeholderTextColor={colors.muted} testID="gbp-cid" />
+              <AppTextInput style={styles.input} value={cid} onChangeText={setCid} autoCapitalize="none" placeholder="…apps.googleusercontent.com" placeholderTextColor={colors.muted} testID="gbp-cid" />
               <Text style={styles.label}>OAuth Client Secret</Text>
-              <TextInput style={styles.input} value={secret} onChangeText={setSecret} autoCapitalize="none" secureTextEntry placeholder={settings.configured ? "•••• (unchanged)" : "GOCSPX-…"} placeholderTextColor={colors.muted} testID="gbp-secret" />
+              <AppTextInput style={styles.input} value={secret} onChangeText={setSecret} autoCapitalize="none" secureTextEntry placeholder={settings.configured ? "•••• (unchanged)" : "GOCSPX-…"} placeholderTextColor={colors.muted} testID="gbp-secret" />
               <Text style={styles.label}>Redirect URI</Text>
-              <TextInput style={styles.input} value={redirect} onChangeText={setRedirect} autoCapitalize="none" placeholderTextColor={colors.muted} testID="gbp-redirect" />
+              <AppTextInput style={styles.input} value={redirect} onChangeText={setRedirect} autoCapitalize="none" placeholderTextColor={colors.muted} testID="gbp-redirect" />
               <Text style={styles.hint}>Register this exact URI in Google Cloud → Credentials → Authorized redirect URIs.</Text>
               <View style={{ height: spacing.sm }} />
               <PrimaryButton title="Save Credentials" icon="save-outline" loading={savingCfg} onPress={saveConfig} testID="gbp-save-cfg" />
@@ -542,7 +543,7 @@ export default function Gbp() {
       {/* Phase B: Generate branded image sheet */}
       <Sheet visible={genImgSheet} onClose={() => setGenImgSheet(false)} title="Generate branded image" testID="gbp-genimg-sheet">
         <Text style={styles.label}>Image prompt</Text>
-        <TextInput
+        <AppTextInput
           style={[styles.input, styles.textArea]}
           value={genImgPrompt}
           onChangeText={setGenImgPrompt}

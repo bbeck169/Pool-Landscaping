@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform, Alert, Linking, ActivityIndicator, Image } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Platform, Alert, Linking, ActivityIndicator, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import { useFocusEffect } from "expo-router";
@@ -14,6 +14,7 @@ import { Loading, Sheet, PrimaryButton, EmptyState } from "@/src/components/ui";
 import MapCanvas from "@/src/components/d2d/MapCanvas";
 import { DISPO, ORDER, leadStatusMeta } from "@/src/components/d2d/dispo";
 import { ZillowUsageChip, ZillowRateLimitedBanner } from "@/src/components/ZillowUsageChip";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const empty = { id: "", address: "", name: "", phone: "", disposition: "not_home", notes: "", lat: null as number | null, lng: null as number | null, zpid: null as string | null, sold_price: null as number | null };
 
@@ -434,7 +435,7 @@ export default function D2DCanvass() {
           <View style={styles.zipRow}>
             <View style={styles.zipInputWrap}>
               <Ionicons name="location-outline" size={16} color={colors.muted} />
-              <TextInput
+              <AppTextInput
                 style={styles.zipInput}
                 value={zip}
                 onChangeText={(v) => setZip(v.replace(/[^0-9]/g, "").slice(0, 5))}
@@ -480,11 +481,11 @@ export default function D2DCanvass() {
             <View style={styles.priceRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.label}>Min price ($)</Text>
-                <TextInput style={styles.priceInput} value={minPrice} onChangeText={(v) => setMinPrice(v.replace(/[^0-9]/g, ""))} placeholder="e.g. 400000" placeholderTextColor={colors.muted} keyboardType="number-pad" testID="d2d-minprice" />
+                <AppTextInput style={styles.priceInput} value={minPrice} onChangeText={(v) => setMinPrice(v.replace(/[^0-9]/g, ""))} placeholder="e.g. 400000" placeholderTextColor={colors.muted} keyboardType="number-pad" testID="d2d-minprice" />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.label}>Max price ($)</Text>
-                <TextInput style={styles.priceInput} value={maxPrice} onChangeText={(v) => setMaxPrice(v.replace(/[^0-9]/g, ""))} placeholder="e.g. 900000" placeholderTextColor={colors.muted} keyboardType="number-pad" testID="d2d-maxprice" />
+                <AppTextInput style={styles.priceInput} value={maxPrice} onChangeText={(v) => setMaxPrice(v.replace(/[^0-9]/g, ""))} placeholder="e.g. 900000" placeholderTextColor={colors.muted} keyboardType="number-pad" testID="d2d-maxprice" />
               </View>
             </View>
             {minBeds || minPrice.trim() || maxPrice.trim() ? (
@@ -811,7 +812,7 @@ function Field({ label, ...props }: any) {
   return (
     <View style={{ marginTop: spacing.sm }}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput style={[styles.input, props.multiline && { height: 72, textAlignVertical: "top" }]} placeholderTextColor={colors.muted} {...props} />
+      <AppTextInput style={[styles.input, props.multiline && { height: 72, textAlignVertical: "top" }]} placeholderTextColor={colors.muted} {...props} />
     </View>
   );
 }

@@ -18,18 +18,17 @@ import {
   StyleSheet,
   Modal,
   Pressable,
-  TextInput,
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
-  Switch,
-} from "react-native";
+  Switch } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import { mapApiError } from "@/src/utils/mapApiError";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 interface Props {
   visible: boolean;
@@ -137,7 +136,7 @@ export default function SendToCustomerSheet({
           </View>
 
           {useOverride ? (
-            <TextInput
+            <AppTextInput
               style={s.input}
               value={override}
               onChangeText={setOverride}
@@ -154,7 +153,7 @@ export default function SendToCustomerSheet({
           <Text style={[s.label, { marginTop: spacing.md }]}>
             Admin note (audit only — not shown to customer)
           </Text>
-          <TextInput
+          <AppTextInput
             style={[s.input, s.noteInput]}
             value={note}
             onChangeText={(t) => setNote(t.slice(0, 500))}

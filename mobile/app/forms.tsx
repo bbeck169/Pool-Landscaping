@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function Forms() {
   const [items, setItems] = useState<any[]>([]);
@@ -84,11 +85,11 @@ export default function Forms() {
 
       <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="New Form" testID="add-form-sheet">
         <Text style={styles.inputLabel}>NAME</Text>
-        <TextInput style={styles.input} value={form.name} onChangeText={(v) => setForm((f) => ({ ...f, name: v }))} placeholder="e.g. Free Pool Estimate" placeholderTextColor={colors.muted} testID="form-name-input" />
+        <AppTextInput style={styles.input} value={form.name} onChangeText={(v) => setForm((f) => ({ ...f, name: v }))} placeholder="e.g. Free Pool Estimate" placeholderTextColor={colors.muted} testID="form-name-input" />
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>DESCRIPTION</Text>
-        <TextInput style={styles.input} value={form.description} onChangeText={(v) => setForm((f) => ({ ...f, description: v }))} placeholder="Where this form lives" placeholderTextColor={colors.muted} testID="form-desc-input" />
+        <AppTextInput style={styles.input} value={form.description} onChangeText={(v) => setForm((f) => ({ ...f, description: v }))} placeholder="Where this form lives" placeholderTextColor={colors.muted} testID="form-desc-input" />
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>FIELDS (comma separated)</Text>
-        <TextInput style={styles.input} value={form.fields} onChangeText={(v) => setForm((f) => ({ ...f, fields: v }))} placeholder="name, email, phone" placeholderTextColor={colors.muted} testID="form-fields-input" />
+        <AppTextInput style={styles.input} value={form.fields} onChangeText={(v) => setForm((f) => ({ ...f, fields: v }))} placeholder="name, email, phone" placeholderTextColor={colors.muted} testID="form-fields-input" />
         <View style={{ height: spacing.md }} />
         <PrimaryButton title="Create Form" onPress={create} testID="save-form-button" />
       </Sheet>

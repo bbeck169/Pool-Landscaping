@@ -12,15 +12,15 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, TextInput, Modal,
-  ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform,
-} from "react-native";
+  View, Text, StyleSheet, Pressable, Modal,
+  ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import WarrantyCard, { WarrantyContract } from "./WarrantyCard";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 // ── Form types ─────────────────────────────────────────────────────
 type FormData = {
@@ -288,7 +288,7 @@ export default function CustomerWarrantiesSection({
             >
               {/* Contract name */}
               <Text style={s.label}>Contract Name *</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 value={form.contract_name}
                 onChangeText={(v) => patchForm("contract_name", v.slice(0, 200))}
@@ -299,7 +299,7 @@ export default function CustomerWarrantiesSection({
 
               {/* Provider */}
               <Text style={s.label}>Provider</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 value={form.provider}
                 onChangeText={(v) => patchForm("provider", v.slice(0, 200))}
@@ -310,7 +310,7 @@ export default function CustomerWarrantiesSection({
 
               {/* Coverage start */}
               <Text style={s.label}>Coverage Start</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 value={form.coverage_start}
                 onChangeText={(v) => patchForm("coverage_start", v)}
@@ -321,7 +321,7 @@ export default function CustomerWarrantiesSection({
 
               {/* Coverage end */}
               <Text style={s.label}>Coverage End</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 value={form.coverage_end}
                 onChangeText={(v) => patchForm("coverage_end", v)}
@@ -371,7 +371,7 @@ export default function CustomerWarrantiesSection({
 
               {/* Notes */}
               <Text style={s.label}>Notes</Text>
-              <TextInput
+              <AppTextInput
                 style={[s.input, { minHeight: 80 }]}
                 value={form.notes}
                 onChangeText={(v) => patchForm("notes", v.slice(0, 2000))}

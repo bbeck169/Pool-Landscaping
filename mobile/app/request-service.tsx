@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Platform } from "react-native";
+import { View, Text, StyleSheet, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
@@ -9,6 +9,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { PrimaryButton } from "@/src/components/ui";
 import { FileUpload } from "@/src/components/files";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const MIN_LEN = 10;
 const MAX_LEN = 2000;
@@ -115,7 +116,7 @@ export default function RequestService() {
         </Text>
 
         <Text style={s.label}>WHAT SERVICE DO YOU NEED?</Text>
-        <TextInput
+        <AppTextInput
           testID="rs-details"
           style={s.textArea}
           placeholder="Describe what you need — e.g., green pool, broken sprinkler, tree trim, etc."
@@ -143,7 +144,7 @@ export default function RequestService() {
         <Text style={s.label}>PREFERRED DATE (OPTIONAL)</Text>
         <View style={s.inputRow}>
           <Ionicons name="calendar-outline" size={18} color={colors.muted} />
-          <TextInput
+          <AppTextInput
             testID="rs-date"
             style={s.input}
             placeholder="YYYY-MM-DD"

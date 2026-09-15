@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -8,6 +8,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 function relTime(iso?: string) {
   if (!iso) return "";
@@ -97,9 +98,9 @@ export default function Campaigns() {
           ))}
         </View>
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>SUBJECT</Text>
-        <TextInput style={styles.input} value={form.subject} onChangeText={(v) => setForm((f) => ({ ...f, subject: v }))} placeholder="Summer special…" placeholderTextColor={colors.muted} testID="campaign-subject-input" />
+        <AppTextInput style={styles.input} value={form.subject} onChangeText={(v) => setForm((f) => ({ ...f, subject: v }))} placeholder="Summer special…" placeholderTextColor={colors.muted} testID="campaign-subject-input" />
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>MESSAGE</Text>
-        <TextInput style={[styles.input, { height: 96, paddingTop: spacing.sm }]} value={form.body} onChangeText={(v) => setForm((f) => ({ ...f, body: v }))} placeholder="Write your message…" placeholderTextColor={colors.muted} multiline testID="campaign-body-input" />
+        <AppTextInput style={[styles.input, { height: 96, paddingTop: spacing.sm }]} value={form.body} onChangeText={(v) => setForm((f) => ({ ...f, body: v }))} placeholder="Write your message…" placeholderTextColor={colors.muted} multiline testID="campaign-body-input" />
         <View style={{ height: spacing.md }} />
         <PrimaryButton title="Send Campaign" icon="paper-plane-outline" onPress={send} testID="send-campaign-button" />
       </Sheet>

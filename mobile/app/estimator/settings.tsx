@@ -1,11 +1,12 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, Platform, Alert } from "react-native";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading, PrimaryButton } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function EstimateSettings() {
   const [loading, setLoading] = useState(true);
@@ -41,9 +42,9 @@ export default function EstimateSettings() {
       <View style={{ padding: spacing.lg }}>
         <Text style={styles.hint}>Set your company overhead recovery and target profit margin. New estimates start with these values.</Text>
         <Text style={styles.label}>Default overhead %</Text>
-        <TextInput style={styles.input} value={overhead} onChangeText={(v) => setOverhead(v.replace(/[^0-9.]/g, ""))} keyboardType="decimal-pad" testID="settings-overhead" />
+        <AppTextInput style={styles.input} value={overhead} onChangeText={(v) => setOverhead(v.replace(/[^0-9.]/g, ""))} keyboardType="decimal-pad" testID="settings-overhead" />
         <Text style={styles.label}>Default profit margin %</Text>
-        <TextInput style={styles.input} value={margin} onChangeText={(v) => setMargin(v.replace(/[^0-9.]/g, ""))} keyboardType="decimal-pad" testID="settings-margin" />
+        <AppTextInput style={styles.input} value={margin} onChangeText={(v) => setMargin(v.replace(/[^0-9.]/g, ""))} keyboardType="decimal-pad" testID="settings-margin" />
         <View style={{ height: spacing.lg }} />
         <PrimaryButton title="Save Defaults" icon="checkmark" loading={saving} onPress={save} testID="settings-save" />
       </View>

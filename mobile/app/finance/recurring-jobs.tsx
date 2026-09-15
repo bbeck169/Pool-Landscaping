@@ -10,9 +10,8 @@
 // Admin / super-admin / manager only.
 import React, { useCallback, useMemo, useState } from "react";
 import {
-  View, Text, StyleSheet, Switch, TextInput, Pressable, Platform,
-  Modal,
-} from "react-native";
+  View, Text, StyleSheet, Switch, Pressable, Platform,
+  Modal } from "react-native";
 import { useFocusEffect } from "expo-router";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import dayjs from "dayjs";
@@ -24,6 +23,7 @@ import { showConfirm } from "@/src/components/ConfirmModal";
 import { AdminListPage } from "@/src/components/layout/AdminListPage";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { useToast } from "@/src/components/ToastProvider";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type RecurringJob = {
   id: string;
@@ -419,7 +419,7 @@ export default function RecurringJobsMobile() {
           <View style={{ gap: spacing.md }}>
             <View>
               <Text style={s.fieldLabel}>Customer ID</Text>
-              <TextInput
+              <AppTextInput
                 value={editing.customer_id || ""}
                 onChangeText={(t) => setEditing((x) => ({ ...(x || {}), customer_id: t }))}
                 style={s.input}
@@ -430,7 +430,7 @@ export default function RecurringJobsMobile() {
             </View>
             <View>
               <Text style={s.fieldLabel}>Service type</Text>
-              <TextInput
+              <AppTextInput
                 value={editing.service_type || ""}
                 onChangeText={(t) => setEditing((x) => ({ ...(x || {}), service_type: t }))}
                 style={s.input}
@@ -500,7 +500,7 @@ export default function RecurringJobsMobile() {
                 ) : (
                   <View>
                     <Text style={s.fieldLabel}>Day of month (1–31)</Text>
-                    <TextInput
+                    <AppTextInput
                       value={String(editing.day_of_month ?? "")}
                       onChangeText={(t) => setEditing((x) => ({
                         ...(x || {}),
@@ -575,7 +575,7 @@ export default function RecurringJobsMobile() {
 
             <View>
               <Text style={s.fieldLabel}>Price (dollars)</Text>
-              <TextInput
+              <AppTextInput
                 value={String(((editing.price_cents ?? 0) / 100).toFixed(2))}
                 onChangeText={(t) => {
                   const num = parseFloat(t.replace(/[^0-9.]/g, "")) || 0;
@@ -589,7 +589,7 @@ export default function RecurringJobsMobile() {
 
             <View>
               <Text style={s.fieldLabel}>Notes</Text>
-              <TextInput
+              <AppTextInput
                 value={editing.notes || ""}
                 onChangeText={(t) => setEditing((x) => ({ ...(x || {}), notes: t }))}
                 style={[s.input, { minHeight: 60 }]}

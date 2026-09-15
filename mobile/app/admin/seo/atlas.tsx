@@ -1,9 +1,7 @@
 /** Phase 17B · Mobile — Atlas Agent chat. */
 import React, { useCallback, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  KeyboardAvoidingView, Platform, ActivityIndicator,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -11,6 +9,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { AdminOnlyGate, BrandPill } from "./_shared";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Msg = { role: "user" | "assistant"; content: string;
               tool_calls?: any[]; at?: string };
@@ -178,7 +177,7 @@ function Inner() {
       </ScrollView>
 
       <View style={styles.composer}>
-        <TextInput style={styles.composerInput}
+        <AppTextInput style={styles.composerInput}
                     placeholder="Ask Atlas…" placeholderTextColor={colors.muted}
                     value={input} onChangeText={setInput}
                     multiline

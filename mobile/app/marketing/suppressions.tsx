@@ -5,8 +5,7 @@
 import React, { useCallback, useState } from "react";
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  ActivityIndicator, RefreshControl, TextInput,
-} from "react-native";
+  ActivityIndicator, RefreshControl } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -14,6 +13,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Suppression = { id?: string; recipient?: string; email?: string; phone?: string; reason?: string; added_at?: string; created_at?: string };
 
@@ -68,7 +68,7 @@ export default function SuppressionsScreen() {
 
       <View style={s.searchWrap}>
         <Ionicons name="search" size={16} color={colors.muted} />
-        <TextInput
+        <AppTextInput
           style={s.searchInput}
           value={search}
           onChangeText={setSearch}

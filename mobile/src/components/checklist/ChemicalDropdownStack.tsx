@@ -7,7 +7,7 @@
  * parent onChange which flows into the autosave path.
  */
 import React, { useRef, useState } from "react";
-import { View, Text, TextInput, StyleSheet, Pressable } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import {
@@ -15,6 +15,7 @@ import {
   normalizeChemQty,
   type ChemCatalogEntry,
 } from "@/src/config/chemicalsCatalog";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 // Legacy CHEM_TYPES export retained for callers that still import the
 // symbol (there are none in-tree today, but keeps the module surface
@@ -117,7 +118,7 @@ export default function ChemicalDropdownStack({
                   : `No ${entry.name} added`}
               </Text>
             </View>
-            <TextInput
+            <AppTextInput
               testID={`chemicals-row-${entry.slug}-input`}
               keyboardType={entry.unit_kind === "integer" ? "number-pad" : "decimal-pad"}
               value={draft}

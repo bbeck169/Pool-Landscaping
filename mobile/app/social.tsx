@@ -6,9 +6,7 @@
  */
 import React, { useMemo, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  Alert, Platform, ActivityIndicator,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import DateTimePicker from "@react-native-community/datetimepicker";
@@ -18,6 +16,7 @@ import { api } from "@/src/api";
 import { useToast } from "@/src/components/ToastProvider";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type NetKey =
   | "facebook" | "instagram" | "twitter" | "linkedin"
@@ -167,7 +166,7 @@ export default function SocialComposerMobile() {
       <Header title="Social Composer" />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}>
         <Text style={styles.sectionTitle}>Caption</Text>
-        <TextInput
+        <AppTextInput
           testID="social-caption-input"
           style={styles.textarea}
           multiline
@@ -234,7 +233,7 @@ export default function SocialComposerMobile() {
         </View>
 
         <Text style={[styles.sectionTitle, { marginTop: spacing.xl }]}>First comment (optional)</Text>
-        <TextInput
+        <AppTextInput
           style={styles.input}
           value={firstComment}
           onChangeText={setFirstComment}

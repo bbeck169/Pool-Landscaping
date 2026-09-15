@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -8,6 +8,7 @@ import { colors, spacing, radius, font, fontSize, money, statusMeta } from "@/sr
 import { Loading, EmptyState, StatusChip, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, FilterRow, IconButton } from "@/src/components/widgets";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -196,7 +197,7 @@ export default function Leads() {
         {[["name", "Name *", "default"], ["phone", "Phone", "phone-pad"], ["email", "Email", "email-address"], ["source", "Source", "default"], ["est_value", "Estimated Value ($)", "decimal-pad"], ["notes", "Notes", "default"]].map(([k, lbl, kt]) => (
           <View key={k as string} style={{ marginBottom: spacing.sm }}>
             <Text style={styles.inputLabel}>{lbl}</Text>
-            <TextInput
+            <AppTextInput
               testID={`lead-${k}-input`}
               style={styles.input}
               value={(form as any)[k as string]}
@@ -252,16 +253,16 @@ export default function Leads() {
               ))}
             </View>
             <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>SCHEDULED DATE (YYYY-MM-DD)</Text>
-            <TextInput style={styles.input} value={jobForm.scheduled_date} onChangeText={(v) => setJobForm((f) => ({ ...f, scheduled_date: v }))} placeholder="Optional" placeholderTextColor={colors.muted} testID="convert-job-date" />
+            <AppTextInput style={styles.input} value={jobForm.scheduled_date} onChangeText={(v) => setJobForm((f) => ({ ...f, scheduled_date: v }))} placeholder="Optional" placeholderTextColor={colors.muted} testID="convert-job-date" />
             <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>PRICE ($)</Text>
-            <TextInput style={styles.input} value={jobForm.price} onChangeText={(v) => setJobForm((f) => ({ ...f, price: v }))} keyboardType="decimal-pad" placeholderTextColor={colors.muted} testID="convert-job-price" />
+            <AppTextInput style={styles.input} value={jobForm.price} onChangeText={(v) => setJobForm((f) => ({ ...f, price: v }))} keyboardType="decimal-pad" placeholderTextColor={colors.muted} testID="convert-job-price" />
           </>
         ) : (
           <>
             <Text style={styles.inputLabel}>ESTIMATE TITLE</Text>
-            <TextInput style={styles.input} value={quoteForm.title} onChangeText={(v) => setQuoteForm((f) => ({ ...f, title: v }))} placeholderTextColor={colors.muted} testID="convert-quote-title" />
+            <AppTextInput style={styles.input} value={quoteForm.title} onChangeText={(v) => setQuoteForm((f) => ({ ...f, title: v }))} placeholderTextColor={colors.muted} testID="convert-quote-title" />
             <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>AMOUNT ($)</Text>
-            <TextInput style={styles.input} value={quoteForm.unit_price} onChangeText={(v) => setQuoteForm((f) => ({ ...f, unit_price: v }))} keyboardType="decimal-pad" placeholderTextColor={colors.muted} testID="convert-quote-amount" />
+            <AppTextInput style={styles.input} value={quoteForm.unit_price} onChangeText={(v) => setQuoteForm((f) => ({ ...f, unit_price: v }))} keyboardType="decimal-pad" placeholderTextColor={colors.muted} testID="convert-quote-amount" />
           </>
         )}
         <View style={{ height: spacing.lg }} />

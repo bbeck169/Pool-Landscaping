@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform, Alert, Linking, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Platform, Alert, Linking, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 
@@ -8,6 +8,7 @@ import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
 import AddressAutocomplete, { type AddressSelection } from "@/src/components/common/AddressAutocomplete";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 // Defensive wrapper: if AddressAutocomplete crashes (stale cache, lazy-load
 // failure, etc.) the form still renders a plain TextInput for the address.
@@ -120,7 +121,7 @@ export default function NewLeadForm({ onDone }: { onDone?: () => void }) {
       {fields.map(([k, lbl, kt]) => (
         <View key={k} style={{ marginBottom: spacing.md }}>
           <Text style={styles.label}>{lbl}</Text>
-          <TextInput
+          <AppTextInput
             style={styles.input}
             value={(form as any)[k]}
             onChangeText={(v) => set(k, v)}
@@ -135,7 +136,7 @@ export default function NewLeadForm({ onDone }: { onDone?: () => void }) {
       <Text style={styles.label}>Address</Text>
       <AddressErrorBoundary
         fallback={
-          <TextInput
+          <AppTextInput
             style={styles.input}
             value={form.address}
             onChangeText={(v) => set("address", v)}
@@ -181,7 +182,7 @@ export default function NewLeadForm({ onDone }: { onDone?: () => void }) {
       </View>
 
       <Text style={[styles.label, { marginTop: spacing.md }]}>Notes</Text>
-      <TextInput
+      <AppTextInput
         style={[styles.input, styles.textArea]}
         value={form.notes}
         onChangeText={(v) => set("notes", v)}

@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
@@ -11,6 +11,7 @@ import { colors, spacing, radius, font, fontSize, money, statusMeta } from "@/sr
 import { Loading, EmptyState, StatusChip, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, FilterRow, IconButton } from "@/src/components/widgets";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 // Repair status meta
 Object.assign(statusMeta, {
@@ -160,12 +161,12 @@ export default function Equipment() {
         </View>
 
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>ISSUE</Text>
-        <TextInput style={[styles.input, { height: 72, paddingTop: spacing.sm }]} value={form.issue} onChangeText={(v) => setForm((f) => ({ ...f, issue: v }))} placeholder="Describe the problem…" placeholderTextColor={colors.muted} multiline testID="repair-issue-input" />
+        <AppTextInput style={[styles.input, { height: 72, paddingTop: spacing.sm }]} value={form.issue} onChangeText={(v) => setForm((f) => ({ ...f, issue: v }))} placeholder="Describe the problem…" placeholderTextColor={colors.muted} multiline testID="repair-issue-input" />
 
         {!isTech ? (
           <>
             <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>ESTIMATED COST ($)</Text>
-            <TextInput style={styles.input} value={form.cost} onChangeText={(v) => setForm((f) => ({ ...f, cost: v }))} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.muted} testID="repair-cost-input" />
+            <AppTextInput style={styles.input} value={form.cost} onChangeText={(v) => setForm((f) => ({ ...f, cost: v }))} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.muted} testID="repair-cost-input" />
           </>
         ) : null}
 

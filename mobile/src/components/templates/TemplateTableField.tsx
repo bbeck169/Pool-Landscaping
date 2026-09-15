@@ -2,14 +2,13 @@ import React from "react";
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Switch,
-} from "react-native";
+  Switch } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, font, fontSize, radius } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Column = { key: string; label?: string; type?: string };
 
@@ -81,7 +80,7 @@ export default function TemplateTableField({
                   }
                   return (
                     <View key={c.key} style={styles.dataCell}>
-                      <TextInput
+                      <AppTextInput
                         value={val != null ? String(val) : ""}
                         editable={!disabled}
                         onChangeText={(t) => {

@@ -7,13 +7,11 @@ import {
   RefreshControl,
   Pressable,
   ActivityIndicator,
-  TextInput,
   Switch,
   ScrollView,
   Modal,
   KeyboardAvoidingView,
-  Platform,
-} from "react-native";
+  Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -22,6 +20,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 /* ── helpers ────────────────────────────── */
 
@@ -354,7 +353,7 @@ function ComposeSheet({
           {emailOn ? (
             <>
               <Text style={s.fieldLabel}>Subject (email)</Text>
-              <TextInput
+              <AppTextInput
                 style={s.input}
                 value={subject}
                 onChangeText={setSubject}
@@ -367,7 +366,7 @@ function ComposeSheet({
 
           {/* Body */}
           <Text style={s.fieldLabel}>Body (supports merge tags)</Text>
-          <TextInput
+          <AppTextInput
             style={[s.input, { height: 120, textAlignVertical: "top" }]}
             value={body}
             onChangeText={setBody}

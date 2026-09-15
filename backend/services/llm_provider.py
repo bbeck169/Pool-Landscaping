@@ -268,6 +268,7 @@ async def call_llm_with_fallback(*, system_prompt: str, user_text: str,
                     tenant_id=tenant_id,
                     system_prompt=system_prompt, user_text=user_text,
                     model=model,
+                    parse_json=parse_json,
                 )
             except TenantAIUsageCapExceeded as cap:
                 logger.info(

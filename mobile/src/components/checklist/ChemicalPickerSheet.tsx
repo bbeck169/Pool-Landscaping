@@ -13,8 +13,7 @@
  */
 import React, { useRef, useState } from "react";
 import {
-  View, Text, Modal, Pressable, StyleSheet, ScrollView, TextInput, Platform,
-} from "react-native";
+  View, Text, Modal, Pressable, StyleSheet, ScrollView, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
@@ -24,6 +23,7 @@ import {
   normalizeChemQty,
   type ChemCatalogEntry,
 } from "@/src/config/chemicalsCatalog";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type ChemAdded = {
   slug?: string; chemical?: string; name?: string;
@@ -129,7 +129,7 @@ export default function ChemicalPickerSheet({
                   <Text style={styles.name}>{entry.name}</Text>
                   <Text style={styles.unit}>{entry.unit}</Text>
                 </View>
-                <TextInput
+                <AppTextInput
                   value={draft}
                   onChangeText={(t) => {
                     // Digits + optional decimal for decimal units; digits

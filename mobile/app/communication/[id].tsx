@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -9,6 +9,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading } from "@/src/components/ui";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function CommunicationThread() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -104,7 +105,7 @@ export default function CommunicationThread() {
         </KeyboardAwareScrollView>
       )}
       <View style={styles.composer}>
-        <TextInput
+        <AppTextInput
           style={styles.input}
           value={text}
           onChangeText={setText}

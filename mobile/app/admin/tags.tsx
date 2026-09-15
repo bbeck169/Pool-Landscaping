@@ -16,15 +16,14 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  View, Text, Pressable, FlatList, StyleSheet, Modal, TextInput,
-  ActivityIndicator,
-} from "react-native";
+  View, Text, Pressable, FlatList, StyleSheet, Modal, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const PALETTE = [
   "#DBEAFE", "#FEE2E2", "#DCFCE7", "#FEF3C7", "#EDE9FE",
@@ -94,7 +93,7 @@ function TagEditorModal({
             </Pressable>
           </View>
           <Text style={ss.label}>Name</Text>
-          <TextInput
+          <AppTextInput
             value={name}
             onChangeText={setName}
             placeholder="e.g. VIP"
@@ -273,7 +272,7 @@ export default function AdminTagsPage() {
       {showSearch ? (
         <View style={ss.searchWrap}>
           <Ionicons name="search" size={14} color={colors.muted} style={ss.searchIcon} />
-          <TextInput
+          <AppTextInput
             value={query}
             onChangeText={setQuery}
             placeholder={`Search ${totalCount} tags…`}

@@ -4,9 +4,8 @@
  */
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Pressable,
-  ActivityIndicator, Image,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable,
+  ActivityIndicator, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import { useRouter } from "expo-router";
@@ -16,6 +15,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { ZillowUsageChip, ZillowRateLimitedBanner } from "@/src/components/ZillowUsageChip";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 interface Comp {
   address?: string;
@@ -125,7 +125,7 @@ export default function PropertyLookup() {
       <ScrollView contentContainerStyle={{ padding: spacing.lg,
                                              paddingBottom: spacing["3xl"] }}>
         <View style={styles.searchRow}>
-          <TextInput
+          <AppTextInput
             value={address} onChangeText={setAddress}
             placeholder="123 Main St, Springfield, IL"
             placeholderTextColor={colors.muted}
@@ -290,7 +290,7 @@ export default function PropertyLookup() {
 
             <View style={styles.card}>
               <Text style={styles.sectionTitle}>Save a note</Text>
-              <TextInput
+              <AppTextInput
                 value={noteText} onChangeText={setNoteText}
                 placeholder='e.g., "Big yard, quarterly service"'
                 placeholderTextColor={colors.muted}

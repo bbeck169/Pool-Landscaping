@@ -1,11 +1,12 @@
 /** Phase 17A · Mobile — Content Scorer. */
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { AdminOnlyGate, ScoreChip, CenterLoader } from "./_shared";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function ContentScorerMobile() {
   return (
@@ -76,7 +77,7 @@ function Inner() {
         <Text style={styles.label}>
           {mode === "url" ? "Page URL" : "Paste HTML"}
         </Text>
-        <TextInput
+        <AppTextInput
           style={[styles.input, mode === "html" && { minHeight: 140,
                                                       textAlignVertical: "top" }]}
           value={urlOrHtml}
@@ -86,7 +87,7 @@ function Inner() {
           testID="scorer-input" />
 
         <Text style={styles.label}>Target keyword</Text>
-        <TextInput style={styles.input} value={keyword}
+        <AppTextInput style={styles.input} value={keyword}
                     autoCapitalize="none"
                     onChangeText={setKeyword}
                     testID="scorer-keyword" />

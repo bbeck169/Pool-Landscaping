@@ -19,8 +19,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text,
-  TextInput, View,
-} from "react-native";
+  View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
@@ -28,6 +27,7 @@ import { useToast } from "@/src/components/ToastProvider";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, font, fontSize, radius, spacing } from "@/src/theme";
 import { FileUpload } from "@/src/components/files/FileUpload";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 
 const ALLOWED_ROLES = new Set(["technician", "manager", "admin", "super_admin"]);
@@ -195,7 +195,7 @@ export function CouldNotServiceModal({ visible, jobId, onClose, onDone }: ModalP
           <Text style={styles.label}>
             Notes{isOther ? <Text style={{ color: AMBER }}>  (required)</Text> : null}
           </Text>
-          <TextInput
+          <AppTextInput
             value={notes}
             onChangeText={setNotes}
             placeholder={isOther ? "Describe what happened…" : "Optional context…"}

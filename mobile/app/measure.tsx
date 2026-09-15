@@ -4,12 +4,10 @@ import {
   Text,
   StyleSheet,
   Pressable,
-  TextInput,
   Platform,
   Alert,
   Linking,
-  ActivityIndicator,
-} from "react-native";
+  ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -24,6 +22,7 @@ import { Sheet, PrimaryButton } from "@/src/components/ui";
 // Resolved by Metro via .native.tsx / .web.tsx platform extensions.
 // eslint-disable-next-line import/no-unresolved
 import MeasureMap from "@/src/components/measure/MeasureMap";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Coord = { latitude: number; longitude: number };
 type Mode = "distance" | "area";
@@ -238,7 +237,7 @@ function MeasureScreen() {
           </Pressable>
           <View style={styles.searchBox}>
             <Ionicons name="search" size={16} color={colors.muted} />
-            <TextInput
+            <AppTextInput
               style={styles.searchInput}
               value={search}
               onChangeText={setSearch}
@@ -317,7 +316,7 @@ function MeasureScreen() {
       {/* Save sheet */}
       <Sheet visible={saveOpen} onClose={() => setSaveOpen(false)} title="Save measurement" testID="measure-save-sheet">
         <Text style={styles.inputLabel}>NAME</Text>
-        <TextInput style={styles.sheetInput} value={mName} onChangeText={setMName} placeholder={mode === "area" ? "Backyard lawn" : "Fence run"} placeholderTextColor={colors.muted} testID="measure-name" />
+        <AppTextInput style={styles.sheetInput} value={mName} onChangeText={setMName} placeholder={mode === "area" ? "Backyard lawn" : "Fence run"} placeholderTextColor={colors.muted} testID="measure-name" />
         <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>ATTACH TO (OPTIONAL)</Text>
         {attachLabel ? (
           <View style={styles.attachRow}>

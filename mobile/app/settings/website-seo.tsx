@@ -1,8 +1,6 @@
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, RefreshControl, TextInput,
-  TouchableOpacity, ActivityIndicator, Pressable,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, ActivityIndicator, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -10,6 +8,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 function scoreColor(s: number) {
   if (s >= 85) return "#16A34A";
@@ -77,7 +76,7 @@ export default function WebsiteSeoPage() {
       >
         {/* URL input + run */}
         <View style={s.inputRow}>
-          <TextInput
+          <AppTextInput
             style={s.urlInput}
             value={url}
             onChangeText={setUrl}

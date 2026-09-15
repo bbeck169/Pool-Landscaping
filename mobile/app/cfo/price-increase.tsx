@@ -5,8 +5,7 @@
 // Admin / super-admin only.
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, RefreshControl, TextInput,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, RefreshControl } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -15,6 +14,7 @@ import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Card, Loading, EmptyState, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 function _currentMonth(): string {
   const d = new Date();
@@ -61,7 +61,7 @@ export default function CfoPriceIncrease() {
         >
           <View style={styles.monthRow}>
             <Text style={styles.monthLabel}>Analysis month (YYYY-MM)</Text>
-            <TextInput
+            <AppTextInput
               value={month}
               onChangeText={setMonth}
               placeholder="2026-02"

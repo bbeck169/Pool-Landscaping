@@ -5,13 +5,11 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
-  TextInput,
   Platform,
   Alert,
   Linking,
   ActivityIndicator,
-  Dimensions,
-} from "react-native";
+  Dimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
@@ -23,6 +21,7 @@ import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
 import { ZillowUsageChip, ZillowRateLimitedBanner } from "@/src/components/ZillowUsageChip";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const W = Dimensions.get("window").width;
 const num = (n: any) => (n === null || n === undefined || n === "" ? "—" : Number(n).toLocaleString());
@@ -160,7 +159,7 @@ function VirtualBidScreen() {
       <View style={styles.searchWrap}>
         <View style={styles.searchBox}>
           <Ionicons name="search" size={16} color={colors.muted} />
-          <TextInput
+          <AppTextInput
             style={styles.searchInput}
             value={address}
             onChangeText={setAddress}

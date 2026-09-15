@@ -5,8 +5,7 @@
 // Admin / super-admin only.
 import React, { useCallback, useMemo, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, RefreshControl, TextInput,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, RefreshControl } from "react-native";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 
 import { api } from "@/src/api";
@@ -16,6 +15,7 @@ import { Header } from "@/src/components/widgets";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { RoleGate } from "@/src/components/RoleGate";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Child = {
   id: string;
@@ -132,7 +132,7 @@ export default function MasterInvoiceDetail() {
             {balance > 0 && (
               <View style={styles.applyBox} testID="master-apply-box">
                 <Text style={styles.applyLabel}>Apply payment</Text>
-                <TextInput
+                <AppTextInput
                   value={amount}
                   onChangeText={setAmount}
                   placeholder="0.00"

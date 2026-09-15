@@ -5,11 +5,12 @@
  * "All My Tools" hub or from the More menu without having to be on a job.
  */
 import React, { useMemo, useState } from "react";
-import { View, Text, Pressable, TextInput, Platform, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Platform, ScrollView, StyleSheet } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from '@/src/theme';
 import { Header } from "@/src/components/widgets";
 import { Sheet } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Tool = "dosing" | "volume" | "salt" | "lsi";
 
@@ -25,7 +26,7 @@ function NumInput({ label, unit, value, onChangeText, testID }: any) {
     <View style={{ flex: 1 }}>
       <Text style={styles.inputLabel}>{label}</Text>
       <View style={styles.inputWrap}>
-        <TextInput
+        <AppTextInput
           testID={testID}
           style={styles.input}
           value={value}

@@ -4,7 +4,7 @@
  * POST /api/auth/reset-password { token, new_password }
  */
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Platform } from "react-native";
+import { View, Text, StyleSheet, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -12,6 +12,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function ResetPassword() {
   const router = useRouter();
@@ -68,7 +69,7 @@ export default function ResetPassword() {
         <Text style={s.intro}>Choose a strong new password (8+ characters).</Text>
 
         <Text style={s.label}>NEW PASSWORD</Text>
-        <TextInput
+        <AppTextInput
           testID="reset-pw-field"
           style={s.input}
           placeholder="New password"
@@ -81,7 +82,7 @@ export default function ResetPassword() {
         />
 
         <Text style={s.label}>CONFIRM PASSWORD</Text>
-        <TextInput
+        <AppTextInput
           testID="reset-pw-confirm"
           style={s.input}
           placeholder="Confirm new password"

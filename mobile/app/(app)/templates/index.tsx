@@ -10,13 +10,11 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
   Alert,
-  Linking,
-} from "react-native";
+  Linking } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -27,6 +25,7 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import TemplateCard from "@/src/components/templates/TemplateCard";
 import TemplateStatusPill from "@/src/components/templates/TemplateStatusPill";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const CATEGORIES = [
   { key: "all", label: "All" },
@@ -245,7 +244,7 @@ export default function TemplatesLibraryScreen() {
           {/* Search */}
           <View style={styles.searchRow}>
             <Ionicons name="search-outline" size={16} color={colors.muted} />
-            <TextInput
+            <AppTextInput
               value={query}
               onChangeText={setQuery}
               placeholder="Search templates…"

@@ -6,8 +6,7 @@
 // `/api/aeo/response/templates`.
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Pressable, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { router, useLocalSearchParams } from "expo-router";
@@ -18,6 +17,7 @@ import { useToast } from "@/src/components/ToastProvider";
 import { Card, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Tone = "empathetic" | "professional" | "apologetic" | "assertive";
 const TONES: { key: Tone; label: string }[] = [
@@ -145,7 +145,7 @@ export default function ResponseDraft() {
                 {body.length}/{charLimit}
               </Text>
             </View>
-            <TextInput
+            <AppTextInput
               testID="draft-body-input"
               multiline
               value={body}

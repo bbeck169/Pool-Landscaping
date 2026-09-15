@@ -2,12 +2,13 @@
 // Phase 41.2 · Feb-2026 — refactored onto the shared `<AdminListPage>`.
 // Web: BusinessOS.jsx SOP slice. Backend: GET/POST /sops, POST /sops/generate.
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, TextInput } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
 import { AdminListPage } from "@/src/components/layout/AdminListPage";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function OsSops() {
   const [rows, setRows] = useState<any[]>([]);
@@ -63,9 +64,9 @@ export default function OsSops() {
       sheet={
         <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="New SOP" testID="os-sops-sheet">
           <View style={{ gap: spacing.md, padding: spacing.lg }}>
-            <TextInput placeholder="Title" value={draft.title} onChangeText={(t) => setDraft((d) => ({ ...d, title: t }))} style={styles.input} testID="os-sops-input-title" />
-            <TextInput placeholder="Topic (optional)" value={draft.topic} onChangeText={(t) => setDraft((d) => ({ ...d, topic: t }))} style={styles.input} testID="os-sops-input-topic" />
-            <TextInput placeholder="Steps (optional — leave blank + tap Generate to auto-write)" value={draft.steps} onChangeText={(t) => setDraft((d) => ({ ...d, steps: t }))} multiline style={[styles.input, { minHeight: 80 }]} testID="os-sops-input-steps" />
+            <AppTextInput placeholder="Title" value={draft.title} onChangeText={(t) => setDraft((d) => ({ ...d, title: t }))} style={styles.input} testID="os-sops-input-title" />
+            <AppTextInput placeholder="Topic (optional)" value={draft.topic} onChangeText={(t) => setDraft((d) => ({ ...d, topic: t }))} style={styles.input} testID="os-sops-input-topic" />
+            <AppTextInput placeholder="Steps (optional — leave blank + tap Generate to auto-write)" value={draft.steps} onChangeText={(t) => setDraft((d) => ({ ...d, steps: t }))} multiline style={[styles.input, { minHeight: 80 }]} testID="os-sops-input-steps" />
             <View style={{ flexDirection: "row", gap: spacing.sm }}>
               <View style={{ flex: 1 }}>
                 <PrimaryButton label={busy ? "Saving…" : "Save"} onPress={save} disabled={busy || !draft.title.trim()} testID="os-sops-save" />

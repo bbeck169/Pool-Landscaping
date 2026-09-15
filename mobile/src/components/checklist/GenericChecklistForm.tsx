@@ -14,10 +14,11 @@
  * change. This keeps to the "no invented endpoints" rule.
  */
 import React from "react";
-import { View, Text, Pressable, TextInput, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type ChecklistItem = { id: string; label: string; checked: boolean; notes?: string };
 
@@ -46,7 +47,7 @@ export default function GenericChecklistForm(props: GenericChecklistFormProps) {
   return (
     <View testID="generic-checklist-form">
       <Text style={styles.sectionTitle}>Work Performed</Text>
-      <TextInput
+      <AppTextInput
         multiline
         numberOfLines={5}
         editable={!locked}
@@ -82,7 +83,7 @@ export default function GenericChecklistForm(props: GenericChecklistFormProps) {
       )}
 
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Notes</Text>
-      <TextInput
+      <AppTextInput
         multiline
         numberOfLines={4}
         editable={!locked}

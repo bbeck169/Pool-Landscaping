@@ -6,9 +6,10 @@
  * on every keystroke on lower-end Android.
  */
 import React, { useEffect, useRef, useState } from "react";
-import { View, TextInput, Pressable, StyleSheet, Platform } from "react-native";
+import { View, Pressable, StyleSheet, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Props = {
   onQueryChange: (q: string) => void;
@@ -39,7 +40,7 @@ export const SearchBar: React.FC<Props> = ({
   return (
     <View style={styles.wrap}>
       <Ionicons name="search-outline" size={18} color={colors.muted} />
-      <TextInput
+      <AppTextInput
         testID={testID}
         style={styles.input}
         value={text}

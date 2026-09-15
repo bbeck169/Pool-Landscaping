@@ -67,5 +67,12 @@ export const IMAGES = {
     "https://images.unsplash.com/photo-1777106322601-578dc9213ace?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzZ8MHwxfHNlYXJjaHwxfHxzdWJ1cmJhbiUyMG1vZGVybiUyMGhvdXNlJTIwZXh0ZXJpb3J8ZW58MHx8fHwxNzgzMzc2NTA1fDA&ixlib=rb-4.1.0&q=85&w=800",
 };
 
+/** Phase T1 — sitewide input theme: white bg + navy text */
+export const inputColors = {
+  bg: "#FFFFFF",
+  text: "#000080",
+  placeholder: "rgba(0,0,128,0.55)",
+} as const;
+
 export const money = (n: number = 0) =>
   "$" + (n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });

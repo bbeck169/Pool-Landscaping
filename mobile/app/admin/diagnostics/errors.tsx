@@ -25,9 +25,8 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, RefreshControl,
-  TouchableOpacity, ActivityIndicator, Modal, Pressable, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, RefreshControl,
+  TouchableOpacity, ActivityIndicator, Modal, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 
@@ -35,6 +34,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type ClientErrorRow = {
   id: string;
@@ -115,7 +115,7 @@ export default function ClientErrorsDiagnosticsScreen() {
               back />
 
       <View style={s.toolbar}>
-        <TextInput
+        <AppTextInput
           testID="client-errors-filter"
           style={s.search}
           value={componentFilter}

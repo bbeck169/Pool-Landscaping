@@ -10,12 +10,12 @@
  */
 import React, { useEffect, useState, useCallback } from "react";
 import {
-  View, Text, StyleSheet, Switch, Alert, TextInput,
-} from "react-native";
+  View, Text, StyleSheet, Switch, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { Card } from "@/src/components/ui";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const PLATFORM_LABELS: Record<string, string> = {
   gbp: "Google Business Profile",
@@ -125,7 +125,7 @@ function PlatformRow({
       <View style={s.platformRight}>
         <View style={s.cadenceWrap}>
           <Text style={s.cadenceLabel}>{isDaily ? "per day" : "per week"}</Text>
-          <TextInput
+          <AppTextInput
             style={[s.cadenceInput, (isReddit || disabled) && s.inputDisabled]}
             keyboardType="number-pad"
             value={String(cadenceVal)}

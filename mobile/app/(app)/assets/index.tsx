@@ -7,9 +7,8 @@
  */
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, FlatList, Pressable, TextInput, Modal, Alert,
-  RefreshControl,
-} from "react-native";
+  View, Text, StyleSheet, FlatList, Pressable, Modal, Alert,
+  RefreshControl } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -18,6 +17,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const CATS = [
   { key: "",          label: "All" },
@@ -186,7 +186,7 @@ export default function AssetsIndex() {
                 <Ionicons name="close" size={22} color={colors.muted}/>
               </Pressable>
             </View>
-            <TextInput value={form.name}
+            <AppTextInput value={form.name}
                        onChangeText={(v) => setForm({ ...form, name: v })}
                        placeholder="Name (e.g., Truck #3)"
                        placeholderTextColor={colors.muted}
@@ -208,7 +208,7 @@ export default function AssetsIndex() {
                 </Pressable>
               ))}
             </View>
-            <TextInput value={form.asset_tag}
+            <AppTextInput value={form.asset_tag}
                        onChangeText={(v) => setForm({ ...form, asset_tag: v })}
                        placeholder="Asset tag (optional)"
                        placeholderTextColor={colors.muted}

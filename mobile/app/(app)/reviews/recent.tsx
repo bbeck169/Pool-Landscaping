@@ -1,6 +1,6 @@
 /** Recent reviews list — Phase 3 mobile. */
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl, Modal, TouchableOpacity, TextInput, Switch, Alert, ScrollView } from "react-native";
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl, Modal, TouchableOpacity, Switch, Alert, ScrollView } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -8,6 +8,7 @@ import { Header } from "@/src/components/widgets";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { listReviews, updateReview } from "@/src/api/reviews";
 import { ReviewCardNative } from "@/src/components/reviews/ReviewCardNative";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function ReviewsRecentScreen() {
   const insets = useSafeAreaInsets();
@@ -93,7 +94,7 @@ export default function ReviewsRecentScreen() {
             <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
               {selected ? <ReviewCardNative review={selected} /> : null}
               <Text style={styles.label}>Admin response</Text>
-              <TextInput
+              <AppTextInput
                 multiline value={response} onChangeText={setResponse}
                 placeholder="Say thanks, address concerns…"
                 placeholderTextColor={colors.muted}

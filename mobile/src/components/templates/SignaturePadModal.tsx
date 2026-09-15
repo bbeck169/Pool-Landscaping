@@ -10,17 +10,16 @@ import React, { useRef, useState, useEffect } from "react";
 import {
   View,
   Text,
-  TextInput,
   Modal,
   StyleSheet,
   TouchableOpacity,
   Alert,
   KeyboardAvoidingView,
-  Platform,
-} from "react-native";
+  Platform } from "react-native";
 import SignatureScreen from "react-native-signature-canvas";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Props = {
   visible: boolean;
@@ -138,7 +137,7 @@ export default function SignaturePadModal({
         {/* Name input */}
         <View style={styles.nameSection}>
           <Text style={styles.labelText}>Signer name</Text>
-          <TextInput
+          <AppTextInput
             value={signerName}
             onChangeText={setSignerName}
             style={styles.nameInput}

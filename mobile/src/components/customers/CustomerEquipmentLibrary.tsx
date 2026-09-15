@@ -29,10 +29,8 @@ import {
   Image,
   Pressable,
   StyleSheet,
-  TextInput,
   ActivityIndicator,
-  Alert,
-} from "react-native";
+  Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 
@@ -41,6 +39,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type EquipmentPhoto = {
   id: string;
@@ -315,7 +314,7 @@ function EquipmentSection({
               resizeMode="cover"
             />
             <Text style={styles.inputLabel}>Caption (optional)</Text>
-            <TextInput
+            <AppTextInput
               value={uploadSheet.caption}
               onChangeText={(v) =>
                 setUploadSheet((s) => (s ? { ...s, caption: v.slice(0, 120) } : s))

@@ -2,12 +2,13 @@
 // Phase 41.2 · Feb-2026 — refactored onto the shared `<AdminListPage>`.
 // Web: BusinessOS.jsx Roles slice. Backend: GET/POST /role-definitions.
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, TextInput } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
 import { AdminListPage } from "@/src/components/layout/AdminListPage";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function OsRoles() {
   const [rows, setRows] = useState<any[]>([]);
@@ -57,9 +58,9 @@ export default function OsRoles() {
       sheet={
         <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="New role" testID="os-roles-sheet">
           <View style={{ gap: spacing.md, padding: spacing.lg }}>
-            <TextInput placeholder="Role name" value={draft.name} onChangeText={(t) => setDraft((d) => ({ ...d, name: t }))} style={styles.input} testID="os-roles-input-name" />
-            <TextInput placeholder="Accountabilities (one per line)" value={draft.accountabilities} onChangeText={(t) => setDraft((d) => ({ ...d, accountabilities: t }))} multiline style={[styles.input, { minHeight: 80 }]} testID="os-roles-input-accountabilities" />
-            <TextInput placeholder="Assign to user id (optional)" value={draft.user_id} onChangeText={(t) => setDraft((d) => ({ ...d, user_id: t }))} style={styles.input} testID="os-roles-input-user" />
+            <AppTextInput placeholder="Role name" value={draft.name} onChangeText={(t) => setDraft((d) => ({ ...d, name: t }))} style={styles.input} testID="os-roles-input-name" />
+            <AppTextInput placeholder="Accountabilities (one per line)" value={draft.accountabilities} onChangeText={(t) => setDraft((d) => ({ ...d, accountabilities: t }))} multiline style={[styles.input, { minHeight: 80 }]} testID="os-roles-input-accountabilities" />
+            <AppTextInput placeholder="Assign to user id (optional)" value={draft.user_id} onChangeText={(t) => setDraft((d) => ({ ...d, user_id: t }))} style={styles.input} testID="os-roles-input-user" />
             <PrimaryButton label={busy ? "Saving…" : "Save"} onPress={save} disabled={busy || !draft.name.trim()} testID="os-roles-save" />
           </View>
         </Sheet>

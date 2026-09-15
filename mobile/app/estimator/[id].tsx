@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
@@ -12,6 +12,7 @@ import { computeEstimate, CATEGORIES, CATEGORY_META, EstimateLine } from "@/src/
 import { exportEstimatePdf } from "@/src/utils/exportEstimatePdf";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const emptyLine = (): EstimateLine => ({ category: "Material", description: "", quantity: 1, unit_cost: 0 });
 
@@ -190,7 +191,7 @@ export default function EstimateBuilder() {
         </Pressable>
 
         <Text style={styles.label}>Title</Text>
-        <TextInput style={styles.input} value={title} onChangeText={setTitle} editable={!readOnly} placeholder="e.g. Equipment upgrade" placeholderTextColor={colors.muted} testID="estimate-title" />
+        <AppTextInput style={styles.input} value={title} onChangeText={setTitle} editable={!readOnly} placeholder="e.g. Equipment upgrade" placeholderTextColor={colors.muted} testID="estimate-title" />
 
         <View style={styles.sectionHead}>
           <Text style={styles.sectionTitle}>Cost line items</Text>
@@ -236,11 +237,11 @@ export default function EstimateBuilder() {
         <View style={styles.pctRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Overhead %</Text>
-            <TextInput style={styles.input} value={overhead} onChangeText={(v) => setOverhead(v.replace(/[^0-9.]/g, ""))} editable={!readOnly} keyboardType="decimal-pad" testID="estimate-overhead" />
+            <AppTextInput style={styles.input} value={overhead} onChangeText={(v) => setOverhead(v.replace(/[^0-9.]/g, ""))} editable={!readOnly} keyboardType="decimal-pad" testID="estimate-overhead" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Profit margin %</Text>
-            <TextInput style={styles.input} value={margin} onChangeText={(v) => setMargin(v.replace(/[^0-9.]/g, ""))} editable={!readOnly} keyboardType="decimal-pad" testID="estimate-margin" />
+            <AppTextInput style={styles.input} value={margin} onChangeText={(v) => setMargin(v.replace(/[^0-9.]/g, ""))} editable={!readOnly} keyboardType="decimal-pad" testID="estimate-margin" />
           </View>
         </View>
 
@@ -331,15 +332,15 @@ export default function EstimateBuilder() {
             <Text style={styles.pbBtnText}>Fill from Price Book</Text>
           </Pressable>
           <Text style={styles.label}>Description</Text>
-          <TextInput style={styles.input} value={lineDraft.description} onChangeText={(v) => setLineDraft((d) => ({ ...d, description: v }))} placeholder="What this covers" placeholderTextColor={colors.muted} testID="estimate-line-desc" />
+          <AppTextInput style={styles.input} value={lineDraft.description} onChangeText={(v) => setLineDraft((d) => ({ ...d, description: v }))} placeholder="What this covers" placeholderTextColor={colors.muted} testID="estimate-line-desc" />
           <View style={styles.pctRow}>
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>Quantity</Text>
-              <TextInput style={styles.input} value={String(lineDraft.quantity)} onChangeText={(v) => setLineDraft((d) => ({ ...d, quantity: v.replace(/[^0-9.]/g, "") as any }))} keyboardType="decimal-pad" testID="estimate-line-qty" />
+              <AppTextInput style={styles.input} value={String(lineDraft.quantity)} onChangeText={(v) => setLineDraft((d) => ({ ...d, quantity: v.replace(/[^0-9.]/g, "") as any }))} keyboardType="decimal-pad" testID="estimate-line-qty" />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>Unit cost ($)</Text>
-              <TextInput style={styles.input} value={String(lineDraft.unit_cost)} onChangeText={(v) => setLineDraft((d) => ({ ...d, unit_cost: v.replace(/[^0-9.]/g, "") as any }))} keyboardType="decimal-pad" testID="estimate-line-cost" />
+              <AppTextInput style={styles.input} value={String(lineDraft.unit_cost)} onChangeText={(v) => setLineDraft((d) => ({ ...d, unit_cost: v.replace(/[^0-9.]/g, "") as any }))} keyboardType="decimal-pad" testID="estimate-line-cost" />
             </View>
           </View>
           <View style={{ height: spacing.md }} />
@@ -376,7 +377,7 @@ export default function EstimateBuilder() {
       {/* Save as template */}
       <Sheet visible={saveTplSheet} onClose={() => setSaveTplSheet(false)} title="Save as Template" testID="estimate-savetpl-sheet">
         <Text style={styles.label}>Template name</Text>
-        <TextInput style={styles.input} value={tplName} onChangeText={setTplName} placeholder="e.g. Standard equipment install" placeholderTextColor={colors.muted} testID="estimate-tpl-name" />
+        <AppTextInput style={styles.input} value={tplName} onChangeText={setTplName} placeholder="e.g. Standard equipment install" placeholderTextColor={colors.muted} testID="estimate-tpl-name" />
         <View style={{ height: spacing.md }} />
         <PrimaryButton title="Save Template" icon="albums" onPress={saveAsTemplate} testID="estimate-tpl-save" />
       </Sheet>

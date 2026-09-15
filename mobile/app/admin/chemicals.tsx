@@ -18,15 +18,15 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, RefreshControl,
-  TouchableOpacity, ActivityIndicator, Alert, Modal, Switch,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, RefreshControl,
+  TouchableOpacity, ActivityIndicator, Alert, Modal, Switch } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type ChemicalProduct = {
   id?: string;
@@ -157,7 +157,7 @@ export default function ChemicalProductsScreen() {
       <Header title="Chemical Products" subtitle="Catalog + unit costs" back />
 
       <View style={s.toolbar}>
-        <TextInput
+        <AppTextInput
           testID="chem-product-search"
           style={s.search}
           value={q}
@@ -262,7 +262,7 @@ export default function ChemicalProductsScreen() {
             </Text>
 
             <Text style={s.label}>Name *</Text>
-            <TextInput
+            <AppTextInput
               testID="chem-product-name"
               style={s.input}
               value={editing?.name || ""}
@@ -272,7 +272,7 @@ export default function ChemicalProductsScreen() {
             />
 
             <Text style={s.label}>SKU</Text>
-            <TextInput
+            <AppTextInput
               testID="chem-product-sku"
               style={s.input}
               value={editing?.sku || ""}
@@ -283,7 +283,7 @@ export default function ChemicalProductsScreen() {
             />
 
             <Text style={s.label}>Unit *</Text>
-            <TextInput
+            <AppTextInput
               testID="chem-product-unit"
               style={s.input}
               value={editing?.unit || ""}
@@ -295,7 +295,7 @@ export default function ChemicalProductsScreen() {
             />
 
             <Text style={s.label}>Unit cost (cents)</Text>
-            <TextInput
+            <AppTextInput
               testID="chem-product-cost"
               style={s.input}
               value={costCentsDraft}

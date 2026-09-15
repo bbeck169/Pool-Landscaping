@@ -2,7 +2,7 @@
 // Web: BusinessOS.jsx Sprints slice.
 // Backend: GET/POST /sprints, POST /sprints/{id}/retro-ai.
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TextInput, Pressable } from "react-native";
+import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
@@ -10,6 +10,7 @@ import { Card, Loading, EmptyState, PrimaryButton, Sheet } from "@/src/component
 import { Header, IconButton } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 function _weekStart(): string {
   const d = new Date();
@@ -124,9 +125,9 @@ export default function OsSprints() {
         </ScrollView>
         <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="New sprint" testID="os-sprints-sheet">
           <View style={{ gap: spacing.md, padding: spacing.lg }}>
-            <TextInput placeholder="Week start (YYYY-MM-DD)" value={draft.week_start} onChangeText={(t) => setDraft((d) => ({ ...d, week_start: t }))} style={styles.input} testID="os-sprints-input-week" />
-            <TextInput placeholder="Theme" value={draft.theme} onChangeText={(t) => setDraft((d) => ({ ...d, theme: t }))} style={styles.input} testID="os-sprints-input-theme" />
-            <TextInput placeholder="Goals (one per line)" value={draft.goals} onChangeText={(t) => setDraft((d) => ({ ...d, goals: t }))} multiline style={[styles.input, { minHeight: 80 }]} testID="os-sprints-input-goals" />
+            <AppTextInput placeholder="Week start (YYYY-MM-DD)" value={draft.week_start} onChangeText={(t) => setDraft((d) => ({ ...d, week_start: t }))} style={styles.input} testID="os-sprints-input-week" />
+            <AppTextInput placeholder="Theme" value={draft.theme} onChangeText={(t) => setDraft((d) => ({ ...d, theme: t }))} style={styles.input} testID="os-sprints-input-theme" />
+            <AppTextInput placeholder="Goals (one per line)" value={draft.goals} onChangeText={(t) => setDraft((d) => ({ ...d, goals: t }))} multiline style={[styles.input, { minHeight: 80 }]} testID="os-sprints-input-goals" />
             <PrimaryButton label={busy ? "Saving…" : "Save"} onPress={save} disabled={busy || !draft.week_start.trim()} testID="os-sprints-save" />
           </View>
         </Sheet>

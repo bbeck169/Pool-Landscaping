@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, Platform } from "react-native";
+import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
 
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function ForgotPassword() {
   const router = useRouter();
@@ -70,7 +71,7 @@ export default function ForgotPassword() {
             <Text style={styles.label}>EMAIL</Text>
             <View style={styles.inputRow}>
               <Ionicons name="mail-outline" size={18} color={colors.muted} />
-              <TextInput
+              <AppTextInput
                 testID="forgot-password-email"
                 style={styles.input}
                 placeholder="you@company.com"

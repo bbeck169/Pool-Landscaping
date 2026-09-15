@@ -16,8 +16,7 @@
 import React, { useCallback, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
-  TextInput, Platform,
-} from "react-native";
+  Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -25,6 +24,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type WeatherEvent = {
   id: string;
@@ -291,7 +291,7 @@ function EventCard({
           {overrideOpen ? (
             <View style={cardStyles.overrideBox}>
               <Text style={cardStyles.overrideLabel}>Override date (YYYY-MM-DD)</Text>
-              <TextInput
+              <AppTextInput
                 testID={`weather-override-input-${ev.id}`}
                 value={overrideDate}
                 onChangeText={onOverrideDate}

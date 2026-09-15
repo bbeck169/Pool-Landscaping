@@ -1,15 +1,14 @@
 /** Phase 17A · Mobile — Rank Heatmap: form + table view (graph is desktop-only). */
 import React, { useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { AdminOnlyGate, DesktopHint, BrandPill, CenterLoader } from "./_shared";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function RankHeatmapMobile() {
   return (
@@ -76,21 +75,21 @@ function Inner() {
         <DesktopHint text="Map overlay is best viewed on desktop. Mobile shows a compact table view." />
 
         <Text style={styles.label}>Keyword</Text>
-        <TextInput style={styles.input} value={keyword}
+        <AppTextInput style={styles.input} value={keyword}
                     autoCapitalize="none"
                     onChangeText={setKeyword}
                     testID="heatmap-keyword" />
         <View style={{ flexDirection: "row", gap: spacing.md }}>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Latitude</Text>
-            <TextInput style={styles.input} value={lat}
+            <AppTextInput style={styles.input} value={lat}
                         keyboardType="numbers-and-punctuation"
                         onChangeText={setLat}
                         testID="heatmap-lat" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Longitude</Text>
-            <TextInput style={styles.input} value={lng}
+            <AppTextInput style={styles.input} value={lng}
                         keyboardType="numbers-and-punctuation"
                         onChangeText={setLng}
                         testID="heatmap-lng" />
@@ -99,14 +98,14 @@ function Inner() {
         <View style={{ flexDirection: "row", gap: spacing.md }}>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Grid (per side)</Text>
-            <TextInput style={styles.input} value={grid}
+            <AppTextInput style={styles.input} value={grid}
                         keyboardType="number-pad"
                         onChangeText={setGrid}
                         testID="heatmap-grid" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Radius (mi)</Text>
-            <TextInput style={styles.input} value={radiusMi}
+            <AppTextInput style={styles.input} value={radiusMi}
                         keyboardType="numbers-and-punctuation"
                         onChangeText={setRadiusMi}
                         testID="heatmap-radius" />

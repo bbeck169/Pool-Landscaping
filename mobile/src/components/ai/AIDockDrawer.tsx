@@ -4,9 +4,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
-  ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Modal, Alert,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Modal, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -17,6 +15,7 @@ import {
   listPendingActions, approveAction, rejectAction,
   AIEmployee, AIAction,
 } from "@/src/api/aiDock";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Msg = { id: string; role: "user" | "assistant"; text: string };
 
@@ -296,7 +295,7 @@ function ChatView({ employee, onBack, insets, refreshBalance }: { employee: AIEm
         }
       />
       <View style={[styles.composer, { paddingBottom: insets.bottom || 12 }]}>
-        <TextInput
+        <AppTextInput
           testID="ai-dock-input"
           style={styles.composerInput}
           value={input}

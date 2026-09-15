@@ -11,11 +11,11 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, Pressable, TextInput, ScrollView, ActivityIndicator, StyleSheet,
-} from "react-native";
+  View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type QnAAnswer = {
   answer: string;
@@ -122,7 +122,7 @@ export default function QnAPanel({ period, onUsageChange, onContextSnapshot }: Q
         </Pressable>
       </View>
 
-      <TextInput
+      <AppTextInput
         multiline
         numberOfLines={4}
         editable={!busy}

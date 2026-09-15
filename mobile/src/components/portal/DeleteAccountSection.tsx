@@ -16,10 +16,7 @@
  * because Android's Alert has no inline ``TextInput`` support.
  */
 import React, { useState } from "react";
-import {
-  View, Text, StyleSheet, Pressable, Modal,
-  ActivityIndicator, Alert,
-} from "react-native";
+import { View, Text, StyleSheet, Pressable, Modal, ActivityIndicator, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";

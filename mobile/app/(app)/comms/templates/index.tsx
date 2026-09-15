@@ -10,11 +10,9 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  RefreshControl,
-} from "react-native";
+  RefreshControl } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -22,6 +20,7 @@ import { Header } from "@/src/components/widgets";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { listEmailTemplates, listSmsTemplates } from "@/src/api/comms";
 import ChannelIcon from "@/src/components/comms/ChannelIcon";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function CommsTemplatesListScreen() {
   const router = useRouter();
@@ -157,7 +156,7 @@ export default function CommsTemplatesListScreen() {
       {/* Search */}
       <View style={styles.searchWrap}>
         <Ionicons name="search-outline" size={16} color={colors.muted} />
-        <TextInput
+        <AppTextInput
           testID="comms-templates-search"
           style={styles.searchInput}
           value={q}

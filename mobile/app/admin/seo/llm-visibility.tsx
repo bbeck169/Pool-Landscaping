@@ -1,9 +1,7 @@
 /** Phase 17B · Mobile — LLM Visibility: Queries tab + Dashboard tab. */
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  Alert, ActivityIndicator,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, Pressable, Alert, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -12,6 +10,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { showConfirm } from "@/src/components/ConfirmModal";
 import { AdminOnlyGate, BrandPill, CenterLoader } from "./_shared";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Tab = "queries" | "dashboard";
 
@@ -145,15 +144,15 @@ function Inner() {
             {showNew && (
               <View style={styles.newQueryBox}>
                 <Text style={styles.label}>Query text</Text>
-                <TextInput style={styles.input} value={qText}
+                <AppTextInput style={styles.input} value={qText}
                             onChangeText={setQText}
                             testID="llm-new-text" />
                 <Text style={styles.label}>Expected brand</Text>
-                <TextInput style={styles.input} value={brand}
+                <AppTextInput style={styles.input} value={brand}
                             onChangeText={setBrand}
                             testID="llm-new-brand" />
                 <Text style={styles.label}>Category</Text>
-                <TextInput style={styles.input} value={category}
+                <AppTextInput style={styles.input} value={category}
                             onChangeText={setCategory}
                             testID="llm-new-category" />
                 <View style={{ flexDirection: "row", gap: spacing.sm,

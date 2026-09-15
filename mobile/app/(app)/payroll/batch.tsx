@@ -17,7 +17,7 @@
  *   POST /api/checks/payroll/import-csv?bank_account_id=...&execute=false|true
  */
 import React, { useCallback, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, ActivityIndicator, TextInput, Linking, Platform, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, Linking, Platform, StyleSheet } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
@@ -26,6 +26,7 @@ import { api, api_base } from '@/src/api';
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from '@/src/theme';
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Bank = { id: string; nickname: string; bank_name?: string; account_number_last4?: string; current_balance?: number };
 type Payee = { id: string; name: string; kind?: string };
@@ -288,7 +289,7 @@ function BatchTab({ bankId, payees, onDone }: { bankId: string; payees: Payee[];
               <View style={batchStyles.fieldRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={batchStyles.fieldLabel}>AMOUNT</Text>
-                  <TextInput
+                  <AppTextInput
                     value={l.amount}
                     onChangeText={(v) => updateLine(l.id, { amount: v })}
                     keyboardType="decimal-pad"
@@ -300,7 +301,7 @@ function BatchTab({ bankId, payees, onDone }: { bankId: string; payees: Payee[];
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={batchStyles.fieldLabel}>DATE</Text>
-                  <TextInput
+                  <AppTextInput
                     value={l.date}
                     onChangeText={(v) => updateLine(l.id, { date: v })}
                     placeholder="YYYY-MM-DD"
@@ -313,7 +314,7 @@ function BatchTab({ bankId, payees, onDone }: { bankId: string; payees: Payee[];
                 </View>
               </View>
               <Text style={batchStyles.fieldLabel}>MEMO (OPTIONAL)</Text>
-              <TextInput
+              <AppTextInput
                 value={l.memo}
                 onChangeText={(v) => updateLine(l.id, { memo: v })}
                 placeholder="e.g. May payroll"

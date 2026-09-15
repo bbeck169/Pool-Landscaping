@@ -10,10 +10,9 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Alert, RefreshControl, Image, KeyboardAvoidingView,
-  Platform,
-} from "react-native";
+  Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -31,6 +30,7 @@ import {
 } from "@/src/api/businessSettings";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -360,7 +360,7 @@ function Field({
   return (
     <View style={s.fieldWrap}>
       <Text style={s.fieldLabel}>{label}</Text>
-      <TextInput
+      <AppTextInput
         style={[s.fieldInput, multiline && { minHeight: 68, textAlignVertical: "top" }, error && { borderColor: colors.error }]}
         value={value}
         onChangeText={onChangeText}
@@ -388,7 +388,7 @@ function ColorField({
       <Text style={s.fieldLabel}>{label}</Text>
       <View style={s.colorRow}>
         <View style={[s.colorSwatch, { backgroundColor: display }]} testID={`${testID}-swatch`} />
-        <TextInput
+        <AppTextInput
           style={[s.fieldInput, { flex: 1 }, error && { borderColor: colors.error }]}
           value={value}
           onChangeText={onChangeText}

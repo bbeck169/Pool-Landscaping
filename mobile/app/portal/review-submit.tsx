@@ -14,14 +14,14 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, TextInput, Linking, Platform,
-  ScrollView, ActivityIndicator,
-} from "react-native";
+  View, Text, StyleSheet, Pressable, Linking, Platform,
+  ScrollView, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type RequestData = {
   company_name?: string;
@@ -238,7 +238,7 @@ export default function ReviewSubmitScreen() {
         <Text style={s.commentLabel}>
           {stars >= 4 ? "Anything you'd like to add? (optional)" : "Tell us what we can improve"}
         </Text>
-        <TextInput
+        <AppTextInput
           testID="review-comment-input"
           style={s.commentInput}
           placeholder="Your feedback…"

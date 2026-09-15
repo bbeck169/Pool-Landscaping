@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform, Alert } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -21,6 +21,7 @@ import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import CreditsBudgetChip from "@/src/components/ai/CreditsBudgetChip";
 import EbitTile from "@/src/components/dashboard/EbitTile";
 import RevenueForecastTile from "@/src/components/dashboard/RevenueForecastTile";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -393,7 +394,7 @@ function MaintenanceDigest({ onOpen }: { onOpen: () => void }) {
             </Pressable>
           ))}
         </View>
-        <TextInput style={styles.bulkInput} value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} testID="digest-date-input" />
+        <AppTextInput style={styles.bulkInput} value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} testID="digest-date-input" />
         <Text style={styles.bulkLabel}>Assign technician</Text>
         <View style={styles.bulkPresetRow}>
           <Pressable style={[styles.bulkPreset, !tech && styles.bulkPresetOn]} onPress={() => setTech(null)} testID="digest-tech-none">
@@ -502,7 +503,7 @@ function ReadyToSchedule({ onOpenQuote }: { onOpenQuote: (id: string) => void })
                 </Pressable>
               ))}
             </View>
-            <TextInput style={styles.bulkInput} value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} testID="rts-date-input" />
+            <AppTextInput style={styles.bulkInput} value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} testID="rts-date-input" />
             <Text style={styles.bulkLabel}>Assign technician</Text>
             <View style={styles.bulkPresetRow}>
               <Pressable style={[styles.bulkPreset, !tech && styles.bulkPresetOn]} onPress={() => setTech(null)} testID="rts-tech-none">

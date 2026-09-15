@@ -8,9 +8,7 @@
  */
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
-  ActivityIndicator, Alert, Linking, RefreshControl, Modal, KeyboardAvoidingView, Platform,
-} from "react-native";
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Linking, RefreshControl, Modal, KeyboardAvoidingView, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -19,6 +17,7 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
   // Phase 34 · Task CC: 5 canonical snake_case statuses
@@ -288,7 +287,7 @@ export default function LeadDetailScreen() {
         {/* Notes */}
         <View style={st.card}>
           <Text style={st.sectionLabel}>ADD NOTE</Text>
-          <TextInput
+          <AppTextInput
             style={st.noteInput}
             value={noteText}
             onChangeText={setNoteText}
@@ -325,7 +324,7 @@ export default function LeadDetailScreen() {
           <View style={st.modalCard}>
             <Text style={st.modalTitle}>Close as Lost</Text>
             <Text style={st.modalDesc}>Why did we lose this lead? (min 3 chars)</Text>
-            <TextInput
+            <AppTextInput
               style={st.modalInput}
               value={lostReason}
               onChangeText={setLostReason}

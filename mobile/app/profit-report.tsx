@@ -13,8 +13,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable,
-  ActivityIndicator, Alert, Platform, TextInput,
-} from "react-native";
+  ActivityIndicator, Alert, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as FileSystemLegacy from "expo-file-system/legacy";
 import * as SharingModule from "expo-sharing";
@@ -25,6 +24,7 @@ import { useLocalSearchParams } from "expo-router";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import EbitPanel from "@/src/components/admin/EbitPanel";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const RANGE_OPTIONS = [
   { key: "this_month", label: "This Month" },
@@ -208,7 +208,7 @@ export default function ProfitReport() {
             <View style={styles.customRow} testID="profit-report-custom-picker">
               <View style={{ flex: 1 }}>
                 <Text style={styles.dateLabel}>FROM</Text>
-                <TextInput
+                <AppTextInput
                   style={styles.dateInput}
                   placeholder="YYYY-MM-DD"
                   placeholderTextColor={colors.muted}
@@ -219,7 +219,7 @@ export default function ProfitReport() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.dateLabel}>TO</Text>
-                <TextInput
+                <AppTextInput
                   style={styles.dateInput}
                   placeholder="YYYY-MM-DD"
                   placeholderTextColor={colors.muted}
