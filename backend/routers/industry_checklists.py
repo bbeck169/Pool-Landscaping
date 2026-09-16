@@ -40,8 +40,15 @@ router = APIRouter()
 
 # ─── Canonical industry slugs ────────────────────────────────────────
 INDUSTRY_SLUGS = (
+    # ── Phase MI1 · Feb 2026 ── original 7 ─────────────────────────
     "pool", "landscaping", "hvac", "pest_control",
     "cleaning", "solar", "handyman",
+    # ── Phase D1 · Feb 2026 ── +16 = 23 total ──────────────────────
+    "plumbing", "electrical", "roofing", "painting",
+    "garage_door", "appliance_repair", "locksmith",
+    "chimney_sweep", "gutter", "window_cleaning",
+    "carpet_cleaning", "pressure_washing", "tree_service",
+    "snow_removal", "fencing", "irrigation",
 )
 
 
@@ -96,6 +103,12 @@ DEFAULT_TEMPLATES: Dict[str, List[Dict[str, Any]]] = {
         {"key": "documented_pest_activity",  "label": "Documented pest activity",           "required": True},
         {"key": "applied_granular_soil",     "label": "Applied granular treatment to soil", "required": False},
         {"key": "placed_monitoring_devices", "label": "Placed monitoring devices",          "required": False},
+        # Phase D1 · Feb 2026 — legally-critical additions. Most
+        # states require the applicator to log EPA reg # + amount
+        # for each product AND to notify the customer of the
+        # re-entry interval before leaving the site.
+        {"key": "documented_products_epa",   "label": "Products applied documented (EPA reg # + amount)", "required": True},
+        {"key": "informed_reentry_time",     "label": "Client informed of re-entry time",   "required": True},
     ],
     "cleaning": [
         {"key": "high_dusted_surfaces",      "label": "High-dusted surfaces",               "required": False},
@@ -125,6 +138,142 @@ DEFAULT_TEMPLATES: Dict[str, List[Dict[str, Any]]] = {
         {"key": "cleaned_work_area",         "label": "Cleaned work area",                  "required": True},
         {"key": "reviewed_with_customer",    "label": "Reviewed completed work with customer","required": False},
         {"key": "documented_before_after",   "label": "Documented before/after photos",     "required": False},
+    ],
+    # ═══════════════════════════════════════════════════════════════
+    # Phase D1 · Feb 2026 — 16 new industry defaults.
+    # Every template stays 5-7 rows; required=True is reserved for
+    # rows that carry safety / legal / warranty exposure so admins
+    # can override the visual list without accidentally softening
+    # a compliance gate.
+    # ═══════════════════════════════════════════════════════════════
+    "plumbing": [
+        {"key": "shutoff_valve_tested",     "label": "Shut-off valve tested",              "required": False},
+        {"key": "water_pressure_checked",   "label": "Water pressure checked (PSI)",       "required": False},
+        {"key": "fixtures_inspected_leaks", "label": "Fixtures inspected for leaks",       "required": True},
+        {"key": "drain_flow_verified",      "label": "Drain flow verified",                "required": False},
+        {"key": "water_heater_inspected",   "label": "Water heater inspected",             "required": False},
+        {"key": "parts_materials_documented","label": "Parts / materials used documented", "required": False},
+    ],
+    "electrical": [
+        {"key": "panel_labeled_accessible", "label": "Panel labeled & accessible",         "required": True},
+        {"key": "voltage_readings_recorded","label": "Voltage readings recorded",          "required": False},
+        {"key": "gfci_afci_tested",         "label": "GFCI / AFCI outlets tested",         "required": True},
+        {"key": "wiring_inspected_damage",  "label": "Wiring inspected for damage",        "required": False},
+        {"key": "grounding_verified",       "label": "Grounding verified",                 "required": False},
+        {"key": "circuits_load_tested",     "label": "Circuits load-tested",               "required": False},
+        {"key": "client_walkthrough_done",  "label": "Client walk-through completed",      "required": False},
+    ],
+    "roofing": [
+        {"key": "roof_surface_inspection",  "label": "Roof surface inspection",            "required": False},
+        {"key": "flashings_penetrations",   "label": "Flashings & penetrations checked",   "required": True},
+        {"key": "gutters_drainage_clear",   "label": "Gutters / drainage clear",           "required": False},
+        {"key": "attic_ventilation",        "label": "Attic ventilation verified",         "required": False},
+        {"key": "debris_removed",           "label": "Debris removed",                     "required": False},
+        {"key": "trouble_spots_photos",     "label": "Photos of trouble spots captured",   "required": True},
+        {"key": "warranty_items_noted",     "label": "Warranty items noted",               "required": False},
+    ],
+    "painting": [
+        {"key": "surface_prep_completed",   "label": "Surface prep completed",             "required": True},
+        {"key": "primer_applied",           "label": "Primer applied where needed",        "required": False},
+        {"key": "coat_count_documented",    "label": "Coat count documented",              "required": False},
+        {"key": "trim_edging_completed",    "label": "Trim / edging completed",            "required": False},
+        {"key": "cleanup_completed",        "label": "Cleanup completed",                  "required": False},
+        {"key": "client_walkthrough_signoff","label": "Client walk-through & sign-off",    "required": True},
+    ],
+    "garage_door": [
+        {"key": "springs_cables_inspected", "label": "Springs & cables inspected",         "required": True},
+        {"key": "opener_force_tested",      "label": "Opener force setting tested",        "required": True},
+        {"key": "safety_sensors_aligned",   "label": "Safety sensors aligned & tested",    "required": True},
+        {"key": "rollers_hinges_lubed",     "label": "Rollers & hinges lubed",             "required": False},
+        {"key": "weather_seal_condition",   "label": "Weather seal condition",             "required": False},
+        {"key": "manual_release_tested",    "label": "Manual release tested",              "required": False},
+    ],
+    "appliance_repair": [
+        {"key": "model_serial_recorded",    "label": "Model / serial recorded",            "required": False},
+        {"key": "symptom_reproduced",       "label": "Symptom reproduced",                 "required": False},
+        {"key": "parts_replaced_documented","label": "Parts replaced documented",          "required": False},
+        {"key": "voltage_continuity",       "label": "Voltage / continuity readings",      "required": False},
+        {"key": "function_tested_postrepair","label": "Function tested post-repair",       "required": True},
+        {"key": "client_demoed_operation",  "label": "Client demoed operation",            "required": False},
+    ],
+    "locksmith": [
+        {"key": "lock_type_make_recorded",  "label": "Lock type & make recorded",          "required": False},
+        {"key": "keys_cut_rekeyed_count",   "label": "Keys cut / rekeyed count",           "required": False},
+        {"key": "deadbolt_verified",        "label": "Deadbolt operation verified",        "required": True},
+        {"key": "master_sub_keys_docs",     "label": "Master / sub keys documented if applicable", "required": False},
+        {"key": "client_id_verified",       "label": "Client ID verification completed",   "required": True},
+    ],
+    "chimney_sweep": [
+        {"key": "firebox_smoke_chamber",    "label": "Firebox & smoke chamber inspected",  "required": True},
+        {"key": "creosote_level_noted",     "label": "Creosote level noted (0/1/2/3)",     "required": False},
+        {"key": "cap_crown_inspected",      "label": "Cap & crown inspected",              "required": False},
+        {"key": "damper_operation",         "label": "Damper operation tested",            "required": False},
+        {"key": "ash_debris_removed",       "label": "Ash / debris removed",               "required": False},
+        {"key": "draft_test_performed",     "label": "Draft test performed",               "required": False},
+    ],
+    "gutter": [
+        {"key": "debris_cleared_runs",      "label": "Debris cleared from runs",           "required": False},
+        {"key": "downspouts_flushed",       "label": "Downspouts flushed",                 "required": False},
+        {"key": "flow_verified_outlets",    "label": "Flow verified at outlets",           "required": False},
+        {"key": "hangers_brackets",         "label": "Hangers / brackets inspected",       "required": False},
+        {"key": "fascia_condition",         "label": "Fascia condition noted",             "required": False},
+        {"key": "screens_guards_checked",   "label": "Screens / guards checked if installed", "required": False},
+    ],
+    "window_cleaning": [
+        {"key": "exterior_glass_cleaned",   "label": "Exterior glass cleaned",             "required": False},
+        {"key": "interior_glass_cleaned",   "label": "Interior glass cleaned",             "required": False},
+        {"key": "screens_removed_cleaned",  "label": "Screens removed & cleaned",          "required": False},
+        {"key": "sills_tracks_wiped",       "label": "Sills & tracks wiped",               "required": False},
+        {"key": "cracks_seal_issues",       "label": "Cracks / seal issues noted",         "required": False},
+        {"key": "streak_spot_recheck",      "label": "Streak / spot re-check completed",   "required": False},
+    ],
+    "carpet_cleaning": [
+        {"key": "pretreatment_applied",     "label": "Pre-treatment applied",              "required": False},
+        {"key": "hot_water_extraction",     "label": "Hot-water extraction completed",     "required": False},
+        {"key": "spot_stain_treatments",    "label": "Spot / stain treatments logged",     "required": False},
+        {"key": "furniture_moved_restored", "label": "Furniture moved / restored",         "required": False},
+        {"key": "drying_time_communicated", "label": "Drying time communicated to client", "required": False},
+        {"key": "damage_noted_preservice",  "label": "Damage noted pre-service",           "required": True},
+    ],
+    "pressure_washing": [
+        {"key": "psi_setting_recorded",     "label": "PSI setting recorded",               "required": False},
+        {"key": "detergent_documented",     "label": "Detergent / chemicals used documented", "required": False},
+        {"key": "surface_types_cleaned",    "label": "Surface types cleaned",              "required": False},
+        {"key": "runoff_drainage_plan",     "label": "Runoff / drainage plan followed",    "required": True},
+        {"key": "damage_noted_preservice_pw","label": "Damage noted pre-service",          "required": False},
+        {"key": "final_rinse_completed",    "label": "Final rinse completed",              "required": False},
+    ],
+    "tree_service": [
+        {"key": "trees_serviced_species",   "label": "Trees serviced (species / count)",   "required": False},
+        {"key": "work_performed_type",      "label": "Work performed (trim / removal / stump)", "required": False},
+        {"key": "debris_hauled_chipped",    "label": "Debris hauled or chipped",           "required": False},
+        {"key": "drop_zone_verified",       "label": "Property protection / drop-zone verified", "required": True},
+        {"key": "overhead_line_clearance",  "label": "Overhead line clearance verified",   "required": True},
+        {"key": "client_walkthrough_tree",  "label": "Client walk-through",                "required": False},
+    ],
+    "snow_removal": [
+        {"key": "areas_cleared_documented", "label": "Areas cleared documented",           "required": False},
+        {"key": "deicer_applied",           "label": "De-icer applied (product & amount)", "required": False},
+        {"key": "site_conditions_arrival",  "label": "Site conditions on arrival",         "required": False},
+        {"key": "site_conditions_departure","label": "Site conditions on departure",       "required": False},
+        {"key": "photos_property_damage",   "label": "Photos taken (required if property damage)", "required": True},
+        {"key": "hazards_noted",            "label": "Hazards noted",                      "required": False},
+    ],
+    "fencing": [
+        {"key": "posts_set_plumb",          "label": "Posts set / verified plumb",         "required": False},
+        {"key": "rails_pickets",            "label": "Rails & pickets installed / repaired","required": False},
+        {"key": "gate_operation_tested",    "label": "Gate operation tested",              "required": False},
+        {"key": "hardware_installed",       "label": "Hardware installed",                 "required": False},
+        {"key": "debris_cleaned_fence",     "label": "Debris cleaned up",                  "required": False},
+        {"key": "client_walkthrough_fence", "label": "Client walk-through & sign-off",     "required": True},
+    ],
+    "irrigation": [
+        {"key": "zones_cycled_tested",      "label": "All zones cycled & tested",          "required": True},
+        {"key": "heads_adjusted_aligned",   "label": "Heads adjusted & aligned",           "required": False},
+        {"key": "leaks_breaks_noted",       "label": "Leaks / breaks noted",               "required": False},
+        {"key": "controller_programmed",    "label": "Controller programmed & documented", "required": False},
+        {"key": "backflow_tested",          "label": "Backflow tested (required if applicable)", "required": True},
+        {"key": "winterize_step_logged",    "label": "Winterize / de-winterize step logged","required": False},
     ],
 }
 
@@ -261,9 +410,21 @@ def derive_industry_for_job(job: Optional[Dict[str, Any]],
             str(job.get(k) or "") for k in ("service_type", "job_type", "title")
         ).lower()
         keyword_map = [
-            # Order matters — narrower matches win before broader
-            # ones. e.g. "Solar Panel Cleaning" must resolve to
-            # ``solar``, not ``cleaning``.
+            # ═══════════════════════════════════════════════════════
+            # Phase D1 · Feb 2026 — 16 new industries.
+            # Ordering rule: compound keywords must match BEFORE
+            # their component words. e.g. "Window Cleaning" must
+            # resolve to ``window_cleaning``, NOT ``cleaning``.
+            # ═══════════════════════════════════════════════════════
+            # Compound / multi-word matches — narrowest first.
+            ("garage door", "garage_door"), ("garage-door", "garage_door"),
+            ("chimney", "chimney_sweep"),
+            ("window clean", "window_cleaning"), ("window wash", "window_cleaning"),
+            ("carpet", "carpet_cleaning"),
+            ("pressure wash", "pressure_washing"), ("power wash", "pressure_washing"),
+            ("tree", "tree_service"),
+            ("snow", "snow_removal"),
+            # Original Phase-MI1 industries — order preserved.
             ("solar", "solar"), ("pv panel", "solar"), ("photovoltaic", "solar"),
             ("hvac", "hvac"), ("heating", "hvac"), ("cooling", "hvac"),
             ("air conditioning", "hvac"),
@@ -272,6 +433,19 @@ def derive_industry_for_job(job: Optional[Dict[str, Any]],
             ("landscape", "landscaping"), ("landscap", "landscaping"),
             ("mowing", "landscaping"), ("lawn", "landscaping"),
             ("pool", "pool"), ("chem", "pool"),
+            # Phase D1 · single-keyword new industries. Placed AFTER
+            # the pool / solar / cleaning-compound matches so an
+            # "electrical solar panel install" still resolves to
+            # ``solar`` (electrical is the trade, solar is the product).
+            ("appliance", "appliance_repair"),
+            ("locksmith", "locksmith"), ("rekey", "locksmith"),
+            ("plumb", "plumbing"),
+            ("electric", "electrical"),
+            ("roof", "roofing"),
+            ("paint", "painting"),
+            ("gutter", "gutter"),
+            ("fenc", "fencing"),
+            ("irrigat", "irrigation"), ("sprinkler", "irrigation"),
             # Broader matches last so they don't preempt an industry
             # keyword earlier in the string.
             ("clean", "cleaning"), ("janitorial", "cleaning"),
