@@ -3,7 +3,11 @@
 Builds the concise SMS sent to the customer when a tech submits a
 service report. Pure function; no I/O.
 
-Template:
+Template (Phase D5 · Feb-2026):
+    Loaded via :func:`services.i18n_notifications.resolve_notification_body`
+    using the ``completion_sms`` template key. The English source text
+    is byte-identical to the pre-D5 wording:
+
     ``Hi {first}, your {title} with {business} is complete!
     View your full report and photos here: {portal_link}``
 
@@ -90,11 +94,61 @@ def build_completion_sms_body(
 
     Callers keep the ``portal_link`` builder they already had — this
     helper does not touch magic-link JWT construction.
+
+    Phase D5 · Feb-2026 — the body is now resolved through the i18n
+    loader with locale priority: ``customer.locale`` → ``tenant.default_locale``
+    → ``en``. English wording is byte-identical to the pre-D5 output.
+
+    Non-fatal fallback: if the loader raises (missing files, missing
+    merge var, etc.) we log a WARN and fall back to the pre-D5 inline
+    English composition so a template-tree bug can never blank an
+    outbound SMS.
     """
     first = _pick_first_name(customer)
     title = _pick_job_title(job)
     business = _pick_business_name(tenant)
-    return (
-        f"Hi {first}, your {title} with {business} is complete! "
-        f"View your full report and photos here: {portal_link}"
-    )
+
+    try:
+        # Local import so hot-reload picks up template file edits
+        # without a supervisor restart (matches marketing_templates
+        # DB seed semantics — files are cached, not the loader
+        # module).
+        from services.i18n_notifications import (
+            SMS_GSM7_SEGMENT_CHARS,
+            resolve_notification_body,
+            resolve_recipient_locale,
+            sms_segment_count,
+        )
+        import logging as _logging
+
+        locale = resolve_recipient_locale(
+            customer=customer, tenant=tenant, audience="customer",
+        )
+        rendered = resolve_notification_body(
+            "completion_sms", locale,
+            context={
+                "first_name": first,
+                "job_title": title,
+                "business_name": business,
+                "portal_link": portal_link,
+            },
+        )
+        body = rendered["body_text"].rstrip("\n")
+        seg_count = sms_segment_count(body)
+        if seg_count > 1:
+            _logging.getLogger("i18n_notifications").warning(
+                "[i18n-sms] completion_sms locale=%s segments=%d "
+                "chars=%d exceeds %d — multi-segment send",
+                locale, seg_count, len(body), SMS_GSM7_SEGMENT_CHARS,
+            )
+        return body
+    except Exception as exc:  # noqa: BLE001 — never blank the SMS
+        import logging as _logging
+        _logging.getLogger("i18n_notifications").warning(
+            "[i18n-sms] completion_sms fallback to inline English: "
+            "%s: %s", type(exc).__name__, str(exc)[:200],
+        )
+        return (
+            f"Hi {first}, your {title} with {business} is complete! "
+            f"View your full report and photos here: {portal_link}"
+        )

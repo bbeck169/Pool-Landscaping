@@ -1,0 +1,1 @@
+Bonjour {first_name}, votre {job_title} avec {business_name} est terminé. Consultez le rapport complet et les photos ici : {portal_link}

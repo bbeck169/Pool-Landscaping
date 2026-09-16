@@ -1,0 +1,11 @@
+{business_name}
+Service visit summary
+
+Hi {customer_first_name},
+
+Thank you for choosing {business_name}. Here is a recap of the service visit completed on {visit_date}.
+
+View your full report, water chemistry readings, and visit photos:
+{portal_link}
+
+This is an automatic recap of the customer-facing portion of your visit. Internal service notes are not included.

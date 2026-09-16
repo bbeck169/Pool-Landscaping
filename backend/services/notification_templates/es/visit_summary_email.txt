@@ -1,0 +1,11 @@
+{business_name}
+Resumen de la visita de servicio
+
+Hola {customer_first_name}:
+
+Gracias por elegir a {business_name}. A continuación encontrará un resumen de la visita de servicio realizada el {visit_date}.
+
+Consulte el informe completo, las lecturas químicas del agua y las fotos de la visita:
+{portal_link}
+
+Este es un resumen automático de la parte de la visita destinada al cliente. Las notas internas de servicio no están incluidas.

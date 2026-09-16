@@ -4079,6 +4079,58 @@ async def patch_customer_vip(cid: str, body: _VipToggle,
     return fresh
 
 
+# ─── Phase D5 · Feb-2026 — Customer locale patch ───────────────────
+class _LocalePatch(BaseModel):
+    """Body for ``PATCH /api/customers/{cid}/locale``.
+
+    Whitelisted to the D5 locale set (``en`` / ``es`` / ``fr``).
+    Passing ``None`` explicitly clears the field so the tenant
+    default (or the ultimate ``en`` fallback) takes over.
+    """
+    locale: Optional[str] = None
+
+
+@router.patch("/customers/{cid}/locale")
+async def patch_customer_locale(cid: str, body: _LocalePatch,
+                                    user: dict = Depends(require_admin),
+                                    tenant: dict = Depends(get_current_tenant)):
+    """Phase D5 · Feb-2026 — set / clear the customer's outbound
+    notification locale.
+
+    Locale drives every customer-facing email + SMS body's language
+    (see :mod:`services.i18n_notifications`). Admin scope only —
+    customers should NOT be able to change their own locale via the
+    portal until we've hardened the resolver's fallback chain in a
+    later phase.
+    """
+    from services.i18n_notifications import SUPPORTED_LOCALES
+    raw = body.locale
+    if raw is not None:
+        loc = str(raw).strip().lower()
+        if loc not in SUPPORTED_LOCALES:
+            raise HTTPException(422, detail={
+                "code": "invalid_locale",
+                "supported": sorted(SUPPORTED_LOCALES),
+                "received": raw,
+            })
+        new_value = loc
+    else:
+        new_value = None
+    existing = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1},
+    )
+    if not existing:
+        raise HTTPException(404, "Customer not found")
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"$set": {"locale": new_value, "updated_at": now_iso()}},
+    )
+    return {"customer_id": cid, "locale": new_value}
+
+
+
+
+
 @router.patch("/customers/{cid}/mobiles")
 async def patch_customer_mobiles(cid: str, body: _MobilesUpdate,
                                   user: dict = Depends(require_admin),

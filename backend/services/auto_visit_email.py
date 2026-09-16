@@ -392,7 +392,45 @@ def render_email(
     kind = (sr.get("kind") or job.get("service_type") or "pool").lower()
     is_landscape = "landscape" in kind or "landscap" in kind
     visit_date = _visit_date_formatted(sr, job)
-    subject = f"Your {company} service visit — {visit_date}"
+    # Phase D5 · Feb-2026 — subject line resolves through the i18n
+    # loader so a customer with ``locale="es"`` receives a Spanish
+    # subject even though the body sections below remain composed in
+    # English. Body-section i18n is deferred to a follow-up (D6). If
+    # the loader fails for any reason (missing template, missing
+    # merge var, etc.) we fall back to the pre-D5 English wording so
+    # a template-tree bug can never blank an outbound subject.
+    try:
+        from services.i18n_notifications import (
+            resolve_notification_body as _resolve_body,
+            resolve_recipient_locale as _resolve_loc,
+        )
+        _locale = _resolve_loc(
+            customer=customer, tenant=tenant, audience="customer",
+        )
+        _rendered = _resolve_body(
+            "visit_summary_email", _locale,
+            context={
+                "business_name": company,
+                "visit_date": visit_date,
+                # NB: the HTML/text bodies are NOT consumed here yet
+                # (we still use the dynamic composer below), but
+                # both files exist and are placeholder-parity checked
+                # so a future D6 wire-through has a stable target.
+                "customer_first_name": (
+                    (customer.get("first_name")
+                     or (customer.get("name") or "").split(" ")[0]
+                     or "").strip() or "there"
+                ),
+                "portal_link": "",  # unused for subject render
+            },
+        )
+        subject = _rendered["subject"]
+    except Exception as _i18n_exc:  # noqa: BLE001
+        logger.warning(
+            "[i18n-email] visit_summary_email subject fallback: %s: %s",
+            type(_i18n_exc).__name__, str(_i18n_exc)[:200],
+        )
+        subject = f"Your {company} service visit — {visit_date}"
 
     if is_landscape:
         sections = _landscape_body_sections(sr)

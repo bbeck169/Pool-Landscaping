@@ -1,0 +1,1 @@
+Hi {customer_first_name} — {business_name} needs a card on file for your account. Add it here (link expires in 7 days): {add_card_link}

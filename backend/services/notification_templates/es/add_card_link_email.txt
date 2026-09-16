@@ -1,0 +1,10 @@
+Hola {customer_first_name}:
+
+Para mantener su servicio al día, le pedimos que agregue una tarjeta a su cuenta con {business_name}.
+
+Agregar una tarjeta es rápido, seguro y solo lleva un minuto. Use este enlace seguro:
+{add_card_link}
+
+Este enlace seguro expira en 7 días. Si tiene alguna pregunta, responda a este mensaje.
+
+— El equipo de {business_name}

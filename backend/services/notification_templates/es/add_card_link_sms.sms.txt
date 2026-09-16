@@ -1,0 +1,1 @@
+Hola {customer_first_name}: {business_name} necesita una tarjeta en su cuenta. Agréguela aquí (expira en 7 días): {add_card_link}

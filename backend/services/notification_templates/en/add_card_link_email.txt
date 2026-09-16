@@ -1,0 +1,10 @@
+Hi {customer_first_name},
+
+To keep your service on schedule, please add a card on file with {business_name}.
+
+Adding a card is quick, secure, and only takes a minute. Use this secure link:
+{add_card_link}
+
+This secure link expires in 7 days. If you have any questions, just reply to this email.
+
+— The {business_name} team

@@ -1,0 +1,1 @@
+Hi {first_name}, your {job_title} with {business_name} is complete! View your full report and photos here: {portal_link}

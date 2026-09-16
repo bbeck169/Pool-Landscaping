@@ -1,0 +1,11 @@
+{business_name}
+Résumé de la visite de service
+
+Bonjour {customer_first_name},
+
+Merci d'avoir choisi {business_name}. Voici le récapitulatif de la visite de service effectuée le {visit_date}.
+
+Consultez le rapport complet, les mesures chimiques de l'eau et les photos de la visite :
+{portal_link}
+
+Ceci est un récapitulatif automatique de la partie de la visite destinée au client. Les notes de service internes ne sont pas incluses.

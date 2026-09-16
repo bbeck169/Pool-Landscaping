@@ -1,0 +1,10 @@
+Bonjour {customer_first_name},
+
+Pour maintenir votre service à jour, veuillez ajouter une carte à votre compte avec {business_name}.
+
+Ajouter une carte est rapide, sécurisé et ne prend qu'une minute. Utilisez ce lien sécurisé :
+{add_card_link}
+
+Ce lien sécurisé expire dans 7 jours. Pour toute question, répondez simplement à ce message.
+
+— L'équipe {business_name}

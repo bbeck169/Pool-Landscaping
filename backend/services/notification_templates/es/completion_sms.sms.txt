@@ -1,0 +1,1 @@
+Hola {first_name}, su {job_title} con {business_name} está completo. Consulte el informe completo y las fotos aquí: {portal_link}

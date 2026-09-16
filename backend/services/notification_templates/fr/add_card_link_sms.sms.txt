@@ -1,0 +1,1 @@
+Bonjour {customer_first_name} : {business_name} a besoin d'une carte pour votre compte. Ajoutez-la ici (expire dans 7 jours) : {add_card_link}

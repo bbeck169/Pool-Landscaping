@@ -868,6 +868,13 @@ class TenantSettingsUpdate(BaseModel):
     # tenant on the default single-industry pipeline; the Phase A
     # migration seeds ``["pools"]`` on any tenant missing the field.
     industries: Optional[List[str]] = None
+    # Phase D5 · Feb-2026 — tenant-wide default locale for outbound
+    # customer email + SMS bodies. Whitelisted to the D5 set
+    # (``en`` / ``es`` / ``fr``); passing ``None`` clears the
+    # override so the ultimate ``en`` fallback kicks in.
+    # Admin notifications ALWAYS remain English regardless of this
+    # value — see ``services.i18n_notifications.resolve_recipient_locale``.
+    default_locale: Optional[str] = None
 
 
 @router.get(
@@ -972,6 +979,20 @@ async def patch_own_settings(body: TenantSettingsUpdate,
                 "invalid": invalid,
             })
         upd["industries"] = valid
+    # Phase D5 · Feb-2026 — validate default_locale against the D5
+    # whitelist. ``None`` is allowed (clears the override).
+    if "default_locale" in upd:
+        from services.i18n_notifications import SUPPORTED_LOCALES
+        raw = upd["default_locale"]
+        if raw is not None:
+            loc = str(raw).strip().lower()
+            if loc not in SUPPORTED_LOCALES:
+                raise HTTPException(422, detail={
+                    "code": "invalid_default_locale",
+                    "supported": sorted(SUPPORTED_LOCALES),
+                    "received": raw,
+                })
+            upd["default_locale"] = loc
     upd["settings_updated_at"] = now_iso()
     upd["settings_updated_by"] = user.get("id")
     await db.tenants.update_one({"id": tid}, {"$set": upd})
