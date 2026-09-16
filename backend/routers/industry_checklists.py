@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from config import db, logger
 from routers.tenants import get_current_tenant
@@ -484,15 +484,130 @@ def derive_industry_for_job(job: Optional[Dict[str, Any]],
 
 
 # ─── HTTP surface ────────────────────────────────────────────────────
+_SUPPORTED_LOCALES = ("en", "es", "fr")
+
+
+def resolve_row_label(row: Dict[str, Any], locale: str) -> str:
+    """Phase D4 · Feb 2026 — return the localized label for a row.
+
+    Fallback chain (loosest → strictest):
+        label_i18n[locale] → label_i18n["en"] → label → key
+    Empty strings are treated as missing. Unknown locales collapse
+    to ``en`` before the chain runs.
+    """
+    if not isinstance(row, dict):
+        return ""
+    loc = str(locale or "en").strip().lower()
+    if loc not in _SUPPORTED_LOCALES:
+        loc = "en"
+    i18n = row.get("label_i18n") or {}
+    if isinstance(i18n, dict):
+        val = i18n.get(loc)
+        if isinstance(val, str) and val.strip():
+            return val
+        # ``en`` intra-i18n fallback — used when a caller stored the
+        # English translation inside ``label_i18n`` rather than the
+        # authoritative ``label`` field.
+        en_val = i18n.get("en")
+        if isinstance(en_val, str) and en_val.strip():
+            return en_val
+    label = row.get("label")
+    if isinstance(label, str) and label.strip():
+        return label
+    return str(row.get("key") or "")
+
+
+def _parse_accept_language(header: Optional[str]) -> Optional[str]:
+    """Return the first supported locale from an ``Accept-Language``
+    header, or ``None`` when none match. Very lightweight — enough
+    for our 3-locale surface."""
+    if not header:
+        return None
+    for tok in header.split(","):
+        code = tok.split(";", 1)[0].strip().lower()
+        if not code:
+            continue
+        # Region-stripped match (``es-419`` → ``es``).
+        base = code.split("-", 1)[0]
+        if base in _SUPPORTED_LOCALES:
+            return base
+    return None
+
+
+def _resolve_effective_locale(
+    *, query_locale: Optional[str], user: Optional[Dict[str, Any]],
+    request: Optional[Request],
+) -> str:
+    """Priority: query param → user record → Accept-Language → ``en``."""
+    for candidate in (
+        (query_locale or "").strip().lower(),
+        (user or {}).get("locale") or "",
+    ):
+        c = str(candidate or "").strip().lower()
+        if c in _SUPPORTED_LOCALES:
+            return c
+    if request is not None:
+        hdr = _parse_accept_language(
+            request.headers.get("accept-language")
+            or request.headers.get("Accept-Language"),
+        )
+        if hdr:
+            return hdr
+    return "en"
+
+
+def _localize_items(items: List[Dict[str, Any]], locale: str) -> List[Dict[str, Any]]:
+    """Return a list of rows with ``label`` replaced by the localized
+    string, ``label_en`` set to the authoritative English, and
+    ``label_i18n_available`` populated with the locales that have a
+    non-empty entry."""
+    out: List[Dict[str, Any]] = []
+    for row in items or ():
+        if not isinstance(row, dict):
+            continue
+        localized = dict(row)
+        english = str(row.get("label") or "").strip()
+        i18n = row.get("label_i18n") or {}
+        available = ["en"] if english else []
+        if isinstance(i18n, dict):
+            for code in _SUPPORTED_LOCALES:
+                if code == "en":
+                    continue
+                v = i18n.get(code)
+                if isinstance(v, str) and v.strip() and code not in available:
+                    available.append(code)
+        localized["label"] = resolve_row_label(row, locale)
+        localized["label_en"] = english or localized["label"]
+        localized["label_i18n_available"] = available
+        out.append(localized)
+    return out
+
+
 @router.get("/checklists/industry/{industry}",
               operation_id="industryChecklists.get")
 async def get_checklist_endpoint(
     industry: str,
+    request: Request,
+    locale: Optional[str] = Query(default=None,
+                                     pattern="^[a-zA-Z-]{2,10}$"),
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Any authed user can read the resolved template."""
-    return await get_industry_checklist(tenant["id"], industry)
+    """Any authed user can read the resolved template.
+
+    Phase D4 · Feb 2026 — locale-aware rendering.
+    Priority: ``?locale`` query → ``user.locale`` → ``Accept-Language``
+    → ``en``. Every returned row carries ``label`` (localized),
+    ``label_en`` (authoritative), and ``label_i18n_available`` (list of
+    locales that ship a translation for the row).
+    """
+    body = await get_industry_checklist(tenant["id"], industry)
+    eff = _resolve_effective_locale(
+        query_locale=locale, user=user, request=request,
+    )
+    body["items"] = _localize_items(body.get("items") or [], eff)
+    body["locale"] = eff
+    return body
 
 
 @router.put("/checklists/industry/{industry}",

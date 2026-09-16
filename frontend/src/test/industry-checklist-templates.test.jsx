@@ -115,8 +115,11 @@ describe("IndustryChecklistForm · dispatcher wrapper", () => {
   });
 
   it("fetches /checklists/industry/{industry} for non-pool", () => {
+    // Phase D4 · Feb 2026 — URL now interpolates ``${qs}`` for the
+    // optional ``?locale=…`` query param appended by the locale
+    // effect. Assertion still pins the base path.
     expect(WRAPPER).toMatch(
-      /api\.get\(`\/checklists\/industry\/\$\{industry\}`\)/,
+      /api\.get\(`\/checklists\/industry\/\$\{industry\}(?:\$\{qs\})?`\)/,
     );
   });
 

@@ -5,5 +5,7 @@
   "notes_placeholder": "Cualquier cosa que el cliente o el despachador deba saber…",
   "save_and_close": "Guardar y cerrar",
   "discard_changes": "Descartar cambios",
-  "unsaved_warning": "Tienes cambios sin guardar. ¿Descartarlos?"
+  "unsaved_warning": "Tienes cambios sin guardar. ¿Descartarlos?",
+  "translation_pending": "EN",
+  "translation_pending_tooltip": "Este ítem aún no ha sido traducido; se muestra la versión en inglés."
 }

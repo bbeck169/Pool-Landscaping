@@ -5,5 +5,7 @@
   "notes_placeholder": "Anything the customer or dispatcher should know…",
   "save_and_close": "Save and close",
   "discard_changes": "Discard changes",
-  "unsaved_warning": "You have unsaved changes. Discard them?"
+  "unsaved_warning": "You have unsaved changes. Discard them?",
+  "translation_pending": "EN",
+  "translation_pending_tooltip": "This row hasn't been translated yet; showing the English source."
 }

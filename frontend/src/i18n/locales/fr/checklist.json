@@ -5,5 +5,7 @@
   "notes_placeholder": "Toute information utile pour le client ou le dispatcher…",
   "save_and_close": "Enregistrer et fermer",
   "discard_changes": "Ignorer les modifications",
-  "unsaved_warning": "Vous avez des modifications non enregistrées. Les ignorer ?"
+  "unsaved_warning": "Vous avez des modifications non enregistrées. Les ignorer ?",
+  "translation_pending": "EN",
+  "translation_pending_tooltip": "Cet élément n'est pas encore traduit ; version anglaise affichée."
 }

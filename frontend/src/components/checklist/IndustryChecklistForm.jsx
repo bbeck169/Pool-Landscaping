@@ -63,6 +63,10 @@ function mergeTemplateAndReport(templateItems, reportItems) {
       required: !!t.required,
       checked: !!prev?.checked,
       notes: prev?.notes || "",
+      // Phase D4 · Feb 2026 — carry the locale metadata forward
+      // so the row-level "translation pending" badge can render.
+      label_en: t.label_en,
+      label_i18n_available: t.label_i18n_available,
     };
   });
 }
@@ -74,7 +78,7 @@ function GenericIndustryChecklistBody({
   // Phase D3 · Feb 2026 — pull namespaces for the shell strings +
   // industry display name. Row labels remain from the template
   // (Phase D4 will translate those).
-  const { t } = useTranslation(["checklist", "industries", "common"]);
+  const { t, i18n } = useTranslation(["checklist", "industries", "common"]);
   const items = template?.items || [];
   const merged = useMemo(
     () => mergeTemplateAndReport(items, checklistItems),
@@ -145,6 +149,31 @@ function GenericIndustryChecklistBody({
                           aria-label={t("checklist:required_asterisk_tooltip")}
                           title={t("checklist:required_asterisk_tooltip")}>*</span>
                   ) : null}
+                  {/* Phase D4 · translation-pending indicator. Server
+                      returns ``label_i18n_available`` per row — when
+                      the active locale isn't in that list, show a
+                      subtle badge with the English source in the
+                      tooltip so techs can cross-check. */}
+                  {row.label_i18n_available
+                    && !row.label_i18n_available.includes(
+                      (i18n.language || "en").slice(0, 2),
+                    ) ? (
+                    <span
+                      className="ml-1 inline-flex items-center justify-center rounded-full text-[9px] font-bold"
+                      style={{
+                        color: "#B45309", background: "#FEF3C7",
+                        padding: "0px 5px", verticalAlign: "middle",
+                      }}
+                      title={
+                        t("checklist:translation_pending_tooltip")
+                        + (row.label_en ? ` · EN: ${row.label_en}` : "")
+                      }
+                      aria-label={t("checklist:translation_pending_tooltip")}
+                      data-testid={`industry-check-translation-pending-${row.key}`}
+                    >
+                      {t("checklist:translation_pending")}
+                    </span>
+                  ) : null}
                 </span>
               </label>
               {row.checked && !locked ? (
@@ -207,15 +236,22 @@ export default function IndustryChecklistForm({
   // industry switches.
   const [template, setTemplate] = useState(null);
   const [error, setError] = useState("");
+  const { i18n } = useTranslation();
   useEffect(() => {
     if (industry === "pool") { setTemplate(null); setError(""); return; }
     let cancelled = false;
     setError(""); setTemplate(null);
-    api.get(`/checklists/industry/${industry}`)
+    // Phase D4 · Feb 2026 — pass the active locale explicitly so a
+    // tech who toggled the D3 language selector sees translated
+    // rows immediately without re-logging in. Belt-and-suspenders
+    // with the ``user.locale`` fallback the backend also honours.
+    const loc = (i18n.language || "en").slice(0, 2);
+    const qs = loc ? `?locale=${encodeURIComponent(loc)}` : "";
+    api.get(`/checklists/industry/${industry}${qs}`)
       .then((body) => { if (!cancelled) setTemplate(body); })
       .catch((e) => { if (!cancelled) setError(e?.message || "Failed to load"); });
     return () => { cancelled = true; };
-  }, [industry, tenantId]);
+  }, [industry, tenantId, i18n.language]);
 
   // Pool → delegate to the untouched historical component so
   // pool tenants keep the full chemistry UX.
